@@ -6,6 +6,14 @@ package com.azhukov.agent.service.imagegen;
 public interface ImageGenProvider {
 
     /**
+     * Provider name used for agent.image-gen.provider selection
+     * (e.g. "pollinations", "openai").
+     */
+    default String name() {
+        return "openai";
+    }
+
+    /**
      * Generate an image from a text prompt.
      *
      * @param prompt      the text prompt describing the desired image

@@ -356,9 +356,10 @@ agent:
   
   # ─── Image generation ───
   image-gen:
+    # pollinations is the keyless default (dev-friendly); openai needs an api-key.
     enabled: ${AGENT_IMAGE_GEN_ENABLED:false}
-    provider: ${AGENT_IMAGE_GEN_PROVIDER:fal}
-    api-key: ${AGENT_IMAGE_GEN_API_KEY:}
+    provider: ${AGENT_IMAGE_GEN_PROVIDER:pollinations}
+    api-key: ${AGEN...EY:}
     model: ${AGENT_IMAGE_GEN_MODEL:}
   
   # ─── TTS ───

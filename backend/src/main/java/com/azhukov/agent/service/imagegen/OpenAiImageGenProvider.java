@@ -37,6 +37,11 @@ public class OpenAiImageGenProvider implements ImageGenProvider {
     }
 
     @Override
+    public String name() {
+        return "openai";
+    }
+
+    @Override
     public byte[] generate(String prompt, String aspectRatio) {
         try {
             String apiKey = properties.getImageGen().getApiKey();

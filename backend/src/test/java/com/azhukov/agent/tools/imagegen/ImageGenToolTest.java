@@ -32,11 +32,15 @@ class ImageGenToolTest {
     @Mock
     private ImageGenProvider provider;
 
+    private com.azhukov.agent.config.AgentProperties properties;
     private ImageGenTool tool;
 
     @BeforeEach
     void setUp() {
-        tool = new ImageGenTool(providerProvider);
+        properties = new com.azhukov.agent.config.AgentProperties();
+        properties.getImageGen().setProvider("openai");
+        org.mockito.Mockito.lenient().when(provider.name()).thenReturn("openai");
+        tool = new ImageGenTool(providerProvider, properties);
     }
 
     @Test
@@ -55,7 +59,7 @@ class ImageGenToolTest {
 
     @Test
     void generate_imageSavedAndReturnsHermesJson() throws Exception {
-        when(providerProvider.getIfAvailable()).thenReturn(provider);
+        when(providerProvider.stream()).thenReturn(java.util.stream.Stream.of(provider));
         byte[] imageBytes = "fake-png-data".getBytes();
         when(provider.generate(eq("a cat"), any())).thenReturn(imageBytes);
 
@@ -81,7 +85,7 @@ class ImageGenToolTest {
 
     @Test
     void generate_defaultAspectRatioMatchesHermesLandscape() throws Exception {
-        when(providerProvider.getIfAvailable()).thenReturn(provider);
+        when(providerProvider.stream()).thenReturn(java.util.stream.Stream.of(provider));
         byte[] imageBytes = "fake-png-data".getBytes();
         when(provider.generate(eq("a cat"), eq("landscape"))).thenReturn(imageBytes);
 
@@ -94,7 +98,7 @@ class ImageGenToolTest {
 
     @Test
     void generate_invalidAspectRatioFallsBackToLandscape() throws Exception {
-        when(providerProvider.getIfAvailable()).thenReturn(provider);
+        when(providerProvider.stream()).thenReturn(java.util.stream.Stream.of(provider));
         byte[] imageBytes = "fake-png-data".getBytes();
         when(provider.generate(eq("a cat"), eq("landscape"))).thenReturn(imageBytes);
 
@@ -107,7 +111,7 @@ class ImageGenToolTest {
 
     @Test
     void generate_noProvider_returnsFailureJson() throws Exception {
-        when(providerProvider.getIfAvailable()).thenReturn(null);
+        when(providerProvider.stream()).thenReturn(java.util.stream.Stream.empty());
 
         String args = """
             {"prompt":"a cat"}
@@ -118,9 +122,9 @@ class ImageGenToolTest {
         JsonNode response = MAPPER.readTree(result.content());
         assertThat(response.get("success").asBoolean()).isFalse();
         assertThat(response.get("image").isNull()).isTrue();
-        assertThat(response.get("error").asText()).contains("not enabled");
+        assertThat(response.get("error").asText()).contains("disabled by configuration");
         assertThat(response.get("error_type").asText()).isEqualTo("ValueError");
-        assertThat(result.error()).contains("not enabled");
+        assertThat(result.error()).contains("disabled by configuration");
     }
 
     @Test
@@ -139,7 +143,7 @@ class ImageGenToolTest {
 
     @Test
     void generate_withSourceImage_returnsHonestUnsupportedEditingJson() throws Exception {
-        when(providerProvider.getIfAvailable()).thenReturn(provider);
+        when(providerProvider.stream()).thenReturn(java.util.stream.Stream.of(provider));
 
         ToolResult result = tool.execute("""
             {"prompt":"make it cinematic","image_url":"https://example.com/source.png"}
@@ -157,7 +161,7 @@ class ImageGenToolTest {
 
     @Test
     void generate_withReferenceImages_returnsHonestUnsupportedEditingJson() throws Exception {
-        when(providerProvider.getIfAvailable()).thenReturn(provider);
+        when(providerProvider.stream()).thenReturn(java.util.stream.Stream.of(provider));
 
         ToolResult result = tool.execute("""
             {"prompt":"same style","reference_image_urls":["https://example.com/ref.png"]}
@@ -175,7 +179,7 @@ class ImageGenToolTest {
 
     @Test
     void generate_withUpscaleTrue_returnsHonestUnsupportedJson() throws Exception {
-        when(providerProvider.getIfAvailable()).thenReturn(provider);
+        when(providerProvider.stream()).thenReturn(java.util.stream.Stream.of(provider));
 
         ToolResult result = tool.execute("""
             {"prompt":"make it large","upscale":true}

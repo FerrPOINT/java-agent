@@ -40,7 +40,8 @@ public class ImageGenTool implements ToolHandler {
     private static final Set<String> VALID_ASPECT_RATIOS = Set.of("landscape", "square", "portrait");
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    private final ObjectProvider<ImageGenProvider> providerProvider;
+    private final org.springframework.beans.factory.ObjectProvider<ImageGenProvider> providerProvider;
+    private final com.azhukov.agent.config.AgentProperties properties;
 
 
     @Override
@@ -58,10 +59,15 @@ public class ImageGenTool implements ToolHandler {
 
         String aspectRatio = normalizeAspectRatio(args.aspectRatio());
 
-        ImageGenProvider provider = providerProvider.getIfAvailable();
+        ImageGenProvider provider = resolveProvider();
         if (provider == null) {
+            String configured = properties.getImageGen().getProvider();
+            String hint = configured != null && !configured.isBlank() && !"pollinations".equalsIgnoreCase(configured)
+                ? " The configured provider '" + configured + "' has no implementation."
+                : "";
             return jsonFailureResponse(
-                "Image generation is not enabled. Set agent.image-gen.enabled=true to use this tool.",
+                "Image generation is disabled by configuration. Set agent.image-gen.enabled=true"
+                    + " (env AGENT_IMAGE_GEN_ENABLED) to use this tool." + hint,
                 "ValueError"
             );
         }
@@ -97,6 +103,23 @@ public class ImageGenTool implements ToolHandler {
             log.error("Image generation failed: {}", e.getMessage(), e);
             return jsonFailureResponse(errorMessage(e), e.getClass().getSimpleName());
         }
+    }
+
+    private ImageGenProvider resolveProvider() {
+        List<ImageGenProvider> available = providerProvider.stream().toList();
+        if (available.isEmpty()) {
+            return null;
+        }
+        String configured = properties.getImageGen().getProvider();
+        if (configured != null && !configured.isBlank()) {
+            for (ImageGenProvider provider : available) {
+                if (provider.name().equalsIgnoreCase(configured.trim())) {
+                    return provider;
+                }
+            }
+            return null;
+        }
+        return available.size() == 1 ? available.getFirst() : null;
     }
 
     private ToolResult jsonFailureResponse(String error, String errorType) {
