@@ -309,7 +309,10 @@ agent:
 
   # ─── Core ───
   core:
-    max-turns: ${AGENT_CORE_MAX_TURNS:25}
+    # Agentic loop iterations per user turn. Default 100 (parity with the model
+    # budget max-model-calls-per-turn=100 and Hermes max_iterations=500): a lower
+    # yml default silently cut long tool chains to a quarter of the budget.
+    max-turns: ${AGENT_CORE_MAX_TURNS:100}
     tool-use-enforcement: ${AGENT_CORE_TOOL_USE_ENFORCEMENT:auto}
     task-completion-guidance: ${AGENT_CORE_TASK_COMPLETION_GUIDANCE:true}
     parallel-tool-call-guidance: ${AGENT_CORE_PARALLEL_TOOL_CALL_GUIDANCE:true}
