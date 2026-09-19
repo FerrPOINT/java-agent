@@ -267,6 +267,64 @@ public class TelegramClient {
     }
 
     /**
+     * Send a text message, surfacing a KNOWN Telegram refusal as
+     * {@link SendFailure} (Hermes delivery.py parity: the platform rejected the
+     * send before accepting anything — retryable). An empty Optional keeps its
+     * old meaning: the outcome is ambiguous (timeout after accept, collapsed
+     * transport error) and must not be blindly retried.
+     */
+    public Optional<Long> sendMessageChecked(long chatId, String text, String parseMode,
+                                             Long replyToMessageId, Integer messageThreadId,
+                                             String replyMarkup, boolean disableNotification) {
+        Map<String, Object> params = baseSendParams(chatId, text, parseMode, replyToMessageId,
+            messageThreadId, replyMarkup, disableNotification);
+        try {
+            Optional<TelegramResponse> response = callApi("sendMessage", params);
+            return response.flatMap(r -> Optional.ofNullable(r.resultMessageIdAsLong()));
+        } catch (TelegramApiException e) {
+            if (e.isRateLimit()) {
+                // The platform REFUSED the send (429) — nothing was delivered.
+                // Return a known failure; the ledger's flood handling keeps the
+                // platform's own retry_after wait (Hermes flood_not_before).
+                throw new SendRefusalException(e.getRetryAfter(), e.getMessage());
+            }
+            if (e.getErrorCode() > 0) {
+                // Definite Telegram API refusal (4xx/5xx with a code): the
+                // message was NOT accepted. Retrying may succeed later.
+                throw new SendRefusalException(-1, e.getMessage());
+            }
+            return Optional.empty();  // ambiguous transport outcome
+        }
+    }
+
+    /** Typed known-refusal signal for durable delivery (never ambiguous). */
+    public static class SendRefusalException extends RuntimeException {
+        private final int retryAfterSeconds;
+        public SendRefusalException(int retryAfterSeconds, String message) {
+            super(message);
+            this.retryAfterSeconds = retryAfterSeconds;
+        }
+        public int getRetryAfterSeconds() { return retryAfterSeconds; }
+    }
+
+    private Map<String, Object> baseSendParams(long chatId, String text, String parseMode,
+                                               Long replyToMessageId, Integer messageThreadId,
+                                               String replyMarkup, boolean disableNotification) {
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("chat_id", chatId);
+        params.put("text", text);
+        if (parseMode != null && !parseMode.isBlank()) params.put("parse_mode", parseMode);
+        if (replyToMessageId != null) params.put("reply_to_message_id", replyToMessageId);
+        if (messageThreadId != null) params.put("message_thread_id", messageThreadId);
+        if (replyMarkup != null && !replyMarkup.isBlank()) params.put("reply_markup", replyMarkup);
+        if (disableNotification) params.put("disable_notification", true);
+        if (!linkPreviewEnabled) {
+            params.put("disable_web_page_preview", true);
+        }
+        return params;
+    }
+
+    /**
      * Check whether the error description warrants a retry without
      * {@code reply_to_message_id}. Only "message thread not found" and
      * "reply message not found" errors qualify — other errors (chat not

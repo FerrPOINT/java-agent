@@ -158,6 +158,18 @@ public class DeliveryWorkItemController {
             : ResponseEntity.status(409).body(Map.of("dropped", false, "error", "claim not held"));
     }
 
+    /**
+     * Hermes boot-sweep parity: a consumer restart is the real recovery signal
+     * for rows parked as {@code send_path_degraded}. Invoked by the bot on
+     * startup so its first claim cycle spends their reserved last attempt.
+     */
+    @PostMapping("/rearm")
+    public ResponseEntity<Map<String, Object>> rearm(@RequestBody Map<String, Object> request) {
+        int rearmed = deliveryService.rearmSendPathDegraded(
+            request == null ? null : String.valueOf(request.get("consumer_id")));
+        return ResponseEntity.ok(Map.of("rearmed", rearmed));
+    }
+
     private static boolean blank(String value) {
         return value == null || value.isBlank();
     }

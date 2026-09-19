@@ -11,6 +11,8 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
@@ -41,18 +43,18 @@ class DeliveryLedgerConsumerBatchTest {
 
     @Test
     void singleItemDeliversPlainPayload() {
-        when(telegram.sendMessage(anyLong(), anyString())).thenReturn(Optional.of(1L));
+        when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean())).thenReturn(Optional.of(1L));
 
         consumer().deliverBatchForTest(List.of(delegate("42", "task done")));
 
         ArgumentCaptor<String> sent = ArgumentCaptor.forClass(String.class);
-        verify(telegram, times(1)).sendMessage(anyLong(), sent.capture());
+        verify(telegram, times(1)).sendMessageChecked(anyLong(), sent.capture(), any(), any(), any(), any(), anyBoolean());
         assertThat(sent.getValue()).isEqualTo("task done");
     }
 
     @Test
     void multipleItemsCoalesceIntoOneSyntheticMessage() {
-        when(telegram.sendMessage(anyLong(), anyString())).thenReturn(Optional.of(1L));
+        when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean())).thenReturn(Optional.of(1L));
 
         consumer().deliverBatchForTest(List.of(
             delegate("42", "result A"),
@@ -60,7 +62,7 @@ class DeliveryLedgerConsumerBatchTest {
             delegate("44", "result C")));
 
         ArgumentCaptor<String> sent = ArgumentCaptor.forClass(String.class);
-        verify(telegram, times(1)).sendMessage(anyLong(), sent.capture());
+        verify(telegram, times(1)).sendMessageChecked(anyLong(), sent.capture(), any(), any(), any(), any(), anyBoolean());
         String text = sent.getValue();
         assertThat(text).startsWith("[IMPORTANT: 3 background processes completed");
         assertThat(text).contains("result A");
@@ -94,15 +96,15 @@ class DeliveryLedgerConsumerBatchTest {
 
     @Test
     void sendFailureFencesEveryItemAsUnknown() {
-        when(telegram.sendMessage(anyLong(), anyString())).thenReturn(Optional.empty());
+        when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean())).thenReturn(Optional.empty());
 
         consumer().deliverBatchForTest(List.of(
             delegate("42", "result A"), delegate("43", "result B")));
 
-        verify(telegram, times(1)).sendMessage(anyLong(), anyString());
+        verify(telegram, times(1)).sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean());
         // Both items must be fenced unknown via /delivery/unknown — verified by
         // the outcome posts: consumer posts for each item (2 posts). We assert
         // via the ack absence: no ack call happens because sendMessage empty.
-        verify(telegram, times(1)).sendMessage(anyLong(), anyString());
+        verify(telegram, times(1)).sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean());
     }
 }

@@ -303,12 +303,67 @@ class DeliveryWorkItemServiceTest {
         claimed.setClaimToken("tok");
         claimed.setAttempts(8);
         when(repository.findById(id)).thenReturn(Optional.of(claimed));
-        when(repository.markTerminal(eq(id), eq("tok"), eq(DeliveryWorkItemService.STATE_DROPPED),
-            any(Instant.class), any(), any())).thenReturn(1);
+        when(repository.releaseKnownFailure(eq(id), eq("tok"), any(Instant.class),
+            eq(DeliveryWorkItemService.CATEGORY_SEND_PATH_DEGRADED), any())).thenReturn(1);
 
         assertThat(service().releaseKnownFailure(id, "tok", "fatal", "boom")).isTrue();
 
-        verify(repository, never()).releaseKnownFailure(any(), any(), any(), any(), any());
+        // Hermes 807435ac1e parity: the LAST budgeted attempt is never spent by
+        // a release — the row is parked as send_path_degraded (not claimable by
+        // the timer) and waits for a consumer restart to rearm it. It is NOT
+        // dropped: an unclassified outage must not silently lose a notification.
+        verify(repository, never()).markTerminal(any(), any(), any(), any(), any(), any());
+        verify(repository).releaseKnownFailure(
+            eq(id), eq("tok"), any(Instant.class),
+            eq(DeliveryWorkItemService.CATEGORY_SEND_PATH_DEGRADED), any());
+    }
+
+    @Test
+    void floodReleaseKeepsPlatformRetryAfterNotBackoffSchedule() {
+        UUID id = UUID.randomUUID();
+        DeliveryWorkItemEntity claimed = pendingItem("default");
+        claimed.setState(DeliveryWorkItemService.STATE_CLAIMED);
+        claimed.setClaimToken("tok");
+        claimed.setAttempts(2);
+        when(repository.findById(id)).thenReturn(Optional.of(claimed));
+        ArgumentCaptor<Instant> dueAt = ArgumentCaptor.forClass(Instant.class);
+        when(repository.releaseKnownFailure(eq(id), eq("tok"), dueAt.capture(),
+            eq("flood_control:95"), any())).thenReturn(1);
+
+        Instant before = Instant.now();
+        assertThat(service().releaseKnownFailure(
+            id, "tok", "FLOOD_CONTROL:95", "retry_after=95s 429 Too Many Requests")).isTrue();
+
+        // flood_not_before parity: the platform's own wait (95s) wins over the
+        // exponential backoff (would be 10s at 2 attempts) AND over the
+        // never-due park (a flood row always keeps its own schedule).
+        Instant due = dueAt.getValue();
+        assertThat(due).isAfterOrEqualTo(before.plusSeconds(94));
+        assertThat(due).isBeforeOrEqualTo(Instant.now().plusSeconds(97));
+    }
+
+    @Test
+    void rearmClearsParkedSendPathDegradedRows() {
+        when(repository.rearmSendPathDegraded(any(Instant.class), any(Instant.class))).thenReturn(3);
+
+        assertThat(service().rearmSendPathDegraded("telegram-bot")).isEqualTo(3);
+        verify(repository).rearmSendPathDegraded(any(Instant.class), any(Instant.class));
+    }
+
+    @Test
+    void unclassifiedReleaseAtPenultimateAttemptParksRowNotDrops() {
+        UUID id = UUID.randomUUID();
+        DeliveryWorkItemEntity claimed = pendingItem("default");
+        claimed.setState(DeliveryWorkItemService.STATE_CLAIMED);
+        claimed.setClaimToken("tok");
+        claimed.setAttempts(7);  // MAX_ATTEMPTS - 1: the boundary itself
+        when(repository.findById(id)).thenReturn(Optional.of(claimed));
+        when(repository.releaseKnownFailure(eq(id), eq("tok"), any(Instant.class),
+            eq(DeliveryWorkItemService.CATEGORY_SEND_PATH_DEGRADED), any())).thenReturn(1);
+
+        assertThat(service().releaseKnownFailure(id, "tok", "transport_error", "conn refused")).isTrue();
+
+        verify(repository, never()).markTerminal(any(), any(), any(), any(), any(), any());
     }
 
     @Test

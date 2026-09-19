@@ -37,6 +37,20 @@ public class DeliveryWorkItemService {
     private static final int MAX_PAYLOAD_CHARS = 2_000_000;
     private static final Duration RETRY_BASE_DELAY = Duration.ofSeconds(5);
 
+    /**
+     * Hermes {@code _RUNTIME_RETRYABLE_ERRORS} parity: a released claim whose
+     * consumer could not even attempt the send (adapter gone, transport dead).
+     * The redelivery timer must NOT re-arm for such rows — only a reconnect
+     * (poller recovery / restart boot sweep) is a real recovery signal.
+     */
+    public static final String CATEGORY_SEND_PATH_DEGRADED = "send_path_degraded";
+
+    /**
+     * Sentinel for "no timer re-arm": farther in the future than any scheduler
+     * window. A restart/boot-sweep clears it (see rearmSendPathDegraded).
+     */
+    private static final Instant NEVER_DUE = Instant.parse("9999-12-31T23:59:59Z");
+
     private final DeliveryWorkItemRepository repository;
     private final org.springframework.beans.factory.ObjectProvider<DelegatedCompletionClassifier> classifierProvider;
 
@@ -188,14 +202,34 @@ public class DeliveryWorkItemService {
         if (item == null || !STATE_CLAIMED.equals(item.getState()) || !claimToken.equals(item.getClaimToken())) {
             return false;
         }
-        if (item.getAttempts() >= MAX_ATTEMPTS) {
-            return markTerminal(id, claimToken, STATE_DROPPED, category, detail);
+        String normalized = normalizeCategory(category);
+        if (isFloodCategory(normalized)) {
+            // A flood refusal keeps the platform's own wait (Hermes
+            // flood_not_before): retry_after seconds from the release moment.
+            int retryAfter = parseFloodRetryAfter(detail);
+            Instant due = Instant.now().plusSeconds(Math.max(retryAfter, 1));
+            return repository.releaseKnownFailure(
+                id, claimToken, due, normalized, redactDetail(detail)) == 1;
+        }
+        // Hermes 807435ac1e parity: an unclassified rejection must never spend
+        // the LAST budgeted attempt — an outage can outlast any backoff
+        // schedule, and a row the timer exhausted would be lost for good.
+        // Keep exactly one attempt in reserve: from MAX_ATTEMPTS-1 spent, the
+        // timer stops arming and the row waits for a real recovery signal
+        // (bot restart / reconnect sweep).
+        if (item.getAttempts() >= MAX_ATTEMPTS - 1) {
+            return repository.releaseKnownFailure(
+                id,
+                claimToken,
+                NEVER_DUE,  // not claimable by the timer; a restart rearms it
+                CATEGORY_SEND_PATH_DEGRADED,
+                redactDetail(detail)) == 1;
         }
         return repository.releaseKnownFailure(
             id,
             claimToken,
             Instant.now().plus(retryDelay(item.getAttempts())),
-            normalizeCategory(category),
+            normalized,
             redactDetail(detail)) == 1;
     }
 
@@ -243,6 +277,18 @@ public class DeliveryWorkItemService {
             }
         }
         return new SweepResult(recovered, abandoned);
+    }
+
+    /**
+     * Hermes boot-sweep parity (07a1d55d33/877848d2f3): rows parked as
+     * {@code send_path_degraded} (their last budgeted attempt unspent, waiting
+     * for a real recovery signal) become claimable again after a consumer
+     * restart — the restart IS the recovery signal. This method is invoked from
+     * the delivery controller on consumer registration (bot boot claim).
+     */
+    @Transactional
+    public int rearmSendPathDegraded(String consumerId) {
+        return repository.rearmSendPathDegraded(Instant.now(), NEVER_DUE);
     }
 
     public record SweepResult(int recovered, int abandoned) {}
@@ -341,6 +387,24 @@ public class DeliveryWorkItemService {
     private static Duration retryDelay(int attempts) {
         long multiplier = 1L << Math.min(Math.max(attempts - 1, 0), 8);
         return RETRY_BASE_DELAY.multipliedBy(multiplier);
+    }
+
+    /** Hermes is_flood_error parity: a Telegram 429 refusal recorded in the ledger. */
+    static boolean isFloodCategory(String category) {
+        return category != null && category.startsWith("flood");
+    }
+
+    /**
+     * Hermes flood_not_before parity: the platform's own wait (retry_after
+     * seconds) wins over any backoff schedule. Detail carries "retry_after=Ns".
+     */
+    static int parseFloodRetryAfter(String detail) {
+        if (detail == null) {
+            return 0;
+        }
+        java.util.regex.Matcher m = java.util.regex.Pattern
+            .compile("retry_after=(\\d+)").matcher(detail);
+        return m.find() ? Integer.parseInt(m.group(1)) : 0;
     }
 
     private static String normalizeCategory(String category) {

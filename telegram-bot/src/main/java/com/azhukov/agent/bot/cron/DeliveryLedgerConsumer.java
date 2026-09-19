@@ -64,6 +64,30 @@ public class DeliveryLedgerConsumer {
     }
 
     /**
+     * Hermes boot-sweep parity (07a1d55d33/877848d2f3): a bot restart is the
+     * real recovery signal for rows parked as {@code send_path_degraded}.
+     * Their reserved last attempt is spent by THIS consumer on its first
+     * claim cycle — not by the timer. Called once at startup.
+     */
+    @jakarta.annotation.PostConstruct
+    void rearmParkedRows() {
+        if (!properties.isCronDeliveryEnabled()) {
+            return;
+        }
+        try {
+            String json = restClient.post()
+                .uri("/api/v1/agent/delivery/rearm")
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .body(objectMapper.writeValueAsString(Map.of("consumer_id", consumerId())))
+                .retrieve()
+                .body(String.class);
+            log.info("Delivery boot-sweep: {}", json);
+        } catch (Exception e) {
+            log.debug("Delivery rearm failed (backend not up yet): {}", e.getMessage());
+        }
+    }
+
+    /**
      * Hermes completion-batch parity: claim several pending items for ONE
      * target and deliver them as a single coalesced message (or the plain
      * payload when there is exactly one).
@@ -166,8 +190,8 @@ public class DeliveryLedgerConsumer {
             boolean sendFailed = false;
             for (String chunk : chunks) {
                 Optional<Long> sent = threadId == null
-                    ? telegramClient.sendMessage(chatId, chunk)
-                    : telegramClient.sendMessage(chatId, chunk, null, null, threadId, false);
+                    ? telegramClient.sendMessageChecked(chatId, chunk, null, null, null, null, false)
+                    : telegramClient.sendMessageChecked(chatId, chunk, null, null, threadId, null, false);
                 if (sent.isEmpty()) {
                     sendFailed = true;
                     break;
@@ -193,6 +217,23 @@ public class DeliveryLedgerConsumer {
             log.warn("delivery_batch_unresolved items={} sourceIds={} chat={} category={}", batch.size(),
                 batch.stream().map(ClaimedItem::sourceId).toList(), chatId,
                 lastMessageId != null ? "partial_chunk_failure" : "empty_send_result");
+        } catch (TelegramClient.SendRefusalException e) {
+            // Hermes delivery.py parity: the platform REFUSED the send — a
+            // known failure (never ambiguous). A flood refusal (429) keeps the
+            // platform's own retry_after wait; any other definite refusal
+            // backs off normally.
+            String category = e.getRetryAfterSeconds() > 0
+                ? "flood_control:" + e.getRetryAfterSeconds()
+                : "send_refused";
+            for (ClaimedItem item : batch) {
+                outcome(item, "release", category,
+                    e.getRetryAfterSeconds() > 0
+                        ? "retry_after=" + e.getRetryAfterSeconds() + "s " + e.getMessage()
+                        : e.getMessage());
+            }
+            log.warn("delivery_batch_refused items={} sourceIds={} chat={} category={} retryAfter={}",
+                batch.size(), batch.stream().map(ClaimedItem::sourceId).toList(), chatId,
+                category, e.getRetryAfterSeconds());
         } catch (Exception e) {
             for (ClaimedItem item : batch) {
                 outcome(item, "release", "transport_error", e.getMessage());

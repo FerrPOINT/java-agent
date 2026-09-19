@@ -114,4 +114,24 @@ public interface DeliveryWorkItemRepository extends JpaRepository<DeliveryWorkIt
         @Param("terminalAt") Instant terminalAt,
         @Param("errorCategory") String errorCategory,
         @Param("errorDetail") String errorDetail);
+
+    /**
+     * Hermes boot-sweep parity: a consumer restart is the real recovery signal
+     * for rows parked as send_path_degraded. Their reserved last attempt is
+     * spent by the reconnecting consumer itself, not by the timer.
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @org.springframework.transaction.annotation.Transactional
+    @Query("""
+        update DeliveryWorkItemEntity item
+        set item.availableAt = :now,
+            item.errorCategory = null,
+            item.errorDetail = null
+        where item.state = 'pending'
+          and item.errorCategory = 'send_path_degraded'
+          and item.availableAt = :neverDue
+        """)
+    int rearmSendPathDegraded(
+        @Param("now") Instant now,
+        @Param("neverDue") Instant neverDue);
 }
