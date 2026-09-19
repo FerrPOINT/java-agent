@@ -39,6 +39,9 @@ services:
       # Keyless image generation for dev (pollinations), explicitly enabled.
       AGENT_IMAGE_GEN_ENABLED: ${AGENT_IMAGE_GEN_ENABLED:-true}
       AGENT_IMAGE_GEN_PROVIDER: ${AGENT_IMAGE_GEN_PROVIDER:-pollinations}
+      # MCP client enabled: DB-configured stdio servers register lazily from the
+      # persisted schema cache (no eager spawn on boot).
+      AGENT_MCP_ENABLED: ${AGENT_MCP_ENABLED:-true}
       AGENT_TTS_ENABLED: ${AGENT_TTS_ENABLED:-false}
       # Run the image-bundled client, never a host interpreter.
       AGENT_TTS_EDGE_COMMAND: ${AGENT_TTS_EDGE_COMMAND:-/opt/edge-tts/bin/edge-tts}

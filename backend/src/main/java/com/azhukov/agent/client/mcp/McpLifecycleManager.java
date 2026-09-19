@@ -208,7 +208,7 @@ public class McpLifecycleManager {
             log.info("MCP is disabled.");
             return;
         }
-        for (AgentProperties.McpProperties.ServerProperties server : properties.getMcp().getServers()) {
+        for (AgentProperties.McpProperties.ServerProperties server : effectiveServers()) {
             if (!server.isEnabled()) {
                 log.info("Skipping disabled MCP server {}", server.getName());
                 continue;
@@ -217,7 +217,91 @@ public class McpLifecycleManager {
         }
     }
 
+    /**
+     * YAML-configured servers plus persisted dashboard configs (mcp_server_configs,
+     * profile "default"). A persisted entry with the same name overrides the YAML
+     * one (the dashboard is the more specific, revisioned source); entries are
+     * de-duplicated by name. Without this merge, servers added through the
+     * dashboard never connect after a restart.
+     */
+    List<AgentProperties.McpProperties.ServerProperties> effectiveServers() {
+        List<AgentProperties.McpProperties.ServerProperties> merged = new java.util.ArrayList<>();
+        java.util.Set<String> names = new java.util.HashSet<>();
+        for (AgentProperties.McpProperties.ServerProperties server : properties.getMcp().getServers()) {
+            merged.add(server);
+            names.add(server.getName());
+        }
+        var store = configStoreProvider == null ? null : configStoreProvider.getIfAvailable();
+        if (store != null) {
+            try {
+                for (var entity : store.list("default")) {
+                    if (entity.getName() != null && names.add(entity.getName())) {
+                        merged.add(toServerProperties(entity));
+                    }
+                }
+            } catch (Exception e) {
+                log.debug("Persisted MCP configs unavailable: {}", e.getMessage());
+            }
+        }
+        return merged;
+    }
+
+    private AgentProperties.McpProperties.ServerProperties toServerProperties(
+            com.azhukov.agent.persistence.entity.McpServerConfigEntity entity) {
+        AgentProperties.McpProperties.ServerProperties server = new AgentProperties.McpProperties.ServerProperties();
+        server.setEnabled(entity.isEnabled());
+        server.setName(entity.getName());
+        server.setTransport(entity.getTransport() == null ? "stdio" : entity.getTransport());
+        server.setCommand(entity.getCommand() == null ? "" : entity.getCommand());
+        server.getArgs().addAll(parseJsonStringList(entity.getArgsJson()));
+        server.getHeaders().putAll(parseJsonStringMap(entity.getHeadersJson()));
+        List<String> include = parseJsonStringList(entity.getIncludeToolsJson());
+        if (!include.isEmpty()) {
+            server.getTools().setInclude(include);
+        }
+        List<String> exclude = parseJsonStringList(entity.getExcludeToolsJson());
+        if (!exclude.isEmpty()) {
+            server.getTools().setExclude(exclude);
+        }
+        server.setBaseUrl(entity.getBaseUrl() == null ? "" : entity.getBaseUrl());
+        server.setTimeoutSeconds((int) entity.getTimeoutSeconds());
+        server.setTrust(entity.getTrust() == null ? "full" : entity.getTrust());
+        server.setOauthTokenUrl(entity.getOauthTokenUrl() == null ? "" : entity.getOauthTokenUrl());
+        server.setOauthClientId(entity.getOauthClientId() == null ? "" : entity.getOauthClientId());
+        server.setOauthScopes(entity.getOauthScopes() == null ? "" : entity.getOauthScopes());
+        return server;
+    }
+
+    private List<String> parseJsonStringList(String json) {
+        if (json == null || json.isBlank()) {
+            return List.of();
+        }
+        try {
+            return objectMapper.readValue(json, objectMapper.getTypeFactory()
+                .constructCollectionType(List.class, String.class));
+        } catch (Exception e) {
+            return List.of();
+        }
+    }
+
+    private Map<String, String> parseJsonStringMap(String json) {
+        if (json == null || json.isBlank()) {
+            return Map.of();
+        }
+        try {
+            return objectMapper.readValue(json, objectMapper.getTypeFactory()
+                .constructMapType(Map.class, String.class, String.class));
+        } catch (Exception e) {
+            return Map.of();
+        }
+    }
+
     public void connect(AgentProperties.McpProperties.ServerProperties server) {
+        connect(server, true);
+    }
+
+    /** @param allowLazy false forces a real connect (lazy registration was already done). */
+    void connect(AgentProperties.McpProperties.ServerProperties server, boolean allowLazy) {
         // H18: Synchronize only the check-then-act, not the initialization.
         // client.initialize() and listToolsWithPagination() involve network I/O
         // that must NOT be held under the lock — it would block all other connect/
@@ -231,7 +315,7 @@ public class McpLifecycleManager {
         // tools register from the cache with NO server spawn; the first real
         // call routes through ensureConnectedForCall. A cache miss (or a
         // config revision change) falls through to a full connect.
-        if (lazyRegisterFromCache(server)) {
+        if (allowLazy && lazyRegisterFromCache(server)) {
             return;
         }
         McpSyncClient client = null;
@@ -361,7 +445,7 @@ public class McpLifecycleManager {
         if (clients.containsKey(serverName) || !lazyServers.contains(serverName)) {
             return;
         }
-        var serverProps = properties.getMcp().getServers().stream()
+        var serverProps = effectiveServers().stream()
             .filter(s -> serverName.equals(s.getName()))
             .findFirst().orElse(null);
         if (serverProps == null) {
@@ -369,7 +453,7 @@ public class McpLifecycleManager {
         }
         lazyServers.remove(serverName);
         log.info("MCP server {}: first call — connecting now (lazy startup)", serverName);
-        connect(serverProps);
+        connect(serverProps, false);
         if (!clients.containsKey(serverName)) {
             throw new IllegalStateException("MCP server failed to connect on demand: " + serverName);
         }
@@ -852,7 +936,7 @@ public class McpLifecycleManager {
     }
 
     public void reconnect(String serverName) {
-        AgentProperties.McpProperties.ServerProperties serverProps = properties.getMcp().getServers().stream()
+        AgentProperties.McpProperties.ServerProperties serverProps = effectiveServers().stream()
             .filter(s -> s.getName().equals(serverName))
             .findFirst()
             .orElse(null);
@@ -977,7 +1061,7 @@ public class McpLifecycleManager {
                 || msg.contains("reset") || msg.contains("timeout");
             if (isConnectionError) {
                 log.info("MCP server {} tool refresh failed with connection error, triggering reconnect", serverName);
-                properties.getMcp().getServers().stream()
+                effectiveServers().stream()
                     .filter(s -> s.getName().equals(serverName))
                     .findFirst()
                     .ifPresent(server -> {
@@ -1565,7 +1649,7 @@ public class McpLifecycleManager {
         if (oldRefresh != null) {
             oldRefresh.cancel(false);
         }
-        properties.getMcp().getServers().stream()
+        effectiveServers().stream()
             .filter(s -> s.getName().equals(serverName))
             .findFirst()
             .ifPresent(server -> scheduleReconnect(server, 0, false));
@@ -2557,7 +2641,7 @@ public class McpLifecycleManager {
                     log.warn("MCP tool '{}' on server '{}' failed with connection error, triggering reconnect: {}",
                         toolName, serverName, e.getMessage());
                     // Find the server properties and schedule a reconnect
-                    properties.getMcp().getServers().stream()
+                    effectiveServers().stream()
                         .filter(s -> s.getName().equals(serverName))
                         .findFirst()
                         .ifPresent(server -> {

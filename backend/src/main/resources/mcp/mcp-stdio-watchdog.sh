@@ -42,7 +42,13 @@ kill_child_group() {
 
 # Own session+group: killpg reaches the whole tree the real command spawns
 # without touching our own group or the parent's.
-setsid "$@" &
+#
+# stdin NOTE: a background async-list command in non-interactive POSIX sh
+# redirects stdin from /dev/null. The MCP stdio protocol rides on our stdin,
+# so the real command must keep OUR stdin: re-open it via fd 3 before
+# backgrounding (dash/POSIX sh safe; /dev/fd/N works on Linux).
+exec 3<&0
+setsid "$@" <&3 &
 child=$!
 trap 'kill_child_group; exit 143' TERM INT
 
