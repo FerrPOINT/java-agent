@@ -60,7 +60,7 @@ graph TB
     subgraph "Java Agent System"
         BE[Backend<br/>Spring Boot 4.1<br/>REST API + Agent Runtime<br/>Port 8090]
         BOT[Telegram Bot<br/>Spring Boot app<br/>56 commands + streaming<br/>Shared PostgreSQL]
-        CLI[CLI<br/>Spring Boot (non-web)<br/>JLine REPL<br/>92 slash commands]
+        CLI[CLI<br/>Spring Boot non-web<br/>JLine REPL<br/>92 slash commands]
     end
 
     PG[(PostgreSQL 16<br/>Shared database)]
@@ -76,7 +76,7 @@ graph TB
     BOT -->|REST + SSE streaming| BE
     BE -->|LLM calls| LLM
     BE -->|JPA / Flyway| PG
-    BOT -->|JPA (bot schema)| PG
+    BOT -->|JPA bot schema| PG
 
     style BE fill:#2d6a9f,color:#fff
     style BOT fill:#67c23a,color:#fff
@@ -105,7 +105,7 @@ graph TB
         SVC[service/<br/>RuntimeService,<br/>StreamingService,<br/>CheckpointManager,<br/>UsageTracker, CronService]
         CORE[core/<br/>AgentRuntime, ToolRegistry,<br/>ContextEngine, Memory,<br/>Skills, State, Budget]
         CLIENT[client/<br/>LangChain4j client,<br/>NoOp client, MCP client]
-        TOOLS[tools/<br/>@AgentTool implementations<br/>web, file, browser,<br/>terminal, coding, etc.]
+        TOOLS[tools/<br/>AgentTool implementations<br/>web, file, browser,<br/>terminal, coding, etc.]
         PERSIST[persistence/<br/>JPA entities, repositories,<br/>MapStruct mappers, Flyway]
         CONFIG[config/<br/>AgentProperties,<br/>MapStructConfig, beans]
         SEC[security/<br/>SSRF guard, file/URL safety,<br/>redactor, sanitizers]
