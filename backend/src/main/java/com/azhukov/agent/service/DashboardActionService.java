@@ -141,8 +141,106 @@ public class DashboardActionService {
                 report.put("last_reload_status", state.getLastReloadStatus());
             });
         }
+        report.putAll(toolDiagnostics());
         report.put("checked_at", Instant.now().toString());
         return report;
+    }
+
+    /**
+     * Per-capability smoke status so a silently-off tool is visible without manual
+     * testing (the 2026-09-19 tool audit found browser/TTS/image-gen/MCP dead in
+     * dev while everything LOOKED healthy). Every entry states WHY it is off and,
+     * where possible, the env var that turns it on. All checks are read-only and
+     * must stay fast: no chromium spawn, no network LLM calls.
+     */
+    private Map<String, Object> toolDiagnostics() {
+        Map<String, Object> tools = new LinkedHashMap<>();
+
+        // Browser: is a Chromium/CDP endpoint reachable right now?
+        Map<String, Object> browser = new LinkedHashMap<>();
+        String cdpUrl = properties.getBrowser() != null ? properties.getBrowser().getCdpUrl() : null;
+        browser.put("cdp_url", cdpUrl == null || cdpUrl.isBlank() ? "<unset>" : cdpUrl);
+        browser.put("auto_start", properties.getChromium() != null && properties.getChromium().isAutoStart());
+        String browserStatus;
+        String browserDetail;
+        if (!properties.getChromium().isAutoStart() && (cdpUrl == null || cdpUrl.isBlank())) {
+            browserStatus = "off";
+            browserDetail = "agent.chromium.auto-start=false and no agent.browser.cdp-url — set AGENT_CHROMIUM_AUTO_START=true or AGENT_BROWSER_CDP_URL";
+        } else {
+            java.net.URI uri = null;
+            try {
+                uri = cdpUrl == null || cdpUrl.isBlank() ? java.net.URI.create("http://127.0.0.1:9222") : java.net.URI.create(cdpUrl);
+            } catch (Exception ignored) {
+                // fall through to probe with the raw string
+            }
+            String probeHost = uri != null && uri.getHost() != null ? uri.getHost() : "127.0.0.1";
+            int probePort = uri != null && uri.getPort() > 0 ? uri.getPort() : 9222;
+            try (java.net.Socket socket = new java.net.Socket()) {
+                socket.connect(new java.net.InetSocketAddress(probeHost, probePort), 500);
+                browserStatus = "ok";
+                browserDetail = "CDP endpoint accepting connections";
+            } catch (Exception e) {
+                browserStatus = "down";
+                browserDetail = "cannot reach " + probeHost + ":" + probePort + " (" + e.getClass().getSimpleName() + ") — browser tools will fail; check AGENT_CHROMIUM_AUTO_START / the chromium process";
+            }
+        }
+        browser.put("status", browserStatus);
+        browser.put("detail", browserDetail);
+        tools.put("browser", browser);
+
+        // TTS: enabled + does the provider have a valid voice for it?
+        Map<String, Object> tts = new LinkedHashMap<>();
+        var ttsProps = properties.getTts();
+        tts.put("enabled", ttsProps.isEnabled());
+        tts.put("provider", ttsProps.getProvider());
+        String ttsVoice = "edge".equalsIgnoreCase(ttsProps.getProvider())
+            ? ttsProps.getEdge().getVoice() : ttsProps.getVoice();
+        tts.put("voice", ttsVoice);
+        boolean edgeVoiceInvalid = "edge".equalsIgnoreCase(ttsProps.getProvider())
+            && ttsVoice != null && !ttsVoice.matches("[a-z]{2}-[A-Z]{2}-[A-Za-z]+");
+        if (!ttsProps.isEnabled()) {
+            tts.put("status", "off");
+            tts.put("detail", "agent.tts.enabled=false — set AGENT_TTS_ENABLED=true");
+        } else if (edgeVoiceInvalid) {
+            tts.put("status", "misconfigured");
+            tts.put("detail", "edge-tts needs a Microsoft neural voice like ru-RU-DmitryNeural, got '" + ttsVoice + "' — set AGENT_TTS_EDGE_VOICE");
+        } else {
+            tts.put("status", "ok");
+            tts.put("detail", ttsProps.getProvider() + " with voice " + ttsVoice);
+        }
+        tools.put("text_to_speech", tts);
+
+        // Image generation: keyless pollinations works without keys; openai needs one.
+        Map<String, Object> imageGen = new LinkedHashMap<>();
+        var imageProps = properties.getImageGen();
+        imageGen.put("enabled", imageProps.isEnabled());
+        imageGen.put("provider", imageProps.getProvider());
+        if (!imageProps.isEnabled()) {
+            imageGen.put("status", "off");
+            imageGen.put("detail", "agent.image-gen.enabled=false — set AGENT_IMAGE_GEN_ENABLED=true (pollinations needs no key)");
+        } else if ("openai".equalsIgnoreCase(imageProps.getProvider())
+            && (imageProps.getApiKey() == null || imageProps.getApiKey().isBlank())) {
+            imageGen.put("status", "misconfigured");
+            imageGen.put("detail", "openai provider selected but agent.image-gen.api-key is empty — set AGENT_IMAGE_GEN_API_KEY or AGENT_IMAGE_GEN_PROVIDER=pollinations");
+        } else {
+            imageGen.put("status", "ok");
+            imageGen.put("detail", imageProps.getProvider() + " provider selected");
+        }
+        tools.put("image_generate", imageGen);
+
+        // MCP: enabled + how many servers actually connected.
+        Map<String, Object> mcp = new LinkedHashMap<>();
+        mcp.put("enabled", properties.getMcp().isEnabled());
+        if (!properties.getMcp().isEnabled()) {
+            mcp.put("status", "off");
+            mcp.put("detail", "agent.mcp.enabled=false — set AGENT_MCP_ENABLED=true");
+        } else {
+            mcp.put("status", "ok");
+            mcp.put("detail", "see /api/mcp/servers for per-server state");
+        }
+        tools.put("mcp", mcp);
+
+        return Map.of("tools", tools);
     }
 
     private Map<String, Object> promptSize(String profile) {
