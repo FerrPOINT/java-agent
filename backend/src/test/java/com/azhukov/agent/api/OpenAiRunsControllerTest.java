@@ -981,6 +981,65 @@ class OpenAiRunsControllerTest {
     }
 
     @Test
+    void approvalRequestIdEchoesBackAndMismatchedIdIsRejected() throws Exception {
+        BlockingRun blockingRun = blockRuntime();
+        String runId = createRun("needs approval request_id");
+        waitForStatus(runId, "running");
+        UUID controlSessionId = runService.get(runId).controlSessionId();
+        ApprovalQueue.PendingApproval pending = approvalQueue.request(
+            controlSessionId,
+            new ToolCall("call_rid", "terminal", "{\"cmd\":\"date\"}"),
+            "Terminal execution requires approval",
+            Duration.ofSeconds(30)
+        );
+
+        // A request_id that matches no pending request is 409, never a silent
+        // resolve of a DIFFERENT request (Hermes _handle_run_approval parity).
+        mockMvc.perform(post("/v1/runs/{runId}/approval", runId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"choice\":\"once\",\"request_id\":\"" + UUID.randomUUID() + "\"}"))
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.error.code").value("approval_not_pending"));
+        assertThat(approvalQueue.isPending(controlSessionId)).isTrue();
+
+        // The exact request_id resolves and is echoed back.
+        mockMvc.perform(post("/v1/runs/{runId}/approval", runId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"choice\":\"once\",\"request_id\":\"" + pending.requestId() + "\"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.choice").value("once"))
+            .andExpect(jsonPath("$.request_id").value(pending.requestId().toString()))
+            .andExpect(jsonPath("$.resolved").value(1));
+        assertThat(approvalQueue.isApproved(controlSessionId)).isTrue();
+
+        blockingRun.complete();
+        waitForStatus(runId, "completed");
+    }
+
+    @Test
+    void approvalBlankRequestIdIsInvalidRequestLikeHermes() throws Exception {
+        BlockingRun blockingRun = blockRuntime();
+        String runId = createRun("needs approval blank rid");
+        waitForStatus(runId, "running");
+        UUID controlSessionId = runService.get(runId).controlSessionId();
+        approvalQueue.request(
+            controlSessionId,
+            new ToolCall("call_blank", "terminal", "{\"cmd\":\"date\"}"),
+            "Terminal execution requires approval",
+            Duration.ofSeconds(30)
+        );
+
+        mockMvc.perform(post("/v1/runs/{runId}/approval", runId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"choice\":\"once\",\"request_id\":\"   \"}"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.error.code").value("invalid_approval_request"));
+
+        blockingRun.complete();
+        waitForStatus(runId, "completed");
+    }
+
+    @Test
     void approvalRequestEventRedactsToolArgumentsLikeHermes() throws Exception {
         BlockingRun blockingRun = blockRuntime();
         String runId = createRun("needs approval");

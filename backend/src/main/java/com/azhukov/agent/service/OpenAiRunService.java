@@ -167,6 +167,19 @@ public class OpenAiRunService {
     }
 
     public ControlResult approval(String runId, String rawChoice, boolean resolveAll) {
+        return approval(runId, rawChoice, resolveAll, null);
+    }
+
+    /**
+     * Hermes {@code _handle_run_approval} parity: resolves a pending run
+     * approval. {@code requestId} optionally targets one exact pending request
+     * (its UUID must match, else 409 approval_not_pending — never a silent
+     * resolve of a different request); {@code resolveAll} resolves every
+     * pending request for the run's control session. The {@code session} and
+     * {@code always} scopes record a standing decision so later approvals of
+     * the same tool auto-resolve instead of blocking the run.
+     */
+    public ControlResult approval(String runId, String rawChoice, boolean resolveAll, String requestId) {
         RunRecord record = runs.get(runId);
         if (record == null) {
             return ControlResult.notFound();
@@ -177,6 +190,9 @@ public class OpenAiRunService {
                 "Invalid approval choice; expected one of: once, session, always, deny",
                 "invalid_approval_choice");
         }
+        if (requestId != null && (requestId.isBlank() || requestId.length() > 256)) {
+            return ControlResult.badRequest("Approval request_id is invalid.", "invalid_approval_request");
+        }
         if (record.isTerminal()) {
             return ControlResult.conflict(
                 "Run has no active approval session: " + runId,
@@ -186,21 +202,43 @@ public class OpenAiRunService {
         if (pending == null || pending.approved() || pending.denied() || pending.superseded()) {
             return ControlResult.conflict("Run has no pending approval: " + runId, "approval_not_pending");
         }
+        if (requestId != null && !requestId.equals(String.valueOf(pending.requestId()))) {
+            return ControlResult.conflict(
+                "Run has no pending approval matching request_id " + requestId + ": " + runId,
+                "approval_not_pending");
+        }
 
         if ("deny".equals(choice)) {
             approvalQueue.deny(record.controlSessionId(), null);
         } else {
-            approvalQueue.approve(record.controlSessionId(), "approve", null);
+            approvalQueue.approve(record.controlSessionId(),
+                "session".equals(choice) || "always".equals(choice) ? choice : "approve", null);
         }
-        int resolved = resolveAll ? 1 : 1;
+        // Hermes resolve_gateway_approval parity: resolve_all clears every
+        // still-pending request for this control session, not just the head.
+        int resolved = 1;
+        if (resolveAll) {
+            int extra = approvalQueue.resolveAllPending(record.controlSessionId(),
+                !"deny".equals(choice));
+            resolved += extra;
+        }
         record.setStatus("running", Map.of("last_event", "approval.responded"));
-        record.emit("approval.responded", Map.of("choice", choice, "resolved", resolved));
-        return ControlResult.ok(Map.of(
-            "object", "hermes.run.approval_response",
-            "run_id", runId,
-            "choice", choice,
-            "resolved", resolved
-        ));
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("choice", choice);
+        if (requestId != null) {
+            payload.put("request_id", requestId);
+        }
+        payload.put("resolved", resolved);
+        record.emit("approval.responded", payload);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("object", "hermes.run.approval_response");
+        body.put("run_id", runId);
+        body.put("choice", choice);
+        if (requestId != null) {
+            body.put("request_id", requestId);
+        }
+        body.put("resolved", resolved);
+        return ControlResult.ok(body);
     }
 
     public SseEmitter events(String runId) {

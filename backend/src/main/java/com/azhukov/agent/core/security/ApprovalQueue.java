@@ -136,6 +136,24 @@ public class ApprovalQueue {
     }
 
     /**
+     * Hermes {@code resolve_gateway_approval(resolve_all=True)} parity: resolve
+     * every pending (undecided) request for the session beyond the head one.
+     *
+     * @return the number of additional requests resolved (0 when only the head
+     *         existed — the caller already resolved that one).
+     */
+    public int resolveAllPending(UUID sessionId, boolean approve) {
+        PendingApproval p = pending.get(sessionId);
+        if (p == null || p.approved() || p.denied() || p.superseded()) {
+            return 0;
+        }
+        // The queue holds one pending per session (supersede semantics); with
+        // nothing else queued there is nothing additional to resolve. Kept as
+        // the explicit seam so a multi-pending queue keeps the same contract.
+        return 0;
+    }
+
+    /**
      * Returns {@code true} if the approval for the given session has been approved.
      */
     public boolean isApproved(UUID sessionId) {

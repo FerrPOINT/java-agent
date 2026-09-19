@@ -223,7 +223,12 @@ public class OpenAiRunsController {
         String choice = stringValue(requestBody.get("choice"));
         boolean resolveAll = OpenAiRequestBooleans.coerce(requestBody.get("all"), false)
             || OpenAiRequestBooleans.coerce(requestBody.get("resolve_all"), false);
-        return controlResponse(runId, runService.approval(runId, choice, resolveAll));
+        // Hermes _handle_run_approval parity: an optional request_id targets one
+        // exact pending approval request; the response echoes it back. A blank
+        // string is PRESENT-but-invalid (400), not absent.
+        Object rawRequestId = requestBody.get("request_id");
+        String requestId = rawRequestId instanceof String s ? s.trim() : null;
+        return controlResponse(runId, runService.approval(runId, choice, resolveAll, requestId));
     }
 
     @PostMapping("/{runId}/steer")
