@@ -30,6 +30,9 @@ public class ClarificationStateStore {
     private static final String ACTION_OTHER = "other";
     private static final String ACTION_DONE = "done";
     private static final int MAX_CHOICES = 4;
+    /** Unanswered prompts expire so an ignored keyboard cannot leak state forever. */
+    private static final long PENDING_TTL_MS = 24 * 60 * 60 * 1000L;
+    private static final int MAX_PENDING = 256;
 
     private final AtomicLong nextId = new AtomicLong(1);
     private final Map<String, PendingQuestion> pending = new ConcurrentHashMap<>();
@@ -38,6 +41,7 @@ public class ClarificationStateStore {
 
     /** Render a supported single question. Batch questions stay textual: one response must not trigger several turns. */
     public void present(long chatId, long threadId, String rawArguments, TelegramClient telegramClient) {
+        evictExpired();
         Prompt prompt = parseSinglePrompt(rawArguments);
         if (prompt == null || prompt.choices().isEmpty()) {
             return;
@@ -157,12 +161,26 @@ public class ClarificationStateStore {
         return "Answer to clarification question '" + prompt.question() + "': " + answer;
     }
 
+    /**
+     * Hermes parity (clarify_gateway.py clear-on-expiry): drop prompts older than the TTL
+     * and cap the map, so ignored keyboards cannot accumulate state forever. Best-effort:
+     * called opportunistically on present(); no background thread.
+     */
+    private void evictExpired() {
+        long now = System.currentTimeMillis();
+        pending.values().removeIf(state -> now - state.createdAt > PENDING_TTL_MS);
+        while (pending.size() > MAX_PENDING) {
+            pending.keySet().stream().findFirst().ifPresent(pending::remove);
+        }
+    }
+
     private record Prompt(String question, List<String> choices, boolean multiSelect) {}
 
     private static final class PendingQuestion {
         private final long chatId;
         private final long threadId;
         private final Prompt prompt;
+        private final long createdAt = System.currentTimeMillis();
         private final LinkedHashSet<Integer> selected = new LinkedHashSet<>();
         private volatile boolean awaitingTypedAnswer;
 
