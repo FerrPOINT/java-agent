@@ -1097,7 +1097,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                 // Also handle finish_reason="incomplete" with incomplete_details.reason
                 // = "max_output_tokens" — Hermes treats this as a synonym for LENGTH
                 // (conversation_loop.py:3555-3563).
-                boolean isLengthTruncation = "LENGTH".equals(finishReason)
+                boolean isLengthTruncation = "length".equalsIgnoreCase(finishReason)
                     || "incomplete".equalsIgnoreCase(finishReason);
                 if (isLengthTruncation && hasContent && !hasToolCalls
                         && lengthContinueRetries < MAX_LENGTH_CONTINUATION_ATTEMPTS) {
@@ -1425,7 +1425,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
             if (pipeline.truncatedArgs()) {
                 log.warn("Truncated tool call arguments in stream — aborting turn (session {})", session.id());
                 eventHelper().send(emitter, new StreamEvent("error", null, null,
-                    "Response truncated due to output length limit"), streamCtx);
+                    com.azhukov.agent.core.agent.ResponseRecoveryPolicy.TRUNCATED_TOOL_CALL_FINAL), streamCtx);
                 eventHelper().send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                 eventHelper().safeComplete(emitter);
                 if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);

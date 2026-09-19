@@ -491,6 +491,15 @@ public class StreamingOrchestrator {
             || msg.contains("too many requests") || msg.contains("retry after")) {
             return "Rate limited by Telegram. Retrying...";
         }
+        // Output-length truncation (Hermes turn_truncation copy): the model hit
+        // its output-token cap mid tool-call. The backend already retried with a
+        // boosted budget; the user must know the action was NOT executed and that
+        // resending is safe — a generic "temporary issue" hides a real outcome.
+        if (msg.contains("truncated") || msg.contains("output length") || msg.contains("output-token")
+            || msg.contains("output token")) {
+            return "The model hit its output-token limit mid tool-call and the action was not "
+                + "executed after automatic retries. Resend your message or switch the model.";
+        }
         // Network / timeout errors
         if (error instanceof java.util.concurrent.TimeoutException
             || error instanceof java.net.SocketTimeoutException

@@ -83,6 +83,17 @@ public final class ResponseRecoveryPolicy {
         "Try rephrasing the request, narrowing the context, or "
             + "adding a fallback provider with `hermes fallback add`.";
 
+    /**
+     * Hermes parity (turn_truncation.py _TRUNCATED_FINAL / stream_dropped_tool_call):
+     * the user-facing copy when a truncated tool call survived all retries — the
+     * action was NOT executed, and the message must say so instead of a generic
+     * "temporary issue".
+     */
+    public static final String TRUNCATED_TOOL_CALL_FINAL =
+        "⚠️ The model hit its output-token limit mid tool-call and the action was not "
+            + "executed after automatic retries. Resend your message (the conversation "
+            + "history is preserved) or switch to a model with a larger output budget.";
+
     private ResponseRecoveryPolicy() {
     }
 
@@ -106,7 +117,7 @@ public final class ResponseRecoveryPolicy {
         // Hermes parity (conversation_loop.py:3555-3563): "incomplete" finish_reason
         // with incomplete_details.reason="max_output_tokens" is a synonym for LENGTH.
         String fr = response.finishReason();
-        return ("LENGTH".equals(fr) || "incomplete".equalsIgnoreCase(fr))
+        return ("length".equalsIgnoreCase(fr) || "incomplete".equalsIgnoreCase(fr))
             && response.hasContent()
             && !response.hasToolCalls()
             && lengthRetries < MAX_LENGTH_CONTINUATION_ATTEMPTS;
@@ -139,7 +150,11 @@ public final class ResponseRecoveryPolicy {
         // Hermes parity (conversation_loop.py:3555-3563): finish_reason="incomplete"
         // with incomplete_details.reason="max_output_tokens" is treated as a synonym
         // for "LENGTH" — both mean the output was truncated.
-        return ("LENGTH".equals(finishReason) || "incomplete".equalsIgnoreCase(finishReason))
+        // Case-insensitive: the streaming client normalizes wire finish reasons to
+        // lowercase ("length"), the sync path returns the enum name ("LENGTH"). The
+        // 2026-09-19 incident (session 89d4cd4d) showed a case-sensitive compare here
+        // silently disabling the whole truncated-tool-call retry circuit on streams.
+        return ("length".equalsIgnoreCase(finishReason) || "incomplete".equalsIgnoreCase(finishReason))
             && hasToolCalls;
     }
 

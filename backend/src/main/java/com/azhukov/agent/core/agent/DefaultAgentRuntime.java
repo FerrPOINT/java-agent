@@ -756,7 +756,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 session = resolveRotatedSession(session);
                 continue;
             }
-            if (("LENGTH".equals(response.finishReason()) || "incomplete".equalsIgnoreCase(response.finishReason()))
+            if (("length".equalsIgnoreCase(response.finishReason()) || "incomplete".equalsIgnoreCase(response.finishReason()))
                     && response.hasContent() && !response.hasToolCalls()
                     && lengthContinueRetries >= ResponseRecoveryPolicy.MAX_LENGTH_CONTINUATION_ATTEMPTS) {
                 String stitched = truncatedParts + response.content();
@@ -1071,7 +1071,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 if (turnFinalizer != null) {
                     turnFinalizer.finalize(session.id(), turnMessages, false, TurnExitReason.MAX_TURNS_REACHED);
                 }
-                return TurnResult.error("Response truncated due to output length limit");
+                return TurnResult.error(ResponseRecoveryPolicy.TRUNCATED_TOOL_CALL_FINAL);
             }
             if (!pipeline.syntheticResults().isEmpty()) {
                 turnMessages.addAll(pipeline.syntheticResults());

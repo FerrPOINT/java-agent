@@ -32,6 +32,19 @@ class StreamErrorClassificationTest {
     }
 
     @Test
+    void truncationErrorSaysActionNotExecutedNotTemporaryIssue() {
+        // 2026-09-19 incident: "Response truncated due to output length limit" fell
+        // through to the generic "Temporary issue" — hiding that a tool call was
+        // dropped and that resending is safe.
+        String out = StreamingOrchestrator.toUserFriendlyError(
+            new RuntimeException("Response truncated due to output length limit"));
+        assertThat(out)
+            .doesNotContain("Temporary issue")
+            .contains("output-token limit")
+            .contains("not executed");
+    }
+
+    @Test
     void providerOverloadMentionsCooldownNotTelegram() {
         String out = StreamingOrchestrator.toUserFriendlyError(
             new RuntimeException(LITELLM_NO_DEPLOYMENTS));

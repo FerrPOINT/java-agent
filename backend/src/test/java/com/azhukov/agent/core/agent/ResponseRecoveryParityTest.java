@@ -104,6 +104,19 @@ class ResponseRecoveryParityTest {
     }
 
     @Test
+    void isTruncatedToolCallAcceptsStreamingLowercaseLength() {
+        // 2026-09-19 incident (session 89d4cd4d): the streaming client normalizes
+        // finish reasons to lowercase ("length"), and the case-sensitive "LENGTH"
+        // compare silently disabled the whole retry circuit — the turn died with a
+        // generic error instead of retrying with a boosted max_tokens.
+        assertThat(ResponseRecoveryPolicy.isTruncatedToolCall("length", true)).isTrue();
+        assertThat(ResponseRecoveryPolicy.isTruncatedToolCall("Length", true)).isTrue();
+        assertThat(ResponseRecoveryPolicy.isTruncatedToolCall("length", false)).isFalse();
+        assertThat(ResponseRecoveryPolicy.isLengthContinuable(
+            new com.azhukov.agent.core.model.ChatResponse("partial", java.util.List.of(), "length"), 0)).isTrue();
+    }
+
+    @Test
     void isTruncatedToolCallRejectsNullFinishReason() {
         assertThat(ResponseRecoveryPolicy.isTruncatedToolCall(null, true)).isFalse();
     }
