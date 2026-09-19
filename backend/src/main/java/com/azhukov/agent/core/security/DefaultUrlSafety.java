@@ -66,24 +66,81 @@ public class DefaultUrlSafety implements UrlSafety {
         if (isHostBlocked(lowerHost)) {
             return false;
         }
-        // Block localhost and known metadata endpoints by name
-        if (LOCALHOST_NAMES.contains(lowerHost)) {
+        // Hermes parity (url_safety.py): the cloud-metadata floor applies BEFORE and
+        // regardless of security.allow_private_urls — opting into private/LAN URLs
+        // must never make metadata endpoints reachable.
+        if (isMetadataHost(lowerHost) || isMetadataIpLiteral(lowerHost)) {
             return false;
         }
-        if (METADATA_HOSTS.contains(lowerHost)
-                || lowerHost.endsWith(".metadata.google.internal")
-                || lowerHost.endsWith(".metadata.goog")) {
-            return false;
+        // Loopback names are ordinary private targets under the allow-private toggle.
+        if (LOCALHOST_NAMES.contains(lowerHost)) {
+            return allowPrivateUrls();
         }
         // Check for encoded private IPs (SSRF bypass techniques)
         if (isEncodedPrivateIp(lowerHost)) {
-            return false;
+            return allowPrivateUrls();
         }
         // Resolve host and check for private/loopback/link-local/metadata IPs
         if (isUnsafeAddress(lowerHost)) {
             return false;
         }
         return true;
+    }
+
+    private boolean allowPrivateUrls() {
+        return properties.getSecurity().isAllowPrivateUrls();
+    }
+
+    private boolean isMetadataHost(String lowerHost) {
+        return METADATA_HOSTS.contains(lowerHost)
+            || lowerHost.endsWith(".metadata.google.internal")
+            || lowerHost.endsWith(".metadata.goog");
+    }
+
+    /**
+     * Hermes parity: literal and encoded cloud-metadata IPs (169.254.0.0/16,
+     * 169.254.170.2, 169.254.169.253, 100.100.100.200, incl. decimal/octal/hex
+     * encodings) are blocked before the allow-private toggle is ever consulted.
+     */
+    private boolean isMetadataIpLiteral(String host) {
+        int[] octets = parseDottedOctets(host);
+        if (octets == null) {
+            return false;
+        }
+        if (octets[0] == 169 && octets[1] == 254) {
+            return true; // link-local: AWS/GCP/Azure/DO metadata range
+        }
+        return octets[0] == 100 && octets[1] == 100 && octets[2] == 100 && octets[3] == 200;
+    }
+
+    /**
+     * Parses dotted IPv4 forms incl. octal/hex parts (0177.0.0.1, 0x7f.0.0.1);
+     * null when the host is not a dotted quad.
+     */
+    private int[] parseDottedOctets(String host) {
+        if (!host.contains(".") || host.contains(":")) {
+            return null;
+        }
+        String[] parts = host.split("\\.");
+        if (parts.length != 4) {
+            return null;
+        }
+        try {
+            int[] octets = new int[4];
+            for (int i = 0; i < 4; i++) {
+                String p = parts[i];
+                if (p.toLowerCase().startsWith("0x")) {
+                    octets[i] = Integer.parseInt(p.substring(2), 16);
+                } else if (p.startsWith("0") && p.length() > 1 && p.matches("[0-7]+")) {
+                    octets[i] = Integer.parseInt(p, 8);
+                } else {
+                    octets[i] = Integer.parseInt(p);
+                }
+            }
+            return octets;
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     @Override
@@ -107,8 +164,12 @@ public class DefaultUrlSafety implements UrlSafety {
             // InetAddress handles DNS resolution and IP parsing.
             // It also normalizes decimal IP encodings (e.g., 2130706433 → 127.0.0.1).
             for (InetAddress address : resolveAll(host)) {
+                // Cloud metadata / link-local floor: blocked regardless of allow-private.
+                if (isMetadataAddress(address)) {
+                    return false;
+                }
                 if (isUnsafeResolvedAddress(address)) {
-                    return true;
+                    return !allowPrivateUrls();
                 }
             }
         } catch (UnknownHostException e) {
@@ -120,6 +181,37 @@ public class DefaultUrlSafety implements UrlSafety {
             return true;
         }
         return false;
+    }
+
+    /**
+     * Hermes parity (_ALWAYS_BLOCKED_IPS / _ALWAYS_BLOCKED_NETWORKS): cloud metadata
+     * endpoints and the entire IPv4 link-local range stay blocked even when
+     * security.allow-private-urls is enabled.
+     */
+    private boolean isMetadataAddress(InetAddress address) {
+        byte[] bytes = address.getAddress();
+        if (bytes == null) {
+            return false;
+        }
+        // Classify by the embedded IPv4 for IPv4-mapped IPv6 answers.
+        if (bytes.length == 16 && isIpv4MappedAddress(bytes)) {
+            bytes = java.util.Arrays.copyOfRange(bytes, 12, 16);
+        }
+        if (bytes.length != 4) {
+            // fd00:ec2::254 — AWS metadata over IPv6.
+            byte[] aws = {(byte) 0xfd, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x02, 0x54};
+            return java.util.Arrays.equals(bytes, aws);
+        }
+        int o1 = bytes[0] & 0xFF;
+        int o2 = bytes[1] & 0xFF;
+        int o3 = bytes[2] & 0xFF;
+        int o4 = bytes[3] & 0xFF;
+        // Entire 169.254.0.0/16 link-local range (AWS/GCP/Azure/DO metadata).
+        if (o1 == 169 && o2 == 254) {
+            return true;
+        }
+        // Alibaba Cloud metadata.
+        return o1 == 100 && o2 == 100 && o3 == 100 && o4 == 200;
     }
 
     InetAddress[] resolveAll(String host) throws UnknownHostException {

@@ -280,6 +280,9 @@ agent:
     always-require-approval-tools: ${AGENT_SECURITY_ALWAYS_REQUIRE_APPROVAL_TOOLS:}
     file-safety-enabled: ${AGENT_SECURITY_FILE_SAFETY_ENABLED:true}
     url-safety-enabled: ${AGENT_SECURITY_URL_SAFETY_ENABLED:true}
+    # Hermes parity (security.allow_private_urls): permit loopback/private/LAN URLs while cloud
+    # metadata endpoints stay blocked unconditionally. HERMES_ALLOW_PRIVATE_URLS is also honored.
+    allow-private-urls: ${AGENT_SECURITY_ALLOW_PRIVATE_URLS:${HERMES_ALLOW_PRIVATE_URLS:false}}
     redact-enabled: ${AGENT_SECURITY_REDACT_ENABLED:true}
     redact-secrets: ${AGENT_SECURITY_REDACT_SECRETS:true}
     redact-pii: ${AGENT_SECURITY_REDACT_PII:false}

@@ -32,6 +32,9 @@ services:
       # A container-local CDP endpoint keeps the dev agent isolated from host state.
       AGENT_CHROMIUM_AUTO_START: "true"
       AGENT_GATEWAY_TELEGRAM_LONG_POLLING_ENABLED: "false"
+      # Dev parity with Hermes security.allow_private_urls: the agent may browse and
+      # fetch local dev services (localhost/LAN); cloud metadata stays blocked regardless.
+      AGENT_SECURITY_ALLOW_PRIVATE_URLS: ${AGENT_SECURITY_ALLOW_PRIVATE_URLS:-true}
       AGENT_TTS_VOICE: ${AGENT_TTS_VOICE:-ru-RU-DmitryNeural}
       AGENT_TTS_ENABLED: ${AGENT_TTS_ENABLED:-false}
       # Run the image-bundled client, never a host interpreter.

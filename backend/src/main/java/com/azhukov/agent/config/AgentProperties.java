@@ -469,6 +469,12 @@ public class AgentProperties {
         private boolean approvalsEnabled = true;
         private boolean fileSafetyEnabled = true;
         private boolean urlSafetyEnabled = true;
+        /**
+         * Hermes parity (security.allow_private_urls): allow loopback/private/LAN URLs while
+         * keeping cloud-metadata endpoints blocked unconditionally. Lets the agent browse and
+         * fetch local dev services without disabling URL safety entirely.
+         */
+        private boolean allowPrivateUrls = false;
         private boolean redactEnabled = true;
         /** Whether built-in secret patterns (API keys, tokens, etc.) are redacted (default true). */
         private boolean redactSecrets = true;
