@@ -91,7 +91,7 @@ public class ImageGenTool implements ToolHandler {
             if (imageBytes == null || imageBytes.length == 0) {
                 throw new IllegalStateException("Image generation returned empty image data");
             }
-            String fileName = "img_" + UUID.randomUUID() + ".png";
+            String fileName = "img_" + UUID.randomUUID() + imageExtension(imageBytes);
             Path outputPath = defaultOutputDir().resolve(fileName)
                 .toAbsolutePath()
                 .normalize();
@@ -103,6 +103,27 @@ public class ImageGenTool implements ToolHandler {
             log.error("Image generation failed: {}", e.getMessage(), e);
             return jsonFailureResponse(errorMessage(e), e.getClass().getSimpleName());
         }
+    }
+
+    private String imageExtension(byte[] image) {
+        // Providers may return JPEG even when their endpoint has no filename extension.
+        // Persist a truthful suffix so MEDIA delivery and downstream image decoders agree.
+        if (image.length >= 3 && (image[0] & 0xFF) == 0xFF && (image[1] & 0xFF) == 0xD8 && (image[2] & 0xFF) == 0xFF) {
+            return ".jpg";
+        }
+        if (image.length >= 8 && (image[0] & 0xFF) == 0x89 && image[1] == 0x50 && image[2] == 0x4E && image[3] == 0x47
+            && image[4] == 0x0D && image[5] == 0x0A && image[6] == 0x1A && image[7] == 0x0A) {
+            return ".png";
+        }
+        if (image.length >= 6 && image[0] == 'G' && image[1] == 'I' && image[2] == 'F'
+            && image[3] == '8' && (image[4] == '7' || image[4] == '9') && image[5] == 'a') {
+            return ".gif";
+        }
+        if (image.length >= 12 && image[0] == 'R' && image[1] == 'I' && image[2] == 'F' && image[3] == 'F'
+            && image[8] == 'W' && image[9] == 'E' && image[10] == 'B' && image[11] == 'P') {
+            return ".webp";
+        }
+        return ".png"; // Preserve the historical suffix for an unrecognized provider payload.
     }
 
     private ImageGenProvider resolveProvider() {

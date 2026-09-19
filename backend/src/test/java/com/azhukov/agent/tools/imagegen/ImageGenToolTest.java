@@ -84,6 +84,20 @@ class ImageGenToolTest {
     }
 
     @Test
+    void generate_jpegPayloadUsesJpgSuffix() throws Exception {
+        when(providerProvider.stream()).thenReturn(java.util.stream.Stream.of(provider));
+        byte[] jpeg = new byte[]{(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, 0x01};
+        when(provider.generate(eq("a cat"), any())).thenReturn(jpeg);
+
+        ToolResult result = tool.execute("{\"prompt\":\"a cat\"}", null, null);
+        Path savedPath = generatedImagePath(result);
+
+        assertThat(savedPath.getFileName().toString()).endsWith(".jpg");
+        assertThat(Files.readAllBytes(savedPath)).isEqualTo(jpeg);
+        Files.deleteIfExists(savedPath);
+    }
+
+    @Test
     void generate_defaultAspectRatioMatchesHermesLandscape() throws Exception {
         when(providerProvider.stream()).thenReturn(java.util.stream.Stream.of(provider));
         byte[] imageBytes = "fake-png-data".getBytes();
