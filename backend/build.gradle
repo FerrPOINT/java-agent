@@ -121,6 +121,9 @@ tasks.named('test') {
         excludeTags 'live', 'slow', 'e2e'
     }
     jvmArgs '-XX:+EnableDynamicAgentLoading'
+    // Env-mutation tests (HERMES_HOME artifact-path resolution) need reflective
+    // access to the unmodifiable env map backing System.getenv().
+    jvmArgs '--add-opens=java.base/java.util=ALL-UNNAMED', '--add-opens=java.base/java.lang=ALL-UNNAMED'
     maxHeapSize = '4g'
     // DEBT-3: strict-stubs flakes (OpenAiRunsControllerTest) under parallel forks —
     // async run tests race Mockito verification. Serialized forks + periodic

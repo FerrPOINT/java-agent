@@ -270,7 +270,11 @@ class BrowserServiceUnitTest {
         when(client.send(eq("Page.captureScreenshot"), any())).thenReturn(CompletableFuture.completedFuture(result));
 
         String oldHome = System.getProperty("user.home");
+        String oldEnvHome = System.getenv("HERMES_HOME");
         System.setProperty("user.home", home.toString());
+        // Container deployments set HERMES_HOME to the writable state dir; the
+        // screenshot path must honor it (read-only-rootfs incident 2026-09-19).
+        java.util.Map<String, String> envBackup = setEnv("HERMES_HOME", home.resolve("state").toString());
         try {
             BrowserService service = new BrowserService(client, () -> "http://localhost:9222", mock(UrlSafety.class));
 
@@ -278,12 +282,12 @@ class BrowserServiceUnitTest {
 
             assertThat(screenshot.success()).isTrue();
             assertThat(screenshot.dataUrl()).isEqualTo("data:image/png;base64," + data);
-            assertThat(screenshot.screenshotPath()).contains(".hermes");
+            assertThat(screenshot.screenshotPath()).contains(home.resolve("state").toString());
             assertThat(screenshot.mediaTag()).isEqualTo("MEDIA:" + screenshot.screenshotPath());
             assertThat(screenshot.mimeType()).isEqualTo("image/png");
             Path path = Path.of(screenshot.screenshotPath());
             try {
-                assertThat(path).startsWith(home.resolve(".hermes").resolve("cache").resolve("screenshots"));
+                assertThat(path).startsWith(home.resolve("state").resolve("cache").resolve("screenshots"));
                 assertThat(path.getFileName().toString()).startsWith("browser_screenshot_").endsWith(".png");
                 assertThat(Files.readAllBytes(path)).isEqualTo(png);
             } finally {
@@ -295,6 +299,42 @@ class BrowserServiceUnitTest {
             } else {
                 System.setProperty("user.home", oldHome);
             }
+            restoreEnv(envBackup);
+        }
+    }
+
+    /** Mutable-env helper for HERMES_HOME tests (envBackup from setEnv). */
+    private static java.util.Map<String, String> setEnv(String key, String value) {
+        try {
+            var field = System.getenv().getClass().getDeclaredField("m");
+            field.setAccessible(true);
+            @SuppressWarnings("unchecked")
+            var mutable = (java.util.Map<String, String>) field.get(System.getenv());
+            String previous = mutable.put(key, value);
+            return previous == null ? java.util.Map.of() : java.util.Map.of(key, previous);
+        } catch (Exception e) {
+            return java.util.Map.of("_unsupported", "1");
+        }
+    }
+
+    private static void restoreEnv(java.util.Map<String, String> backup) {
+        if (backup.isEmpty() || backup.containsKey("_unsupported")) {
+            return;
+        }
+        try {
+            var field = System.getenv().getClass().getDeclaredField("m");
+            field.setAccessible(true);
+            @SuppressWarnings("unchecked")
+            var mutable = (java.util.Map<String, String>) field.get(System.getenv());
+            for (var entry : backup.entrySet()) {
+                if (entry.getValue() == null) {
+                    mutable.remove(entry.getKey());
+                } else {
+                    mutable.put(entry.getKey(), entry.getValue());
+                }
+            }
+        } catch (Exception ignored) {
+            // env mutation unsupported on this JVM — the assertion already ran
         }
     }
 

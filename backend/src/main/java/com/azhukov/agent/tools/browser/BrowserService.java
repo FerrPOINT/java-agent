@@ -335,9 +335,16 @@ public class BrowserService {
     }
 
     private Path writeScreenshot(byte[] bytes) throws java.io.IOException {
-        Path cacheDir = Path.of(System.getProperty("user.home", "."), ".hermes", "cache", "screenshots")
-            .toAbsolutePath()
-            .normalize();
+        // Same artifact-home resolution as TTS/image-gen: HERMES_HOME (the
+        // deployment's writable state dir, e.g. /home/agent/.java-agent) first,
+        // fallback ~/.hermes. Hardcoding ~/.hermes broke screenshots in the
+        // read-only-rootfs container (2026-09-19 tool audit: "Read-only file
+        // system") while audio/images worked because they honored HERMES_HOME.
+        String artifactHome = System.getenv("HERMES_HOME");
+        Path base = artifactHome != null && !artifactHome.isBlank()
+            ? Path.of(artifactHome).toAbsolutePath().normalize()
+            : Path.of(System.getProperty("user.home", "."), ".hermes").toAbsolutePath().normalize();
+        Path cacheDir = base.resolve("cache").resolve("screenshots");
         Files.createDirectories(cacheDir);
         Path output = cacheDir.resolve("browser_screenshot_" + UUID.randomUUID().toString().replace("-", "") + ".png")
             .toAbsolutePath()
