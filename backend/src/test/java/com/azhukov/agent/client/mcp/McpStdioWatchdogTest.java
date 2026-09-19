@@ -44,7 +44,7 @@ class McpStdioWatchdogTest {
         server.setCommand("cat"); // never speaks MCP; holds the pipe open
         server.setTimeout(0.5);
         properties.getMcp().getServers().add(server);
-        manager = new McpLifecycleManager(properties, new com.fasterxml.jackson.databind.ObjectMapper(), null, null, null, null, null, null);
+        manager = new McpLifecycleManager(properties, new com.fasterxml.jackson.databind.ObjectMapper(), null, null, null, null, null, null, null);
     }
 
     @Test

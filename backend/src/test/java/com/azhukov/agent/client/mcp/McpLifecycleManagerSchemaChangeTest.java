@@ -53,7 +53,7 @@ class McpLifecycleManagerSchemaChangeTest {
         McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), ctx,
             new McpToolDefinitionScanner(new ObjectMapper()), new McpResponseScanner(),
             new ToolArgumentInjectionScanner(), new ToolFingerprintStore(new ObjectMapper()),
-            new SlidingWindowRateLimiter());
+            new SlidingWindowRateLimiter(), null);
 
         // Initial tools with one schema
         McpSchema.Tool initialTool = McpSchema.Tool.builder("tool1")
@@ -90,7 +90,7 @@ class McpLifecycleManagerSchemaChangeTest {
         McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), ctx,
             new McpToolDefinitionScanner(new ObjectMapper()), new McpResponseScanner(),
             new ToolArgumentInjectionScanner(), new ToolFingerprintStore(new ObjectMapper()),
-            new SlidingWindowRateLimiter());
+            new SlidingWindowRateLimiter(), null);
 
         // Tools with same names and same schemas
         McpSchema.Tool tool1 = McpSchema.Tool.builder("tool1")

@@ -80,9 +80,20 @@ public class McpLifecycleManager {
     private final ToolArgumentInjectionScanner argumentScanner;
     private final ToolFingerprintStore fingerprintStore;
     private final SlidingWindowRateLimiter rateLimiter;
+
+    /**
+     * Lazy startup seam (Hermes #56832 / tools/mcp_schema_cache.py parity):
+     * the durable schema cache turns a cold boot into a no-spawn registration.
+     * ObjectProvider — the lifecycle manager must stay constructible in unit
+     * tests without a database.
+     */
+    private final org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.service.McpConfigStore> configStoreProvider;
     /** Derived: OSV malware gate for stdio MCP servers (null when disabled). Created in init() so tests can inject their own via a visible field. */
     private OsvCheckService osvCheckService;
     private final Map<String, McpServerState> clients = new ConcurrentHashMap<>();
+
+    /** Servers registered lazily from the schema cache; the first call connects them. */
+    private final java.util.Set<String> lazyServers = ConcurrentHashMap.newKeySet();
     @Autowired(required = false)
     private McpOAuthManager mcpOAuthManager;
     @Autowired(required = false)
@@ -216,6 +227,13 @@ public class McpLifecycleManager {
                 return;
             }
         }
+        // Hermes #56832 lazy startup: with a fresh persisted schema cache the
+        // tools register from the cache with NO server spawn; the first real
+        // call routes through ensureConnectedForCall. A cache miss (or a
+        // config revision change) falls through to a full connect.
+        if (lazyRegisterFromCache(server)) {
+            return;
+        }
         McpSyncClient client = null;
         try {
             client = createClient(server);
@@ -237,6 +255,7 @@ public class McpLifecycleManager {
             resetMcpServerError(server.getName());
             log.info("Connected to MCP server {} ({}) with {} tools", server.getName(), server.getTransport(), tools.size());
         } catch (Exception e) {
+            recordSchemaConnectError(server, e);
             log.warn("Failed to connect to MCP server {}: {}", server.getName(), e.getMessage());
             // H17: Close the client in the catch block before scheduleReconnect
             // to avoid leaking the underlying transport/resources.
@@ -244,6 +263,115 @@ public class McpLifecycleManager {
                 safeCloseClient(client);
             }
             scheduleReconnect(server, 0, true);
+        }
+    }
+
+    /**
+     * Hermes {@code _register_from_cache_sync} parity: register tools from the
+     * persisted schema cache without spawning the server process. Returns true
+     * when the lazy registration succeeded (connect() must not spawn).
+     */
+    private boolean lazyRegisterFromCache(AgentProperties.McpProperties.ServerProperties server) {
+        if (!properties.getMcp().isLazyStartup()) {
+            return false;
+        }
+        var store = configStoreProvider == null ? null : configStoreProvider.getIfAvailable();
+        if (store == null) {
+            return false;
+        }
+        try {
+            var configEntity = store.find("default", server.getName()).orElse(null);
+            if (configEntity == null) {
+                return false;  // not a dashboard-managed server — no cached identity
+            }
+            var cache = store.cachedSchema(configEntity.getId(), configEntity.getConfigRevision())
+                .filter(store::isFresh)
+                .orElse(null);
+            if (cache == null || cache.getToolsJson() == null || cache.getToolsJson().isBlank()) {
+                return false;
+            }
+            List<McpSchema.Tool> cachedTools = objectMapper.readValue(
+                cache.getToolsJson(), objectMapper.getTypeFactory()
+                    .constructCollectionType(List.class, McpSchema.Tool.class));
+            List<McpSchema.Tool> registeredTools = selectedMcpTools(server, cachedTools);
+            if (registeredTools.isEmpty()) {
+                return false;
+            }
+            recordMcpToolTrustMetadata(server.getName(), server, registeredTools);
+            for (McpSchema.Tool tool : registeredTools) {
+                String fullName = mcpPrefixedToolName(server.getName(), tool.name());
+                ToolDefinition definition = convertToolDefinition(fullName, tool);
+                toolRegistry().registerDynamic(fullName, mcpToolsetName(server.getName()),
+                    definition, new McpToolHandler(server.getName(), tool.name()));
+            }
+            lazyServers.add(server.getName());
+            log.info("MCP server {} (lazy): registered {} tool(s) from the schema cache (no spawn)",
+                server.getName(), registeredTools.size());
+            return true;
+        } catch (Exception e) {
+            log.debug("Lazy registration for MCP server {} unavailable: {}", server.getName(), e.getMessage());
+            return false;
+        }
+    }
+
+    /** Hermes {@code _write_schema_cache} write-through: persist a live manifest. */
+    private void writeSchemaCache(AgentProperties.McpProperties.ServerProperties server,
+                                  List<McpSchema.Tool> tools) {
+        var store = configStoreProvider == null ? null : configStoreProvider.getIfAvailable();
+        if (store == null) {
+            return;
+        }
+        try {
+            var configEntity = store.find("default", server.getName()).orElse(null);
+            if (configEntity == null) {
+                return;
+            }
+            List<McpSchema.Tool> selected = selectedMcpTools(server, tools);
+            store.storeSchema(configEntity.getId(), configEntity.getConfigRevision(),
+                objectMapper.writeValueAsString(selected), null, null);
+        } catch (Exception e) {
+            // Cache failures never break registration (Hermes parity).
+            log.debug("MCP schema cache write failed for '{}': {}", server.getName(), e.getMessage());
+        }
+    }
+
+    /** Mark a failed connect in the cache WITHOUT deleting the prior schema. */
+    private void recordSchemaConnectError(AgentProperties.McpProperties.ServerProperties server, Exception error) {
+        var store = configStoreProvider == null ? null : configStoreProvider.getIfAvailable();
+        if (store == null) {
+            return;
+        }
+        try {
+            var configEntity = store.find("default", server.getName()).orElse(null);
+            if (configEntity != null) {
+                store.recordSchemaError(configEntity.getId(), configEntity.getConfigRevision(),
+                    sanitizeError(error.getMessage()));
+            }
+        } catch (Exception ignored) {
+            // error recording is best-effort
+        }
+    }
+
+    /**
+     * Hermes {@code _ensure_lazy_server_connected} parity: the first real tool
+     * call on a lazily-registered server connects it now. Falls through to a
+     * normal call when the server is already live.
+     */
+    private void ensureConnectedForCall(String serverName) {
+        if (clients.containsKey(serverName) || !lazyServers.contains(serverName)) {
+            return;
+        }
+        var serverProps = properties.getMcp().getServers().stream()
+            .filter(s -> serverName.equals(s.getName()))
+            .findFirst().orElse(null);
+        if (serverProps == null) {
+            throw new IllegalStateException("MCP server not configured: " + serverName);
+        }
+        lazyServers.remove(serverName);
+        log.info("MCP server {}: first call — connecting now (lazy startup)", serverName);
+        connect(serverProps);
+        if (!clients.containsKey(serverName)) {
+            throw new IllegalStateException("MCP server failed to connect on demand: " + serverName);
         }
     }
 
@@ -948,6 +1076,9 @@ public class McpLifecycleManager {
                 definition, new McpToolHandler(serverName, tool.name()));
         }
         registerUtilityTools(serverName, client, nativeFullNames);
+        // Hermes #56832 write-through: persist the live manifest so the NEXT
+        // startup registers this server lazily (no spawn).
+        writeSchemaCache(server, registeredTools);
     }
 
     private List<McpSchema.Tool> selectedMcpTools(AgentProperties.McpProperties.ServerProperties server,
@@ -1339,6 +1470,9 @@ public class McpLifecycleManager {
     }
 
     public McpSchema.CallToolResult executeTool(String serverName, String toolName, String argumentsJson) {
+        // Hermes _ensure_lazy_server_connected parity: a lazily-registered
+        // server connects on the first real call.
+        ensureConnectedForCall(serverName);
         var state = clients.get(serverName);
         if (state == null) {
             throw new IllegalStateException("MCP server not connected: " + serverName);
@@ -1497,6 +1631,7 @@ public class McpLifecycleManager {
         // calls closeAll() then reconnects — one-shot shutdown made every later
         // schedule throw RejectedExecutionException).
         shutdownRequested.set(true);
+        lazyServers.clear();
         // M29 fix: bounded drain of in-flight work before replacing the pools —
         // shutdownNow() alone abandons running tool calls mid-write.
         reconnectExecutor.shutdownNow();

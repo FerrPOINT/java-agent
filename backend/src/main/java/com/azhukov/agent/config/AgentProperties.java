@@ -396,6 +396,12 @@ public class AgentProperties {
         private int rateLimitMaxCalls = 0;
         /** Rate limit window in seconds (0 = no limit). */
         private long rateLimitWindowSeconds = 0;
+        /**
+         * Hermes #56832 parity: on startup, servers with a fresh persisted
+         * schema cache register from the cache WITHOUT spawning the server
+         * process; the first real tool call connects on demand.
+         */
+        private boolean lazyStartup = true;
         private final List<ServerProperties> servers = new ArrayList<>();
         private final Server server = new Server();
 

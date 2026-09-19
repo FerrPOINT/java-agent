@@ -45,7 +45,7 @@ class McpToolHandlerTest {
             new McpResponseScanner(),
             new ToolArgumentInjectionScanner(),
             new ToolFingerprintStore(objectMapper),
-            new SlidingWindowRateLimiter());
+            new SlidingWindowRateLimiter(), null);
 
         McpSyncClient client = mock(McpSyncClient.class);
         McpSchema.CallToolResult result = new McpSchema.CallToolResult(
@@ -70,7 +70,7 @@ class McpToolHandlerTest {
             new McpResponseScanner(),
             new ToolArgumentInjectionScanner(),
             new ToolFingerprintStore(objectMapper),
-            new SlidingWindowRateLimiter());
+            new SlidingWindowRateLimiter(), null);
 
         Map<String, Object> meta = new LinkedHashMap<>();
         meta.put("modelcontextprotocol.io/cache", "hit");
@@ -104,7 +104,7 @@ class McpToolHandlerTest {
             new McpResponseScanner(),
             new ToolArgumentInjectionScanner(),
             new ToolFingerprintStore(objectMapper),
-            new SlidingWindowRateLimiter());
+            new SlidingWindowRateLimiter(), null);
 
         McpSyncClient client = mock(McpSyncClient.class);
         String png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
@@ -149,7 +149,7 @@ class McpToolHandlerTest {
             new McpResponseScanner(),
             new ToolArgumentInjectionScanner(),
             new ToolFingerprintStore(objectMapper),
-            new SlidingWindowRateLimiter());
+            new SlidingWindowRateLimiter(), null);
 
         McpSyncClient client = mock(McpSyncClient.class);
         McpSchema.CallToolResult result = new McpSchema.CallToolResult(
@@ -177,7 +177,7 @@ class McpToolHandlerTest {
             new McpResponseScanner(),
             new ToolArgumentInjectionScanner(),
             new ToolFingerprintStore(objectMapper),
-            new SlidingWindowRateLimiter());
+            new SlidingWindowRateLimiter(), null);
 
         McpSyncClient client = mock(McpSyncClient.class);
         when(client.callTool(any())).thenThrow(new RuntimeException("boom"));
@@ -204,7 +204,7 @@ class McpToolHandlerTest {
             new McpResponseScanner(),
             new ToolArgumentInjectionScanner(),
             new ToolFingerprintStore(objectMapper),
-            new SlidingWindowRateLimiter());
+            new SlidingWindowRateLimiter(), null);
 
         CountDownLatch release = new CountDownLatch(1);
         McpSyncClient client = mock(McpSyncClient.class);
@@ -246,7 +246,7 @@ class McpToolHandlerTest {
             new McpResponseScanner(),
             new ToolArgumentInjectionScanner(),
             new ToolFingerprintStore(objectMapper),
-            new SlidingWindowRateLimiter());
+            new SlidingWindowRateLimiter(), null);
 
         McpSyncClient client = mock(McpSyncClient.class);
         McpSchema.CallToolResult result = new McpSchema.CallToolResult(
@@ -273,7 +273,7 @@ class McpToolHandlerTest {
             new McpResponseScanner(),
             new ToolArgumentInjectionScanner(),
             new ToolFingerprintStore(objectMapper),
-            new SlidingWindowRateLimiter());
+            new SlidingWindowRateLimiter(), null);
 
         McpSyncClient client = mock(McpSyncClient.class);
         when(client.callTool(any())).thenThrow(new RuntimeException("still broken"));
@@ -299,7 +299,7 @@ class McpToolHandlerTest {
             new McpResponseScanner(),
             new ToolArgumentInjectionScanner(),
             new ToolFingerprintStore(objectMapper),
-            new SlidingWindowRateLimiter());
+            new SlidingWindowRateLimiter(), null);
 
         McpSyncClient client = mock(McpSyncClient.class);
         McpSchema.CallToolResult ok = new McpSchema.CallToolResult(
@@ -326,7 +326,7 @@ class McpToolHandlerTest {
             new McpResponseScanner(),
             new ToolArgumentInjectionScanner(),
             new ToolFingerprintStore(objectMapper),
-            new SlidingWindowRateLimiter());
+            new SlidingWindowRateLimiter(), null);
 
         McpSyncClient client = mock(McpSyncClient.class);
         when(client.callTool(any())).thenThrow(new RuntimeException("still broken"));

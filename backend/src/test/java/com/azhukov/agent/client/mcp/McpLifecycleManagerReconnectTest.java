@@ -40,7 +40,7 @@ class McpLifecycleManagerReconnectTest {
         McpLifecycleManager mgr = new McpLifecycleManager(props, new ObjectMapper(), ctx,
             new McpToolDefinitionScanner(new ObjectMapper()), new McpResponseScanner(),
             new ToolArgumentInjectionScanner(), new ToolFingerprintStore(new ObjectMapper()),
-            new SlidingWindowRateLimiter());
+            new SlidingWindowRateLimiter(), null);
 
         // Use reflection to put a mock state into the clients map
         var clientsField = McpLifecycleManager.class.getDeclaredField("clients");

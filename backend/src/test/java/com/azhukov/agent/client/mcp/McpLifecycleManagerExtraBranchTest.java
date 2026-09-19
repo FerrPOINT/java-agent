@@ -35,7 +35,7 @@ class McpLifecycleManagerExtraBranchTest {
     void closeAll_clearsClientsAndShutsDownExecutors() throws Exception {
         AgentProperties properties = new AgentProperties();
         ApplicationContext ctx = mock(ApplicationContext.class);
-        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), ctx, null, null, null, null, null);
+        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), ctx, null, null, null, null, null, null);
 
         // Inject a mock client
         McpSyncClient client = mock(McpSyncClient.class);
@@ -50,7 +50,7 @@ class McpLifecycleManagerExtraBranchTest {
     @Test
     void closeAll_withNullClients_doesNotThrow() {
         AgentProperties properties = new AgentProperties();
-        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null, null, null, null, null, null);
+        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null, null, null, null, null, null, null);
         manager.closeAll(); // should not throw
     }
 
@@ -58,7 +58,7 @@ class McpLifecycleManagerExtraBranchTest {
     void closeAll_multipleClients_allClosed() throws Exception {
         AgentProperties properties = new AgentProperties();
         ApplicationContext ctx = mock(ApplicationContext.class);
-        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), ctx, null, null, null, null, null);
+        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), ctx, null, null, null, null, null, null);
 
         McpSyncClient client1 = mock(McpSyncClient.class);
         McpSyncClient client2 = mock(McpSyncClient.class);
@@ -74,7 +74,7 @@ class McpLifecycleManagerExtraBranchTest {
     @Test
     void readResource_notConnected_throwsIllegalStateException() {
         AgentProperties properties = new AgentProperties();
-        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null, null, null, null, null, null);
+        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null, null, null, null, null, null, null);
         assertThatThrownBy(() -> manager.readResource("nonexistent", "resource://x"))
             .isInstanceOf(IllegalStateException.class)
             .hasMessageContaining("MCP server not connected");
@@ -83,7 +83,7 @@ class McpLifecycleManagerExtraBranchTest {
     @Test
     void readResource_throwsException_credentialsSanitized() throws Exception {
         AgentProperties properties = new AgentProperties();
-        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null, null, null, null, null, null);
+        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null, null, null, null, null, null, null);
 
         McpSyncClient client = mock(McpSyncClient.class);
         when(client.readResource(any(McpSchema.ReadResourceRequest.class)))
@@ -99,7 +99,7 @@ class McpLifecycleManagerExtraBranchTest {
     @Test
     void executeTool_notConnected_throwsIllegalStateException() {
         AgentProperties properties = new AgentProperties();
-        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null, null, null, null, null, null);
+        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null, null, null, null, null, null, null);
         assertThatThrownBy(() -> manager.executeTool("nonexistent", "tool", "{}"))
             .isInstanceOf(IllegalStateException.class)
             .hasMessageContaining("MCP server not connected");
@@ -108,7 +108,7 @@ class McpLifecycleManagerExtraBranchTest {
     @Test
     void executeTool_throwsException_credentialsSanitized() throws Exception {
         AgentProperties properties = new AgentProperties();
-        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null, null, null, null, null, null);
+        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null, null, null, null, null, null, null);
 
         McpSyncClient client = mock(McpSyncClient.class);
         when(client.callTool(any())).thenThrow(new RuntimeException("Bearer sk-abc123 error"));
@@ -123,7 +123,7 @@ class McpLifecycleManagerExtraBranchTest {
     @Test
     void executeTool_invalidJson_throwsException() throws Exception {
         AgentProperties properties = new AgentProperties();
-        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null, null, null, null, null, null);
+        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null, null, null, null, null, null, null);
 
         McpSyncClient client = mock(McpSyncClient.class);
         injectClient(manager, "srv", client, List.of());
@@ -135,14 +135,14 @@ class McpLifecycleManagerExtraBranchTest {
     @Test
     void listDiscoveredTools_empty_returnsEmptyList() {
         AgentProperties properties = new AgentProperties();
-        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null, null, null, null, null, null);
+        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null, null, null, null, null, null, null);
         assertThat(manager.listDiscoveredTools()).isEmpty();
     }
 
     @Test
     void listDiscoveredTools_withTools_returnsAll() throws Exception {
         AgentProperties properties = new AgentProperties();
-        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null, null, null, null, null, null);
+        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null, null, null, null, null, null, null);
 
         McpSchema.Tool tool1 = McpSchema.Tool.builder("tool1").title("t").description("d").inputSchema(Map.of()).build();
         McpSchema.Tool tool2 = McpSchema.Tool.builder("tool2").title("t").description("d").inputSchema(Map.of()).build();
@@ -159,14 +159,14 @@ class McpLifecycleManagerExtraBranchTest {
     @Test
     void listServers_empty_returnsEmptyList() {
         AgentProperties properties = new AgentProperties();
-        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null, null, null, null, null, null);
+        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null, null, null, null, null, null, null);
         assertThat(manager.listServers()).isEmpty();
     }
 
     @Test
     void listServers_withClient_returnsServerInfo() throws Exception {
         AgentProperties properties = new AgentProperties();
-        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null, null, null, null, null, null);
+        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null, null, null, null, null, null, null);
 
         McpSchema.Tool tool = McpSchema.Tool.builder("tool1").title("t").description("d").inputSchema(Map.of()).build();
         McpSyncClient client = mock(McpSyncClient.class);
@@ -183,7 +183,7 @@ class McpLifecycleManagerExtraBranchTest {
     void connectConfiguredServers_disabled_doesNothing() {
         AgentProperties properties = new AgentProperties();
         properties.getMcp().setEnabled(false);
-        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null, null, null, null, null, null);
+        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null, null, null, null, null, null, null);
         manager.connectConfiguredServers(); // should not throw
         assertThat(manager.listServers()).isEmpty();
     }
@@ -192,7 +192,7 @@ class McpLifecycleManagerExtraBranchTest {
     void connectConfiguredServers_emptyServers_doesNothing() {
         AgentProperties properties = new AgentProperties();
         properties.getMcp().setEnabled(true);
-        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null, null, null, null, null, null);
+        McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null, null, null, null, null, null, null);
         manager.connectConfiguredServers();
         assertThat(manager.listServers()).isEmpty();
     }
@@ -206,7 +206,7 @@ class McpLifecycleManagerExtraBranchTest {
         server.setEnabled(false);
         properties.getMcp().getServers().add(server);
         McpLifecycleManager manager = spy(new McpLifecycleManager(properties, new ObjectMapper(),
-            null, null, null, null, null, null));
+            null, null, null, null, null, null, null));
 
         manager.connectConfiguredServers();
 
@@ -220,7 +220,7 @@ class McpLifecycleManagerExtraBranchTest {
         McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null,
             new McpToolDefinitionScanner(new ObjectMapper()), new McpResponseScanner(),
             new ToolArgumentInjectionScanner(), new ToolFingerprintStore(new ObjectMapper()),
-            new SlidingWindowRateLimiter());
+            new SlidingWindowRateLimiter(), null);
 
         McpSyncClient client = mock(McpSyncClient.class);
         when(client.callTool(any())).thenThrow(new RuntimeException("key=supersecret leaked"));
@@ -241,7 +241,7 @@ class McpLifecycleManagerExtraBranchTest {
         McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null,
             new McpToolDefinitionScanner(new ObjectMapper()), new McpResponseScanner(),
             new ToolArgumentInjectionScanner(), new ToolFingerprintStore(new ObjectMapper()),
-            new SlidingWindowRateLimiter());
+            new SlidingWindowRateLimiter(), null);
 
         McpSyncClient client = mock(McpSyncClient.class);
         injectClient(manager, "srv", client, List.of());

@@ -31,7 +31,7 @@ class McpPaginationTest {
     private List<McpSchema.Tool> paginate(McpSyncClient client) throws Exception {
         Method m = McpLifecycleManager.class.getDeclaredMethod("listToolsWithPagination", McpSyncClient.class);
         m.setAccessible(true);
-        McpLifecycleManager manager = new McpLifecycleManager(null, null, null, null, null, null, null, null);
+        McpLifecycleManager manager = new McpLifecycleManager(null, null, null, null, null, null, null, null, null);
         @SuppressWarnings("unchecked")
         List<McpSchema.Tool> tools = (List<McpSchema.Tool>) m.invoke(manager, client);
         return tools;

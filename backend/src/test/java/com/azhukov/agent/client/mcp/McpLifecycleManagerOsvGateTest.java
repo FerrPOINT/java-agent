@@ -31,7 +31,7 @@ class McpLifecycleManagerOsvGateTest {
         properties.getMcp().setOsvCheckEnabled(false); // default gate off → we inject a stub below
 
         McpLifecycleManager manager = new McpLifecycleManager(
-            properties, new ObjectMapper(), mock(ApplicationContext.class), null, null, null, null, null);
+            properties, new ObjectMapper(), mock(ApplicationContext.class), null, null, null, null, null, null);
         manager.init(); // osvCheckService == null (disabled)
 
         // Re-enable through the derived field the way the production path would,
@@ -56,7 +56,7 @@ class McpLifecycleManagerOsvGateTest {
         properties.getMcp().setOsvCheckEnabled(false);
 
         McpLifecycleManager manager = new McpLifecycleManager(
-            properties, new ObjectMapper(), mock(ApplicationContext.class), null, null, null, null, null);
+            properties, new ObjectMapper(), mock(ApplicationContext.class), null, null, null, null, null, null);
         manager.init();
         assertThat(manager.osvGate()).isNull();
 
