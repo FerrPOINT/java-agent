@@ -57,6 +57,8 @@ public class ClarifyGatewayStore {
             new CompletableFuture<>());
         entries.put(id, entry);
         sessionIndex.computeIfAbsent(sessionKey, k -> new ConcurrentHashMap<>()).put(id, entry);
+        log.info("clarify_registered session={} id={} sequence={} choices={} multiSelect={}",
+            sessionKey, id, entry.sequence(), entry.choices().size(), entry.multiSelect());
         return entry;
     }
 
@@ -92,10 +94,14 @@ public class ClarifyGatewayStore {
     public boolean resolve(String clarifyId, String response) {
         PendingClarify entry = entries.get(clarifyId);
         if (entry == null || entry.future().isDone()) {
+            log.info("clarify_resolve_rejected id={} reason={}", clarifyId,
+                entry == null ? "unknown" : "already_completed");
             return false;
         }
         boolean accepted = entry.future().complete(response == null ? "" : response);
         if (accepted) {
+            log.info("clarify_resolved session={} id={} responseChars={}",
+                entry.sessionKey(), clarifyId, response == null ? 0 : response.length());
             cleanup(entry);
         }
         return accepted;
@@ -113,6 +119,11 @@ public class ClarifyGatewayStore {
         // sessions almost always have exactly one pending clarify).
         return index.values().stream()
             .min(java.util.Comparator.comparingLong(PendingClarify::sequence))
+            .map(entry -> {
+                log.debug("clarify_text_target session={} id={} sequence={}",
+                    sessionKey, entry.clarifyId(), entry.sequence());
+                return entry;
+            })
             .orElse(null);
     }
 

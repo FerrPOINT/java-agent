@@ -327,6 +327,7 @@ public class MessageApiClient extends BaseBackendClient {
                                     if ("clarify".equalsIgnoreCase(type)) {
                                         String payload = event.path("error").asText(null);
                                         if (payload != null && !payload.isEmpty() && clarifyConsumer != null) {
+                                            log.info("clarify_sse_received session={} payloadBytes={}", sessionId, payload.length());
                                             clarifyConsumer.accept(payload);
                                         }
                                         continue;

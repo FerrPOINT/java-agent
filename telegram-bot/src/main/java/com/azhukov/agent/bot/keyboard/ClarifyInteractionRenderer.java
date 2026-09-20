@@ -64,6 +64,8 @@ public class ClarifyInteractionRenderer {
      */
     public void present(long chatId, long threadId, String backendSessionId, String payloadJson) {
         try {
+            log.info("clarify_prompt_render_start chat={} session={} payloadBytes={}",
+                chatId, backendSessionId, payloadJson == null ? 0 : payloadJson.length());
             JsonNode payload = objectMapper.readTree(payloadJson);
             if (payload.path("batch").asBoolean(false)) {
                 String prompt = payload.path("prompt").asText("");
@@ -85,7 +87,11 @@ public class ClarifyInteractionRenderer {
             activePrompts.put(clarifyId, new PromptPayload(clarifyId, backendSessionId, question, choices, multiSelect));
             String markup = keyboardBuilder.build(buttonsFor(clarifyId, choices, multiSelect, java.util.Set.of()));
             Integer topicId = threadId > 0 ? (int) threadId : null;
-            if (telegramClient.sendMessage(chatId, question, null, null, topicId, markup, false).isEmpty()) {
+            boolean delivered = telegramClient.sendMessage(chatId, question, null, null, topicId, markup, false).isPresent();
+            if (delivered) {
+                log.info("clarify_prompt_rendered chat={} session={} id={} choices={} multiSelect={}",
+                    chatId, backendSessionId, clarifyId, choices.size(), multiSelect);
+            } else {
                 activePrompts.remove(clarifyId);
                 log.warn("Clarify keyboard delivery failed for chat {}", chatId);
             }
@@ -104,8 +110,11 @@ public class ClarifyInteractionRenderer {
         String action = parts[1];
         PromptPayload prompt = activePrompts.get(clarifyId);
         if (prompt == null) {
+            log.info("clarify_callback_rejected chat={} id={} reason=unknown_prompt", chatId, clarifyId);
             return CallbackResult.invalid("This question has expired.");
         }
+        log.info("clarify_callback_received chat={} session={} id={} action={}",
+            chatId, prompt.backendSessionId(), clarifyId, action);
         if ("other".equals(action)) {
             // Text-capture mode: the next typed message resolves via /clarify/text
             return CallbackResult.pending("Type your answer");
@@ -168,7 +177,9 @@ public class ClarifyInteractionRenderer {
                 .body(Map.of("clarifyId", clarifyId, "response", response))
                 .retrieve()
                 .body(Map.class);
-            return result != null && Boolean.TRUE.equals(result.get("resolved"));
+            boolean resolved = result != null && Boolean.TRUE.equals(result.get("resolved"));
+            log.info("clarify_callback_backend_result id={} resolved={}", clarifyId, resolved);
+            return resolved;
         } catch (Exception e) {
             log.warn("Clarify resolve failed for {}: {}", clarifyId, e.getMessage());
             return false;
