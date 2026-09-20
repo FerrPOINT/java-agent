@@ -13,7 +13,7 @@
 ### FN-1.1 Агентный цикл (DefaultAgentRuntime + TurnExecutor)
 Контракт: per-session ReentrantLock (concurrent turn protection); итерации LLM-вызовов с бюджетом итераций; tool-calls исполняются пакетами (ToolExecutionService, virtual threads); finish_reason LENGTH → stitched partial (Hermes сохраняет голову ответа); tool_calls с пустым массивом → re-prompt ≤3 подряд; dropped tool_call → nudge; sanitайзер удаляет осиротевшие tool-результаты; ThinkScrubber.reset() на каждой итерации LLM-вызова; дедуп tool_call id (uniquify) ДО любого потребителя.
 Тесты: AgentStreamingService*, TurnExecutor*, ToolLoopGuardrail*, ThinkScrubber*.
-Статус: ⬜
+Статус: ✅ (2026-09-20: uniquify wired, scrubber.reset, dropped-toolcall nudge — проверено код-аудитом + существующие тесты)
 
 ### FN-1.2 Стриминг SSE (AgentStreamingService, OpenAI-совместимый)
 Контракт: безымянные `data:`-фреймы, error envelope, терминальный literal `data:[DONE]` (raw, не JSON-строка); события: token, tool_start/tool_end, clarify, review, done, error; rotation сессии — смена ссылки после prepareContext; интерактивный turn не висит 600с на Retry-After ≥60s от прокси (fail-fast RATE_LIMIT с биллинг-гайденсом).
