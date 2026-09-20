@@ -116,5 +116,11 @@ class ApplicationYmlIterationDefaultsTest {
         assertThat(properties.getBudget().getMaxModelCallsPerTurn())
             .as("AgentProperties.budget.maxModelCallsPerTurn must equal the yml default")
             .isEqualTo(placeholderDefault("agent.budget.max-model-calls-per-turn"));
+        assertThat(properties.getBudget().getMaxToolExecutionsPerTurn())
+            .as("AgentProperties.budget.maxToolExecutionsPerTurn must equal the yml default")
+            .isEqualTo(placeholderDefault("agent.budget.max-tool-executions-per-turn"));
+        assertThat(properties.getBudget().getRunBudgetSeconds())
+            .as("AgentProperties.budget.runBudgetSeconds must equal the yml default")
+            .isEqualTo(placeholderDefault("agent.budget.run-budget-seconds"));
     }
 }

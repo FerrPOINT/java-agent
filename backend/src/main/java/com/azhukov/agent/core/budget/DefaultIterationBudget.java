@@ -46,29 +46,18 @@ public class DefaultIterationBudget implements IterationBudget {
         if (snapshot.exhausted()) {
             return snapshot;
         }
-        boolean exhausted = isExhausted(new TurnSnapshot(
-            snapshot.sessionId(),
-            snapshot.startedAt(),
-            snapshot.turnIndex(),
-            snapshot.modelCalls() + 1,
-            snapshot.toolExecutions(),
+        TurnSnapshot updated = new TurnSnapshot(
+            snapshot.sessionId(), snapshot.startedAt(), snapshot.turnIndex(),
+            snapshot.modelCalls() + 1, snapshot.toolExecutions(),
             snapshot.totalInputTokens() + Math.max(0, inputTokens),
             snapshot.totalOutputTokens() + Math.max(0, outputTokens),
-            snapshot.totalToolDurationMs(),
-            false,
-            null
-        ), config);
+            snapshot.totalToolDurationMs(), false, null);
+        boolean exhausted = isExhausted(updated, config);
         return new TurnSnapshot(
-            snapshot.sessionId(),
-            snapshot.startedAt(),
-            snapshot.turnIndex(),
-            snapshot.modelCalls() + 1,
-            snapshot.toolExecutions(),
-            snapshot.totalInputTokens() + Math.max(0, inputTokens),
-            snapshot.totalOutputTokens() + Math.max(0, outputTokens),
-            snapshot.totalToolDurationMs(),
-            exhausted,
-            exhausted ? "model call budget exhausted" : null
+            updated.sessionId(), updated.startedAt(), updated.turnIndex(),
+            updated.modelCalls(), updated.toolExecutions(), updated.totalInputTokens(),
+            updated.totalOutputTokens(), updated.totalToolDurationMs(), exhausted,
+            exhausted ? exhaustionReason(updated, config) : null
         );
     }
 
@@ -81,29 +70,17 @@ public class DefaultIterationBudget implements IterationBudget {
         if (snapshot.exhausted()) {
             return snapshot;
         }
-        boolean exhausted = isExhausted(new TurnSnapshot(
-            snapshot.sessionId(),
-            snapshot.startedAt(),
-            snapshot.turnIndex(),
-            snapshot.modelCalls(),
-            snapshot.toolExecutions() + 1,
-            snapshot.totalInputTokens(),
-            snapshot.totalOutputTokens(),
-            snapshot.totalToolDurationMs() + Math.max(0, durationMs),
-            false,
-            null
-        ), config);
+        TurnSnapshot updated = new TurnSnapshot(
+            snapshot.sessionId(), snapshot.startedAt(), snapshot.turnIndex(),
+            snapshot.modelCalls(), snapshot.toolExecutions() + 1,
+            snapshot.totalInputTokens(), snapshot.totalOutputTokens(),
+            snapshot.totalToolDurationMs() + Math.max(0, durationMs), false, null);
+        boolean exhausted = isExhausted(updated, config);
         return new TurnSnapshot(
-            snapshot.sessionId(),
-            snapshot.startedAt(),
-            snapshot.turnIndex(),
-            snapshot.modelCalls(),
-            snapshot.toolExecutions() + 1,
-            snapshot.totalInputTokens(),
-            snapshot.totalOutputTokens(),
-            snapshot.totalToolDurationMs() + Math.max(0, durationMs),
-            exhausted,
-            exhausted ? "tool execution budget exhausted" : null
+            updated.sessionId(), updated.startedAt(), updated.turnIndex(),
+            updated.modelCalls(), updated.toolExecutions(), updated.totalInputTokens(),
+            updated.totalOutputTokens(), updated.totalToolDurationMs(), exhausted,
+            exhausted ? exhaustionReason(updated, config) : null
         );
     }
 
@@ -144,19 +121,35 @@ public class DefaultIterationBudget implements IterationBudget {
             || snapshot.totalToolDurationMs() >= config.getMaxToolDurationMsPerTurn();
     }
 
+    private static String exhaustionReason(TurnSnapshot snapshot, AgentProperties.BudgetProperties config) {
+        if (snapshot.modelCalls() >= config.getMaxModelCallsPerTurn()) return "max model calls reached";
+        if (snapshot.toolExecutions() >= config.getMaxToolExecutionsPerTurn()) return "max tool executions reached";
+        if (snapshot.totalInputTokens() + snapshot.totalOutputTokens() >= config.getMaxTokensPerTurn()) return "max tokens reached";
+        if (snapshot.totalToolDurationMs() >= config.getMaxToolDurationMsPerTurn()) return "max tool duration reached";
+        return "iteration budget exhausted";
+    }
+
     @Override
     public BudgetStatus status(TurnSnapshot snapshot) {
         AgentProperties.BudgetProperties config = properties.getBudget();
         if (snapshot.exhausted()) {
-            return new BudgetStatus(false, 0, 0, 0, snapshot.reason());
+            int remainingModelCalls = Math.max(0, config.getMaxModelCallsPerTurn() - snapshot.modelCalls());
+            int remainingToolExecutions = Math.max(0, config.getMaxToolExecutionsPerTurn() - snapshot.toolExecutions());
+            int remainingTokens = Math.max(0, config.getMaxTokensPerTurn() - snapshot.totalInputTokens() - snapshot.totalOutputTokens());
+            long remainingToolDurationMs = Math.max(0L, config.getMaxToolDurationMsPerTurn() - snapshot.totalToolDurationMs());
+            return new BudgetStatus(false, remainingModelCalls, remainingToolExecutions, remainingTokens,
+                remainingToolDurationMs, snapshot.reason());
         }
         int remainingModelCalls = Math.max(0, config.getMaxModelCallsPerTurn() - snapshot.modelCalls());
         int remainingToolExecutions = Math.max(0, config.getMaxToolExecutionsPerTurn() - snapshot.toolExecutions());
         int remainingTokens = Math.max(0, config.getMaxTokensPerTurn() - snapshot.totalInputTokens() - snapshot.totalOutputTokens());
+        long remainingToolDurationMs = Math.max(0L, config.getMaxToolDurationMsPerTurn() - snapshot.totalToolDurationMs());
         String reason = null;
         if (remainingModelCalls == 0) reason = "max model calls reached";
         else if (remainingToolExecutions == 0) reason = "max tool executions reached";
         else if (remainingTokens == 0) reason = "max tokens reached";
-        return new BudgetStatus(reason == null, remainingModelCalls, remainingToolExecutions, remainingTokens, reason);
+        else if (remainingToolDurationMs == 0) reason = "max tool duration reached";
+        return new BudgetStatus(reason == null, remainingModelCalls, remainingToolExecutions, remainingTokens,
+            remainingToolDurationMs, reason);
     }
 }

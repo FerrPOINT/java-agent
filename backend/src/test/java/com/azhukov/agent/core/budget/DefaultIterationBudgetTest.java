@@ -52,6 +52,25 @@ class DefaultIterationBudgetTest {
     }
 
     @Test
+    void exhaustsAfterToolDuration() {
+        props.getBudget().setMaxToolDurationMsPerTurn(5);
+        var snap = budget.recordToolExecution(budget.startTurn(UUID.randomUUID()), "slow", 5);
+
+        assertTrue(snap.exhausted());
+        assertThat(budget.status(snap).reason()).isEqualTo("max tool duration reached");
+        assertThat(budget.status(snap).remainingToolDurationMs()).isZero();
+    }
+
+    @Test
+    void statusReportsToolDurationLimitBeforeExhaustion() {
+        props.getBudget().setMaxToolDurationMsPerTurn(10);
+        var snap = budget.recordToolExecution(budget.startTurn(UUID.randomUUID()), "slow", 9);
+
+        assertThat(budget.status(snap).remainingToolDurationMs()).isEqualTo(1);
+        assertThat(budget.status(snap).reason()).isNull();
+    }
+
+    @Test
     void doesNotExhaustWith50ToolExecutionsBelowDefaultLimit() {
         // The default permits 100 tool executions per turn.
         var snap = budget.startTurn(UUID.randomUUID());

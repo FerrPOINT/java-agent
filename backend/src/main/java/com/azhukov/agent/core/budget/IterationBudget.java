@@ -46,6 +46,7 @@ public interface IterationBudget {
         int remainingModelCalls,
         int remainingToolExecutions,
         int remainingTokens,
+        long remainingToolDurationMs,
         String reason
     ) {}
 }

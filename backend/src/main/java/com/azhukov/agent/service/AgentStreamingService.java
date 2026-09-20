@@ -595,9 +595,11 @@ public class AgentStreamingService {
                 return;
             }
             if (iterationBudget.isExhausted(budget)) {
-                IterationBudget.BudgetStatus budgetStatus = iterationBudget.status(budget);
-                log.warn("Iteration budget exhausted for session {} after {} model calls, {} tool executions; reason={}",
-                    session.id(), budget.modelCalls(), budget.toolExecutions(), budgetStatus.reason());
+                var budgetStatus = iterationBudget.status(budget);
+                log.warn("Iteration budget exhausted for session {} after {} model calls, {} tool executions, {} estimated tokens, {} ms tool time; reason={}",
+                    session.id(), budget.modelCalls(), budget.toolExecutions(),
+                    budget.totalInputTokens() + budget.totalOutputTokens(), budget.totalToolDurationMs(),
+                    budgetStatus.reason());
                 // c2 B4: Hermes _handle_max_iterations parity — one toolless
                 // summary call instead of a raw budget message (sync parity).
                 String budgetMsg;
