@@ -47,11 +47,12 @@ class ClarifyToolBlockingTest {
             }
         });
         resolver.start();
-        ClarifyStreamBridge.setSender(emitted::set);
+        Session session = interactiveSession();
+        ClarifyStreamBridge.setSender(session.id(), emitted::set);
         try {
             ToolResult result = tool.execute(
                 "{\"question\":\"Which environment?\",\"choices\":[\"staging\",\"prod\"]}",
-                null, interactiveSession());
+                null, session);
             assertThat(result.success()).isTrue();
             com.fasterxml.jackson.databind.JsonNode json =
                 new com.fasterxml.jackson.databind.ObjectMapper().readTree(result.content());
@@ -59,7 +60,7 @@ class ClarifyToolBlockingTest {
             assertThat(json.path("user_response").asText()).isEqualTo("staging");
             assertThat(json.path("choices_offered").toString()).contains("staging");
         } finally {
-            ClarifyStreamBridge.clear();
+            ClarifyStreamBridge.clear(session.id());
             try { resolver.join(6000); } catch (InterruptedException ignored) {}
         }
     }

@@ -63,7 +63,7 @@ public class ClarifyTool implements ToolHandler {
             return jsonError(e.getMessage());
         }
         boolean interactive = clarifyStore != null
-            && ClarifyStreamBridge.sender() != null
+            && ClarifyStreamBridge.sender(session == null ? null : session.id()) != null
             && session != null
             && session.getMetadata("clarifyChatId") != null;
         if (args.questions() != null && !args.questions().isEmpty()) {
@@ -84,7 +84,7 @@ public class ClarifyTool implements ToolHandler {
 
     private ToolResult runBlockingSingle(String question, List<String> choices, boolean multiSelect, Session session) {
         List<String> shown = markRecommendedPublic(choices);
-        ClarifyStreamBridge.Sender sender = ClarifyStreamBridge.sender();
+        ClarifyStreamBridge.Sender sender = ClarifyStreamBridge.sender(session == null ? null : session.id());
         com.azhukov.agent.core.tool.ClarifyGatewayStore.PendingClarify entry =
             clarifyStore.register(sessionKey(session), question, shown, multiSelect);
         sender.sendClarifyPrompt(singlePromptPayload(entry.clarifyId(), question, shown, multiSelect));
@@ -104,7 +104,7 @@ public class ClarifyTool implements ToolHandler {
                 return jsonError(e.getMessage());
             }
         }
-        ClarifyStreamBridge.Sender sender = ClarifyStreamBridge.sender();
+        ClarifyStreamBridge.Sender sender = ClarifyStreamBridge.sender(session == null ? null : session.id());
         // One SSE prompt per batch (adapter renders all questions on one card);
         // answers resolve sequentially: single-choice entries answer in order,
         // open-ended entries capture the typed message.

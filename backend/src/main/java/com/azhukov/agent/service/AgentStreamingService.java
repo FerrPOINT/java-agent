@@ -1518,7 +1518,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
             // batch a sender that emits the `clarify` SSE event; the tool
             // registers a pending entry and blocks on the store future until
             // the adapter resolves it via /clarify/resolve or /clarify/text.
-            com.azhukov.agent.tools.memory.ClarifyStreamBridge.setSender(
+            com.azhukov.agent.tools.memory.ClarifyStreamBridge.setSender(session.id(),
                 payload -> eventHelper().send(emitter,
                     com.azhukov.agent.tools.memory.ClarifyStreamBridge.clarifyEvent(payload), streamCtx));
             com.azhukov.agent.core.agent.TurnExecutor.ToolBatchResult batchResult;
@@ -1527,7 +1527,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     pipeline.executableCalls(), registeredToolNames, session, turnState, turnIndex,
                     skipApproval, sseEvents);
             } finally {
-                com.azhukov.agent.tools.memory.ClarifyStreamBridge.clear();
+                com.azhukov.agent.tools.memory.ClarifyStreamBridge.clear(session.id());
             }
             for (com.azhukov.agent.core.agent.TurnExecutor.ToolExecutionRecord rec : batchResult.executions()) {
                 budget = iterationBudget.recordToolExecution(budget, rec.toolName(), rec.durationMs());
