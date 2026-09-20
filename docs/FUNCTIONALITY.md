@@ -132,5 +132,7 @@
 | 2026-09-20 | FN-2.6/2.14 JsonAlias | 🔧→✅ TerminalTool (notifyOnComplete/watchPatterns), BrowserDialogTool (promptText): camelCase-алиасы добавлены + TerminalToolArgAliasesTest, BrowserDialogToolArgAliasesTest |
 | 2026-09-20 | FN-6.2 FileSafety | 🔧→✅ home-скоупинг write-denylist (Hermes build_write_denied_paths/#45947): проектные .env/auth.json/config.json записываемы; /etc,/boot,/usr/lib/systemd,docker.sock глобальны; read-block .env глобален; .ssh/.gnupg read-block под home; +5 parity-тестов; guard-home-paths config seam (78a70069) |
 | 2026-09-20 | FN-2.19 clarify | ✅ предварительно: session-keyed bridge + NO_TOOL_TIMEOUT закоммичены (75f236ec); тесты ClarifyToolBlockingTest зелёные |
+| 2026-09-20 | FN-4.x бот-команды | 🔧→✅ /loop /refine /approvals покрыты тестами (22 кейса); найден и починен баг: /loop stop шлёт POST /stop, которого нет у бекенда → 404 «No loop set.» при живом лупе (bc80a18f) |
+| 2026-09-20 | Джавадоки сервисов | ✅ AgentRuntimeService, AgentStreamingService, CronJobService, DelegatedTaskRunService, OpenAiRunService получили class-level контракты; DOC001 513→508, ratchet чист |
 
 (детальный inventory тулзов/команд/эндпоинтов — в конце файла)
