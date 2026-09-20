@@ -438,6 +438,15 @@ public class AgentStreamingService {
         if (request.chatType() != null && !request.chatType().isBlank()) {
             session = session.withMetadata("chatType", request.chatType());
         }
+        // Blocking clarify (Hermes clarify_gateway parity): the Telegram adapter
+        // forwards its routing ids so the backend can bind pending clarify
+        // entries to the originating chat and stream clarify prompts back.
+        if (request.chatId() != null && !request.chatId().isBlank()) {
+            session = session.withMetadata("clarifyChatId", request.chatId());
+        }
+        if (request.threadId() != null && !request.threadId().isBlank()) {
+            session = session.withMetadata("clarifyThreadId", request.threadId());
+        }
         // Set the ThreadLocal session ID so LangChain4jModelClient can check cancellation
         InterruptToken.setCurrentSessionId(session.id());
 
@@ -1505,10 +1514,21 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                             null, null, null, call.name(), resultPreview), streamCtx);
                     }
                 };
-            com.azhukov.agent.core.agent.TurnExecutor.ToolBatchResult batchResult =
-                turnExecutor().executeToolBatch(
+            // Blocking clarify (Hermes clarify_gateway parity): give the tool
+            // batch a sender that emits the `clarify` SSE event; the tool
+            // registers a pending entry and blocks on the store future until
+            // the adapter resolves it via /clarify/resolve or /clarify/text.
+            com.azhukov.agent.tools.memory.ClarifyStreamBridge.setSender(
+                payload -> eventHelper().send(emitter,
+                    com.azhukov.agent.tools.memory.ClarifyStreamBridge.clarifyEvent(payload), streamCtx));
+            com.azhukov.agent.core.agent.TurnExecutor.ToolBatchResult batchResult;
+            try {
+                batchResult = turnExecutor().executeToolBatch(
                     pipeline.executableCalls(), registeredToolNames, session, turnState, turnIndex,
                     skipApproval, sseEvents);
+            } finally {
+                com.azhukov.agent.tools.memory.ClarifyStreamBridge.clear();
+            }
             for (com.azhukov.agent.core.agent.TurnExecutor.ToolExecutionRecord rec : batchResult.executions()) {
                 budget = iterationBudget.recordToolExecution(budget, rec.toolName(), rec.durationMs());
                 if (rec.refunded()) {

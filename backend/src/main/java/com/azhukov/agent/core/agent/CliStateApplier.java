@@ -67,7 +67,7 @@ public class CliStateApplier {
                 request.cdpUrl(), null, request.userId(), request.username(),
                 request.firstName(), request.languageCode(), request.chatType(),
                 request.serviceTier(), request.yoloMode(), request.verboseMode(),
-                request.footerEnabled(), request.attachments());
+                request.footerEnabled(), request.chatId(), request.threadId(), request.attachments());
         }
         String reasoningEffort = request.reasoningEffort() != null ? request.reasoningEffort() : session.getCliStateValue("reasoningEffort");
         String personality = request.personality() != null ? request.personality() : session.getCliStateValue("personality");
@@ -114,6 +114,8 @@ public class CliStateApplier {
             request.yoloMode(),
             request.verboseMode(),
             request.footerEnabled(),
+            request.chatId(),
+            request.threadId(),
             request.attachments()
         );
     }

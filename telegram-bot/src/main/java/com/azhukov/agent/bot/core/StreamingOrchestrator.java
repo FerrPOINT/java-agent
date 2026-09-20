@@ -56,6 +56,7 @@ public class StreamingOrchestrator {
     }
 
     private final com.azhukov.agent.bot.session.BotSessionStore sessionStore;
+    private final com.azhukov.agent.bot.keyboard.ClarifyInteractionRenderer clarificationInteraction;
 
     /**
      * Hermes parity (display.tool_progress_grouping="accumulate"): tool
@@ -282,6 +283,16 @@ public class StreamingOrchestrator {
                         } catch (Exception e) {
                             log.warn("Review message delivery failed for chat {}: {}", chatId, e.getMessage());
                         }
+                    }
+                },
+                // clarifyConsumer (Hermes clarify_gateway parity): the backend's
+                // BLOCKING clarify prompt — render an inline keyboard bound to
+                // the pending entry; button taps resolve it via the backend.
+                clarifyPayload -> {
+                    try {
+                        clarificationInteraction.present(chatId, messageThreadId, sessionId, clarifyPayload);
+                    } catch (Exception e) {
+                        log.warn("Clarify prompt delivery failed for chat {}: {}", chatId, e.getMessage());
                     }
                 },
                 // onComplete

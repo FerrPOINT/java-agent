@@ -50,7 +50,8 @@ class StreamingOrchestratorErrorBeforeFirstTokenTest {
         when(runtimeFooter.format(anyString(), anyInt(), anyInt(), anyString())).thenReturn("");
         orchestrator = new StreamingOrchestrator(backendClient, streamEditor, busyHandler,
             runtimeFooter, properties, new MediaDeliveryService(),
-            mock(com.azhukov.agent.bot.client.TelegramClient.class), sessionStoreMock);
+            mock(com.azhukov.agent.bot.client.TelegramClient.class), sessionStoreMock,
+            mock(com.azhukov.agent.bot.keyboard.ClarifyInteractionRenderer.class));
 
         hooks = mock(StreamingOrchestrator.ProcessorHooks.class);
         when(hooks.buildMessageWithContext(anyString(), any(), anyLong()))
@@ -73,9 +74,9 @@ class StreamingOrchestratorErrorBeforeFirstTokenTest {
     @SuppressWarnings("unchecked")
     private void stubErrorBeforeTokens(String errorMessage) {
         when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(),
-            any(), any(), any(), any(), any(), any(), any()))
+            any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
-                Consumer<Throwable> onError = inv.getArgument(10);
+                Consumer<Throwable> onError = inv.getArgument(11);
                 onError.accept(new RuntimeException(errorMessage));
                 return new AgentBackendClient.ChatResult("");
             });
@@ -124,11 +125,11 @@ class StreamingOrchestratorErrorBeforeFirstTokenTest {
     @Test
     void streamInterrupted_beforeAnyToken_cleansUpDraftSession() {
         when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(),
-            any(), any(), any(), any(), any(), any(), any()))
+            any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
                 Consumer<String> tokenConsumer = inv.getArgument(4);
                 tokenConsumer.accept("he"); // first token arrives…
-                Consumer<Throwable> onError = inv.getArgument(10);
+                Consumer<Throwable> onError = inv.getArgument(11);
                 onError.accept(new StreamingOrchestrator.StreamInterruptedException());
                 return new AgentBackendClient.ChatResult("");
             });

@@ -53,7 +53,7 @@ class CliStateApplierAttachmentsTest {
         return new ChatRequest(SESSION_ID, "look at this", null, null,
             null, null, null, null, null, null, null, null, null, null,
             null, null, null, null, null, null, null, null, null, null, null,
-            null, null, null, null, attachments);
+            null, null, null, null, null, null, attachments);
     }
 
     private AttachmentArtifactService.AttachmentArtifact artifact(String id, String mime, String name) {

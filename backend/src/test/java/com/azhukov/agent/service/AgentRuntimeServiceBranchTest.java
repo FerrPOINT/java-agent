@@ -184,7 +184,7 @@ class AgentRuntimeServiceBranchTest {
         return new ChatRequest(
             sessionId, message, null, null, null, null, null, null, null, null, null, null, null,
             null, null, null, null, null, null, null, null, null, null, null, null,
-            null, yoloMode, null, null, null);
+            null, yoloMode, null, null, null, null, null);
     }
 
     private com.azhukov.agent.core.ports.SessionStorePort sessionStorePort() {

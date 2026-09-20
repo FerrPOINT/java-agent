@@ -78,6 +78,8 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
     private final CommandRegistry commandRegistry;
     private final CallbackQueryHandler callbackQueryHandler;
     private ClarificationStateStore clarificationStateStore;
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.azhukov.agent.bot.keyboard.ClarifyTextInterceptor clarifyTextInterceptor;
 
     @org.springframework.beans.factory.annotation.Autowired
     void setClarificationStateStore(ClarificationStateStore clarificationStateStore) {
@@ -372,6 +374,22 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         java.util.List<String> artifactIds = extractArtifactIds(messageText);
         messageText = stripArtifactMarkers(messageText);
 
+        // Blocking clarify (Hermes clarify_gateway parity): while a turn is
+        // open and waiting on a clarify prompt, a typed message resolves the
+        // pending entry instead of being rejected/queued as a new turn.
+        if (busyHandler.isBusy(chatId) && clarifyTextInterceptor != null
+                && messageText != null && !messageText.isBlank()) {
+            String clarifyOutcome = clarifyTextInterceptor.tryResolve(session, messageText);
+            if (clarifyOutcome != null) {
+                // resolved: answer fed into the open turn; ack to the user
+                if (!"invalid_selection".equals(clarifyOutcome)) {
+                    return;
+                }
+                // invalid selection: keep the prompt armed, tell the user
+                sendError(chatId, "⚠️ Invalid selection — pick a listed option or type the full label.");
+                return;
+            }
+        }
         // Check busy state
         if (busyHandler.isBusy(chatId)) {
             String effectiveMode = busyHandler.getEffectiveBusyInputMode();

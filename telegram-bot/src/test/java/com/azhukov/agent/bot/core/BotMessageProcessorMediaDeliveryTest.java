@@ -152,7 +152,8 @@ class BotMessageProcessorMediaDeliveryTest {
             properties, editCaptureService, textBatchDebouncer, photoBatchDebouncer);
         StreamingOrchestrator streamingOrchestrator = new StreamingOrchestrator(
             backendClient, streamEditor, busyHandler, runtimeFooter, properties, mediaDeliveryService,
-            mock(com.azhukov.agent.bot.client.TelegramClient.class), sessionStoreMock);
+            mock(com.azhukov.agent.bot.client.TelegramClient.class), sessionStoreMock,
+            mock(com.azhukov.agent.bot.keyboard.ClarifyInteractionRenderer.class));
 
         processor = new BotMessageProcessor(
             telegramClient, authorizationService, sessionStore, busyHandler,
@@ -175,11 +176,11 @@ class BotMessageProcessorMediaDeliveryTest {
             Consumer<String> tokenConsumer = inv.getArgument(4);
             tokenConsumer.accept(content);
             if (streamFinalized) {
-                Consumer<AgentBackendClient.ChatResult> onComplete = inv.getArgument(9);
+                Consumer<AgentBackendClient.ChatResult> onComplete = inv.getArgument(10);
                 onComplete.accept(new AgentBackendClient.ChatResult(content, "test-model", 100, 1000, true));
             }
             return new AgentBackendClient.ChatResult(content, "test-model", 100, 1000, streamFinalized, false);
-        }).when(backendClient).chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any());
+        }).when(backendClient).chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     private UpdateEvent textEvent(long updateId, long chatId, String text) {

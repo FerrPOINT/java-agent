@@ -48,6 +48,7 @@ public class CallbackQueryHandler {
     private final AgentBackendClient backendClient;
     private final ApprovalStateStore approvalStateStore;
     private ClarificationStateStore clarificationStateStore;
+    private final ClarifyInteractionRenderer clarifyRenderer;
 
     @org.springframework.beans.factory.annotation.Autowired
     void setClarificationStateStore(ClarificationStateStore clarificationStateStore) {
@@ -132,6 +133,13 @@ public class CallbackQueryHandler {
             case "pp" -> handleProviderSelect(value, chatId);
             case "ea" -> handleExecApproval(value, chatId, messageId);
             case "sc" -> handleSlashConfirm(value, chatId);
+            // Blocking clarify (Hermes clarify_gateway parity): resolve the
+            // backend's pending entry; the open agent turn receives the answer.
+            case ClarifyInteractionRenderer.CLARIFY_CALLBACK -> {
+                ClarifyInteractionRenderer.CallbackResult result =
+                    clarifyRenderer.handleCallback(chatId, messageId, value);
+                yield result.acknowledgement();
+            }
             default -> "Unknown action: " + command;
         };
     }

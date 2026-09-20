@@ -21,6 +21,6 @@ public final class ChatRequestIdentity {
             request.voiceMode(), request.personality(), request.enabledTools(), request.disabledTools(),
             request.queuedPrompt(), request.subgoal(), null, null, request.cdpUrl(), request.goal(),
             userId, request.username(), request.firstName(), request.languageCode(), request.chatType(),
-            null, null, null, null, request.attachments());
+            null, null, null, null, request.chatId(), request.threadId(), request.attachments());
     }
 }

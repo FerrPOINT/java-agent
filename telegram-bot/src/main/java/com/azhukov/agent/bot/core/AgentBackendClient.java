@@ -114,7 +114,7 @@ public class AgentBackendClient {
                                  Consumer<ChatResult> onComplete,
                                  Consumer<Throwable> onError) {
         return messages.chatStream(message, sessionId, runtime, tokenConsumer, toolCallConsumer,
-            toolResultConsumer, retryConsumer, null, onComplete, onError);
+            toolResultConsumer, retryConsumer, null, null, onComplete, onError);
     }
 
     public ChatResult chatStream(String message,
@@ -143,8 +143,25 @@ public class AgentBackendClient {
                                  Consumer<String> reviewConsumer,
                                  Consumer<ChatResult> onComplete,
                                  Consumer<Throwable> onError) {
+        return chatStream(message, sessionId, runtime, attachments, tokenConsumer, toolCallConsumer,
+            toolResultConsumer, retryConsumer, reviewConsumer, null, onComplete, onError);
+    }
+
+    /** Blocking clarify (Hermes parity): full overload with the clarify payload consumer. */
+    public ChatResult chatStream(String message,
+                                 String sessionId,
+                                 BotSessionEntity runtime,
+                                 java.util.List<java.util.Map<String, String>> attachments,
+                                 Consumer<String> tokenConsumer,
+                                 Consumer<String> toolCallConsumer,
+                                 java.util.function.BiConsumer<String, String> toolResultConsumer,
+                                 Consumer<String> retryConsumer,
+                                 Consumer<String> reviewConsumer,
+                                 Consumer<String> clarifyConsumer,
+                                 Consumer<ChatResult> onComplete,
+                                 Consumer<Throwable> onError) {
         return messages.chatStream(message, sessionId, runtime, attachments, tokenConsumer,
-            toolCallConsumer, toolResultConsumer, retryConsumer, reviewConsumer, onComplete, onError);
+            toolCallConsumer, toolResultConsumer, retryConsumer, reviewConsumer, clarifyConsumer, onComplete, onError);
     }
 
     public ChatResult chatStream(String message,
@@ -168,7 +185,7 @@ public class AgentBackendClient {
                                        Consumer<ChatResult> onComplete,
                                        Consumer<Throwable> onError) {
         return messages.chatStream(message, sessionId, null, tokenConsumer, toolCallConsumer,
-            toolResultConsumer, retryConsumer, reviewConsumer, onComplete, onError);
+            toolResultConsumer, retryConsumer, reviewConsumer, null, onComplete, onError);
     }
 
     public byte[] tts(String text, String voice) {

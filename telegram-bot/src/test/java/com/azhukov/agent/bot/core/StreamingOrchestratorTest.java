@@ -61,7 +61,8 @@ class StreamingOrchestratorTest {
         mediaDeliveryService = new MediaDeliveryService();
         orchestrator = new StreamingOrchestrator(backendClient, streamEditor, busyHandler,
             runtimeFooter, properties, mediaDeliveryService,
-            telegramClient, sessionStoreMock);
+            telegramClient, sessionStoreMock,
+            mock(com.azhukov.agent.bot.keyboard.ClarifyInteractionRenderer.class));
 
         // Hooks: the processor's media delivery / model resolution / PII prefix
         hooks = mock(StreamingOrchestrator.ProcessorHooks.class);
@@ -93,7 +94,7 @@ class StreamingOrchestratorTest {
     @SuppressWarnings("unchecked")
     private AgentBackendClient.ChatResult stubChatStream(Consumer<InvocationCtx> setup) {
         when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(),
-            any(), any(), any(), any(), any(), any(), any()))
+            any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
                 InvocationCtx ctx = new InvocationCtx(inv);
                 setup.accept(ctx);
@@ -124,8 +125,8 @@ class StreamingOrchestratorTest {
             this.toolCallConsumer = inv.getArgument(5);
             this.toolResultConsumer = inv.getArgument(6);
             this.retryConsumer = inv.getArgument(7);
-            this.onComplete = inv.getArgument(9);
-            this.onError = inv.getArgument(10);
+            this.onComplete = inv.getArgument(10);
+            this.onError = inv.getArgument(11);
         }
     }
 
@@ -204,10 +205,10 @@ class StreamingOrchestratorTest {
     @Test
     void streamChat_interrupted_finalizesWithAccumulatedContent() {
         when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(),
-            any(), any(), any(), any(), any(), any(), any()))
+            any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
                 Consumer<String> tokenConsumer = inv.getArgument(4);
-                Consumer<Throwable> onError = inv.getArgument(10);
+                Consumer<Throwable> onError = inv.getArgument(11);
                 // First token streams normally (editStream is called)
                 tokenConsumer.accept("partial");
                 // Now mark the chat interrupted mid-stream and emit another token,
@@ -234,9 +235,9 @@ class StreamingOrchestratorTest {
     @Test
     void streamChat_errorFinalizesWithUserFriendlyMessage() {
         when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(),
-            any(), any(), any(), any(), any(), any(), any()))
+            any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
-                Consumer<Throwable> onError = inv.getArgument(10);
+                Consumer<Throwable> onError = inv.getArgument(11);
                 onError.accept(new RuntimeException("HTTP 429"));
                 return new AgentBackendClient.ChatResult("", "model", 1, 10, false, false, null);
             });
@@ -250,7 +251,7 @@ class StreamingOrchestratorTest {
     @Test
     void streamChat_noContentWithMetadata_fallsBackToSync() {
         when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(),
-            any(), any(), any(), any(), any(), any(), any()))
+            any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
                 // No tokens, no complete — just metadata
                 return new AgentBackendClient.ChatResult("", "model", 1, 10, false, false, null);
@@ -275,7 +276,7 @@ class StreamingOrchestratorTest {
         when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong())).thenReturn(Optional.of(1L));
         when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong())).thenReturn(Optional.of(1L));
         when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(),
-            any(), any(), any(), any(), any(), any(), any()))
+            any(), any(), any(), any(), any(), any(), any(), any()))
             .thenThrow(new RuntimeException("connection refused"));
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() ->
@@ -294,7 +295,7 @@ class StreamingOrchestratorTest {
         when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong())).thenReturn(Optional.empty());
         when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong())).thenReturn(Optional.empty());
         when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(),
-            any(), any(), any(), any(), any(), any(), any()))
+            any(), any(), any(), any(), any(), any(), any(), any()))
             .thenThrow(new RuntimeException("connection refused"));
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() ->
@@ -349,7 +350,7 @@ class StreamingOrchestratorTest {
     @Test
     void streamChat_toolCall_setsCurrentToolName() {
         when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(),
-            any(), any(), any(), any(), any(), any(), any()))
+            any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
                 Consumer<String> tokenConsumer = inv.getArgument(4);
                 Consumer<String> toolCallConsumer = inv.getArgument(5);
@@ -358,7 +359,7 @@ class StreamingOrchestratorTest {
                 // Post-tool tokens stream into a NEW segment (the tool-call consumer
                 // committed the previous segment and reset the accumulator).
                 tokenConsumer.accept("after tool");
-                Consumer<AgentBackendClient.ChatResult> onComplete = inv.getArgument(9);
+                Consumer<AgentBackendClient.ChatResult> onComplete = inv.getArgument(10);
                 onComplete.accept(new AgentBackendClient.ChatResult("after tool", "model", 1, 10, true));
                 return new AgentBackendClient.ChatResult("after tool", "model", 1, 10, true, false, null);
             });
@@ -371,13 +372,13 @@ class StreamingOrchestratorTest {
     @Test
     void streamChat_toolResult_triggersSegmentBreak() {
         when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(),
-            any(), any(), any(), any(), any(), any(), any()))
+            any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
                 Consumer<String> tokenConsumer = inv.getArgument(4);
                 java.util.function.BiConsumer<String, String> toolResultConsumer = inv.getArgument(6);
                 tokenConsumer.accept("before tool");
                 toolResultConsumer.accept("WebSearch", "result-preview");
-                Consumer<AgentBackendClient.ChatResult> onComplete = inv.getArgument(9);
+                Consumer<AgentBackendClient.ChatResult> onComplete = inv.getArgument(10);
                 onComplete.accept(new AgentBackendClient.ChatResult("before tool", "model", 1, 10, true));
                 return new AgentBackendClient.ChatResult("before tool", "model", 1, 10, true, false, null);
             });
@@ -393,13 +394,13 @@ class StreamingOrchestratorTest {
     @Test
     void streamChat_retryConsumer_showsRetryStatus() {
         when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(),
-            any(), any(), any(), any(), any(), any(), any()))
+            any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
                 Consumer<String> tokenConsumer = inv.getArgument(4);
                 Consumer<String> retryConsumer = inv.getArgument(7);
                 tokenConsumer.accept("partial");
                 retryConsumer.accept("Retrying due to rate limit...");
-                Consumer<AgentBackendClient.ChatResult> onComplete = inv.getArgument(9);
+                Consumer<AgentBackendClient.ChatResult> onComplete = inv.getArgument(10);
                 onComplete.accept(new AgentBackendClient.ChatResult("partial", "model", 1, 10, true));
                 return new AgentBackendClient.ChatResult("partial", "model", 1, 10, true, false, null);
             });
@@ -413,11 +414,11 @@ class StreamingOrchestratorTest {
     @Test
     void streamChat_usesHooksForModelResolution() {
         when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(),
-            any(), any(), any(), any(), any(), any(), any()))
+            any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
                 Consumer<String> tokenConsumer = inv.getArgument(4);
                 tokenConsumer.accept("answer");
-                Consumer<AgentBackendClient.ChatResult> onComplete = inv.getArgument(9);
+                Consumer<AgentBackendClient.ChatResult> onComplete = inv.getArgument(10);
                 onComplete.accept(new AgentBackendClient.ChatResult("answer", "model", 1, 10, true));
                 return new AgentBackendClient.ChatResult("answer", "model", 1, 10, true, false, null);
             });
@@ -431,12 +432,12 @@ class StreamingOrchestratorTest {
     @Test
     void streamChat_buildsMessageWithContextViaHooks() {
         when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(),
-            any(), any(), any(), any(), any(), any(), any()))
+            any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
                 String msg = inv.getArgument(0);
                 Consumer<String> tokenConsumer = inv.getArgument(4);
                 tokenConsumer.accept(msg); // emit the (context-prefixed) message as a token
-                Consumer<AgentBackendClient.ChatResult> onComplete = inv.getArgument(9);
+                Consumer<AgentBackendClient.ChatResult> onComplete = inv.getArgument(10);
                 onComplete.accept(new AgentBackendClient.ChatResult(msg, "model", 1, 10, true));
                 return new AgentBackendClient.ChatResult(msg, "model", 1, 10, true, false, null);
             });
@@ -446,7 +447,7 @@ class StreamingOrchestratorTest {
         orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
 
         verify(backendClient).chatStream(eq("CTX:hi"), nullable(String.class), any(), any(),
-            any(), any(), any(), any(), any(), any(), any());
+            any(), any(), any(), any(), any(), any(), any(), any());
     }
 
 }

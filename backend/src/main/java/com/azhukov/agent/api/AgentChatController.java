@@ -244,6 +244,74 @@ public class AgentChatController {
      * can deliver "💾 Self-improvement review: …" autonomously, without
      * waiting for the next user turn.
      */
+    /**
+     * Blocking clarify (Hermes clarify_gateway parity): resolve a pending
+     * clarify entry. Called by the Telegram adapter when the user taps an
+     * inline button or types an answer. Returns the outcome so the adapter
+     * can decide between ack / keep-armed-for-retry / route-normally.
+     */
+    @org.springframework.web.bind.annotation.PostMapping(
+        value = "/agent/session/{sessionId}/clarify/resolve",
+        consumes = "application/json")
+    public Map<String, Object> resolveClarify(@PathVariable String sessionId,
+                                              @org.springframework.web.bind.annotation.RequestBody ClarifyResolveRequest request) {
+        com.azhukov.agent.core.tool.ClarifyGatewayStore store =
+            clarifyStoreProvider() != null ? clarifyStoreProvider().getObject() : null;
+        if (store == null) {
+            return Map.of("resolved", false, "reason", "clarify gateway unavailable");
+        }
+        String clarifyId = request.clarifyId() == null ? "" : request.clarifyId().trim();
+        if (clarifyId.isEmpty()) {
+            return Map.of("resolved", false, "reason", "clarifyId required");
+        }
+        boolean resolved = store.resolve(clarifyId, request.response() == null ? "" : request.response());
+        return resolved
+            ? Map.of("resolved", true)
+            : Map.of("resolved", false, "reason", "expired or already answered");
+    }
+
+    /**
+     * Typed-reply clarification (Hermes attempt_text_response_for_session): a
+     * plain message resolves the session's pending clarify when it coerces to
+     * an answer (number, label, comma list, any text for open-ended); free
+     * prose on a choice prompt reports prose=true so the adapter routes the
+     * message as a normal turn instead.
+     */
+    @org.springframework.web.bind.annotation.PostMapping(
+        value = "/agent/session/{sessionId}/clarify/text",
+        consumes = "application/json")
+    public Map<String, Object> clarifyText(@PathVariable String sessionId,
+                                           @org.springframework.web.bind.annotation.RequestBody ClarifyTextRequest request) {
+        com.azhukov.agent.core.tool.ClarifyGatewayStore store =
+            clarifyStoreProvider() != null ? clarifyStoreProvider().getObject() : null;
+        if (store == null) {
+            return Map.of("outcome", "no_pending");
+        }
+        var pending = store.pendingForSession(sessionId);
+        if (pending == null) {
+            return Map.of("outcome", "no_pending");
+        }
+        String coerced = com.azhukov.agent.tools.memory.ClarifyTextCoercer.coerce(pending, request.text());
+        if (coerced == null) {
+            return Map.of("outcome", "rejected_prose");
+        }
+        boolean resolved = store.resolve(pending.clarifyId(), coerced);
+        return Map.of("outcome", resolved ? "resolved" : "no_pending");
+    }
+
+    /** Request body for clarify/resolve. */
+    public record ClarifyResolveRequest(String clarifyId, String response) {}
+
+    /** Request body for clarify/text. */
+    public record ClarifyTextRequest(String text) {}
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.core.tool.ClarifyGatewayStore> clarifyStoreProviderField;
+
+    private org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.core.tool.ClarifyGatewayStore> clarifyStoreProvider() {
+        return clarifyStoreProviderField;
+    }
+
     @GetMapping("/agent/session/{sessionId}/review/pending")
     public Map<String, Object> pendingReview(@PathVariable String sessionId) {
         if (!properties.getMemory().getBackgroundReview().isEnabled()) {

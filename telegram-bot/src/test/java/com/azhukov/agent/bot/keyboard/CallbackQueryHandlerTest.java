@@ -46,7 +46,8 @@ class CallbackQueryHandlerTest {
         when(authorizationService.isAuthorized(anyLong(), anyString(), anyLong())).thenReturn(true);
         handler = new CallbackQueryHandler(client, providerKeyboardBuilder, modelKeyboardBuilder,
             inlineKeyboardBuilder, sessionStore, properties, authorizationService,
-            backendClient, approvalStateStore);
+            backendClient, approvalStateStore,
+            mock(ClarifyInteractionRenderer.class));
 
         when(client.answerCallbackQuery(anyString(), anyString(), anyBoolean())).thenReturn(true);
         when(client.sendMessage(anyLong(), any())).thenReturn(Optional.of(1L));

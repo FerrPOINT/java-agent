@@ -131,10 +131,11 @@ public class MessageApiClient extends BaseBackendClient {
                                                     java.util.function.BiConsumer<String, String> toolResultConsumer,
                                                     Consumer<String> retryConsumer,
                                                     Consumer<String> reviewConsumer,
+                                                    Consumer<String> clarifyConsumer,
                                                     Consumer<AgentBackendClient.ChatResult> onComplete,
                                                     Consumer<Throwable> onError) {
         return chatStream(message, sessionId, runtime, null, tokenConsumer, toolCallConsumer,
-            toolResultConsumer, retryConsumer, reviewConsumer, onComplete, onError);
+            toolResultConsumer, retryConsumer, reviewConsumer, clarifyConsumer, onComplete, onError);
     }
 
     /** WP-11 overload carrying inbound attachment artifact ids on the chat request. */
@@ -147,6 +148,7 @@ public class MessageApiClient extends BaseBackendClient {
                                                     java.util.function.BiConsumer<String, String> toolResultConsumer,
                                                     Consumer<String> retryConsumer,
                                                     Consumer<String> reviewConsumer,
+                                                    Consumer<String> clarifyConsumer,
                                                     Consumer<AgentBackendClient.ChatResult> onComplete,
                                                     Consumer<Throwable> onError) {
         Map<String, Object> body = buildChatBody(message, sessionId, runtime);
@@ -320,6 +322,15 @@ public class MessageApiClient extends BaseBackendClient {
                                         }
                                         continue;
                                     }
+                                    // clarify event (Hermes clarify_gateway parity): blocking
+                                    // clarify prompt from the backend — payload JSON in `error`.
+                                    if ("clarify".equalsIgnoreCase(type)) {
+                                        String payload = event.path("error").asText(null);
+                                        if (payload != null && !payload.isEmpty() && clarifyConsumer != null) {
+                                            clarifyConsumer.accept(payload);
+                                        }
+                                        continue;
+                                    }
                                     JsonNode tokenNode = event.get("token");
                                     if (tokenNode != null && !tokenNode.isNull() && tokenNode.isTextual()) {
                                         String token = tokenNode.asText();
@@ -375,7 +386,7 @@ public class MessageApiClient extends BaseBackendClient {
                                                      Consumer<AgentBackendClient.ChatResult> onComplete,
                                                      Consumer<Throwable> onError) {
         return chatStream(message, sessionId, null, tokenConsumer, toolCallConsumer,
-            toolResultConsumer, msg -> {}, null, onComplete, onError);
+            toolResultConsumer, msg -> {}, null, null, onComplete, onError);
     }
 
     // ------------------------------------------------------------------

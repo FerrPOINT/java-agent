@@ -42,8 +42,10 @@ class ClarifyToolTest {
         AgentTool annotation = ClarifyTool.class.getAnnotation(AgentTool.class);
 
         assertEquals("clarify", annotation.toolset());
-        assertTrue(annotation.description().contains("does not block waiting for user input"));
-        assertFalse(annotation.description().contains("user_response will"));
+        // Blocking clarify (Hermes parity): the tool BLOCKS on interactive
+        // platforms and returns {responses:[...]} with user answers.
+        assertTrue(annotation.description().contains("BLOCKS until the user answers"));
+        assertTrue(annotation.description().contains("{responses: [...]}"));
     }
 
     @Test
