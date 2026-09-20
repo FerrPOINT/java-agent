@@ -58,6 +58,16 @@ class ClarifyGatewayStoreTest {
     }
 
     @Test
+    void pendingForSessionReturnsBatchEntriesInRegistrationOrder() {
+        ClarifyGatewayStore store = new ClarifyGatewayStore();
+        ClarifyGatewayStore.PendingClarify first = store.register("s1", "First", List.of("a"), false);
+        ClarifyGatewayStore.PendingClarify second = store.register("s1", "Second", List.of("b"), false);
+
+        assertThat(store.pendingForSession("s1").clarifyId()).isEqualTo(first.clarifyId());
+        assertThat(store.resolve(first.clarifyId(), "a")).isTrue();
+        assertThat(store.pendingForSession("s1").clarifyId()).isEqualTo(second.clarifyId());
+    }
+    @Test
     void clearSessionCancelsWaitersWithEmptyAnswer() throws Exception {
         ClarifyGatewayStore store = new ClarifyGatewayStore();
         ClarifyGatewayStore.PendingClarify entry = store.register("s1", "Q", List.of("a"), false);

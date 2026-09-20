@@ -318,6 +318,25 @@ class StreamingOrchestratorTest {
     }
 
     @Test
+    void streamChat_clarifyToolStartDoesNotRenderDetachedLegacyPrompt() {
+        com.azhukov.agent.bot.keyboard.ClarificationStateStore legacyStore =
+            mock(com.azhukov.agent.bot.keyboard.ClarificationStateStore.class);
+        com.azhukov.agent.bot.keyboard.ClarifyInteractionRenderer blockingRenderer =
+            mock(com.azhukov.agent.bot.keyboard.ClarifyInteractionRenderer.class);
+        orchestrator = new StreamingOrchestrator(backendClient, streamEditor, busyHandler,
+            runtimeFooter, properties, mediaDeliveryService, telegramClient, sessionStoreMock, blockingRenderer);
+        orchestrator.setClarificationStateStore(legacyStore);
+        stubChatStream(ctx -> {
+            ctx.toolCallConsumer.accept("clarify\u0001{\"question\":\"Deploy where?\",\"choices\":[\"dev\",\"prod\"]}");
+            ctx.returnResult = new AgentBackendClient.ChatResult("", null, null, null, true, false, null);
+        });
+
+        orchestrator.streamChat(100L, "hi", "backend-session", session(), 5L, 0L, hooks);
+
+        // Prompt delivery belongs exclusively to the backend clarify SSE event.
+        verify(legacyStore, never()).present(anyLong(), anyLong(), anyString(), any());
+    }
+    @Test
     void streamChat_hiddenToolProgressDoesNotRenderExecutedTool() {
         properties.getDisplay().setToolProgress("hidden");
         stubChatStream(ctx -> {
