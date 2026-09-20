@@ -96,10 +96,9 @@ class ApplicationYmlIterationDefaultsTest {
         assertThat(modelCalls)
             .as("agent.budget.max-model-calls-per-turn yml default must be 100")
             .isEqualTo(100);
-        // A turn cannot execute more tool batches than the model-call budget allows.
         assertThat(toolExecutions)
-            .as("tool-execution budget should not exceed the model-call budget")
-            .isLessThanOrEqualTo(modelCalls);
+            .as("agent.budget.max-tool-executions-per-turn yml default must be 100")
+            .isEqualTo(100);
     }
 
     @Test

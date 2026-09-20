@@ -8,6 +8,7 @@ public record DoctorDto(
     String provider,
     int maxTurns,
     int maxModelCallsPerTurn,
+    int maxToolExecutionsPerTurn,
     boolean memoryEnabled,
     boolean ttsEnabled,
     boolean transcriptionEnabled,

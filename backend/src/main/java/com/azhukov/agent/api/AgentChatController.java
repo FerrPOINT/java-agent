@@ -110,6 +110,7 @@ public class AgentChatController {
             properties.getModel().getProvider(),
             properties.getCore().getMaxTurns(),
             properties.getBudget().getMaxModelCallsPerTurn(),
+            properties.getBudget().getMaxToolExecutionsPerTurn(),
             memoryProvider != null && isMemoryConfiguredEnabled(),
             ttsService != null,
             transcriptionService != null,

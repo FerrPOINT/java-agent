@@ -9,6 +9,7 @@ public record AgentConfigDto(
     String baseUrl,
     int maxTurns,
     int maxModelCallsPerTurn,
+    int maxToolExecutionsPerTurn,
     int maxTokens,
     double temperature,
     int timeoutSeconds,
