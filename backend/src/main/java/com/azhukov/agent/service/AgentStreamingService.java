@@ -73,6 +73,14 @@ import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 
 @Slf4j
+/**
+ * SSE streaming agent loop (OpenAI-compatible /v1/chat/completions and
+ * internal event stream): unnamed {@code data:} frames, terminal literal
+ * {@code data:[DONE]}, token/tool_start/tool_end/clarify/review/done/error
+ * events. Reuses {@code TurnExecutor} for tool batches; owns session
+ * rotation switching, LENGTH finish-reason partial stitching, and the
+ * clarify stream bridge binding per session.
+ */
 @Service
 @RequiredArgsConstructor
 public class AgentStreamingService {

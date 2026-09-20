@@ -36,6 +36,11 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+/**
+ * Durable OpenAI Runs API surface (WP-6): run state machine persistence and
+ * restart-safe event replay. A run's events survive backend restarts and
+ * replay strictly after the client cursor — no duplicates, no gaps.
+ */
 @Service
 @RequiredArgsConstructor
 @Slf4j

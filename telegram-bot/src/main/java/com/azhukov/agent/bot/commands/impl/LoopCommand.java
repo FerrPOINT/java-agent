@@ -48,9 +48,12 @@ public class LoopCommand implements CommandHandler {
             return heartbeatStatus(sid);
         }
         if (lower.equals("pause") || lower.equals("resume") || lower.equals("stop") || lower.equals("off")) {
+            // "stop" maps to the backend's /clear (no /stop endpoint exists);
+            // both remove the loop entirely
+            String action = (lower.equals("off") || lower.equals("stop")) ? "clear" : lower;
             JsonNode r = backendClient.suggestionPost("/api/v1/agent/cron/heartbeat/" + sid
-                + "/" + ("off".equals(lower) ? "clear" : lower));
-            if ("off".equals(lower) || "stop".equals(lower)) {
+                + "/" + action);
+            if (lower.equals("off") || lower.equals("stop")) {
                 deliveryPoller.unwatch(java.util.UUID.fromString(sid));
             }
             return r != null && r.path("ok").asBoolean(false)

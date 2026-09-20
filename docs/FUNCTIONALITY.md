@@ -128,6 +128,9 @@
 
 | Дата | Область | Итог |
 |------|---------|------|
-| 2026-09-20 | Инвентаризация | файл создан |
+| 2026-09-20 | Инвентаризация | файл создан (36 тулзов, 63 бот-команды, 82 CLI, 44 контроллера) |
+| 2026-09-20 | FN-2.6/2.14 JsonAlias | 🔧→✅ TerminalTool (notifyOnComplete/watchPatterns), BrowserDialogTool (promptText): camelCase-алиасы добавлены + TerminalToolArgAliasesTest, BrowserDialogToolArgAliasesTest |
+| 2026-09-20 | FN-6.2 FileSafety | 🔧→✅ home-скоупинг write-denylist (Hermes build_write_denied_paths/#45947): проектные .env/auth.json/config.json записываемы; /etc,/boot,/usr/lib/systemd,docker.sock глобальны; read-block .env глобален; .ssh/.gnupg read-block под home; +5 parity-тестов; guard-home-paths config seam (78a70069) |
+| 2026-09-20 | FN-2.19 clarify | ✅ предварительно: session-keyed bridge + NO_TOOL_TIMEOUT закоммичены (75f236ec); тесты ClarifyToolBlockingTest зелёные |
 
 (детальный inventory тулзов/команд/эндпоинтов — в конце файла)
