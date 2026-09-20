@@ -44,6 +44,16 @@ public class ImageGenTool implements ToolHandler {
     private final com.azhukov.agent.config.AgentProperties properties;
 
 
+    /**
+     * Hermes parity (tools/registry.py check_fn): a tool whose provider is not
+     * configured is hidden from the model's tool schema instead of being
+     * registered and failing at call time. True when the configured provider
+     * bean exists (agent.image-gen.enabled=true loads pollinations/openai).
+     */
+    public boolean isToolAvailable() {
+        return resolveProvider() != null;
+    }
+
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
         ImageGenArgs args;

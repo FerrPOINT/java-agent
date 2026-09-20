@@ -60,6 +60,16 @@ public class TtsTool implements ToolHandler {
     private final AgentProperties properties;
 
 
+    /**
+     * Hermes parity (tools/registry.py check_fn): a tool whose provider is not
+     * configured is hidden from the model's tool schema instead of being
+     * registered and failing at call time. True when the configured provider
+     * bean exists (agent.tts.enabled=true loads edge/openai beans).
+     */
+    public boolean isToolAvailable() {
+        return resolveProvider(null) != null;
+    }
+
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
         TtsArgs args;

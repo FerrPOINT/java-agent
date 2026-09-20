@@ -34,6 +34,17 @@ class ToolRegistryWiringInvariantTest {
         "kanban", "email", "feishu", "dingtalk", "wecom", "weixin", "qqbot",
         "mcp", "delegation");
 
+    /**
+     * Provider-gated tools (Hermes parity, tools/registry.py check_fn): they
+     * register only when their provider is configured (agent.tts.enabled /
+     * agent.image-gen.enabled). The noop test profile has neither enabled, so
+     * toolsets promising them resolve to an empty registration here — the
+     * registered-when-available contract is covered by
+     * ProviderToolGateRegistryTest.
+     */
+    private static final Set<String> PROVIDER_GATED = Set.of(
+        "image_generate", "text_to_speech");
+
     @Test
     void everyAdvertisedStaticToolsetToolHasAHandler() {
         Set<String> registered = new HashSet<>();
@@ -45,6 +56,9 @@ class ToolRegistryWiringInvariantTest {
                 continue;
             }
             for (String toolName : registry.expandToolsetNames(Set.of(toolset))) {
+                if (PROVIDER_GATED.contains(toolName)) {
+                    continue;
+                }
                 if (!registered.contains(toolName)) {
                     offenders.add(toolset + ":" + toolName);
                 }

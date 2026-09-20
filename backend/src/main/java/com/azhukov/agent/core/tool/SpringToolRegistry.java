@@ -198,6 +198,17 @@ public class SpringToolRegistry implements ToolRegistry {
             if ("memory".equals(annotation.name()) && !isMemoryToolAvailable()) {
                 continue;
             }
+            // Hermes parity (tools/registry.py check_fn): provider-backed tools
+            // are hidden from the schema when their provider is not configured,
+            // instead of being registered and failing at call time.
+            if (handler instanceof com.azhukov.agent.tools.tts.TtsTool tts
+                    && !tts.isToolAvailable()) {
+                continue;
+            }
+            if (handler instanceof com.azhukov.agent.tools.imagegen.ImageGenTool imageGen
+                    && !imageGen.isToolAvailable()) {
+                continue;
+            }
             @SuppressWarnings("unchecked")
             Class<? extends ToolHandler> handlerClass = (Class<? extends ToolHandler>) bean.getClass();
             ToolDefinition definition = buildDefinition(annotation.name(), annotation.description(), handlerClass);
