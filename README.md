@@ -50,7 +50,7 @@
 | Data | PostgreSQL 16, JPA/Hibernate, Flyway |
 | AI/tooling | LangChain4j 1.18, MCP Java SDK 2.0, Repomix MCP, built-in tool registry |
 | Interfaces | REST/SSE, OpenAI-compatible `/v1/*`, Telegram bot, CLI REPL |
-| Base umbrella | API `7761`, PostgreSQL `7762` (loopback), Telegram gateway `7763`; management port network-internal |
+| Base workspace | API `18090`, PostgreSQL `18091` (loopback); Telegram gateway `18092` only when started separately |
 | Тесты | 6221 (backend 4710 + bot 1511), 567 файлов, 0 падений |
 | License | FerrPOINT Proprietary Source-Available Evaluation License v1.0 |
 
