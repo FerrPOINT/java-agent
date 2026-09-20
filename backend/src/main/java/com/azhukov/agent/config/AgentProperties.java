@@ -607,7 +607,7 @@ public class AgentProperties {
     @Getter @Setter
     public static class BudgetProperties {
         private int maxModelCallsPerTurn = 100;
-        private int maxToolExecutionsPerTurn = 200;
+        private int maxToolExecutionsPerTurn = 100;
         private int maxTokensPerTurn = 200000;
         private int maxToolDurationMsPerTurn = 600000;
         private boolean enabled = true;

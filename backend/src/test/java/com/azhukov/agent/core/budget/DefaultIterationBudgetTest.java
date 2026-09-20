@@ -52,8 +52,8 @@ class DefaultIterationBudgetTest {
     }
 
     @Test
-    void doesNotExhaustWith200ToolExecutionsAtDefaultLimit() {
-        // Verify the new default of 200 tool executions doesn't trigger prematurely
+    void doesNotExhaustWith50ToolExecutionsBelowDefaultLimit() {
+        // The default permits 100 tool executions per turn.
         var snap = budget.startTurn(UUID.randomUUID());
         for (int i = 0; i < 50; i++) {
             snap = budget.recordToolExecution(snap, "x", 1);
@@ -70,11 +70,9 @@ class DefaultIterationBudgetTest {
     }
 
     @Test
-    void defaultMaxToolExecutionsIs200Not20() {
-        // Bug 1: old default was 20, way too low. New default is 200
-        // (effectively unlimited, matching Hermes which doesn't limit tools separately)
+    void defaultMaxToolExecutionsMatches100CallTurnBudget() {
         AgentProperties.BudgetProperties defaultBudget = new AgentProperties.BudgetProperties();
-        assertThat(defaultBudget.getMaxToolExecutionsPerTurn()).isEqualTo(200);
+        assertThat(defaultBudget.getMaxToolExecutionsPerTurn()).isEqualTo(100);
     }
 
     @Test

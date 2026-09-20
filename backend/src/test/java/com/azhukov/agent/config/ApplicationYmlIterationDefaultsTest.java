@@ -89,6 +89,7 @@ class ApplicationYmlIterationDefaultsTest {
         int turns = placeholderDefault("agent.core.max-turns");
         int modelCalls = placeholderDefault("agent.budget.max-model-calls-per-turn");
         int toolExecutions = placeholderDefault("agent.budget.max-tool-executions-per-turn");
+        int runBudgetSeconds = placeholderDefault("agent.budget.run-budget-seconds");
 
         assertThat(turns)
             .as("agent.core.max-turns yml default must be 100 (user directive 2026-09-20)")
@@ -99,6 +100,9 @@ class ApplicationYmlIterationDefaultsTest {
         assertThat(toolExecutions)
             .as("agent.budget.max-tool-executions-per-turn yml default must be 100")
             .isEqualTo(100);
+        assertThat(runBudgetSeconds)
+            .as("agent.budget.run-budget-seconds must default to disabled")
+            .isZero();
     }
 
     @Test

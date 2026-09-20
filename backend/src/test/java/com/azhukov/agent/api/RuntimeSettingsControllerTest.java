@@ -89,6 +89,8 @@ class RuntimeSettingsControllerTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.name").value(properties.getName()))
             .andExpect(jsonPath("$.maxTurns").value(properties.getCore().getMaxTurns()))
+            .andExpect(jsonPath("$.maxModelCallsPerTurn").value(properties.getBudget().getMaxModelCallsPerTurn()))
+            .andExpect(jsonPath("$.maxToolExecutionsPerTurn").value(properties.getBudget().getMaxToolExecutionsPerTurn()))
             .andExpect(jsonPath("$.features.memory").value(true))
             .andExpect(jsonPath("$.features.tts").value(true))
             .andExpect(jsonPath("$.features.transcription").value(true))
