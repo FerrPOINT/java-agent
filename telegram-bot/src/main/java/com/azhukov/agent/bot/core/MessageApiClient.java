@@ -343,7 +343,7 @@ public class MessageApiClient extends BaseBackendClient {
                                             ? new AgentBackendClient.ChatResult(accumulated.toString(), metadataHolder[0].modelUsed(),
                                             metadataHolder[0].contextTokens(), metadataHolder[0].contextLength(),
                                             metadataHolder[0].streamFinalized(), metadataHolder[0].memoryUpdated(),
-                                            metadataHolder[0].backendSessionId())
+                                            metadataHolder[0].backendSessionId(), metadataHolder[0].lastReasoning())
                                             : new AgentBackendClient.ChatResult(accumulated.toString());
                                         onComplete.accept(result);
                                         return result;
@@ -429,7 +429,10 @@ public class MessageApiClient extends BaseBackendClient {
                 log.warn("Stream metadata contained invalid sessionId: {}", sessionIdNode.asText());
             }
         }
-        return new AgentBackendClient.ChatResult(null, modelUsed, contextTokens, contextLength, streamFinalized, memoryUpdated, backendSessionId);
+        String lastReasoning = event.has("lastReasoning") && !event.get("lastReasoning").isNull()
+            ? event.get("lastReasoning").asText(null) : null;
+        return new AgentBackendClient.ChatResult(null, modelUsed, contextTokens, contextLength,
+            streamFinalized, memoryUpdated, backendSessionId, lastReasoning);
     }
 
     /**

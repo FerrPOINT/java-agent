@@ -160,10 +160,18 @@ public class AgentStreamingService {
     // the @RequiredArgsConstructor signature stable for the 7 positional
     // test constructors.
     private MemoryNudgeManager memoryNudgeManager;
+    private com.azhukov.agent.core.memory.BackgroundReviewService backgroundReviewService;
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     void setMemoryNudgeManager(MemoryNudgeManager memoryNudgeManager) {
         this.memoryNudgeManager = memoryNudgeManager;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setBackgroundReviewService(
+        com.azhukov.agent.core.memory.BackgroundReviewService backgroundReviewService
+    ) {
+        this.backgroundReviewService = backgroundReviewService;
     }
 
     // rev-91: session auto-title — the streaming path (all Telegram turns) had
@@ -427,6 +435,11 @@ public class AgentStreamingService {
             properties.getModel().getModelName(), sessionSource);
         boolean isNew = resolved.isNew();
         Session session = resolved.session();
+        // A foreground streaming turn has the same priority as the sync path:
+        // cancel its session's stale review before the first model/tool call.
+        if (backgroundReviewService != null) {
+            backgroundReviewService.cancelForNewForegroundTurn(session.id());
+        }
         log.info("turn_started session={} source={} model={}", session.id(), sessionSource,
             request.model() != null && !request.model().isBlank() ? request.model() : properties.getModel().getModelName());
 
@@ -666,6 +679,7 @@ public class AgentStreamingService {
                 final AtomicReference<Throwable> capturedError = new AtomicReference<>();
                 final AtomicReference<String> capturedFinishReason = new AtomicReference<>();
                 final AtomicReference<Long> capturedOutputTokens = new AtomicReference<>();
+                final AtomicReference<String> capturedReasoning = new AtomicReference<>();
                 // Hermes parity: think-scrub state is per-RESPONSE (_strip_think_blocks is
                 // stateless); reset so hadThinkContent() reflects THIS iteration only.
                 scrubber.reset();
@@ -750,6 +764,12 @@ public class AgentStreamingService {
                             capturedFinishReason.set(finishReason);
                             capturedOutputTokens.set(outputTokens);
                             onComplete();
+                        }
+
+                        @Override
+                        public void onComplete(String finishReason, Long outputTokens, String reasoning) {
+                            capturedReasoning.set(reasoning);
+                            onComplete(finishReason, outputTokens);
                         }
 
                         @Override
@@ -996,7 +1016,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                 }
 
                 // CONTENT_FILTER: model declined due to content policy
-                if ("CONTENT_FILTER".equals(finishReason) && !hasToolCalls) {
+                if ("content_filter".equalsIgnoreCase(finishReason) && !hasToolCalls) {
                     log.warn("Content filter triggered for session {} — model declined response", session.id());
                     String filterMsg = (contentBuilder.length() > 0 ? contentBuilder.toString().strip() + "\n\n" : "")
                         + ResponseRecoveryPolicy.CONTENT_POLICY_RECOVERY_HINT;
@@ -1164,7 +1184,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                 // finalization with that mismatch would end the turn with the task unstarted.
                 // Re-prompt (bounded to 3 CONSECUTIVE stalls; budget resets after any
                 // successful tool round). finish_reason="stop" text finishes never enter this.
-                if ("TOOL_EXECUTION".equals(finishReason) && collectedToolCalls.isEmpty()
+                if ("tool_calls".equalsIgnoreCase(finishReason) && collectedToolCalls.isEmpty()
                         && droppedToolcallRetries < MAX_DROPPED_TOOLCALL_RETRIES) {
                     droppedToolcallRetries++;
                     log.warn("finish_reason=tool_calls with empty tool_calls array (narration only) — re-prompting to emit the call (retry {}/{}, session {})",
@@ -1282,18 +1302,20 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     // the dropped-toolcall stall budget.
                     droppedToolcallRetries = 0;
                     if (streamedContent != null && !streamedContent.isBlank()) {
-                        response = ChatResponse.textAndToolCalls(streamedContent, collectedToolCalls);
+                        response = ChatResponse.textAndToolCalls(streamedContent, collectedToolCalls)
+                            .withReasoning(capturedReasoning.get());
                     } else {
-                        response = ChatResponse.toolCalls(collectedToolCalls);
+                        response = ChatResponse.toolCalls(collectedToolCalls).withReasoning(capturedReasoning.get());
                     }
                 } else {
                     lastResponseHadToolCalls = false;
                     // Hermes parity (conversation_loop.py:7888-7893): a successful response
                     // after LENGTH continuations joins all stitched fragments.
                     if (truncatedParts.length() > 0) {
-                        response = ChatResponse.text(truncatedParts + streamedContent);
+                        response = ChatResponse.text(truncatedParts + streamedContent)
+                            .withReasoning(capturedReasoning.get());
                     } else {
-                        response = ChatResponse.text(streamedContent);
+                        response = ChatResponse.text(streamedContent).withReasoning(capturedReasoning.get());
                     }
                 }
                 break;
@@ -1388,7 +1410,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                 } catch (Exception reviewEx) {
                     log.debug("Review summary surface failed for {}: {}", session.id(), reviewEx.getMessage());
                 }
-                eventHelper().sendMetadataEvent(emitter, session, streamCtx, budget.totalInputTokens());
+                eventHelper().sendMetadataEvent(emitter, session, streamCtx, budget.totalInputTokens(), response.reasoning());
                 eventHelper().send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                 eventHelper().safeComplete(emitter);
                 if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);

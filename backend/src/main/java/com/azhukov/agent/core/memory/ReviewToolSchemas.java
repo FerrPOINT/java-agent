@@ -3,8 +3,10 @@ package com.azhukov.agent.core.memory;
 import com.azhukov.agent.core.model.ToolDefinition;
 
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * S3: Full JSON Schema definitions for the review agent's tool whitelist.
@@ -22,12 +24,17 @@ public final class ReviewToolSchemas {
  * Build the full list of review tool definitions with proper JSON Schema parameters.
  */
  public static List<ToolDefinition> build() {
- return List.of(
- memoryTool(),
- skillManageTool(),
- skillsListTool(),
- skillViewTool()
- );
+ return build(Set.of("memory", "skill_manage", "skills_list", "skill_view", "read_file", "search_files"));
+ }
+
+ /** Build schemas for the capabilities allowed to this specific review run. */
+ public static List<ToolDefinition> build(Set<String> allowedTools) {
+     Set<String> allowed = allowedTools == null ? Set.of() : allowedTools;
+     List<ToolDefinition> all = List.of(
+         memoryTool(), skillManageTool(), skillsListTool(), skillViewTool(),
+         readFileTool(), searchFilesTool()
+     );
+     return all.stream().filter(tool -> allowed.contains(tool.name())).toList();
  }
 
  /**
@@ -95,6 +102,31 @@ public final class ReviewToolSchemas {
  "Read a skill by name. Returns content with metadata, YAML frontmatter, " +
  "and linked support files.",
  schema);
+ }
+
+ /**
+ * Read a file before changing a skill; review tool scope permits this only
+ * for skill reviews.
+ */
+ static ToolDefinition readFileTool() {
+     return new ToolDefinition("read_file", "Read a text file with line numbers and pagination.",
+         objectSchema(List.of("path"), Map.of(
+             "path", stringDesc("File path to read"),
+             "offset", integerDesc("1-based line to start reading", 1, 1_000_000),
+             "limit", integerDesc("Maximum lines to read", 1, 2_000)
+         )));
+ }
+
+ /** Search files before patching a skill so writes are evidence-based. */
+ static ToolDefinition searchFilesTool() {
+     return new ToolDefinition("search_files", "Search file contents or find files by name.",
+         objectSchema(List.of("pattern"), Map.of(
+             "pattern", stringDesc("Regex pattern or file glob"),
+             "target", stringEnum("Search target", List.of("content", "files")),
+             "path", stringDesc("Directory or file to search"),
+             "file_glob", stringDesc("Optional file glob filter"),
+             "limit", integerDesc("Maximum results", 1, 100)
+         )));
  }
 
  // ── JSON Schema builders ──────────────────────────────────────────

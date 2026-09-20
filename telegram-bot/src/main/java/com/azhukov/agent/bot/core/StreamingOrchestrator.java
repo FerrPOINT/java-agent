@@ -434,7 +434,8 @@ public class StreamingOrchestrator {
                     streamResult.contextLength(),
                     finalized[0],
                     streamResult.memoryUpdated(),
-                    streamResult.backendSessionId()
+                    streamResult.backendSessionId(),
+                    streamResult.lastReasoning()
                 );
             }
             // If streaming produced no visible tokens but has metadata, prefer the sync fallback to get content

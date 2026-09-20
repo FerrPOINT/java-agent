@@ -227,8 +227,10 @@ public class AgentProperties {
     public static class BackgroundReviewProperties {
         private boolean enabled = true;
         private int delayMs = 2000;
-        /** Maximum number of review turns for the background review mini-conversation (default 8). */
-        private int maxReviewTurns = 8;
+        /** Maximum number of review turns for the background review mini-conversation (default 16). */
+        private int maxReviewTurns = 16;
+        /** Aggregate estimated input budget for one review fork; <= 0 disables it. */
+        private int maxInputTokens = 600_000;
     }
 
     @Getter @Setter

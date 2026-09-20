@@ -200,15 +200,17 @@ public class LangChain4jModelClient implements ModelClient {
                 // (interim assistant message) shown to the user before tool execution.
                 // Mirrors Hermes _emit_interim_assistant_message().
                 String text = aiMessage.text();
+                String thinking = aiMessage.thinking();
                 if (text != null && !text.isBlank()) {
-                    return new ChatResponse(text, calls, finishReasonOf(response));
+                    return new ChatResponse(text, calls, finishReasonOf(response)).withReasoning(thinking);
                 }
-                return new ChatResponse("", calls, finishReasonOf(response));
+                return new ChatResponse("", calls, finishReasonOf(response)).withReasoning(thinking);
             }
 
             // c2: carry the provider finish reason so BOTH runtimes can run the
             // shared recovery policies (LENGTH continuation). Missing → "STOP".
-            return ChatResponse.text(aiMessage.text() != null ? aiMessage.text() : "", finishReasonOf(response));
+            return ChatResponse.text(aiMessage.text() != null ? aiMessage.text() : "", finishReasonOf(response))
+                .withReasoning(aiMessage.thinking());
         } catch (Exception e) {
             ErrorClassifier.ErrorType errorType = errorClassifier != null ? errorClassifier.classify(e) : ErrorClassifier.ErrorType.RETRYABLE;
             log.warn("Model complete() failed — errorType={}: {}", errorType, e.getMessage());
@@ -373,7 +375,7 @@ public class LangChain4jModelClient implements ModelClient {
                     log.info("model_stream_completed finishReason={} outputTokens={} toolCalls={} contentBytes={}",
                         finishReason, outputTokens, completeResponse.aiMessage().hasToolExecutionRequests(),
                         content.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8).length);
-                    handler.onComplete(finishReason, outputTokens);
+                    handler.onComplete(finishReason, outputTokens, completeResponse.aiMessage().thinking());
                 } finally {
                     latch.countDown();
                 }

@@ -54,11 +54,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @RequiredArgsConstructor
 public class BackgroundReviewService {
 
- private static final int DEFAULT_MAX_REVIEW_TURNS = 8;
+ private static final int DEFAULT_MAX_REVIEW_TURNS = 16;
 
- // S1: Tool whitelist — only memory and skill tools are allowed
- private static final Set<String> REVIEW_TOOL_WHITELIST = Set.of(
- "memory", "skill_manage", "skills_list", "skill_view"
+ // Review tool capabilities are scoped to the nudge that caused the fork.
+ // A skill-only review must not mutate memory; skill reviews receive read-only
+ // file tools so a patch can be based on the current on-disk skill content.
+ private static final Set<String> MEMORY_REVIEW_TOOLS = Set.of("memory");
+ private static final Set<String> SKILL_REVIEW_TOOLS = Set.of(
+     "skill_manage", "skills_list", "skill_view", "read_file", "search_files"
  );
 
  private final ModelClient modelClient;
@@ -80,12 +83,14 @@ public class BackgroundReviewService {
  // S7: Track which sessions have been reviewed to prevent stale-action re-processing
  private final ConcurrentHashMap<UUID, StaleActionFilter.PriorToolResults> priorResultsCache = new ConcurrentHashMap<>();
 
- // P-05 (Hermes background_review.py cancellation handshake): per-session
- // cancellation flag consulted between review model calls and before every
- // review tool execution. A new foreground turn (or reset) sets it so a stale
- // review cannot keep burning tokens or write outdated memory/skills after
- // the conversation moved on.
- private final ConcurrentHashMap<UUID, AtomicBoolean> cancelFlags = new ConcurrentHashMap<>();
+ // P-05 (Hermes background_review.py cancellation handshake): a distinct run
+ // token owns its cancellation state. Identity-safe teardown prevents an older
+ // review from clearing the state of a successor (ABA race).
+ private final ConcurrentHashMap<UUID, ReviewRun> activeReviews = new ConcurrentHashMap<>();
+
+ private static final class ReviewRun {
+     private final AtomicBoolean cancelled = new AtomicBoolean(false);
+ }
 
  /**
   * P-05: cancel any scheduled/in-flight review for a session. Called at the
@@ -96,23 +101,22 @@ public class BackgroundReviewService {
      if (sessionId == null) {
          return;
      }
-     AtomicBoolean flag = cancelFlags.get(sessionId);
-     if (flag != null) {
-         flag.set(true);
+     ReviewRun run = activeReviews.get(sessionId);
+     if (run != null) {
+         run.cancelled.set(true);
      }
  }
 
- private boolean isCancelled(UUID sessionId) {
-     AtomicBoolean flag = cancelFlags.get(sessionId);
-     return flag != null && flag.get();
+ private boolean isCancelled(ReviewRun run) {
+     return run.cancelled.get();
  }
 
- private void beginReview(UUID sessionId) {
-     cancelFlags.put(sessionId, new AtomicBoolean(false));
+ private boolean beginReview(UUID sessionId, ReviewRun run) {
+     return activeReviews.putIfAbsent(sessionId, run) == null;
  }
 
- private void endReview(UUID sessionId) {
-     cancelFlags.remove(sessionId);
+ private void endReview(UUID sessionId, ReviewRun run) {
+     activeReviews.remove(sessionId, run);
  }
 
  /**
@@ -182,22 +186,24 @@ public class BackgroundReviewService {
      }
 
      int delayMs = properties.getMemory().getBackgroundReview().getDelayMs();
-     // Register before scheduling so a foreground turn arriving during the
-     // delay can cancel this exact pending review.
-     cancelFlags.put(sessionId, new AtomicBoolean(false));
+     ReviewRun run = new ReviewRun();
+     // One active review per session. A foreground turn cancels this exact run;
+     // do not replace it with a new token until its provider phase has exited.
+     if (!beginReview(sessionId, run)) {
+         log.debug("Skipping background review because one is already active for session {}", sessionId);
+         return;
+     }
      executor.schedule(() -> {
          try {
-             // P-05: a foreground turn that arrived during the schedule delay
-             // cancels the review before it starts.
-             if (isCancelled(sessionId)) {
+             if (isCancelled(run)) {
                  log.debug("Background review cancelled before start for session {}", sessionId);
                  return;
              }
-             doReview(sessionId, messages, parentUserId, reviewMemory, reviewSkills, f);
+             doReview(sessionId, messages, parentUserId, reviewMemory, reviewSkills, f, run);
          } catch (Exception e) {
              log.error("Background review failed for session {}: {}", sessionId, e.getMessage());
          } finally {
-             endReview(sessionId);
+             endReview(sessionId, run);
          }
      }, delayMs, TimeUnit.MILLISECONDS);
  }
@@ -248,7 +254,7 @@ public class BackgroundReviewService {
   * mirroring Hermes spawn_background_review_thread prompt selection.
   */
  private void doReview(UUID sessionId, List<Message> messages, String parentUserId,
-                       boolean reviewMemory, boolean reviewSkills, String focus) {
+                       boolean reviewMemory, boolean reviewSkills, String focus, ReviewRun run) {
      log.debug("Starting background review for session {} (memory={}, skills={})",
          sessionId, reviewMemory, reviewSkills);
 
@@ -302,8 +308,10 @@ public class BackgroundReviewService {
  // S7: Add the selected review prompt (not hardcoded combined)
  reviewMessages.add(Message.user(reviewPrompt));
 
- // S3: Tool definitions with full JSON Schema parameters (not empty Map.of())
- List<ToolDefinition> tools = ReviewToolSchemas.build();
+ // Tool definitions must exactly match the execution scope; advertising a
+ // write capability that the review cannot execute causes invalid tool loops.
+ Set<String> allowedTools = allowedTools(reviewMemory, reviewSkills);
+ List<ToolDefinition> tools = ReviewToolSchemas.build(allowedTools);
 
  // S1: Create review session — use the parent session's userId so memory
  // writes are attributed to the actual user, not a throwaway "review-bot".
@@ -315,21 +323,30 @@ public class BackgroundReviewService {
  // S7: Set WriteContext for this review thread — all writes tagged as BACKGROUND_REVIEW
  WriteContext.setReviewContext(sessionId.toString(), null, "background-review");
 
- // M9: Configurable max review turns (default 8, via AgentProperties)
+ // M9: Configurable max review turns and aggregate input budget.
  int maxReviewTurns = properties.getMemory().getBackgroundReview().getMaxReviewTurns();
  if (maxReviewTurns <= 0) {
      maxReviewTurns = DEFAULT_MAX_REVIEW_TURNS;
  }
+ int maxReviewInputTokens = properties.getMemory().getBackgroundReview().getMaxInputTokens();
+ long accumulatedInputTokens = 0;
 
  try {
  // S1: Mini conversation loop (up to maxReviewTurns turns)
  for (int turn = 0; turn < maxReviewTurns; turn++) {
  // P-05: stop the review when a new foreground turn arrived
- if (isCancelled(sessionId)) {
+ if (isCancelled(run)) {
      log.info("Background review cancelled by a new foreground turn (session {}, turn {}/{})",
          sessionId, turn, maxReviewTurns);
      break;
  }
+ long estimatedInputTokens = estimateInputTokens(reviewMessages);
+ if (maxReviewInputTokens > 0 && accumulatedInputTokens + estimatedInputTokens > maxReviewInputTokens) {
+     log.info("Background review input budget exhausted for session {} before turn {}/{}: used={} next={} limit={}",
+         sessionId, turn + 1, maxReviewTurns, accumulatedInputTokens, estimatedInputTokens, maxReviewInputTokens);
+     break;
+ }
+ accumulatedInputTokens += estimatedInputTokens;
  ChatResponse response = modelClient.complete(
      HistorySanitizer.sanitizeForModelRequest(reviewMessages), tools);
 
@@ -345,11 +362,11 @@ public class BackgroundReviewService {
  boolean anyToolExecuted = false;
  for (ToolCall call : response.toolCalls()) {
  // P-05: never execute a review write after cancellation
- if (isCancelled(sessionId)) {
+ if (isCancelled(run)) {
      log.info("Background review dropped pending tool write after cancellation (session {})", sessionId);
      break;
  }
- if (!REVIEW_TOOL_WHITELIST.contains(call.name())) {
+ if (!allowedTools.contains(call.name())) {
  log.warn("Background review denied non-whitelisted tool: {}", call.name());
  // Add denied result to conversation
  reviewMessages.add(Message.assistantToolCalls(List.of(call), turn));
@@ -422,6 +439,39 @@ public class BackgroundReviewService {
  }
  }
 
+ /** Estimate the next review request without spending a model call. */
+ private static long estimateInputTokens(List<Message> messages) {
+     long chars = 0;
+     for (Message message : messages) {
+         if (message != null && message.content() != null) {
+             chars += message.content().length();
+         }
+         if (message != null && message.toolCalls() != null) {
+             for (ToolCall call : message.toolCalls()) {
+                 if (call != null && call.arguments() != null) {
+                     chars += call.arguments().length();
+                 }
+             }
+         }
+     }
+     return Math.max(1, (chars + 3) / 4);
+ }
+
+ /**
+ * Build the review scope from the triggering nudges. Shared by schema filtering
+ * and dispatch enforcement so a denied capability can never be advertised.
+ */
+ private static Set<String> allowedTools(boolean reviewMemory, boolean reviewSkills) {
+     java.util.LinkedHashSet<String> allowed = new java.util.LinkedHashSet<>();
+     if (reviewMemory) {
+         allowed.addAll(MEMORY_REVIEW_TOOLS);
+     }
+     if (reviewSkills) {
+         allowed.addAll(SKILL_REVIEW_TOOLS);
+     }
+     return Set.copyOf(allowed);
+ }
+
  /**
  * S1: Execute a whitelisted tool call.
  * S7: WriteContext is set on the current thread, so tool implementations
@@ -434,6 +484,8 @@ public class BackgroundReviewService {
  case "skill_manage" -> reviewToolProvider.execute("skill_manage", call.arguments(), session);
  case "skills_list" -> reviewToolProvider.execute("skills_list", call.arguments(), session);
  case "skill_view" -> reviewToolProvider.execute("skill_view", call.arguments(), session);
+ case "read_file" -> reviewToolProvider.execute("read_file", call.arguments(), session);
+ case "search_files" -> reviewToolProvider.execute("search_files", call.arguments(), session);
  default -> ToolResult.fail("Tool not in whitelist: " + call.name());
  };
  } catch (Exception e) {

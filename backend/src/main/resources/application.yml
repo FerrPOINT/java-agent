@@ -165,7 +165,8 @@ agent:
     background-review:
       enabled: ${AGENT_MEMORY_BACKGROUND_REVIEW_ENABLED:true}
       delay-ms: ${AGENT_MEMORY_BACKGROUND_REVIEW_DELAY_MS:2000}
-      max-review-turns: ${AGENT_MEMORY_BACKGROUND_REVIEW_MAX_TURNS:8}
+      max-review-turns: ${AGENT_MEMORY_BACKGROUND_REVIEW_MAX_TURNS:16}
+      max-input-tokens: ${AGENT_MEMORY_BACKGROUND_REVIEW_MAX_INPUT_TOKENS:600000}
   
   # ─── Skills ───
   skills:
