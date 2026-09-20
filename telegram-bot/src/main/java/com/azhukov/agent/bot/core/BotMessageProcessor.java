@@ -158,6 +158,13 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
 
     @Override
     public void handleCommand(UpdateEvent event) {
+        // /stop is control-plane input: it must not wait behind the very turn
+        // it cancels. All other commands remain serialized with the active
+        // chat turn below.
+        if ("stop".equals(event.commandName())) {
+            handleStopCommandImmediately(event);
+            return;
+        }
         // M26 fix: commands mutate session state (/new, /model, /checkpoint …) —
         // serialize per chat like handleTextOrMedia so a command can't interleave
         // with an in-flight turn or another command on the same chat.
@@ -179,6 +186,27 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
             handleCommandLocked(event);
         } finally {
             lock.unlock();
+        }
+    }
+
+    private void handleStopCommandImmediately(UpdateEvent event) {
+        if (!slashAccessPolicy.canRun(event.userId(), "stop")) {
+            telegramClient.sendMessage(event.chatId(), "⛔ You don't have access to /stop");
+            return;
+        }
+        CommandHandler stopHandler = commandRegistry.get("stop");
+        if (stopHandler == null) {
+            sendError(event.chatId(), "Stop command is unavailable.");
+            return;
+        }
+        try {
+            String response = stopHandler.handle(event, resolveSession(event));
+            if (response != null && !response.isBlank()) {
+                sendFormatted(event.chatId(), response);
+            }
+        } catch (Exception e) {
+            log.error("Command /stop failed: {}", e.getMessage(), e);
+            sendError(event.chatId(), "Error executing command: " + e.getMessage());
         }
     }
 
@@ -285,6 +313,13 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
     @Override
     public void handleTextOrMedia(UpdateEvent event) {
         long chatId = event.chatId();
+        // A replacement message must reach the busy-mode handler while the
+        // active turn owns the per-chat lock; otherwise interrupt mode cannot
+        // cancel anything until after that turn has already finished.
+        if (busyHandler.isBusy(chatId)) {
+            handleBusyMessage(chatId, event, busyHandler.getEffectiveBusyInputMode(), resolveSession(event));
+            return;
+        }
         ReentrantLock lock = locks.computeIfAbsent(chatId, k -> new ReentrantLock());
         boolean acquired;
         try {
@@ -397,6 +432,13 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
             return;
         }
 
+        // The turn was already interrupted before it acquired the processing
+        // slot, therefore normal execution and auto-continuation are skipped.
+        if (busyHandler.isInterrupted(chatId)) {
+            log.debug("Skipping already interrupted turn for chat {}", chatId);
+            return;
+        }
+
         // B1.2: Reaction — processing start
         reactionManager.onProcessingStart(chatId, event.messageId());
 
@@ -407,23 +449,28 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         typingManager.startTyping(chatId, typingThreadId);
 
         AgentBackendClient.ChatResult result;
+        String sessionId = session.getBackendSessionId() != null
+            ? session.getBackendSessionId().toString()
+            : null;
+        // Thread the message_thread_id through to all response sends.
+        long threadId = event.messageThreadId();
+        if (session != null && session.getLastMessageThreadId() != threadId) {
+            session.setLastMessageThreadId(threadId);
+        }
         try {
-            String sessionId = session.getBackendSessionId() != null
-                ? session.getBackendSessionId().toString()
-                : null;
-
-            // B1.6/B2.7: Thread the message_thread_id from the event through to all sends
-            long threadId = event.messageThreadId();
-            // DM-topics depth (docs/34): persist the originating topic so
-            // restart-surviving sends (recovery notices, resumed turns)
-            // route back into the same thread.
-            if (session != null && session.getLastMessageThreadId() != threadId) {
-                session.setLastMessageThreadId(threadId);
-            }
-
             // Build footer text (will be appended to streaming message or sync response)
             result = streamingOrchestrator.streamChat(chatId, messageText, sessionId, session,
                 event.messageId(), threadId, artifactIds, this);
+
+            // A /stop or interrupt-mode replacement can arrive while the
+            // backend stream is unwinding. Do not render, persist, or continue
+            // a result belonging to that cancelled turn.
+            if (busyHandler.isInterrupted(chatId)) {
+                log.debug("Discarding interrupted turn result for chat {}", chatId);
+                reactionManager.onCancel(chatId, event.messageId());
+                typingManager.stopTyping(chatId);
+                return;
+            }
 
             // Persist the backend-assigned session ID for conversation history continuity
             if (result.backendSessionId() != null) {
@@ -569,10 +616,18 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
             busyHandler.queueMessage(chatId, event);
         }
 
-        // Interrupt if in interrupt mode (and not demoted)
+        // Interrupt if in interrupt mode (and not demoted). The local flag only
+        // stops Telegram rendering; the backend has a separate streaming turn
+        // and must receive /agent/stop too. Without this call an incoming
+        // message looked cancelled in the chat while the model/tool loop kept
+        // running server-side until its natural completion.
         if ("interrupt".equals(actualMode) && !demotedForSubagents) {
             busyHandler.interrupt(chatId);
-            log.debug("Interrupted busy chat {} and queued interrupting message", chatId);
+            String backendSessionId = session.getBackendSessionId() == null
+                ? null : session.getBackendSessionId().toString();
+            boolean backendStopped = backendSessionId != null && backendClient.stop(backendSessionId);
+            log.debug("Interrupted busy chat {} and queued message (backendStopped={})",
+                chatId, backendStopped);
         } else if (steered) {
             log.debug("Steered message into active run for chat {}", chatId);
         } else {
@@ -671,6 +726,13 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         int drained = 0;
         while (busyHandler.hasQueued(chatId) && drained < maxDrainDepth) {
             List<UpdateEvent> queued = busyHandler.drainQueue(chatId);
+            // An interrupt-mode message is queued while the previous turn is
+            // still marked busy. Clear the per-turn marker BEFORE replaying it,
+            // otherwise the replay sees itself as busy, cancels itself and is
+            // queued again until the drain-depth guard intervenes.
+            if (busyHandler.isInterrupted(chatId)) {
+                busyHandler.markFree(chatId);
+            }
             for (UpdateEvent queuedEvent : queued) {
                 try {
                     handleTextOrMediaInternalBody(queuedEvent);

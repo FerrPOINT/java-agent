@@ -412,7 +412,37 @@ class BotMessageProcessorTest {
         verify(telegramClient).sendMessage(eq(100L), contains("Error executing command"), anyString(), any(), any());
     }
 
-    // ─── Text processing — basic flow ───────────────────────────
+    @Test
+    void stopCommandCancelsActiveTurnWithoutWaitingForChatLock() throws Exception {
+        CommandHandler stopHandler = mock(CommandHandler.class);
+        when(commandRegistry.get("stop")).thenReturn(stopHandler);
+        when(stopHandler.handle(any(), any())).thenReturn("Stopping current generation...");
+
+        java.util.concurrent.CountDownLatch streamStarted = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch releaseStream = new java.util.concurrent.CountDownLatch(1);
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+            .thenAnswer(invocation -> {
+                streamStarted.countDown();
+                releaseStream.await(5, java.util.concurrent.TimeUnit.SECONDS);
+                return new AgentBackendClient.ChatResult("response", "test-model", 100, 1000, true, false);
+            });
+
+        java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newSingleThreadExecutor();
+        try {
+            java.util.concurrent.Future<?> runningTurn = executor.submit(() -> processor.accept(textEvent(1, 100L, "long task")));
+            assertThat(streamStarted.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+
+            processor.accept(commandEvent(2, 100L, "stop", ""));
+
+            verify(stopHandler, timeout(500)).handle(any(), any());
+            releaseStream.countDown();
+            runningTurn.get(5, java.util.concurrent.TimeUnit.SECONDS);
+        } finally {
+            releaseStream.countDown();
+            executor.shutdownNow();
+        }
+    }
+
 
     @Test
     void textMessageProcessingCallsBackend() {
@@ -745,22 +775,45 @@ class BotMessageProcessorTest {
         // Now manually mark busy and send another
         busyHandler.markBusy(100L);
         processor.accept(textEvent(2, 100L, "second"));
-        // Should be queued, not processed
+        // The busy route queues the replacement for replay after the active
+        // turn releases the lock.
         assertThat(busyHandler.hasQueued(100L)).isTrue();
     }
 
     // ─── Busy session — interrupt mode ──────────────────────────
 
     @Test
-    void busyInterruptModeInterruptsAndQueues() {
+    void busyInterruptModeCancelsBackendThenReplaysQueuedMessage() {
         properties.setBusyMode("interrupt");
         stubStreamingResult("response", true);
+        UUID backendId = UUID.randomUUID();
+        BotSessionEntity activeSession = new BotSessionEntity();
+        activeSession.setId(UUID.randomUUID());
+        activeSession.setBackendSessionId(backendId);
+        when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(activeSession);
+        when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), any())).thenReturn(activeSession);
+        when(backendClient.stop(backendId.toString())).thenReturn(true);
 
         busyHandler.markBusy(100L);
         processor.accept(textEvent(2, 100L, "interrupting msg"));
-        // Should have called interrupt and queued the message
+
         assertThat(busyHandler.isInterrupted(100L)).isTrue();
         assertThat(busyHandler.hasQueued(100L)).isTrue();
+        verify(backendClient).stop(backendId.toString());
+        verify(backendClient, never()).chatStream(anyString(), anyString(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void busyInterruptModeWithoutBackendSessionReplaysWithoutMalformedStop() {
+        properties.setBusyMode("interrupt");
+        stubStreamingResult("response", true);
+        busyHandler.markBusy(100L);
+
+        processor.accept(textEvent(2, 100L, "interrupting msg"));
+
+        assertThat(busyHandler.isInterrupted(100L)).isTrue();
+        assertThat(busyHandler.hasQueued(100L)).isTrue();
+        verify(backendClient, never()).stop(anyString());
     }
 
     // ─── Stream interruption ─────────────────────────────────────
@@ -1124,8 +1177,7 @@ class BotMessageProcessorTest {
         org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
             .thenReturn(session);
 
-        stubStreamingWithTokensAndFinalize("response", "test-model", false);
-        // Simulate interrupt after processing
+        // Simulate an already-interrupted active turn: no continuation may start.
         busyHandler.markBusy(100L);
         busyHandler.interrupt(100L);
 
