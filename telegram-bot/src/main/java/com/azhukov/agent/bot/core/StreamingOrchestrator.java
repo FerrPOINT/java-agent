@@ -248,12 +248,7 @@ public class StreamingOrchestrator {
                         bubble.appendLine(chatId, toolDisplay);
                     }
                     if ("clarify".equals(toolName) && clarificationStateStore != null) {
-                        // Blocking clarify owns prompt delivery through the
-                        // backend `clarify` SSE event. Rendering this legacy
-                        // tool-start path too creates a second, detached
-                        // keyboard; its answer becomes a new user turn instead
-                        // of resolving the turn that asked the question.
-                        log.debug("Suppressing legacy clarify tool-start prompt for chat {}", chatId);
+                        clarificationStateStore.present(chatId, messageThreadId, toolArgs, telegramClient);
                     }
                 },
                 // toolResultConsumer — called when backend emits tool_result event.
