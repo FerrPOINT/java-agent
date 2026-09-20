@@ -40,7 +40,7 @@ public class ClarifyInteractionRenderer {
 
     /** chatId -> selected indexes for multi-select prompts (clarifyId-keyed). */
     private final Map<String, java.util.Set<Integer>> multiSelectState = new java.util.concurrent.ConcurrentHashMap<>();
-    /** Payloads kept per chat so Done/Other callbacks can re-render or resolve. */
+    /** Prompt metadata stays until its matching backend pending entry resolves. */
     private final Map<String, PromptPayload> activePrompts = new java.util.concurrent.ConcurrentHashMap<>();
 
     /** Single-question prompt payload (mirrors the backend ClarifyStreamBridge event). */
@@ -57,9 +57,10 @@ public class ClarifyInteractionRenderer {
     }
 
     /**
-     * Render a clarify SSE payload: {"clarifyId","question","choices",
-     * "multi_select"} for a single question; {"batch":true,"prompt"} renders
-     * as text (the whole batch answers in one typed message via /clarify/text).
+     * Render a clarify SSE payload. Single questions receive an inline keyboard.
+     * Batch questions are emitted as one prompt in the current tool contract,
+     * so make every choice independently tappable instead of falling back to
+     * inert plain text.
      */
     public void present(long chatId, long threadId, String backendSessionId, String payloadJson) {
         try {

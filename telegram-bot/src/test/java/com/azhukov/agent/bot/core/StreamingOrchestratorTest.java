@@ -112,6 +112,7 @@ class StreamingOrchestratorTest {
         final Consumer<String> toolCallConsumer;
         final java.util.function.BiConsumer<String, String> toolResultConsumer;
         final Consumer<String> retryConsumer;
+        final Consumer<String> clarifyConsumer;
         final Consumer<AgentBackendClient.ChatResult> onComplete;
         final Consumer<Throwable> onError;
         AgentBackendClient.ChatResult returnResult;
@@ -125,6 +126,7 @@ class StreamingOrchestratorTest {
             this.toolCallConsumer = inv.getArgument(5);
             this.toolResultConsumer = inv.getArgument(6);
             this.retryConsumer = inv.getArgument(7);
+            this.clarifyConsumer = inv.getArgument(9);
             this.onComplete = inv.getArgument(10);
             this.onError = inv.getArgument(11);
         }
@@ -315,6 +317,23 @@ class StreamingOrchestratorTest {
         orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
 
         verify(telegramClient).sendMessage(eq(100L), contains("web_search"), isNull(), isNull(), isNull(), eq(true));
+    }
+
+    @Test
+    void streamChat_clarifyToolStartRendersOnlyBoundKeyboard() {
+        var boundRenderer = mock(com.azhukov.agent.bot.keyboard.ClarifyInteractionRenderer.class);
+        orchestrator = new StreamingOrchestrator(backendClient, streamEditor, busyHandler,
+            runtimeFooter, properties, mediaDeliveryService, telegramClient, sessionStoreMock, boundRenderer);
+
+        stubChatStream(ctx -> {
+            ctx.toolCallConsumer.accept("clarify\u0001{\"question\":\"Target?\",\"choices\":[\"dev\",\"prod\"]}");
+            ctx.clarifyConsumer.accept("{\"clarifyId\":\"prompt-1\",\"question\":\"Target?\",\"choices\":[\"dev\",\"prod\"]}");
+            ctx.returnResult = new AgentBackendClient.ChatResult("", null, null, null, true, false, null);
+        });
+
+        orchestrator.streamChat(100L, "hi", "session-1", session(), 5L, 0L, hooks);
+
+        verify(boundRenderer).present(eq(100L), eq(0L), eq("session-1"), contains("prompt-1"));
     }
 
     @Test

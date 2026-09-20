@@ -66,6 +66,36 @@ class ClarifyToolBlockingTest {
     }
 
     @Test
+    void batchEmitsOneBoundPromptForEachQuestion() throws Exception {
+        ClarifyGatewayStore store = new ClarifyGatewayStore();
+        ClarifyTool tool = new ClarifyTool(store);
+        Session session = interactiveSession();
+        java.util.List<String> prompts = new java.util.concurrent.CopyOnWriteArrayList<>();
+        ClarifyStreamBridge.setSender(session.id(), prompts::add);
+        java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newSingleThreadExecutor();
+        try {
+            java.util.concurrent.Future<ToolResult> result = executor.submit(() -> tool.execute(
+                "{\"questions\":[{\"question\":\"First?\",\"choices\":[\"A\",\"B\"]},"
+                    + "{\"question\":\"Second?\",\"choices\":[\"C\",\"D\"]}]}", null, session));
+            long deadline = System.currentTimeMillis() + 2_000;
+            while (prompts.size() < 2 && System.currentTimeMillis() < deadline) {
+                Thread.sleep(10);
+            }
+            assertThat(prompts).hasSize(2);
+            for (String prompt : prompts) {
+                com.fasterxml.jackson.databind.JsonNode payload = new com.fasterxml.jackson.databind.ObjectMapper().readTree(prompt);
+                assertThat(payload.path("clarifyId").asText()).isNotBlank();
+                assertThat(payload.path("batch").asBoolean(false)).isFalse();
+                store.resolve(payload.path("clarifyId").asText(), "1");
+            }
+            assertThat(result.get(2, java.util.concurrent.TimeUnit.SECONDS).success()).isTrue();
+        } finally {
+            executor.shutdownNow();
+            ClarifyStreamBridge.clear(session.id());
+        }
+    }
+
+    @Test
     void noInteractiveContextFallsBackToFormattedText() {
         ClarifyTool tool = new ClarifyTool(null);
         ToolResult result = tool.execute(

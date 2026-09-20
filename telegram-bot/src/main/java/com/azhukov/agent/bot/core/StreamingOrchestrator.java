@@ -48,13 +48,6 @@ public class StreamingOrchestrator {
     private final BotProperties properties;
     private final MediaDeliveryService mediaDeliveryService;
     private final com.azhukov.agent.bot.client.TelegramClient telegramClient;
-    private com.azhukov.agent.bot.keyboard.ClarificationStateStore clarificationStateStore;
-
-    @org.springframework.beans.factory.annotation.Autowired
-    void setClarificationStateStore(com.azhukov.agent.bot.keyboard.ClarificationStateStore clarificationStateStore) {
-        this.clarificationStateStore = clarificationStateStore;
-    }
-
     private final com.azhukov.agent.bot.session.BotSessionStore sessionStore;
     private final com.azhukov.agent.bot.keyboard.ClarifyInteractionRenderer clarificationInteraction;
 
@@ -247,8 +240,11 @@ public class StreamingOrchestrator {
                         String toolDisplay = ToolEmojiMap.formatToolCall(toolName, toolArgs);
                         bubble.appendLine(chatId, toolDisplay);
                     }
-                    if ("clarify".equals(toolName) && clarificationStateStore != null) {
-                        clarificationStateStore.present(chatId, messageThreadId, toolArgs, telegramClient);
+                    // The backend blocking-clarify SSE event is the only interactive
+                    // renderer. tool_start remains progress-only; otherwise each question
+                    // is sent twice (the detached cq keyboard plus the bound clfy keyboard).
+                    if ("clarify".equals(toolName)) {
+                        log.debug("Clarify tool_start rendered as progress only for chat {}", chatId);
                     }
                 },
                 // toolResultConsumer — called when backend emits tool_result event.

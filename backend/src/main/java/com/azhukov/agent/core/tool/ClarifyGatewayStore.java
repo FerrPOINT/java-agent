@@ -26,6 +26,7 @@ public class ClarifyGatewayStore {
     public record PendingClarify(
         String clarifyId,
         String sessionKey,
+        long sequence,
         String question,
         List<String> choices,
         boolean multiSelect,
@@ -41,6 +42,8 @@ public class ClarifyGatewayStore {
 
     public static final long DEFAULT_TIMEOUT_SECONDS = 3600;
 
+    /** Monotonic order makes typed answers bind to the first visible batch question. */
+    private final java.util.concurrent.atomic.AtomicLong nextSequence = new java.util.concurrent.atomic.AtomicLong();
     private final Map<String, PendingClarify> entries = new ConcurrentHashMap<>();
     private final Map<String, Map<String, PendingClarify>> sessionIndex = new ConcurrentHashMap<>();
 
@@ -48,7 +51,7 @@ public class ClarifyGatewayStore {
     public PendingClarify register(String sessionKey, String question, List<String> choices, boolean multiSelect) {
         String id = UUID.randomUUID().toString();
         PendingClarify entry = new PendingClarify(
-            id, sessionKey, question,
+            id, sessionKey, nextSequence.incrementAndGet(), question,
             choices == null ? List.of() : List.copyOf(choices),
             multiSelect && choices != null && !choices.isEmpty(),
             new CompletableFuture<>());
@@ -98,7 +101,7 @@ public class ClarifyGatewayStore {
         return accepted;
     }
 
-    /** Oldest pending entry for the session (any kind) — typed replies resolve it rather than queue a new turn. */
+    /** Oldest pending entry for the session, matching the order prompts were rendered. */
     public PendingClarify pendingForSession(String sessionKey) {
         Map<String, PendingClarify> index = sessionIndex.get(sessionKey);
         if (index == null) {
@@ -108,7 +111,9 @@ public class ClarifyGatewayStore {
         // earliest-created entry (UUIDs carry no order, compare by registration
         // sequence via the future's internal ordering — fall back to any entry:
         // sessions almost always have exactly one pending clarify).
-        return index.values().stream().findFirst().orElse(null);
+        return index.values().stream()
+            .min(java.util.Comparator.comparingLong(PendingClarify::sequence))
+            .orElse(null);
     }
 
     /** Drop every pending entry for a session (/new, interrupt, shutdown). */

@@ -105,19 +105,19 @@ public class ClarifyTool implements ToolHandler {
             }
         }
         ClarifyStreamBridge.Sender sender = ClarifyStreamBridge.sender(session == null ? null : session.id());
-        // One SSE prompt per batch (adapter renders all questions on one card);
-        // answers resolve sequentially: single-choice entries answer in order,
-        // open-ended entries capture the typed message.
-        StringBuilder promptText = new StringBuilder();
+        // A batch needs one bound interaction per pending question. Sending a
+        // textual bundle leaves choices inert and makes a typed reply ambiguous.
         List<com.azhukov.agent.core.tool.ClarifyGatewayStore.PendingClarify> entries = new ArrayList<>();
-        for (int i = 0; i < normalized.size(); i++) {
-            NormalizedQuestion q = normalized.get(i);
+        for (NormalizedQuestion q : normalized) {
             List<String> shown = markRecommendedPublic(q.choices());
-            promptText.append(i > 0 ? "\n\n" : "").append("Question ").append(i + 1).append(":\n")
-                .append(formatQuestion(q.question(), shown, q.multiSelect()));
-            entries.add(clarifyStore.register(sessionKey(session) + ":q" + i, q.question(), shown, q.multiSelect()));
+            entries.add(clarifyStore.register(sessionKey(session), q.question(), shown, q.multiSelect()));
         }
-        sender.sendClarifyPrompt(batchPromptPayload(sessionKey(session), promptText.toString()));
+        for (int i = 0; i < entries.size(); i++) {
+            NormalizedQuestion q = normalized.get(i);
+            com.azhukov.agent.core.tool.ClarifyGatewayStore.PendingClarify entry = entries.get(i);
+            sender.sendClarifyPrompt(singlePromptPayload(entry.clarifyId(), q.question(),
+                markRecommendedPublic(q.choices()), q.multiSelect()));
+        }
         com.fasterxml.jackson.databind.node.ArrayNode responses = MAPPER.createArrayNode();
         boolean timedOut = false;
         for (int i = 0; i < entries.size(); i++) {
