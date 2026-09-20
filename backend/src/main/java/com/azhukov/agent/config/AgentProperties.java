@@ -485,12 +485,19 @@ public class AgentProperties {
         private final List<String> alwaysRequireApprovalTools = new ArrayList<>();
         private final List<String> sensitiveEnvVarPatterns = new ArrayList<>();
         private final List<String> allowedPaths = new ArrayList<>();
+        /**
+         * Guard homes for the home-scoped credential denylist (Hermes
+         * _guard_homes parity). Empty = derive from user.home + ~/.hermes at
+         * call time; set explicitly in tests to make the scope deterministic.
+         */
+        private final List<String> guardHomePaths = new ArrayList<>();
         private final List<String> blockedCommands = new ArrayList<>();
         private final List<String> blockedUrlHosts = new ArrayList<>();
         private final List<String> secretPatterns = new ArrayList<>();
 
         public void setAlwaysRequireApprovalTools(List<String> tools) { this.alwaysRequireApprovalTools.clear(); this.alwaysRequireApprovalTools.addAll(tools); }
         public void setAllowedPaths(List<String> allowedPaths) { this.allowedPaths.clear(); this.allowedPaths.addAll(allowedPaths); }
+        public void setGuardHomePaths(List<String> guardHomePaths) { this.guardHomePaths.clear(); this.guardHomePaths.addAll(guardHomePaths); }
         public void setBlockedCommands(List<String> blockedCommands) { this.blockedCommands.clear(); this.blockedCommands.addAll(blockedCommands); }
         public void setBlockedUrlHosts(List<String> blockedUrlHosts) { this.blockedUrlHosts.clear(); this.blockedUrlHosts.addAll(blockedUrlHosts); }
         public void setSecretPatterns(List<String> secretPatterns) { this.secretPatterns.clear(); this.secretPatterns.addAll(secretPatterns); }

@@ -697,8 +697,8 @@ public class TerminalTool implements ToolHandler {
         @ToolParam(description = "With background=true: run in pseudo-terminal for interactive CLIs.", required = false) boolean pty,
         @ToolParam(description = "Working directory for this command.", required = false) String workdir,
         @JsonProperty("notify") @ToolParam(description = "With background=true: true notifies on exit, or a list of strings notifies on output pattern match.", required = false) Object notifyValue,
-        @JsonProperty("notify_on_complete") @JsonAlias("notify-on-complete") @ToolParam(description = "Get notified when the process exits.", required = false) boolean notifyOnComplete,
-        @JsonProperty("watch_patterns") @JsonAlias("watch-patterns") @ToolParam(description = "Strings to watch for in background output.", required = false) List<String> watchPatterns) {
+        @JsonProperty("notify_on_complete") @JsonAlias({"notify-on-complete", "notifyOnComplete"}) @ToolParam(description = "Get notified when the process exits.", required = false) boolean notifyOnComplete,
+        @JsonProperty("watch_patterns") @JsonAlias({"watch-patterns", "watchPatterns"}) @ToolParam(description = "Strings to watch for in background output.", required = false) List<String> watchPatterns) {
         TerminalArgs {
             if (command == null) command = "";
             if (watchPatterns == null) watchPatterns = List.of();

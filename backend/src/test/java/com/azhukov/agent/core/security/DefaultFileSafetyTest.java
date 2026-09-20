@@ -31,6 +31,7 @@ class DefaultFileSafetyTest {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setFileSafetyEnabled(true);
         properties.getSecurity().setAllowedPaths(List.of("/tmp/agent-work"));
+        properties.getSecurity().setGuardHomePaths(List.of("/tmp/agent-work"));
         DefaultFileSafety safety = new DefaultFileSafety(properties);
         assertThat(safety.isPathAllowed(Paths.get("/tmp/agent-work/file.txt"))).isTrue();
         assertThat(safety.isPathAllowed(Paths.get("/tmp/agent-work/subdir/file.txt"))).isTrue();
@@ -41,6 +42,7 @@ class DefaultFileSafetyTest {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setFileSafetyEnabled(true);
         properties.getSecurity().setAllowedPaths(List.of("/tmp/agent-work"));
+        properties.getSecurity().setGuardHomePaths(List.of("/tmp/agent-work"));
         DefaultFileSafety safety = new DefaultFileSafety(properties);
         assertThat(safety.isPathAllowed(Paths.get("/etc/passwd"))).isFalse();
         assertThat(safety.isPathAllowed(Paths.get("/tmp/other/file.txt"))).isFalse();
@@ -79,6 +81,7 @@ class DefaultFileSafetyTest {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setFileSafetyEnabled(true);
         properties.getSecurity().setAllowedPaths(List.of("/tmp/agent-work"));
+        properties.getSecurity().setGuardHomePaths(List.of("/tmp/agent-work"));
         DefaultFileSafety safety = new DefaultFileSafety(properties);
 
         // /tmp/agent-work/../../etc/passwd normalizes to /etc/passwd → blocked
@@ -90,6 +93,7 @@ class DefaultFileSafetyTest {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setFileSafetyEnabled(true);
         properties.getSecurity().setAllowedPaths(List.of("/tmp/agent-work"));
+        properties.getSecurity().setGuardHomePaths(List.of("/tmp/agent-work"));
         DefaultFileSafety safety = new DefaultFileSafety(properties);
 
         // Relative path resolves to CWD/../../etc/passwd — outside allowed base
@@ -101,6 +105,7 @@ class DefaultFileSafetyTest {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setFileSafetyEnabled(true);
         properties.getSecurity().setAllowedPaths(List.of("/tmp/agent-work"));
+        properties.getSecurity().setGuardHomePaths(List.of("/tmp/agent-work"));
         DefaultFileSafety safety = new DefaultFileSafety(properties);
 
         assertThat(safety.isPathAllowed(Paths.get("/tmp/agent-work/../agent-work/../etc/passwd"))).isFalse();
@@ -111,6 +116,7 @@ class DefaultFileSafetyTest {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setFileSafetyEnabled(true);
         properties.getSecurity().setAllowedPaths(List.of("/tmp/agent-work"));
+        properties.getSecurity().setGuardHomePaths(List.of("/tmp/agent-work"));
         DefaultFileSafety safety = new DefaultFileSafety(properties);
 
         // /tmp/agent-work/sub/../file.txt normalizes to /tmp/agent-work/file.txt → allowed
@@ -124,6 +130,7 @@ class DefaultFileSafetyTest {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setFileSafetyEnabled(true);
         properties.getSecurity().setAllowedPaths(List.of("/tmp/agent-work"));
+        properties.getSecurity().setGuardHomePaths(List.of("/tmp/agent-work"));
         DefaultFileSafety safety = new DefaultFileSafety(properties);
 
         // .ssh/id_rsa inside allowed base is now BLOCKED by denylist
@@ -135,6 +142,7 @@ class DefaultFileSafetyTest {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setFileSafetyEnabled(true);
         properties.getSecurity().setAllowedPaths(List.of("/tmp/agent-work"));
+        properties.getSecurity().setGuardHomePaths(List.of("/tmp/agent-work"));
         DefaultFileSafety safety = new DefaultFileSafety(properties);
 
         // Blocked because outside allowed base AND because of .ssh denylist
@@ -146,6 +154,7 @@ class DefaultFileSafetyTest {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setFileSafetyEnabled(true);
         properties.getSecurity().setAllowedPaths(List.of("/tmp/agent-work"));
+        properties.getSecurity().setGuardHomePaths(List.of("/tmp/agent-work"));
         DefaultFileSafety safety = new DefaultFileSafety(properties);
 
         assertThat(safety.isPathAllowed(Paths.get("/tmp/agent-work/.env"))).isFalse();
@@ -156,6 +165,7 @@ class DefaultFileSafetyTest {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setFileSafetyEnabled(true);
         properties.getSecurity().setAllowedPaths(List.of("/tmp/agent-work"));
+        properties.getSecurity().setGuardHomePaths(List.of("/tmp/agent-work"));
         DefaultFileSafety safety = new DefaultFileSafety(properties);
 
         assertThat(safety.isPathAllowed(Paths.get("/tmp/agent-work/subdir/.env"))).isFalse();
@@ -166,6 +176,7 @@ class DefaultFileSafetyTest {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setFileSafetyEnabled(true);
         properties.getSecurity().setAllowedPaths(List.of("/tmp/agent-work"));
+        properties.getSecurity().setGuardHomePaths(List.of("/tmp/agent-work"));
         DefaultFileSafety safety = new DefaultFileSafety(properties);
 
         assertThat(safety.isPathAllowed(Paths.get("/tmp/agent-work/.aws/credentials"))).isFalse();
@@ -176,6 +187,7 @@ class DefaultFileSafetyTest {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setFileSafetyEnabled(true);
         properties.getSecurity().setAllowedPaths(List.of("/tmp/agent-work"));
+        properties.getSecurity().setGuardHomePaths(List.of("/tmp/agent-work"));
         DefaultFileSafety safety = new DefaultFileSafety(properties);
 
         // .git/config is NOT in the denylist — still allowed
@@ -187,6 +199,7 @@ class DefaultFileSafetyTest {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setFileSafetyEnabled(true);
         properties.getSecurity().setAllowedPaths(List.of("/tmp/agent-work"));
+        properties.getSecurity().setGuardHomePaths(List.of("/tmp/agent-work"));
         DefaultFileSafety safety = new DefaultFileSafety(properties);
 
         // private_key.pem is NOT in the denylist — still allowed
@@ -198,6 +211,7 @@ class DefaultFileSafetyTest {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setFileSafetyEnabled(true);
         properties.getSecurity().setAllowedPaths(List.of("/tmp/agent-work"));
+        properties.getSecurity().setGuardHomePaths(List.of("/tmp/agent-work"));
         DefaultFileSafety safety = new DefaultFileSafety(properties);
 
         assertThat(safety.isPathAllowed(Paths.get("/tmp/agent-work/.gnupg/secring.gpg"))).isFalse();
@@ -208,6 +222,7 @@ class DefaultFileSafetyTest {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setFileSafetyEnabled(true);
         properties.getSecurity().setAllowedPaths(List.of("/tmp/agent-work"));
+        properties.getSecurity().setGuardHomePaths(List.of("/tmp/agent-work"));
         DefaultFileSafety safety = new DefaultFileSafety(properties);
 
         assertThat(safety.isPathAllowed(Paths.get("/tmp/agent-work/.kube/config"))).isFalse();
@@ -218,6 +233,7 @@ class DefaultFileSafetyTest {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setFileSafetyEnabled(true);
         properties.getSecurity().setAllowedPaths(List.of("/tmp/agent-work"));
+        properties.getSecurity().setGuardHomePaths(List.of("/tmp/agent-work"));
         DefaultFileSafety safety = new DefaultFileSafety(properties);
 
         assertThat(safety.isPathAllowed(Paths.get("/tmp/agent-work/.docker/config.json"))).isFalse();
@@ -228,6 +244,7 @@ class DefaultFileSafetyTest {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setFileSafetyEnabled(true);
         properties.getSecurity().setAllowedPaths(List.of("/tmp/agent-work"));
+        properties.getSecurity().setGuardHomePaths(List.of("/tmp/agent-work"));
         DefaultFileSafety safety = new DefaultFileSafety(properties);
 
         assertThat(safety.isPathAllowed(Paths.get("/tmp/agent-work/.netrc"))).isFalse();
@@ -238,6 +255,7 @@ class DefaultFileSafetyTest {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setFileSafetyEnabled(true);
         properties.getSecurity().setAllowedPaths(List.of("/tmp/agent-work"));
+        properties.getSecurity().setGuardHomePaths(List.of("/tmp/agent-work"));
         DefaultFileSafety safety = new DefaultFileSafety(properties);
 
         assertThat(safety.isPathAllowed(Paths.get("/tmp/agent-work/.pgpass"))).isFalse();
@@ -276,6 +294,64 @@ class DefaultFileSafetyTest {
     }
 
     // ─── Read blocking tests (NEW: isReadBlocked) ───
+
+    // ─── Hermes parity: project files stay writable, home credentials do not ───
+
+    @Test
+    void hermesParity_projectEnvWrite_isAllowed() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setFileSafetyEnabled(true);
+        // No allowedPaths restriction and no guard home covers /opt/dev —
+        // a PROJECT .env is writable (Hermes scopes the .env write-deny to
+        // guard homes; reading it stays blocked)
+        DefaultFileSafety safety = new DefaultFileSafety(properties);
+        assertThat(safety.isWriteAllowed(Paths.get("/opt/dev/myproject/.env"))).isTrue();
+    }
+
+    @Test
+    void hermesParity_projectConfigJsonAndAuthJsonWrite_isAllowed() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setFileSafetyEnabled(true);
+        DefaultFileSafety safety = new DefaultFileSafety(properties);
+        // Upstream #45947 freed control files (auth.json, config.json) from
+        // the write denylist — read-denied only
+        assertThat(safety.isWriteAllowed(Paths.get("/opt/dev/myproject/config.json"))).isTrue();
+        assertThat(safety.isWriteAllowed(Paths.get("/opt/dev/myproject/auth.json"))).isTrue();
+    }
+
+    @Test
+    void hermesParity_projectDotSshRead_isAllowed() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setFileSafetyEnabled(true);
+        DefaultFileSafety safety = new DefaultFileSafety(properties);
+        // A project directory named .ssh must stay readable (Hermes blocks
+        // only ~/.ssh via home prefix guards, not a global segment ban)
+        assertThat(safety.isReadBlocked(Paths.get("/opt/dev/myproject/.ssh/known_hosts"))).isFalse();
+    }
+
+    @Test
+    void hermesParity_guardHomeEnvWrite_isBlocked() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setFileSafetyEnabled(true);
+        properties.getSecurity().setGuardHomePaths(List.of("/home/testuser"));
+        DefaultFileSafety safety = new DefaultFileSafety(properties);
+        assertThat(safety.isWriteAllowed(Paths.get("/home/testuser/.env"))).isFalse();
+        assertThat(safety.isWriteAllowed(Paths.get("/home/testuser/.pgpass"))).isFalse();
+        assertThat(safety.isWriteAllowed(Paths.get("/home/testuser/.ssh/authorized_keys"))).isFalse();
+        assertThat(safety.isWriteAllowed(Paths.get("/home/testuser/.hermes/.env"))).isFalse();
+    }
+
+    @Test
+    void hermesParity_agentHomeCredentialStores_blockedEverywhereUnderAgentHome() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setFileSafetyEnabled(true);
+        properties.getSecurity().setGuardHomePaths(List.of("/home/testuser"));
+        DefaultFileSafety safety = new DefaultFileSafety(properties);
+        // auth.json is deliberately FREED (upstream #45947: control files stay
+        // writable, read-denied); OAuth caches stay denied under the agent home
+        assertThat(safety.isWriteAllowed(Paths.get("/home/testuser/.hermes/auth.json"))).isTrue();
+        assertThat(safety.isWriteAllowed(Paths.get("/home/testuser/.hermes/.anthropic_oauth.json"))).isFalse();
+    }
 
     @Test
     void readBlock_envFile_isBlocked() {
@@ -416,6 +492,7 @@ class DefaultFileSafetyTest {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setFileSafetyEnabled(true);
         properties.getSecurity().setAllowedPaths(List.of("/tmp/agent-work"));
+        properties.getSecurity().setGuardHomePaths(List.of("/tmp/agent-work"));
         DefaultFileSafety safety = new DefaultFileSafety(properties);
 
         // FIXED: null path returns false instead of throwing NPE
@@ -427,6 +504,7 @@ class DefaultFileSafetyTest {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setFileSafetyEnabled(true);
         properties.getSecurity().setAllowedPaths(List.of("/tmp/agent-work"));
+        properties.getSecurity().setGuardHomePaths(List.of("/tmp/agent-work"));
         DefaultFileSafety safety = new DefaultFileSafety(properties);
 
         // Empty path resolves to CWD (current working directory), likely outside allowed base
@@ -465,6 +543,7 @@ class DefaultFileSafetyTest {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setFileSafetyEnabled(true);
         properties.getSecurity().setAllowedPaths(List.of("/tmp/agent-work"));
+        properties.getSecurity().setGuardHomePaths(List.of("/tmp/agent-work"));
         DefaultFileSafety safety = new DefaultFileSafety(properties);
 
         assertThat(safety.isPathAllowed(Paths.get("/tmp/agent-work"))).isTrue();
@@ -477,6 +556,7 @@ class DefaultFileSafetyTest {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setFileSafetyEnabled(true);
         properties.getSecurity().setAllowedPaths(List.of("/tmp/agent-work"));
+        properties.getSecurity().setGuardHomePaths(List.of("/tmp/agent-work"));
         DefaultFileSafety safety = new DefaultFileSafety(properties);
 
         // /tmp/agent-work-evil should NOT be allowed — startsWith on Path handles this correctly
