@@ -129,10 +129,10 @@ Hermes upstream sync (13–15.09): five parity fixes from the upstream digest.
 
 ## [Unreleased]
 
-
 ### Added
 
 - Coverage ratchet восстановлен новыми тестами: pending-review endpoint (все ветки pending-release), PatchTool fuzzy-стратегии (8 веток + guard-бранчи), CodingWorkspaceSnapshot (манифесты/verify-команды/package managers), Anthropic cache_control breakpoints (4 точки, TTL, list-content) — backend LINE 79.15% >= baseline без ослабления стандарта.
+
 ### Fixed
 
 - Case-insensitive LENGTH-детекция re-arms retry для усечённых tool-call'ов; actionable truncation error.
