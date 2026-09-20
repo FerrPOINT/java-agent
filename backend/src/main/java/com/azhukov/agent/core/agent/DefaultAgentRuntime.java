@@ -723,7 +723,8 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     truncatedToolCallRetries);
                 // Close the interrupted sequence as one assistant batch so
                 // every recovery tool result still has its owning call on replay.
-                turnMessages.add(Message.assistantWithToolCalls(response.content(), response.toolCalls(), turnIndex));
+                turnMessages.add(Message.assistantWithToolCalls(response.content(), response.toolCalls(), turnIndex,
+                    response.reasoning()));
                 for (ToolCall tc : response.toolCalls()) {
                     turnMessages.add(Message.toolResult(tc.pairingId(),
                         "[Truncated tool call — arguments were incomplete after "
@@ -941,7 +942,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     return new TurnResult(turnMessages, true, "(empty)");
                 }
                 lastResponseHadToolCalls = false; // clean text round — plain backoff next time
-                turnMessages.add(Message.assistant(visibleContent, turnIndex));
+                turnMessages.add(Message.assistant(visibleContent, turnIndex, response.reasoning()));
                 // P1-5: Persist the final assistant message immediately
                 if (midTurnPersistenceCallback != null) {
                     // M6: Only advance cursor if persistence succeeded
@@ -1029,9 +1030,10 @@ public class DefaultAgentRuntime implements AgentRuntime {
             // Preserve commentary text in the assistant message alongside tool calls
             // (built from the UNIQUIFIED calls so persistence matches execution)
             if (response.hasContent() && response.hasToolCalls()) {
-                turnMessages.add(Message.assistantWithToolCalls(response.content(), toolCalls, turnIndex));
+                turnMessages.add(Message.assistantWithToolCalls(response.content(), toolCalls, turnIndex,
+                    response.reasoning()));
             } else if (response.hasToolCalls()) {
-                turnMessages.add(Message.assistantToolCalls(toolCalls, turnIndex));
+                turnMessages.add(Message.assistantToolCalls(toolCalls, turnIndex, response.reasoning()));
             }
 
             // P1-5: Persist the assistant message (with tool calls) immediately.

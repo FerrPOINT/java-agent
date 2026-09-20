@@ -339,7 +339,7 @@ public final class TurnExecutorUtils {
         return context.stream().map(m -> {
             if (m.imageCount() == null || m.imageCount() == 0) return m;
             return new Message(m.role(), m.content(), m.toolCall(), m.toolCalls(),
-                m.toolCallId(), m.turnIndex(), 0);
+                m.toolCallId(), m.turnIndex(), 0, m.createdAt(), m.reasoning());
         }).toList();
     }
 
@@ -365,7 +365,7 @@ public final class TurnExecutorUtils {
         return context.stream().map(m -> {
             if (m.content() != null && m.content().startsWith("data:")) {
                 return new Message(m.role(), "[multimodal content stripped]", m.toolCall(),
-                    m.toolCalls(), m.toolCallId(), m.turnIndex(), m.imageCount());
+                    m.toolCalls(), m.toolCallId(), m.turnIndex(), m.imageCount(), m.createdAt(), m.reasoning());
             }
             return m;
         }).toList();

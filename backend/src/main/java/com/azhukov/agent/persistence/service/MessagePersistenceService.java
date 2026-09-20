@@ -59,7 +59,7 @@ public class MessagePersistenceService {
                         ? msg.toolCalls()
                         : msg.toolCall() == null ? List.of() : List.of(msg.toolCall());
                     if ((msg.content() != null && !msg.content().isBlank()) || !calls.isEmpty()) {
-                        saveAssistantMessage(session.id(), msg.content(), calls,
+                        saveAssistantMessage(session.id(), msg.content(), calls, msg.reasoning(),
                             msg.turnIndex() != null ? msg.turnIndex() : 0);
                     }
                 } else if (msg.role() == Role.TOOL) {
@@ -124,7 +124,8 @@ private String resolveToolName(List<Message> messages, String toolCallId) {
         return null;
     }
 
-    private void saveAssistantMessage(UUID sessionId, String content, List<ToolCall> calls, int turnIndex) {
+    private void saveAssistantMessage(UUID sessionId, String content, List<ToolCall> calls, String reasoning,
+                                      int turnIndex) {
         if (!sessionRepository.existsById(sessionId)) {
             log.debug("saveAssistantMessage skipped: session {} no longer exists", sessionId);
             return;
@@ -133,6 +134,7 @@ private String resolveToolName(List<Message> messages, String toolCallId) {
         entity.setSessionId(sessionId);
         entity.setRole(Role.ASSISTANT.name().toLowerCase());
         entity.setContent(content != null ? content : "");
+        entity.setReasoning(reasoning);
         entity.setTurnIndex(turnIndex);
         entity.setCreatedAt(Instant.now());
         entity.setActive(true);

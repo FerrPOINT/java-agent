@@ -940,7 +940,7 @@ public class DefaultContextCompressor implements ContextCompressor {
                 }
             }
             if (modified) {
-                result.add(Message.assistantWithToolCalls(m.content(), truncated, m.turnIndex()));
+                result.add(Message.assistantWithToolCalls(m.content(), truncated, m.turnIndex(), m.reasoning()));
             } else {
                 result.add(m);
             }
@@ -1043,7 +1043,8 @@ public class DefaultContextCompressor implements ContextCompressor {
                 }
             }
             if (deduped.size() != msg.toolCalls().size()) {
-                messages.set(m, Message.assistantToolCalls(deduped, msg.turnIndex()));
+                messages.set(m, Message.assistantWithToolCalls(msg.content(), deduped, msg.turnIndex(),
+                    msg.reasoning()));
                 log.debug("Compression sanitizer: dropped {} duplicate tool_call alias(es)",
                     msg.toolCalls().size() - deduped.size());
             }

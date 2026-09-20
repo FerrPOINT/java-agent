@@ -99,6 +99,20 @@ class MidTurnPersistenceServiceTest {
     }
 
     @Test
+    void persistNewMessages_persistsAssistantReasoningForReplay() {
+        stubTransaction();
+        UUID sessionId = UUID.randomUUID();
+        List<Message> messages = List.of(Message.assistant("answer", 1, "provider reasoning"));
+
+        service.persistNewMessages(sessionId, messages, 0);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<java.util.List<MessageEntity>> captor = ArgumentCaptor.forClass(java.util.List.class);
+        verify(messageRepository).saveAll(captor.capture());
+        assertThat(captor.getValue().get(0).getReasoning()).isEqualTo("provider reasoning");
+    }
+
+    @Test
     void persistNewMessages_skipsSystemAndDeveloperMessages() {
         stubTransaction();
         UUID sessionId = UUID.randomUUID();

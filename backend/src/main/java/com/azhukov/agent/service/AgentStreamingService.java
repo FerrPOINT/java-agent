@@ -1324,7 +1324,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
             // Check for interrupt after model response (covers mid-stream cancel)
             if (interruptToken != null && interruptToken.isCancelled(session.id())) {
                 log.info("Streaming turn cancelled by interrupt after model response for session {}", session.id());
-                turnMessages.add(Message.assistant(response.content(), turnIndex));
+                turnMessages.add(Message.assistant(response.content(), turnIndex, response.reasoning()));
                 eventHelper().send(emitter, new StreamEvent("interrupted", null, null, "Turn cancelled by user."), streamCtx);
                 eventHelper().send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                 eventHelper().safeComplete(emitter);
@@ -1352,7 +1352,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                             log.info("Verify-on-stop nudge (streaming) for session {} (attempt {}, {} changed paths)",
                                 session.id(), tracker.getVerificationStopNudges(), changedPaths.size());
                             // Emit the assistant response as interim, then inject nudge
-                            turnMessages.add(Message.assistant(response.content(), turnIndex));
+                            turnMessages.add(Message.assistant(response.content(), turnIndex, response.reasoning()));
                             turnMessages.add(Message.user(nudge));
                             // Persist interim before continuing
                             if (midTurnPersistenceCallback != null) {
@@ -1389,7 +1389,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                         + " попыток продолжения. Попробуйте переформулировать запрос.";
                     eventHelper().send(emitter, new StreamEvent("token", errorMsg, null, null), streamCtx);
                 }
-                turnMessages.add(Message.assistant(response.content(), turnIndex));
+                turnMessages.add(Message.assistant(response.content(), turnIndex, response.reasoning()));
                 // Self-improvement (Hermes parity): surface a PENDING review
                 // summary from an earlier turn's background review as an SSE
                 // "review" event before "done" — the bot renders it as
@@ -1443,7 +1443,8 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     session.id(), response.content().length());
             }
 
-            turnMessages.add(Message.assistantWithToolCalls(response.content(), response.toolCalls(), turnIndex));
+            turnMessages.add(Message.assistantWithToolCalls(response.content(), response.toolCalls(), turnIndex,
+                response.reasoning()));
 
             // P1-5: Persist the assistant message (with tool calls) immediately.
             if (midTurnPersistenceCallback != null) {

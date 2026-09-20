@@ -248,7 +248,8 @@ public class MessageApiClient extends BaseBackendClient {
                                                 metadataHolder[0].contextLength(),
                                                 false,
                                                 metadataHolder[0].memoryUpdated(),
-                                                metadataHolder[0].backendSessionId())
+                                                metadataHolder[0].backendSessionId(),
+                                                metadataHolder[0].lastReasoning())
                                             : new AgentBackendClient.ChatResult(accumulated.toString());
                                     }
                                     if ("metadata".equalsIgnoreCase(type)) {
@@ -366,7 +367,8 @@ public class MessageApiClient extends BaseBackendClient {
                 AgentBackendClient.ChatResult result = metadataHolder[0] != null
                     ? new AgentBackendClient.ChatResult(accumulated.toString(), metadataHolder[0].modelUsed(),
                     metadataHolder[0].contextTokens(), metadataHolder[0].contextLength(), false,
-                    metadataHolder[0].memoryUpdated(), metadataHolder[0].backendSessionId())
+                    metadataHolder[0].memoryUpdated(), metadataHolder[0].backendSessionId(),
+                metadataHolder[0].lastReasoning())
                     : new AgentBackendClient.ChatResult(accumulated.toString());
                 onComplete.accept(result);
                 return result;

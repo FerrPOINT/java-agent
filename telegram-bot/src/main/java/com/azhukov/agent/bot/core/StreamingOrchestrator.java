@@ -445,7 +445,7 @@ public class StreamingOrchestrator {
             // Stream finished but produced no content and no metadata
             return new AgentBackendClient.ChatResult(accumulated.toString(),
                 streamResult.modelUsed(), streamResult.contextTokens(), streamResult.contextLength(), false,
-                streamResult.memoryUpdated(), streamResult.backendSessionId());
+                streamResult.memoryUpdated(), streamResult.backendSessionId(), streamResult.lastReasoning());
         } catch (StreamInterruptedException e) {
             // Already handled in onError callback
             progressBubbles.remove(chatId);
@@ -482,7 +482,8 @@ public class StreamingOrchestrator {
             syncResult.contextLength() != null ? syncResult.contextLength() : streamResult.contextLength(),
             false,
             syncResult.memoryUpdated() || streamResult.memoryUpdated(),
-            syncResult.backendSessionId() != null ? syncResult.backendSessionId() : streamResult.backendSessionId()
+            syncResult.backendSessionId() != null ? syncResult.backendSessionId() : streamResult.backendSessionId(),
+            syncResult.lastReasoning() != null ? syncResult.lastReasoning() : streamResult.lastReasoning()
         );
     }
 

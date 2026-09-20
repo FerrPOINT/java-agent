@@ -88,6 +88,7 @@ class DefaultContextEngineTest {
 
         MessageEntity userMsg = entity("user", "previous user question", 1);
         MessageEntity assistantMsg = entity("assistant", "previous assistant answer", 1);
+        assistantMsg.setReasoning("provider reasoning");
         when(messageRepository.findBySessionIdOrderByCreatedAtDesc(eq(session.id()), anyInt()))
                 .thenReturn(List.of(assistantMsg, userMsg)); // Desc order (newest first)
 
@@ -100,6 +101,7 @@ class DefaultContextEngineTest {
         assertThat(result.get(1).content()).isEqualTo("previous user question");
         assertThat(result.get(2).role()).isEqualTo(Role.ASSISTANT);
         assertThat(result.get(2).content()).isEqualTo("previous assistant answer");
+        assertThat(result.get(2).reasoning()).isEqualTo("provider reasoning");
         assertThat(result.get(3).role()).isEqualTo(Role.USER);
         assertThat(result.get(3).content()).isEqualTo("Current question");
     }

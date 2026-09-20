@@ -68,6 +68,17 @@ class MessagePersistenceServiceTest {
     }
 
     @Test
+    void persistTurn_persistsAssistantReasoningForReplay() {
+        TurnResult result = new TurnResult(List.of(Message.assistant("Hello!", 1, "provider reasoning")), true, null);
+
+        service.persistTurn(SESSION, "Hi", result);
+
+        ArgumentCaptor<MessageEntity> captor = ArgumentCaptor.forClass(MessageEntity.class);
+        verify(repository, times(2)).save(captor.capture());
+        assertThat(captor.getAllValues().get(1).getReasoning()).isEqualTo("provider reasoning");
+    }
+
+    @Test
     void persistTurn_savesToolMessages() {
         TurnResult result = new TurnResult(List.of(
             Message.assistantToolCalls(List.of(new ToolCall("call-1", "read_file", "{\"path\":\"/tmp\"}")), 1),

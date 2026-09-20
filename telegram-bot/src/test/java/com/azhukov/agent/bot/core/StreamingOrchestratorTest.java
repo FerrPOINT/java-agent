@@ -256,7 +256,8 @@ class StreamingOrchestratorTest {
             any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
                 // No tokens, no complete — just metadata
-                return new AgentBackendClient.ChatResult("", "model", 1, 10, false, false, null);
+                return new AgentBackendClient.ChatResult("", "model", 1, 10, false, false, null,
+                    "stream reasoning");
             });
         when(backendClient.chat(anyString(), nullable(String.class), any()))
             .thenReturn(new AgentBackendClient.ChatResult("sync answer", "model", 1, 10, false, false, null));
@@ -267,6 +268,7 @@ class StreamingOrchestratorTest {
         // Should fall back to sync chat
         verify(backendClient).chat(anyString(), nullable(String.class), any());
         assertThat(result.content()).isEqualTo("sync answer");
+        assertThat(result.lastReasoning()).isEqualTo("stream reasoning");
         // finalizeStream NOT called (no streaming message)
         verify(streamEditor, never()).finalizeStream(anyLong(), anyLong(), anyString());
     }

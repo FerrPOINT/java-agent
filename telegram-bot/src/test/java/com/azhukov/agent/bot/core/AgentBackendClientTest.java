@@ -343,6 +343,22 @@ class AgentBackendClientTest {
         assertThat(result.modelUsed()).isEqualTo("gpt-4");
         assertThat(result.contextTokens()).isEqualTo(1000);
         assertThat(result.contextLength()).isEqualTo(8000);
+        assertThat(result.lastReasoning()).isNull();
+    }
+
+    @Test
+    void chatStream_metadataEvent_preservesStructuredReasoning() {
+        when(responseSpec.body(InputStream.class)).thenReturn(sseStream(
+            "data:{\"type\":\"metadata\",\"lastReasoning\":\"provider thought\"}",
+            "data:{\"type\":\"token\",\"token\":\"Answer\"}",
+            "data:{\"type\":\"done\"}"
+        ));
+
+        AgentBackendClient.ChatResult result = client.chatStream("Hi", "s1",
+            t -> {}, t -> {}, (n, r) -> {}, r -> {}, e -> {});
+
+        assertThat(result.content()).isEqualTo("Answer");
+        assertThat(result.lastReasoning()).isEqualTo("provider thought");
     }
 
     @Test

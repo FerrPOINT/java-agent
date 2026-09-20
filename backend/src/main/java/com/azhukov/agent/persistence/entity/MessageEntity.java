@@ -28,6 +28,9 @@ public class MessageEntity {
     private String content;
 
     @Column(columnDefinition = "TEXT")
+    private String reasoning;
+
+    @Column(columnDefinition = "TEXT")
     private String toolCallId;
 
     private String toolCallName;

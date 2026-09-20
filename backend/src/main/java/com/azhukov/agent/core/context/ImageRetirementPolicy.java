@@ -52,7 +52,7 @@ public final class ImageRetirementPolicy {
             + (count > 0 ? " " + count + " image" + (count > 1 ? "s" : "") : "")
             + (summary.isBlank() ? "" : " " + trimTo(summary, 200));
         return new Message(m.role(), placeholder, m.toolCall(), m.toolCalls(),
-            m.toolCallId(), m.turnIndex(), 0, m.createdAt());
+            m.toolCallId(), m.turnIndex(), 0, m.createdAt(), m.reasoning());
     }
 
     /**

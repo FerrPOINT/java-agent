@@ -115,7 +115,23 @@ class LangChain4jModelClientExtraTest {
         verify(chatModel).chat(request.capture());
         AiMessage replayedAssistant = (AiMessage) request.getValue().messages().get(1);
         assertThat(replayedAssistant.text()).isEqualTo("calling tool");
+        assertThat(replayedAssistant.thinking()).isNull();
         assertThat(replayedAssistant.toolExecutionRequests()).hasSize(1);
+    }
+
+    @Test
+    void completeReplaysAssistantReasoning() {
+        properties.getModel().setModelName("gpt-4o");
+        LangChain4jModelClient client = client();
+        when(chatModel.chat(any(ChatRequest.class))).thenReturn(lcResponse("ok"));
+
+        client.complete(List.of(Message.user("hi"), Message.assistant("answer", 1, "opaque reasoning")), List.of());
+
+        ArgumentCaptor<ChatRequest> request = ArgumentCaptor.forClass(ChatRequest.class);
+        verify(chatModel).chat(request.capture());
+        AiMessage replayedAssistant = (AiMessage) request.getValue().messages().get(1);
+        assertThat(replayedAssistant.text()).isEqualTo("answer");
+        assertThat(replayedAssistant.thinking()).isEqualTo("opaque reasoning");
     }
 
     @Test

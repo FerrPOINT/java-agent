@@ -666,6 +666,7 @@ public class DefaultContextEngine implements ContextEngine {
          for (MessageEntity e : ascHistory) {
              String role = e.getRole();
              String content = e.getContent() != null ? e.getContent() : "";
+             String reasoning = e.getReasoning();
              int turnIdx = e.getTurnIndex() != null ? e.getTurnIndex() : 0;
              // Hermes parity: SYSTEM/DEVELOPER rows are regenerated each turn by
              // the prompt builder and must never load back as history (the old
@@ -695,7 +696,7 @@ public class DefaultContextEngine implements ContextEngine {
                          }
                      }
                      if (!calls.isEmpty()) {
-                         yield Message.assistantWithToolCalls(content, calls, turnIdx);
+                         yield Message.assistantWithToolCalls(content, calls, turnIdx, reasoning);
                      }
                      // Pre-V35 rows carry only one scalar call. Do not use those
                      // fields when a malformed batch exists: it would recreate
@@ -706,9 +707,9 @@ public class DefaultContextEngine implements ContextEngine {
                          yield Message.assistantWithToolCalls(content,
                              List.of(new com.azhukov.agent.core.model.ToolCall(
                                  e.getToolCallId(), e.getToolCallName(), e.getToolCallArguments())),
-                             turnIdx);
+                             turnIdx, reasoning);
                      }
-                     yield Message.assistant(content, turnIdx);
+                     yield Message.assistant(content, turnIdx, reasoning);
                  }
                  case "tool" -> Message.toolResult(e.getToolCallId(), content, turnIdx);
                  default -> Message.user(content);

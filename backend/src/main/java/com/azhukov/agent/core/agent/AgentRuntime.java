@@ -42,8 +42,8 @@ public interface AgentRuntime {
             return new TurnResult(List.of(), true, null);
         }
         Message assistant = response.hasToolCalls()
-            ? Message.assistantWithToolCalls(response.content(), response.toolCalls(), 1)
-            : Message.assistant(response.content(), 1);
+            ? Message.assistantWithToolCalls(response.content(), response.toolCalls(), 1, response.reasoning())
+            : Message.assistant(response.content(), 1, response.reasoning());
         return new TurnResult(List.of(assistant), true, null);
     }
 

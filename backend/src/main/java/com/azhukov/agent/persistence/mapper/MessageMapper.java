@@ -55,7 +55,7 @@ public interface MessageMapper {
             ? (toolCall == null ? null : List.of(toolCall))
             : persistedToolCalls);
         return new Message(role, entity.getContent(), toolCall, toolCalls, toolCallId,
-            entity.getTurnIndex(), 0, entity.getCreatedAt());
+            entity.getTurnIndex(), 0, entity.getCreatedAt(), entity.getReasoning());
     }
 
     default boolean isTool(String role) {
@@ -75,6 +75,7 @@ public interface MessageMapper {
         MessageEntity entity = new MessageEntity();
         entity.setRole(roleToString(message.role()));
         entity.setContent(message.content());
+        entity.setReasoning(message.role() == Role.ASSISTANT ? message.reasoning() : null);
         entity.setTurnIndex(message.turnIndex() != null ? message.turnIndex() : 0);
         List<ToolCall> calls = message.toolCalls() != null && !message.toolCalls().isEmpty()
             ? message.toolCalls()

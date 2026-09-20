@@ -117,12 +117,12 @@ public class FallbackModelClient implements ModelClient {
                 // Preserve text alongside tool calls — the text is "commentary"
                 String text = aiMessage.text();
                 if (text != null && !text.isBlank()) {
-                    return ChatResponse.textAndToolCalls(text, calls);
+                    return ChatResponse.textAndToolCalls(text, calls).withReasoning(aiMessage.thinking());
                 }
-                return ChatResponse.toolCalls(calls);
+                return ChatResponse.toolCalls(calls).withReasoning(aiMessage.thinking());
             }
 
-            return ChatResponse.text(aiMessage.text() != null ? aiMessage.text() : "");
+            return ChatResponse.text(aiMessage.text() != null ? aiMessage.text() : "").withReasoning(aiMessage.thinking());
         } catch (Exception e) {
             log.warn("FallbackModelClient complete() failed for {}/{}: {}", provider, modelName, e.getMessage());
             throw e;
