@@ -1425,9 +1425,10 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
             if (response.toolCalls() != null && response.toolCalls().size() > 1) {
                 List<ToolCall> fixed = new ArrayList<>(response.toolCalls());
                 if (ToolCallValidator.uniquifyToolCallIds(fixed) > 0) {
-                    response = response.hasContent()
+                    response = (response.hasContent()
                         ? ChatResponse.textAndToolCalls(response.content(), fixed)
-                        : ChatResponse.toolCalls(fixed);
+                        : ChatResponse.toolCalls(fixed))
+                        .withReasoning(response.reasoning());
                 }
             }
 

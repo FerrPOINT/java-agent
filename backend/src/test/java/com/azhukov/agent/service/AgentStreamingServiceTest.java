@@ -282,6 +282,42 @@ class AgentStreamingServiceTest {
     }
 
     @Test
+    void streamTurnPreservesReasoningWhenDuplicateToolCallIdsAreRewritten() throws Exception {
+        ChatRequest request = ChatRequest.simple(SESSION_ID, USER_MESSAGE, null, 10_000L);
+        AtomicInteger calls = new AtomicInteger();
+        AtomicReference<List<Message>> secondRequest = new AtomicReference<>();
+
+        doAnswer(invocation -> {
+            StreamingResponseHandler handler = invocation.getArgument(3);
+            if (calls.incrementAndGet() == 1) {
+                handler.onToolCalls(List.of(
+                    new ToolCall("call-1", "weather", "{\"city\":\"Paris\"}"),
+                    new ToolCall("call-1", "weather", "{\"city\":\"Berlin\"}")
+                ));
+                handler.onComplete("tool_calls", null, "opaque provider reasoning");
+            } else {
+                secondRequest.set(List.copyOf(invocation.getArgument(0)));
+                handler.onToken("Done");
+                handler.onComplete("stop", null, "final reasoning");
+            }
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+        when(toolExecutionService.execute(eq("weather"), any(String.class), any(String.class),
+            any(), any(Session.class), any())).thenReturn(ToolResult.ok("Weather returned"));
+
+        CollectingEmitter emitter = new CollectingEmitter(30_000L);
+        streamingService.streamTurn(request, emitter);
+        emitter.awaitDone();
+
+        assertThat(calls.get()).isEqualTo(2);
+        assertThat(secondRequest.get()).anySatisfy(message -> {
+            assertThat(message.role()).isEqualTo(com.azhukov.agent.core.model.Role.ASSISTANT);
+            assertThat(message.toolCalls()).hasSize(2);
+            assertThat(message.reasoning()).isEqualTo("opaque provider reasoning");
+        });
+    }
+
+    @Test
     void streamTurnEmitsToolCallsAndToolResultEvents() throws Exception {
         ChatRequest request = ChatRequest.simple(SESSION_ID, USER_MESSAGE, null, 10_000L);
         ToolCall toolCall = new ToolCall("call-1", "weather", "{\"city\":\"Paris\"}");
