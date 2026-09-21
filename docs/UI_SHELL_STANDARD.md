@@ -6,10 +6,11 @@ area implementation to standardize today.
 
 If a first-party web console is added, it must adopt the Base [UI Shell
 Standard](https://github.com/FerrPOINT/services-base/blob/main/docs/platform/UI_SHELL_STANDARD.md)
-before page implementation: one left navigation, one global header and a fluid
-right work area. Page-local forms may use a readable constrained column while
-operational lists, session timelines, logs and tool activity use available work
-width. The new console must prove 375, 1440 and 2560 px behavior, active route,
+before page implementation: the shared 264 px/72 px left navigation, 60 px
+header and full-width right work area. It must use only `wide` for operational
+lists, session timelines, logs and tool activity, `reading/form` with a 760 px
+inner form column, or `detail-with-aside` with a 320 px contextual rail. The
+new console must prove 375, 1440 and 2560 px behavior, active route,
 keyboard drawer flow and absence of document-level overflow.
 
 The browser automation tool is not a user-facing console and is outside this
