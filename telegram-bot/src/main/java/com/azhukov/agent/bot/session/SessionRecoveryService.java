@@ -77,20 +77,29 @@ public class SessionRecoveryService {
                 .map(session -> new RecoveredSession(
                         session.getChatId(),
                         session.getLastMessageThreadId(),
-                        session.getBackendSessionId()))
+                        session.getBackendSessionId(),
+                        session.getId()))
                 .toList();
-        for (BotSessionEntity session : pending) {
-            session.setResumePending(false);
-            session.setUpdatedAt(Instant.now());
-            repository.save(session);
-        }
-        log.info("startup: recovered {} resume-pending session(s)", recovered.size());
+        log.info("startup: found {} resume-pending session(s)", recovered.size());
         return recovered;
+    }
+
+    /**
+     * Clear resume-pending only after the recovery notice has reached Telegram.
+     * A failed delivery remains pending for the next restart instead of silently
+     * discarding the interrupted-turn signal.
+     */
+    @Transactional
+    public boolean acknowledgeRecoveredSession(java.util.UUID sessionId) {
+        if (sessionId == null) {
+            return false;
+        }
+        return store.clearResumePending(sessionId);
     }
 
     /** A session recovered at startup, ready for a one-time continuation notice. */
     public record RecoveredSession(String chatId, long messageThreadId,
-                                   java.util.UUID backendSessionId) {
+                                   java.util.UUID backendSessionId, java.util.UUID botSessionId) {
     }
 
     /** The one-time notice text sent to recovered chats after a restart. */

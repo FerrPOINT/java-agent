@@ -78,8 +78,8 @@ class SessionRecoveryServiceTest {
 
         assertThat(recovered).hasSize(1);
         assertThat(recovered.get(0).chatId()).isEqualTo("100");
-        assertThat(pending.isResumePending()).isFalse();
-        verify(repository).save(pending);
+        assertThat(pending.isResumePending()).isTrue();
+        verify(repository, never()).save(any());
     }
 
     @Test
@@ -90,6 +90,23 @@ class SessionRecoveryServiceTest {
 
         assertThat(recovered).isEmpty();
         verify(repository, never()).save(any());
+    }
+
+    @Test
+    void acknowledgesOnlyKnownPendingSessionAfterDelivery() {
+        UUID sessionId = UUID.randomUUID();
+        when(store.clearResumePending(sessionId)).thenReturn(true);
+
+        boolean cleared = recovery.acknowledgeRecoveredSession(sessionId);
+
+        assertThat(cleared).isTrue();
+        verify(store).clearResumePending(sessionId);
+    }
+
+    @Test
+    void doesNotAcknowledgeMissingSessionId() {
+        assertThat(recovery.acknowledgeRecoveredSession(null)).isFalse();
+        verifyNoInteractions(store);
     }
 
     @Test

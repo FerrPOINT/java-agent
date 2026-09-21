@@ -41,6 +41,9 @@ public class SessionRecoveryLifecycle implements ApplicationRunner {
                         null, null, threadId, false);
                 if (sent.isEmpty()) {
                     log.warn("recovery notice not delivered to chat {} (send failed)", session.chatId());
+                } else if (!recoveryService.acknowledgeRecoveredSession(session.botSessionId())) {
+                    log.warn("recovery notice delivered but resume-pending could not be cleared for session {}",
+                        session.botSessionId());
                 }
             } catch (NumberFormatException e) {
                 log.warn("recovery notice skipped: non-numeric chat id {}", session.chatId());
