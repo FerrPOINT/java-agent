@@ -228,6 +228,17 @@ public class GlobalExceptionHandler {
         ));
     }
 
+    /**
+     * A peer may close an SSE response while the agent is still finishing a turn.
+     * The response is already unusable, so attempting to serialize another SSE
+     * error event recurses through this advice and produces a misleading 500.
+     */
+    @ExceptionHandler(org.springframework.web.context.request.async.AsyncRequestNotUsableException.class)
+    public void handleDisconnectedAsyncRequest(
+            org.springframework.web.context.request.async.AsyncRequestNotUsableException ex) {
+        log.debug("Client disconnected from async response: {}", ex.getMessage());
+    }
+
     @ExceptionHandler(Exception.class)
     public Object handleGeneric(Exception ex) {
         log.error("Unhandled exception", ex);
