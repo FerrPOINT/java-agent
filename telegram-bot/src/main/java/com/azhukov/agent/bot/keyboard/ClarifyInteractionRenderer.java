@@ -9,6 +9,7 @@ package com.azhukov.agent.bot.keyboard;
  */
 
 import com.azhukov.agent.bot.client.TelegramClient;
+import com.azhukov.agent.bot.typing.TypingManager;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -37,6 +38,7 @@ public class ClarifyInteractionRenderer {
     private final InlineKeyboardBuilder keyboardBuilder;
     private final RestClient backendRestClient;
     private final TelegramClient telegramClient;
+    private final TypingManager typingManager;
 
     /** chatId -> selected indexes for multi-select prompts (clarifyId-keyed). */
     private final Map<String, java.util.Set<Integer>> multiSelectState = new java.util.concurrent.ConcurrentHashMap<>();
@@ -49,11 +51,13 @@ public class ClarifyInteractionRenderer {
     public ClarifyInteractionRenderer(ObjectMapper objectMapper,
                                       InlineKeyboardBuilder keyboardBuilder,
                                       @Qualifier("backendRestClient") RestClient backendRestClient,
-                                      TelegramClient telegramClient) {
+                                      TelegramClient telegramClient,
+                                      TypingManager typingManager) {
         this.objectMapper = objectMapper;
         this.keyboardBuilder = keyboardBuilder;
         this.backendRestClient = backendRestClient;
         this.telegramClient = telegramClient;
+        this.typingManager = typingManager;
     }
 
     /**
@@ -70,8 +74,11 @@ public class ClarifyInteractionRenderer {
             if (payload.path("batch").asBoolean(false)) {
                 String prompt = payload.path("prompt").asText("");
                 if (!prompt.isBlank()) {
-                    telegramClient.sendMessage(chatId, prompt, null, null,
-                        threadId > 0 ? (int) threadId : null, null, false);
+                    boolean delivered = telegramClient.sendMessage(chatId, prompt, null, null,
+                        threadId > 0 ? (int) threadId : null, null, false).isPresent();
+                    if (delivered) {
+                        typingManager.pauseTypingForClarify(chatId);
+                    }
                 }
                 return;
             }
@@ -89,6 +96,7 @@ public class ClarifyInteractionRenderer {
             Integer topicId = threadId > 0 ? (int) threadId : null;
             boolean delivered = telegramClient.sendMessage(chatId, question, null, null, topicId, markup, false).isPresent();
             if (delivered) {
+                typingManager.pauseTypingForClarify(chatId);
                 log.info("clarify_prompt_rendered chat={} session={} id={} choices={} multiSelect={}",
                     chatId, backendSessionId, clarifyId, choices.size(), multiSelect);
             } else {
@@ -128,6 +136,7 @@ public class ClarifyInteractionRenderer {
                 .reduce((a, b) -> a + "," + b).orElse("");
             boolean resolved = resolveOnBackend(clarifyId, numbers);
             if (resolved) {
+                typingManager.resumeTyping(chatId);
                 cleanup(clarifyId, messageId, chatId);
                 return CallbackResult.complete("Selected");
             }
@@ -157,6 +166,7 @@ public class ClarifyInteractionRenderer {
         }
         boolean resolved = resolveOnBackend(clarifyId, String.valueOf(index + 1));
         if (resolved) {
+            typingManager.resumeTyping(chatId);
             cleanup(clarifyId, messageId, chatId);
             return CallbackResult.complete("Selected");
         }

@@ -485,6 +485,21 @@ class BotMessageProcessorTest {
     }
 
     @Test
+    void resolvedTypedClarifyAnswerResumesTypingWithoutStartingAnotherTurn() {
+        long chatId = 100L;
+        busyHandler.markBusy(chatId);
+        com.azhukov.agent.bot.keyboard.ClarifyTextInterceptor clarifyInterceptor =
+            mock(com.azhukov.agent.bot.keyboard.ClarifyTextInterceptor.class);
+        processor.setClarifyTextInterceptor(clarifyInterceptor);
+        when(clarifyInterceptor.tryResolve(any(), eq("dev"))).thenReturn("resolved");
+
+        processor.accept(textEvent(1, chatId, "dev"));
+
+        verify(typingManager).resumeTyping(chatId);
+        verify(backendClient, never()).chatStream(anyString(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
     void textMessageMarksBusyAndMarksFree() {
         stubStreamingResult("Response", true);
         processor.accept(textEvent(1, 100L, "Hello"));

@@ -112,13 +112,21 @@ public class TypingManager {
             ScheduledFuture<?> future = activeTyping.get(chatId);
             if (future != null) {
                 future.cancel(false);
-                // Re-register a no-op future so putIfAbsent in resumeTyping works correctly
+                // Keep the active entry so resumeTyping can restore the same turn.
                 pausedChats.put(chatId, true);
                 log.debug("Paused typing for chat {}", chatId);
             }
         } finally {
             pauseLock.unlock();
         }
+    }
+
+    /**
+     * Pause typing while the agent waits for an interactive clarification.
+     * The turn remains active, so the callback or typed answer resumes it.
+     */
+    public void pauseTypingForClarify(long chatId) {
+        pauseTyping(chatId);
     }
 
     /**

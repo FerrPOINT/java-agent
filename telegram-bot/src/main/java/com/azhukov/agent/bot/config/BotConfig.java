@@ -73,9 +73,14 @@ public class BotConfig {
 
     @Bean
     public RestClient backendRestClient(BotProperties properties) {
-        // h10: shared factory (timeouts, X-API-Key, tolerant converters) —
-        // same client behaviour as the CLI module.
+        // Short-lived backend operations use the ordinary REST timeout.
         return com.azhukov.agent.shared.http.BackendRestClientFactory.create(
+            properties.getBackendUrl(), properties.getBackendApiKey());
+    }
+
+    @Bean("streamingBackendRestClient")
+    public RestClient streamingBackendRestClient(BotProperties properties) {
+        return com.azhukov.agent.shared.http.BackendRestClientFactory.createStreaming(
             properties.getBackendUrl(), properties.getBackendApiKey());
     }
 

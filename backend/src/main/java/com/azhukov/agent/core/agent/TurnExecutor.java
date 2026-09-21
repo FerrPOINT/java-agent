@@ -685,8 +685,12 @@ public class TurnExecutor {
         default void onToolResult(ToolCall call, ToolResult result, String formatted) {}
     }
 
-    /** One executed tool call, for post-batch budget recording by the caller. */
-    public record ToolExecutionRecord(String toolName, long durationMs, boolean refunded) {}
+    /**
+     * One executed tool call for post-batch accounting. A human wait in
+     * blocking clarify counts as one tool interaction but never as execution
+     * time against the turn's tool-duration limit.
+     */
+    public record ToolExecutionRecord(String toolName, long durationMs, boolean refunded, boolean chargesDurationBudget) {}
 
     /**
      * c2 canonical batch executor. Both the sync loop (DefaultAgentRuntime) and
@@ -851,7 +855,8 @@ public class TurnExecutor {
                     // and must not starve the per-turn budget. Previously this
                     // refund existed ONLY on the streaming path.
                     boolean refunded = allExecuteCode && "execute_code".equals(call.name());
-                    executions.add(new ToolExecutionRecord(call.name(), duration, refunded));
+                    boolean chargesDurationBudget = !"clarify".equals(call.name());
+                    executions.add(new ToolExecutionRecord(call.name(), duration, refunded, chargesDurationBudget));
                     if (events != null) events.onToolResult(call, result, formatted);
                     if (isBrowserInfrastructureFailure(call.name(), result)) {
                         browserUnavailableReason = browserFailureReason(result);
@@ -883,7 +888,7 @@ public class TurnExecutor {
                 ToolCall call = toolCalls.get(i);
                 Message msg = i < toolResults.size() ? toolResults.get(i) : null;
                 executions.add(new ToolExecutionRecord(call.name(), 0,
-                    allExecuteCode && "execute_code".equals(call.name())));
+                    allExecuteCode && "execute_code".equals(call.name()), !"clarify".equals(call.name())));
                 if (events != null && msg != null) {
                     events.onToolResult(call, ToolResult.ok(msg.content() != null ? msg.content() : ""), msg.content());
                 }

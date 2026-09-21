@@ -62,6 +62,17 @@ class TypingManagerPauseResumeTest {
     }
 
     @Test
+    void pauseTypingForClarifyUsesTheSamePausedState() {
+        when(client.sendTyping(anyLong(), any())).thenReturn(true);
+        manager.startTyping(123L);
+
+        manager.pauseTypingForClarify(123L);
+
+        assertThat(manager.isPaused(123L)).isTrue();
+        manager.stopTyping(123L);
+    }
+
+    @Test
     void isPaused_falseBeforePause() {
         when(client.sendTyping(anyLong(), any())).thenReturn(true);
         manager.startTyping(123L);

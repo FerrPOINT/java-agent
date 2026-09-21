@@ -243,9 +243,24 @@ class CallbackQueryHandlerTest {
 
         assertThat(outcome.complete()).isTrue();
         assertThat(outcome.answer()).isEqualTo("Answer to clarification question 'Deploy where?': dev");
-        verify(client).answerCallbackQuery("cq-clarify", "Selected", false);
+        verify(client).answerCallbackQuery("cq-clarify", null, false);
     }
 
+
+    @Test
+    void clarifyCallbackAcknowledgesWithoutSendingSelectedMessage() {
+        UpdateEvent event = callbackEvent("cq-clarify", "clfy:prompt-1:0");
+        ClarifyInteractionRenderer renderer = mock(ClarifyInteractionRenderer.class);
+        CallbackQueryHandler clarifyHandler = new CallbackQueryHandler(client, providerKeyboardBuilder,
+            modelKeyboardBuilder, inlineKeyboardBuilder, sessionStore, properties, authorizationService,
+            backendClient, approvalStateStore, renderer);
+
+        String result = clarifyHandler.handle(event);
+
+        assertThat(result).isNull();
+        verify(renderer).handleCallback(123L, 456L, "prompt-1:0");
+        verify(client).answerCallbackQuery("cq-clarify", "OK", false);
+    }
 
     private UpdateEvent callbackEvent(String callbackQueryId, String callbackData) {
         // Use 17-arg constructor with messageId=456L (same as userId for test simplicity)

@@ -16,6 +16,7 @@ import com.azhukov.agent.bot.formatting.ResponseFilter;
 import com.azhukov.agent.bot.goal.GoalAutoContinueService;
 import com.azhukov.agent.bot.group.GroupMessageFilter;
 import com.azhukov.agent.bot.keyboard.CallbackQueryHandler;
+import com.azhukov.agent.bot.keyboard.ClarifyTextInterceptor;
 import com.azhukov.agent.bot.keyboard.ClarificationStateStore;
 import com.azhukov.agent.bot.media.AgentMediaPaths;
 import com.azhukov.agent.bot.media.InboundMediaHandler;
@@ -78,8 +79,12 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
     private final CommandRegistry commandRegistry;
     private final CallbackQueryHandler callbackQueryHandler;
     private ClarificationStateStore clarificationStateStore;
+    private ClarifyTextInterceptor clarifyTextInterceptor;
+
     @org.springframework.beans.factory.annotation.Autowired
-    private com.azhukov.agent.bot.keyboard.ClarifyTextInterceptor clarifyTextInterceptor;
+    void setClarifyTextInterceptor(ClarifyTextInterceptor clarifyTextInterceptor) {
+        this.clarifyTextInterceptor = clarifyTextInterceptor;
+    }
 
     @org.springframework.beans.factory.annotation.Autowired
     void setClarificationStateStore(ClarificationStateStore clarificationStateStore) {
@@ -317,6 +322,9 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         // active turn owns the per-chat lock; otherwise interrupt mode cannot
         // cancel anything until after that turn has already finished.
         if (busyHandler.isBusy(chatId)) {
+            if (tryResolveTypedClarify(chatId, event)) {
+                return;
+            }
             handleBusyMessage(chatId, event, busyHandler.getEffectiveBusyInputMode(), resolveSession(event));
             return;
         }
@@ -345,6 +353,30 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         } finally {
             lock.unlock();
         }
+    }
+
+    private boolean tryResolveTypedClarify(long chatId, UpdateEvent event) {
+        if (clarifyTextInterceptor == null) {
+            return false;
+        }
+        String messageText = extractMessageText(event);
+        if (messageText == null || messageText.isBlank()) {
+            return false;
+        }
+        String outcome = clarifyTextInterceptor.tryResolve(resolveSession(event), messageText);
+        return handleTypedClarifyOutcome(chatId, outcome);
+    }
+
+    private boolean handleTypedClarifyOutcome(long chatId, String outcome) {
+        if (outcome == null) {
+            return false;
+        }
+        if ("invalid_selection".equals(outcome)) {
+            sendError(chatId, "⚠️ Invalid selection — pick a listed option or type the full label.");
+        } else {
+            typingManager.resumeTyping(chatId);
+        }
+        return true;
     }
 
     private void handleTextOrMediaInternalBody(UpdateEvent event) {
@@ -409,19 +441,10 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         java.util.List<String> artifactIds = extractArtifactIds(messageText);
         messageText = stripArtifactMarkers(messageText);
 
-        // Blocking clarify (Hermes clarify_gateway parity): while a turn is
-        // open and waiting on a clarify prompt, a typed message resolves the
-        // pending entry instead of being rejected/queued as a new turn.
         if (busyHandler.isBusy(chatId) && clarifyTextInterceptor != null
                 && messageText != null && !messageText.isBlank()) {
             String clarifyOutcome = clarifyTextInterceptor.tryResolve(session, messageText);
-            if (clarifyOutcome != null) {
-                // resolved: answer fed into the open turn; ack to the user
-                if (!"invalid_selection".equals(clarifyOutcome)) {
-                    return;
-                }
-                // invalid selection: keep the prompt armed, tell the user
-                sendError(chatId, "⚠️ Invalid selection — pick a listed option or type the full label.");
+            if (handleTypedClarifyOutcome(chatId, clarifyOutcome)) {
                 return;
             }
         }

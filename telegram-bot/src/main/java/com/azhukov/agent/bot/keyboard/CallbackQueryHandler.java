@@ -118,7 +118,11 @@ public class CallbackQueryHandler {
             ? data.substring((ClarificationStateStore.CALLBACK_COMMAND + ":").length()) : "";
         ClarificationStateStore.CallbackOutcome outcome = clarificationStateStore.handleCallback(
             event.chatId(), event.messageId(), value, telegramClient);
-        answer(event.callbackQueryId(), outcome.acknowledgement(), false);
+        if (outcome.complete()) {
+            answer(event.callbackQueryId(), null, false);
+        } else {
+            answer(event.callbackQueryId(), outcome.acknowledgement(), false);
+        }
         return outcome;
     }
 
@@ -136,9 +140,8 @@ public class CallbackQueryHandler {
             // Blocking clarify (Hermes clarify_gateway parity): resolve the
             // backend's pending entry; the open agent turn receives the answer.
             case ClarifyInteractionRenderer.CLARIFY_CALLBACK -> {
-                ClarifyInteractionRenderer.CallbackResult result =
-                    clarifyRenderer.handleCallback(chatId, messageId, value);
-                yield result.acknowledgement();
+                clarifyRenderer.handleCallback(chatId, messageId, value);
+                yield null;
             }
             default -> "Unknown action: " + command;
         };

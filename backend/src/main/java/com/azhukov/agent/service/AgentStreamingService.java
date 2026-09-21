@@ -1565,7 +1565,8 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                 com.azhukov.agent.tools.memory.ClarifyStreamBridge.clear(session.id());
             }
             for (com.azhukov.agent.core.agent.TurnExecutor.ToolExecutionRecord rec : batchResult.executions()) {
-                budget = iterationBudget.recordToolExecution(budget, rec.toolName(), rec.durationMs());
+                budget = iterationBudget.recordToolExecution(
+                    budget, rec.toolName(), rec.chargesDurationBudget() ? rec.durationMs() : 0);
                 if (rec.refunded()) {
                     budget = iterationBudget.refundToolExecution(budget);
                 }

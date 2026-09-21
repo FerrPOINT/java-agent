@@ -34,7 +34,7 @@ public class MessageApiClient extends BaseBackendClient {
     private static final int MAX_CONNECT_RETRIES = 3;
     private static final long[] CONNECT_BACKOFF_MS = {2_000, 4_000, 8_000};
 
-    public MessageApiClient(@Qualifier("backendRestClient") RestClient restClient, ObjectMapper objectMapper) {
+    public MessageApiClient(@Qualifier("streamingBackendRestClient") RestClient restClient, ObjectMapper objectMapper) {
         super(restClient, objectMapper);
     }
 

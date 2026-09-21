@@ -1112,7 +1112,8 @@ public class DefaultAgentRuntime implements AgentRuntime {
             // Post-batch budget accounting (incl. the execute_code refund,
             // previously streaming-only — Hermes conversation_loop.py:7277-7280).
             for (TurnExecutor.ToolExecutionRecord rec : batchResult.executions()) {
-                budget = iterationBudget.recordToolExecution(budget, rec.toolName(), rec.durationMs());
+                budget = iterationBudget.recordToolExecution(
+                    budget, rec.toolName(), rec.chargesDurationBudget() ? rec.durationMs() : 0);
                 if (rec.refunded()) {
                     budget = iterationBudget.refundToolExecution(budget);
                 }

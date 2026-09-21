@@ -62,6 +62,15 @@ class DefaultIterationBudgetTest {
     }
 
     @Test
+    void clarifyDurationDoesNotConsumeTheToolDurationLimit() {
+        props.getBudget().setMaxToolDurationMsPerTurn(5);
+        var snap = budget.recordToolExecution(budget.startTurn(UUID.randomUUID()), "clarify", 0);
+
+        assertFalse(snap.exhausted());
+        assertThat(budget.status(snap).remainingToolDurationMs()).isEqualTo(5);
+    }
+
+    @Test
     void statusReportsToolDurationLimitBeforeExhaustion() {
         props.getBudget().setMaxToolDurationMsPerTurn(10);
         var snap = budget.recordToolExecution(budget.startTurn(UUID.randomUUID()), "slow", 9);

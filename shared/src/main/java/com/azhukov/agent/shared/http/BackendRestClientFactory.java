@@ -36,9 +36,22 @@ public final class BackendRestClientFactory {
      * @param apiKey  optional API key sent as {@code X-API-Key}; null/blank skips the header
      */
     public static RestClient create(String baseUrl, String apiKey) {
+        return create(baseUrl, apiKey, READ_TIMEOUT);
+    }
+
+    /**
+     * Creates a dedicated long-lived client for SSE turns. Blocking clarify can
+     * legitimately wait for a human answer for an hour, so it must not inherit
+     * the ordinary REST request timeout.
+     */
+    public static RestClient createStreaming(String baseUrl, String apiKey) {
+        return create(baseUrl, apiKey, Duration.ofHours(2));
+    }
+
+    private static RestClient create(String baseUrl, String apiKey, Duration readTimeout) {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout((int) CONNECT_TIMEOUT.toMillis());
-        factory.setReadTimeout((int) READ_TIMEOUT.toMillis());
+        factory.setReadTimeout((int) readTimeout.toMillis());
 
         RestClient.Builder builder = RestClient.builder()
             .baseUrl(baseUrl)
