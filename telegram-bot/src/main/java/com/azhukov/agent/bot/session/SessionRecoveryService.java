@@ -39,29 +39,6 @@ public class SessionRecoveryService {
     private final BotSessionStore store;
 
     /**
-     * Mark active sessions as resume-pending during graceful shutdown.
-     *
-     * @return number of sessions newly marked
-     */
-    @Transactional
-    public int markInterruptedOnShutdown() {
-        int marked = 0;
-        for (BotSessionEntity session : repository.findByActiveTrueAndSuspendedFalse()) {
-            if (session.isResumePending()) {
-                continue;
-            }
-            session.setResumePending(true);
-            session.setUpdatedAt(Instant.now());
-            repository.save(session);
-            marked++;
-        }
-        if (marked > 0) {
-            log.info("shutdown: marked {} active session(s) resume-pending", marked);
-        }
-        return marked;
-    }
-
-    /**
      * Recover resume-pending sessions at startup: collect chat ids for the
      * one-time notice and clear the flag transactionally.
      *
