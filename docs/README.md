@@ -130,6 +130,7 @@ Telegram gateway:
 8. Read `08-browser-vision.md` for HTTP examples.
 9. Read `09-builtin-tools.md` for the implemented tool matrix and security defaults.
 10. Read `10-production-readiness.md` for Docker/systemd/health/telegram.
+11. Read `UI_SHELL_STANDARD.md` before designing a first-party web console.
 
 ## Source
 
