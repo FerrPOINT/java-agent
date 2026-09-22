@@ -11,6 +11,7 @@ import org.springframework.web.client.RestClient;
 
 import java.util.Optional;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
@@ -63,6 +64,23 @@ class ClarifyInteractionRendererTest {
             """);
 
         verifyNoInteractions(typingManager);
+    }
+
+    @Test
+    void otherButtonArmsCustomTextOnBackendBeforePromptingForIt() {
+        when(telegramClient.sendMessage(anyLong(), any(), any(), any(), any(), any(), eq(false)))
+            .thenReturn(Optional.of(42L));
+        renderer.present(100L, 0L, "session-1", """
+            {"clarifyId":"prompt-1","question":"Deploy where?","choices":["dev","prod"]}
+            """);
+        server.expect(once(), requestTo("http://backend.test/api/v1/agent/session/session-1/clarify/prompt-1/custom"))
+            .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+            .andRespond(withSuccess("{\"armed\":true}", MediaType.APPLICATION_JSON));
+
+        ClarifyInteractionRenderer.CallbackResult result = renderer.handleCallback(100L, 42L, "prompt-1:other");
+
+        assertThat(result).isEqualTo(new ClarifyInteractionRenderer.CallbackResult("Type your answer", false));
+        server.verify();
     }
 
     @Test

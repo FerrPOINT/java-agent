@@ -1,0 +1,55 @@
+package com.azhukov.agent.bot.keyboard;
+
+import com.azhukov.agent.bot.session.BotSessionEntity;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.client.MockRestServiceServer;
+import org.springframework.web.client.RestClient;
+
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.client.ExpectedCount.once;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.content;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
+
+class ClarifyTextInterceptorTest {
+
+    private MockRestServiceServer server;
+    private ClarifyTextInterceptor interceptor;
+    private BotSessionEntity session;
+
+    @BeforeEach
+    void setUp() {
+        RestClient.Builder builder = RestClient.builder().baseUrl("http://backend.test");
+        server = MockRestServiceServer.bindTo(builder).build();
+        interceptor = new ClarifyTextInterceptor(builder.build(), new ObjectMapper());
+        session = new BotSessionEntity();
+        session.setId(UUID.fromString("550e8400-e29b-41d4-a716-446655440000"));
+    }
+
+    @Test
+    void customTextResolvedByBackendUnblocksTheExistingClarifyTurn() {
+        server.expect(once(), requestTo("http://backend.test/api/v1/agent/session/"
+                + session.getId() + "/clarify/text"))
+            .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+            .andExpect(content().json("{\"text\":\"a bespoke environment\"}"))
+            .andRespond(withSuccess("{\"outcome\":\"resolved\"}", MediaType.APPLICATION_JSON));
+
+        assertThat(interceptor.tryResolve(session, "a bespoke environment")).isEqualTo("resolved");
+        server.verify();
+    }
+
+    @Test
+    void absentPendingClarifyLeavesAnOrdinaryMessageForNormalRouting() {
+        server.expect(once(), requestTo("http://backend.test/api/v1/agent/session/"
+                + session.getId() + "/clarify/text"))
+            .andRespond(withSuccess("{\"outcome\":\"no_pending\"}", MediaType.APPLICATION_JSON));
+
+        assertThat(interceptor.tryResolve(session, "ordinary message")).isNull();
+        server.verify();
+    }
+}

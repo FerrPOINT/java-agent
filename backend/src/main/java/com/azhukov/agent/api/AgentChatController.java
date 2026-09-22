@@ -273,6 +273,18 @@ public class AgentChatController {
             : Map.of("resolved", false, "reason", "expired or already answered");
     }
 
+    @org.springframework.web.bind.annotation.PostMapping(
+        value = "/agent/session/{sessionId}/clarify/{clarifyId}/custom",
+        consumes = "application/json")
+    public Map<String, Object> armClarifyCustomResponse(@PathVariable String sessionId,
+                                                        @PathVariable String clarifyId) {
+        com.azhukov.agent.core.tool.ClarifyGatewayStore store =
+            clarifyStoreProvider() != null ? clarifyStoreProvider().getObject() : null;
+        boolean armed = store != null && store.armCustomResponse(sessionId, clarifyId);
+        log.info("clarify_custom_response_request session={} id={} armed={}", sessionId, clarifyId, armed);
+        return Map.of("armed", armed);
+    }
+
     /**
      * Typed-reply clarification (Hermes attempt_text_response_for_session): a
      * plain message resolves the session's pending clarify when it coerces to

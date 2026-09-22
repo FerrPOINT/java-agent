@@ -124,8 +124,9 @@ public class ClarifyInteractionRenderer {
         log.info("clarify_callback_received chat={} session={} id={} action={}",
             chatId, prompt.backendSessionId(), clarifyId, action);
         if ("other".equals(action)) {
-            // Text-capture mode: the next typed message resolves via /clarify/text
-            return CallbackResult.pending("Type your answer");
+            boolean armed = armCustomResponse(prompt.backendSessionId(), clarifyId);
+            return armed ? CallbackResult.pending("Type your answer")
+                : CallbackResult.invalid("This question has expired.");
         }
         if ("done".equals(action)) {
             java.util.Set<Integer> selected = multiSelectState.getOrDefault(clarifyId, java.util.Set.of());
@@ -176,6 +177,24 @@ public class ClarifyInteractionRenderer {
     private String sessionIdFor(String clarifyId) {
         PromptPayload prompt = activePrompts.get(clarifyId);
         return prompt != null && prompt.backendSessionId() != null ? prompt.backendSessionId() : "unknown";
+    }
+
+    private boolean armCustomResponse(String backendSessionId, String clarifyId) {
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> result = backendRestClient.post()
+                .uri("/api/v1/agent/session/{sessionId}/clarify/{clarifyId}/custom", backendSessionId, clarifyId)
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .body(Map.of())
+                .retrieve()
+                .body(Map.class);
+            boolean armed = result != null && Boolean.TRUE.equals(result.get("armed"));
+            log.info("clarify_custom_response_armed id={} armed={}", clarifyId, armed);
+            return armed;
+        } catch (Exception e) {
+            log.warn("Clarify custom-response arm failed for {}: {}", clarifyId, e.getMessage());
+            return false;
+        }
     }
 
     private boolean resolveOnBackend(String clarifyId, String response) {

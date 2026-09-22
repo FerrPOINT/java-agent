@@ -30,10 +30,11 @@ public class ClarifyGatewayStore {
         String question,
         List<String> choices,
         boolean multiSelect,
-        CompletableFuture<String> future
+        CompletableFuture<String> future,
+        boolean acceptsCustomResponse
     ) {
         boolean isAwaitingText() {
-            return choices == null || choices.isEmpty();
+            return choices == null || choices.isEmpty() || acceptsCustomResponse;
         }
     }
 
@@ -49,12 +50,23 @@ public class ClarifyGatewayStore {
 
     /** Register a pending clarify; the caller then blocks on the entry's future. */
     public PendingClarify register(String sessionKey, String question, List<String> choices, boolean multiSelect) {
+        return register(sessionKey, question, choices, multiSelect, choices == null || choices.isEmpty());
+    }
+
+    /**
+     * Register a pending clarify and declare whether a free-form answer is valid.
+     * Choice prompts require this explicit bit because their text route otherwise
+     * cannot distinguish ordinary prose from a deliberate "Other" response.
+     */
+    public PendingClarify register(String sessionKey, String question, List<String> choices, boolean multiSelect,
+                                   boolean acceptsCustomResponse) {
         String id = UUID.randomUUID().toString();
         PendingClarify entry = new PendingClarify(
             id, sessionKey, nextSequence.incrementAndGet(), question,
             choices == null ? List.of() : List.copyOf(choices),
             multiSelect && choices != null && !choices.isEmpty(),
-            new CompletableFuture<>());
+            new CompletableFuture<>(),
+            acceptsCustomResponse);
         entries.put(id, entry);
         sessionIndex.computeIfAbsent(sessionKey, k -> new ConcurrentHashMap<>()).put(id, entry);
         log.info("clarify_registered session={} id={} sequence={} choices={} multiSelect={}",
@@ -105,6 +117,32 @@ public class ClarifyGatewayStore {
             cleanup(entry);
         }
         return accepted;
+    }
+
+    /**
+     * Permit a free-form response after the adapter receives the explicit
+     * Other action. The entry is atomically replaced so later text coercion
+     * accepts prose without changing its waiter or registration order.
+     */
+    public boolean armCustomResponse(String sessionKey, String clarifyId) {
+        PendingClarify entry = entries.get(clarifyId);
+        if (entry == null || entry.future().isDone() || !entry.sessionKey().equals(sessionKey)) {
+            return false;
+        }
+        if (entry.acceptsCustomResponse()) {
+            return true;
+        }
+        PendingClarify armed = new PendingClarify(entry.clarifyId(), entry.sessionKey(), entry.sequence(),
+            entry.question(), entry.choices(), entry.multiSelect(), entry.future(), true);
+        if (!entries.replace(clarifyId, entry, armed)) {
+            return false;
+        }
+        Map<String, PendingClarify> index = sessionIndex.get(sessionKey);
+        if (index != null) {
+            index.replace(clarifyId, entry, armed);
+        }
+        log.info("clarify_custom_response_armed session={} id={}", sessionKey, clarifyId);
+        return true;
     }
 
     /** Oldest pending entry for the session, matching the order prompts were rendered. */
