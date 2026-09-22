@@ -230,7 +230,7 @@ class CallbackQueryHandlerTest {
     }
 
     @Test
-    void clarifyCallbackAcknowledgesWithoutSendingSelectedMessage() {
+    void completedClarifyCallbackSuppressesTheSelectedToast() {
         UpdateEvent event = callbackEvent("cq-clarify", "clfy:prompt-1:0");
         ClarifyInteractionRenderer renderer = mock(ClarifyInteractionRenderer.class);
         CallbackQueryHandler clarifyHandler = new CallbackQueryHandler(client, providerKeyboardBuilder,
@@ -243,7 +243,23 @@ class CallbackQueryHandlerTest {
 
         assertThat(result).isNull();
         verify(renderer).handleCallback(123L, 456L, "prompt-1:0");
-        verify(client).answerCallbackQuery("cq-clarify", "OK", false);
+        verify(client).answerCallbackQuery("cq-clarify", null, false);
+    }
+
+    @Test
+    void pendingClarifyCallbackKeepsOnlyItsEphemeralInstruction() {
+        UpdateEvent event = callbackEvent("cq-clarify-other", "clfy:prompt-1:other");
+        ClarifyInteractionRenderer renderer = mock(ClarifyInteractionRenderer.class);
+        CallbackQueryHandler clarifyHandler = new CallbackQueryHandler(client, providerKeyboardBuilder,
+            modelKeyboardBuilder, inlineKeyboardBuilder, sessionStore, properties, authorizationService,
+            backendClient, approvalStateStore, renderer);
+        when(renderer.handleCallback(123L, 456L, "prompt-1:other"))
+            .thenReturn(new ClarifyInteractionRenderer.CallbackResult("Type your answer", false));
+
+        assertThat(clarifyHandler.handle(event)).isNull();
+
+        verify(client).answerCallbackQuery("cq-clarify-other", "Type your answer", false);
+        verify(client, never()).sendMessage(eq(123L), contains("Type your answer"));
     }
 
     private UpdateEvent callbackEvent(String callbackQueryId, String callbackData) {

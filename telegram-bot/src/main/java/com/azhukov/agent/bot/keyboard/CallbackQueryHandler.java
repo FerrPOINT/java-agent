@@ -90,6 +90,14 @@ public class CallbackQueryHandler {
             value = "";
         }
 
+        if (ClarifyInteractionRenderer.CLARIFY_CALLBACK.equals(command)) {
+            ClarifyInteractionRenderer.CallbackResult clarify = clarifyRenderer.handleCallback(chatId, event.messageId(), value);
+            // Clarify callbacks only release the existing backend turn. Their
+            // acknowledgement stays ephemeral and must not become bot output.
+            answer(callbackQueryId, clarify != null && !clarify.complete() ? clarify.acknowledgement() : null, false);
+            return null;
+        }
+
         String response = route(command, value, chatId, event.userId(), event.messageId());
 
         String answerText = response != null ? response : "OK";
@@ -103,18 +111,19 @@ public class CallbackQueryHandler {
             return "Unknown command";
         }
 
+        if (ClarifyInteractionRenderer.CLARIFY_CALLBACK.equals(command)) {
+            ClarifyInteractionRenderer.CallbackResult clarify = clarifyRenderer.handleCallback(chatId, messageId, value);
+            // Clarify acknowledgements are ephemeral callback toasts; never
+            // inject a synthetic assistant message into the open agent turn.
+            return clarify != null ? clarify.acknowledgement() : null;
+        }
+
         return switch (command) {
             case "mp" -> handleModelSelect(value, chatId, userId);
             case "mpp" -> handleModelPage(value, chatId);
             case "pp" -> handleProviderSelect(value, chatId);
             case "ea" -> handleExecApproval(value, chatId, messageId);
             case "sc" -> handleSlashConfirm(value, chatId);
-            // Blocking clarify (Hermes clarify_gateway parity): resolve the
-            // backend's pending entry; the open agent turn receives the answer.
-            case ClarifyInteractionRenderer.CLARIFY_CALLBACK -> {
-                clarifyRenderer.handleCallback(chatId, messageId, value);
-                yield null;
-            }
             default -> "Unknown action: " + command;
         };
     }

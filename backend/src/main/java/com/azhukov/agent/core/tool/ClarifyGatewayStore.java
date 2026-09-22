@@ -104,10 +104,19 @@ public class ClarifyGatewayStore {
 
     /** Unblock the waiter; false if already resolved/expired/unknown. */
     public boolean resolve(String clarifyId, String response) {
+        return resolveForSession(null, clarifyId, response);
+    }
+
+    /**
+     * Unblock only an entry owned by {@code sessionKey}. The public adapter
+     * endpoints must use this overload: a clarify ID is not authorization.
+     */
+    public boolean resolveForSession(String sessionKey, String clarifyId, String response) {
         PendingClarify entry = entries.get(clarifyId);
-        if (entry == null || entry.future().isDone()) {
+        if (entry == null || entry.future().isDone()
+            || (sessionKey != null && !entry.sessionKey().equals(sessionKey))) {
             log.info("clarify_resolve_rejected id={} reason={}", clarifyId,
-                entry == null ? "unknown" : "already_completed");
+                entry == null ? "unknown" : entry.future().isDone() ? "already_completed" : "wrong_session");
             return false;
         }
         boolean accepted = entry.future().complete(response == null ? "" : response);

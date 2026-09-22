@@ -67,6 +67,15 @@ class ClarifyInteractionRendererTest {
     }
 
     @Test
+    void missingBackendSessionDoesNotRenderAnUnresolvablePrompt() {
+        renderer.present(100L, 0L, null, """
+            {"clarifyId":"prompt-1","question":"Deploy where?","choices":["dev","prod"]}
+            """);
+
+        verifyNoInteractions(telegramClient, typingManager);
+    }
+
+    @Test
     void otherButtonArmsCustomTextOnBackendBeforePromptingForIt() {
         when(telegramClient.sendMessage(anyLong(), any(), any(), any(), any(), any(), eq(false)))
             .thenReturn(Optional.of(42L));
@@ -81,6 +90,21 @@ class ClarifyInteractionRendererTest {
 
         assertThat(result).isEqualTo(new ClarifyInteractionRenderer.CallbackResult("Type your answer", false));
         assertThat(renderer.awaitingTextSession(100L)).isEqualTo("session-1");
+        server.verify();
+    }
+
+    @Test
+    void callbackFromAnotherChatCannotArmOrResolveThePrompt() {
+        when(telegramClient.sendMessage(anyLong(), any(), any(), any(), any(), any(), eq(false)))
+            .thenReturn(Optional.of(42L));
+        renderer.present(100L, 0L, "session-1", """
+            {"clarifyId":"prompt-1","question":"Deploy where?","choices":["dev","prod"]}
+            """);
+
+        ClarifyInteractionRenderer.CallbackResult result = renderer.handleCallback(200L, 42L, "prompt-1:other");
+
+        assertThat(result).isEqualTo(new ClarifyInteractionRenderer.CallbackResult("This question has expired.", false));
+        assertThat(renderer.awaitingTextSession(200L)).isNull();
         server.verify();
     }
 

@@ -83,6 +83,39 @@ class AgentClarifyControllerTest {
             .andExpect(jsonPath("$.outcome").value("rejected_prose"));
     }
 
+    @Test
+    void resolveCannotCompleteAnotherSessionsPendingClarify() throws Exception {
+        var pending = store.register("session-1", "Deploy where?", List.of("dev", "prod"), false);
+
+        mockMvc.perform(post("/api/v1/agent/session/session-2/clarify/resolve")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"clarifyId\":\"" + pending.clarifyId() + "\",\"response\":\"prod\"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.resolved").value(false));
+
+        assertThat(pending.future()).isNotDone();
+        mockMvc.perform(post("/api/v1/agent/session/session-1/clarify/resolve")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"clarifyId\":\"" + pending.clarifyId() + "\",\"response\":\"prod\"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.resolved").value(true));
+        assertThat(pending.future()).isCompletedWithValue("prod");
+    }
+
+    @Test
+    void invalidNumericTextKeepsTheChoicePromptArmedForRetry() throws Exception {
+        var pending = store.register("session-1", "Deploy where?", List.of("dev", "prod"), false);
+
+        mockMvc.perform(post("/api/v1/agent/session/session-1/clarify/text")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"text\":\"3\"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.outcome").value("rejected_selection"));
+
+        assertThat(pending.future()).isNotDone();
+        assertThat(store.pendingForSession("session-1").clarifyId()).isEqualTo(pending.clarifyId());
+    }
+
     private static <T> ObjectProvider<T> provider(T value) {
         return new ObjectProvider<>() {
             @Override public T getObject() { return value; }

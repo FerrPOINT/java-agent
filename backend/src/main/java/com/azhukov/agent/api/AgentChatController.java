@@ -267,7 +267,7 @@ public class AgentChatController {
         }
         log.info("clarify_resolve_request session={} id={} responseChars={}",
             sessionId, clarifyId, request.response() == null ? 0 : request.response().length());
-        boolean resolved = store.resolve(clarifyId, request.response() == null ? "" : request.response());
+        boolean resolved = store.resolveForSession(sessionId, clarifyId, request.response() == null ? "" : request.response());
         return resolved
             ? Map.of("resolved", true)
             : Map.of("resolved", false, "reason", "expired or already answered");
@@ -309,8 +309,11 @@ public class AgentChatController {
         }
         String coerced = com.azhukov.agent.tools.memory.ClarifyTextCoercer.coerce(pending, request.text());
         if (coerced == null) {
-            log.info("clarify_text_rejected session={} id={} reason=prose", sessionId, pending.clarifyId());
-            return Map.of("outcome", "rejected_prose");
+            boolean selectionShaped = com.azhukov.agent.tools.memory.ClarifyTextCoercer
+                .looksLikeSelection(request.text(), pending.choices());
+            log.info("clarify_text_rejected session={} id={} reason={}", sessionId, pending.clarifyId(),
+                selectionShaped ? "selection" : "prose");
+            return Map.of("outcome", selectionShaped ? "rejected_selection" : "rejected_prose");
         }
         boolean resolved = store.resolve(pending.clarifyId(), coerced);
         log.info("clarify_text_result session={} id={} resolved={}", sessionId, pending.clarifyId(), resolved);

@@ -48,7 +48,7 @@ public class ClarifyInteractionRenderer {
     private final Map<Long, String> awaitingTextSessions = new java.util.concurrent.ConcurrentHashMap<>();
 
     /** Single-question prompt payload (mirrors the backend ClarifyStreamBridge event). */
-    record PromptPayload(String clarifyId, String backendSessionId, String question, List<String> choices, boolean multiSelect) {}
+    record PromptPayload(long chatId, String clarifyId, String backendSessionId, String question, List<String> choices, boolean multiSelect) {}
 
     public ClarifyInteractionRenderer(ObjectMapper objectMapper,
                                       InlineKeyboardBuilder keyboardBuilder,
@@ -93,7 +93,11 @@ public class ClarifyInteractionRenderer {
                 log.debug("Clarify payload missing fields for chat {}", chatId);
                 return;
             }
-            activePrompts.put(clarifyId, new PromptPayload(clarifyId, backendSessionId, question, choices, multiSelect));
+            if (backendSessionId == null || backendSessionId.isBlank()) {
+                log.warn("Clarify payload missing backend session for chat {}", chatId);
+                return;
+            }
+            activePrompts.put(clarifyId, new PromptPayload(chatId, clarifyId, backendSessionId, question, choices, multiSelect));
             String markup = keyboardBuilder.build(buttonsFor(clarifyId, choices, multiSelect, java.util.Set.of()));
             Integer topicId = threadId > 0 ? (int) threadId : null;
             boolean delivered = telegramClient.sendMessage(chatId, question, null, null, topicId, markup, false).isPresent();
@@ -121,6 +125,10 @@ public class ClarifyInteractionRenderer {
         PromptPayload prompt = activePrompts.get(clarifyId);
         if (prompt == null) {
             log.info("clarify_callback_rejected chat={} id={} reason=unknown_prompt", chatId, clarifyId);
+            return CallbackResult.invalid("This question has expired.");
+        }
+        if (prompt.chatId() != chatId) {
+            log.warn("clarify_callback_rejected chat={} id={} reason=wrong_chat", chatId, clarifyId);
             return CallbackResult.invalid("This question has expired.");
         }
         log.info("clarify_callback_received chat={} session={} id={} action={}",
