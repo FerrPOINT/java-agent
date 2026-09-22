@@ -30,11 +30,14 @@ public class ClarifyTextInterceptor {
 
     private final RestClient backendRestClient;
     private final ObjectMapper objectMapper;
+    private final ClarifyInteractionRenderer clarifyInteractionRenderer;
 
     public ClarifyTextInterceptor(@Qualifier("backendRestClient") RestClient backendRestClient,
-                                  ObjectMapper objectMapper) {
+                                  ObjectMapper objectMapper,
+                                  ClarifyInteractionRenderer clarifyInteractionRenderer) {
         this.backendRestClient = backendRestClient;
         this.objectMapper = objectMapper;
+        this.clarifyInteractionRenderer = clarifyInteractionRenderer;
     }
 
     /**
@@ -46,10 +49,15 @@ public class ClarifyTextInterceptor {
         if (session == null || session.getId() == null || text == null || text.isBlank()) {
             return null;
         }
+        String backendSessionId = clarifyInteractionRenderer.awaitingTextSession(
+            parseChatId(session.getChatId()));
+        if (backendSessionId == null || backendSessionId.isBlank()) {
+            return null;
+        }
         try {
             @SuppressWarnings("unchecked")
             Map<String, Object> outcome = backendRestClient.post()
-                .uri("/api/v1/agent/session/{sessionId}/clarify/text", session.getId().toString())
+                .uri("/api/v1/agent/session/{sessionId}/clarify/text", backendSessionId)
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
                 .body(Map.of("text", text))
                 .retrieve()
@@ -59,14 +67,24 @@ public class ClarifyTextInterceptor {
             }
             String result = String.valueOf(outcome.get("outcome"));
             return switch (result) {
-                case "resolved" -> "resolved";
+                case "resolved" -> {
+                    clarifyInteractionRenderer.clearAwaitingTextSession(parseChatId(session.getChatId()));
+                    yield "resolved";
+                }
                 case "rejected_selection" -> "invalid_selection";
-                // prose or no pending clarify: route normally
                 default -> null;
             };
         } catch (Exception e) {
             log.debug("Clarify text intercept failed for session {}: {}", session.getId(), e.getMessage());
             return null;
+        }
+    }
+
+    private long parseChatId(String chatId) {
+        try {
+            return Long.parseLong(chatId);
+        } catch (NumberFormatException e) {
+            return 0L;
         }
     }
 }

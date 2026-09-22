@@ -15,40 +15,45 @@ import static org.springframework.test.web.client.ExpectedCount.once;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.content;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
 
 class ClarifyTextInterceptorTest {
 
     private MockRestServiceServer server;
     private ClarifyTextInterceptor interceptor;
+    private ClarifyInteractionRenderer renderer;
     private BotSessionEntity session;
 
     @BeforeEach
     void setUp() {
         RestClient.Builder builder = RestClient.builder().baseUrl("http://backend.test");
         server = MockRestServiceServer.bindTo(builder).build();
-        interceptor = new ClarifyTextInterceptor(builder.build(), new ObjectMapper());
+        renderer = mock(ClarifyInteractionRenderer.class);
+        interceptor = new ClarifyTextInterceptor(builder.build(), new ObjectMapper(), renderer);
         session = new BotSessionEntity();
         session.setId(UUID.fromString("550e8400-e29b-41d4-a716-446655440000"));
+        session.setChatId("12345");
     }
 
     @Test
     void customTextResolvedByBackendUnblocksTheExistingClarifyTurn() {
+        String backendSessionId = "550e8400-e29b-41d4-a716-446655440001";
+        when(renderer.awaitingTextSession(12345L)).thenReturn(backendSessionId);
         server.expect(once(), requestTo("http://backend.test/api/v1/agent/session/"
-                + session.getId() + "/clarify/text"))
+                + backendSessionId + "/clarify/text"))
             .andExpect(content().contentType(MediaType.APPLICATION_JSON))
             .andExpect(content().json("{\"text\":\"a bespoke environment\"}"))
             .andRespond(withSuccess("{\"outcome\":\"resolved\"}", MediaType.APPLICATION_JSON));
 
         assertThat(interceptor.tryResolve(session, "a bespoke environment")).isEqualTo("resolved");
+        verify(renderer).clearAwaitingTextSession(12345L);
         server.verify();
     }
 
     @Test
     void absentPendingClarifyLeavesAnOrdinaryMessageForNormalRouting() {
-        server.expect(once(), requestTo("http://backend.test/api/v1/agent/session/"
-                + session.getId() + "/clarify/text"))
-            .andRespond(withSuccess("{\"outcome\":\"no_pending\"}", MediaType.APPLICATION_JSON));
-
         assertThat(interceptor.tryResolve(session, "ordinary message")).isNull();
         server.verify();
     }

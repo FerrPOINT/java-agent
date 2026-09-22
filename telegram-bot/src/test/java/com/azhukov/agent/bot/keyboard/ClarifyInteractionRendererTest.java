@@ -80,6 +80,7 @@ class ClarifyInteractionRendererTest {
         ClarifyInteractionRenderer.CallbackResult result = renderer.handleCallback(100L, 42L, "prompt-1:other");
 
         assertThat(result).isEqualTo(new ClarifyInteractionRenderer.CallbackResult("Type your answer", false));
+        assertThat(renderer.awaitingTextSession(100L)).isEqualTo("session-1");
         server.verify();
     }
 

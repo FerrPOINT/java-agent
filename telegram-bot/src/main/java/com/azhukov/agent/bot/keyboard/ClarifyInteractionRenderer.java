@@ -44,6 +44,8 @@ public class ClarifyInteractionRenderer {
     private final Map<String, java.util.Set<Integer>> multiSelectState = new java.util.concurrent.ConcurrentHashMap<>();
     /** Prompt metadata stays until its matching backend pending entry resolves. */
     private final Map<String, PromptPayload> activePrompts = new java.util.concurrent.ConcurrentHashMap<>();
+    /** Backend session id for a text response, keyed by its Telegram chat. */
+    private final Map<Long, String> awaitingTextSessions = new java.util.concurrent.ConcurrentHashMap<>();
 
     /** Single-question prompt payload (mirrors the backend ClarifyStreamBridge event). */
     record PromptPayload(String clarifyId, String backendSessionId, String question, List<String> choices, boolean multiSelect) {}
@@ -125,8 +127,11 @@ public class ClarifyInteractionRenderer {
             chatId, prompt.backendSessionId(), clarifyId, action);
         if ("other".equals(action)) {
             boolean armed = armCustomResponse(prompt.backendSessionId(), clarifyId);
-            return armed ? CallbackResult.pending("Type your answer")
-                : CallbackResult.invalid("This question has expired.");
+            if (armed) {
+                awaitingTextSessions.put(chatId, prompt.backendSessionId());
+                return CallbackResult.pending("Type your answer");
+            }
+            return CallbackResult.invalid("This question has expired.");
         }
         if ("done".equals(action)) {
             java.util.Set<Integer> selected = multiSelectState.getOrDefault(clarifyId, java.util.Set.of());
@@ -174,6 +179,16 @@ public class ClarifyInteractionRenderer {
         return CallbackResult.invalid("This question has expired.");
     }
 
+    /** Backend session associated with the pending custom text response in this chat. */
+    public String awaitingTextSession(long chatId) {
+        return awaitingTextSessions.get(chatId);
+    }
+
+    /** Clear a text-response route only after the backend accepted or rejected it. */
+    public void clearAwaitingTextSession(long chatId) {
+        awaitingTextSessions.remove(chatId);
+    }
+
     private String sessionIdFor(String clarifyId) {
         PromptPayload prompt = activePrompts.get(clarifyId);
         return prompt != null && prompt.backendSessionId() != null ? prompt.backendSessionId() : "unknown";
@@ -218,6 +233,7 @@ public class ClarifyInteractionRenderer {
     private void cleanup(String clarifyId, long messageId, long chatId) {
         activePrompts.remove(clarifyId);
         multiSelectState.remove(clarifyId);
+        awaitingTextSessions.remove(chatId);
         if (messageId > 0) {
             telegramClient.editMessageReplyMarkup(chatId, messageId, null);
         }
