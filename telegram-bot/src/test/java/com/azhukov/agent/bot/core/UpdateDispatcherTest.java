@@ -39,6 +39,7 @@ class UpdateDispatcherTest {
         @Override public void handleTextOrMedia(UpdateEvent e) { lastCall = "textOrMedia"; lastEvent = e; textOrMediaCount++; }
         @Override public void handleEditedMessage(UpdateEvent e) { lastCall = "edited"; lastEvent = e; editedCount++; }
         @Override public void handleEditCapture(UpdateEvent e) { lastCall = "editCapture"; lastEvent = e; editCaptureCount++; }
+        @Override public boolean shouldBypassTextBatch(UpdateEvent e) { return false; }
         @Override public void sendError(long chatId, String message) { lastCall = "error"; errorChatId = chatId; errorMsg = message; }
     }
 
@@ -113,6 +114,19 @@ class UpdateDispatcherTest {
         assertThat(handlers.lastCall).isEqualTo("editCapture");
         assertThat(handlers.editCaptureCount).isEqualTo(1);
         assertThat(handlers.textOrMediaCount).isZero();
+    }
+
+    @Test
+    void clarifyReplyBypassesTextBatchAndRoutesImmediately() {
+        RecordingHandlers clarifyHandlers = new RecordingHandlers() {
+            @Override public boolean shouldBypassTextBatch(UpdateEvent e) { return true; }
+        };
+        when(textBatchDebouncer.offer(any())).thenReturn(true);
+
+        dispatcher.dispatch(textEvent(100L), clarifyHandlers);
+
+        assertThat(clarifyHandlers.lastCall).isEqualTo("textOrMedia");
+        verifyNoInteractions(textBatchDebouncer);
     }
 
     @Test

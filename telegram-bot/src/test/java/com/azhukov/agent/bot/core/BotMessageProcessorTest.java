@@ -526,6 +526,26 @@ class BotMessageProcessorTest {
     // ─── Text batching ──────────────────────────────────────────
 
     @Test
+    void busyTextBypassesBatchingBeforeTheClarifyInterceptorCanResolveIt() {
+        busyHandler.markBusy(100L);
+        when(textBatchDebouncer.offer(any())).thenReturn(true);
+        com.azhukov.agent.bot.keyboard.ClarifyTextInterceptor interceptor =
+            mock(com.azhukov.agent.bot.keyboard.ClarifyTextInterceptor.class);
+        processor.setClarifyTextInterceptor(interceptor);
+        BotSessionEntity pendingSession = new BotSessionEntity();
+        pendingSession.setId(UUID.randomUUID());
+        when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(pendingSession);
+        when(interceptor.tryResolve(any(BotSessionEntity.class), eq("custom answer"))).thenReturn("resolved");
+
+        processor.accept(textEvent(17, 100L, "custom answer"));
+
+        verify(interceptor).tryResolve(any(BotSessionEntity.class), eq("custom answer"));
+        verifyNoInteractions(textBatchDebouncer);
+        verify(typingManager).resumeTyping(100L);
+        verifyNoInteractions(backendClient);
+    }
+
+    @Test
     void textBatchBufferedDoesNotProcessImmediately() {
         when(textBatchDebouncer.offer(any())).thenReturn(true);
         processor.accept(textEvent(1, 100L, "Hello"));

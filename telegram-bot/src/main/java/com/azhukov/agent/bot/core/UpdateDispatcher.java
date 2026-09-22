@@ -56,6 +56,8 @@ public class UpdateDispatcher {
         void handleEditedMessage(UpdateEvent event);
         /** Handle a text event routed to edit-capture mode. */
         void handleEditCapture(UpdateEvent event);
+        /** True when a text event is a response to a live clarify prompt. */
+        boolean shouldBypassTextBatch(UpdateEvent event);
         /** Send an error message to the chat (top-level error handler). */
         void sendError(long chatId, String message);
     }
@@ -74,6 +76,12 @@ public class UpdateDispatcher {
                 case CALLBACK_QUERY -> handlers.handleCallbackQuery(event);
                 case COMMAND -> handlers.handleCommand(event);
                 case TEXT -> {
+                    // A clarify reply must bypass batching: buffering it keeps the
+                    // original turn blocked even though the user has answered.
+                    if (handlers.shouldBypassTextBatch(event)) {
+                        handlers.handleTextOrMedia(event);
+                        return;
+                    }
                     // P35: Edit-capture mode — if chat has active capture, route to capture handler
                     if (editCaptureService.getCapture(event.chatId()) != null) {
                         handlers.handleEditCapture(event);

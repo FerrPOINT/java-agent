@@ -303,6 +303,11 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
     // ─── Text / Media ──────────────────────────────────────────────
 
     @Override
+    public boolean shouldBypassTextBatch(UpdateEvent event) {
+        return event != null && busyHandler.isBusy(event.chatId());
+    }
+
+    @Override
     public void handleTextOrMedia(UpdateEvent event) {
         long chatId = event.chatId();
         // A replacement message must reach the busy-mode handler while the
