@@ -327,9 +327,11 @@ public class MessageApiClient extends BaseBackendClient {
                                     // clarify prompt from the backend — payload JSON in `error`.
                                     if ("clarify".equalsIgnoreCase(type)) {
                                         String payload = event.path("error").asText(null);
+                                        String clarifySessionId = event.path("sessionId").asText(sessionId);
                                         if (payload != null && !payload.isEmpty() && clarifyConsumer != null) {
-                                            log.info("clarify_sse_received session={} payloadBytes={}", sessionId, payload.length());
-                                            clarifyConsumer.accept(payload);
+                                            log.info("clarify_sse_received requestSession={} clarifySession={} payloadBytes={}",
+                                                sessionId, clarifySessionId, payload.length());
+                                            clarifyConsumer.accept(clarifySessionId + "\u0001" + payload);
                                         }
                                         continue;
                                     }

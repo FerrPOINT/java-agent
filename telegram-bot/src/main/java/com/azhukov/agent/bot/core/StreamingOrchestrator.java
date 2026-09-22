@@ -286,7 +286,14 @@ public class StreamingOrchestrator {
                 // the pending entry; button taps resolve it via the backend.
                 clarifyPayload -> {
                     try {
-                        clarificationInteraction.present(chatId, messageThreadId, sessionId, clarifyPayload);
+                        int separator = clarifyPayload == null ? -1 : clarifyPayload.indexOf('\u0001');
+                        String clarifySessionId = separator >= 0 ? clarifyPayload.substring(0, separator) : sessionId;
+                        String payload = separator >= 0 ? clarifyPayload.substring(separator + 1) : clarifyPayload;
+                        if (clarifySessionId == null || clarifySessionId.isBlank()) {
+                            log.warn("Clarify payload missing backend session for chat {}", chatId);
+                            return;
+                        }
+                        clarificationInteraction.present(chatId, messageThreadId, clarifySessionId, payload);
                     } catch (Exception e) {
                         log.warn("Clarify prompt delivery failed for chat {}: {}", chatId, e.getMessage());
                     }

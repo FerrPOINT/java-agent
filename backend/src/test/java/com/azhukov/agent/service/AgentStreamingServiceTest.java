@@ -318,6 +318,26 @@ class AgentStreamingServiceTest {
     }
 
     @Test
+    void disconnectDoesNotCancelTheServerSideTurn() throws Exception {
+        ChatRequest request = ChatRequest.simple(SESSION_ID, USER_MESSAGE, null, 10_000L);
+        CollectingEmitter emitter = new CollectingEmitter(30_000L);
+        AtomicBoolean streamStarted = new AtomicBoolean();
+
+        doAnswer(invocation -> {
+            StreamingResponseHandler handler = invocation.getArgument(3);
+            streamStarted.set(true);
+            handler.onToken("Done after peer disconnect");
+            handler.onComplete();
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+
+        streamingService.streamTurn(request, emitter);
+        emitter.complete();
+        await().atMost(5, TimeUnit.SECONDS).untilTrue(streamStarted);
+        verify(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+    }
+
+    @Test
     void streamTurnEmitsToolCallsAndToolResultEvents() throws Exception {
         ChatRequest request = ChatRequest.simple(SESSION_ID, USER_MESSAGE, null, 10_000L);
         ToolCall toolCall = new ToolCall("call-1", "weather", "{\"city\":\"Paris\"}");

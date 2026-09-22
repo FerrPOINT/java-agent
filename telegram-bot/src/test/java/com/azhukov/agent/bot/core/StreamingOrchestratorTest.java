@@ -329,13 +329,44 @@ class StreamingOrchestratorTest {
 
         stubChatStream(ctx -> {
             ctx.toolCallConsumer.accept("clarify\u0001{\"question\":\"Target?\",\"choices\":[\"dev\",\"prod\"]}");
-            ctx.clarifyConsumer.accept("{\"clarifyId\":\"prompt-1\",\"question\":\"Target?\",\"choices\":[\"dev\",\"prod\"]}");
+            ctx.clarifyConsumer.accept("session-1\u0001{\"clarifyId\":\"prompt-1\",\"question\":\"Target?\",\"choices\":[\"dev\",\"prod\"]}");
             ctx.returnResult = new AgentBackendClient.ChatResult("", null, null, null, true, false, null);
         });
 
         orchestrator.streamChat(100L, "hi", "session-1", session(), 5L, 0L, hooks);
 
         verify(boundRenderer).present(eq(100L), eq(0L), eq("session-1"), contains("prompt-1"));
+    }
+
+    @Test
+    void streamChat_clarifyUsesSseBackendSessionWhenTheRequestHadNone() {
+        var boundRenderer = mock(com.azhukov.agent.bot.keyboard.ClarifyInteractionRenderer.class);
+        orchestrator = new StreamingOrchestrator(backendClient, streamEditor, busyHandler,
+            runtimeFooter, properties, mediaDeliveryService, telegramClient, sessionStoreMock, boundRenderer);
+        String backendSession = "550e8400-e29b-41d4-a716-446655440000";
+        stubChatStream(ctx -> {
+            ctx.clarifyConsumer.accept(backendSession + "\u0001{\"clarifyId\":\"prompt-1\",\"question\":\"Target?\",\"choices\":[\"dev\",\"prod\"]}");
+            ctx.returnResult = new AgentBackendClient.ChatResult("", null, null, null, true, false, null);
+        });
+
+        orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
+
+        verify(boundRenderer).present(eq(100L), eq(0L), eq(backendSession), contains("prompt-1"));
+    }
+
+    @Test
+    void streamChat_clarifyWithoutAnyBackendSessionIsNotRendered() {
+        var boundRenderer = mock(com.azhukov.agent.bot.keyboard.ClarifyInteractionRenderer.class);
+        orchestrator = new StreamingOrchestrator(backendClient, streamEditor, busyHandler,
+            runtimeFooter, properties, mediaDeliveryService, telegramClient, sessionStoreMock, boundRenderer);
+        stubChatStream(ctx -> {
+            ctx.clarifyConsumer.accept("{\"clarifyId\":\"prompt-1\",\"question\":\"Target?\"}");
+            ctx.returnResult = new AgentBackendClient.ChatResult("", null, null, null, true, false, null);
+        });
+
+        orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
+
+        verifyNoInteractions(boundRenderer);
     }
 
     @Test

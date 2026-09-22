@@ -351,16 +351,10 @@ public class AgentStreamingService {
         });
         emitter.onError(ex -> {
             streamCtx.markDisconnected();
-            if (callbackSessionId != null) {
-                interruptToken.cancel(callbackSessionId);
-            }
-            log.warn("Stream error", ex);
+            log.debug("SSE peer disconnected for request session {}; keep the server turn running", callbackSessionId);
         });
         emitter.onCompletion(() -> {
             streamCtx.markDisconnected();
-            if (callbackSessionId != null) {
-                interruptToken.cancel(callbackSessionId);
-            }
         });
 
         CompletableFuture.runAsync(() -> {
@@ -1553,9 +1547,10 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
             // batch a sender that emits the `clarify` SSE event; the tool
             // registers a pending entry and blocks on the store future until
             // the adapter resolves it via /clarify/resolve or /clarify/text.
-            com.azhukov.agent.tools.memory.ClarifyStreamBridge.setSender(session.id(),
+            UUID clarifySessionId = session.id();
+            com.azhukov.agent.tools.memory.ClarifyStreamBridge.setSender(clarifySessionId,
                 payload -> eventHelper().send(emitter,
-                    com.azhukov.agent.tools.memory.ClarifyStreamBridge.clarifyEvent(payload), streamCtx));
+                    com.azhukov.agent.tools.memory.ClarifyStreamBridge.clarifyEvent(payload, clarifySessionId), streamCtx));
             com.azhukov.agent.core.agent.TurnExecutor.ToolBatchResult batchResult;
             try {
                 batchResult = turnExecutor().executeToolBatch(

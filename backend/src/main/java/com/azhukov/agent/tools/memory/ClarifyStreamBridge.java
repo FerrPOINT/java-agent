@@ -43,8 +43,9 @@ public final class ClarifyStreamBridge {
         }
     }
 
-    /** The SSE event payload a sender emits ({@code error} field carries the JSON prompt, review-event style). */
-    public static StreamEvent clarifyEvent(String payloadJson) {
-        return new StreamEvent("clarify", null, null, payloadJson);
+    /** The SSE event payload a sender emits, bound to the backend session that owns the pending entry. */
+    public static StreamEvent clarifyEvent(String payloadJson, UUID sessionId) {
+        return new StreamEvent("clarify", null, null, payloadJson, null, null, null,
+            null, null, sessionId);
     }
 }

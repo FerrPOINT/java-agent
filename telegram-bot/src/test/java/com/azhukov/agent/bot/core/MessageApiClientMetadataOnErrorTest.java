@@ -102,6 +102,24 @@ class MessageApiClientMetadataOnErrorTest {
     }
 
     @Test
+    void chatStream_clarifyCarriesSseSessionIdWhenOriginalRequestHasNoSession() {
+        String backendSession = "550e8400-e29b-41d4-a716-446655440000";
+        serveSse(
+            "{\"type\":\"clarify\",\"sessionId\":\"" + backendSession + "\","
+                + "\"error\":\"{\\\"clarifyId\\\":\\\"prompt-1\\\",\\\"question\\\":\\\"Target?\\\"}\"}",
+            "{\"type\":\"done\"}"
+        );
+        AtomicReference<String> clarify = new AtomicReference<>();
+
+        MessageApiClient client = new MessageApiClient(restClient, mapper);
+        client.chatStream("hi", null, null, token -> { }, toolCall -> { }, (name, preview) -> { },
+            retry -> { }, review -> { }, clarify::set, complete -> { }, error -> { });
+
+        assertThat(clarify.get()).startsWith(backendSession + "\u0001");
+        assertThat(clarify.get()).contains("\"clarifyId\":\"prompt-1\"");
+    }
+
+    @Test
     void chatStream_errorWithoutMetadata_returnsEmptyMetadata() {
         serveSse(
             "{\"type\":\"error\",\"error\":\"Model call failed: boom\"}"
