@@ -500,6 +500,14 @@ class BotMessageProcessorTest {
     }
 
     @Test
+    void legacyClarificationCallbackIsIgnoredInsteadOfStartingASecondTurn() {
+        processor.accept(callbackEvent(1, 100L, "cq:1:0"));
+
+        verifyNoInteractions(backendClient);
+        verifyNoInteractions(telegramClient);
+    }
+
+    @Test
     void textMessageMarksBusyAndMarksFree() {
         stubStreamingResult("Response", true);
         processor.accept(textEvent(1, 100L, "Hello"));

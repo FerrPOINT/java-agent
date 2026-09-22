@@ -230,30 +230,14 @@ class CallbackQueryHandlerTest {
     }
 
     @Test
-    void handleClarificationCallback_returnsAnswerForSelectedChoice() {
-        ClarificationStateStore clarification = new ClarificationStateStore(
-            new com.fasterxml.jackson.databind.ObjectMapper(), inlineKeyboardBuilder);
-        when(client.sendMessage(anyLong(), any(), any(), any(), any(), any(), anyBoolean()))
-            .thenReturn(Optional.of(91L));
-        clarification.present(123L, 0L,
-            "{\"question\":\"Deploy where?\",\"choices\":[\"dev\",\"prod\"]}", client);
-        handler.setClarificationStateStore(clarification);
-
-        ClarificationStateStore.CallbackOutcome outcome = handler.handleClarification(callbackEvent("cq-clarify", "cq:1:0"));
-
-        assertThat(outcome.complete()).isTrue();
-        assertThat(outcome.answer()).isEqualTo("Answer to clarification question 'Deploy where?': dev");
-        verify(client).answerCallbackQuery("cq-clarify", null, false);
-    }
-
-
-    @Test
     void clarifyCallbackAcknowledgesWithoutSendingSelectedMessage() {
         UpdateEvent event = callbackEvent("cq-clarify", "clfy:prompt-1:0");
         ClarifyInteractionRenderer renderer = mock(ClarifyInteractionRenderer.class);
         CallbackQueryHandler clarifyHandler = new CallbackQueryHandler(client, providerKeyboardBuilder,
             modelKeyboardBuilder, inlineKeyboardBuilder, sessionStore, properties, authorizationService,
             backendClient, approvalStateStore, renderer);
+        when(renderer.handleCallback(123L, 456L, "prompt-1:0"))
+            .thenReturn(new ClarifyInteractionRenderer.CallbackResult("Selected", true));
 
         String result = clarifyHandler.handle(event);
 

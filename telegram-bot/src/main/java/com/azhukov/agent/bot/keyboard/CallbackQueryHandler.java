@@ -47,13 +47,7 @@ public class CallbackQueryHandler {
     private final AuthorizationService authorizationService;
     private final AgentBackendClient backendClient;
     private final ApprovalStateStore approvalStateStore;
-    private ClarificationStateStore clarificationStateStore;
     private final ClarifyInteractionRenderer clarifyRenderer;
-
-    @org.springframework.beans.factory.annotation.Autowired
-    void setClarificationStateStore(ClarificationStateStore clarificationStateStore) {
-        this.clarificationStateStore = clarificationStateStore;
-    }
 
     /**
      * Handles a callback_query UpdateEvent.
@@ -102,28 +96,6 @@ public class CallbackQueryHandler {
         answer(callbackQueryId, answerText, false);
 
         return response;
-    }
-
-    public ClarificationStateStore.CallbackOutcome handleClarification(UpdateEvent event) {
-        if (clarificationStateStore == null || event == null || event.type() != UpdateEvent.Type.CALLBACK_QUERY) {
-            return ClarificationStateStore.CallbackOutcome.invalid("Unknown clarification");
-        }
-        if (!authorizationService.isAuthorized(event.userId(), event.username(), event.chatId())) {
-            log.warn("Unauthorized clarification callback: userId={}, chatId={}", event.userId(), event.chatId());
-            answer(event.callbackQueryId(), "Not authorized", true);
-            return ClarificationStateStore.CallbackOutcome.invalid("Not authorized");
-        }
-        String data = event.callbackData();
-        String value = data != null && data.startsWith(ClarificationStateStore.CALLBACK_COMMAND + ":")
-            ? data.substring((ClarificationStateStore.CALLBACK_COMMAND + ":").length()) : "";
-        ClarificationStateStore.CallbackOutcome outcome = clarificationStateStore.handleCallback(
-            event.chatId(), event.messageId(), value, telegramClient);
-        if (outcome.complete()) {
-            answer(event.callbackQueryId(), null, false);
-        } else {
-            answer(event.callbackQueryId(), outcome.acknowledgement(), false);
-        }
-        return outcome;
     }
 
     private String route(String command, String value, long chatId, long userId, long messageId) {
