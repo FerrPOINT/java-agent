@@ -582,7 +582,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 log.warn("Iteration budget exhausted for session {} after {} model calls, {} tool executions, {} estimated tokens, {} ms tool time; reason={}",
                     session.id(), budget.modelCalls(), budget.toolExecutions(),
                     budget.totalInputTokens() + budget.totalOutputTokens(), budget.totalToolDurationMs(),
-                    budgetStatus.reason());
+                    budgetStatus == null ? "iteration budget exhausted" : budgetStatus.reason());
                 // Mirrors Hermes _handle_max_iterations: make one extra toolless LLM call
                 // asking the model to summarise what it accomplished, instead of just
                 // printing a raw "budget exhausted" message. c2: shared owner in

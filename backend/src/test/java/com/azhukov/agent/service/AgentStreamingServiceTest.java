@@ -28,6 +28,8 @@ import com.azhukov.agent.core.security.ToolGuardrails;
 import com.azhukov.agent.core.state.TurnStateManager;
 import com.azhukov.agent.core.tool.ToolExecutionService;
 import com.azhukov.agent.core.tool.ToolRegistry;
+import com.azhukov.agent.core.tool.ClarifyGatewayStore;
+import com.azhukov.agent.tools.memory.ClarifyTool;
 import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.repository.MessageRepository;
 import com.azhukov.agent.persistence.repository.SessionRepository;
@@ -315,6 +317,63 @@ class AgentStreamingServiceTest {
             assertThat(message.toolCalls()).hasSize(2);
             assertThat(message.reasoning()).isEqualTo("opaque provider reasoning");
         });
+    }
+
+    @Test
+    void delayedClarifyResolutionContinuesTheSameStreamWithASecondModelCall() throws Exception {
+        ChatRequest request = new ChatRequest(
+            SESSION_ID, USER_MESSAGE, null, 10_000L,
+            null, null, null, null, null, null, null, null, null, null,
+            null, null, null, null, null, null, null, null, null, null,
+            null, null, null, null, null, "12345", null, null);
+        ClarifyGatewayStore clarifyStore = new ClarifyGatewayStore();
+        ClarifyTool clarifyTool = new ClarifyTool(clarifyStore);
+        AtomicInteger modelCalls = new AtomicInteger();
+        AtomicReference<String> clarifyId = new AtomicReference<>();
+        AtomicReference<List<Message>> continuationContext = new AtomicReference<>();
+        when(toolRegistry.getDefinitions(any(Set.class))).thenReturn(List.of(
+            new ToolDefinition("clarify", "Ask a question", Map.of())));
+        when(toolExecutionService.execute(eq("clarify"), any(String.class), any(String.class),
+            any(), any(Session.class), any())).thenAnswer(invocation ->
+                clarifyTool.execute(invocation.getArgument(2), invocation.getArgument(3), invocation.getArgument(4)));
+        doAnswer(invocation -> {
+            StreamingResponseHandler handler = invocation.getArgument(3);
+            if (modelCalls.incrementAndGet() == 1) {
+                handler.onToolCalls(List.of(new ToolCall("clarify-1", "clarify",
+                    "{\"question\":\"Choose environment\",\"choices\":[\"dev\",\"prod\"]}")));
+                handler.onComplete("tool_calls", null, null);
+            } else {
+                continuationContext.set(List.copyOf(invocation.getArgument(0)));
+                handler.onToken("continued after dev");
+                handler.onComplete("stop", null, null);
+            }
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+
+        CollectingEmitter emitter = new CollectingEmitter(30_000L);
+        streamingService.streamTurn(request, emitter);
+        await().atMost(5, TimeUnit.SECONDS).until(() -> emitter.events.stream().anyMatch(event -> {
+            if (!"clarify".equals(event.name)) return false;
+            try {
+                StreamEvent clarify = deserialize(event.data, StreamEvent.class);
+                clarifyId.set(objectMapper.readTree(clarify.error()).path("clarifyId").asText());
+                return !clarifyId.get().isBlank();
+            } catch (Exception ignored) {
+                return false;
+            }
+        }));
+
+        assertThat(clarifyStore.resolveForSession(SESSION_ID.toString(), clarifyId.get(), "1")).isTrue();
+        emitter.awaitDone();
+
+        assertThat(modelCalls.get()).isEqualTo(2);
+        assertThat(continuationContext.get()).anySatisfy(message ->
+            assertThat(message.content()).contains("user_response").contains("dev"));
+        assertThat(emitter.events).anySatisfy(event -> {
+            assertThat(event.name).isEqualTo("token");
+            assertThat(deserialize(event.data, StreamEvent.class).token()).isEqualTo("continued after dev");
+        });
+        assertThat(emitter.events).anyMatch(event -> "done".equals(event.name));
     }
 
     @Test

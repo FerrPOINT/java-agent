@@ -546,6 +546,25 @@ class BotMessageProcessorTest {
     }
 
     @Test
+    void promptVisibleProseIsConsumedWithoutInterruptingOrQueueingTheOriginalTurn() {
+        long chatId = 100L;
+        busyHandler.markBusy(chatId);
+        com.azhukov.agent.bot.keyboard.ClarifyTextInterceptor interceptor =
+            mock(com.azhukov.agent.bot.keyboard.ClarifyTextInterceptor.class);
+        processor.setClarifyTextInterceptor(interceptor);
+        when(interceptor.tryResolve(any(BotSessionEntity.class), eq("not an answer"))).thenReturn("awaiting_response");
+
+        processor.accept(textEvent(18, chatId, "not an answer"));
+
+        verify(interceptor).tryResolve(any(BotSessionEntity.class), eq("not an answer"));
+        verifyNoInteractions(textBatchDebouncer);
+        verifyNoInteractions(backendClient);
+        assertThat(busyHandler.isInterrupted(chatId)).isFalse();
+        assertThat(busyHandler.hasQueued(chatId)).isFalse();
+        verify(typingManager, never()).resumeTyping(chatId);
+    }
+
+    @Test
     void textBatchBufferedDoesNotProcessImmediately() {
         when(textBatchDebouncer.offer(any())).thenReturn(true);
         processor.accept(textEvent(1, 100L, "Hello"));

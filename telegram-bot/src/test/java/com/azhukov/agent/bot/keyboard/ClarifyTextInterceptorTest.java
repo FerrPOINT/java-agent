@@ -40,7 +40,7 @@ class ClarifyTextInterceptorTest {
     @Test
     void customTextResolvedByBackendUnblocksTheExistingClarifyTurn() {
         String backendSessionId = "550e8400-e29b-41d4-a716-446655440001";
-        when(renderer.awaitingTextSession(12345L)).thenReturn(backendSessionId);
+        when(renderer.awaitingResponseSession(12345L)).thenReturn(backendSessionId);
         server.expect(once(), requestTo("http://backend.test/api/v1/agent/session/"
                 + backendSessionId + "/clarify/text"))
             .andExpect(content().contentType(MediaType.APPLICATION_JSON))
@@ -48,7 +48,58 @@ class ClarifyTextInterceptorTest {
             .andRespond(withSuccess("{\"outcome\":\"resolved\"}", MediaType.APPLICATION_JSON));
 
         assertThat(interceptor.tryResolve(session, "a bespoke environment")).isEqualTo("resolved");
-        verify(renderer).clearAwaitingTextSession(12345L);
+        verify(renderer).completeTextResponse(12345L);
+        server.verify();
+    }
+
+    @Test
+    void typedChoiceWithoutOtherUsesTheLivePromptSessionAndUnblocksTheTurn() {
+        String backendSessionId = "550e8400-e29b-41d4-a716-446655440002";
+        when(renderer.awaitingResponseSession(12345L)).thenReturn(backendSessionId);
+        server.expect(once(), requestTo("http://backend.test/api/v1/agent/session/"
+                + backendSessionId + "/clarify/text"))
+            .andExpect(content().json("{\"text\":\"2\"}"))
+            .andRespond(withSuccess("{\"outcome\":\"resolved\"}", MediaType.APPLICATION_JSON));
+
+        assertThat(interceptor.tryResolve(session, "2")).isEqualTo("resolved");
+        verify(renderer).completeTextResponse(12345L);
+        server.verify();
+    }
+
+    @Test
+    void rejectedChoiceRemainsWithThePromptAndNeverFallsIntoBusyInterrupt() {
+        String backendSessionId = "550e8400-e29b-41d4-a716-446655440003";
+        when(renderer.awaitingResponseSession(12345L)).thenReturn(backendSessionId);
+        server.expect(once(), requestTo("http://backend.test/api/v1/agent/session/"
+                + backendSessionId + "/clarify/text"))
+            .andRespond(withSuccess("{\"outcome\":\"rejected_selection\"}", MediaType.APPLICATION_JSON));
+
+        assertThat(interceptor.tryResolve(session, "9")).isEqualTo("invalid_selection");
+        server.verify();
+    }
+
+    @Test
+    void unresolvedProseDuringVisibleChoicePromptIsConsumedInsteadOfInterrupting() {
+        String backendSessionId = "550e8400-e29b-41d4-a716-446655440004";
+        when(renderer.awaitingResponseSession(12345L)).thenReturn(backendSessionId);
+        when(renderer.isAwaitingResponse(12345L)).thenReturn(true);
+        server.expect(once(), requestTo("http://backend.test/api/v1/agent/session/"
+                + backendSessionId + "/clarify/text"))
+            .andRespond(withSuccess("{\"outcome\":\"rejected_prose\"}", MediaType.APPLICATION_JSON));
+
+        assertThat(interceptor.tryResolve(session, "not a listed option")).isEqualTo("awaiting_response");
+        server.verify();
+    }
+    @Test
+    void backendErrorDuringAVisiblePromptIsConsumedInsteadOfInterruptingTheTurn() {
+        String backendSessionId = "550e8400-e29b-41d4-a716-446655440005";
+        when(renderer.awaitingResponseSession(12345L)).thenReturn(backendSessionId);
+        when(renderer.isAwaitingResponse(12345L)).thenReturn(true);
+        server.expect(once(), requestTo("http://backend.test/api/v1/agent/session/"
+                + backendSessionId + "/clarify/text"))
+            .andRespond(withSuccess("not-json", MediaType.TEXT_PLAIN));
+
+        assertThat(interceptor.tryResolve(session, "delayed answer")).isEqualTo("awaiting_response");
         server.verify();
     }
 

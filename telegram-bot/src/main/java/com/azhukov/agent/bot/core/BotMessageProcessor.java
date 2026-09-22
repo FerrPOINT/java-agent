@@ -365,7 +365,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         }
         if ("invalid_selection".equals(outcome)) {
             sendError(chatId, "⚠️ Invalid selection — pick a listed option or type the full label.");
-        } else {
+        } else if ("resolved".equals(outcome)) {
             typingManager.resumeTyping(chatId);
         }
         return true;
