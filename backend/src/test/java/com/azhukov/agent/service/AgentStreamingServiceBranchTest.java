@@ -622,11 +622,18 @@ class AgentStreamingServiceBranchTest {
         streamingService.streamTurn(request, emitter);
         emitter.awaitDone();
 
-        // The final response is the model's toolless budget summary when it succeeds;
-        // implementations may fall back to the literal budget text when it cannot.
-        boolean hasFinalMessage = emitter.events.stream()
-            .anyMatch(e -> "token".equals(e.name));
-        assertThat(hasFinalMessage).isTrue();
+        // The summary call is best-effort; if it cannot produce text, the fallback
+        // must expose which independent limit was reached and every counter.
+        SseEvent finalTokenEvent = emitter.events.stream()
+            .filter(e -> "token".equals(e.name))
+            .reduce((first, second) -> second)
+            .orElseThrow();
+        StreamEvent finalToken = deserialize(finalTokenEvent.data, StreamEvent.class);
+        assertThat(finalToken.token()).contains("reason=max model calls reached")
+            .contains("model_calls=0/100")
+            .contains("tool_executions=0/100")
+            .contains("estimated_tokens=0/200000")
+            .contains("tool_duration_ms=0/600000");
         assertThat(emitter.completed.get()).isTrue();
     }
 

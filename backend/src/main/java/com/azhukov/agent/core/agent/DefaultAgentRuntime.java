@@ -579,10 +579,10 @@ public class DefaultAgentRuntime implements AgentRuntime {
             }
             if (iterationBudget.isExhausted(budget)) {
                 var budgetStatus = iterationBudget.status(budget);
+                String exhaustionReason = budgetStatus == null ? "iteration budget exhausted" : budgetStatus.reason();
                 log.warn("Iteration budget exhausted for session {} after {} model calls, {} tool executions, {} estimated tokens, {} ms tool time; reason={}",
                     session.id(), budget.modelCalls(), budget.toolExecutions(),
-                    budget.totalInputTokens() + budget.totalOutputTokens(), budget.totalToolDurationMs(),
-                    budgetStatus == null ? "iteration budget exhausted" : budgetStatus.reason());
+                    budget.totalInputTokens() + budget.totalOutputTokens(), budget.totalToolDurationMs(), exhaustionReason);
                 // Mirrors Hermes _handle_max_iterations: make one extra toolless LLM call
                 // asking the model to summarise what it accomplished, instead of just
                 // printing a raw "budget exhausted" message. c2: shared owner in
@@ -594,8 +594,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     summaryClient, session, turnMessages, options);
                 String budgetMsg = summary != null && !summary.isBlank()
                     ? summary
-                    : "⚠️ Iteration budget exhausted (" + budget.modelCalls()
-                        + "/" + properties.getBudget().getMaxModelCallsPerTurn() + ")";
+                    : turnExecutor().formatBudgetExhaustionMessage(budget, exhaustionReason);
                 turnMessages.add(Message.assistant(budgetMsg, turnIndex));
                 // H7: Fire background review on budget-exhausted path too.
                 boolean interrupted = interruptToken != null && interruptToken.isCancelled(session.id());

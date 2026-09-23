@@ -2,6 +2,7 @@ package com.azhukov.agent.core.agent;
 
 import com.azhukov.agent.client.langchain4j.ErrorClassifier;
 import com.azhukov.agent.client.langchain4j.LangChain4jModelClient;
+import com.azhukov.agent.core.budget.IterationBudget.TurnSnapshot;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.config.FallbackConfig;
 import com.azhukov.agent.core.client.ModelClient;
@@ -186,6 +187,21 @@ public class TurnExecutor {
             log.warn("Budget exhaustion summary call failed for session {}: {}", session.id(), e.getMessage());
         }
         return null;
+    }
+
+    /**
+     * Produces the exact counters and limits when the final toolless summary
+     * cannot be obtained from the provider.
+     */
+    public String formatBudgetExhaustionMessage(TurnSnapshot budget, String reason) {
+        var configured = properties.getBudget();
+        return "Iteration budget exhausted: reason=" + reason
+            + "; model_calls=" + budget.modelCalls() + "/" + configured.getMaxModelCallsPerTurn()
+            + "; tool_executions=" + budget.toolExecutions() + "/" + configured.getMaxToolExecutionsPerTurn()
+            + "; estimated_tokens=" + (budget.totalInputTokens() + budget.totalOutputTokens())
+                + "/" + configured.getMaxTokensPerTurn()
+            + "; tool_duration_ms=" + budget.totalToolDurationMs()
+                + "/" + configured.getMaxToolDurationMsPerTurn() + ".";
     }
 
     // ──────────────────────────────────────────────────────────────────

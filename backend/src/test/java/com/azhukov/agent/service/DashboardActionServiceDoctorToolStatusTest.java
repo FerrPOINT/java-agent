@@ -20,6 +20,18 @@ import static org.mockito.Mockito.when;
 class DashboardActionServiceDoctorToolStatusTest {
 
     @SuppressWarnings("unchecked")
+    private Map<String, Object> doctorFor(AgentProperties properties) {
+        DashboardActionService service = new DashboardActionService(
+            (ObjectProvider<com.azhukov.agent.service.ProfileService>) null,
+            (ObjectProvider<com.azhukov.agent.persistence.repository.DashboardActionRepository>) null,
+            (ObjectProvider<com.azhukov.agent.service.ProfileRuntimeRegistry>) null,
+            (ObjectProvider<com.azhukov.agent.service.AgentRuntimeService>) null,
+            null,
+            properties);
+        return service.run("doctor", "default", "test").output();
+    }
+
+    @SuppressWarnings("unchecked")
     private Map<String, Object> toolsFor(AgentProperties properties) {
         return toolsFor(properties, null);
     }
@@ -53,6 +65,28 @@ class DashboardActionServiceDoctorToolStatusTest {
         properties.getImageGen().setEnabled(false);
         properties.getMcp().setEnabled(false);
         return properties;
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void doctorReportsEveryEffectiveBudgetLimit() {
+        AgentProperties properties = baseProps();
+        properties.getCore().setMaxTurns(100);
+        properties.getBudget().setEnabled(true);
+        properties.getBudget().setMaxModelCallsPerTurn(100);
+        properties.getBudget().setMaxToolExecutionsPerTurn(100);
+        properties.getBudget().setMaxTokensPerTurn(200_000);
+        properties.getBudget().setMaxToolDurationMsPerTurn(600_000);
+        properties.getBudget().setRunBudgetSeconds(0);
+
+        Map<String, Object> budget = (Map<String, Object>) doctorFor(properties).get("budget");
+        assertThat(budget).containsEntry("enabled", true)
+            .containsEntry("max_turns", 100)
+            .containsEntry("max_model_calls_per_turn", 100)
+            .containsEntry("max_tool_executions_per_turn", 100)
+            .containsEntry("max_tokens_per_turn", 200_000)
+            .containsEntry("max_tool_duration_ms_per_turn", 600_000)
+            .containsEntry("run_budget_seconds", 0);
     }
 
     @Test

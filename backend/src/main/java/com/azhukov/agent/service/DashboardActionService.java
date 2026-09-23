@@ -131,6 +131,7 @@ public class DashboardActionService {
         report.put("model_provider", String.valueOf(properties.getModel().getProvider()));
         report.put("model_configured", properties.getModel().getApiKey() != null
             && !properties.getModel().getApiKey().isBlank());
+        report.put("budget", budgetDiagnostics());
         ProfileRuntimeRegistry registry = runtimeRegistry();
         if (registry != null) {
             registry.state(profile).ifPresent(state -> {
@@ -145,6 +146,18 @@ public class DashboardActionService {
         report.putAll(toolDiagnostics());
         report.put("checked_at", Instant.now().toString());
         return report;
+    }
+
+    private Map<String, Object> budgetDiagnostics() {
+        var budget = properties.getBudget();
+        return Map.of(
+            "enabled", budget.isEnabled(),
+            "max_turns", properties.getCore().getMaxTurns(),
+            "max_model_calls_per_turn", budget.getMaxModelCallsPerTurn(),
+            "max_tool_executions_per_turn", budget.getMaxToolExecutionsPerTurn(),
+            "max_tokens_per_turn", budget.getMaxTokensPerTurn(),
+            "max_tool_duration_ms_per_turn", budget.getMaxToolDurationMsPerTurn(),
+            "run_budget_seconds", budget.getRunBudgetSeconds());
     }
 
     /**

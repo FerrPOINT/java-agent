@@ -604,10 +604,10 @@ public class AgentStreamingService {
             }
             if (iterationBudget.isExhausted(budget)) {
                 var budgetStatus = iterationBudget.status(budget);
+                String exhaustionReason = budgetStatus == null ? "iteration budget exhausted" : budgetStatus.reason();
                 log.warn("Iteration budget exhausted for session {} after {} model calls, {} tool executions, {} estimated tokens, {} ms tool time; reason={}",
                     session.id(), budget.modelCalls(), budget.toolExecutions(),
-                    budget.totalInputTokens() + budget.totalOutputTokens(), budget.totalToolDurationMs(),
-                    budgetStatus == null ? "iteration budget exhausted" : budgetStatus.reason());
+                    budget.totalInputTokens() + budget.totalOutputTokens(), budget.totalToolDurationMs(), exhaustionReason);
                 // c2 B4: Hermes _handle_max_iterations parity — one toolless
                 // summary call instead of a raw budget message (sync parity).
                 String budgetMsg;
@@ -615,12 +615,10 @@ public class AgentStreamingService {
                     String summary = turnExecutor().requestBudgetExhaustionSummary(
                         activeStreamClientRef.get(), session, turnMessages, streamOptions);
                     budgetMsg = summary != null && !summary.isBlank() ? summary
-                        : "⚠️ Iteration budget exhausted (" + budget.modelCalls()
-                            + "/" + properties.getBudget().getMaxModelCallsPerTurn() + ")";
+                        : turnExecutor().formatBudgetExhaustionMessage(budget, exhaustionReason);
                 } catch (Exception summaryEx) {
                     log.debug("Budget summary call failed for {}: {}", session.id(), summaryEx.getMessage());
-                    budgetMsg = "⚠️ Iteration budget exhausted (" + budget.modelCalls()
-                        + "/" + properties.getBudget().getMaxModelCallsPerTurn() + ")";
+                    budgetMsg = turnExecutor().formatBudgetExhaustionMessage(budget, exhaustionReason);
                 }
                 eventHelper().send(emitter, new StreamEvent("token", budgetMsg, null, null), streamCtx);
                 eventHelper().send(emitter, new StreamEvent("done", null, null, null), streamCtx);
