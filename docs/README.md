@@ -39,6 +39,7 @@ The `backend/` directory is the actual application. The `docs/` directory is the
     ├── 08-browser-vision.md              # browser/vision endpoints
     ├── 09-builtin-tools.md               # matrix of implemented tools
     ├── 10-production-readiness.md        # docker, systemd, logging, health, gateway
+    ├── default-settings.md                # shipped config defaults and fallback precedence
     └── standards/
         └── documentation.md              # ДЕЙСТВУЮЩИЙ стандарт документации и тестов (2026-09-20)
 ```
@@ -131,6 +132,7 @@ Telegram gateway:
 9. Read `09-builtin-tools.md` for the implemented tool matrix and security defaults.
 10. Read `10-production-readiness.md` for Docker/systemd/health/telegram.
 11. Read `UI_SHELL_STANDARD.md` before designing a first-party web console.
+12. Read `default-settings.md` before changing configuration defaults or selecting environment overrides.
 
 ## Source
 
