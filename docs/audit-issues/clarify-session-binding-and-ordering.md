@@ -49,6 +49,13 @@ Run:
 ./gradlew :telegram-bot:test --tests "com.azhukov.agent.bot.keyboard.Clarify*"
 ```
 
+Results on the audited worktree:
+
+- `:backend:test` for `ClarifyGatewayStoreTest` and `AgentChatControllerT1Test`: passed.
+- `:telegram-bot:test` for `ClarifyInteractionRendererTest`: passed.
+- `:backend:compileJava :telegram-bot:compileJava`: passed.
+- The registration-order regression test was sabotaged by restoring `findFirst()`; it failed, then passed after restoring the sequence comparison.
+
 ## Risk
 
 Blocking clarify is a cross-process, user-interaction boundary. Incorrect identity binding can misapply a user answer to another question or session, and a failed resume leaves the active tool turn held until its timeout.
