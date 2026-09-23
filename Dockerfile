@@ -50,7 +50,20 @@ RUN apt-get update \
         python3-venv \
         unzip \
         wget \
+        xz-utils \
         xdg-utils \
+    && curl -fsSL https://nodejs.org/dist/v22.23.2/node-v22.23.2-linux-x64.tar.xz -o /tmp/node.tar.xz \
+    && curl -fsSL https://nodejs.org/dist/v22.23.2/SHASUMS256.txt -o /tmp/node-shasums.txt \
+    && mv /tmp/node.tar.xz /tmp/node-v22.23.2-linux-x64.tar.xz \
+    && grep ' node-v22.23.2-linux-x64.tar.xz$' /tmp/node-shasums.txt | sed 's# node-v22.23.2-linux-x64.tar.xz$# /tmp/node-v22.23.2-linux-x64.tar.xz#' | sha256sum -c - \
+    && tar -xJf /tmp/node-v22.23.2-linux-x64.tar.xz -C /opt \
+    && ln -s /opt/node-v22.23.2-linux-x64/bin/node /usr/local/bin/node \
+    && ln -s /opt/node-v22.23.2-linux-x64/bin/npm /usr/local/bin/npm \
+    && ln -s /opt/node-v22.23.2-linux-x64/bin/npx /usr/local/bin/npx \
+    && /usr/local/bin/npm install --global --ignore-scripts repomix@1.18.1 \
+    && ln -s /opt/node-v22.23.2-linux-x64/bin/repomix /usr/local/bin/repomix \
+    && /usr/local/bin/repomix --version \
+    && rm -f /tmp/node.tar.xz /tmp/node-shasums.txt \
     && python3 -m venv /opt/edge-tts \
     && /opt/edge-tts/bin/pip install --no-cache-dir edge-tts==7.2.7 \
     && rm -rf /var/lib/apt/lists/*
