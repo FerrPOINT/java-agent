@@ -50,6 +50,7 @@ public class DashboardActionService {
     private final ObjectProvider<DashboardActionRepository> actionRepositoryProvider;
     private final ObjectProvider<ProfileRuntimeRegistry> runtimeRegistryProvider;
     private final ObjectProvider<AgentRuntimeService> runtimeServiceProvider;
+    private final ObjectProvider<com.azhukov.agent.client.mcp.McpLifecycleManager> mcpLifecycleManagerProvider;
     private final com.azhukov.agent.config.AgentProperties properties;
     private final Map<UUID, Boolean> cancellationRequests = new ConcurrentHashMap<>();
 
@@ -228,15 +229,23 @@ public class DashboardActionService {
         }
         tools.put("image_generate", imageGen);
 
-        // MCP: enabled + how many servers actually connected.
+        // MCP is usable only when at least one configured server is connected.
         Map<String, Object> mcp = new LinkedHashMap<>();
         mcp.put("enabled", properties.getMcp().isEnabled());
         if (!properties.getMcp().isEnabled()) {
             mcp.put("status", "off");
             mcp.put("detail", "agent.mcp.enabled=false — set AGENT_MCP_ENABLED=true");
         } else {
-            mcp.put("status", "ok");
-            mcp.put("detail", "see /api/mcp/servers for per-server state");
+            var lifecycle = mcpLifecycleManagerProvider == null ? null : mcpLifecycleManagerProvider.getIfAvailable();
+            int connectedServers = lifecycle == null ? 0 : lifecycle.listServers().size();
+            mcp.put("connected_servers", connectedServers);
+            if (connectedServers == 0) {
+                mcp.put("status", "down");
+                mcp.put("detail", "MCP is enabled but no servers are connected — inspect /api/v1/mcp/servers and the backend log");
+            } else {
+                mcp.put("status", "ok");
+                mcp.put("detail", connectedServers + " MCP server(s) connected");
+            }
         }
         tools.put("mcp", mcp);
 

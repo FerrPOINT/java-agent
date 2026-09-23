@@ -587,7 +587,8 @@ public class AgentStreamingService {
                 eventHelper().send(emitter, new StreamEvent("interrupted", null, null, "Turn cancelled by user."), streamCtx);
                 eventHelper().send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                 eventHelper().safeComplete(emitter);
-                if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
+                if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew,
+                    midTurnPersistenceCallback != null ? persistedUpTo : 0, TurnExitReason.INTERRUPTED);
                 return;
             }
             // c2 B2: guardrail halt parity — the sync loop checks isHalted() at
@@ -624,7 +625,8 @@ public class AgentStreamingService {
                 eventHelper().send(emitter, new StreamEvent("token", budgetMsg, null, null), streamCtx);
                 eventHelper().send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                 eventHelper().safeComplete(emitter);
-                if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
+                if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew,
+                    midTurnPersistenceCallback != null ? persistedUpTo : 0, TurnExitReason.BUDGET_EXHAUSTED);
                 return;
             }
 
@@ -1682,6 +1684,11 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
     }
 
     private void persistTurn(Session session, List<Message> turnMessages, boolean isNew, int fromIndex) {
+        persistTurn(session, turnMessages, isNew, fromIndex, TurnExitReason.PENDING_TOOL_RESULT);
+    }
+
+    private void persistTurn(Session session, List<Message> turnMessages, boolean isNew, int fromIndex,
+                             TurnExitReason exitReason) {
         // Deleted-session guard (same race as MidTurnPersistenceService): the
         // session row can be removed while the turn is still streaming; a
         // pre-check keeps the FK violation out of the journal entirely.
@@ -1694,7 +1701,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
         // (interrupt/error/budget cut the turn short), append a synthetic
         // assistant message so the persisted history doesn't end on tool→user
         // (role-alternation violation → Gemini/Claude 400, #48879).
-        TurnFinalizer.closeInterruptedToolSequence(turnMessages, TurnExitReason.INTERRUPTED);
+        TurnFinalizer.closeInterruptedToolSequence(turnMessages, exitReason);
         log.info("turn_persist_started session={} messages={} fromIndex={}", session.id(), turnMessages.size(), fromIndex);
         try {
             transactionTemplate.execute(status -> {
