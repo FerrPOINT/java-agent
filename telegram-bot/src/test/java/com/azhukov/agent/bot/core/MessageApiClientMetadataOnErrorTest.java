@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -99,6 +100,12 @@ class MessageApiClientMetadataOnErrorTest {
         assertThat(result.contextLength()).isEqualTo(262144);
         assertThat(result.backendSessionId())
             .isEqualTo(java.util.UUID.fromString("00000000-0000-0000-0000-000000000001"));
+    }
+
+    @Test
+    void streamingIdleTimeoutOutlivesTheMaximumClarifyWait() {
+        assertThat(MessageApiClient.STREAM_IDLE_TIMEOUT_MS)
+            .isGreaterThan(Duration.ofHours(1).toMillis());
     }
 
     @Test

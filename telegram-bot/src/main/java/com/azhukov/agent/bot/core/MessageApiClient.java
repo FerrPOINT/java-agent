@@ -14,6 +14,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.Executors;
@@ -30,7 +31,9 @@ import java.util.function.Consumer;
 @Slf4j
 public class MessageApiClient extends BaseBackendClient {
 
-    private static final long STREAM_IDLE_TIMEOUT_MS = 300_000; // 5 minutes of no data — allows compression/LLM calls
+    // A blocking clarify can wait up to one hour for a human response. Keep the
+    // bot transport open longer than that wait instead of treating it as a dead stream.
+    static final long STREAM_IDLE_TIMEOUT_MS = Duration.ofHours(2).toMillis();
     private static final int MAX_CONNECT_RETRIES = 3;
     private static final long[] CONNECT_BACKOFF_MS = {2_000, 4_000, 8_000};
 
