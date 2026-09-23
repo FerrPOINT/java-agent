@@ -264,6 +264,9 @@ public class AgentChatController {
         if (clarifyId.isEmpty()) {
             return Map.of("resolved", false, "reason", "clarifyId required");
         }
+        if (!store.belongsToSession(sessionId, clarifyId)) {
+            return Map.of("resolved", false, "reason", "clarify does not belong to session");
+        }
         boolean resolved = store.resolve(clarifyId, request.response() == null ? "" : request.response());
         return resolved
             ? Map.of("resolved", true)

@@ -30,26 +30,32 @@ public class ClarifyTextInterceptor {
 
     private final RestClient backendRestClient;
     private final ObjectMapper objectMapper;
+    private final ClarifyInteractionRenderer clarifyRenderer;
 
     public ClarifyTextInterceptor(@Qualifier("backendRestClient") RestClient backendRestClient,
-                                  ObjectMapper objectMapper) {
+                                  ObjectMapper objectMapper,
+                                  ClarifyInteractionRenderer clarifyRenderer) {
         this.backendRestClient = backendRestClient;
         this.objectMapper = objectMapper;
+        this.clarifyRenderer = clarifyRenderer;
     }
 
     /**
-     * @return "resolved", "invalid_selection" when the backend classified the
-     *         text as a failed selection (prompt stays armed), or null when
-     *         there is no pending clarify (route the message normally).
+     * @return "resolved", "invalid_selection", or "awaiting_clarify" while the
+     *         prompt remains armed; null only when there is no pending clarify.
      */
-    public String tryResolve(BotSessionEntity session, String text) {
+    public String tryResolve(BotSessionEntity session, long chatId, String text) {
         if (session == null || session.getId() == null || text == null || text.isBlank()) {
+            return null;
+        }
+        String backendSessionId = clarifyRenderer.backendSessionIdForChat(chatId);
+        if (backendSessionId == null) {
             return null;
         }
         try {
             @SuppressWarnings("unchecked")
             Map<String, Object> outcome = backendRestClient.post()
-                .uri("/api/v1/agent/session/{sessionId}/clarify/text", session.getId().toString())
+                .uri("/api/v1/agent/session/{sessionId}/clarify/text", backendSessionId)
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
                 .body(Map.of("text", text))
                 .retrieve()
@@ -59,9 +65,12 @@ public class ClarifyTextInterceptor {
             }
             String result = String.valueOf(outcome.get("outcome"));
             return switch (result) {
-                case "resolved" -> "resolved";
+                case "resolved" -> {
+                    clarifyRenderer.clearOldestPromptForChat(chatId, backendSessionId);
+                    yield "resolved";
+                }
                 case "rejected_selection" -> "invalid_selection";
-                // prose or no pending clarify: route normally
+                case "rejected_prose" -> "awaiting_clarify";
                 default -> null;
             };
         } catch (Exception e) {

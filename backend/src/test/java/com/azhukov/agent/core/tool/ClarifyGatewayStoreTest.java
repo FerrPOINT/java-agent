@@ -2,7 +2,9 @@ package com.azhukov.agent.core.tool;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -73,6 +75,39 @@ class ClarifyGatewayStoreTest {
         // Cancelled waiter sees "" (Hermes clear_session), not a real reply
         assertThat(answer).isEmpty();
         clearer.join();
+    }
+
+    @Test
+    void pendingForSessionSelectsOldestRegistrationDeterministically() {
+        ClarifyGatewayStore store = new ClarifyGatewayStore();
+        ClarifyGatewayStore.PendingClarify first = store.register("s1", "First?", List.of("a"), false);
+        ClarifyGatewayStore.PendingClarify second = store.register("s1", "Second?", List.of("b"), false);
+        reverseSessionIteration(store, "s1", second, first);
+
+        assertThat(store.pendingForSession("s1").clarifyId()).isEqualTo(first.clarifyId());
+        assertThat(store.belongsToSession("s1", first.clarifyId())).isTrue();
+        assertThat(store.belongsToSession("another-session", first.clarifyId())).isFalse();
+
+        assertThat(store.resolve(first.clarifyId(), "a")).isTrue();
+        assertThat(store.pendingForSession("s1").question()).isEqualTo("Second?");
+    }
+
+    @SuppressWarnings("unchecked")
+    private void reverseSessionIteration(ClarifyGatewayStore store, String sessionKey,
+                                         ClarifyGatewayStore.PendingClarify second,
+                                         ClarifyGatewayStore.PendingClarify first) {
+        try {
+            var field = ClarifyGatewayStore.class.getDeclaredField("sessionIndex");
+            field.setAccessible(true);
+            Map<String, Map<String, ClarifyGatewayStore.PendingClarify>> index =
+                (Map<String, Map<String, ClarifyGatewayStore.PendingClarify>>) field.get(store);
+            Map<String, ClarifyGatewayStore.PendingClarify> reversed = new LinkedHashMap<>();
+            reversed.put(second.clarifyId(), second);
+            reversed.put(first.clarifyId(), first);
+            index.put(sessionKey, reversed);
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError(e);
+        }
     }
 
     @Test

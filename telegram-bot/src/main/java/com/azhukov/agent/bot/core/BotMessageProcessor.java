@@ -379,7 +379,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         // pending entry instead of being rejected/queued as a new turn.
         if (busyHandler.isBusy(chatId) && clarifyTextInterceptor != null
                 && messageText != null && !messageText.isBlank()) {
-            String clarifyOutcome = clarifyTextInterceptor.tryResolve(session, messageText);
+            String clarifyOutcome = clarifyTextInterceptor.tryResolve(session, chatId, messageText);
             if (clarifyOutcome != null) {
                 // resolved: answer fed into the open turn; ack to the user
                 if (!"invalid_selection".equals(clarifyOutcome)) {

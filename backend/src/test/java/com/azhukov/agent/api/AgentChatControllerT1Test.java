@@ -46,6 +46,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -147,6 +148,31 @@ class AgentChatControllerT1Test {
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler(new com.fasterxml.jackson.databind.ObjectMapper()))
             .build();
+    }
+
+    @Test
+    void resolveClarifyRejectsIdFromAnotherSession() throws Exception {
+        com.azhukov.agent.core.tool.ClarifyGatewayStore clarifyStore =
+            new com.azhukov.agent.core.tool.ClarifyGatewayStore();
+        var pending = clarifyStore.register(SESSION_ID.toString(), "Deploy?", List.of("dev"), false);
+        AgentChatController controller = new AgentChatController(
+            agentRuntimeService, streamingService, memoryProvider, skillManager,
+            ttsService, transcriptionService, steerBuffer, interruptToken,
+            backgroundReviewServiceProvider, backgroundJobRepository, sessionRepository,
+            messageRepository, messageMapper, approvalQueue, properties, agentMetrics, toolRegistry);
+        org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.core.tool.ClarifyGatewayStore> provider =
+            org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class);
+        when(provider.getObject()).thenReturn(clarifyStore);
+        var field = AgentChatController.class.getDeclaredField("clarifyStoreProviderField");
+        field.setAccessible(true);
+        field.set(controller, provider);
+
+        Map<String, Object> result = controller.resolveClarify(UUID.randomUUID().toString(),
+            new AgentChatController.ClarifyResolveRequest(pending.clarifyId(), "dev"));
+
+        assertThat(result).containsEntry("resolved", false)
+            .containsEntry("reason", "clarify does not belong to session");
+        assertThat(clarifyStore.pendingForSession(SESSION_ID.toString())).isNotNull();
     }
 
     // ── chat() ──

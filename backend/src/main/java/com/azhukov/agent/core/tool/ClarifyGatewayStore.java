@@ -9,6 +9,7 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Hermes parity (tools/clarify_gateway.py): blocking clarify primitive. The
@@ -29,6 +30,7 @@ public class ClarifyGatewayStore {
         String question,
         List<String> choices,
         boolean multiSelect,
+        long registrationSequence,
         CompletableFuture<String> future
     ) {
         boolean isAwaitingText() {
@@ -43,6 +45,7 @@ public class ClarifyGatewayStore {
 
     private final Map<String, PendingClarify> entries = new ConcurrentHashMap<>();
     private final Map<String, Map<String, PendingClarify>> sessionIndex = new ConcurrentHashMap<>();
+    private final AtomicLong registrationSequence = new AtomicLong();
 
     /** Register a pending clarify; the caller then blocks on the entry's future. */
     public PendingClarify register(String sessionKey, String question, List<String> choices, boolean multiSelect) {
@@ -51,6 +54,7 @@ public class ClarifyGatewayStore {
             id, sessionKey, question,
             choices == null ? List.of() : List.copyOf(choices),
             multiSelect && choices != null && !choices.isEmpty(),
+            registrationSequence.incrementAndGet(),
             new CompletableFuture<>());
         entries.put(id, entry);
         sessionIndex.computeIfAbsent(sessionKey, k -> new ConcurrentHashMap<>()).put(id, entry);
@@ -104,11 +108,15 @@ public class ClarifyGatewayStore {
         if (index == null) {
             return null;
         }
-        // Insertion-ordered scan is not guaranteed by ConcurrentHashMap; pick the
-        // earliest-created entry (UUIDs carry no order, compare by registration
-        // sequence via the future's internal ordering — fall back to any entry:
-        // sessions almost always have exactly one pending clarify).
-        return index.values().stream().findFirst().orElse(null);
+        return index.values().stream()
+            .min(java.util.Comparator.comparingLong(PendingClarify::registrationSequence))
+            .orElse(null);
+    }
+
+    /** True only when the pending clarify id belongs to the requested session. */
+    public boolean belongsToSession(String sessionKey, String clarifyId) {
+        PendingClarify entry = entries.get(clarifyId);
+        return entry != null && entry.sessionKey().equals(sessionKey);
     }
 
     /** Drop every pending entry for a session (/new, interrupt, shutdown). */

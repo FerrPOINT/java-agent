@@ -19,6 +19,7 @@ import org.springframework.web.client.RestClient;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Renders the backend's BLOCKING clarify prompts (Hermes clarify_gateway
@@ -42,9 +43,10 @@ public class ClarifyInteractionRenderer {
     private final Map<String, java.util.Set<Integer>> multiSelectState = new java.util.concurrent.ConcurrentHashMap<>();
     /** Payloads kept per chat so Done/Other callbacks can re-render or resolve. */
     private final Map<String, PromptPayload> activePrompts = new java.util.concurrent.ConcurrentHashMap<>();
+    private final AtomicLong promptRegistrationSequence = new AtomicLong();
 
     /** Single-question prompt payload (mirrors the backend ClarifyStreamBridge event). */
-    record PromptPayload(String clarifyId, String backendSessionId, String question, List<String> choices, boolean multiSelect) {}
+    record PromptPayload(String clarifyId, long chatId, String backendSessionId, String question, List<String> choices, boolean multiSelect, long registrationSequence) {}
 
     public ClarifyInteractionRenderer(ObjectMapper objectMapper,
                                       InlineKeyboardBuilder keyboardBuilder,
@@ -77,11 +79,11 @@ public class ClarifyInteractionRenderer {
             List<String> choices = new ArrayList<>();
             payload.path("choices").forEach(c -> choices.add(c.asText()));
             boolean multiSelect = payload.path("multi_select").asBoolean(false);
-            if (clarifyId.isEmpty() || question.isEmpty()) {
+            if (clarifyId.isEmpty() || backendSessionId == null || backendSessionId.isBlank() || question.isEmpty()) {
                 log.debug("Clarify payload missing fields for chat {}", chatId);
                 return;
             }
-            activePrompts.put(clarifyId, new PromptPayload(clarifyId, backendSessionId, question, choices, multiSelect));
+            activePrompts.put(clarifyId, new PromptPayload(clarifyId, chatId, backendSessionId, question, choices, multiSelect, promptRegistrationSequence.incrementAndGet()));
             String markup = keyboardBuilder.build(buttonsFor(clarifyId, choices, multiSelect, java.util.Set.of()));
             Integer topicId = threadId > 0 ? (int) threadId : null;
             if (telegramClient.sendMessage(chatId, question, null, null, topicId, markup, false).isEmpty()) {
@@ -104,6 +106,10 @@ public class ClarifyInteractionRenderer {
         PromptPayload prompt = activePrompts.get(clarifyId);
         if (prompt == null) {
             return CallbackResult.invalid("This question has expired.");
+        }
+        if (prompt.chatId() != chatId) {
+            log.warn("Rejected clarify callback for {} from unrelated chat {}", clarifyId, chatId);
+            return CallbackResult.invalid("This question belongs to another chat.");
         }
         if ("other".equals(action)) {
             // Text-capture mode: the next typed message resolves via /clarify/text
@@ -151,6 +157,28 @@ public class ClarifyInteractionRenderer {
             return CallbackResult.complete("Selected");
         }
         return CallbackResult.invalid("This question has expired.");
+    }
+
+    /** Return the backend session bound to a visible prompt in this Telegram chat. */
+    String backendSessionIdForChat(long chatId) {
+        return activePrompts.values().stream()
+            .filter(prompt -> prompt.chatId() == chatId)
+            .min(java.util.Comparator.comparingLong(PromptPayload::registrationSequence))
+            .map(PromptPayload::backendSessionId)
+            .filter(sessionId -> sessionId != null && !sessionId.isBlank())
+            .orElse(null);
+    }
+
+    void clearOldestPromptForChat(long chatId, String backendSessionId) {
+        activePrompts.values().stream()
+            .filter(prompt -> prompt.chatId() == chatId && backendSessionId.equals(prompt.backendSessionId()))
+            .min(java.util.Comparator.comparingLong(PromptPayload::registrationSequence))
+            .ifPresent(prompt -> clearPrompt(prompt.clarifyId()));
+    }
+
+    private void clearPrompt(String clarifyId) {
+        activePrompts.remove(clarifyId);
+        multiSelectState.remove(clarifyId);
     }
 
     private String sessionIdFor(String clarifyId) {
