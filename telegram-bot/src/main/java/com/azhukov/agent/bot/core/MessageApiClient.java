@@ -31,9 +31,8 @@ import java.util.function.Consumer;
 @Slf4j
 public class MessageApiClient extends BaseBackendClient {
 
-    // A blocking clarify can wait up to one hour for a human response. Keep the
-    // bot transport open longer than that wait instead of treating it as a dead stream.
-    static final long STREAM_IDLE_TIMEOUT_MS = Duration.ofHours(2).toMillis();
+    // The delivery transport must exceed the recommended seven-day clarify window.
+    static final long STREAM_IDLE_TIMEOUT_MS = Duration.ofDays(8).toMillis();
     private static final int MAX_CONNECT_RETRIES = 3;
     private static final long[] CONNECT_BACKOFF_MS = {2_000, 4_000, 8_000};
 

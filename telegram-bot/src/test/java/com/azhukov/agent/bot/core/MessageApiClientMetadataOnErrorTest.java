@@ -103,9 +103,9 @@ class MessageApiClientMetadataOnErrorTest {
     }
 
     @Test
-    void streamingIdleTimeoutOutlivesTheMaximumClarifyWait() {
+    void streamingIdleTimeoutOutlivesTheRecommendedClarifyWindow() {
         assertThat(MessageApiClient.STREAM_IDLE_TIMEOUT_MS)
-            .isGreaterThan(Duration.ofHours(1).toMillis());
+            .isGreaterThan(Duration.ofDays(7).toMillis());
     }
 
     @Test

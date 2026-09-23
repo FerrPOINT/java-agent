@@ -41,7 +41,14 @@ public class ClarifyGatewayStore {
     /** Outcome of a typed-reply resolution attempt. */
     public enum TextOutcome { RESOLVED, REJECTED_PROSE, REJECTED_SELECTION, NO_PENDING }
 
-    public static final long DEFAULT_TIMEOUT_SECONDS = 3600;
+    /**
+     * Default human-response window for a blocking clarify prompt.
+     * One day is intentional: a clarification is a user decision, not a
+     * request deadline. Two to seven days is recommended for unattended or
+     * asynchronous channels; callers may supply a longer window when their
+     * transport and session-retention policy support it.
+     */
+    public static final long DEFAULT_TIMEOUT_SECONDS = TimeUnit.DAYS.toSeconds(1);
 
     /** Monotonic order makes typed answers bind to the first visible batch question. */
     private final java.util.concurrent.atomic.AtomicLong nextSequence = new java.util.concurrent.atomic.AtomicLong();

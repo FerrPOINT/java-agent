@@ -25,6 +25,12 @@ public final class BackendRestClientFactory {
     public static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(10);
     /** Default read timeout: one full agent turn can take minutes. */
     public static final Duration READ_TIMEOUT = Duration.ofMinutes(10);
+    /**
+     * Streaming transport window for clarify. It exceeds the recommended
+     * seven-day human-response window so a valid delayed answer can still
+     * resume its original turn.
+     */
+    public static final Duration STREAMING_READ_TIMEOUT = Duration.ofDays(8);
 
     private BackendRestClientFactory() {
     }
@@ -41,11 +47,11 @@ public final class BackendRestClientFactory {
 
     /**
      * Creates a dedicated long-lived client for SSE turns. Blocking clarify can
-     * legitimately wait for a human answer for an hour, so it must not inherit
-     * the ordinary REST request timeout.
+     * wait days for a human decision. Eight days covers the recommended two to
+     * seven-day window while preserving a small margin for final delivery.
      */
     public static RestClient createStreaming(String baseUrl, String apiKey) {
-        return create(baseUrl, apiKey, Duration.ofHours(2));
+        return create(baseUrl, apiKey, STREAMING_READ_TIMEOUT);
     }
 
     private static RestClient create(String baseUrl, String apiKey, Duration readTimeout) {
