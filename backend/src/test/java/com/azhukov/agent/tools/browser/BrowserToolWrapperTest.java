@@ -449,6 +449,21 @@ class BrowserToolWrapperTest {
     }
 
     @Test
+    void dialogAcceptsCamelCasePromptTextFromModels() {
+        BrowserService browserService = mock(BrowserService.class);
+        when(browserService.handleDialog(true, "camel case answer")).thenReturn("Dialog accepted");
+
+        BrowserDialogTool tool = new BrowserDialogTool(browserService);
+        ToolResult result = tool.execute(
+            "{\"action\":\"accept\",\"promptText\":\"camel case answer\"}",
+            null,
+            null);
+
+        assertThat(result.success()).isTrue();
+        verify(browserService).handleDialog(true, "camel case answer");
+    }
+
+    @Test
     void dialogKeepsLegacyTextAlias() {
         BrowserService browserService = mock(BrowserService.class);
         when(browserService.handleDialog(true, "legacy answer")).thenReturn("Dialog accepted");
