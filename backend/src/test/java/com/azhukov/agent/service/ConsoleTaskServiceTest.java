@@ -110,6 +110,28 @@ class ConsoleTaskServiceTest {
     }
 
     @Test
+    void tailerRecordsRealExitStatusAfterFinalOutputDrain() throws Exception {
+        ProcessTool.ManagedProcess managed = org.mockito.Mockito.mock(ProcessTool.ManagedProcess.class);
+        when(processTool.isProcessAlive(managed)).thenReturn(false);
+        when(processTool.exitCode(managed)).thenReturn(17);
+        when(processTool.outputFrom(managed, 0)).thenReturn(List.of("failure detail"));
+        when(taskRepository.findById("t1")).thenReturn(Optional.of(task("t1", "running")));
+        when(outputRepository.findFirstByTaskIdOrderBySequenceDesc("t1")).thenReturn(Optional.empty());
+
+        java.lang.reflect.Method tailer = ConsoleTaskService.class
+            .getDeclaredMethod("tailOutput", String.class, ProcessTool.ManagedProcess.class);
+        tailer.setAccessible(true);
+        tailer.invoke(service(), "t1", managed);
+
+        org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(2)).untilAsserted(() -> {
+            verify(processTool).awaitOutputDrain(managed, 3000);
+            verify(processTool).exitCode(managed);
+            verify(taskRepository).finishTask(eq("t1"), eq("failed"), eq(17), any());
+            verify(outputRepository).save(any(ConsoleTaskOutputEntity.class));
+        });
+    }
+
+    @Test
     void drainOnlyPersistsNewProcessOutput() throws Exception {
         ProcessTool.ManagedProcess managed = org.mockito.Mockito.mock(ProcessTool.ManagedProcess.class);
         when(processTool.outputFrom(managed, 0)).thenReturn(List.of("first", "second"));

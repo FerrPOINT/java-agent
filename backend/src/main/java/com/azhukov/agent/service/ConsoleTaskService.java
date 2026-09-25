@@ -210,8 +210,11 @@ public class ConsoleTaskService {
                     drainNewOutput(taskId, managed, processTool);
                     Thread.sleep(250);
                 }
+                // The OS process may exit before its reader consumes the final stdout bytes.
+                processTool.awaitOutputDrain(managed, 3000);
                 drainNewOutput(taskId, managed, processTool);
-                finish(taskId, "completed", 0);
+                int exitCode = processTool.exitCode(managed);
+                finish(taskId, exitCode == 0 ? "completed" : "failed", exitCode);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 finish(taskId, "cancelled", null);
