@@ -2,33 +2,28 @@ package com.azhukov.agent.api;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.security.Redactor;
+import com.azhukov.agent.core.security.UserContext;
+import com.azhukov.agent.service.ConsoleTaskService;
 import com.azhukov.agent.tools.terminal.ProcessTool;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 
-import java.io.IOException;
-import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyBoolean;
-import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/**
- * Bounded REST console (docs/34 gap 1 REST subset): guard enforcement,
- * lifecycle mapping and fail-closed unsupported markers.
- */
+/** Controller contract for durable, owner-scoped console command tasks. */
 @ExtendWith(MockitoExtension.class)
 class ConsoleControllerTest {
 
@@ -37,99 +32,75 @@ class ConsoleControllerTest {
     @Mock
     private Redactor redactor;
     @Mock
-    private ProcessTool.ManagedProcess managedProcess;
+    private ConsoleTaskService consoleTaskService;
 
-    private AgentProperties properties;
     private ConsoleController controller;
 
     @BeforeEach
     void setUp() {
-        properties = new AgentProperties();
-        controller = new ConsoleController(processTool, properties, redactor, null, null, null);
+        controller = new ConsoleController(processTool, new AgentProperties(), redactor,
+            provider(consoleTaskService), null, null);
+    }
+
+    @AfterEach
+    void clearUserContext() {
+        UserContext.clear();
     }
 
     @Test
     void startRequiresCommand() {
-        ResponseEntity<Map<String, Object>> response =
-            controller.start(null, Map.of());
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(controller.start(null, Map.of()).getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
     }
 
     @Test
-    void startRejectsBlockedCommandWithForbidden() {
-        ResponseEntity<Map<String, Object>> response =
-            controller.start(null, Map.of("command", "sudo rm -rf /"));
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
-        assertThat(response.getBody()).containsEntry("error", "command blocked by console guard");
-    }
-
-    @Test
-    void startSpawnsGuardedTaskAndReturnsAccepted() throws IOException {
-        when(processTool.spawn(anyString(), anyInt(), anyBoolean(), any(), any()))
-            .thenReturn(managedProcess);
-        when(processTool.processId(managedProcess)).thenReturn("proc_abc123");
-        when(processTool.isProcessAlive(managedProcess)).thenReturn(true);
+    void startDelegatesToDurableTaskServiceWithAuthenticatedUser() {
+        UserContext.set("user-a", UserContext.ROLE_USER);
+        when(consoleTaskService.start(null, "user-a", "echo hi", null, 30))
+            .thenReturn(new ConsoleTaskService.StartResult("task_abc", null, null));
         when(redactor.redact("echo hi")).thenReturn("echo hi");
 
         ResponseEntity<Map<String, Object>> response =
             controller.start(null, Map.of("command", "echo hi", "timeout_seconds", 30));
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
-        assertThat(response.getBody())
-            .containsEntry("id", "proc_abc123")
-            .containsEntry("status", "running");
+        assertThat(response.getBody()).containsEntry("id", "task_abc");
+        verify(consoleTaskService).start(null, "user-a", "echo hi", null, 30);
     }
 
     @Test
-    void statusUnknownTaskIsNotFound() {
-        when(processTool.findConsoleProcess("nope")).thenReturn(null);
-        ResponseEntity<Map<String, Object>> response = controller.status("nope");
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
-    }
+    void outputUsesDurableCursorReplayAndOwnerScope() {
+        UserContext.set("user-a", UserContext.ROLE_USER);
+        Map<String, Object> payload = Map.of("id", "task_abc", "cursor", 3L, "lines", java.util.List.of());
+        when(consoleTaskService.output(null, "user-a", "task_abc", 2, 200))
+            .thenReturn(Optional.of(payload));
 
-    @Test
-    void statusReportsRunningAndExitedStates() {
-        when(processTool.findConsoleProcess("proc_abc123")).thenReturn(managedProcess);
-        when(processTool.isProcessAlive(managedProcess)).thenReturn(true);
-        assertThat(controller.status("proc_abc123").getBody())
-            .containsEntry("status", "running");
-
-        when(processTool.isProcessAlive(managedProcess)).thenReturn(false);
-        assertThat(controller.status("proc_abc123").getBody())
-            .containsEntry("status", "exited");
-    }
-
-    @Test
-    void outputReturnsRedactedRecentLines() {
-        when(processTool.findConsoleProcess("proc_abc123")).thenReturn(managedProcess);
-        when(processTool.recentOutput(managedProcess, 200))
-            .thenReturn(List.of("plain", "SECRET_TOKEN"));
-        when(redactor.redact("plain")).thenReturn("plain");
-        when(redactor.redact("SECRET_TOKEN")).thenReturn("[REDACTED]");
-
-        ResponseEntity<Map<String, Object>> response =
-            controller.output("proc_abc123", 0, 200);
+        ResponseEntity<Map<String, Object>> response = controller.output(null, "task_abc", 2, 200);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-        @SuppressWarnings("unchecked")
-        List<String> lines = (List<String>) response.getBody().get("lines");
-        assertThat(lines).containsExactly("plain", "[REDACTED]");
+        assertThat(response.getBody()).isEqualTo(payload);
+        verify(consoleTaskService).output(null, "user-a", "task_abc", 2, 200);
     }
 
     @Test
-    void killTerminatesWithConsoleSource() {
-        when(processTool.findConsoleProcess("proc_abc123")).thenReturn(managedProcess);
-        ResponseEntity<Map<String, Object>> response = controller.kill("proc_abc123");
+    void killUsesDurableTaskServiceAndOwnerScope() {
+        UserContext.set("user-a", UserContext.ROLE_USER);
+        when(consoleTaskService.cancel(null, "user-a", "task_abc")).thenReturn(true);
+
+        ResponseEntity<Map<String, Object>> response = controller.kill(null, "task_abc");
+
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-        org.mockito.Mockito.verify(processTool).killProcess(managedProcess, "console.kill");
+        assertThat(response.getBody()).containsEntry("status", "cancelled");
+        verify(consoleTaskService).cancel(null, "user-a", "task_abc");
     }
 
-    @Test
-    void ptySurfaceReportsCapability() {
-        // WP-9: /api/console/pty now reports the real capability (available or
-        // fail-closed with reason) instead of a permanent 501
-        ResponseEntity<Map<String, Object>> response = controller.ptyCapability(null);
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(response.getBody()).containsKeys("available", "transport", "detail");
+    private static <T> ObjectProvider<T> provider(T value) {
+        return new ObjectProvider<>() {
+            @Override public T getObject() { return value; }
+            @Override public T getObject(Object... args) { return value; }
+            @Override public T getIfAvailable() { return value; }
+            @Override public T getIfUnique() { return value; }
+            @Override public Stream<T> stream() { return Stream.of(value); }
+            @Override public Stream<T> orderedStream() { return Stream.of(value); }
+        };
     }
 }

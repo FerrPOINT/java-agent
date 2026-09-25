@@ -110,6 +110,35 @@ class ConsoleTaskServiceTest {
     }
 
     @Test
+    void drainOnlyPersistsNewProcessOutput() throws Exception {
+        ProcessTool.ManagedProcess managed = org.mockito.Mockito.mock(ProcessTool.ManagedProcess.class);
+        when(processTool.outputFrom(managed, 0)).thenReturn(List.of("first", "second"));
+        when(processTool.outputFrom(managed, 2)).thenReturn(List.of("third"));
+        when(taskRepository.findById("t1")).thenReturn(Optional.of(task("t1", "running")));
+        when(outputRepository.findFirstByTaskIdOrderBySequenceDesc("t1")).thenReturn(Optional.empty());
+
+        ConsoleTaskService service = service();
+        service.drainNewOutput("t1", managed, processTool);
+        service.drainNewOutput("t1", managed, processTool);
+
+        verify(processTool).outputFrom(managed, 0);
+        verify(processTool).outputFrom(managed, 2);
+        verify(outputRepository, org.mockito.Mockito.times(3)).save(any(ConsoleTaskOutputEntity.class));
+    }
+
+    @Test
+    void nonOwnerCannotReadOrCancelTask() {
+        ConsoleTaskEntity task = task("t1", "running");
+        task.setUserId("owner");
+        when(taskRepository.findByIdAndProfile("t1", "default")).thenReturn(Optional.of(task));
+
+        assertThat(service().status("default", "other", "t1")).isEmpty();
+        assertThat(service().output("default", "other", "t1", 0, 100)).isEmpty();
+        assertThat(service().cancel("default", "other", "t1")).isFalse();
+        verify(processTool, never()).killProcess(org.mockito.ArgumentMatchers.any(), anyString());
+    }
+
+    @Test
     void cursorReplayNoDuplicatesNoGaps() {
         when(outputRepository.replayAfter(eq("t1"), eq(0L), any(Pageable.class)))
             .thenReturn(List.of(output("t1", 1, "a"), output("t1", 2, "b"), output("t1", 3, "c")));

@@ -51,6 +51,9 @@ public class ConsoleTaskService {
     /** Live task runners (process + tailer); NOT restart-safe by design — rows survive. */
     private final ConcurrentHashMap<String, ProcessTool.ManagedProcess> live = new ConcurrentHashMap<>();
 
+    /** Ordered per-task cursor for draining the in-memory process ledger once. */
+    private final ConcurrentHashMap<String, Integer> drainedOutputOffsets = new ConcurrentHashMap<>();
+
     public record StartResult(String id, String error, Integer httpStatus) {}
 
     public StartResult start(String profile, String userId, String command, String workdir,
@@ -65,7 +68,7 @@ public class ConsoleTaskService {
         ProcessTool processTool = processTool();
         ConsoleTaskEntity task = new ConsoleTaskEntity();
         task.setId("task_" + UUID.randomUUID().toString().replace("-", ""));
-        task.setProfile(profile == null || profile.isBlank() ? "default" : profile);
+        task.setProfile(canonicalProfile(profile));
         task.setUserId(userId);
         task.setCommand(command);
         task.setWorkdir(workdir);
@@ -85,14 +88,22 @@ public class ConsoleTaskService {
         }
     }
 
-    public Optional<ConsoleTaskEntity> status(String profile, String id) {
+    public Optional<ConsoleTaskEntity> status(String profile, String userId, String id) {
         sweepExpired();
-        return tasks().findByIdAndProfile(id, profile == null || profile.isBlank()
-            ? "default" : profile);
+        return tasks().findByIdAndProfile(id, canonicalProfile(profile))
+            .filter(task -> userId == null || java.util.Objects.equals(userId, task.getUserId()));
+    }
+
+    /** Backward-compatible admin/service lookup without a user ownership filter. */
+    public Optional<ConsoleTaskEntity> status(String profile, String id) {
+        return status(profile, null, id);
     }
 
     /** Cursor replay: lines with sequence strictly AFTER the cursor. */
-    public Map<String, Object> output(String taskId, long after, int limit) {
+    public Optional<Map<String, Object>> output(String profile, String userId, String taskId, long after, int limit) {
+        if (status(profile, userId, taskId).isEmpty()) {
+            return Optional.empty();
+        }
         int bounded = Math.min(Math.max(limit, 1), MAX_REPLAY_LIMIT);
         List<ConsoleTaskOutputEntity> rows =
             outputs().replayAfter(taskId, after, PageRequest.of(0, bounded));
@@ -109,12 +120,29 @@ public class ConsoleTaskService {
         payload.put("id", taskId);
         payload.put("cursor", lastSeq);
         payload.put("lines", lines);
+        return Optional.of(payload);
+    }
+
+    /** Backward-compatible admin/service replay without a user ownership filter. */
+    public Map<String, Object> output(String taskId, long after, int limit) {
+        int bounded = Math.min(Math.max(limit, 1), MAX_REPLAY_LIMIT);
+        List<ConsoleTaskOutputEntity> rows = outputs().replayAfter(taskId, after, PageRequest.of(0, bounded));
+        List<Map<String, Object>> lines = new ArrayList<>(rows.size());
+        long lastSeq = after;
+        for (ConsoleTaskOutputEntity row : rows) {
+            lines.add(Map.of("seq", row.getSequence(), "text", row.getLine()));
+            lastSeq = row.getSequence();
+        }
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("id", taskId);
+        payload.put("cursor", lastSeq);
+        payload.put("lines", lines);
         return payload;
     }
 
     /** Idempotent cancellation: kill the process and mark the row once. */
-    public boolean cancel(String profile, String id) {
-        Optional<ConsoleTaskEntity> existing = status(profile, id);
+    public boolean cancel(String profile, String userId, String id) {
+        Optional<ConsoleTaskEntity> existing = status(profile, userId, id);
         if (existing.isEmpty()) {
             return false;
         }
@@ -127,6 +155,11 @@ public class ConsoleTaskService {
             finish(id, "cancelled", null);
         }
         return true;
+    }
+
+    /** Idempotent cancellation: kill the process and mark the row once. */
+    public boolean cancel(String profile, String id) {
+        return cancel(profile, null, id);
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -163,6 +196,10 @@ public class ConsoleTaskService {
         }
     }
 
+    private static String canonicalProfile(String profile) {
+        return profile == null || profile.isBlank() ? "default" : profile;
+    }
+
     // ── internals ────────────────────────────────────────────────────────
 
     private void tailOutput(String taskId, ProcessTool.ManagedProcess managed) {
@@ -170,15 +207,10 @@ public class ConsoleTaskService {
             ProcessTool processTool = processTool();
             try {
                 while (processTool.isProcessAlive(managed)) {
-                    for (String line : processTool.recentOutput(managed, 200)) {
-                        appendLine(taskId, line);
-                    }
+                    drainNewOutput(taskId, managed, processTool);
                     Thread.sleep(250);
                 }
-                // final drain
-                for (String line : processTool.recentOutput(managed, 2000)) {
-                    appendLine(taskId, line);
-                }
+                drainNewOutput(taskId, managed, processTool);
                 finish(taskId, "completed", 0);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -188,8 +220,18 @@ public class ConsoleTaskService {
                 finish(taskId, "failed", -1);
             } finally {
                 live.remove(taskId);
+                drainedOutputOffsets.remove(taskId);
             }
         });
+    }
+
+    void drainNewOutput(String taskId, ProcessTool.ManagedProcess managed, ProcessTool processTool) {
+        int offset = drainedOutputOffsets.getOrDefault(taskId, 0);
+        List<String> newLines = processTool.outputFrom(managed, offset);
+        for (String line : newLines) {
+            appendLine(taskId, line);
+        }
+        drainedOutputOffsets.put(taskId, offset + newLines.size());
     }
 
     private String redact(String line) {
