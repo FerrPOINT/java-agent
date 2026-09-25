@@ -1,8 +1,9 @@
 package com.azhukov.agent.api;
 
-import com.azhukov.agent.core.security.Redactor;
-import com.azhukov.agent.tools.terminal.ProcessTool;
+import com.azhukov.agent.persistence.entity.ConsoleTaskEntity;
+import com.azhukov.agent.service.ConsoleTaskService;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.socket.CloseStatus;
@@ -13,14 +14,14 @@ import java.io.IOException;
 import java.net.URI;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
@@ -28,29 +29,27 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/**
- * docs/34 gap 2 (bounded subset): live output streaming for console command
- * tasks over WebSocket, reusing the ProcessTool ledger and the same
- * redaction as the REST surface. Interactive PTY remains a documented gap.
- */
+/** Durable console WebSocket replay must retain task ownership and cursor semantics. */
 class ConsoleWebSocketHandlerTest {
 
-    private ProcessTool processTool;
-    private Redactor redactor;
+    private ConsoleTaskService taskService;
     private ObjectMapper objectMapper;
     private ExecutorService executor;
 
     @BeforeEach
     void setUp() {
-        processTool = mock(ProcessTool.class);
-        redactor = mock(Redactor.class);
-        when(redactor.redact(anyString())).thenAnswer(inv -> inv.getArgument(0));
+        taskService = mock(ConsoleTaskService.class);
         objectMapper = new ObjectMapper();
         executor = Executors.newSingleThreadExecutor();
     }
 
+    @AfterEach
+    void tearDown() {
+        executor.shutdownNow();
+    }
+
     private ConsoleWebSocketHandler handler() {
-        return new ConsoleWebSocketHandler(processTool, redactor, objectMapper,
+        return new ConsoleWebSocketHandler(taskService, objectMapper,
             java.time.Duration.ofMillis(20), executor);
     }
 
@@ -58,44 +57,59 @@ class ConsoleWebSocketHandlerTest {
         WebSocketSession session = mock(WebSocketSession.class);
         when(session.getUri()).thenReturn(new URI("ws://localhost/api/console/ws" + query));
         when(session.isOpen()).thenReturn(true);
+        when(session.getAttributes()).thenReturn(new java.util.concurrent.ConcurrentHashMap<>());
         return session;
     }
 
-    @Test
-    void streamsRedactedOutputThenExitFrame() throws Exception {
-        ProcessTool.ManagedProcess managed = mock(ProcessTool.ManagedProcess.class);
-        when(processTool.findConsoleProcess("proc-1")).thenReturn(managed);
-        AtomicInteger pollCount = new AtomicInteger();
-        // First poll: alive with one line; second poll: exited with two lines.
-        when(processTool.isProcessAlive(managed)).thenAnswer(inv -> pollCount.incrementAndGet() == 1);
-        when(processTool.recentOutput(any(), anyInt()))
-            .thenReturn(List.of("line-1"))
-            .thenReturn(List.of("line-1", "line-2"));
-        when(processTool.processId(managed)).thenReturn("proc-1");
+    private static ConsoleTaskEntity task(String state) {
+        ConsoleTaskEntity task = new ConsoleTaskEntity();
+        task.setState(state);
+        return task;
+    }
 
-        WebSocketSession session = session("?id=proc-1");
+    @Test
+    void streamsDurableCursorReplayThenExitFrame() throws Exception {
+        AtomicInteger statusCalls = new AtomicInteger();
+        when(taskService.status(null, null, "task-1"))
+            .thenAnswer(inv -> Optional.of(task(statusCalls.incrementAndGet() == 1 ? "running" : "completed")));
+        when(taskService.output(null, null, "task-1", 0, 500)).thenReturn(Optional.of(Map.of(
+            "id", "task-1", "cursor", 2L,
+            "lines", List.of(Map.of("seq", 1L, "text", "line-1"), Map.of("seq", 2L, "text", "line-2")))));
+
+        WebSocketSession session = session("?id=task-1");
         ConsoleWebSocketHandler handler = handler();
         handler.afterConnectionEstablished(session);
         handler.awaitStreaming();
 
-        verify(session, atLeastOnce()).sendMessage(any(TextMessage.class));
         List<String> frames = capturedFrames(session);
-        // Delta streaming: line-1 first, then the line-2 delta; no line is
-        // ever re-sent across frames.
-        List<String> streamed = new java.util.ArrayList<>();
-        for (String frame : frames) {
-            Map<String, Object> payload = objectMapper.readValue(frame, Map.class);
-            if ("output".equals(payload.get("type"))) {
-                streamed.addAll((List<String>) payload.get("lines"));
-            }
-        }
-        assertThat(streamed).containsExactly("line-1", "line-2");
+        Map<String, Object> output = objectMapper.readValue(frames.getFirst(), Map.class);
+        assertThat(output).containsEntry("type", "output").containsEntry("cursor", 2);
+        assertThat((List<?>) output.get("lines")).hasSize(2);
         assertThat(frames).anySatisfy(frame -> {
             Map<String, Object> payload = objectMapper.readValue(frame, Map.class);
-            assertThat(payload.get("type")).isEqualTo("exit");
-            assertThat(payload.get("id")).isEqualTo("proc-1");
+            assertThat(payload).containsEntry("type", "exit").containsEntry("cursor", 2);
         });
         verify(session).close(CloseStatus.NORMAL);
+    }
+
+    @Test
+    void replaysOnlyOutputStrictlyAfterReconnectCursor() throws Exception {
+        when(taskService.status(null, null, "task-1")).thenReturn(Optional.of(task("completed")));
+        when(taskService.output(null, null, "task-1", 7, 500)).thenReturn(Optional.of(Map.of(
+            "id", "task-1", "cursor", 8L,
+            "lines", List.of(Map.of("seq", 8L, "text", "new")))));
+
+        WebSocketSession session = session("?id=task-1&after=7");
+        ConsoleWebSocketHandler handler = handler();
+        handler.afterConnectionEstablished(session);
+        handler.awaitStreaming();
+
+        verify(taskService).output(null, null, "task-1", 7, 500);
+        List<String> frames = capturedFrames(session);
+        Map<String, Object> output = objectMapper.readValue(frames.getFirst(), Map.class);
+        assertThat(output).containsEntry("cursor", 8);
+        assertThat((List<Map<String, Object>>) output.get("lines"))
+            .extracting(line -> line.get("seq")).containsExactly(8);
     }
 
     @Test
@@ -103,40 +117,18 @@ class ConsoleWebSocketHandlerTest {
         WebSocketSession session = session("");
         handler().afterConnectionEstablished(session);
         verify(session).close(CloseStatus.BAD_DATA);
-        verify(session, never()).sendMessage(any(TextMessage.class));
+        verify(session, never()).sendMessage(org.mockito.ArgumentMatchers.any(TextMessage.class));
     }
 
     @Test
-    void closesWithNotFoundForUnknownTask() throws Exception {
-        when(processTool.findConsoleProcess("nope")).thenReturn(null);
-        WebSocketSession session = session("?id=nope");
+    void rejectsUnknownOrNonOwnedTaskBeforeStreaming() throws Exception {
+        when(taskService.status(null, "user-a", "task-1")).thenReturn(Optional.empty());
+        WebSocketSession session = session("?id=task-1");
+        session.getAttributes().put(DashboardWebSocketHandshakeInterceptor.USER_ID_ATTRIBUTE, "user-a");
         handler().afterConnectionEstablished(session);
+
+        verify(taskService).status(null, "user-a", "task-1");
         verify(session).close(CloseStatus.POLICY_VIOLATION);
-    }
-
-    @Test
-    void redactsEveryStreamedLine() throws Exception {
-        ProcessTool.ManagedProcess managed = mock(ProcessTool.ManagedProcess.class);
-        when(processTool.findConsoleProcess("proc-2")).thenReturn(managed);
-        when(processTool.processId(managed)).thenReturn("proc-2");
-        when(processTool.isProcessAlive(managed)).thenReturn(false);
-        when(processTool.recentOutput(any(), anyInt()))
-            .thenReturn(List.of("secret-line"));
-        when(redactor.redact("secret-line")).thenReturn("[REDACTED]");
-
-        WebSocketSession session = session("?id=proc-2");
-        ConsoleWebSocketHandler handler = handler();
-        handler.afterConnectionEstablished(session);
-        handler.awaitStreaming();
-
-        verify(redactor).redact("secret-line");
-        List<String> frames = capturedFrames(session);
-        assertThat(frames).anySatisfy(frame -> {
-            Map<String, Object> payload = objectMapper.readValue(frame, Map.class);
-            if ("output".equals(payload.get("type"))) {
-                assertThat((List<String>) payload.get("lines")).containsExactly("[REDACTED]");
-            }
-        });
     }
 
     @SuppressWarnings("unchecked")
