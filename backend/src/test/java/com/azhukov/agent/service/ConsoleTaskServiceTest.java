@@ -119,15 +119,29 @@ class ConsoleTaskServiceTest {
         when(outputRepository.findFirstByTaskIdOrderBySequenceDesc("t1")).thenReturn(Optional.empty());
 
         java.lang.reflect.Method tailer = ConsoleTaskService.class
-            .getDeclaredMethod("tailOutput", String.class, ProcessTool.ManagedProcess.class);
+            .getDeclaredMethod("tailOutput", String.class, ProcessTool.ManagedProcess.class, java.time.Instant.class);
         tailer.setAccessible(true);
-        tailer.invoke(service(), "t1", managed);
+        tailer.invoke(service(), "t1", managed, java.time.Instant.now().plusSeconds(60));
 
         org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(2)).untilAsserted(() -> {
             verify(processTool).awaitOutputDrain(managed, 3000);
             verify(processTool).exitCode(managed);
             verify(taskRepository).finishTask(eq("t1"), eq("failed"), eq(17), any());
             verify(outputRepository).save(any(ConsoleTaskOutputEntity.class));
+        });
+    }
+
+    @Test
+    void tailerTerminatesAStillRunningProcessAtTheTaskDeadline() throws Exception {
+        ProcessTool.ManagedProcess managed = org.mockito.Mockito.mock(ProcessTool.ManagedProcess.class);
+        when(processTool.isProcessAlive(managed)).thenReturn(true);
+
+        ConsoleTaskService service = service();
+        service.tailOutput("t1", managed, java.time.Instant.now().minusMillis(1));
+
+        org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(2)).untilAsserted(() -> {
+            verify(processTool).killProcess(managed, "console.timeout");
+            verify(taskRepository).finishTask(eq("t1"), eq("timeout"), isNull(), any());
         });
     }
 

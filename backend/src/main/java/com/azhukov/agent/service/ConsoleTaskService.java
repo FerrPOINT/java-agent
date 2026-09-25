@@ -80,7 +80,7 @@ public class ConsoleTaskService {
             ProcessTool.ManagedProcess managed =
                 processTool.spawn(command, timeoutSeconds, false, null, workdir);
             live.put(task.getId(), managed);
-            tailOutput(task.getId(), managed);
+            tailOutput(task.getId(), managed, task.getCreatedAt().plusSeconds(timeoutSeconds));
             return new StartResult(task.getId(), null, null);
         } catch (IOException e) {
             finish(task.getId(), "failed", -1);
@@ -202,13 +202,19 @@ public class ConsoleTaskService {
 
     // ── internals ────────────────────────────────────────────────────────
 
-    private void tailOutput(String taskId, ProcessTool.ManagedProcess managed) {
+    void tailOutput(String taskId, ProcessTool.ManagedProcess managed, Instant deadline) {
         Thread.ofVirtual().name("console-task-" + taskId).start(() -> {
             ProcessTool processTool = processTool();
             try {
                 while (processTool.isProcessAlive(managed)) {
                     drainNewOutput(taskId, managed, processTool);
-                    Thread.sleep(250);
+                    if (!Instant.now().isBefore(deadline)) {
+                        processTool.killProcess(managed, "console.timeout");
+                        finish(taskId, "timeout", null);
+                        return;
+                    }
+                    long remainingMillis = Math.max(1, deadline.toEpochMilli() - Instant.now().toEpochMilli());
+                    Thread.sleep(Math.min(250, remainingMillis));
                 }
                 // The OS process may exit before its reader consumes the final stdout bytes.
                 processTool.awaitOutputDrain(managed, 3000);
