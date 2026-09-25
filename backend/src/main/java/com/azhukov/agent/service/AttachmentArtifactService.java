@@ -118,9 +118,8 @@ public class AttachmentArtifactService {
         }
     }
 
-    /** Resolve a stored artifact's absolute cache path (validated). */
-    public Optional<Path> contentPath(String artifactId) {
-        return repository().findById(artifactId).map(entity -> {
+    public Optional<Path> contentPath(String artifactId, String ownerId) {
+        return findEntity(artifactId, ownerId).map(entity -> {
             try {
                 return safeCachePath(entity.getCachePath());
             } catch (IllegalArgumentException e) {
@@ -129,18 +128,39 @@ public class AttachmentArtifactService {
         });
     }
 
-    public Optional<AttachmentArtifact> find(String artifactId) {
-        return repository().findById(artifactId).map(AttachmentArtifact::from);
+    /** Backward-compatible admin/service lookup without an owner filter. */
+    public Optional<Path> contentPath(String artifactId) {
+        return contentPath(artifactId, null);
     }
 
-    public List<AttachmentArtifact> bySession(UUID sessionId) {
+    public Optional<AttachmentArtifact> find(String artifactId, String ownerId) {
+        return findEntity(artifactId, ownerId).map(AttachmentArtifact::from);
+    }
+
+    /** Backward-compatible admin/service lookup without an owner filter. */
+    public Optional<AttachmentArtifact> find(String artifactId) {
+        return find(artifactId, null);
+    }
+
+    public List<AttachmentArtifact> bySession(UUID sessionId, String ownerId) {
         return repository().findBySessionIdOrderByCreatedAtAsc(sessionId).stream()
+            .filter(entity -> ownerId == null || java.util.Objects.equals(ownerId, entity.getOwnerId()))
             .map(AttachmentArtifact::from).toList();
+    }
+
+    /** Backward-compatible admin/service lookup without an owner filter. */
+    public List<AttachmentArtifact> bySession(UUID sessionId) {
+        return bySession(sessionId, null);
     }
 
     /** Outbound receipt: mark delivered exactly once (idempotent). */
     public boolean markDelivered(String artifactId) {
-        return markDelivered(artifactId, null);
+        return markDelivered(artifactId, null, null);
+    }
+
+    /** Backward-compatible admin/service receipt without an owner filter. */
+    public boolean markDelivered(String artifactId, String deliveredMessageId) {
+        return markDelivered(artifactId, null, deliveredMessageId);
     }
 
     /**
@@ -149,9 +169,9 @@ public class AttachmentArtifactService {
      * a retry after an ambiguous send never overwrites it and the caller
      * can detect the duplicate by the false return.
      */
-    public boolean markDelivered(String artifactId, String deliveredMessageId) {
+    public boolean markDelivered(String artifactId, String ownerId, String deliveredMessageId) {
         AttachmentArtifactRepository repository = repository();
-        AttachmentArtifactEntity entity = repository.findById(artifactId).orElse(null);
+        AttachmentArtifactEntity entity = findEntity(artifactId, ownerId).orElse(null);
         if (entity == null) {
             return false;
         }
@@ -323,6 +343,11 @@ public class AttachmentArtifactService {
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 unavailable", e);
         }
+    }
+
+    private Optional<AttachmentArtifactEntity> findEntity(String artifactId, String ownerId) {
+        return repository().findById(artifactId)
+            .filter(entity -> ownerId == null || java.util.Objects.equals(ownerId, entity.getOwnerId()));
     }
 
     private AttachmentArtifactRepository repository() {
