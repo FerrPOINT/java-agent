@@ -11,6 +11,9 @@ import org.springframework.web.socket.server.HandshakeInterceptor;
 
 import java.util.Map;
 
+/**
+ * Applies dashboard-origin checks and retains authenticated identity for a WebSocket session.
+ */
 @Component
 @RequiredArgsConstructor
 public class DashboardWebSocketHandshakeInterceptor implements HandshakeInterceptor {

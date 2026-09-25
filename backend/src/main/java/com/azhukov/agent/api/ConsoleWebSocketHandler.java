@@ -22,11 +22,10 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * Streams owner-authorized durable console output with a reconnect cursor.
+ * Streams owner-authorized durable console output with reconnect cursors.
  *
- * <p>The process ledger is intentionally not used here: it is lost on restart
- * and cannot prove task ownership. The durable task and output ledgers remain
- * the source of truth for both live frames and reconnect replay.
+ * <p>Persistent task/output ledgers, rather than the transient process map,
+ * are the source of truth for replay after a disconnect or application restart.
  */
 @Component
 @Slf4j
