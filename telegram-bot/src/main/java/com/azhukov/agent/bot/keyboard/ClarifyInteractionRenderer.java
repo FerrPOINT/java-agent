@@ -217,12 +217,14 @@ public class ClarifyInteractionRenderer {
         return target == null ? null : target.clarifyId();
     }
 
-    /** Clear the prompt state after the backend accepted a typed response. */
-    public void completeTextResponse(long chatId) {
+    /** Clear one resolved prompt while preserving other questions in the same batch. */
+    public void completeTextResponse(long chatId, String clarifyId) {
         awaitingTextTargets.remove(chatId);
-        activePrompts.entrySet().removeIf(entry -> entry.getValue().chatId() == chatId);
-        multiSelectState.keySet().removeIf(clarifyId -> !activePrompts.containsKey(clarifyId));
-        awaitingResponseChats.remove(chatId);
+        if (clarifyId != null && !clarifyId.isBlank()) {
+            activePrompts.remove(clarifyId);
+            multiSelectState.remove(clarifyId);
+        }
+        clearAwaitingResponseIfNoPrompt(chatId);
     }
 
     /** Backend session id for a custom text response, keyed by its Telegram chat. */

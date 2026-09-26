@@ -73,7 +73,7 @@ public class ClarifyTextInterceptor {
             }
             String result = String.valueOf(outcome.get("outcome"));
             if ("resolved".equals(result)) {
-                clarifyInteractionRenderer.completeTextResponse(chatId);
+                clarifyInteractionRenderer.completeTextResponse(chatId, String.valueOf(outcome.get("clarifyId")));
                 return "resolved";
             }
             if ("rejected_selection".equals(result)) {

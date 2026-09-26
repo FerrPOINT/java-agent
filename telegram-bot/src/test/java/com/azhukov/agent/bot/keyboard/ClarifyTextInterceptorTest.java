@@ -45,10 +45,10 @@ class ClarifyTextInterceptorTest {
                 + backendSessionId + "/clarify/text"))
             .andExpect(content().contentType(MediaType.APPLICATION_JSON))
             .andExpect(content().json("{\"text\":\"a bespoke environment\"}"))
-            .andRespond(withSuccess("{\"outcome\":\"resolved\"}", MediaType.APPLICATION_JSON));
+            .andRespond(withSuccess("{\"outcome\":\"resolved\",\"clarifyId\":\"prompt-1\"}", MediaType.APPLICATION_JSON));
 
         assertThat(interceptor.tryResolve(session, "a bespoke environment")).isEqualTo("resolved");
-        verify(renderer).completeTextResponse(12345L);
+        verify(renderer).completeTextResponse(12345L, "prompt-1");
         server.verify();
     }
 
@@ -59,10 +59,10 @@ class ClarifyTextInterceptorTest {
         server.expect(once(), requestTo("http://backend.test/api/v1/agent/session/"
                 + backendSessionId + "/clarify/text"))
             .andExpect(content().json("{\"text\":\"2\"}"))
-            .andRespond(withSuccess("{\"outcome\":\"resolved\"}", MediaType.APPLICATION_JSON));
+            .andRespond(withSuccess("{\"outcome\":\"resolved\",\"clarifyId\":\"prompt-2\"}", MediaType.APPLICATION_JSON));
 
         assertThat(interceptor.tryResolve(session, "2")).isEqualTo("resolved");
-        verify(renderer).completeTextResponse(12345L);
+        verify(renderer).completeTextResponse(12345L, "prompt-2");
         server.verify();
     }
 
@@ -111,10 +111,10 @@ class ClarifyTextInterceptorTest {
         server.expect(once(), requestTo("http://backend.test/api/v1/agent/session/"
                 + backendSessionId + "/clarify/text"))
             .andExpect(content().json("{\"text\":\"a bespoke environment\",\"clarifyId\":\"second-prompt\"}"))
-            .andRespond(withSuccess("{\"outcome\":\"resolved\"}", MediaType.APPLICATION_JSON));
+            .andRespond(withSuccess("{\"outcome\":\"resolved\",\"clarifyId\":\"second-prompt\"}", MediaType.APPLICATION_JSON));
 
         assertThat(interceptor.tryResolve(session, "a bespoke environment")).isEqualTo("resolved");
-        verify(renderer).completeTextResponse(12345L);
+        verify(renderer).completeTextResponse(12345L, "second-prompt");
         server.verify();
     }
 

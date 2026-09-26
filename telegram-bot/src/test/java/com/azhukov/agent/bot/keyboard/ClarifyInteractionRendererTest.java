@@ -113,6 +113,23 @@ class ClarifyInteractionRendererTest {
     }
 
     @Test
+    void resolvingOneBatchPromptLeavesTheOtherPromptVisibleAndPending() {
+        when(telegramClient.sendMessage(anyLong(), any(), any(), any(), any(), any(), eq(false)))
+            .thenReturn(Optional.of(42L));
+        renderer.present(100L, 0L, "session-1", """
+            {"clarifyId":"first-prompt","question":"First?","choices":["one","two"]}
+            """);
+        renderer.present(100L, 0L, "session-1", """
+            {"clarifyId":"second-prompt","question":"Second?","choices":["dev","prod"]}
+            """);
+
+        renderer.completeTextResponse(100L, "second-prompt");
+
+        assertThat(renderer.isAwaitingResponse(100L)).isTrue();
+        assertThat(renderer.awaitingResponseSession(100L)).isEqualTo("session-1");
+    }
+
+    @Test
     void callbackFromAnotherChatCannotArmOrResolveThePrompt() {
         when(telegramClient.sendMessage(anyLong(), any(), any(), any(), any(), any(), eq(false)))
             .thenReturn(Optional.of(42L));

@@ -323,7 +323,9 @@ public class AgentChatController {
         }
         boolean resolved = store.resolve(pending.clarifyId(), coerced);
         log.info("clarify_text_result session={} id={} resolved={}", sessionId, pending.clarifyId(), resolved);
-        return Map.of("outcome", resolved ? "resolved" : "no_pending");
+        return resolved
+            ? Map.of("outcome", "resolved", "clarifyId", pending.clarifyId())
+            : Map.of("outcome", "no_pending");
     }
 
     /** Request body for clarify/resolve. */
