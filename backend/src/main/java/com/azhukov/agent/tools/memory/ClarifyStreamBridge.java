@@ -2,44 +2,50 @@ package com.azhukov.agent.tools.memory;
 
 import com.azhukov.agent.api.dto.StreamEvent;
 
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+
 /**
  * Streaming-context bridge for the blocking clarify tool. The streaming agent
- * loop registers a sender before dispatching a tool batch; {@code ClarifyTool}
- * reads it at call time to emit the {@code clarify} SSE event (the prompt the
- * adapter renders) without the tool layer knowing about SSE or emitters.
- * Null sender = non-interactive context (CLI/noop/tests): the tool falls back
- * to formatting-only mode.
+ * loop registers a sender bound to the session BEFORE dispatching a tool
+ * batch; {@code ClarifyTool} — which runs on a worker thread, not the stream
+ * thread — looks the sender up by session id and emits the {@code clarify}
+ * SSE event through it. ThreadLocal was unusable here: the tool executor
+ * submits execution to its own thread pool.
  */
 public final class ClarifyStreamBridge {
 
+    private static final Map<UUID, Sender> SENDERS = new ConcurrentHashMap<>();
+
+    /** Functional interface the streaming loop provides to emit a clarify prompt. */
     @FunctionalInterface
     public interface Sender {
         void sendClarifyPrompt(String payloadJson);
     }
 
-    private static final ThreadLocal<Sender> SENDER = new ThreadLocal<>();
-
     private ClarifyStreamBridge() {
     }
 
-    /** Register the sender for the current agent-loop thread. */
-    public static void setSender(Sender sender) {
-        SENDER.set(sender);
+    public static void setSender(UUID sessionId, Sender sender) {
+        if (sessionId != null && sender != null) {
+            SENDERS.put(sessionId, sender);
+        }
     }
 
-    /** Clear the sender (finally-block of the tool batch dispatch). */
-    public static void clear() {
-        SENDER.remove();
+    public static Sender sender(UUID sessionId) {
+        return sessionId == null ? null : SENDERS.get(sessionId);
     }
 
-    /** Currently registered sender or null (non-streaming context). */
-    public static Sender sender() {
-        return SENDER.get();
+    public static void clear(UUID sessionId) {
+        if (sessionId != null) {
+            SENDERS.remove(sessionId);
+        }
     }
 
-    /** Build the {@code clarify} SSE event carrying the prompt payload. */
-    public static StreamEvent clarifyEvent(String payloadJson) {
-        return new StreamEvent("clarify", null, null, payloadJson,
-            null, null, null, "clarify", null, null);
+    /** The SSE event payload a sender emits, bound to the backend session that owns the pending entry. */
+    public static StreamEvent clarifyEvent(String payloadJson, UUID sessionId) {
+        return new StreamEvent("clarify", null, null, payloadJson, null, null, null,
+            null, null, sessionId);
     }
 }

@@ -117,12 +117,15 @@ class PatchToolTest {
 
     @Test
     void blocksSensitivePath() {
-        ToolResult r = tool.execute("{\"path\":\"/.env\",\"old_string\":\"x\",\"new_string\":\"y\"}", null, session);
+        // /etc is a globally denied prefix — no guard home needed
+        ToolResult r = tool.execute("{\"path\":\"/etc/app/.env\",\"old_string\":\"x\",\"new_string\":\"y\"}", null, session);
         assertThat(r.error()).contains("not allowed");
     }
 
     @Test
-    void replaceModeBlocksNestedEnv(@TempDir Path dir) throws Exception {
+    void replaceModeAllowsProjectEnv(@TempDir Path dir) throws Exception {
+        // Hermes parity: a project-local .env is WRITABLE (the write deny is
+        // scoped to guard homes); reading it stays blocked
         Path file = dir.resolve(".env");
         Files.writeString(file, "TOKEN=old");
 
@@ -130,9 +133,8 @@ class PatchToolTest {
             "{\"path\":\"" + jsonPath(file) + "\",\"old_string\":\"old\",\"new_string\":\"new\"}",
             null, session);
 
-        assertThat(r.success()).isFalse();
-        assertThat(r.error()).contains("Access denied");
-        assertThat(Files.readString(file)).isEqualTo("TOKEN=old");
+        assertThat(r.success()).isTrue();
+        assertThat(Files.readString(file)).isEqualTo("TOKEN=new");
     }
 
     @Test
@@ -150,16 +152,17 @@ class PatchToolTest {
     }
 
     @Test
-    void v4aAddBlocksNestedEnv(@TempDir Path dir) {
+    void v4aAddAllowsProjectEnv(@TempDir Path dir) {
+        // Hermes parity: project-local .env creation is allowed (write deny is
+        // home-scoped)
         Path file = dir.resolve("sub/.env");
         String patch = "*** Add File: " + file + "\n+TOKEN=secret";
         String json = "{\"mode\":\"patch\",\"patch\":\"" + patch.replace("\\", "\\\\").replace("\n", "\\n").replace("\"", "\\\"") + "\"}";
 
         ToolResult r = tool.execute(json, null, session);
 
-        assertThat(r.success()).isFalse();
-        assertThat(r.error()).contains("Access denied");
-        assertThat(Files.exists(file)).isFalse();
+        assertThat(r.success()).isTrue();
+        assertThat(Files.exists(file)).isTrue();
     }
 
     @Test

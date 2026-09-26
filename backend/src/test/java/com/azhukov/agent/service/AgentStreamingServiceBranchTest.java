@@ -135,6 +135,7 @@ class AgentStreamingServiceBranchTest {
 
         SessionEntity sessionEntity = newSessionEntity(SESSION_ID, "test-model");
         when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(sessionEntity));
+        when(sessionRepository.existsById(SESSION_ID)).thenReturn(true);
         when(messageRepository.findBySessionIdOrderByCreatedAtAsc(SESSION_ID))
             .thenReturn(List.of());
 
@@ -608,6 +609,8 @@ class AgentStreamingServiceBranchTest {
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
 
         when(iterationBudget.isExhausted(any())).thenReturn(true);
+        when(iterationBudget.status(any())).thenReturn(
+            new IterationBudget.BudgetStatus(false, 0, 0, 0, 0, "max model calls reached"));
 
         doAnswer(invocation -> {
             StreamingResponseHandler handler = invocation.getArgument(3);
@@ -619,18 +622,18 @@ class AgentStreamingServiceBranchTest {
         streamingService.streamTurn(request, emitter);
         emitter.awaitDone();
 
-        // Should have a "token" event with the new budget exhausted message format
-        boolean hasBudgetMessage = emitter.events.stream()
-            .anyMatch(e -> {
-                if (!"token".equals(e.name)) return false;
-                try {
-                    StreamEvent ev = deserialize(e.data, StreamEvent.class);
-                    return ev.token() != null && ev.token().contains("Iteration budget exhausted");
-                } catch (Exception ex) {
-                    return false;
-                }
-            });
-        assertThat(hasBudgetMessage).isTrue();
+        // The summary call is best-effort; if it cannot produce text, the fallback
+        // must expose which independent limit was reached and every counter.
+        SseEvent finalTokenEvent = emitter.events.stream()
+            .filter(e -> "token".equals(e.name))
+            .reduce((first, second) -> second)
+            .orElseThrow();
+        StreamEvent finalToken = deserialize(finalTokenEvent.data, StreamEvent.class);
+        assertThat(finalToken.token()).contains("reason=max model calls reached")
+            .contains("model_calls=0/100")
+            .contains("tool_executions=0/100")
+            .contains("estimated_tokens=0/200000")
+            .contains("tool_duration_ms=0/600000");
         assertThat(emitter.completed.get()).isTrue();
     }
 

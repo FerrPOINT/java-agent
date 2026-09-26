@@ -62,7 +62,8 @@ public class MessageSanitizer {
                 }
                 repaired.add(new ToolCall(tc.id(), tc.name(), args != null ? args : tc.arguments()));
             }
-            return new Message(message.role(), content, message.toolCall(), repaired, message.toolCallId(), message.turnIndex());
+            return new Message(message.role(), content, message.toolCall(), repaired, message.toolCallId(),
+                message.turnIndex(), message.imageCount(), message.createdAt(), message.reasoning());
         }
         return Message.withContent(message, content);
     }

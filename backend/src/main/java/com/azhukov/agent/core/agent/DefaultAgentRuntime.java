@@ -578,8 +578,11 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 return new TurnResult(turnMessages, true, null);
             }
             if (iterationBudget.isExhausted(budget)) {
-                log.warn("Iteration budget exhausted for session {} after {} model calls, {} tool executions",
-                    session.id(), budget.modelCalls(), budget.toolExecutions());
+                var budgetStatus = iterationBudget.status(budget);
+                String exhaustionReason = budgetStatus == null ? "iteration budget exhausted" : budgetStatus.reason();
+                log.warn("Iteration budget exhausted for session {} after {} model calls, {} tool executions, {} estimated tokens, {} ms tool time; reason={}",
+                    session.id(), budget.modelCalls(), budget.toolExecutions(),
+                    budget.totalInputTokens() + budget.totalOutputTokens(), budget.totalToolDurationMs(), exhaustionReason);
                 // Mirrors Hermes _handle_max_iterations: make one extra toolless LLM call
                 // asking the model to summarise what it accomplished, instead of just
                 // printing a raw "budget exhausted" message. c2: shared owner in
@@ -591,8 +594,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     summaryClient, session, turnMessages, options);
                 String budgetMsg = summary != null && !summary.isBlank()
                     ? summary
-                    : "⚠️ Iteration budget exhausted (" + budget.modelCalls()
-                        + "/" + properties.getBudget().getMaxModelCallsPerTurn() + ")";
+                    : turnExecutor().formatBudgetExhaustionMessage(budget, exhaustionReason);
                 turnMessages.add(Message.assistant(budgetMsg, turnIndex));
                 // H7: Fire background review on budget-exhausted path too.
                 boolean interrupted = interruptToken != null && interruptToken.isCancelled(session.id());
@@ -720,7 +722,8 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     truncatedToolCallRetries);
                 // Close the interrupted sequence as one assistant batch so
                 // every recovery tool result still has its owning call on replay.
-                turnMessages.add(Message.assistantWithToolCalls(response.content(), response.toolCalls(), turnIndex));
+                turnMessages.add(Message.assistantWithToolCalls(response.content(), response.toolCalls(), turnIndex,
+                    response.reasoning()));
                 for (ToolCall tc : response.toolCalls()) {
                     turnMessages.add(Message.toolResult(tc.pairingId(),
                         "[Truncated tool call — arguments were incomplete after "
@@ -938,7 +941,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     return new TurnResult(turnMessages, true, "(empty)");
                 }
                 lastResponseHadToolCalls = false; // clean text round — plain backoff next time
-                turnMessages.add(Message.assistant(visibleContent, turnIndex));
+                turnMessages.add(Message.assistant(visibleContent, turnIndex, response.reasoning()));
                 // P1-5: Persist the final assistant message immediately
                 if (midTurnPersistenceCallback != null) {
                     // M6: Only advance cursor if persistence succeeded
@@ -1026,9 +1029,10 @@ public class DefaultAgentRuntime implements AgentRuntime {
             // Preserve commentary text in the assistant message alongside tool calls
             // (built from the UNIQUIFIED calls so persistence matches execution)
             if (response.hasContent() && response.hasToolCalls()) {
-                turnMessages.add(Message.assistantWithToolCalls(response.content(), toolCalls, turnIndex));
+                turnMessages.add(Message.assistantWithToolCalls(response.content(), toolCalls, turnIndex,
+                    response.reasoning()));
             } else if (response.hasToolCalls()) {
-                turnMessages.add(Message.assistantToolCalls(toolCalls, turnIndex));
+                turnMessages.add(Message.assistantToolCalls(toolCalls, turnIndex, response.reasoning()));
             }
 
             // P1-5: Persist the assistant message (with tool calls) immediately.
@@ -1107,7 +1111,8 @@ public class DefaultAgentRuntime implements AgentRuntime {
             // Post-batch budget accounting (incl. the execute_code refund,
             // previously streaming-only — Hermes conversation_loop.py:7277-7280).
             for (TurnExecutor.ToolExecutionRecord rec : batchResult.executions()) {
-                budget = iterationBudget.recordToolExecution(budget, rec.toolName(), rec.durationMs());
+                budget = iterationBudget.recordToolExecution(
+                    budget, rec.toolName(), rec.chargesDurationBudget() ? rec.durationMs() : 0);
                 if (rec.refunded()) {
                     budget = iterationBudget.refundToolExecution(budget);
                 }

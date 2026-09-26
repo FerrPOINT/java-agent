@@ -15,20 +15,27 @@ public record StreamEvent(
     Integer contextLength,
     String toolName,
     String toolResult,
-    UUID sessionId
+    UUID sessionId,
+    String lastReasoning
 ) {
     public StreamEvent(String type, String token, List<ToolCall> toolCalls, String error) {
-        this(type, token, toolCalls, error, null, null, null, null, null, null);
+        this(type, token, toolCalls, error, null, null, null, null, null, null, null);
     }
 
     public StreamEvent(String type, String token, List<ToolCall> toolCalls, String error,
                       String modelUsed, Integer contextTokens, Integer contextLength) {
-        this(type, token, toolCalls, error, modelUsed, contextTokens, contextLength, null, null, null);
+        this(type, token, toolCalls, error, modelUsed, contextTokens, contextLength, null, null, null, null);
+    }
+
+    public StreamEvent(String type, String token, List<ToolCall> toolCalls, String error,
+                      String modelUsed, Integer contextTokens, Integer contextLength,
+                      String toolName, String toolResult, UUID sessionId) {
+        this(type, token, toolCalls, error, modelUsed, contextTokens, contextLength, toolName, toolResult, sessionId, null);
     }
 
     public StreamEvent(String type, String token, List<ToolCall> toolCalls, String error,
                       String modelUsed, Integer contextTokens, Integer contextLength,
                       String toolName, String toolResult) {
-        this(type, token, toolCalls, error, modelUsed, contextTokens, contextLength, toolName, toolResult, null);
+        this(type, token, toolCalls, error, modelUsed, contextTokens, contextLength, toolName, toolResult, null, null);
     }
 }

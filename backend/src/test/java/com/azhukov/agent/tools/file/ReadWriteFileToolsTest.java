@@ -65,8 +65,9 @@ class ReadWriteFileToolsTest {
 
     @Test
     void writeFileBlocksSensitivePath() {
+        // /etc is a globally denied prefix — blocked regardless of guard home
         WriteFileTool t = new WriteFileTool(props(), fileSafety());
-        ToolResult r = t.execute("{\"path\":\"/.env\",\"content\":\"x\"}", null, session);
+        ToolResult r = t.execute("{\"path\":\"/etc/app/.env\",\"content\":\"x\"}", null, session);
         assertThat(r.success()).isFalse();
     }
 

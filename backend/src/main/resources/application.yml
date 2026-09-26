@@ -165,7 +165,8 @@ agent:
     background-review:
       enabled: ${AGENT_MEMORY_BACKGROUND_REVIEW_ENABLED:true}
       delay-ms: ${AGENT_MEMORY_BACKGROUND_REVIEW_DELAY_MS:2000}
-      max-review-turns: ${AGENT_MEMORY_BACKGROUND_REVIEW_MAX_TURNS:8}
+      max-review-turns: ${AGENT_MEMORY_BACKGROUND_REVIEW_MAX_TURNS:16}
+      max-input-tokens: ${AGENT_MEMORY_BACKGROUND_REVIEW_MAX_INPUT_TOKENS:600000}
   
   # ─── Skills ───
   skills:
@@ -336,9 +337,10 @@ agent:
   budget:
     enabled: ${AGENT_BUDGET_ENABLED:true}
     max-model-calls-per-turn: ${AGENT_BUDGET_MAX_MODEL_CALLS_PER_TURN:100}
-    max-tool-executions-per-turn: ${AGENT_BUDGET_MAX_TOOL_EXECUTIONS_PER_TURN:40}
+    max-tool-executions-per-turn: ${AGENT_BUDGET_MAX_TOOL_EXECUTIONS_PER_TURN:100}
     max-tokens-per-turn: ${AGENT_BUDGET_MAX_TOKENS_PER_TURN:200000}
     max-tool-duration-ms-per-turn: ${AGENT_BUDGET_MAX_TOOL_DURATION_MS_PER_TURN:600000}
+    run-budget-seconds: ${AGENT_BUDGET_RUN_BUDGET_SECONDS:0}
   
   # ─── Prompt caching ───
   prompt-caching:

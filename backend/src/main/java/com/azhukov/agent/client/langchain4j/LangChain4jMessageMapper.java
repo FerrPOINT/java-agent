@@ -38,11 +38,16 @@ public final class LangChain4jMessageMapper {
                             .build())
                         .collect(Collectors.toList());
                     String content = message.content();
-                    yield content != null && !content.isBlank()
-                        ? AiMessage.from(content, requests)
-                        : AiMessage.from(requests);
+                    yield AiMessage.builder()
+                        .text(content != null && !content.isBlank() ? content : null)
+                        .thinking(message.reasoning())
+                        .toolExecutionRequests(requests)
+                        .build();
                 }
-                yield AiMessage.from(message.content() != null ? message.content() : "");
+                yield AiMessage.builder()
+                    .text(message.content() != null ? message.content() : "")
+                    .thinking(message.reasoning())
+                    .build();
             }
             case TOOL -> ToolExecutionResultMessage.from(
                 message.toolCallId(), null, message.content() != null ? message.content() : "");

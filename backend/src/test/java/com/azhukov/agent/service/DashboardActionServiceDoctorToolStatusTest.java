@@ -1,12 +1,16 @@
 package com.azhukov.agent.service;
 
+import com.azhukov.agent.client.mcp.McpLifecycleManager;
 import com.azhukov.agent.config.AgentProperties;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
 
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * The 2026-09-19 tool audit showed capabilities can be silently off while every
@@ -16,15 +20,41 @@ import static org.assertj.core.api.Assertions.assertThat;
 class DashboardActionServiceDoctorToolStatusTest {
 
     @SuppressWarnings("unchecked")
-    private Map<String, Object> toolsFor(AgentProperties properties) {
+    private Map<String, Object> doctorFor(AgentProperties properties) {
         DashboardActionService service = new DashboardActionService(
             (ObjectProvider<com.azhukov.agent.service.ProfileService>) null,
             (ObjectProvider<com.azhukov.agent.persistence.repository.DashboardActionRepository>) null,
             (ObjectProvider<com.azhukov.agent.service.ProfileRuntimeRegistry>) null,
             (ObjectProvider<com.azhukov.agent.service.AgentRuntimeService>) null,
+            null,
+            properties);
+        return service.run("doctor", "default", "test").output();
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> toolsFor(AgentProperties properties) {
+        return toolsFor(properties, null);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> toolsFor(AgentProperties properties, McpLifecycleManager lifecycle) {
+        ObjectProvider<McpLifecycleManager> lifecycleProvider = lifecycle == null ? null : providerOf(lifecycle);
+        DashboardActionService service = new DashboardActionService(
+            (ObjectProvider<com.azhukov.agent.service.ProfileService>) null,
+            (ObjectProvider<com.azhukov.agent.persistence.repository.DashboardActionRepository>) null,
+            (ObjectProvider<com.azhukov.agent.service.ProfileRuntimeRegistry>) null,
+            (ObjectProvider<com.azhukov.agent.service.AgentRuntimeService>) null,
+            lifecycleProvider,
             properties);
         Map<String, Object> report = service.run("doctor", "default", "test").output();
         return (Map<String, Object>) report.get("tools");
+    }
+
+    private ObjectProvider<McpLifecycleManager> providerOf(McpLifecycleManager lifecycle) {
+        @SuppressWarnings("unchecked")
+        ObjectProvider<McpLifecycleManager> provider = mock(ObjectProvider.class);
+        when(provider.getIfAvailable()).thenReturn(lifecycle);
+        return provider;
     }
 
     private AgentProperties baseProps() {
@@ -35,6 +65,28 @@ class DashboardActionServiceDoctorToolStatusTest {
         properties.getImageGen().setEnabled(false);
         properties.getMcp().setEnabled(false);
         return properties;
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void doctorReportsEveryEffectiveBudgetLimit() {
+        AgentProperties properties = baseProps();
+        properties.getCore().setMaxTurns(100);
+        properties.getBudget().setEnabled(true);
+        properties.getBudget().setMaxModelCallsPerTurn(100);
+        properties.getBudget().setMaxToolExecutionsPerTurn(100);
+        properties.getBudget().setMaxTokensPerTurn(200_000);
+        properties.getBudget().setMaxToolDurationMsPerTurn(600_000);
+        properties.getBudget().setRunBudgetSeconds(0);
+
+        Map<String, Object> budget = (Map<String, Object>) doctorFor(properties).get("budget");
+        assertThat(budget).containsEntry("enabled", true)
+            .containsEntry("max_turns", 100)
+            .containsEntry("max_model_calls_per_turn", 100)
+            .containsEntry("max_tool_executions_per_turn", 100)
+            .containsEntry("max_tokens_per_turn", 200_000)
+            .containsEntry("max_tool_duration_ms_per_turn", 600_000)
+            .containsEntry("run_budget_seconds", 0);
     }
 
     @Test
@@ -56,6 +108,29 @@ class DashboardActionServiceDoctorToolStatusTest {
         Map<String, Object> mcp = (Map<String, Object>) tools.get("mcp");
         assertThat(mcp.get("status")).isEqualTo("off");
         assertThat((String) mcp.get("detail")).contains("AGENT_MCP_ENABLED");
+    }
+
+    @Test
+    void enabledMcpWithoutConnectionsReportsDown() {
+        AgentProperties properties = baseProps();
+        properties.getMcp().setEnabled(true);
+
+        Map<String, Object> mcp = (Map<String, Object>) toolsFor(properties).get("mcp");
+        assertThat(mcp.get("status")).isEqualTo("down");
+        assertThat(mcp.get("connected_servers")).isEqualTo(0);
+    }
+
+    @Test
+    void connectedMcpReportsConnectedServerCount() {
+        AgentProperties properties = baseProps();
+        properties.getMcp().setEnabled(true);
+        McpLifecycleManager lifecycle = mock(McpLifecycleManager.class);
+        when(lifecycle.listServers()).thenReturn(List.of(
+            new McpLifecycleManager.McpServerInfo("repomix", "", "stdio", 2, List.of("pack", "read"))));
+
+        Map<String, Object> mcp = (Map<String, Object>) toolsFor(properties, lifecycle).get("mcp");
+        assertThat(mcp.get("status")).isEqualTo("ok");
+        assertThat(mcp.get("connected_servers")).isEqualTo(1);
     }
 
     @Test

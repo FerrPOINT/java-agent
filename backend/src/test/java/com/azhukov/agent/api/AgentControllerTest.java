@@ -163,6 +163,7 @@ class AgentControllerTest {
         when(modelProperties.getProvider()).thenReturn("test-provider");
         when(coreProperties.getMaxTurns()).thenReturn(100);
         when(budgetProperties.getMaxModelCallsPerTurn()).thenReturn(100);
+        when(budgetProperties.getMaxToolExecutionsPerTurn()).thenReturn(100);
         when(skillManager.listSkillNames()).thenReturn(List.of("search", "read_file"));
 
         mockMvc.perform(get("/api/v1/agent/doctor"))
@@ -173,6 +174,7 @@ class AgentControllerTest {
             .andExpect(jsonPath("$.provider").value("test-provider"))
             .andExpect(jsonPath("$.maxTurns").value(100))
             .andExpect(jsonPath("$.maxModelCallsPerTurn").value(100))
+            .andExpect(jsonPath("$.maxToolExecutionsPerTurn").value(100))
             .andExpect(jsonPath("$.skillCount").value(2));
     }
 

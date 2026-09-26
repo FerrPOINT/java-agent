@@ -88,6 +88,12 @@ class StreamingEventHelper {
      *                        or {@code 0} to fall back to the usage-tracker estimate
      */
     void sendMetadataEvent(SseEmitter emitter, Session session, StreamContext streamCtx, int lastInputTokens) {
+        sendMetadataEvent(emitter, session, streamCtx, lastInputTokens, null);
+    }
+
+    /** Final metadata can carry the last structured provider reasoning for an opted-in UI. */
+    void sendMetadataEvent(SseEmitter emitter, Session session, StreamContext streamCtx, int lastInputTokens,
+                           String lastReasoning) {
         try {
             String modelUsed = resolveModelUsed(session);
             int contextLength = modelMetadataService.detectContextLength(modelUsed);
@@ -98,7 +104,7 @@ class StreamingEventHelper {
                 ? lastInputTokens
                 : estimateContextTokens(session.id());
             send(emitter, new StreamEvent("metadata", null, null, null,
-                modelUsed, contextTokens, contextLength, null, null, session.id()), streamCtx);
+                modelUsed, contextTokens, contextLength, null, null, session.id(), lastReasoning), streamCtx);
         } catch (Exception e) {
             log.warn("Failed to send stream metadata event: {}", e.getMessage());
         }

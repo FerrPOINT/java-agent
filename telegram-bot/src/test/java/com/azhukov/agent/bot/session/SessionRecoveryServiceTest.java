@@ -18,12 +18,9 @@ import static org.mockito.Mockito.*;
  * restarts without losing the user's session thread.
  *
  * Contract under test:
- * - graceful shutdown marks every active, non-suspended session
- *   resume_pending so the next boot knows an in-flight turn was interrupted;
- * - startup recovery finds those sessions, notifies each chat once and
- *   clears the flag so the notice cannot repeat on every boot;
- * - suspended sessions are never touched (explicit user intent wins);
- * - the first successful post-restart turn also clears the flag.
+ * - startup leaves each interrupted turn pending until the lifecycle confirms
+ *   successful notification delivery;
+ * - a delivery acknowledgement clears exactly the matching pending session;
  */
 class SessionRecoveryServiceTest {
 
@@ -39,35 +36,7 @@ class SessionRecoveryServiceTest {
     }
 
     @Test
-    void shutdownMarksActiveSessionsResumePending() {
-        BotSessionEntity active = session("u1", true, false);
-        BotSessionEntity suspended = session("u2", true, true);
-        BotSessionEntity inactive = session("u3", false, false);
-        when(repository.findByActiveTrueAndSuspendedFalse()).thenReturn(List.of(active));
-
-        int marked = recovery.markInterruptedOnShutdown();
-
-        assertThat(marked).isEqualTo(1);
-        assertThat(active.isResumePending()).isTrue();
-        verify(repository).save(active);
-        verify(repository, never()).save(suspended);
-        verify(repository, never()).save(inactive);
-    }
-
-    @Test
-    void shutdownSkipsAlreadyPendingSessions() {
-        BotSessionEntity pending = session("u1", true, false);
-        pending.setResumePending(true);
-        when(repository.findByActiveTrueAndSuspendedFalse()).thenReturn(List.of(pending));
-
-        int marked = recovery.markInterruptedOnShutdown();
-
-        assertThat(marked).isZero();
-        verify(repository, never()).save(any(BotSessionEntity.class));
-    }
-
-    @Test
-    void startupNotifiesPendingSessionsAndClearsFlag() {
+    void recoveringPendingSessionDoesNotClearFlagBeforeDelivery() {
         BotSessionEntity pending = session("u1", true, false);
         pending.setResumePending(true);
         when(repository.findByResumePendingTrueAndActiveTrue())
@@ -78,8 +47,8 @@ class SessionRecoveryServiceTest {
 
         assertThat(recovered).hasSize(1);
         assertThat(recovered.get(0).chatId()).isEqualTo("100");
-        assertThat(pending.isResumePending()).isFalse();
-        verify(repository).save(pending);
+        assertThat(pending.isResumePending()).isTrue();
+        verify(repository, never()).save(any());
     }
 
     @Test
@@ -90,6 +59,23 @@ class SessionRecoveryServiceTest {
 
         assertThat(recovered).isEmpty();
         verify(repository, never()).save(any());
+    }
+
+    @Test
+    void acknowledgesOnlyKnownPendingSessionAfterDelivery() {
+        UUID sessionId = UUID.randomUUID();
+        when(store.clearResumePending(sessionId)).thenReturn(true);
+
+        boolean cleared = recovery.acknowledgeRecoveredSession(sessionId);
+
+        assertThat(cleared).isTrue();
+        verify(store).clearResumePending(sessionId);
+    }
+
+    @Test
+    void doesNotAcknowledgeMissingSessionId() {
+        assertThat(recovery.acknowledgeRecoveredSession(null)).isFalse();
+        verifyNoInteractions(store);
     }
 
     @Test

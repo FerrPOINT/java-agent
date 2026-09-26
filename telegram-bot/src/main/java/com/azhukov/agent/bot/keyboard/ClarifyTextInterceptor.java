@@ -30,26 +30,34 @@ public class ClarifyTextInterceptor {
 
     private final RestClient backendRestClient;
     private final ObjectMapper objectMapper;
+    private final ClarifyInteractionRenderer clarifyInteractionRenderer;
 
     public ClarifyTextInterceptor(@Qualifier("backendRestClient") RestClient backendRestClient,
-                                  ObjectMapper objectMapper) {
+                                  ObjectMapper objectMapper,
+                                  ClarifyInteractionRenderer clarifyInteractionRenderer) {
         this.backendRestClient = backendRestClient;
         this.objectMapper = objectMapper;
+        this.clarifyInteractionRenderer = clarifyInteractionRenderer;
     }
 
     /**
-     * @return "resolved", "invalid_selection" when the backend classified the
-     *         text as a failed selection (prompt stays armed), or null when
-     *         there is no pending clarify (route the message normally).
+     * @return "resolved", "invalid_selection", or "awaiting_response". The
+     *         latter consumes arbitrary prose while a choice clarify remains
+     *         visible, preventing busy-mode interruption of the blocked turn.
      */
     public String tryResolve(BotSessionEntity session, String text) {
         if (session == null || session.getId() == null || text == null || text.isBlank()) {
             return null;
         }
+        long chatId = parseChatId(session.getChatId());
+        String backendSessionId = clarifyInteractionRenderer.awaitingResponseSession(chatId);
+        if (backendSessionId == null || backendSessionId.isBlank()) {
+            return null;
+        }
         try {
             @SuppressWarnings("unchecked")
             Map<String, Object> outcome = backendRestClient.post()
-                .uri("/api/v1/agent/session/{sessionId}/clarify/text", session.getId().toString())
+                .uri("/api/v1/agent/session/{sessionId}/clarify/text", backendSessionId)
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
                 .body(Map.of("text", text))
                 .retrieve()
@@ -58,15 +66,25 @@ public class ClarifyTextInterceptor {
                 return null;
             }
             String result = String.valueOf(outcome.get("outcome"));
-            return switch (result) {
-                case "resolved" -> "resolved";
-                case "rejected_selection" -> "invalid_selection";
-                // prose or no pending clarify: route normally
-                default -> null;
-            };
+            if ("resolved".equals(result)) {
+                clarifyInteractionRenderer.completeTextResponse(chatId);
+                return "resolved";
+            }
+            if ("rejected_selection".equals(result)) {
+                return "invalid_selection";
+            }
+            return clarifyInteractionRenderer.isAwaitingResponse(chatId) ? "awaiting_response" : null;
         } catch (Exception e) {
             log.debug("Clarify text intercept failed for session {}: {}", session.getId(), e.getMessage());
-            return null;
+            return clarifyInteractionRenderer.isAwaitingResponse(chatId) ? "awaiting_response" : null;
+        }
+    }
+
+    private long parseChatId(String chatId) {
+        try {
+            return Long.parseLong(chatId);
+        } catch (NumberFormatException e) {
+            return 0L;
         }
     }
 }

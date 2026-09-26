@@ -41,6 +41,12 @@ import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
+/**
+ * Synchronous agent entry point: owns session ownership checks and runs the
+ * blocking conversation loop ({@code runAgenticLoop}) for REST callers.
+ * Streaming consumers use {@link AgentStreamingService} instead; both share
+ * the same {@code TurnExecutor} tool-batch execution semantics.
+ */
 @Service
 @RequiredArgsConstructor
 @Slf4j

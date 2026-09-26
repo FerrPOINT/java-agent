@@ -48,13 +48,6 @@ public class StreamingOrchestrator {
     private final BotProperties properties;
     private final MediaDeliveryService mediaDeliveryService;
     private final com.azhukov.agent.bot.client.TelegramClient telegramClient;
-    private com.azhukov.agent.bot.keyboard.ClarificationStateStore clarificationStateStore;
-
-    @org.springframework.beans.factory.annotation.Autowired
-    void setClarificationStateStore(com.azhukov.agent.bot.keyboard.ClarificationStateStore clarificationStateStore) {
-        this.clarificationStateStore = clarificationStateStore;
-    }
-
     private final com.azhukov.agent.bot.session.BotSessionStore sessionStore;
     private final com.azhukov.agent.bot.keyboard.ClarifyInteractionRenderer clarificationInteraction;
 
@@ -247,8 +240,11 @@ public class StreamingOrchestrator {
                         String toolDisplay = ToolEmojiMap.formatToolCall(toolName, toolArgs);
                         bubble.appendLine(chatId, toolDisplay);
                     }
-                    if ("clarify".equals(toolName) && clarificationStateStore != null) {
-                        clarificationStateStore.present(chatId, messageThreadId, toolArgs, telegramClient);
+                    // The backend blocking-clarify SSE event is the only interactive
+                    // renderer. tool_start remains progress-only; otherwise each question
+                    // is sent twice (the detached cq keyboard plus the bound clfy keyboard).
+                    if ("clarify".equals(toolName)) {
+                        log.debug("Clarify tool_start rendered as progress only for chat {}", chatId);
                     }
                 },
                 // toolResultConsumer — called when backend emits tool_result event.
@@ -290,7 +286,14 @@ public class StreamingOrchestrator {
                 // the pending entry; button taps resolve it via the backend.
                 clarifyPayload -> {
                     try {
-                        clarificationInteraction.present(chatId, messageThreadId, sessionId, clarifyPayload);
+                        int separator = clarifyPayload == null ? -1 : clarifyPayload.indexOf('\u0001');
+                        String clarifySessionId = separator >= 0 ? clarifyPayload.substring(0, separator) : sessionId;
+                        String payload = separator >= 0 ? clarifyPayload.substring(separator + 1) : clarifyPayload;
+                        if (clarifySessionId == null || clarifySessionId.isBlank()) {
+                            log.warn("Clarify payload missing backend session for chat {}", chatId);
+                            return;
+                        }
+                        clarificationInteraction.present(chatId, messageThreadId, clarifySessionId, payload);
                     } catch (Exception e) {
                         log.warn("Clarify prompt delivery failed for chat {}: {}", chatId, e.getMessage());
                     }
@@ -438,7 +441,8 @@ public class StreamingOrchestrator {
                     streamResult.contextLength(),
                     finalized[0],
                     streamResult.memoryUpdated(),
-                    streamResult.backendSessionId()
+                    streamResult.backendSessionId(),
+                    streamResult.lastReasoning()
                 );
             }
             // If streaming produced no visible tokens but has metadata, prefer the sync fallback to get content
@@ -448,7 +452,7 @@ public class StreamingOrchestrator {
             // Stream finished but produced no content and no metadata
             return new AgentBackendClient.ChatResult(accumulated.toString(),
                 streamResult.modelUsed(), streamResult.contextTokens(), streamResult.contextLength(), false,
-                streamResult.memoryUpdated(), streamResult.backendSessionId());
+                streamResult.memoryUpdated(), streamResult.backendSessionId(), streamResult.lastReasoning());
         } catch (StreamInterruptedException e) {
             // Already handled in onError callback
             progressBubbles.remove(chatId);
@@ -485,7 +489,8 @@ public class StreamingOrchestrator {
             syncResult.contextLength() != null ? syncResult.contextLength() : streamResult.contextLength(),
             false,
             syncResult.memoryUpdated() || streamResult.memoryUpdated(),
-            syncResult.backendSessionId() != null ? syncResult.backendSessionId() : streamResult.backendSessionId()
+            syncResult.backendSessionId() != null ? syncResult.backendSessionId() : streamResult.backendSessionId(),
+            syncResult.lastReasoning() != null ? syncResult.lastReasoning() : streamResult.lastReasoning()
         );
     }
 

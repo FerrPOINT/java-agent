@@ -85,6 +85,17 @@ class TurnFinalizerBranchTest {
     }
 
     @Test
+    void budgetExhaustionClosesDanglingToolSequenceWithBudgetReason() {
+        List<Message> messages = new ArrayList<>(List.of(
+            Message.user("run"),
+            Message.toolResult("c1", "completed", 0)));
+
+        assertThat(TurnFinalizer.closeInterruptedToolSequence(messages, TurnExitReason.BUDGET_EXHAUSTED)).isTrue();
+        assertThat(messages.get(messages.size() - 1).content())
+            .isEqualTo("[Turn ended: iteration budget exhausted]");
+    }
+
+    @Test
     void failedTurnWithPartialAssistantFragmentAppendsExplanation() {
         // Short fragment without terminal punctuation → explanation appended
         List<Message> messages = new ArrayList<>(List.of(

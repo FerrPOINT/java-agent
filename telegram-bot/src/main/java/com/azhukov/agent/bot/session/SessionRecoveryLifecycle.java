@@ -1,7 +1,6 @@
 package com.azhukov.agent.bot.session;
 
 import com.azhukov.agent.bot.client.TelegramClient;
-import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.ApplicationArguments;
@@ -14,9 +13,8 @@ import java.util.Optional;
  * Wires {@link SessionRecoveryService} into the bot lifecycle (docs/34 gap 9).
  *
  * <p>Startup: recover resume-pending sessions and send each chat the one-time
- * continuation notice. Shutdown: mark active sessions resume-pending so the
- * next boot can complete the handshake. The notice is best-effort — Telegram
- * unavailability at boot must never crash the application.
+ * continuation notice. Turns mark themselves pending before backend streaming,
+ * so a stopped process leaves only genuinely in-flight turns for recovery.
  */
 @Component
 @RequiredArgsConstructor
@@ -41,6 +39,9 @@ public class SessionRecoveryLifecycle implements ApplicationRunner {
                         null, null, threadId, false);
                 if (sent.isEmpty()) {
                     log.warn("recovery notice not delivered to chat {} (send failed)", session.chatId());
+                } else if (!recoveryService.acknowledgeRecoveredSession(session.botSessionId())) {
+                    log.warn("recovery notice delivered but resume-pending could not be cleared for session {}",
+                        session.botSessionId());
                 }
             } catch (NumberFormatException e) {
                 log.warn("recovery notice skipped: non-numeric chat id {}", session.chatId());
@@ -53,12 +54,4 @@ public class SessionRecoveryLifecycle implements ApplicationRunner {
         }
     }
 
-    @PreDestroy
-    public void onShutdown() {
-        try {
-            recoveryService.markInterruptedOnShutdown();
-        } catch (Exception e) {
-            log.warn("shutdown session marking failed: {}", e.getMessage());
-        }
-    }
 }

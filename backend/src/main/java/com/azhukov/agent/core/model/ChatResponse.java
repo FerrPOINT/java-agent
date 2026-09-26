@@ -20,12 +20,18 @@ public record ChatResponse(
     String content,
     List<ToolCall> toolCalls,
     String finishReason,
-    TokenUsage usage
+    TokenUsage usage,
+    String reasoning
 ) {
     public ChatResponse {
         Objects.requireNonNull(content, "content must not be null");
         toolCalls = toolCalls != null ? List.copyOf(toolCalls) : Collections.emptyList();
         finishReason = finishReason != null ? finishReason : "STOP";
+    }
+
+    /** Canonical 4-arg constructor: no structured reasoning available. */
+    public ChatResponse(String content, List<ToolCall> toolCalls, String finishReason, TokenUsage usage) {
+        this(content, toolCalls, finishReason, usage, null);
     }
 
     /** Canonical 3-arg constructor: no provider usage (recovery paths fail open). */
@@ -40,7 +46,13 @@ public record ChatResponse(
 
     /** Returns a copy carrying the provider-reported usage, or this when usage is null. */
     public ChatResponse withUsage(TokenUsage usage) {
-        return usage == null ? this : new ChatResponse(content, toolCalls, finishReason, usage);
+        return usage == null ? this : new ChatResponse(content, toolCalls, finishReason, usage, reasoning);
+    }
+
+    /** Returns a copy carrying structured provider reasoning for this response. */
+    public ChatResponse withReasoning(String reasoning) {
+        return reasoning == null || reasoning.isBlank()
+            ? this : new ChatResponse(content, toolCalls, finishReason, usage, reasoning);
     }
 
     public static ChatResponse text(String content) {

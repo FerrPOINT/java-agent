@@ -72,6 +72,7 @@ public class RuntimeSettingsController {
             properties.getModel().getBaseUrl(),
             properties.getCore().getMaxTurns(),
             properties.getBudget().getMaxModelCallsPerTurn(),
+            properties.getBudget().getMaxToolExecutionsPerTurn(),
             properties.getModel().getMaxTokens(),
             properties.getModel().getTemperature(),
             properties.getModel().getTimeoutSeconds(),

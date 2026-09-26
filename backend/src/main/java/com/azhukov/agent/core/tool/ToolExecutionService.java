@@ -71,7 +71,12 @@ public class ToolExecutionService {
         "delegate_task", "cronjob", "memory",
         "delete_file", "execute_code", "process", "skill_manage",
         "send_message", "image_generate", "todo", "mcp_tool",
-        "browser_click", "browser_type", "browser_press", "browser_dialog");
+        "browser_click", "browser_type", "browser_press", "browser_dialog",
+        "clarify");
+    /** Hermes parity (clarify_gateway TIMEOUT): the blocking clarify tool waits
+     *  for the user's reply (default 3600s), far beyond the generic tool
+     *  timeout — it must not be killed by the tool-output timeout. */
+    private static final Set<String> NO_TOOL_TIMEOUT = Set.of("clarify");
     private final Retry retry = Retry.of("tool", RetryConfig.custom()
             .maxAttempts(3)
             .waitDuration(Duration.ofMillis(500))
@@ -131,8 +136,10 @@ public class ToolExecutionService {
             NO_RETRY_TOOLS.contains(toolName) ? noRetry : retry, () -> {
             java.util.concurrent.Future<ToolResult> future = executor.submit(callable);
             try {
-                return future.get(
-                    properties.getToolOutput().getTimeoutSecondsOrDefault(120), TimeUnit.SECONDS);
+                long timeout = NO_TOOL_TIMEOUT.contains(toolName)
+                    ? java.lang.Long.MAX_VALUE / 2 // effectively unbounded (await handles its own TTL)
+                    : properties.getToolOutput().getTimeoutSecondsOrDefault(120);
+                return future.get(timeout, TimeUnit.SECONDS);
             } catch (TimeoutException e) {
                 // P11 parity (tool_executor.py:957,966): cancel AND interrupt the
                 // worker so a timed-out tool cannot perform late side effects after

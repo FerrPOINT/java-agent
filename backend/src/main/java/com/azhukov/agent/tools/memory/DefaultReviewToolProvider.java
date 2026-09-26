@@ -1,5 +1,7 @@
 package com.azhukov.agent.tools.memory;
 
+import com.azhukov.agent.tools.file.ReadFileTool;
+import com.azhukov.agent.tools.file.SearchFilesTool;
 import com.azhukov.agent.core.memory.ReviewToolProvider;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
@@ -21,13 +23,15 @@ import java.util.Set;
 public class DefaultReviewToolProvider implements ReviewToolProvider {
 
     private static final Set<String> REVIEW_TOOLS = Set.of(
-        "memory", "skill_manage", "skills_list", "skill_view"
+        "memory", "skill_manage", "skills_list", "skill_view", "read_file", "search_files"
     );
 
     private final MemoryTool memoryTool;
     private final SkillManageTool skillManageTool;
     private final SkillsListTool skillsListTool;
     private final SkillViewTool skillViewTool;
+    private final ReadFileTool readFileTool;
+    private final SearchFilesTool searchFilesTool;
 
     @Override
     public ToolResult execute(String toolName, String arguments, Session session) {
@@ -36,6 +40,8 @@ public class DefaultReviewToolProvider implements ReviewToolProvider {
             case "skill_manage" -> skillManageTool.execute(arguments, null, session);
             case "skills_list" -> skillsListTool.execute(arguments, null, session);
             case "skill_view" -> skillViewTool.execute(arguments, null, session);
+            case "read_file" -> readFileTool.execute(arguments, null, session);
+            case "search_files" -> searchFilesTool.execute(arguments, null, session);
             default -> ToolResult.fail("Unknown review tool: " + toolName);
         };
     }

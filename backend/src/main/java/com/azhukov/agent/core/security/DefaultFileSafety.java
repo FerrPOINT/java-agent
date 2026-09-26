@@ -19,52 +19,6 @@ public class DefaultFileSafety implements FileSafety {
 
  // ─── Write denylist: sensitive files that are NEVER writable ───
 
- /** Filename suffixes that are always denied for writing. */
- private static final Set<String> DENYLIST_FILENAMES = Set.of(
- ".env",
- ".env.local",
- ".env.development",
- ".env.production",
- ".env.test",
- ".env.staging",
- ".envrc",
- ".netrc",
- ".pgpass",
- ".npmrc",
- ".pypirc",
- ".git-credentials",
- "config.json", // .docker/config.json — matched via path segment check too
- "auth.json",
- "auth.lock",
- ".anthropic_oauth.json",
- "webhook_subscriptions.json"
- );
-
- /** Path segments that trigger deny when the normalized path contains them. */
- private static final Set<String> DENYLIST_SEGMENTS = Set.of(
- ".ssh",
- ".gnupg",
- ".aws",
- ".kube",
- ".docker",
- ".azure",
- ".config" // .config/gh, .config/gcloud matched via exact suffix
- );
-
- /** Exact normalized sub-paths that are always denied. */
- private static final Set<String> DENYLIST_EXACT_SUFFIXES = Set.of(
- ".aws/credentials",
- ".kube/config",
- ".docker/config.json",
- ".config/gh/hosts.yml",
- ".config/gcloud/credentials.db",
- // Hermes parity (file_safety.py build_write_denied_prefixes): /etc/systemd
- // and /etc/sudoers.d are prefix-denied — suffix matching on the normalized
- // absolute path covers them without a blanket "systemd" segment ban.
- "etc/systemd",
- "etc/sudoers.d"
- );
-
  /** Absolute paths that are always denied. */
  private static final Set<String> DENYLIST_ABSOLUTE = Set.of(
  "/etc/sudoers",
@@ -87,7 +41,118 @@ public class DefaultFileSafety implements FileSafety {
  "/usr/lib/systemd/"
  );
 
+ // ─── Home-scoped credential denylist (Hermes file_safety.py parity) ───
+ //
+ // Hermes scopes credential-file write denies to the guard HOMES
+ // (build_write_denied_paths/home_files + hermes_files): overwriting a
+ // project-local .env or auth.json is ALLOWED — "true containment belongs in
+ // Docker/remote backends and OS permissions, not an expanding hardcoded
+ // denylist" (upstream #45947). Only the agent's own credential stores under
+ // ~/.hermes (or the OS home dotfiles) are never writable. Before this
+ // scoping the Java denylist blocked config.json/auth.json/.env writes
+ // ANYWHERE on disk, so the agent could not edit its own project files.
+
+ /** Home dotfiles denied for writing anywhere under a guard home. */
+ private static final Set<String> HOME_DENYLIST_FILENAMES = Set.of(
+ ".env",
+ ".env.local",
+ ".env.development",
+ ".env.production",
+ ".env.test",
+ ".env.staging",
+ ".envrc",
+ ".netrc",
+ ".pgpass",
+ ".npmrc",
+ ".pypirc",
+ ".git-credentials"
+ );
+
+ /**
+ * Credential stores under the agent home tree ({@code ~/.hermes}), denied for
+ * writing. Deliberately WITHOUT auth.json / auth.lock /
+ * webhook_subscriptions.json (upstream #45947: control files stay writable,
+ * read-denied only) — mirrors {@code hermes_files} minus the freed set.
+ */
+ private static final Set<String> AGENT_HOME_DENYLIST_FILENAMES = Set.of(
+ ".env",
+ ".anthropic_oauth.json",
+ "google_oauth.json",
+ "bws_cache.json",
+ "bws_cache.enc.json"
+ );
+
+ /** Home directories whose trees the segment/prefix guards apply to. */
+ private static final Set<String> HOME_DENYLIST_SEGMENTS = Set.of(
+ ".ssh",
+ ".gnupg",
+ ".aws",
+ ".kube",
+ ".docker",
+ ".azure"
+ );
+
+ /** Exact sub-paths under a guard home denied for writing. */
+ private static final Set<String> HOME_DENYLIST_EXACT_SUFFIXES = Set.of(
+ ".aws/credentials",
+ ".kube/config",
+ ".docker/config.json",
+ ".config/gh/hosts.yml",
+ ".config/gcloud/credentials.db"
+ );
+
+ private boolean isUnderHome(Path normalized) {
+ if (normalized == null) {
+ return false;
+ }
+ List<String> configured = properties.getSecurity().getGuardHomePaths();
+ if (configured != null && !configured.isEmpty()) {
+ for (String home : configured) {
+ Path base = Paths.get(home).toAbsolutePath().normalize();
+ if (normalized.startsWith(base)) {
+ return true;
+ }
+ }
+ return false;
+ }
+ Path userHome = Path.of(System.getProperty("user.home", "/"));
+ Path agentHome = Path.of(userHome.toString(), ".hermes");
+ Path normalizedHome = userHome.toAbsolutePath().normalize();
+ Path normalizedAgentHome = agentHome.toAbsolutePath().normalize();
+ return normalized.startsWith(normalizedHome) || normalized.startsWith(normalizedAgentHome);
+ }
+
+ private boolean matchesHomeDenylist(Path normalized) {
+ if (!isUnderHome(normalized)) {
+ return false;
+ }
+ String pathStr = normalized.toString();
+ String fileName = normalized.getFileName() != null ? normalized.getFileName().toString() : "";
+ if (HOME_DENYLIST_FILENAMES.contains(fileName)) {
+ return true;
+ }
+ if (normalized.toString().contains(".hermes") && AGENT_HOME_DENYLIST_FILENAMES.contains(fileName)) {
+ return true;
+ }
+ for (String suffix : HOME_DENYLIST_EXACT_SUFFIXES) {
+ if (pathStr.endsWith("/" + suffix)) {
+ return true;
+ }
+ }
+ for (Path element : normalized) {
+ String seg = element.toString();
+ if (HOME_DENYLIST_SEGMENTS.contains(seg)) {
+ return true;
+ }
+ }
+ return false;
+ }
+
  // ─── Read-block list: sensitive files that should never be read ───
+ // Project-local .env* basenames block ANYWHERE on disk (Hermes
+ // _BLOCKED_PROJECT_ENV_BASENAMES); credential stores block under the agent
+ // home tree; .ssh/.gnupg segment blocks are home-scoped (Hermes blocks
+ // ~/.ssh reads via home prefix guards, not a global ".ssh" segment ban).
 
  private static final Set<String> READ_BLOCK_FILENAMES = Set.of(
  ".env",
@@ -159,7 +224,6 @@ public class DefaultFileSafety implements FileSafety {
  private boolean matchesDenylist(Path normalized) {
  if (normalized == null) return false;
  String pathStr = normalized.toString();
- String fileName = normalized.getFileName() != null ? normalized.getFileName().toString() : "";
 
  // Check absolute paths
  for (String abs : DENYLIST_ABSOLUTE) {
@@ -175,32 +239,8 @@ public class DefaultFileSafety implements FileSafety {
  }
  }
 
- // Check filenames
- if (DENYLIST_FILENAMES.contains(fileName)) {
- return true;
- }
-
- // Check exact suffix sub-paths
- for (String suffix : DENYLIST_EXACT_SUFFIXES) {
- if (pathStr.endsWith("/" + suffix) || pathStr.endsWith(suffix)) {
- return true;
- }
- // Directory-prefix form: "/etc/systemd/system/x.service" must match the
- // "etc/systemd" prefix (Hermes build_write_denied_prefixes semantics).
- if (pathStr.contains("/" + suffix + "/")) {
- return true;
- }
- }
-
- // Check path segments (directories)
- for (Path element : normalized) {
- String seg = element.toString();
- if (DENYLIST_SEGMENTS.contains(seg)) {
- return true;
- }
- }
-
- return false;
+ // Home-scoped credential guards (Hermes build_write_denied_paths/prefixes)
+ return matchesHomeDenylist(normalized);
  }
 
  @Override
@@ -295,11 +335,15 @@ public class DefaultFileSafety implements FileSafety {
  }
  }
 
- // Check path segments (directories)
+ // Home-scoped segment guards (Hermes blocks ~/.ssh / ~/.gnupg via home
+ // prefix guards, not a global segment ban — a project dir named .ssh must
+ // stay readable)
+ if (isUnderHome(normalized)) {
  for (Path element : normalized) {
  String seg = element.toString();
  if (READ_BLOCK_SEGMENTS.contains(seg)) {
  return true;
+ }
  }
  }
 

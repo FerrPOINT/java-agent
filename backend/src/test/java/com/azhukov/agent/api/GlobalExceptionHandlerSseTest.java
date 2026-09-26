@@ -6,6 +6,7 @@ import org.springframework.http.MediaType;
 import org.springframework.web.context.request.RequestAttributes;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import jakarta.servlet.http.HttpServletRequest;
@@ -57,6 +58,15 @@ class GlobalExceptionHandlerSseTest {
         Object result = h.handleGeneric(new RuntimeException("internal stream error"));
 
         assertThat(result).isInstanceOf(SseEmitter.class);
+        clearRequestContext();
+    }
+
+    @Test
+    void disconnectedAsyncRequestIsIgnoredWithoutCreatingSecondSseResponse() {
+        setSseRequestContext();
+
+        h.handleDisconnectedAsyncRequest(new AsyncRequestNotUsableException("Broken pipe"));
+
         clearRequestContext();
     }
 

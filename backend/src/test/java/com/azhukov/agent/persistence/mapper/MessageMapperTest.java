@@ -38,6 +38,7 @@ class MessageMapperTest {
         assertThat(message.toolCall().arguments()).isEqualTo("{\"city\":\"Paris\"}");
         assertThat(message.toolCalls()).containsExactly(message.toolCall());
         assertThat(message.toolCallId()).isNull();
+        assertThat(message.reasoning()).isNull();
         assertThat(message.turnIndex()).isEqualTo(3);
     }
 
@@ -99,6 +100,23 @@ class MessageMapperTest {
 
         assertThat(message.toolCall()).isNull();
         assertThat(message.toolCalls()).isNull();
+    }
+
+    @Test
+    void toEntityAndBack_preservesAssistantReasoning() {
+        MessageEntity entity = mapper.toEntity(Message.assistant("answer", 2, "private chain"));
+
+        Message reloaded = mapper.toDomain(entity);
+
+        assertThat(entity.getReasoning()).isEqualTo("private chain");
+        assertThat(reloaded.reasoning()).isEqualTo("private chain");
+    }
+
+    @Test
+    void toEntityDoesNotPersistReasoningForNonAssistantMessages() {
+        MessageEntity entity = mapper.toEntity(Message.toolResult("call-1", "result", 1));
+
+        assertThat(entity.getReasoning()).isNull();
     }
 
     @Test

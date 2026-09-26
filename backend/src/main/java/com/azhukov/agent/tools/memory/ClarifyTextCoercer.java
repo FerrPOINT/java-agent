@@ -30,8 +30,8 @@ public final class ClarifyTextCoercer {
             return null;
         }
         List<String> choices = entry.choices();
-        if (choices == null || choices.isEmpty()) {
-            return text; // open-ended accepts anything
+        if (choices == null || choices.isEmpty() || entry.acceptsCustomResponse()) {
+            return text; // open-ended or explicit Other accepts any text
         }
         if (entry.multiSelect()) {
             return coerceMultiSelect(text, choices);

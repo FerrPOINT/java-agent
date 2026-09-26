@@ -67,6 +67,35 @@ class BackgroundReviewCancellationTest {
         service.shutdown();
     }
 
+    @Test
+    void secondReviewDoesNotReplaceCancelledInFlightRun() throws Exception {
+        ModelClient model = mock(ModelClient.class);
+        ReviewToolProvider tools = mock(ReviewToolProvider.class);
+        AgentProperties props = reviewProperties(0);
+        BackgroundReviewService service = new BackgroundReviewService(model, mock(MemoryProvider.class),
+            mock(WriteApprovalGate.class), tools, props);
+        UUID sessionId = UUID.randomUUID();
+        CountDownLatch firstModelEntered = new CountDownLatch(1);
+        CountDownLatch releaseFirstModel = new CountDownLatch(1);
+
+        when(model.complete(any(), any())).thenAnswer(inv -> {
+            firstModelEntered.countDown();
+            assertThat(releaseFirstModel.await(2, TimeUnit.SECONDS)).isTrue();
+            return ChatResponse.toolCalls(List.of(new ToolCall("c1", "memory", "{}")));
+        });
+
+        service.reviewTurn(sessionId, List.of(Message.user("first")));
+        assertThat(firstModelEntered.await(2, TimeUnit.SECONDS)).isTrue();
+        service.cancelForNewForegroundTurn(sessionId);
+        service.reviewTurn(sessionId, List.of(Message.user("second")));
+        releaseFirstModel.countDown();
+
+        Awaitility.await().atMost(Duration.ofSeconds(2)).untilAsserted(
+            () -> verify(model, times(1)).complete(any(), any()));
+        verifyNoInteractions(tools);
+        service.shutdown();
+    }
+
     private static AgentProperties reviewProperties(int delayMs) {
         AgentProperties props = mock(AgentProperties.class);
         AgentProperties.MemoryProperties memory = mock(AgentProperties.MemoryProperties.class);

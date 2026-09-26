@@ -11,16 +11,25 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ReviewToolSchemasTest {
 
     @Test
-    void build_returnsFourToolDefinitions() {
+    void build_returnsSixToolDefinitions() {
         List<ToolDefinition> tools = ReviewToolSchemas.build();
-        assertThat(tools).hasSize(4);
+        assertThat(tools).hasSize(6);
     }
 
     @Test
     void build_containsAllWhitelistedTools() {
         List<ToolDefinition> tools = ReviewToolSchemas.build();
         List<String> names = tools.stream().map(ToolDefinition::name).toList();
-        assertThat(names).contains("memory", "skill_manage", "skills_list", "skill_view");
+        assertThat(names).contains("memory", "skill_manage", "skills_list", "skill_view", "read_file", "search_files");
+    }
+
+    @Test
+    void scopedBuildDoesNotAdvertiseMemoryToSkillOnlyReview() {
+        List<ToolDefinition> tools = ReviewToolSchemas.build(
+            java.util.Set.of("skill_manage", "skills_list", "skill_view", "read_file", "search_files"));
+        assertThat(tools.stream().map(ToolDefinition::name))
+            .containsExactlyInAnyOrder("skill_manage", "skills_list", "skill_view", "read_file", "search_files")
+            .doesNotContain("memory");
     }
 
     @Test

@@ -52,8 +52,36 @@ class DefaultIterationBudgetTest {
     }
 
     @Test
-    void doesNotExhaustWith200ToolExecutionsAtDefaultLimit() {
-        // Verify the new default of 200 tool executions doesn't trigger prematurely
+    void exhaustsAfterToolDuration() {
+        props.getBudget().setMaxToolDurationMsPerTurn(5);
+        var snap = budget.recordToolExecution(budget.startTurn(UUID.randomUUID()), "slow", 5);
+
+        assertTrue(snap.exhausted());
+        assertThat(budget.status(snap).reason()).isEqualTo("max tool duration reached");
+        assertThat(budget.status(snap).remainingToolDurationMs()).isZero();
+    }
+
+    @Test
+    void clarifyDurationDoesNotConsumeTheToolDurationLimit() {
+        props.getBudget().setMaxToolDurationMsPerTurn(5);
+        var snap = budget.recordToolExecution(budget.startTurn(UUID.randomUUID()), "clarify", 0);
+
+        assertFalse(snap.exhausted());
+        assertThat(budget.status(snap).remainingToolDurationMs()).isEqualTo(5);
+    }
+
+    @Test
+    void statusReportsToolDurationLimitBeforeExhaustion() {
+        props.getBudget().setMaxToolDurationMsPerTurn(10);
+        var snap = budget.recordToolExecution(budget.startTurn(UUID.randomUUID()), "slow", 9);
+
+        assertThat(budget.status(snap).remainingToolDurationMs()).isEqualTo(1);
+        assertThat(budget.status(snap).reason()).isNull();
+    }
+
+    @Test
+    void doesNotExhaustWith50ToolExecutionsBelowDefaultLimit() {
+        // The default permits 100 tool executions per turn.
         var snap = budget.startTurn(UUID.randomUUID());
         for (int i = 0; i < 50; i++) {
             snap = budget.recordToolExecution(snap, "x", 1);
@@ -70,11 +98,9 @@ class DefaultIterationBudgetTest {
     }
 
     @Test
-    void defaultMaxToolExecutionsIs200Not20() {
-        // Bug 1: old default was 20, way too low. New default is 200
-        // (effectively unlimited, matching Hermes which doesn't limit tools separately)
+    void defaultMaxToolExecutionsMatches100CallTurnBudget() {
         AgentProperties.BudgetProperties defaultBudget = new AgentProperties.BudgetProperties();
-        assertThat(defaultBudget.getMaxToolExecutionsPerTurn()).isEqualTo(200);
+        assertThat(defaultBudget.getMaxToolExecutionsPerTurn()).isEqualTo(100);
     }
 
     @Test

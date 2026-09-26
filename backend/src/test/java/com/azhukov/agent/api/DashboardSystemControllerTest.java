@@ -56,7 +56,7 @@ class DashboardSystemControllerTest {
                 providerOf(profileService), null, new com.fasterxml.jackson.databind.ObjectMapper());
         com.azhukov.agent.service.DashboardActionService actionService =
             new com.azhukov.agent.service.DashboardActionService(
-                providerOf(profileService), null, null, null, properties);
+                providerOf(profileService), null, null, null, null, properties);
         com.azhukov.agent.service.ProfileEnvStore envStore =
             new com.azhukov.agent.service.ProfileEnvStore(providerOf(profileService));
         mockMvc = MockMvcBuilders.standaloneSetup(

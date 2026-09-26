@@ -12,7 +12,8 @@ public record Message(
     String toolCallId,
     Integer turnIndex,
     Integer imageCount,
-    Instant createdAt
+    Instant createdAt,
+    String reasoning
 ) {
     public Message {
         Objects.requireNonNull(role, "role must not be null");
@@ -24,13 +25,18 @@ public record Message(
     // ── Full-arity constructor for backward compatibility (7 fields) ──
     public Message(Role role, String content, ToolCall toolCall, List<ToolCall> toolCalls,
                    String toolCallId, Integer turnIndex) {
-        this(role, content, toolCall, toolCalls, toolCallId, turnIndex, 0, null);
+        this(role, content, toolCall, toolCalls, toolCallId, turnIndex, 0, null, null);
     }
 
     /** Compatibility constructor for existing seven-field domain call sites. */
     public Message(Role role, String content, ToolCall toolCall, List<ToolCall> toolCalls,
                    String toolCallId, Integer turnIndex, Integer imageCount) {
-        this(role, content, toolCall, toolCalls, toolCallId, turnIndex, imageCount, null);
+        this(role, content, toolCall, toolCalls, toolCallId, turnIndex, imageCount, null, null);
+    }
+
+    public Message(Role role, String content, ToolCall toolCall, List<ToolCall> toolCalls,
+                   String toolCallId, Integer turnIndex, Integer imageCount, Instant createdAt) {
+        this(role, content, toolCall, toolCalls, toolCallId, turnIndex, imageCount, createdAt, null);
     }
 
     public static Message user(String content) {
@@ -61,17 +67,30 @@ public record Message(
         return new Message(Role.ASSISTANT, null, null, List.copyOf(toolCalls), null, turnIndex, 0);
     }
 
+    public static Message assistantToolCalls(List<ToolCall> toolCalls, int turnIndex, String reasoning) {
+        return new Message(Role.ASSISTANT, null, null, List.copyOf(toolCalls), null, turnIndex, 0, null, reasoning);
+    }
+
     public static Message toolResult(String toolCallId, String content, int turnIndex) {
         return new Message(Role.TOOL, content, null, null, toolCallId, turnIndex, 0);
     }
 
     public static Message withContent(Message message, String content) {
         return new Message(message.role(), content, message.toolCall(), message.toolCalls(),
-            message.toolCallId(), message.turnIndex(), message.imageCount(), message.createdAt());
+            message.toolCallId(), message.turnIndex(), message.imageCount(), message.createdAt(), message.reasoning());
     }
 
     public static Message withImageCount(Message message, int imageCount) {
         return new Message(message.role(), message.content(), message.toolCall(), message.toolCalls(),
-            message.toolCallId(), message.turnIndex(), imageCount, message.createdAt());
+            message.toolCallId(), message.turnIndex(), imageCount, message.createdAt(), message.reasoning());
+    }
+
+    public static Message assistant(String content, int turnIndex, String reasoning) {
+        return new Message(Role.ASSISTANT, content, null, null, null, turnIndex, 0, null, reasoning);
+    }
+
+    public static Message assistantWithToolCalls(String content, List<ToolCall> toolCalls, int turnIndex,
+                                                  String reasoning) {
+        return new Message(Role.ASSISTANT, content, null, List.copyOf(toolCalls), null, turnIndex, 0, null, reasoning);
     }
 }

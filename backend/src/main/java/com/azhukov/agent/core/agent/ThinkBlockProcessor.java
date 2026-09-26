@@ -69,7 +69,7 @@ public final class ThinkBlockProcessor {
             if (m.content() == null) return m;
             String stripped = stripThinkBlocksFromString(m.content()).trim();
             return new Message(m.role(), stripped, m.toolCall(), m.toolCalls(),
-                m.toolCallId(), m.turnIndex(), m.imageCount());
+                m.toolCallId(), m.turnIndex(), m.imageCount(), m.createdAt(), m.reasoning());
         }).toList();
     }
 

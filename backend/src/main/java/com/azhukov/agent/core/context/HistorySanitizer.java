@@ -103,11 +103,13 @@ public final class HistorySanitizer {
                 String joined = prevContent.isEmpty() ? newContent
                     : newContent.isEmpty() ? prevContent
                     : prevContent + "\n" + newContent;
+                String reasoning = msg.reasoning() != null && !msg.reasoning().isBlank()
+                    ? msg.reasoning() : prev.reasoning();
                 Message mergedMsg = new Message(Role.ASSISTANT, joined, null,
                     prevCalls.isEmpty() ? null : List.copyOf(prevCalls),
                     null, msg.turnIndex(), Math.max(
                         prev.imageCount() == null ? 0 : prev.imageCount(),
-                        msg.imageCount() == null ? 0 : msg.imageCount()));
+                        msg.imageCount() == null ? 0 : msg.imageCount()), null, reasoning);
                 collapsed.add(mergedMsg);
                 repairs++;
             } else {
@@ -137,7 +139,7 @@ public final class HistorySanitizer {
             if (deduped.size() != msg.toolCalls().size()) {
                 repairs += msg.toolCalls().size() - deduped.size();
                 collapsed.set(m, new Message(Role.ASSISTANT, msg.content(), msg.toolCall(),
-                    deduped, msg.toolCallId(), msg.turnIndex(), msg.imageCount(), msg.createdAt()));
+                    deduped, msg.toolCallId(), msg.turnIndex(), msg.imageCount(), msg.createdAt(), msg.reasoning()));
             }
         }
 
@@ -167,7 +169,8 @@ public final class HistorySanitizer {
                 if (retained.size() != msg.toolCalls().size()) {
                     repairs += msg.toolCalls().size() - retained.size();
                     msg = new Message(Role.ASSISTANT, msg.content(), msg.toolCall(),
-                        retained.isEmpty() ? null : retained, null, msg.turnIndex(), msg.imageCount());
+                        retained.isEmpty() ? null : retained, null, msg.turnIndex(), msg.imageCount(), null,
+                        msg.reasoning());
                 }
             }
             paired.add(msg);

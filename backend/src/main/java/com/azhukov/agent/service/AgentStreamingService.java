@@ -73,6 +73,14 @@ import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 
 @Slf4j
+/**
+ * SSE streaming agent loop (OpenAI-compatible /v1/chat/completions and
+ * internal event stream): unnamed {@code data:} frames, terminal literal
+ * {@code data:[DONE]}, token/tool_start/tool_end/clarify/review/done/error
+ * events. Reuses {@code TurnExecutor} for tool batches; owns session
+ * rotation switching, LENGTH finish-reason partial stitching, and the
+ * clarify stream bridge binding per session.
+ */
 @Service
 @RequiredArgsConstructor
 public class AgentStreamingService {
@@ -152,10 +160,18 @@ public class AgentStreamingService {
     // the @RequiredArgsConstructor signature stable for the 7 positional
     // test constructors.
     private MemoryNudgeManager memoryNudgeManager;
+    private com.azhukov.agent.core.memory.BackgroundReviewService backgroundReviewService;
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     void setMemoryNudgeManager(MemoryNudgeManager memoryNudgeManager) {
         this.memoryNudgeManager = memoryNudgeManager;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setBackgroundReviewService(
+        com.azhukov.agent.core.memory.BackgroundReviewService backgroundReviewService
+    ) {
+        this.backgroundReviewService = backgroundReviewService;
     }
 
     // rev-91: session auto-title — the streaming path (all Telegram turns) had
@@ -335,16 +351,10 @@ public class AgentStreamingService {
         });
         emitter.onError(ex -> {
             streamCtx.markDisconnected();
-            if (callbackSessionId != null) {
-                interruptToken.cancel(callbackSessionId);
-            }
-            log.warn("Stream error", ex);
+            log.debug("SSE peer disconnected for request session {}; keep the server turn running", callbackSessionId);
         });
         emitter.onCompletion(() -> {
             streamCtx.markDisconnected();
-            if (callbackSessionId != null) {
-                interruptToken.cancel(callbackSessionId);
-            }
         });
 
         CompletableFuture.runAsync(() -> {
@@ -419,6 +429,11 @@ public class AgentStreamingService {
             properties.getModel().getModelName(), sessionSource);
         boolean isNew = resolved.isNew();
         Session session = resolved.session();
+        // A foreground streaming turn has the same priority as the sync path:
+        // cancel its session's stale review before the first model/tool call.
+        if (backgroundReviewService != null) {
+            backgroundReviewService.cancelForNewForegroundTurn(session.id());
+        }
         log.info("turn_started session={} source={} model={}", session.id(), sessionSource,
             request.model() != null && !request.model().isBlank() ? request.model() : properties.getModel().getModelName());
 
@@ -572,7 +587,8 @@ public class AgentStreamingService {
                 eventHelper().send(emitter, new StreamEvent("interrupted", null, null, "Turn cancelled by user."), streamCtx);
                 eventHelper().send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                 eventHelper().safeComplete(emitter);
-                if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
+                if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew,
+                    midTurnPersistenceCallback != null ? persistedUpTo : 0, TurnExitReason.INTERRUPTED);
                 return;
             }
             // c2 B2: guardrail halt parity — the sync loop checks isHalted() at
@@ -587,8 +603,11 @@ public class AgentStreamingService {
                 return;
             }
             if (iterationBudget.isExhausted(budget)) {
-                log.warn("Iteration budget exhausted for session {} after {} model calls",
-                    session.id(), budget.modelCalls());
+                var budgetStatus = iterationBudget.status(budget);
+                String exhaustionReason = budgetStatus == null ? "iteration budget exhausted" : budgetStatus.reason();
+                log.warn("Iteration budget exhausted for session {} after {} model calls, {} tool executions, {} estimated tokens, {} ms tool time; reason={}",
+                    session.id(), budget.modelCalls(), budget.toolExecutions(),
+                    budget.totalInputTokens() + budget.totalOutputTokens(), budget.totalToolDurationMs(), exhaustionReason);
                 // c2 B4: Hermes _handle_max_iterations parity — one toolless
                 // summary call instead of a raw budget message (sync parity).
                 String budgetMsg;
@@ -596,17 +615,16 @@ public class AgentStreamingService {
                     String summary = turnExecutor().requestBudgetExhaustionSummary(
                         activeStreamClientRef.get(), session, turnMessages, streamOptions);
                     budgetMsg = summary != null && !summary.isBlank() ? summary
-                        : "⚠️ Iteration budget exhausted (" + budget.modelCalls()
-                            + "/" + properties.getBudget().getMaxModelCallsPerTurn() + ")";
+                        : turnExecutor().formatBudgetExhaustionMessage(budget, exhaustionReason);
                 } catch (Exception summaryEx) {
                     log.debug("Budget summary call failed for {}: {}", session.id(), summaryEx.getMessage());
-                    budgetMsg = "⚠️ Iteration budget exhausted (" + budget.modelCalls()
-                        + "/" + properties.getBudget().getMaxModelCallsPerTurn() + ")";
+                    budgetMsg = turnExecutor().formatBudgetExhaustionMessage(budget, exhaustionReason);
                 }
                 eventHelper().send(emitter, new StreamEvent("token", budgetMsg, null, null), streamCtx);
                 eventHelper().send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                 eventHelper().safeComplete(emitter);
-                if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
+                if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew,
+                    midTurnPersistenceCallback != null ? persistedUpTo : 0, TurnExitReason.BUDGET_EXHAUSTED);
                 return;
             }
 
@@ -655,6 +673,7 @@ public class AgentStreamingService {
                 final AtomicReference<Throwable> capturedError = new AtomicReference<>();
                 final AtomicReference<String> capturedFinishReason = new AtomicReference<>();
                 final AtomicReference<Long> capturedOutputTokens = new AtomicReference<>();
+                final AtomicReference<String> capturedReasoning = new AtomicReference<>();
                 // Hermes parity: think-scrub state is per-RESPONSE (_strip_think_blocks is
                 // stateless); reset so hadThinkContent() reflects THIS iteration only.
                 scrubber.reset();
@@ -739,6 +758,12 @@ public class AgentStreamingService {
                             capturedFinishReason.set(finishReason);
                             capturedOutputTokens.set(outputTokens);
                             onComplete();
+                        }
+
+                        @Override
+                        public void onComplete(String finishReason, Long outputTokens, String reasoning) {
+                            capturedReasoning.set(reasoning);
+                            onComplete(finishReason, outputTokens);
                         }
 
                         @Override
@@ -985,7 +1010,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                 }
 
                 // CONTENT_FILTER: model declined due to content policy
-                if ("CONTENT_FILTER".equals(finishReason) && !hasToolCalls) {
+                if ("content_filter".equalsIgnoreCase(finishReason) && !hasToolCalls) {
                     log.warn("Content filter triggered for session {} — model declined response", session.id());
                     String filterMsg = (contentBuilder.length() > 0 ? contentBuilder.toString().strip() + "\n\n" : "")
                         + ResponseRecoveryPolicy.CONTENT_POLICY_RECOVERY_HINT;
@@ -1153,7 +1178,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                 // finalization with that mismatch would end the turn with the task unstarted.
                 // Re-prompt (bounded to 3 CONSECUTIVE stalls; budget resets after any
                 // successful tool round). finish_reason="stop" text finishes never enter this.
-                if ("TOOL_EXECUTION".equals(finishReason) && collectedToolCalls.isEmpty()
+                if ("tool_calls".equalsIgnoreCase(finishReason) && collectedToolCalls.isEmpty()
                         && droppedToolcallRetries < MAX_DROPPED_TOOLCALL_RETRIES) {
                     droppedToolcallRetries++;
                     log.warn("finish_reason=tool_calls with empty tool_calls array (narration only) — re-prompting to emit the call (retry {}/{}, session {})",
@@ -1271,18 +1296,20 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     // the dropped-toolcall stall budget.
                     droppedToolcallRetries = 0;
                     if (streamedContent != null && !streamedContent.isBlank()) {
-                        response = ChatResponse.textAndToolCalls(streamedContent, collectedToolCalls);
+                        response = ChatResponse.textAndToolCalls(streamedContent, collectedToolCalls)
+                            .withReasoning(capturedReasoning.get());
                     } else {
-                        response = ChatResponse.toolCalls(collectedToolCalls);
+                        response = ChatResponse.toolCalls(collectedToolCalls).withReasoning(capturedReasoning.get());
                     }
                 } else {
                     lastResponseHadToolCalls = false;
                     // Hermes parity (conversation_loop.py:7888-7893): a successful response
                     // after LENGTH continuations joins all stitched fragments.
                     if (truncatedParts.length() > 0) {
-                        response = ChatResponse.text(truncatedParts + streamedContent);
+                        response = ChatResponse.text(truncatedParts + streamedContent)
+                            .withReasoning(capturedReasoning.get());
                     } else {
-                        response = ChatResponse.text(streamedContent);
+                        response = ChatResponse.text(streamedContent).withReasoning(capturedReasoning.get());
                     }
                 }
                 break;
@@ -1291,7 +1318,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
             // Check for interrupt after model response (covers mid-stream cancel)
             if (interruptToken != null && interruptToken.isCancelled(session.id())) {
                 log.info("Streaming turn cancelled by interrupt after model response for session {}", session.id());
-                turnMessages.add(Message.assistant(response.content(), turnIndex));
+                turnMessages.add(Message.assistant(response.content(), turnIndex, response.reasoning()));
                 eventHelper().send(emitter, new StreamEvent("interrupted", null, null, "Turn cancelled by user."), streamCtx);
                 eventHelper().send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                 eventHelper().safeComplete(emitter);
@@ -1319,7 +1346,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                             log.info("Verify-on-stop nudge (streaming) for session {} (attempt {}, {} changed paths)",
                                 session.id(), tracker.getVerificationStopNudges(), changedPaths.size());
                             // Emit the assistant response as interim, then inject nudge
-                            turnMessages.add(Message.assistant(response.content(), turnIndex));
+                            turnMessages.add(Message.assistant(response.content(), turnIndex, response.reasoning()));
                             turnMessages.add(Message.user(nudge));
                             // Persist interim before continuing
                             if (midTurnPersistenceCallback != null) {
@@ -1356,7 +1383,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                         + " попыток продолжения. Попробуйте переформулировать запрос.";
                     eventHelper().send(emitter, new StreamEvent("token", errorMsg, null, null), streamCtx);
                 }
-                turnMessages.add(Message.assistant(response.content(), turnIndex));
+                turnMessages.add(Message.assistant(response.content(), turnIndex, response.reasoning()));
                 // Self-improvement (Hermes parity): surface a PENDING review
                 // summary from an earlier turn's background review as an SSE
                 // "review" event before "done" — the bot renders it as
@@ -1377,7 +1404,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                 } catch (Exception reviewEx) {
                     log.debug("Review summary surface failed for {}: {}", session.id(), reviewEx.getMessage());
                 }
-                eventHelper().sendMetadataEvent(emitter, session, streamCtx, budget.totalInputTokens());
+                eventHelper().sendMetadataEvent(emitter, session, streamCtx, budget.totalInputTokens(), response.reasoning());
                 eventHelper().send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                 eventHelper().safeComplete(emitter);
                 if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
@@ -1392,9 +1419,10 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
             if (response.toolCalls() != null && response.toolCalls().size() > 1) {
                 List<ToolCall> fixed = new ArrayList<>(response.toolCalls());
                 if (ToolCallValidator.uniquifyToolCallIds(fixed) > 0) {
-                    response = response.hasContent()
+                    response = (response.hasContent()
                         ? ChatResponse.textAndToolCalls(response.content(), fixed)
-                        : ChatResponse.toolCalls(fixed);
+                        : ChatResponse.toolCalls(fixed))
+                        .withReasoning(response.reasoning());
                 }
             }
 
@@ -1410,7 +1438,8 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     session.id(), response.content().length());
             }
 
-            turnMessages.add(Message.assistantWithToolCalls(response.content(), response.toolCalls(), turnIndex));
+            turnMessages.add(Message.assistantWithToolCalls(response.content(), response.toolCalls(), turnIndex,
+                response.reasoning()));
 
             // P1-5: Persist the assistant message (with tool calls) immediately.
             if (midTurnPersistenceCallback != null) {
@@ -1518,19 +1547,21 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
             // batch a sender that emits the `clarify` SSE event; the tool
             // registers a pending entry and blocks on the store future until
             // the adapter resolves it via /clarify/resolve or /clarify/text.
-            com.azhukov.agent.tools.memory.ClarifyStreamBridge.setSender(
+            UUID clarifySessionId = session.id();
+            com.azhukov.agent.tools.memory.ClarifyStreamBridge.setSender(clarifySessionId,
                 payload -> eventHelper().send(emitter,
-                    com.azhukov.agent.tools.memory.ClarifyStreamBridge.clarifyEvent(payload), streamCtx));
+                    com.azhukov.agent.tools.memory.ClarifyStreamBridge.clarifyEvent(payload, clarifySessionId), streamCtx));
             com.azhukov.agent.core.agent.TurnExecutor.ToolBatchResult batchResult;
             try {
                 batchResult = turnExecutor().executeToolBatch(
                     pipeline.executableCalls(), registeredToolNames, session, turnState, turnIndex,
                     skipApproval, sseEvents);
             } finally {
-                com.azhukov.agent.tools.memory.ClarifyStreamBridge.clear();
+                com.azhukov.agent.tools.memory.ClarifyStreamBridge.clear(session.id());
             }
             for (com.azhukov.agent.core.agent.TurnExecutor.ToolExecutionRecord rec : batchResult.executions()) {
-                budget = iterationBudget.recordToolExecution(budget, rec.toolName(), rec.durationMs());
+                budget = iterationBudget.recordToolExecution(
+                    budget, rec.toolName(), rec.chargesDurationBudget() ? rec.durationMs() : 0);
                 if (rec.refunded()) {
                     budget = iterationBudget.refundToolExecution(budget);
                 }
@@ -1651,6 +1682,11 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
     }
 
     private void persistTurn(Session session, List<Message> turnMessages, boolean isNew, int fromIndex) {
+        persistTurn(session, turnMessages, isNew, fromIndex, TurnExitReason.PENDING_TOOL_RESULT);
+    }
+
+    private void persistTurn(Session session, List<Message> turnMessages, boolean isNew, int fromIndex,
+                             TurnExitReason exitReason) {
         // Deleted-session guard (same race as MidTurnPersistenceService): the
         // session row can be removed while the turn is still streaming; a
         // pre-check keeps the FK violation out of the journal entirely.
@@ -1663,7 +1699,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
         // (interrupt/error/budget cut the turn short), append a synthetic
         // assistant message so the persisted history doesn't end on tool→user
         // (role-alternation violation → Gemini/Claude 400, #48879).
-        TurnFinalizer.closeInterruptedToolSequence(turnMessages, TurnExitReason.INTERRUPTED);
+        TurnFinalizer.closeInterruptedToolSequence(turnMessages, exitReason);
         log.info("turn_persist_started session={} messages={} fromIndex={}", session.id(), turnMessages.size(), fromIndex);
         try {
             transactionTemplate.execute(status -> {

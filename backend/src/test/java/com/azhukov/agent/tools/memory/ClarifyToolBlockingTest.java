@@ -47,11 +47,12 @@ class ClarifyToolBlockingTest {
             }
         });
         resolver.start();
-        ClarifyStreamBridge.setSender(emitted::set);
+        Session session = interactiveSession();
+        ClarifyStreamBridge.setSender(session.id(), emitted::set);
         try {
             ToolResult result = tool.execute(
                 "{\"question\":\"Which environment?\",\"choices\":[\"staging\",\"prod\"]}",
-                null, interactiveSession());
+                null, session);
             assertThat(result.success()).isTrue();
             com.fasterxml.jackson.databind.JsonNode json =
                 new com.fasterxml.jackson.databind.ObjectMapper().readTree(result.content());
@@ -59,8 +60,38 @@ class ClarifyToolBlockingTest {
             assertThat(json.path("user_response").asText()).isEqualTo("staging");
             assertThat(json.path("choices_offered").toString()).contains("staging");
         } finally {
-            ClarifyStreamBridge.clear();
+            ClarifyStreamBridge.clear(session.id());
             try { resolver.join(6000); } catch (InterruptedException ignored) {}
+        }
+    }
+
+    @Test
+    void batchEmitsOneBoundPromptForEachQuestion() throws Exception {
+        ClarifyGatewayStore store = new ClarifyGatewayStore();
+        ClarifyTool tool = new ClarifyTool(store);
+        Session session = interactiveSession();
+        java.util.List<String> prompts = new java.util.concurrent.CopyOnWriteArrayList<>();
+        ClarifyStreamBridge.setSender(session.id(), prompts::add);
+        java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newSingleThreadExecutor();
+        try {
+            java.util.concurrent.Future<ToolResult> result = executor.submit(() -> tool.execute(
+                "{\"questions\":[{\"question\":\"First?\",\"choices\":[\"A\",\"B\"]},"
+                    + "{\"question\":\"Second?\",\"choices\":[\"C\",\"D\"]}]}", null, session));
+            long deadline = System.currentTimeMillis() + 2_000;
+            while (prompts.size() < 2 && System.currentTimeMillis() < deadline) {
+                Thread.sleep(10);
+            }
+            assertThat(prompts).hasSize(2);
+            for (String prompt : prompts) {
+                com.fasterxml.jackson.databind.JsonNode payload = new com.fasterxml.jackson.databind.ObjectMapper().readTree(prompt);
+                assertThat(payload.path("clarifyId").asText()).isNotBlank();
+                assertThat(payload.path("batch").asBoolean(false)).isFalse();
+                store.resolve(payload.path("clarifyId").asText(), "1");
+            }
+            assertThat(result.get(2, java.util.concurrent.TimeUnit.SECONDS).success()).isTrue();
+        } finally {
+            executor.shutdownNow();
+            ClarifyStreamBridge.clear(session.id());
         }
     }
 

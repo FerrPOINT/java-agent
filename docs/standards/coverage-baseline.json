@@ -1,1 +1,23 @@
-{"doc_violations": {"backend": {"DOC001": 513, "DOC002": 5, "DOC003": 0}, "telegram-bot": {"DOC001": 58, "DOC002": 0, "DOC003": 0}, "cli": {"DOC001": 6, "DOC002": 0, "DOC003": 0}}, "line_coverage": {"backend": 79.15, "telegram-bot": 82.16}}
+{
+  "doc_violations": {
+    "backend": {
+      "DOC001": 513,
+      "DOC002": 5,
+      "DOC003": 0
+    },
+    "telegram-bot": {
+      "DOC001": 58,
+      "DOC002": 0,
+      "DOC003": 0
+    },
+    "cli": {
+      "DOC001": 6,
+      "DOC002": 0,
+      "DOC003": 0
+    }
+  },
+  "line_coverage": {
+    "backend": 79.38,
+    "telegram-bot": 82.47
+  }
+}

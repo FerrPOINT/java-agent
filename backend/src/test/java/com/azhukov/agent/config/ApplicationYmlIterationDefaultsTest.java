@@ -89,6 +89,7 @@ class ApplicationYmlIterationDefaultsTest {
         int turns = placeholderDefault("agent.core.max-turns");
         int modelCalls = placeholderDefault("agent.budget.max-model-calls-per-turn");
         int toolExecutions = placeholderDefault("agent.budget.max-tool-executions-per-turn");
+        int runBudgetSeconds = placeholderDefault("agent.budget.run-budget-seconds");
 
         assertThat(turns)
             .as("agent.core.max-turns yml default must be 100 (user directive 2026-09-20)")
@@ -96,10 +97,12 @@ class ApplicationYmlIterationDefaultsTest {
         assertThat(modelCalls)
             .as("agent.budget.max-model-calls-per-turn yml default must be 100")
             .isEqualTo(100);
-        // A turn cannot execute more tool batches than the model-call budget allows.
         assertThat(toolExecutions)
-            .as("tool-execution budget should not exceed the model-call budget")
-            .isLessThanOrEqualTo(modelCalls);
+            .as("agent.budget.max-tool-executions-per-turn yml default must be 100")
+            .isEqualTo(100);
+        assertThat(runBudgetSeconds)
+            .as("agent.budget.run-budget-seconds must default to disabled")
+            .isZero();
     }
 
     @Test
@@ -113,5 +116,11 @@ class ApplicationYmlIterationDefaultsTest {
         assertThat(properties.getBudget().getMaxModelCallsPerTurn())
             .as("AgentProperties.budget.maxModelCallsPerTurn must equal the yml default")
             .isEqualTo(placeholderDefault("agent.budget.max-model-calls-per-turn"));
+        assertThat(properties.getBudget().getMaxToolExecutionsPerTurn())
+            .as("AgentProperties.budget.maxToolExecutionsPerTurn must equal the yml default")
+            .isEqualTo(placeholderDefault("agent.budget.max-tool-executions-per-turn"));
+        assertThat(properties.getBudget().getRunBudgetSeconds())
+            .as("AgentProperties.budget.runBudgetSeconds must equal the yml default")
+            .isEqualTo(placeholderDefault("agent.budget.run-budget-seconds"));
     }
 }

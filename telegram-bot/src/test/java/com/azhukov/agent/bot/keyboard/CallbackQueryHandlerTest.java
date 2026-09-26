@@ -230,22 +230,37 @@ class CallbackQueryHandlerTest {
     }
 
     @Test
-    void handleClarificationCallback_returnsAnswerForSelectedChoice() {
-        ClarificationStateStore clarification = new ClarificationStateStore(
-            new com.fasterxml.jackson.databind.ObjectMapper(), inlineKeyboardBuilder);
-        when(client.sendMessage(anyLong(), any(), any(), any(), any(), any(), anyBoolean()))
-            .thenReturn(Optional.of(91L));
-        clarification.present(123L, 0L,
-            "{\"question\":\"Deploy where?\",\"choices\":[\"dev\",\"prod\"]}", client);
-        handler.setClarificationStateStore(clarification);
+    void completedClarifyCallbackSuppressesTheSelectedToast() {
+        UpdateEvent event = callbackEvent("cq-clarify", "clfy:prompt-1:0");
+        ClarifyInteractionRenderer renderer = mock(ClarifyInteractionRenderer.class);
+        CallbackQueryHandler clarifyHandler = new CallbackQueryHandler(client, providerKeyboardBuilder,
+            modelKeyboardBuilder, inlineKeyboardBuilder, sessionStore, properties, authorizationService,
+            backendClient, approvalStateStore, renderer);
+        when(renderer.handleCallback(123L, 456L, "prompt-1:0"))
+            .thenReturn(new ClarifyInteractionRenderer.CallbackResult("Selected", true));
 
-        ClarificationStateStore.CallbackOutcome outcome = handler.handleClarification(callbackEvent("cq-clarify", "cq:1:0"));
+        String result = clarifyHandler.handle(event);
 
-        assertThat(outcome.complete()).isTrue();
-        assertThat(outcome.answer()).isEqualTo("Answer to clarification question 'Deploy where?': dev");
-        verify(client).answerCallbackQuery("cq-clarify", "Selected", false);
+        assertThat(result).isNull();
+        verify(renderer).handleCallback(123L, 456L, "prompt-1:0");
+        verify(client).answerCallbackQuery("cq-clarify", null, false);
     }
 
+    @Test
+    void pendingClarifyCallbackKeepsOnlyItsEphemeralInstruction() {
+        UpdateEvent event = callbackEvent("cq-clarify-other", "clfy:prompt-1:other");
+        ClarifyInteractionRenderer renderer = mock(ClarifyInteractionRenderer.class);
+        CallbackQueryHandler clarifyHandler = new CallbackQueryHandler(client, providerKeyboardBuilder,
+            modelKeyboardBuilder, inlineKeyboardBuilder, sessionStore, properties, authorizationService,
+            backendClient, approvalStateStore, renderer);
+        when(renderer.handleCallback(123L, 456L, "prompt-1:other"))
+            .thenReturn(new ClarifyInteractionRenderer.CallbackResult("Type your answer", false));
+
+        assertThat(clarifyHandler.handle(event)).isNull();
+
+        verify(client).answerCallbackQuery("cq-clarify-other", "Type your answer", false);
+        verify(client, never()).sendMessage(eq(123L), contains("Type your answer"));
+    }
 
     private UpdateEvent callbackEvent(String callbackQueryId, String callbackData) {
         // Use 17-arg constructor with messageId=456L (same as userId for test simplicity)

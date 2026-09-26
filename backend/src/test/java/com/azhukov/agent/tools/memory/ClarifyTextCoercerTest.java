@@ -55,6 +55,29 @@ class ClarifyTextCoercerTest {
     }
 
     @Test
+    void explicitOtherArmsCustomTextForChoicePrompt() {
+        ClarifyGatewayStore store = new ClarifyGatewayStore();
+        var entry = store.register("s", "Q", List.of("dev", "prod"), false);
+
+        assertThat(ClarifyTextCoercer.coerce(entry, "a bespoke environment")).isNull();
+        assertThat(store.armCustomResponse("s", entry.clarifyId())).isTrue();
+
+        var armed = store.pendingForSession("s");
+        assertThat(armed.acceptsCustomResponse()).isTrue();
+        assertThat(ClarifyTextCoercer.coerce(armed, "a bespoke environment"))
+            .isEqualTo("a bespoke environment");
+    }
+
+    @Test
+    void customResponseCannotBeArmedByTheWrongSession() {
+        ClarifyGatewayStore store = new ClarifyGatewayStore();
+        var entry = store.register("s", "Q", List.of("dev", "prod"), false);
+
+        assertThat(store.armCustomResponse("other-session", entry.clarifyId())).isFalse();
+        assertThat(store.pendingForSession("s").acceptsCustomResponse()).isFalse();
+    }
+
+    @Test
     void multiSelectNumericListReturnsJsonArray() {
         var e = entry(List.of("a", "b", "c"), true);
         String coerced = ClarifyTextCoercer.coerce(e, "1,3");

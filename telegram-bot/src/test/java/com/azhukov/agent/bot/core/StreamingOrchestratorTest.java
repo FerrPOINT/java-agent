@@ -112,6 +112,7 @@ class StreamingOrchestratorTest {
         final Consumer<String> toolCallConsumer;
         final java.util.function.BiConsumer<String, String> toolResultConsumer;
         final Consumer<String> retryConsumer;
+        final Consumer<String> clarifyConsumer;
         final Consumer<AgentBackendClient.ChatResult> onComplete;
         final Consumer<Throwable> onError;
         AgentBackendClient.ChatResult returnResult;
@@ -125,6 +126,7 @@ class StreamingOrchestratorTest {
             this.toolCallConsumer = inv.getArgument(5);
             this.toolResultConsumer = inv.getArgument(6);
             this.retryConsumer = inv.getArgument(7);
+            this.clarifyConsumer = inv.getArgument(9);
             this.onComplete = inv.getArgument(10);
             this.onError = inv.getArgument(11);
         }
@@ -254,7 +256,8 @@ class StreamingOrchestratorTest {
             any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
                 // No tokens, no complete — just metadata
-                return new AgentBackendClient.ChatResult("", "model", 1, 10, false, false, null);
+                return new AgentBackendClient.ChatResult("", "model", 1, 10, false, false, null,
+                    "stream reasoning");
             });
         when(backendClient.chat(anyString(), nullable(String.class), any()))
             .thenReturn(new AgentBackendClient.ChatResult("sync answer", "model", 1, 10, false, false, null));
@@ -265,6 +268,7 @@ class StreamingOrchestratorTest {
         // Should fall back to sync chat
         verify(backendClient).chat(anyString(), nullable(String.class), any());
         assertThat(result.content()).isEqualTo("sync answer");
+        assertThat(result.lastReasoning()).isEqualTo("stream reasoning");
         // finalizeStream NOT called (no streaming message)
         verify(streamEditor, never()).finalizeStream(anyLong(), anyLong(), anyString());
     }
@@ -315,6 +319,54 @@ class StreamingOrchestratorTest {
         orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
 
         verify(telegramClient).sendMessage(eq(100L), contains("web_search"), isNull(), isNull(), isNull(), eq(true));
+    }
+
+    @Test
+    void streamChat_clarifyToolStartRendersOnlyBoundKeyboard() {
+        var boundRenderer = mock(com.azhukov.agent.bot.keyboard.ClarifyInteractionRenderer.class);
+        orchestrator = new StreamingOrchestrator(backendClient, streamEditor, busyHandler,
+            runtimeFooter, properties, mediaDeliveryService, telegramClient, sessionStoreMock, boundRenderer);
+
+        stubChatStream(ctx -> {
+            ctx.toolCallConsumer.accept("clarify\u0001{\"question\":\"Target?\",\"choices\":[\"dev\",\"prod\"]}");
+            ctx.clarifyConsumer.accept("session-1\u0001{\"clarifyId\":\"prompt-1\",\"question\":\"Target?\",\"choices\":[\"dev\",\"prod\"]}");
+            ctx.returnResult = new AgentBackendClient.ChatResult("", null, null, null, true, false, null);
+        });
+
+        orchestrator.streamChat(100L, "hi", "session-1", session(), 5L, 0L, hooks);
+
+        verify(boundRenderer).present(eq(100L), eq(0L), eq("session-1"), contains("prompt-1"));
+    }
+
+    @Test
+    void streamChat_clarifyUsesSseBackendSessionWhenTheRequestHadNone() {
+        var boundRenderer = mock(com.azhukov.agent.bot.keyboard.ClarifyInteractionRenderer.class);
+        orchestrator = new StreamingOrchestrator(backendClient, streamEditor, busyHandler,
+            runtimeFooter, properties, mediaDeliveryService, telegramClient, sessionStoreMock, boundRenderer);
+        String backendSession = "550e8400-e29b-41d4-a716-446655440000";
+        stubChatStream(ctx -> {
+            ctx.clarifyConsumer.accept(backendSession + "\u0001{\"clarifyId\":\"prompt-1\",\"question\":\"Target?\",\"choices\":[\"dev\",\"prod\"]}");
+            ctx.returnResult = new AgentBackendClient.ChatResult("", null, null, null, true, false, null);
+        });
+
+        orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
+
+        verify(boundRenderer).present(eq(100L), eq(0L), eq(backendSession), contains("prompt-1"));
+    }
+
+    @Test
+    void streamChat_clarifyWithoutAnyBackendSessionIsNotRendered() {
+        var boundRenderer = mock(com.azhukov.agent.bot.keyboard.ClarifyInteractionRenderer.class);
+        orchestrator = new StreamingOrchestrator(backendClient, streamEditor, busyHandler,
+            runtimeFooter, properties, mediaDeliveryService, telegramClient, sessionStoreMock, boundRenderer);
+        stubChatStream(ctx -> {
+            ctx.clarifyConsumer.accept("{\"clarifyId\":\"prompt-1\",\"question\":\"Target?\"}");
+            ctx.returnResult = new AgentBackendClient.ChatResult("", null, null, null, true, false, null);
+        });
+
+        orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
+
+        verifyNoInteractions(boundRenderer);
     }
 
     @Test

@@ -14,6 +14,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.Executors;
@@ -30,11 +31,12 @@ import java.util.function.Consumer;
 @Slf4j
 public class MessageApiClient extends BaseBackendClient {
 
-    private static final long STREAM_IDLE_TIMEOUT_MS = 300_000; // 5 minutes of no data — allows compression/LLM calls
+    // The delivery transport must exceed the recommended seven-day clarify window.
+    static final long STREAM_IDLE_TIMEOUT_MS = Duration.ofDays(8).toMillis();
     private static final int MAX_CONNECT_RETRIES = 3;
     private static final long[] CONNECT_BACKOFF_MS = {2_000, 4_000, 8_000};
 
-    public MessageApiClient(@Qualifier("backendRestClient") RestClient restClient, ObjectMapper objectMapper) {
+    public MessageApiClient(@Qualifier("streamingBackendRestClient") RestClient restClient, ObjectMapper objectMapper) {
         super(restClient, objectMapper);
     }
 
@@ -248,7 +250,8 @@ public class MessageApiClient extends BaseBackendClient {
                                                 metadataHolder[0].contextLength(),
                                                 false,
                                                 metadataHolder[0].memoryUpdated(),
-                                                metadataHolder[0].backendSessionId())
+                                                metadataHolder[0].backendSessionId(),
+                                                metadataHolder[0].lastReasoning())
                                             : new AgentBackendClient.ChatResult(accumulated.toString());
                                     }
                                     if ("metadata".equalsIgnoreCase(type)) {
@@ -326,8 +329,11 @@ public class MessageApiClient extends BaseBackendClient {
                                     // clarify prompt from the backend — payload JSON in `error`.
                                     if ("clarify".equalsIgnoreCase(type)) {
                                         String payload = event.path("error").asText(null);
+                                        String clarifySessionId = event.path("sessionId").asText(sessionId);
                                         if (payload != null && !payload.isEmpty() && clarifyConsumer != null) {
-                                            clarifyConsumer.accept(payload);
+                                            log.info("clarify_sse_received requestSession={} clarifySession={} payloadBytes={}",
+                                                sessionId, clarifySessionId, payload.length());
+                                            clarifyConsumer.accept(clarifySessionId + "\u0001" + payload);
                                         }
                                         continue;
                                     }
@@ -342,7 +348,7 @@ public class MessageApiClient extends BaseBackendClient {
                                             ? new AgentBackendClient.ChatResult(accumulated.toString(), metadataHolder[0].modelUsed(),
                                             metadataHolder[0].contextTokens(), metadataHolder[0].contextLength(),
                                             metadataHolder[0].streamFinalized(), metadataHolder[0].memoryUpdated(),
-                                            metadataHolder[0].backendSessionId())
+                                            metadataHolder[0].backendSessionId(), metadataHolder[0].lastReasoning())
                                             : new AgentBackendClient.ChatResult(accumulated.toString());
                                         onComplete.accept(result);
                                         return result;
@@ -365,7 +371,8 @@ public class MessageApiClient extends BaseBackendClient {
                 AgentBackendClient.ChatResult result = metadataHolder[0] != null
                     ? new AgentBackendClient.ChatResult(accumulated.toString(), metadataHolder[0].modelUsed(),
                     metadataHolder[0].contextTokens(), metadataHolder[0].contextLength(), false,
-                    metadataHolder[0].memoryUpdated(), metadataHolder[0].backendSessionId())
+                    metadataHolder[0].memoryUpdated(), metadataHolder[0].backendSessionId(),
+                metadataHolder[0].lastReasoning())
                     : new AgentBackendClient.ChatResult(accumulated.toString());
                 onComplete.accept(result);
                 return result;
@@ -428,7 +435,10 @@ public class MessageApiClient extends BaseBackendClient {
                 log.warn("Stream metadata contained invalid sessionId: {}", sessionIdNode.asText());
             }
         }
-        return new AgentBackendClient.ChatResult(null, modelUsed, contextTokens, contextLength, streamFinalized, memoryUpdated, backendSessionId);
+        String lastReasoning = event.has("lastReasoning") && !event.get("lastReasoning").isNull()
+            ? event.get("lastReasoning").asText(null) : null;
+        return new AgentBackendClient.ChatResult(null, modelUsed, contextTokens, contextLength,
+            streamFinalized, memoryUpdated, backendSessionId, lastReasoning);
     }
 
     /**

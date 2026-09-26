@@ -110,6 +110,11 @@ public class AgentChatController {
             properties.getModel().getProvider(),
             properties.getCore().getMaxTurns(),
             properties.getBudget().getMaxModelCallsPerTurn(),
+            properties.getBudget().getMaxToolExecutionsPerTurn(),
+            properties.getBudget().getMaxTokensPerTurn(),
+            properties.getBudget().getMaxToolDurationMsPerTurn(),
+            properties.getBudget().isEnabled(),
+            properties.getBudget().getRunBudgetSeconds(),
             memoryProvider != null && isMemoryConfiguredEnabled(),
             ttsService != null,
             transcriptionService != null,
@@ -264,10 +269,24 @@ public class AgentChatController {
         if (clarifyId.isEmpty()) {
             return Map.of("resolved", false, "reason", "clarifyId required");
         }
-        boolean resolved = store.resolve(clarifyId, request.response() == null ? "" : request.response());
+        log.info("clarify_resolve_request session={} id={} responseChars={}",
+            sessionId, clarifyId, request.response() == null ? 0 : request.response().length());
+        boolean resolved = store.resolveForSession(sessionId, clarifyId, request.response() == null ? "" : request.response());
         return resolved
             ? Map.of("resolved", true)
             : Map.of("resolved", false, "reason", "expired or already answered");
+    }
+
+    @org.springframework.web.bind.annotation.PostMapping(
+        value = "/agent/session/{sessionId}/clarify/{clarifyId}/custom",
+        consumes = "application/json")
+    public Map<String, Object> armClarifyCustomResponse(@PathVariable String sessionId,
+                                                        @PathVariable String clarifyId) {
+        com.azhukov.agent.core.tool.ClarifyGatewayStore store =
+            clarifyStoreProvider() != null ? clarifyStoreProvider().getObject() : null;
+        boolean armed = store != null && store.armCustomResponse(sessionId, clarifyId);
+        log.info("clarify_custom_response_request session={} id={} armed={}", sessionId, clarifyId, armed);
+        return Map.of("armed", armed);
     }
 
     /**
@@ -289,13 +308,19 @@ public class AgentChatController {
         }
         var pending = store.pendingForSession(sessionId);
         if (pending == null) {
+            log.info("clarify_text_rejected session={} reason=no_pending", sessionId);
             return Map.of("outcome", "no_pending");
         }
         String coerced = com.azhukov.agent.tools.memory.ClarifyTextCoercer.coerce(pending, request.text());
         if (coerced == null) {
-            return Map.of("outcome", "rejected_prose");
+            boolean selectionShaped = com.azhukov.agent.tools.memory.ClarifyTextCoercer
+                .looksLikeSelection(request.text(), pending.choices());
+            log.info("clarify_text_rejected session={} id={} reason={}", sessionId, pending.clarifyId(),
+                selectionShaped ? "selection" : "prose");
+            return Map.of("outcome", selectionShaped ? "rejected_selection" : "rejected_prose");
         }
         boolean resolved = store.resolve(pending.clarifyId(), coerced);
+        log.info("clarify_text_result session={} id={} resolved={}", sessionId, pending.clarifyId(), resolved);
         return Map.of("outcome", resolved ? "resolved" : "no_pending");
     }
 

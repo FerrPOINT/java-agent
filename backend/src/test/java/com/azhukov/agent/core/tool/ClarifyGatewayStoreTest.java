@@ -14,6 +14,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ClarifyGatewayStoreTest {
 
     @Test
+    void defaultTimeoutIsOneDayForHumanDecisions() {
+        assertThat(ClarifyGatewayStore.DEFAULT_TIMEOUT_SECONDS)
+            .isEqualTo(java.util.concurrent.TimeUnit.DAYS.toSeconds(1));
+    }
+
+    @Test
     void resolveUnblocksAwaitingToolThread() throws Exception {
         ClarifyGatewayStore store = new ClarifyGatewayStore();
         ClarifyGatewayStore.PendingClarify entry = store.register("s1", "Which?", List.of("a", "b"), false);
@@ -55,6 +61,15 @@ class ClarifyGatewayStoreTest {
 
         assertThat(store.resolve(entry.clarifyId(), "first")).isTrue();
         assertThat(store.resolve(entry.clarifyId(), "second")).isFalse();
+    }
+
+    @Test
+    void pendingForSessionUsesRegistrationOrder() {
+        ClarifyGatewayStore store = new ClarifyGatewayStore();
+        ClarifyGatewayStore.PendingClarify first = store.register("s1", "First", List.of("a"), false);
+        store.register("s1", "Second", List.of("b"), false);
+
+        assertThat(store.pendingForSession("s1").clarifyId()).isEqualTo(first.clarifyId());
     }
 
     @Test

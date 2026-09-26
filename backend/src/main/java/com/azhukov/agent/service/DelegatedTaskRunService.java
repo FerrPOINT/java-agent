@@ -23,6 +23,13 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
+/**
+ * Delegated subagent run lifecycle: dispatches {@code delegate_task} runs,
+ * tracks status transitions (running/completed/failed/error/timeout/
+ * interrupted/cancel_requested), and feeds finished runs to the
+ * {@link DelegateCompletionBatcher} for coalesced reinjection into the
+ * parent session (WP-1 completion batching).
+ */
 @Service
 @Slf4j
 public class DelegatedTaskRunService {

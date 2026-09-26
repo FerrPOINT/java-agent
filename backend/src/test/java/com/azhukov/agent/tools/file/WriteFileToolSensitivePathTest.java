@@ -9,6 +9,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -25,6 +26,13 @@ class WriteFileToolSensitivePathTest {
     @TempDir
     Path home;
 
+    /** Guard home for this test run — Hermes scopes credential denies to homes. */
+    private AgentProperties guardedProps() {
+        AgentProperties p = props();
+        p.getSecurity().setGuardHomePaths(List.of(home.toString()));
+        return p;
+    }
+
     private static AgentProperties props() {
         AgentProperties p = new AgentProperties();
         p.getSecurity().setFileSafetyEnabled(true);
@@ -35,6 +43,17 @@ class WriteFileToolSensitivePathTest {
         return new DefaultFileSafety(props());
     }
 
+    /** FileSafety with {@link #home} as the guard home (credential denies apply). */
+    private DefaultFileSafety guardedFileSafety() {
+        return new DefaultFileSafety(guardedProps());
+    }
+
+    private ToolResult guardedWrite(String path) {
+        WriteFileTool t = new WriteFileTool(guardedProps(), guardedFileSafety());
+        return t.execute("{\"path\":\"" + path + "\",\"content\":\"x\"}",
+            null, Session.create("u", "p", "m"));
+    }
+
     private ToolResult write(String path) {
         return tool.execute("{\"path\":\"" + path + "\",\"content\":\"x\"}",
             null, Session.create("u", "p", "m"));
@@ -42,12 +61,12 @@ class WriteFileToolSensitivePathTest {
 
     @Test
     void blocksPostgresPgpass() {
-        assertThat(write(home.resolve(".pgpass").toString()).success()).isFalse();
+        assertThat(guardedWrite(home.resolve(".pgpass").toString()).success()).isFalse();
     }
 
     @Test
     void blocksGitCredentials() {
-        assertThat(write(home.resolve(".git-credentials").toString()).success()).isFalse();
+        assertThat(guardedWrite(home.resolve(".git-credentials").toString()).success()).isFalse();
     }
 
     @Test
@@ -57,17 +76,17 @@ class WriteFileToolSensitivePathTest {
 
     @Test
     void blocksAwsDirectoryPrefix() {
-        assertThat(write(home.resolve(".aws/credentials").toString()).success()).isFalse();
+        assertThat(guardedWrite(home.resolve(".aws/credentials").toString()).success()).isFalse();
     }
 
     @Test
     void blocksKubeConfig() {
-        assertThat(write(home.resolve(".kube/config").toString()).success()).isFalse();
+        assertThat(guardedWrite(home.resolve(".kube/config").toString()).success()).isFalse();
     }
 
     @Test
     void blocksGnupgPrefix() {
-        assertThat(write(home.resolve(".gnupg/pubring.kbx").toString()).success()).isFalse();
+        assertThat(guardedWrite(home.resolve(".gnupg/pubring.kbx").toString()).success()).isFalse();
     }
 
     @Test
@@ -77,7 +96,7 @@ class WriteFileToolSensitivePathTest {
 
     @Test
     void blocksEnvFile() {
-        assertThat(write(home.resolve(".env").toString()).success()).isFalse();
+        assertThat(guardedWrite(home.resolve(".env").toString()).success()).isFalse();
     }
 
     @Test

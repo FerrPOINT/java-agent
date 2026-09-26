@@ -49,6 +49,8 @@ class BackendRestClientFactoryTest {
             .isEqualTo(java.time.Duration.ofSeconds(10));
         assertThat(BackendRestClientFactory.READ_TIMEOUT)
             .isEqualTo(java.time.Duration.ofMinutes(10));
+        assertThat(BackendRestClientFactory.STREAMING_READ_TIMEOUT)
+            .isEqualTo(java.time.Duration.ofDays(8));
     }
 
     @Test

@@ -16,7 +16,7 @@ import com.azhukov.agent.bot.formatting.ResponseFilter;
 import com.azhukov.agent.bot.goal.GoalAutoContinueService;
 import com.azhukov.agent.bot.group.GroupMessageFilter;
 import com.azhukov.agent.bot.keyboard.CallbackQueryHandler;
-import com.azhukov.agent.bot.keyboard.ClarificationStateStore;
+import com.azhukov.agent.bot.keyboard.ClarifyTextInterceptor;
 import com.azhukov.agent.bot.media.AgentMediaPaths;
 import com.azhukov.agent.bot.media.InboundMediaHandler;
 import com.azhukov.agent.bot.media.MediaDeliveryService;
@@ -77,14 +77,13 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
     private final AgentBackendClient backendClient;
     private final CommandRegistry commandRegistry;
     private final CallbackQueryHandler callbackQueryHandler;
-    private ClarificationStateStore clarificationStateStore;
-    @org.springframework.beans.factory.annotation.Autowired
-    private com.azhukov.agent.bot.keyboard.ClarifyTextInterceptor clarifyTextInterceptor;
+    private ClarifyTextInterceptor clarifyTextInterceptor;
 
     @org.springframework.beans.factory.annotation.Autowired
-    void setClarificationStateStore(ClarificationStateStore clarificationStateStore) {
-        this.clarificationStateStore = clarificationStateStore;
+    void setClarifyTextInterceptor(ClarifyTextInterceptor clarifyTextInterceptor) {
+        this.clarifyTextInterceptor = clarifyTextInterceptor;
     }
+
     private final BotProperties properties;
     private final StreamEditor streamEditor;
     private final InboundMediaHandler inboundMediaHandler;
@@ -134,13 +133,6 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
     @Override
     public void handleCallbackQuery(UpdateEvent event) {
         String callbackData = event.callbackData();
-        if (callbackData != null && callbackData.startsWith(ClarificationStateStore.CALLBACK_COMMAND + ":")) {
-            var outcome = callbackQueryHandler.handleClarification(event);
-            if (outcome.complete()) {
-                handleClarificationAnswer(event, outcome.answer());
-            }
-            return;
-        }
         String response = callbackQueryHandler.handle(event);
         if (response != null && !response.isBlank()) {
             telegramClient.sendMessage(event.chatId(), response);
@@ -158,6 +150,13 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
 
     @Override
     public void handleCommand(UpdateEvent event) {
+        // /stop is control-plane input: it must not wait behind the very turn
+        // it cancels. All other commands remain serialized with the active
+        // chat turn below.
+        if ("stop".equals(event.commandName())) {
+            handleStopCommandImmediately(event);
+            return;
+        }
         // M26 fix: commands mutate session state (/new, /model, /checkpoint …) —
         // serialize per chat like handleTextOrMedia so a command can't interleave
         // with an in-flight turn or another command on the same chat.
@@ -179,6 +178,27 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
             handleCommandLocked(event);
         } finally {
             lock.unlock();
+        }
+    }
+
+    private void handleStopCommandImmediately(UpdateEvent event) {
+        if (!slashAccessPolicy.canRun(event.userId(), "stop")) {
+            telegramClient.sendMessage(event.chatId(), "⛔ You don't have access to /stop");
+            return;
+        }
+        CommandHandler stopHandler = commandRegistry.get("stop");
+        if (stopHandler == null) {
+            sendError(event.chatId(), "Stop command is unavailable.");
+            return;
+        }
+        try {
+            String response = stopHandler.handle(event, resolveSession(event));
+            if (response != null && !response.isBlank()) {
+                sendFormatted(event.chatId(), response);
+            }
+        } catch (Exception e) {
+            log.error("Command /stop failed: {}", e.getMessage(), e);
+            sendError(event.chatId(), "Error executing command: " + e.getMessage());
         }
     }
 
@@ -283,8 +303,23 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
     // ─── Text / Media ──────────────────────────────────────────────
 
     @Override
+    public boolean shouldBypassTextBatch(UpdateEvent event) {
+        return event != null && busyHandler.isBusy(event.chatId());
+    }
+
+    @Override
     public void handleTextOrMedia(UpdateEvent event) {
         long chatId = event.chatId();
+        // A replacement message must reach the busy-mode handler while the
+        // active turn owns the per-chat lock; otherwise interrupt mode cannot
+        // cancel anything until after that turn has already finished.
+        if (busyHandler.isBusy(chatId)) {
+            if (tryResolveTypedClarify(chatId, event)) {
+                return;
+            }
+            handleBusyMessage(chatId, event, busyHandler.getEffectiveBusyInputMode(), resolveSession(event));
+            return;
+        }
         ReentrantLock lock = locks.computeIfAbsent(chatId, k -> new ReentrantLock());
         boolean acquired;
         try {
@@ -310,6 +345,30 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         } finally {
             lock.unlock();
         }
+    }
+
+    private boolean tryResolveTypedClarify(long chatId, UpdateEvent event) {
+        if (clarifyTextInterceptor == null) {
+            return false;
+        }
+        String messageText = extractMessageText(event);
+        if (messageText == null || messageText.isBlank()) {
+            return false;
+        }
+        String outcome = clarifyTextInterceptor.tryResolve(resolveSession(event), messageText);
+        return handleTypedClarifyOutcome(chatId, outcome);
+    }
+
+    private boolean handleTypedClarifyOutcome(long chatId, String outcome) {
+        if (outcome == null) {
+            return false;
+        }
+        if ("invalid_selection".equals(outcome)) {
+            sendError(chatId, "⚠️ Invalid selection — pick a listed option or type the full label.");
+        } else if ("resolved".equals(outcome)) {
+            typingManager.resumeTyping(chatId);
+        }
+        return true;
     }
 
     private void handleTextOrMediaInternalBody(UpdateEvent event) {
@@ -358,12 +417,6 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
 
         // Build message text from the event — now uses InboundMediaHandler for media
         String messageText = extractMessageText(event);
-        if (clarificationStateStore != null) {
-            String clarificationAnswer = clarificationStateStore.consumeTypedAnswer(chatId, messageText);
-            if (clarificationAnswer != null) {
-                messageText = clarificationAnswer;
-            }
-        }
         if (messageText == null || messageText.isBlank()) {
             log.debug("No text content in update {}, skipping", event.updateId());
             return;
@@ -374,19 +427,10 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         java.util.List<String> artifactIds = extractArtifactIds(messageText);
         messageText = stripArtifactMarkers(messageText);
 
-        // Blocking clarify (Hermes clarify_gateway parity): while a turn is
-        // open and waiting on a clarify prompt, a typed message resolves the
-        // pending entry instead of being rejected/queued as a new turn.
         if (busyHandler.isBusy(chatId) && clarifyTextInterceptor != null
                 && messageText != null && !messageText.isBlank()) {
             String clarifyOutcome = clarifyTextInterceptor.tryResolve(session, messageText);
-            if (clarifyOutcome != null) {
-                // resolved: answer fed into the open turn; ack to the user
-                if (!"invalid_selection".equals(clarifyOutcome)) {
-                    return;
-                }
-                // invalid selection: keep the prompt armed, tell the user
-                sendError(chatId, "⚠️ Invalid selection — pick a listed option or type the full label.");
+            if (handleTypedClarifyOutcome(chatId, clarifyOutcome)) {
                 return;
             }
         }
@@ -394,6 +438,13 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         if (busyHandler.isBusy(chatId)) {
             String effectiveMode = busyHandler.getEffectiveBusyInputMode();
             handleBusyMessage(chatId, event, effectiveMode, session);
+            return;
+        }
+
+        // The turn was already interrupted before it acquired the processing
+        // slot, therefore normal execution and auto-continuation are skipped.
+        if (busyHandler.isInterrupted(chatId)) {
+            log.debug("Skipping already interrupted turn for chat {}", chatId);
             return;
         }
 
@@ -407,23 +458,28 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         typingManager.startTyping(chatId, typingThreadId);
 
         AgentBackendClient.ChatResult result;
+        String sessionId = session.getBackendSessionId() != null
+            ? session.getBackendSessionId().toString()
+            : null;
+        // Thread the message_thread_id through to all response sends.
+        long threadId = event.messageThreadId();
+        if (session != null && session.getLastMessageThreadId() != threadId) {
+            session.setLastMessageThreadId(threadId);
+        }
         try {
-            String sessionId = session.getBackendSessionId() != null
-                ? session.getBackendSessionId().toString()
-                : null;
-
-            // B1.6/B2.7: Thread the message_thread_id from the event through to all sends
-            long threadId = event.messageThreadId();
-            // DM-topics depth (docs/34): persist the originating topic so
-            // restart-surviving sends (recovery notices, resumed turns)
-            // route back into the same thread.
-            if (session != null && session.getLastMessageThreadId() != threadId) {
-                session.setLastMessageThreadId(threadId);
-            }
-
             // Build footer text (will be appended to streaming message or sync response)
             result = streamingOrchestrator.streamChat(chatId, messageText, sessionId, session,
                 event.messageId(), threadId, artifactIds, this);
+
+            // A /stop or interrupt-mode replacement can arrive while the
+            // backend stream is unwinding. Do not render, persist, or continue
+            // a result belonging to that cancelled turn.
+            if (busyHandler.isInterrupted(chatId)) {
+                log.debug("Discarding interrupted turn result for chat {}", chatId);
+                reactionManager.onCancel(chatId, event.messageId());
+                typingManager.stopTyping(chatId);
+                return;
+            }
 
             // Persist the backend-assigned session ID for conversation history continuity
             if (result.backendSessionId() != null) {
@@ -569,10 +625,18 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
             busyHandler.queueMessage(chatId, event);
         }
 
-        // Interrupt if in interrupt mode (and not demoted)
+        // Interrupt if in interrupt mode (and not demoted). The local flag only
+        // stops Telegram rendering; the backend has a separate streaming turn
+        // and must receive /agent/stop too. Without this call an incoming
+        // message looked cancelled in the chat while the model/tool loop kept
+        // running server-side until its natural completion.
         if ("interrupt".equals(actualMode) && !demotedForSubagents) {
             busyHandler.interrupt(chatId);
-            log.debug("Interrupted busy chat {} and queued interrupting message", chatId);
+            String backendSessionId = session.getBackendSessionId() == null
+                ? null : session.getBackendSessionId().toString();
+            boolean backendStopped = backendSessionId != null && backendClient.stop(backendSessionId);
+            log.debug("Interrupted busy chat {} and queued message (backendStopped={})",
+                chatId, backendStopped);
         } else if (steered) {
             log.debug("Steered message into active run for chat {}", chatId);
         } else {
@@ -671,6 +735,13 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         int drained = 0;
         while (busyHandler.hasQueued(chatId) && drained < maxDrainDepth) {
             List<UpdateEvent> queued = busyHandler.drainQueue(chatId);
+            // An interrupt-mode message is queued while the previous turn is
+            // still marked busy. Clear the per-turn marker BEFORE replaying it,
+            // otherwise the replay sees itself as busy, cancels itself and is
+            // queued again until the drain-depth guard intervenes.
+            if (busyHandler.isInterrupted(chatId)) {
+                busyHandler.markFree(chatId);
+            }
             for (UpdateEvent queuedEvent : queued) {
                 try {
                     handleTextOrMediaInternalBody(queuedEvent);

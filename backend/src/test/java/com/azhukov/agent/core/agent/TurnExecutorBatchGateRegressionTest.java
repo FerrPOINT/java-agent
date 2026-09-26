@@ -199,6 +199,25 @@ class TurnExecutorBatchGateRegressionTest {
     }
 
     @Test
+    @DisplayName("clarify waits do not charge the per-turn tool-duration budget")
+    void clarifyDoesNotChargeDurationBudget() {
+        AgentProperties props = properties();
+        ToolExecutionService svc = mock(ToolExecutionService.class);
+        when(svc.execute(anyString(), anyString(), anyString(), any(), any(), any()))
+            .thenReturn(ToolResult.ok("answer"));
+        when(svc.enforceToolResultBudget(any())).thenAnswer(inv -> inv.getArgument(0));
+        TurnExecutor executor = executor(props, mock(ToolGuardrails.class), null, svc);
+        Session session = Session.create("user", "noop", "noop");
+
+        var result = executor.executeToolBatch(
+            List.of(new ToolCall("c1", "clarify", "{\"question\":\"Continue?\"}")),
+            Set.of("clarify"), session, mock(TurnState.class), 1, false, null);
+
+        assertThat(result.executions()).singleElement()
+            .satisfies(record -> assertThat(record.chargesDurationBudget()).isFalse());
+    }
+
+    @Test
     @DisplayName("steer note is appended AFTER budget enforcement and survives in the result")
     void steerInjectedAfterBudgetEnforcement() {
         AgentProperties props = properties();

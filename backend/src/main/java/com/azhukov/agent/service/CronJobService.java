@@ -65,6 +65,14 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+/**
+ * Cron job engine: scheduling, execution, and delivery of scheduled jobs.
+ * Runs each tick headless in its own session with the CRON_EXECUTION_HINT
+ * prompt ([SILENT] suppression contract), persists an execution ledger
+ * (h72), and exposes result delivery endpoints the bot polls. Related:
+ * HeartbeatService (session-scoped wakeups), CronSuggestionService
+ * (consent-first suggestions).
+ */
 @Service
 @Slf4j
 public class CronJobService {

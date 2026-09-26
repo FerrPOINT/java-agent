@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -99,6 +100,30 @@ class MessageApiClientMetadataOnErrorTest {
         assertThat(result.contextLength()).isEqualTo(262144);
         assertThat(result.backendSessionId())
             .isEqualTo(java.util.UUID.fromString("00000000-0000-0000-0000-000000000001"));
+    }
+
+    @Test
+    void streamingIdleTimeoutOutlivesTheRecommendedClarifyWindow() {
+        assertThat(MessageApiClient.STREAM_IDLE_TIMEOUT_MS)
+            .isGreaterThan(Duration.ofDays(7).toMillis());
+    }
+
+    @Test
+    void chatStream_clarifyCarriesSseSessionIdWhenOriginalRequestHasNoSession() {
+        String backendSession = "550e8400-e29b-41d4-a716-446655440000";
+        serveSse(
+            "{\"type\":\"clarify\",\"sessionId\":\"" + backendSession + "\","
+                + "\"error\":\"{\\\"clarifyId\\\":\\\"prompt-1\\\",\\\"question\\\":\\\"Target?\\\"}\"}",
+            "{\"type\":\"done\"}"
+        );
+        AtomicReference<String> clarify = new AtomicReference<>();
+
+        MessageApiClient client = new MessageApiClient(restClient, mapper);
+        client.chatStream("hi", null, null, token -> { }, toolCall -> { }, (name, preview) -> { },
+            retry -> { }, review -> { }, clarify::set, complete -> { }, error -> { });
+
+        assertThat(clarify.get()).startsWith(backendSession + "\u0001");
+        assertThat(clarify.get()).contains("\"clarifyId\":\"prompt-1\"");
     }
 
     @Test

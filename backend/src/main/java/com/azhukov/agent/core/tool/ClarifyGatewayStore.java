@@ -26,34 +26,58 @@ public class ClarifyGatewayStore {
     public record PendingClarify(
         String clarifyId,
         String sessionKey,
+        long sequence,
         String question,
         List<String> choices,
         boolean multiSelect,
-        CompletableFuture<String> future
+        CompletableFuture<String> future,
+        boolean acceptsCustomResponse
     ) {
         boolean isAwaitingText() {
-            return choices == null || choices.isEmpty();
+            return choices == null || choices.isEmpty() || acceptsCustomResponse;
         }
     }
 
     /** Outcome of a typed-reply resolution attempt. */
     public enum TextOutcome { RESOLVED, REJECTED_PROSE, REJECTED_SELECTION, NO_PENDING }
 
-    public static final long DEFAULT_TIMEOUT_SECONDS = 3600;
+    /**
+     * Default human-response window for a blocking clarify prompt.
+     * One day is intentional: a clarification is a user decision, not a
+     * request deadline. Two to seven days is recommended for unattended or
+     * asynchronous channels; callers may supply a longer window when their
+     * transport and session-retention policy support it.
+     */
+    public static final long DEFAULT_TIMEOUT_SECONDS = TimeUnit.DAYS.toSeconds(1);
 
+    /** Monotonic order makes typed answers bind to the first visible batch question. */
+    private final java.util.concurrent.atomic.AtomicLong nextSequence = new java.util.concurrent.atomic.AtomicLong();
     private final Map<String, PendingClarify> entries = new ConcurrentHashMap<>();
     private final Map<String, Map<String, PendingClarify>> sessionIndex = new ConcurrentHashMap<>();
 
     /** Register a pending clarify; the caller then blocks on the entry's future. */
     public PendingClarify register(String sessionKey, String question, List<String> choices, boolean multiSelect) {
+        return register(sessionKey, question, choices, multiSelect, choices == null || choices.isEmpty());
+    }
+
+    /**
+     * Register a pending clarify and declare whether a free-form answer is valid.
+     * Choice prompts require this explicit bit because their text route otherwise
+     * cannot distinguish ordinary prose from a deliberate "Other" response.
+     */
+    public PendingClarify register(String sessionKey, String question, List<String> choices, boolean multiSelect,
+                                   boolean acceptsCustomResponse) {
         String id = UUID.randomUUID().toString();
         PendingClarify entry = new PendingClarify(
-            id, sessionKey, question,
+            id, sessionKey, nextSequence.incrementAndGet(), question,
             choices == null ? List.of() : List.copyOf(choices),
             multiSelect && choices != null && !choices.isEmpty(),
-            new CompletableFuture<>());
+            new CompletableFuture<>(),
+            acceptsCustomResponse);
         entries.put(id, entry);
         sessionIndex.computeIfAbsent(sessionKey, k -> new ConcurrentHashMap<>()).put(id, entry);
+        log.info("clarify_registered session={} id={} sequence={} choices={} multiSelect={}",
+            sessionKey, id, entry.sequence(), entry.choices().size(), entry.multiSelect());
         return entry;
     }
 
@@ -87,18 +111,57 @@ public class ClarifyGatewayStore {
 
     /** Unblock the waiter; false if already resolved/expired/unknown. */
     public boolean resolve(String clarifyId, String response) {
+        return resolveForSession(null, clarifyId, response);
+    }
+
+    /**
+     * Unblock only an entry owned by {@code sessionKey}. The public adapter
+     * endpoints must use this overload: a clarify ID is not authorization.
+     */
+    public boolean resolveForSession(String sessionKey, String clarifyId, String response) {
         PendingClarify entry = entries.get(clarifyId);
-        if (entry == null || entry.future().isDone()) {
+        if (entry == null || entry.future().isDone()
+            || (sessionKey != null && !entry.sessionKey().equals(sessionKey))) {
+            log.info("clarify_resolve_rejected id={} reason={}", clarifyId,
+                entry == null ? "unknown" : entry.future().isDone() ? "already_completed" : "wrong_session");
             return false;
         }
         boolean accepted = entry.future().complete(response == null ? "" : response);
         if (accepted) {
+            log.info("clarify_resolved session={} id={} responseChars={}",
+                entry.sessionKey(), clarifyId, response == null ? 0 : response.length());
             cleanup(entry);
         }
         return accepted;
     }
 
-    /** Oldest pending entry for the session (any kind) — typed replies resolve it rather than queue a new turn. */
+    /**
+     * Permit a free-form response after the adapter receives the explicit
+     * Other action. The entry is atomically replaced so later text coercion
+     * accepts prose without changing its waiter or registration order.
+     */
+    public boolean armCustomResponse(String sessionKey, String clarifyId) {
+        PendingClarify entry = entries.get(clarifyId);
+        if (entry == null || entry.future().isDone() || !entry.sessionKey().equals(sessionKey)) {
+            return false;
+        }
+        if (entry.acceptsCustomResponse()) {
+            return true;
+        }
+        PendingClarify armed = new PendingClarify(entry.clarifyId(), entry.sessionKey(), entry.sequence(),
+            entry.question(), entry.choices(), entry.multiSelect(), entry.future(), true);
+        if (!entries.replace(clarifyId, entry, armed)) {
+            return false;
+        }
+        Map<String, PendingClarify> index = sessionIndex.get(sessionKey);
+        if (index != null) {
+            index.replace(clarifyId, entry, armed);
+        }
+        log.info("clarify_custom_response_armed session={} id={}", sessionKey, clarifyId);
+        return true;
+    }
+
+    /** Oldest pending entry for the session, matching the order prompts were rendered. */
     public PendingClarify pendingForSession(String sessionKey) {
         Map<String, PendingClarify> index = sessionIndex.get(sessionKey);
         if (index == null) {
@@ -108,7 +171,14 @@ public class ClarifyGatewayStore {
         // earliest-created entry (UUIDs carry no order, compare by registration
         // sequence via the future's internal ordering — fall back to any entry:
         // sessions almost always have exactly one pending clarify).
-        return index.values().stream().findFirst().orElse(null);
+        return index.values().stream()
+            .min(java.util.Comparator.comparingLong(PendingClarify::sequence))
+            .map(entry -> {
+                log.debug("clarify_text_target session={} id={} sequence={}",
+                    sessionKey, entry.clarifyId(), entry.sequence());
+                return entry;
+            })
+            .orElse(null);
     }
 
     /** Drop every pending entry for a session (/new, interrupt, shutdown). */

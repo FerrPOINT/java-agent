@@ -30,5 +30,10 @@ public interface StreamingResponseHandler {
         onComplete(finishReason);
     }
 
+    /** Structured provider reasoning collected with the final stream response. */
+    default void onComplete(String finishReason, Long outputTokens, String reasoning) {
+        onComplete(finishReason, outputTokens);
+    }
+
     void onError(Throwable error);
 }

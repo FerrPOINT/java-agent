@@ -20,6 +20,9 @@ class AgentPropertiesTest {
             assertThat(properties.getName()).isEqualTo("Джава агент");
             assertThat(properties.getModel().getProvider()).isEqualTo("openai-compatible");
             assertThat(properties.getCore().getMaxTurns()).isEqualTo(100);
+            assertThat(properties.getBudget().getMaxModelCallsPerTurn()).isEqualTo(100);
+            assertThat(properties.getBudget().getMaxToolExecutionsPerTurn()).isEqualTo(100);
+            assertThat(properties.getBudget().getRunBudgetSeconds()).isZero();
             assertThat(properties.getCore().getCodingContext()).isEqualTo("off");
             assertThat(properties.getSkills().getDefaultToolsets())
                     .containsExactly("hermes-cli");
@@ -41,6 +44,9 @@ class AgentPropertiesTest {
                         "agent.name=Custom Agent",
                         "agent.model.provider=anthropic",
                         "agent.core.maxTurns=42",
+                        "agent.budget.maxModelCallsPerTurn=42",
+                        "agent.budget.maxToolExecutionsPerTurn=42",
+                        "agent.budget.runBudgetSeconds=120",
                         "agent.core.codingContext=on",
                         "agent.skills.defaultToolsets=web,file",
                         "agent.api.modelName=custom-agent",
@@ -60,6 +66,9 @@ class AgentPropertiesTest {
                     assertThat(properties.getName()).isEqualTo("Custom Agent");
                     assertThat(properties.getModel().getProvider()).isEqualTo("anthropic");
                     assertThat(properties.getCore().getMaxTurns()).isEqualTo(42);
+                    assertThat(properties.getBudget().getMaxModelCallsPerTurn()).isEqualTo(42);
+                    assertThat(properties.getBudget().getMaxToolExecutionsPerTurn()).isEqualTo(42);
+                    assertThat(properties.getBudget().getRunBudgetSeconds()).isEqualTo(120);
                     assertThat(properties.getCore().getCodingContext()).isEqualTo("on");
                     assertThat(properties.getSkills().getDefaultToolsets()).containsExactly("web", "file");
                     assertThat(properties.getApi().getModelName()).isEqualTo("custom-agent");
