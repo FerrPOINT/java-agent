@@ -194,7 +194,7 @@ public class ConsoleController {
                 .body(Map.of("error", "PTY service is not available in this deployment"));
         }
         String cwd = body.get("cwd") instanceof String s && !s.isBlank() ? s : null;
-        var started = pty.start(profile, null, null, cwd);
+        var started = pty.start(profile, UserContext.getUserId(), null, cwd);
         if (started.error() != null) {
             return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(Map.of("error", started.error()));
@@ -217,7 +217,7 @@ public class ConsoleController {
         if (input.isEmpty()) {
             return badRequest("input is required");
         }
-        return pty.write(profile, id, input)
+        return pty.write(profile, UserContext.getUserId(), id, input)
             ? ResponseEntity.ok(Map.of("id", id, "status", "written"))
             : ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", "unknown PTY session"));
     }
@@ -233,7 +233,7 @@ public class ConsoleController {
             return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED)
                 .body(Map.of("error", "PTY service is not available in this deployment"));
         }
-        var read = pty.read(profile, id, after, limit);
+        var read = pty.read(profile, UserContext.getUserId(), id, after, limit);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("id", id);
         body.put("cursor", read.cursor());
@@ -252,7 +252,7 @@ public class ConsoleController {
             return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED)
                 .body(Map.of("error", "PTY service is not available in this deployment"));
         }
-        return pty.close(profile, id)
+        return pty.close(profile, UserContext.getUserId(), id)
             ? ResponseEntity.ok(Map.of("id", id, "status", "closed"))
             : ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", "unknown PTY session"));
     }

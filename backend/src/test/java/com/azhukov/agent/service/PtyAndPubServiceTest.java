@@ -26,13 +26,13 @@ class PtyAndPubServiceTest {
         var started = pty.start("default", "u1", UUID.randomUUID(), null);
         assertThat(started.id()).isNotNull();
 
-        assertThat(pty.write("default", started.id(), "echo PTY_MARKER_$((40+2))\n")).isTrue();
+        assertThat(pty.write("default", "u1", started.id(), "echo PTY_MARKER_$((40+2))\n")).isTrue();
 
         // wait for the marker to appear in the ring
         String marker = null;
         for (int i = 0; i < 40 && marker == null; i++) {
             Thread.sleep(250);
-            var read = pty.read("default", started.id(), 0, 100);
+            var read = pty.read("default", "u1", started.id(), 0, 100);
             marker = read.lines().stream()
                 .map(PtySessionService.RingLine::text)
                 .filter(t -> t.contains("PTY_MARKER_42"))
@@ -40,12 +40,12 @@ class PtyAndPubServiceTest {
         }
         assertThat(marker).isNotNull();
 
-        var tail = pty.read("default", started.id(), 0, 2_000);
+        var tail = pty.read("default", "u1", started.id(), 0, 2_000);
         assertThat(tail.alive()).isTrue();
         assertThat(tail.cursor()).isGreaterThan(0);
 
-        assertThat(pty.close("default", started.id())).isTrue();
-        assertThat(pty.close("default", started.id())).isFalse(); // idempotent absence
+        assertThat(pty.close("default", "u1", started.id())).isTrue();
+        assertThat(pty.close("default", "u1", started.id())).isFalse(); // idempotent absence
     }
 
     @Test
@@ -57,10 +57,25 @@ class PtyAndPubServiceTest {
         var started = pty.start("profile-a", "u1", UUID.randomUUID(), null);
         assertThat(started.id()).isNotNull();
 
-        assertThat(pty.write("profile-b", started.id(), "whoami\n")).isFalse();
-        assertThat(pty.read("profile-b", started.id(), 0, 10).lines()).isEmpty();
-        assertThat(pty.close("profile-b", started.id())).isFalse();
-        pty.close("profile-a", started.id());
+        assertThat(pty.write("profile-b", "u1", started.id(), "whoami\n")).isFalse();
+        assertThat(pty.read("profile-b", "u1", started.id(), 0, 10).lines()).isEmpty();
+        assertThat(pty.close("profile-b", "u1", started.id())).isFalse();
+        pty.close("profile-a", "u1", started.id());
+    }
+
+    @Test
+    void ptySameProfileDifferentUserDenied() {
+        if (!PtySessionService.ptyAvailable()) {
+            return;
+        }
+        PtySessionService pty = new PtySessionService();
+        var started = pty.start("default", "owner", UUID.randomUUID(), null);
+        assertThat(started.id()).isNotNull();
+
+        assertThat(pty.write("default", "other", started.id(), "whoami\n")).isFalse();
+        assertThat(pty.read("default", "other", started.id(), 0, 10).lines()).isEmpty();
+        assertThat(pty.close("default", "other", started.id())).isFalse();
+        assertThat(pty.close("default", "owner", started.id())).isTrue();
     }
 
     @Test
@@ -70,16 +85,16 @@ class PtyAndPubServiceTest {
         }
         PtySessionService pty = new PtySessionService();
         var started = pty.start("default", "u1", UUID.randomUUID(), null);
-        pty.write("default", started.id(), "echo line_one\n");
+        pty.write("default", "u1", started.id(), "echo line_one\n");
         Thread.sleep(1_500);
 
-        var first = pty.read("default", started.id(), 0, 100);
-        var tail = pty.read("default", started.id(), first.cursor(), 100);
+        var first = pty.read("default", "u1", started.id(), 0, 100);
+        var tail = pty.read("default", "u1", started.id(), first.cursor(), 100);
 
         // strictly-after semantics: tail lines all have seq > first.cursor
         assertThat(tail.lines())
             .allSatisfy(line -> assertThat(line.seq()).isGreaterThan(first.cursor()));
-        pty.close("default", started.id());
+        pty.close("default", "u1", started.id());
     }
 
     // ── pub channels ─────────────────────────────────────────────────────
