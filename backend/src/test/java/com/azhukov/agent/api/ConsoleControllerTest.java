@@ -33,13 +33,15 @@ class ConsoleControllerTest {
     private Redactor redactor;
     @Mock
     private ConsoleTaskService consoleTaskService;
+    @Mock
+    private com.azhukov.agent.service.PtySessionService ptySessionService;
 
     private ConsoleController controller;
 
     @BeforeEach
     void setUp() {
         controller = new ConsoleController(processTool, new AgentProperties(), redactor,
-            provider(consoleTaskService), null, null);
+            provider(consoleTaskService), provider(ptySessionService), null);
     }
 
     @AfterEach
@@ -91,6 +93,42 @@ class ConsoleControllerTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getBody()).containsEntry("status", "cancelled");
         verify(consoleTaskService).cancel(null, "user-a", "task_abc");
+    }
+
+    @Test
+    void ptyInputUsesAuthenticatedUserOwnership() {
+        UserContext.set("user-a", UserContext.ROLE_USER);
+        when(ptySessionService.write(null, "user-a", "pty_abc", "echo hi\n")).thenReturn(true);
+
+        ResponseEntity<Map<String, Object>> response =
+            controller.ptyInput(null, "pty_abc", Map.of("input", "echo hi\n"));
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        verify(ptySessionService).write(null, "user-a", "pty_abc", "echo hi\n");
+    }
+
+    @Test
+    void ptyReadUsesAuthenticatedUserOwnership() {
+        UserContext.set("user-a", UserContext.ROLE_USER);
+        when(ptySessionService.read(null, "user-a", "pty_abc", 0, 20))
+            .thenReturn(new com.azhukov.agent.service.PtySessionService.PtyReadResult(
+                java.util.List.of(), 0, true));
+
+        ResponseEntity<Map<String, Object>> response = controller.ptyRead(null, "pty_abc", 0, 20);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        verify(ptySessionService).read(null, "user-a", "pty_abc", 0, 20);
+    }
+
+    @Test
+    void ptyCloseUsesAuthenticatedUserOwnership() {
+        UserContext.set("user-a", UserContext.ROLE_USER);
+        when(ptySessionService.close(null, "user-a", "pty_abc")).thenReturn(true);
+
+        ResponseEntity<Map<String, Object>> response = controller.ptyClose(null, "pty_abc");
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        verify(ptySessionService).close(null, "user-a", "pty_abc");
     }
 
     private static <T> ObjectProvider<T> provider(T value) {

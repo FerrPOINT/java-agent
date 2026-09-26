@@ -1,5 +1,6 @@
 package com.azhukov.agent.api;
 
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.service.AttachmentArtifactService;
 import com.azhukov.agent.service.AttachmentArtifactService.ArtifactRegistration;
 import com.azhukov.agent.service.AttachmentArtifactService.AttachmentArtifact;
@@ -85,7 +86,7 @@ public class AttachmentController {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "file part is not readable");
         }
         ArtifactRegistration registration = service().register(
-            ownerId, profile, sessionId, messageId,
+            authenticatedOwner(ownerId), profile, sessionId, messageId,
             // V62 chk_attachment_origin allows telegram/cli/internal only —
             // a blank origin from the REST upload is an internal one.
             origin == null || origin.isBlank() ? "internal" : origin,
@@ -98,16 +99,16 @@ public class AttachmentController {
 
     @GetMapping("/{id}")
     public AttachmentArtifact get(@PathVariable("id") String id) {
-        return service().find(id)
+        return service().find(id, scopedOwner())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "unknown artifact " + id));
     }
 
     /** Attachment block injected into the turn (bounded text preview or path reference). */
     @GetMapping("/{id}/content")
     public ResponseEntity<Resource> content(@PathVariable("id") String id) {
-        AttachmentArtifact artifact = service().find(id)
+        AttachmentArtifact artifact = service().find(id, scopedOwner())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "unknown artifact " + id));
-        Path path = service().contentPath(id)
+        Path path = service().contentPath(id, scopedOwner())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "artifact content is gone " + id));
         if (!Files.isReadable(path)) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "artifact content is gone " + id);
@@ -132,7 +133,7 @@ public class AttachmentController {
     @PostMapping("/{id}/delivered")
     public Map<String, Object> delivered(@PathVariable("id") String id,
             @RequestParam(value = "messageId", required = false) String messageId) {
-        boolean ok = service().markDelivered(id, messageId);
+        boolean ok = service().markDelivered(id, scopedOwner(), messageId);
         if (!ok) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "unknown artifact " + id);
         }
@@ -141,7 +142,16 @@ public class AttachmentController {
 
     @GetMapping("/session/{sessionId}")
     public List<AttachmentArtifact> bySession(@PathVariable("sessionId") UUID sessionId) {
-        return service().bySession(sessionId);
+        return service().bySession(sessionId, scopedOwner());
+    }
+
+    private static String scopedOwner() {
+        return UserContext.scopeUserId();
+    }
+
+    private static String authenticatedOwner(String requestedOwnerId) {
+        String scopedOwner = scopedOwner();
+        return scopedOwner != null ? scopedOwner : requestedOwnerId;
     }
 
     private static String sanitizeFileName(String name) {

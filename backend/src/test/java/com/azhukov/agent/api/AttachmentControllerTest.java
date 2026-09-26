@@ -96,8 +96,55 @@ class AttachmentControllerTest {
     }
 
     @Test
+    void regularUserCannotReadAnotherOwnersArtifact() throws Exception {
+        when(service.find("att_1", "user-a")).thenReturn(Optional.empty());
+        com.azhukov.agent.core.security.UserContext.set("user-a",
+            com.azhukov.agent.core.security.UserContext.ROLE_USER);
+        try {
+            mockMvc.perform(get("/api/v1/attachments/att_1"))
+                .andExpect(status().isNotFound());
+            org.mockito.Mockito.verify(service).find("att_1", "user-a");
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+        }
+    }
+
+    @Test
+    void regularUserCannotMarkAnotherOwnersArtifactDelivered() throws Exception {
+        when(service.markDelivered("att_1", "user-a", null)).thenReturn(false);
+        com.azhukov.agent.core.security.UserContext.set("user-a",
+            com.azhukov.agent.core.security.UserContext.ROLE_USER);
+        try {
+            mockMvc.perform(post("/api/v1/attachments/att_1/delivered"))
+                .andExpect(status().isNotFound());
+            org.mockito.Mockito.verify(service).markDelivered("att_1", "user-a", null);
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+        }
+    }
+
+    @Test
+    void regularUserUploadCannotImpersonateAnotherOwner() throws Exception {
+        when(service.register(eq("user-a"), any(), any(), any(), anyString(), anyString(),
+            any(), any(), any())).thenReturn(
+            new ArtifactRegistration("att_123", "abc123", "owner/att_123.png", false, null));
+        com.azhukov.agent.core.security.UserContext.set("user-a",
+            com.azhukov.agent.core.security.UserContext.ROLE_USER);
+        try {
+            mockMvc.perform(multipart("/api/v1/attachments")
+                    .param("ownerId", "user-b")
+                    .file(new MockMultipartFile("file", "photo.png", "image/png", new byte[] {1, 2, 3})))
+                .andExpect(status().isOk());
+            org.mockito.Mockito.verify(service).register(eq("user-a"), any(), any(), any(), anyString(),
+                anyString(), any(), any(), any());
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+        }
+    }
+
+    @Test
     void getReturnsArtifactMetadata() throws Exception {
-        when(service.find("att_1")).thenReturn(Optional.of(new AttachmentArtifact(
+        when(service.find("att_1", null)).thenReturn(Optional.of(new AttachmentArtifact(
             "att_1", "u1", "default", null, null, "hash", "telegram",
             "file", "image/png", "cat.png", 3, "received", null, null)));
 
@@ -110,14 +157,14 @@ class AttachmentControllerTest {
 
     @Test
     void getUnknownArtifactIs404() throws Exception {
-        when(service.find("att_missing")).thenReturn(Optional.empty());
+        when(service.find("att_missing", null)).thenReturn(Optional.empty());
         mockMvc.perform(get("/api/v1/attachments/att_missing"))
             .andExpect(status().isNotFound());
     }
 
     @Test
     void deliveredMarksAndIsIdempotent() throws Exception {
-        when(service.markDelivered("att_1", null)).thenReturn(true);
+        when(service.markDelivered("att_1", null, null)).thenReturn(true);
         mockMvc.perform(post("/api/v1/attachments/att_1/delivered"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.state").value("delivered"));
@@ -125,7 +172,7 @@ class AttachmentControllerTest {
 
     @Test
     void deliveredUnknownArtifactIs404() throws Exception {
-        when(service.markDelivered("att_missing", null)).thenReturn(false);
+        when(service.markDelivered("att_missing", null, null)).thenReturn(false);
         mockMvc.perform(post("/api/v1/attachments/att_missing/delivered"))
             .andExpect(status().isNotFound());
     }
@@ -133,7 +180,7 @@ class AttachmentControllerTest {
     @Test
     void bySessionDelegates() throws Exception {
         UUID sessionId = UUID.randomUUID();
-        when(service.bySession(sessionId)).thenReturn(java.util.List.of());
+        when(service.bySession(sessionId, null)).thenReturn(java.util.List.of());
         mockMvc.perform(get("/api/v1/attachments/session/" + sessionId))
             .andExpect(status().isOk());
     }

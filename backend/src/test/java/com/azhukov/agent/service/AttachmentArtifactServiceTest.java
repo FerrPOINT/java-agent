@@ -112,6 +112,20 @@ class AttachmentArtifactServiceTest {
     }
 
     @Test
+    void ownerScopedLookupAndReceiptDoNotCrossArtifactBoundary() {
+        AttachmentArtifactEntity artifact = new AttachmentArtifactEntity();
+        artifact.setId("att_private");
+        artifact.setOwnerId("user-b");
+        artifact.setState("received");
+        when(repository.findById("att_private")).thenReturn(Optional.of(artifact));
+
+        assertThat(service().find("att_private", "user-a")).isEmpty();
+        assertThat(service().markDelivered("att_private", "user-a", "msg-1")).isFalse();
+        assertThat(artifact.getState()).isEqualTo("received");
+        verify(repository, never()).save(artifact);
+    }
+
+    @Test
     void markDeliveredIsIdempotent() {
         AttachmentArtifactEntity delivered = new AttachmentArtifactEntity();
         delivered.setId("att_1");

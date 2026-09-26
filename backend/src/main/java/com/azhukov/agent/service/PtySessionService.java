@@ -120,8 +120,8 @@ public class PtySessionService {
         }
     }
 
-    public boolean write(String profile, String id, String input) {
-        PtySession session = owned(profile, id);
+    public boolean write(String profile, String userId, String id, String input) {
+        PtySession session = owned(profile, userId, id);
         if (session == null || !session.process.isAlive()) {
             return false;
         }
@@ -134,15 +134,15 @@ public class PtySessionService {
         }
     }
 
-    public boolean resizeIgnored(String profile, String id) {
+    public boolean resizeIgnored(String profile, String userId, String id) {
         // script-based PTY inherits the parent's dimensions; terminal resize
         // signalling is not supported by this transport — honest no-op report
-        return owned(profile, id) != null;
+        return owned(profile, userId, id) != null;
     }
 
-    public PtyReadResult read(String profile, String id, long afterCursor, int limit) {
+    public PtyReadResult read(String profile, String userId, String id, long afterCursor, int limit) {
         evictIdle();
-        PtySession session = owned(profile, id);
+        PtySession session = owned(profile, userId, id);
         if (session == null) {
             return new PtyReadResult(List.of(), afterCursor, false);
         }
@@ -167,8 +167,8 @@ public class PtySessionService {
         return new PtyReadResult(lines, cursor, session.process.isAlive());
     }
 
-    public boolean close(String profile, String id) {
-        PtySession session = owned(profile, id);
+    public boolean close(String profile, String userId, String id) {
+        PtySession session = owned(profile, userId, id);
         if (session == null) {
             return false;
         }
@@ -183,14 +183,15 @@ public class PtySessionService {
 
     // ── internals ────────────────────────────────────────────────────────
 
-    private PtySession owned(String profile, String id) {
+    private PtySession owned(String profile, String userId, String id) {
         PtySession session = sessions.get(id);
         if (session == null) {
             return null;
         }
         String canonProfile = profile == null || profile.isBlank() ? "default" : profile;
-        if (!canonProfile.equals(session.profile)) {
-            return null; // cross-profile denial
+        if (!canonProfile.equals(session.profile)
+            || !java.util.Objects.equals(userId, session.userId)) {
+            return null; // cross-profile or cross-user denial
         }
         return session;
     }
