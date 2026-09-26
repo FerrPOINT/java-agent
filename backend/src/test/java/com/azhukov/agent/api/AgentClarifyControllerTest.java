@@ -22,6 +22,8 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -31,18 +33,20 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class AgentClarifyControllerTest {
 
     private ClarifyGatewayStore store;
+    private com.azhukov.agent.persistence.repository.SessionRepository sessionRepository;
     private MockMvc mockMvc;
 
     @BeforeEach
     void setUp() {
         store = new ClarifyGatewayStore();
+        sessionRepository = Mockito.mock(com.azhukov.agent.persistence.repository.SessionRepository.class);
         AgentChatController controller = new AgentChatController(
             Mockito.mock(AgentRuntimeService.class), Mockito.mock(AgentStreamingService.class),
             Mockito.mock(MemoryProvider.class), Mockito.mock(SkillManager.class),
             Mockito.mock(TtsService.class), Mockito.mock(TranscriptionService.class),
             new SteerBuffer(), new InterruptToken(), null,
             Mockito.mock(com.azhukov.agent.persistence.repository.BackgroundJobRepository.class),
-            null, null, null, new ApprovalQueue(), Mockito.mock(AgentProperties.class), null,
+            sessionRepository, null, null, new ApprovalQueue(), Mockito.mock(AgentProperties.class), null,
             Mockito.mock(ToolRegistry.class));
         ReflectionTestUtils.setField(controller, "clarifyStoreProviderField", provider(store));
         mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
@@ -114,6 +118,54 @@ class AgentClarifyControllerTest {
 
         assertThat(pending.future()).isNotDone();
         assertThat(store.pendingForSession("session-1").clarifyId()).isEqualTo(pending.clarifyId());
+    }
+
+    @Test
+    void nonAdminCannotResolveOrArmAnotherUsersClarify() throws Exception {
+        UUID sessionId = UUID.randomUUID();
+        var pending = store.register(sessionId.toString(), "Deploy where?", List.of("dev", "prod"), false);
+        ownerSession(sessionId, "owner");
+        com.azhukov.agent.core.security.UserContext.set("attacker", com.azhukov.agent.core.security.UserContext.ROLE_USER);
+        try {
+            mockMvc.perform(post("/api/v1/agent/session/{sessionId}/clarify/resolve", sessionId)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"clarifyId\":\"" + pending.clarifyId() + "\",\"response\":\"prod\"}"))
+                .andExpect(status().isForbidden());
+            mockMvc.perform(post("/api/v1/agent/session/{sessionId}/clarify/{clarifyId}/custom", sessionId, pending.clarifyId())
+                    .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isForbidden());
+            mockMvc.perform(post("/api/v1/agent/session/{sessionId}/clarify/text", sessionId)
+                    .contentType(MediaType.APPLICATION_JSON).content("{\"text\":\"prod\"}"))
+                .andExpect(status().isForbidden());
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+        }
+        assertThat(pending.future()).isNotDone();
+    }
+
+    @Test
+    void ownerCanResolveOwnClarify() throws Exception {
+        UUID sessionId = UUID.randomUUID();
+        var pending = store.register(sessionId.toString(), "Deploy where?", List.of("dev", "prod"), false);
+        ownerSession(sessionId, "owner");
+        com.azhukov.agent.core.security.UserContext.set("owner", com.azhukov.agent.core.security.UserContext.ROLE_USER);
+        try {
+            mockMvc.perform(post("/api/v1/agent/session/{sessionId}/clarify/resolve", sessionId)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"clarifyId\":\"" + pending.clarifyId() + "\",\"response\":\"prod\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.resolved").value(true));
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+        }
+        assertThat(pending.future()).isCompletedWithValue("prod");
+    }
+
+    private void ownerSession(UUID sessionId, String userId) {
+        var session = new com.azhukov.agent.persistence.entity.SessionEntity();
+        session.setId(sessionId);
+        session.setUserId(userId);
+        Mockito.when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session));
     }
 
     @Test

@@ -22,11 +22,9 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Renders the backend's BLOCKING clarify prompts (Hermes clarify_gateway
- * parity) as Telegram inline keyboards and resolves pending entries through
- * the backend endpoints. The agent turn stays open on the backend while the
- * user answers; a button tap POSTs /clarify/resolve and the tool result
- * carries the structured answer back into the SAME turn.
+ * Keeps Telegram prompt state bound to the backend clarify entry that owns it.
+ * This prevents one chat's callbacks or typed replies from releasing another
+ * pending question while the original agent turn remains blocked.
  */
 @Slf4j
 @Component
@@ -51,6 +49,7 @@ public class ClarifyInteractionRenderer {
 
     /** Single-question prompt payload (mirrors the backend ClarifyStreamBridge event). */
     record PromptPayload(long chatId, String clarifyId, String backendSessionId, String question, List<String> choices, boolean multiSelect) {}
+    /** Backend session and clarify id for a custom text reply. */
     record PromptTarget(String backendSessionId, String clarifyId) {}
 
     public ClarifyInteractionRenderer(ObjectMapper objectMapper,

@@ -40,6 +40,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import org.springframework.web.bind.annotation.ExceptionHandler;
 
 import java.util.List;
 import java.util.Map;
@@ -96,6 +97,11 @@ public class AgentChatController {
     public ChatResponseDto delegate(@Valid @RequestBody ChatRequest request) {
         if (agentMetrics != null) agentMetrics.incrementChatRequests();
         return agentRuntimeService.runDelegate(ChatRequestIdentity.bind(request));
+    }
+
+    @ExceptionHandler(SecurityException.class)
+    public ResponseEntity<Map<String, String>> handleSecurityException(SecurityException exception) {
+        return ResponseEntity.status(403).body(Map.of("error", exception.getMessage()));
     }
 
     // ── Doctor / diagnostics ──
@@ -249,6 +255,18 @@ public class AgentChatController {
      * can deliver "💾 Self-improvement review: …" autonomously, without
      * waiting for the next user turn.
      */
+    private void requireClarifySessionOwnership(String sessionId) {
+        final UUID parsedSessionId;
+        try {
+            parsedSessionId = UUID.fromString(sessionId);
+        } catch (IllegalArgumentException ignored) {
+            // Pending entries are keyed by session text; non-UUID test/legacy keys
+            // cannot resolve entries owned by a different key.
+            return;
+        }
+        requireSessionOwnership(parsedSessionId);
+    }
+
     /**
      * Blocking clarify (Hermes clarify_gateway parity): resolve a pending
      * clarify entry. Called by the Telegram adapter when the user taps an
@@ -260,6 +278,7 @@ public class AgentChatController {
         consumes = "application/json")
     public Map<String, Object> resolveClarify(@PathVariable String sessionId,
                                               @org.springframework.web.bind.annotation.RequestBody ClarifyResolveRequest request) {
+        requireClarifySessionOwnership(sessionId);
         com.azhukov.agent.core.tool.ClarifyGatewayStore store =
             clarifyStoreProvider() != null ? clarifyStoreProvider().getObject() : null;
         if (store == null) {
@@ -282,6 +301,7 @@ public class AgentChatController {
         consumes = "application/json")
     public Map<String, Object> armClarifyCustomResponse(@PathVariable String sessionId,
                                                         @PathVariable String clarifyId) {
+        requireClarifySessionOwnership(sessionId);
         com.azhukov.agent.core.tool.ClarifyGatewayStore store =
             clarifyStoreProvider() != null ? clarifyStoreProvider().getObject() : null;
         boolean armed = store != null && store.armCustomResponse(sessionId, clarifyId);
@@ -301,6 +321,7 @@ public class AgentChatController {
         consumes = "application/json")
     public Map<String, Object> clarifyText(@PathVariable String sessionId,
                                            @org.springframework.web.bind.annotation.RequestBody ClarifyTextRequest request) {
+        requireClarifySessionOwnership(sessionId);
         com.azhukov.agent.core.tool.ClarifyGatewayStore store =
             clarifyStoreProvider() != null ? clarifyStoreProvider().getObject() : null;
         if (store == null) {
