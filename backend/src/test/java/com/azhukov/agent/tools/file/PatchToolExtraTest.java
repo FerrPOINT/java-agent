@@ -85,7 +85,8 @@ class PatchToolExtraTest {
     void v4aMixedSuccessAndErrors(@TempDir Path dir) throws Exception {
         Path goodFile = dir.resolve("good.txt");
         // One valid Add + one blocked path
-        String patch = "*** Add File: " + goodFile + "\n+hello\n*** Add File: /root/.ssh/key\n+x";
+        Path sshKey = Path.of(System.getProperty("user.home"), ".ssh", "key");
+        String patch = "*** Add File: " + goodFile + "\n+hello\n*** Add File: " + sshKey + "\n+x";
         String json = "{\"mode\":\"patch\",\"patch\":\"" + patch.replace("\\", "\\\\").replace("\n", "\\n").replace("\"", "\\\"") + "\"}";
         ToolResult r = tool.execute(json, null, session);
         // V4A operations are preflighted before any write, so a blocked

@@ -24,6 +24,14 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class DefaultFileSafetyTest {
 
+    private static Path userHomePath(String first, String... more) {
+        Path result = Path.of(System.getProperty("user.home"), first);
+        for (String segment : more) {
+            result = result.resolve(segment);
+        }
+        return result;
+    }
+
     // ─── Existing tests (preserved) ───
 
     @Test
@@ -288,9 +296,9 @@ class DefaultFileSafetyTest {
         // No allowedPaths → denylist still blocks sensitive files
         DefaultFileSafety safety = new DefaultFileSafety(properties);
 
-        assertThat(safety.isPathAllowed(Paths.get("/root/.ssh/id_rsa"))).isFalse();
-        assertThat(safety.isPathAllowed(Paths.get("/root/.env"))).isFalse();
-        assertThat(safety.isPathAllowed(Paths.get("/root/.aws/credentials"))).isFalse();
+        assertThat(safety.isPathAllowed(userHomePath(".ssh", "id_rsa"))).isFalse();
+        assertThat(safety.isPathAllowed(userHomePath(".env"))).isFalse();
+        assertThat(safety.isPathAllowed(userHomePath(".aws", "credentials"))).isFalse();
     }
 
     // ─── Read blocking tests (NEW: isReadBlocked) ───
@@ -413,8 +421,8 @@ class DefaultFileSafetyTest {
         properties.getSecurity().setFileSafetyEnabled(true);
         DefaultFileSafety safety = new DefaultFileSafety(properties);
 
-        assertThat(safety.isReadBlocked(Paths.get("/root/.ssh/id_rsa"))).isTrue();
-        assertThat(safety.isReadBlocked(Paths.get("/root/.ssh/config"))).isTrue();
+        assertThat(safety.isReadBlocked(userHomePath(".ssh", "id_rsa"))).isTrue();
+        assertThat(safety.isReadBlocked(userHomePath(".ssh", "config"))).isTrue();
     }
 
     @Test
@@ -423,7 +431,7 @@ class DefaultFileSafetyTest {
         properties.getSecurity().setFileSafetyEnabled(true);
         DefaultFileSafety safety = new DefaultFileSafety(properties);
 
-        assertThat(safety.isReadBlocked(Paths.get("/root/.aws/credentials"))).isTrue();
+        assertThat(safety.isReadBlocked(userHomePath(".aws", "credentials"))).isTrue();
     }
 
     @Test
@@ -432,7 +440,7 @@ class DefaultFileSafetyTest {
         properties.getSecurity().setFileSafetyEnabled(true);
         DefaultFileSafety safety = new DefaultFileSafety(properties);
 
-        assertThat(safety.isReadBlocked(Paths.get("/root/.gnupg/secring.gpg"))).isTrue();
+        assertThat(safety.isReadBlocked(userHomePath(".gnupg", "secring.gpg"))).isTrue();
     }
 
     @Test

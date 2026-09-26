@@ -107,9 +107,10 @@ class PatchToolBranchTest {
     }
 
     @Test
-    void replaceMode_blockedPath_rootSsh() {
+    void replaceMode_blockedPath_userHomeSsh() {
+        Path sshKey = Path.of(System.getProperty("user.home"), ".ssh", "id_rsa");
         ToolResult r = tool.execute(
-            "{\"path\":\"/root/.ssh/id_rsa\",\"old_string\":\"a\",\"new_string\":\"b\"}", null, session);
+            "{\"path\":\"" + sshKey + "\",\"old_string\":\"a\",\"new_string\":\"b\"}", null, session);
         assertThat(r.success()).isFalse();
         assertThat(r.error()).contains("not allowed");
     }
