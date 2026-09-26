@@ -55,11 +55,17 @@ public class ClarifyTextInterceptor {
             return null;
         }
         try {
+            Map<String, Object> request = new java.util.HashMap<>();
+            request.put("text", text);
+            String clarifyId = clarifyInteractionRenderer.awaitingTextClarifyId(chatId);
+            if (clarifyId != null && !clarifyId.isBlank()) {
+                request.put("clarifyId", clarifyId);
+            }
             @SuppressWarnings("unchecked")
             Map<String, Object> outcome = backendRestClient.post()
                 .uri("/api/v1/agent/session/{sessionId}/clarify/text", backendSessionId)
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                .body(Map.of("text", text))
+                .body(request)
                 .retrieve()
                 .body(Map.class);
             if (outcome == null) {

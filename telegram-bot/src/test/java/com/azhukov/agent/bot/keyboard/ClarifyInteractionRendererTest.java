@@ -94,6 +94,25 @@ class ClarifyInteractionRendererTest {
     }
 
     @Test
+    void otherInAMultiQuestionBatchKeepsTheSelectedClarifyIdForTypedText() {
+        when(telegramClient.sendMessage(anyLong(), any(), any(), any(), any(), any(), eq(false)))
+            .thenReturn(Optional.of(42L));
+        renderer.present(100L, 0L, "session-1", """
+            {"clarifyId":"first-prompt","question":"First?","choices":["one","two"]}
+            """);
+        renderer.present(100L, 0L, "session-1", """
+            {"clarifyId":"second-prompt","question":"Second?","choices":["dev","prod"]}
+            """);
+        server.expect(once(), requestTo("http://backend.test/api/v1/agent/session/session-1/clarify/second-prompt/custom"))
+            .andRespond(withSuccess("{\"armed\":true}", MediaType.APPLICATION_JSON));
+
+        renderer.handleCallback(100L, 42L, "second-prompt:other");
+
+        assertThat(renderer.awaitingTextClarifyId(100L)).isEqualTo("second-prompt");
+        server.verify();
+    }
+
+    @Test
     void callbackFromAnotherChatCannotArmOrResolveThePrompt() {
         when(telegramClient.sendMessage(anyLong(), any(), any(), any(), any(), any(), eq(false)))
             .thenReturn(Optional.of(42L));

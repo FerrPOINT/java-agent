@@ -306,7 +306,9 @@ public class AgentChatController {
         if (store == null) {
             return Map.of("outcome", "no_pending");
         }
-        var pending = store.pendingForSession(sessionId);
+        var pending = request.clarifyId() == null || request.clarifyId().isBlank()
+            ? store.pendingForSession(sessionId)
+            : store.pendingForSession(sessionId, request.clarifyId());
         if (pending == null) {
             log.info("clarify_text_rejected session={} reason=no_pending", sessionId);
             return Map.of("outcome", "no_pending");
@@ -328,7 +330,7 @@ public class AgentChatController {
     public record ClarifyResolveRequest(String clarifyId, String response) {}
 
     /** Request body for clarify/text. */
-    public record ClarifyTextRequest(String text) {}
+    public record ClarifyTextRequest(String text, String clarifyId) {}
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.core.tool.ClarifyGatewayStore> clarifyStoreProviderField;

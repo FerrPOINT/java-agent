@@ -104,6 +104,21 @@ class ClarifyTextInterceptorTest {
     }
 
     @Test
+    void customTextTargetsThePromptSelectedByOtherInAMultiQuestionBatch() {
+        String backendSessionId = "550e8400-e29b-41d4-a716-446655440006";
+        when(renderer.awaitingResponseSession(12345L)).thenReturn(backendSessionId);
+        when(renderer.awaitingTextClarifyId(12345L)).thenReturn("second-prompt");
+        server.expect(once(), requestTo("http://backend.test/api/v1/agent/session/"
+                + backendSessionId + "/clarify/text"))
+            .andExpect(content().json("{\"text\":\"a bespoke environment\",\"clarifyId\":\"second-prompt\"}"))
+            .andRespond(withSuccess("{\"outcome\":\"resolved\"}", MediaType.APPLICATION_JSON));
+
+        assertThat(interceptor.tryResolve(session, "a bespoke environment")).isEqualTo("resolved");
+        verify(renderer).completeTextResponse(12345L);
+        server.verify();
+    }
+
+    @Test
     void absentPendingClarifyLeavesAnOrdinaryMessageForNormalRouting() {
         assertThat(interceptor.tryResolve(session, "ordinary message")).isNull();
         server.verify();

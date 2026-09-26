@@ -167,10 +167,8 @@ public class ClarifyGatewayStore {
         if (index == null) {
             return null;
         }
-        // Insertion-ordered scan is not guaranteed by ConcurrentHashMap; pick the
-        // earliest-created entry (UUIDs carry no order, compare by registration
-        // sequence via the future's internal ordering — fall back to any entry:
-        // sessions almost always have exactly one pending clarify).
+        // ConcurrentHashMap has no insertion order; the monotonic registration
+        // sequence is the canonical ordering for an unbound typed reply.
         return index.values().stream()
             .min(java.util.Comparator.comparingLong(PendingClarify::sequence))
             .map(entry -> {
@@ -179,6 +177,17 @@ public class ClarifyGatewayStore {
                 return entry;
             })
             .orElse(null);
+    }
+
+    /**
+     * Return one still-pending clarify only when it belongs to the supplied
+     * session. An explicit Other reply must target its own question, rather
+     * than the oldest entry from a multi-question batch.
+     */
+    public PendingClarify pendingForSession(String sessionKey, String clarifyId) {
+        PendingClarify entry = entries.get(clarifyId);
+        return entry != null && !entry.future().isDone() && entry.sessionKey().equals(sessionKey)
+            ? entry : null;
     }
 
     /** Drop every pending entry for a session (/new, interrupt, shutdown). */

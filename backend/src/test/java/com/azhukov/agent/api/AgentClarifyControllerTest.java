@@ -116,6 +116,22 @@ class AgentClarifyControllerTest {
         assertThat(store.pendingForSession("session-1").clarifyId()).isEqualTo(pending.clarifyId());
     }
 
+    @Test
+    void explicitClarifyIdSelectsItsOwnPendingEntryInsteadOfTheOldestBatchQuestion() throws Exception {
+        var first = store.register("session-1", "First?", List.of("one", "two"), false);
+        var second = store.register("session-1", "Second?", List.of("dev", "prod"), false);
+        assertThat(store.armCustomResponse("session-1", second.clarifyId())).isTrue();
+
+        mockMvc.perform(post("/api/v1/agent/session/session-1/clarify/text")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"clarifyId\":\"" + second.clarifyId() + "\",\"text\":\"a bespoke environment\"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.outcome").value("resolved"));
+
+        assertThat(first.future()).isNotDone();
+        assertThat(second.future()).isCompletedWithValue("a bespoke environment");
+    }
+
     private static <T> ObjectProvider<T> provider(T value) {
         return new ObjectProvider<>() {
             @Override public T getObject() { return value; }
