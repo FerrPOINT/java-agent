@@ -51,7 +51,7 @@ public class BrowserDialogTool implements ToolHandler {
     public record DialogArgs(
         @ToolParam(description = "accept or dismiss") String action,
         @JsonProperty("prompt_text")
-        @JsonAlias("text")
+        @JsonAlias({"text", "promptText"})
         @ToolParam(description = "text for prompt dialogs", required = false) String promptText,
         @JsonProperty("dialog_id")
         @JsonAlias("dialogId")
