@@ -2,6 +2,7 @@ package com.azhukov.agent.api;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.security.Redactor;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.tools.terminal.CommandGuard;
 import com.azhukov.agent.tools.terminal.ProcessTool;
 import org.springframework.http.HttpStatus;
@@ -84,67 +85,87 @@ public class ConsoleController {
                 .body(Map.of("error", "command blocked by console guard", "detail", blocked));
         }
 
-        try {
-            ProcessTool.ManagedProcess managed =
-                processTool.spawn(command, timeout, false, null, workdir);
-            String processId = processTool.processId(managed);
-            Map<String, Object> response = new LinkedHashMap<>();
-            response.put("id", processId);
-            response.put("command", redactor.redact(command));
-            response.put("timeout_seconds", timeout);
-            response.put("status", processTool.isProcessAlive(managed) ? "running" : "exited");
-            return ResponseEntity.status(HttpStatus.ACCEPTED).body(response);
-        } catch (IOException e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(Map.of("error", "failed to start command", "detail", String.valueOf(e.getMessage())));
+        com.azhukov.agent.service.ConsoleTaskService service = taskService();
+        if (service == null) {
+            return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED)
+                .body(Map.of("error", "durable console tasks are not available in this deployment"));
         }
+        var started = service.start(pathProfile, UserContext.getUserId(), command, workdir, timeout);
+        if (started.error() != null) {
+            return ResponseEntity.status(HttpStatus.valueOf(started.httpStatus()))
+                .body(Map.of("error", started.error()));
+        }
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(Map.of(
+            "id", started.id(),
+            "command", redactor.redact(command),
+            "timeout_seconds", timeout,
+            "status", "running"));
     }
 
     /** Status of one console command task. */
     @GetMapping("/commands/{id}")
-    public ResponseEntity<Map<String, Object>> status(@PathVariable String id) {
-        ProcessTool.ManagedProcess managed = processTool.findConsoleProcess(id);
-        if (managed == null) {
+    public ResponseEntity<Map<String, Object>> status(@PathVariable(name = "profile", required = false) String profile,
+                                                      @PathVariable String id) {
+        com.azhukov.agent.service.ConsoleTaskService service = taskService();
+        if (service == null) {
+            return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED)
+                .body(Map.of("error", "durable console tasks are not available in this deployment"));
+        }
+        var task = service.status(profile, UserContext.scopeUserId(), id);
+        if (task.isEmpty()) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", "unknown command task"));
         }
-        Map<String, Object> response = new LinkedHashMap<>();
-        response.put("id", id);
-        response.put("alive", processTool.isProcessAlive(managed));
-        response.put("status", processTool.isProcessAlive(managed) ? "running" : "exited");
-        return ResponseEntity.ok(response);
+        return ResponseEntity.ok(Map.of(
+            "id", id,
+            "status", task.get().getState(),
+            "alive", "running".equals(task.get().getState())));
+    }
+
+    /** Status of one console command task. */
+    public ResponseEntity<Map<String, Object>> status(String id) {
+        return status(null, id);
     }
 
     /** Redacted output snapshot of one console command task. */
     @GetMapping("/commands/{id}/output")
-    public ResponseEntity<Map<String, Object>> output(@PathVariable String id,
+    public ResponseEntity<Map<String, Object>> output(@PathVariable(name = "profile", required = false) String profile,
+                                                      @PathVariable String id,
                                                       @RequestParam(name = "offset", defaultValue = "0") int offset,
                                                       @RequestParam(name = "limit", defaultValue = "200") int limit) {
-        ProcessTool.ManagedProcess managed = processTool.findConsoleProcess(id);
-        if (managed == null) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", "unknown command task"));
+        com.azhukov.agent.service.ConsoleTaskService service = taskService();
+        if (service == null) {
+            return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED)
+                .body(Map.of("error", "durable console tasks are not available in this deployment"));
         }
         int boundedLimit = Math.min(Math.max(limit, 1), MAX_OUTPUT_LIMIT);
-        List<String> lines = processTool.recentOutput(managed, boundedLimit);
-        List<String> redacted = new ArrayList<>(lines.size());
-        for (String line : lines) {
-            redacted.add(redactor.redact(line));
-        }
-        Map<String, Object> response = new LinkedHashMap<>();
-        response.put("id", id);
-        response.put("limit", boundedLimit);
-        response.put("lines", redacted);
-        return ResponseEntity.ok(response);
+        var result = service.output(profile, UserContext.scopeUserId(), id, offset, boundedLimit);
+        return result.<ResponseEntity<Map<String, Object>>>map(ResponseEntity::ok)
+            .orElseGet(() -> ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Map.of("error", "unknown command task")));
+    }
+
+    /** Redacted output snapshot of one console command task. */
+    public ResponseEntity<Map<String, Object>> output(String id, int offset, int limit) {
+        return output(null, id, offset, limit);
     }
 
     /** Kill a console command task. */
     @PostMapping("/commands/{id}/kill")
-    public ResponseEntity<Map<String, Object>> kill(@PathVariable String id) {
-        ProcessTool.ManagedProcess managed = processTool.findConsoleProcess(id);
-        if (managed == null) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", "unknown command task"));
+    public ResponseEntity<Map<String, Object>> kill(@PathVariable(name = "profile", required = false) String profile,
+                                                    @PathVariable String id) {
+        com.azhukov.agent.service.ConsoleTaskService service = taskService();
+        if (service == null) {
+            return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED)
+                .body(Map.of("error", "durable console tasks are not available in this deployment"));
         }
-        processTool.killProcess(managed, "console.kill");
-        return ResponseEntity.ok(Map.of("id", id, "status", "killed"));
+        return service.cancel(profile, UserContext.scopeUserId(), id)
+            ? ResponseEntity.ok(Map.of("id", id, "status", "cancelled"))
+            : ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", "unknown command task"));
+    }
+
+    /** Kill a console command task. */
+    public ResponseEntity<Map<String, Object>> kill(String id) {
+        return kill(null, id);
     }
 
     // ── PTY (WP-9, ADR-015): interactive sessions via script(1), fail-closed ──
@@ -303,6 +324,10 @@ public class ConsoleController {
         return pub.delete(profile, channel)
             ? ResponseEntity.ok(Map.of("channel", channel, "status", "deleted"))
             : ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", "unknown channel"));
+    }
+
+    private com.azhukov.agent.service.ConsoleTaskService taskService() {
+        return consoleTaskServiceProvider == null ? null : consoleTaskServiceProvider.getIfAvailable();
     }
 
     private com.azhukov.agent.service.PtySessionService pty() {

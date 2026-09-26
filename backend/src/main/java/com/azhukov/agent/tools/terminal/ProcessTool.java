@@ -588,6 +588,31 @@ public class ProcessTool implements ToolHandler {
         return snapshot.subList(start, snapshot.size());
     }
 
+    /** Console bridge: all retained output strictly after a snapshot offset. */
+    public List<String> outputFrom(ProcessTool.ManagedProcess process, int offset) {
+        if (process == null) {
+            return List.of();
+        }
+        List<String> snapshot = process.getOutputLines();
+        int start = Math.min(Math.max(offset, 0), snapshot.size());
+        return snapshot.subList(start, snapshot.size());
+    }
+
+    /** Console bridge: wait for the reader to retain output emitted before exit. */
+    public void awaitOutputDrain(ManagedProcess process, long millis) {
+        if (process != null) {
+            process.awaitOutputDrain(millis);
+        }
+    }
+
+    /** Console bridge: return a terminated process exit code. */
+    public int exitCode(ManagedProcess process) {
+        if (process == null || process.isAlive()) {
+            throw new IllegalStateException("process has not exited");
+        }
+        return process.process.exitValue();
+    }
+
     /** Console bridge: terminate with a console-specific termination source. */
     public void killProcess(ManagedProcess process, String source) {
         if (process != null) {

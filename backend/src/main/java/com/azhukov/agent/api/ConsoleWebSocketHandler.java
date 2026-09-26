@@ -1,7 +1,7 @@
 package com.azhukov.agent.api;
 
-import com.azhukov.agent.core.security.Redactor;
-import com.azhukov.agent.tools.terminal.ProcessTool;
+import com.azhukov.agent.core.security.UserContext;
+import com.azhukov.agent.service.ConsoleTaskService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -20,16 +20,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Live output streaming for console command tasks (docs/34 gap 2, bounded
- * subset). Reuses the {@link ProcessTool} ledger: the client opens
- * {@code /api/console/ws?id=<task>} and receives JSON frames
- * {@code {"type":"output","id":...,"lines":[...]}} while the task runs and a
- * final {@code {"type":"exit",...}} frame before a normal close. Every line
- * is redacted with the same {@link Redactor} as the REST surface. Interactive
- * PTY ({@code /api/pty}) remains a documented gap and fails closed.
+ * Streams owner-authorized durable console output with reconnect cursors.
+ *
+ * <p>Persistent task/output ledgers, rather than the transient process map,
+ * are the source of truth for replay after a disconnect or application restart.
  */
 @Component
 @Slf4j
@@ -39,28 +35,23 @@ public class ConsoleWebSocketHandler extends TextWebSocketHandler {
     private static final Duration DEFAULT_POLL_INTERVAL = Duration.ofMillis(250);
     private static final Duration MAX_POLL_INTERVAL = Duration.ofSeconds(2);
 
-    private final ProcessTool processTool;
-    private final Redactor redactor;
+    private final ConsoleTaskService taskService;
     private final ObjectMapper objectMapper;
     private final Duration pollInterval;
     private final ExecutorService executor;
 
     @Autowired
-    public ConsoleWebSocketHandler(ProcessTool processTool,
-                                   Redactor redactor,
-                                   ObjectMapper objectMapper) {
-        this(processTool, redactor, objectMapper, DEFAULT_POLL_INTERVAL,
+    public ConsoleWebSocketHandler(ConsoleTaskService taskService, ObjectMapper objectMapper) {
+        this(taskService, objectMapper, DEFAULT_POLL_INTERVAL,
             Executors.newThreadPerTaskExecutor(
                 Thread.ofVirtual().name("console-ws-", 0).factory()));
     }
 
-    ConsoleWebSocketHandler(ProcessTool processTool,
-                            Redactor redactor,
+    ConsoleWebSocketHandler(ConsoleTaskService taskService,
                             ObjectMapper objectMapper,
                             Duration pollInterval,
                             ExecutorService executor) {
-        this.processTool = processTool;
-        this.redactor = redactor;
+        this.taskService = taskService;
         this.objectMapper = objectMapper;
         this.pollInterval = clamp(pollInterval);
         this.executor = executor;
@@ -73,39 +64,41 @@ public class ConsoleWebSocketHandler extends TextWebSocketHandler {
             session.close(CloseStatus.BAD_DATA);
             return;
         }
-        ProcessTool.ManagedProcess managed = processTool.findConsoleProcess(taskId);
-        if (managed == null) {
+        String profile = pathProfile(session);
+        String userId = userId(session);
+        if (taskService.status(profile, userId, taskId).isEmpty()) {
             send(session, errorFrame("unknown_command_task", taskId));
             session.close(CloseStatus.POLICY_VIOLATION);
             return;
         }
-        executor.execute(() -> stream(session, taskId, managed));
+        executor.execute(() -> stream(session, profile, userId, taskId));
     }
 
-    private void stream(WebSocketSession session, String taskId, ProcessTool.ManagedProcess managed) {
-        int sentLines = 0;
+    private void stream(WebSocketSession session, String profile, String userId, String taskId) {
+        long cursor = cursor(session);
         try {
             while (session.isOpen()) {
-                List<String> lines = processTool.recentOutput(managed, MAX_LINES_PER_FRAME);
-                if (lines.size() > sentLines) {
-                    List<String> delta = lines.subList(sentLines, lines.size()).stream()
-                        .map(redactor::redact)
-                        .toList();
-                    sentLines = lines.size();
-                    send(session, frame("output", taskId, delta));
+                var output = taskService.output(profile, userId, taskId, cursor, MAX_LINES_PER_FRAME);
+                if (output.isEmpty()) {
+                    send(session, errorFrame("unknown_command_task", taskId));
+                    closeQuietly(session, CloseStatus.POLICY_VIOLATION);
+                    return;
                 }
-                if (!processTool.isProcessAlive(managed)) {
-                    // Final flush: emit everything produced between the last
-                    // frame and process exit, then the exit frame.
-                    List<String> tail = processTool.recentOutput(managed, MAX_LINES_PER_FRAME);
-                    if (tail.size() > sentLines) {
-                        List<String> delta = tail.subList(sentLines, tail.size()).stream()
-                            .map(redactor::redact)
-                            .toList();
-                        sentLines = tail.size();
-                        send(session, frame("output", taskId, delta));
-                    }
-                    send(session, frame("exit", taskId, null));
+                Map<String, Object> payload = output.get();
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> lines = (List<Map<String, Object>>) payload.get("lines");
+                if (!lines.isEmpty()) {
+                    cursor = ((Number) payload.get("cursor")).longValue();
+                    send(session, frame("output", taskId, lines, cursor));
+                }
+                var task = taskService.status(profile, userId, taskId);
+                if (task.isEmpty()) {
+                    send(session, errorFrame("unknown_command_task", taskId));
+                    closeQuietly(session, CloseStatus.POLICY_VIOLATION);
+                    return;
+                }
+                if (!"running".equals(task.get().getState())) {
+                    send(session, frame("exit", taskId, List.of(), cursor));
                     session.close(CloseStatus.NORMAL);
                     return;
                 }
@@ -134,11 +127,12 @@ public class ConsoleWebSocketHandler extends TextWebSocketHandler {
         return frame;
     }
 
-    private Map<String, Object> frame(String type, String taskId, List<String> lines) {
+    private Map<String, Object> frame(String type, String taskId, List<Map<String, Object>> lines, long cursor) {
         Map<String, Object> frame = new LinkedHashMap<>();
         frame.put("type", type);
         frame.put("id", taskId);
-        if (lines != null) {
+        frame.put("cursor", cursor);
+        if (!lines.isEmpty()) {
             frame.put("lines", lines);
         }
         return frame;
@@ -153,17 +147,45 @@ public class ConsoleWebSocketHandler extends TextWebSocketHandler {
     }
 
     private static String taskId(WebSocketSession session) {
-        URI uri = session.getUri();
-        if (uri == null || uri.getQuery() == null) {
-            return null;
+        return query(session).get("id");
+    }
+
+    private static long cursor(WebSocketSession session) {
+        String raw = query(session).getOrDefault("after", query(session).getOrDefault("cursor", "0"));
+        try {
+            return Math.max(0, Long.parseLong(raw));
+        } catch (NumberFormatException e) {
+            return 0;
         }
-        for (String pair : uri.getQuery().split("&")) {
+    }
+
+    private static Map<String, String> query(WebSocketSession session) {
+        URI uri = session.getUri();
+        Map<String, String> values = new LinkedHashMap<>();
+        if (uri == null || uri.getRawQuery() == null) {
+            return values;
+        }
+        for (String pair : uri.getRawQuery().split("&")) {
             int eq = pair.indexOf('=');
-            if (eq > 0 && "id".equals(pair.substring(0, eq))) {
-                return URLDecoder.decode(pair.substring(eq + 1), StandardCharsets.UTF_8);
+            if (eq > 0) {
+                values.put(URLDecoder.decode(pair.substring(0, eq), StandardCharsets.UTF_8),
+                    URLDecoder.decode(pair.substring(eq + 1), StandardCharsets.UTF_8));
             }
         }
-        return null;
+        return values;
+    }
+
+    private static String pathProfile(WebSocketSession session) {
+        URI uri = session.getUri();
+        String[] segments = uri == null || uri.getPath() == null ? new String[0] : uri.getPath().split("/");
+        return segments.length >= 5 && "p".equals(segments[1]) && "api".equals(segments[3])
+            ? segments[2] : null;
+    }
+
+    private static String userId(WebSocketSession session) {
+        Object userId = session.getAttributes().get(DashboardWebSocketHandshakeInterceptor.USER_ID_ATTRIBUTE);
+        Object role = session.getAttributes().get(DashboardWebSocketHandshakeInterceptor.USER_ROLE_ATTRIBUTE);
+        return UserContext.ROLE_ADMIN.equals(role) ? null : userId instanceof String value ? value : null;
     }
 
     private static Duration clamp(Duration interval) {

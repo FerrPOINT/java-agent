@@ -11,10 +11,15 @@ import org.springframework.web.socket.server.HandshakeInterceptor;
 
 import java.util.Map;
 
+/**
+ * Applies dashboard-origin checks and retains authenticated identity for a WebSocket session.
+ */
 @Component
 @RequiredArgsConstructor
 public class DashboardWebSocketHandshakeInterceptor implements HandshakeInterceptor {
 
+    public static final String USER_ID_ATTRIBUTE = DashboardWebSocketHandshakeInterceptor.class.getName() + ".userId";
+    public static final String USER_ROLE_ATTRIBUTE = DashboardWebSocketHandshakeInterceptor.class.getName() + ".userRole";
     private static final String REJECTION_HEADER = "X-Hermes-WebSocket-Reject";
 
     private final DashboardWebSocketGuard guard;
@@ -29,6 +34,14 @@ public class DashboardWebSocketHandshakeInterceptor implements HandshakeIntercep
             headers.getFirst(HttpHeaders.HOST),
             headers.getFirst(HttpHeaders.ORIGIN));
         if (reason == null) {
+            String userId = com.azhukov.agent.core.security.UserContext.getUserId();
+            String role = com.azhukov.agent.core.security.UserContext.getRole();
+            if (userId != null) {
+                attributes.put(USER_ID_ATTRIBUTE, userId);
+            }
+            if (role != null) {
+                attributes.put(USER_ROLE_ATTRIBUTE, role);
+            }
             return true;
         }
         response.setStatusCode(HttpStatus.FORBIDDEN);

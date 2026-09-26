@@ -42,6 +42,23 @@ class DashboardWebSocketHandshakeInterceptorTest {
         verifyNoInteractions(response);
     }
 
+    @Test
+    void copiesAuthenticatedIdentityIntoWebSocketAttributes() {
+        DashboardWebSocketHandshakeInterceptor interceptor = interceptor("127.0.0.1");
+        ServerHttpRequest request = request("localhost:8090", "http://localhost:8090");
+        java.util.Map<String, Object> attributes = new HashMap<>();
+        com.azhukov.agent.core.security.UserContext.set("user-a", com.azhukov.agent.core.security.UserContext.ROLE_USER);
+        try {
+            assertThat(interceptor.beforeHandshake(request, response(),
+                mock(org.springframework.web.socket.WebSocketHandler.class), attributes)).isTrue();
+            assertThat(attributes).containsEntry(DashboardWebSocketHandshakeInterceptor.USER_ID_ATTRIBUTE, "user-a")
+                .containsEntry(DashboardWebSocketHandshakeInterceptor.USER_ROLE_ATTRIBUTE,
+                    com.azhukov.agent.core.security.UserContext.ROLE_USER);
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+        }
+    }
+
     private static DashboardWebSocketHandshakeInterceptor interceptor(String boundHost) {
         return new DashboardWebSocketHandshakeInterceptor(
             new DashboardWebSocketGuard(new AgentProperties(), boundHost));

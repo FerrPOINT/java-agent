@@ -110,6 +110,71 @@ class ConsoleTaskServiceTest {
     }
 
     @Test
+    void tailerRecordsRealExitStatusAfterFinalOutputDrain() throws Exception {
+        ProcessTool.ManagedProcess managed = org.mockito.Mockito.mock(ProcessTool.ManagedProcess.class);
+        when(processTool.isProcessAlive(managed)).thenReturn(false);
+        when(processTool.exitCode(managed)).thenReturn(17);
+        when(processTool.outputFrom(managed, 0)).thenReturn(List.of("failure detail"));
+        when(taskRepository.findById("t1")).thenReturn(Optional.of(task("t1", "running")));
+        when(outputRepository.findFirstByTaskIdOrderBySequenceDesc("t1")).thenReturn(Optional.empty());
+
+        java.lang.reflect.Method tailer = ConsoleTaskService.class
+            .getDeclaredMethod("tailOutput", String.class, ProcessTool.ManagedProcess.class, java.time.Instant.class);
+        tailer.setAccessible(true);
+        tailer.invoke(service(), "t1", managed, java.time.Instant.now().plusSeconds(60));
+
+        org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(2)).untilAsserted(() -> {
+            verify(processTool).awaitOutputDrain(managed, 3000);
+            verify(processTool).exitCode(managed);
+            verify(taskRepository).finishTask(eq("t1"), eq("failed"), eq(17), any());
+            verify(outputRepository).save(any(ConsoleTaskOutputEntity.class));
+        });
+    }
+
+    @Test
+    void tailerTerminatesAStillRunningProcessAtTheTaskDeadline() throws Exception {
+        ProcessTool.ManagedProcess managed = org.mockito.Mockito.mock(ProcessTool.ManagedProcess.class);
+        when(processTool.isProcessAlive(managed)).thenReturn(true);
+
+        ConsoleTaskService service = service();
+        service.tailOutput("t1", managed, java.time.Instant.now().minusMillis(1));
+
+        org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(2)).untilAsserted(() -> {
+            verify(processTool).killProcess(managed, "console.timeout");
+            verify(taskRepository).finishTask(eq("t1"), eq("timeout"), isNull(), any());
+        });
+    }
+
+    @Test
+    void drainOnlyPersistsNewProcessOutput() throws Exception {
+        ProcessTool.ManagedProcess managed = org.mockito.Mockito.mock(ProcessTool.ManagedProcess.class);
+        when(processTool.outputFrom(managed, 0)).thenReturn(List.of("first", "second"));
+        when(processTool.outputFrom(managed, 2)).thenReturn(List.of("third"));
+        when(taskRepository.findById("t1")).thenReturn(Optional.of(task("t1", "running")));
+        when(outputRepository.findFirstByTaskIdOrderBySequenceDesc("t1")).thenReturn(Optional.empty());
+
+        ConsoleTaskService service = service();
+        service.drainNewOutput("t1", managed, processTool);
+        service.drainNewOutput("t1", managed, processTool);
+
+        verify(processTool).outputFrom(managed, 0);
+        verify(processTool).outputFrom(managed, 2);
+        verify(outputRepository, org.mockito.Mockito.times(3)).save(any(ConsoleTaskOutputEntity.class));
+    }
+
+    @Test
+    void nonOwnerCannotReadOrCancelTask() {
+        ConsoleTaskEntity task = task("t1", "running");
+        task.setUserId("owner");
+        when(taskRepository.findByIdAndProfile("t1", "default")).thenReturn(Optional.of(task));
+
+        assertThat(service().status("default", "other", "t1")).isEmpty();
+        assertThat(service().output("default", "other", "t1", 0, 100)).isEmpty();
+        assertThat(service().cancel("default", "other", "t1")).isFalse();
+        verify(processTool, never()).killProcess(org.mockito.ArgumentMatchers.any(), anyString());
+    }
+
+    @Test
     void cursorReplayNoDuplicatesNoGaps() {
         when(outputRepository.replayAfter(eq("t1"), eq(0L), any(Pageable.class)))
             .thenReturn(List.of(output("t1", 1, "a"), output("t1", 2, "b"), output("t1", 3, "c")));
