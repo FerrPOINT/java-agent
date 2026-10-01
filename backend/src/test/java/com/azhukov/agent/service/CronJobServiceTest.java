@@ -160,6 +160,22 @@ class CronJobServiceTest {
     }
 
     @Test
+    void existsDoesNotConfirmAnotherUsersCronJob() {
+        UUID id = UUID.randomUUID();
+        CronJobEntity foreign = new CronJobEntity();
+        foreign.setId(id);
+        foreign.setUserId("user-b");
+        when(cronJobRepository.findById(id)).thenReturn(java.util.Optional.of(foreign));
+        com.azhukov.agent.core.security.UserContext.set("user-a",
+            com.azhukov.agent.core.security.UserContext.ROLE_USER);
+        try {
+            assertThat(service.exists(id)).isFalse();
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+        }
+    }
+
+    @Test
     void contextFrom_injectsLatestUpstreamOutput() throws Exception {
         UUID upstreamId = UUID.randomUUID();
         CronJobEntity upstream = new CronJobEntity();

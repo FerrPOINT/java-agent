@@ -685,7 +685,7 @@ private static final String CRON_EXECUTION_HINT = """
     }
 
     public boolean exists(UUID id) {
-        return cronJobRepository.existsById(id);
+        return findById(id).isPresent();
     }
 
     public void remove(UUID id) {
