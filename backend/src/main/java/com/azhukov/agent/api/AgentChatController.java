@@ -180,7 +180,10 @@ public class AgentChatController {
 
     @PostMapping("/agent/background")
     public java.util.Map<String, Object> background(@Valid @RequestBody BackgroundRequest request) {
-        // Hermes parity: job model — id + status, result via GET /agent/background/{id}
+        // A session-bound background job inherits that session's access scope.
+        if (request.sessionId() != null && !request.sessionId().isBlank()) {
+            requireSessionOwnership(UUID.fromString(request.sessionId()));
+        }
         java.util.UUID jobId = agentRuntimeService.submitBackgroundJob(
             request.prompt(), request.sessionId(), false);
         return java.util.Map.of("jobId", jobId.toString(), "status", "PENDING");

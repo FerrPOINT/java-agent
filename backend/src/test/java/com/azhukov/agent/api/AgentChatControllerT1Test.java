@@ -314,6 +314,27 @@ class AgentChatControllerT1Test {
     // ── backgroundStatus() ──
 
     @Test
+    void background_rejectsForeignSessionBeforeSubmittingJob() throws Exception {
+        UserContext.set("user-77", UserContext.ROLE_USER);
+        try {
+            when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(sessionOf("owner")));
+
+            String body = objectMapper.writeValueAsString(new BackgroundRequest("do work", SESSION_ID.toString()));
+            mockMvc.perform(post("/api/v1/agent/background")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(body))
+                .andExpect(status().isForbidden());
+
+            verify(agentRuntimeService, never()).submitBackgroundJob(
+                org.mockito.ArgumentMatchers.<String>any(),
+                org.mockito.ArgumentMatchers.<String>any(),
+                org.mockito.ArgumentMatchers.anyBoolean());
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
     void backgroundStatus_found() throws Exception {
         UUID jobId = UUID.randomUUID();
         BackgroundJobEntity entity = new BackgroundJobEntity();
