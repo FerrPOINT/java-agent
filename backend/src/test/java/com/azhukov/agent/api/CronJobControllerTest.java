@@ -152,6 +152,22 @@ class CronJobControllerTest {
     }
 
     @Test
+    void executionsRejectForeignCronJobBeforeReadingLedger() throws Exception {
+        UUID id = UUID.randomUUID();
+        UserContext.set("user-a", UserContext.ROLE_USER);
+        try {
+            when(cronJobService.findById(id)).thenReturn(java.util.Optional.empty());
+
+            mockMvc.perform(get("/api/v1/agent/cron/{id}/executions", id))
+                .andExpect(status().isNotFound());
+
+            verify(cronExecutionLogRepository, org.mockito.Mockito.never()).findByJobIdOrderByStartedAtDesc(id);
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
     void deleteEndpoint() throws Exception {
         UUID id = UUID.randomUUID();
         // unknown id → 404 (REST hygiene; double-delete must not be 200)

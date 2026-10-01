@@ -220,6 +220,10 @@ public class CronJobController {
     // h72: Cron execution ledger — list execution history for a job.
     @GetMapping("/{id}/executions")
     public List<CronExecutionLogDto> listExecutions(@PathVariable UUID id) {
+        if (cronJobService.findById(id).isEmpty()) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.NOT_FOUND, "Cron job not found");
+        }
         return cronJobDtoMapper.toExecutionLogDtoList(cronExecutionLogRepository.findByJobIdOrderByStartedAtDesc(id));
     }
 
