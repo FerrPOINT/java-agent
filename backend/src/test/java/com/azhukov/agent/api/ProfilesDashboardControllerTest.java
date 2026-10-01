@@ -1,6 +1,7 @@
 package com.azhukov.agent.api;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.repository.MessageRepository;
@@ -72,6 +73,11 @@ class ProfilesDashboardControllerTest {
                 messageRepository,
                 command -> {
                 })).build();
+    }
+
+    @org.junit.jupiter.api.AfterEach
+    void clearUserContext() {
+        UserContext.clear();
     }
 
     private MockMvc mockMvcWithTerminalLauncher(ProfilesDashboardController.ProfileTerminalLauncher launcher) {
@@ -239,6 +245,24 @@ class ProfilesDashboardControllerTest {
     }
 
     @Test
+    void scanSessionPullRequestsDoesNotExposeAnotherUsersConversation() throws Exception {
+        UUID sessionId = UUID.nameUUIDFromBytes("foreign-pr-session".getBytes(StandardCharsets.UTF_8));
+        SessionEntity foreign = sessionEntity("private", "default", "cli", 1, BASE_TIME);
+        foreign.setId(sessionId);
+        foreign.setUserId("user-b");
+        when(sessionRepository.findById(sessionId)).thenReturn(java.util.Optional.of(foreign));
+        UserContext.set("user-a", UserContext.ROLE_USER);
+
+        mockMvc.perform(post("/api/profiles/sessions/pull-requests")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"ids\":[\"" + sessionId + "\"]}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.pull_requests").isEmpty());
+
+        verify(messageRepository, never()).findBySessionIdOrderByCreatedAtAsc(sessionId);
+    }
+
+    @Test
     void profileSessionsRejectsOutOfRangeQueryParamsLikeHermes() throws Exception {
         mockMvc.perform(get("/api/profiles/sessions?limit=-1"))
             .andExpect(status().isUnprocessableEntity())
@@ -296,6 +320,23 @@ class ProfilesDashboardControllerTest {
             .andExpect(jsonPath("$.data[1].profile").value("work"))
             .andExpect(jsonPath("$.has_more").value(true))
             .andExpect(jsonPath("$.errors").isArray());
+    }
+
+    @Test
+    void profileSessionsCannotImpersonateAnotherUserThroughQueryParameter() throws Exception {
+        UserContext.set("user-a", UserContext.ROLE_USER);
+        when(sessionRepository.findProfileDashboardPageOrderByRecent(
+                eq("user-a"), isNull(), eq(20), eq(0), eq(false), eq(false), eq(false),
+                isNull(), eq(true), anyList(), eq(true), anyList(), eq(0), eq(false), eq(true)))
+            .thenReturn(List.of());
+
+        mockMvc.perform(get("/api/profiles/sessions").param("user_id", "user-b"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.sessions").isEmpty());
+
+        verify(sessionRepository).findProfileDashboardPageOrderByRecent(
+            eq("user-a"), isNull(), eq(20), eq(0), eq(false), eq(false), eq(false),
+            isNull(), eq(true), anyList(), eq(true), anyList(), eq(0), eq(false), eq(true));
     }
 
     @Test
@@ -420,6 +461,29 @@ class ProfilesDashboardControllerTest {
             .andExpect(jsonPath("$.messaging.total").value(1));
     }
 
+
+    @Test
+    void sidebarSessionsCannotImpersonateAnotherUserThroughQueryParameter() throws Exception {
+        UserContext.set("user-a", UserContext.ROLE_USER);
+        when(sessionRepository.findProfileDashboardPageOrderByRecent(
+                eq("user-a"), isNull(), eq(20), eq(0), eq(false), eq(false), eq(false),
+                isNull(), eq(true), anyList(), eq(true), anyList(), eq(1), eq(false), eq(false)))
+            .thenReturn(List.of());
+        when(sessionRepository.findProfileDashboardPinnedOrderByRecent(
+                eq("user-a"), isNull(), eq(false), eq(false), eq(false),
+                isNull(), eq(true), anyList(), eq(true), anyList(), eq(1), eq(false)))
+            .thenReturn(List.of());
+
+        mockMvc.perform(get("/api/profiles/sessions/sidebar").param("userId", "user-b"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.recents.sessions").isEmpty())
+            .andExpect(jsonPath("$.cron.sessions").isEmpty())
+            .andExpect(jsonPath("$.messaging.sessions").isEmpty());
+
+        verify(sessionRepository).findProfileDashboardPageOrderByRecent(
+            eq("user-a"), isNull(), eq(20), eq(0), eq(false), eq(false), eq(false),
+            isNull(), eq(true), anyList(), eq(true), anyList(), eq(1), eq(false), eq(false));
+    }
 
     @Test
     void profileProjectsTreeGroupsByRepoRootAndCwdWorktrees() throws Exception {
