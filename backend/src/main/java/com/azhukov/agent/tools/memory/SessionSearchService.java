@@ -1,6 +1,7 @@
 package com.azhukov.agent.tools.memory;
 
 import com.azhukov.agent.core.agent.SessionLineageService;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.repository.MessageRepository;
@@ -176,7 +177,7 @@ public class SessionSearchService {
         List<DiscoverResult> results = new ArrayList<>();
 
         // Title match first
-        if (titleMatch != null) {
+        if (isVisibleToCurrentUser(titleMatch)) {
             UUID titleLineage = resolveLineageRoot(titleMatch.getId());
             if (currentLineageRoot == null || !titleLineage.equals(currentLineageRoot)) {
                 seen.put(titleLineage, new DiscoverMatch(titleMatch.getId(), titleMatch.getId(), null, "title"));
@@ -210,6 +211,10 @@ public class SessionSearchService {
         for (MessageEntity msg : sortedMessages) {
             if (seen.size() >= limit) break;
             UUID rawSid = msg.getSessionId();
+            SessionEntity rawSession = rawSid != null ? sessionById.get(rawSid) : null;
+            // Legacy/no-auth callers may search all sessions; authenticated users
+            // must have loaded owner metadata before a message result is exposed.
+            if (UserContext.scopeUserId() != null && !isVisibleToCurrentUser(rawSession)) continue;
             UUID resolvedSid = resolveLineageRoot(rawSid);
 
             if (currentLineageRoot != null && resolvedSid.equals(currentLineageRoot)) {
@@ -229,6 +234,7 @@ public class SessionSearchService {
         // FTS title matches
         for (SessionEntity s : ftsSessions) {
             if (seen.size() >= limit) break;
+            if (!isVisibleToCurrentUser(s)) continue;
             UUID resolvedSid = resolveLineageRoot(s.getId());
             if (currentLineageRoot != null && resolvedSid.equals(currentLineageRoot)) {
                 if (!isSessionLeftLiveContext(s.getId())) continue;
@@ -308,7 +314,7 @@ public class SessionSearchService {
 
     private SearchResult scroll(UUID sessionId, UUID aroundMessageId, int window, UUID currentSessionId) {
         SessionEntity meta = sessionRepository.findById(sessionId).orElse(null);
-        if (meta == null) return SearchResult.error("session_id not found: " + sessionId);
+        if (!isVisibleToCurrentUser(meta)) return SearchResult.error("session_id not found: " + sessionId);
 
         if (currentSessionId != null) {
             UUID anchorLineage = resolveLineageRoot(sessionId);
@@ -341,7 +347,7 @@ public class SessionSearchService {
 
     private SearchResult readSession(UUID sessionId, String linkProfile) {
         SessionEntity meta = sessionRepository.findById(sessionId).orElse(null);
-        if (meta == null) return SearchResult.error("session_id not found: " + sessionId);
+        if (!isVisibleToCurrentUser(meta)) return SearchResult.error("session_id not found: " + sessionId);
 
         List<MessageEntity> rows = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
         // H-SYNC: Limit content per message to prevent oversized tool output.
@@ -375,6 +381,7 @@ public class SessionSearchService {
 
         List<BrowseResult> results = new ArrayList<>();
         for (SessionEntity s : sessions) {
+            if (!isVisibleToCurrentUser(s)) continue;
             if (currentSessionId != null && s.getId().equals(currentSessionId)) continue;
             if (currentRoot != null && s.getId().equals(currentRoot) && isCompressionEnded(s)) continue;
 
@@ -432,6 +439,12 @@ public class SessionSearchService {
     }
 
     // ── Helpers ──
+
+    private boolean isVisibleToCurrentUser(SessionEntity session) {
+        String scopedUserId = UserContext.scopeUserId();
+        return session != null && (scopedUserId == null
+            || Objects.equals(scopedUserId, session.getUserId()));
+    }
 
     private UUID resolveLineageRoot(UUID sessionId) {
         if (sessionId == null) return null;
@@ -648,6 +661,7 @@ public Map<String, Object> webSearch(
         UUID directSessionId = parseUuidOrNull(query.trim());
         if (directSessionId != null) {
             sessionRepository.findById(directSessionId)
+                .filter(this::isVisibleToCurrentUser)
                 .filter(session -> matchesSourceFilters(session, includeSources, explicitExcludeSources))
                 .ifPresent(session -> {
                     webResults.add(buildWebSearchResult(
