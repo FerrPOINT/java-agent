@@ -37,6 +37,7 @@ import com.azhukov.agent.core.tool.ToolCallValidator;
 import com.azhukov.agent.core.tool.ToolExecutionService;
 import com.azhukov.agent.core.tool.ToolRegistry;
 import com.azhukov.agent.core.security.ApprovalQueue;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.security.ToolGuardrails;
 import com.azhukov.agent.core.state.TurnState;
 import com.azhukov.agent.core.state.TurnStateManager;
@@ -295,11 +296,23 @@ public class AgentStreamingService {
 
 
     public SseEmitter streamTurn(ChatRequest request) {
+        requireSessionOwnership(request.sessionId());
         // Hermes parity: the in-process turn has no transport deadline. A fixed
         // 600s SseEmitter cap killed legitimate provider-cooldown retries mid-wait
         // (2026-08-27 21:27:54). 0L disables the container timeout; the client-side
         // idle watchdog (refreshed by keepalive events) governs liveness instead.
         return streamTurn(request, new SseEmitter(request.timeoutMs() != null ? request.timeoutMs() : 0L));
+    }
+
+    private void requireSessionOwnership(UUID sessionId) {
+        if (sessionId == null) return;
+        String scopedUserId = UserContext.scopeUserId();
+        if (scopedUserId == null) return;
+        SessionEntity session = transactionTemplate.execute(status ->
+            sessionRepository.findById(sessionId).orElse(null));
+        if (session != null && !scopedUserId.equals(session.getUserId())) {
+            throw new SecurityException("Session does not belong to the current user");
+        }
     }
 
     /**

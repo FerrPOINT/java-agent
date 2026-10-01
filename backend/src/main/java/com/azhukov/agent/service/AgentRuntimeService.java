@@ -139,6 +139,9 @@ public class AgentRuntimeService {
     }
 
     public ChatResponseDto runTurn(ChatRequest request) {
+        if (request.sessionId() != null) {
+            requireSessionOwnership(request.sessionId());
+        }
         ChatRequest applied = applyCliState(request);
         var resolved = sessionResolver.resolveOrCreate(
             applied.sessionId(), AgentProperties.DEFAULT_USER_ID, properties.getModel().getModelName());

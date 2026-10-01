@@ -195,6 +195,22 @@ class AgentRuntimeServiceTest {
     }
 
     @Test
+    void runTurnRejectsAnotherUsersExistingSessionBeforeResolvingIt() {
+        SessionEntity foreign = newSessionEntity(EXISTING_SESSION_ID, "other-user", "Foreign");
+        when(sessionRepository.findById(EXISTING_SESSION_ID)).thenReturn(Optional.of(foreign));
+        UserContext.set(USER_ID, UserContext.ROLE_USER);
+        try {
+            assertThatThrownBy(() -> agentRuntimeService.runTurn(
+                ChatRequest.simple(EXISTING_SESSION_ID, USER_MESSAGE, null, null)))
+                .isInstanceOf(SecurityException.class)
+                .hasMessageContaining("does not belong");
+            verify(agentRuntime, never()).runTurn(any(Session.class), anyString(), any(), any());
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
     void runDelegateCreatesSessionWithDelegationDepthMetadata() {
         ChatRequest request = ChatRequest.simple(null, USER_MESSAGE, 3, null);
 
