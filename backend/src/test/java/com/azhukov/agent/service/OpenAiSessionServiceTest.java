@@ -7,6 +7,7 @@ import com.azhukov.agent.core.model.ChatResponse;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolCall;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.mapper.MessageMapper;
 import com.azhukov.agent.persistence.repository.MessageRepository;
@@ -74,6 +75,11 @@ class OpenAiSessionServiceTest {
             TransactionCallback<Object> callback = invocation.getArgument(0);
             return callback.doInTransaction(null);
         });
+    }
+
+    @org.junit.jupiter.api.AfterEach
+    void clearUserContext() {
+        UserContext.clear();
     }
 
     @Test
@@ -207,6 +213,21 @@ class OpenAiSessionServiceTest {
 
         assertThat(context.session()).isEqualTo(session);
         assertThat(context.continuationRequested()).isTrue();
+    }
+
+    @Test
+    void uuidContinuationDoesNotExposeAnotherUsersSession() {
+        Session foreign = new Session(SESSION_ID, "user-b", "OpenAI",
+            "openai-compatible", MODEL, null, Map.of(), null);
+        properties.getSecurity().setApiKey("secret");
+        UserContext.set("user-a", UserContext.ROLE_USER);
+        when(sessionResolver.resolveResumeSessionId(SESSION_ID)).thenReturn(SESSION_ID);
+        when(sessionRepository.existsById(SESSION_ID)).thenReturn(true);
+        when(sessionResolver.loadSession(SESSION_ID)).thenReturn(foreign);
+
+        assertThatThrownBy(() -> service.resolve(SESSION_ID.toString(), null, MODEL))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("Session not found: " + SESSION_ID);
     }
 
     @Test
