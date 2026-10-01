@@ -466,6 +466,10 @@ private static final String CRON_EXECUTION_HINT = """
     }
 
     public List<CronJobEntity> list() {
+        String scopedUserId = UserContext.scopeUserId();
+        if (scopedUserId != null) {
+            return cronJobRepository.findByUserId(scopedUserId);
+        }
         // H13: Add deterministic sort to avoid unbounded unordered results.
         return cronJobRepository.findAll(org.springframework.data.domain.Sort.by(
             org.springframework.data.domain.Sort.Direction.DESC, "createdAt"));
