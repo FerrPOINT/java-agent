@@ -533,24 +533,28 @@ public class BackgroundReviewService {
              return "user".equals(target) ? "User profile updated" : "Memory updated";
          }
          if ("skill_manage".equals(call.name())) {
-             com.fasterxml.jackson.databind.JsonNode results = node.path("results");
-             if (!node.path("operations_applied").asBoolean(false) || !results.isArray()) {
-                 return null;
-             }
              java.util.Map<String, String> verbs = java.util.Map.of(
                  "create", "created", "patch", "patched", "edit", "rewritten",
                  "write_file", "written", "remove_file", "removed", "delete", "deleted");
-             StringBuilder sb = new StringBuilder();
-             for (com.fasterxml.jackson.databind.JsonNode r : results) {
-                 if (!r.path("success").asBoolean(false)) continue;
-                 String verb = verbs.get(r.path("action").asText(""));
-                 String name = r.path("name").asText("");
-                 if (verb != null && !name.isEmpty()) {
-                     if (sb.length() > 0) sb.append(" · ");
-                     sb.append("Skill '").append(name).append("' ").append(verb);
+             com.fasterxml.jackson.databind.JsonNode results = node.path("results");
+             if (results.isArray()) {
+                 StringBuilder sb = new StringBuilder();
+                 for (com.fasterxml.jackson.databind.JsonNode r : results) {
+                     if (!r.path("success").asBoolean(false)) continue;
+                     String verb = verbs.get(r.path("action").asText(""));
+                     String name = r.path("name").asText("");
+                     if (verb != null && !name.isEmpty()) {
+                         if (sb.length() > 0) sb.append(" · ");
+                         sb.append("Skill '").append(name).append("' ").append(verb);
+                     }
                  }
+                 return sb.length() > 0 ? sb.toString() : null;
              }
-             return sb.length() > 0 ? sb.toString() : null;
+             String verb = verbs.get(node.path("action").asText(""));
+             String name = node.path("name").asText("");
+             return verb != null && !name.isEmpty()
+                 ? "Skill '" + name + "' " + verb
+                 : null;
          }
          return null;
      } catch (Exception e) {
