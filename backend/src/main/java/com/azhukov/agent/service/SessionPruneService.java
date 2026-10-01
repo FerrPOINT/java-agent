@@ -1,5 +1,6 @@
 package com.azhukov.agent.service;
 
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.repository.SessionRepository;
 import lombok.RequiredArgsConstructor;
@@ -81,9 +82,13 @@ public class SessionPruneService {
             ? request.olderThan()
             : Instant.now().minus(IMPLICIT_CUTOFF);
 
+        String scopedUserId = UserContext.scopeUserId();
         List<SessionEntity> matching = new ArrayList<>();
         List<Map<String, Object>> skippedOpen = new ArrayList<>();
         for (SessionEntity candidate : candidates) {
+            if (scopedUserId != null && !scopedUserId.equals(candidate.getUserId())) {
+                continue;
+            }
             if (!request.includeArchived() && Boolean.TRUE.equals(candidate.getArchived())) {
                 continue;
             }
