@@ -13,6 +13,7 @@ import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.security.ApprovalQueue;
 import com.azhukov.agent.core.security.DefaultRedactor;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.service.ApiRunAdmissionService;
 import com.azhukov.agent.service.AgentRuntimeService;
 import com.azhukov.agent.service.OpenAiResponseStore;
@@ -140,6 +141,11 @@ class OpenAiRunsControllerTest {
             .thenReturn(sessionContext);
         lenient().when(openAiSessionService.resolveRunSession(anyString(), any(), anyString()))
             .thenReturn(sessionContext);
+    }
+
+    @org.junit.jupiter.api.AfterEach
+    void clearUserContext() {
+        UserContext.clear();
     }
 
     @Test
@@ -1175,6 +1181,22 @@ class OpenAiRunsControllerTest {
                 .accept(MediaType.TEXT_EVENT_STREAM))
             .andExpect(status().isNotFound())
             .andExpect(jsonPath("$.error.message").value("Run not found: " + runId))
+            .andExpect(jsonPath("$.error.code").value("run_not_found"));
+    }
+
+    @Test
+    void foreignUserCannotReadOrControlRun() throws Exception {
+        when(agentRuntimeService.runApiTurn(any(Session.class), anyString(), any(ModelRequestOptions.class)))
+            .thenReturn(new ChatResponseDto(SESSION_ID, "done", List.of(), true));
+        String runId = createRun("private");
+        waitForStatus(runId, "completed");
+        UserContext.set("user-2", UserContext.ROLE_USER);
+
+        mockMvc.perform(get("/v1/runs/{runId}", runId))
+            .andExpect(status().isNotFound())
+            .andExpect(jsonPath("$.error.code").value("run_not_found"));
+        mockMvc.perform(post("/v1/runs/{runId}/stop", runId))
+            .andExpect(status().isNotFound())
             .andExpect(jsonPath("$.error.code").value("run_not_found"));
     }
 

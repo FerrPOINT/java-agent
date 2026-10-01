@@ -8,6 +8,7 @@ import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.security.ApiErrorTextRedactor;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.security.Redactor;
 import com.azhukov.agent.service.ApiRunAdmissionService;
 import com.azhukov.agent.service.OpenAiResponseStore;
@@ -153,7 +154,7 @@ public class OpenAiRunsController {
 
     @GetMapping("/{runId}")
     public ResponseEntity<Map<String, Object>> getRun(@PathVariable String runId) {
-        RunRecord run = runService.get(runId);
+        RunRecord run = accessibleRun(runId);
         if (run == null) {
             return openAiError(HttpStatus.NOT_FOUND, "Run not found: " + runId, "invalid_request_error", "run_not_found");
         }
@@ -162,6 +163,9 @@ public class OpenAiRunsController {
 
     @GetMapping(value = "/{runId}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public ResponseEntity<?> runEvents(@PathVariable String runId) {
+        if (accessibleRun(runId) == null) {
+            return openAiError(HttpStatus.NOT_FOUND, "Run not found: " + runId, "invalid_request_error", "run_not_found");
+        }
         SseEmitter emitter = runService.events(runId);
         if (emitter == null) {
             return openAiError(HttpStatus.NOT_FOUND, "Run not found: " + runId, "invalid_request_error", "run_not_found");
@@ -186,7 +190,8 @@ public class OpenAiRunsController {
                 "invalid_request_error", "run_persistence_unavailable");
         }
         var state = stateMachine.state(runId);
-        if (state.isEmpty()) {
+        String scopedUserId = UserContext.scopeUserId();
+        if (state.isEmpty() || (scopedUserId != null && !scopedUserId.equals(state.get().getUserId()))) {
             return openAiError(HttpStatus.NOT_FOUND, "Run not found: " + runId,
                 "invalid_request_error", "run_not_found");
         }
@@ -211,7 +216,7 @@ public class OpenAiRunsController {
     @PostMapping("/{runId}/approval")
     public ResponseEntity<Map<String, Object>> approval(@PathVariable String runId,
                                                         @RequestBody(required = false) String body) {
-        if (runService.get(runId) == null) {
+        if (accessibleRun(runId) == null) {
             return openAiError(HttpStatus.NOT_FOUND, "Run not found: " + runId,
                 "invalid_request_error", "run_not_found");
         }
@@ -234,7 +239,7 @@ public class OpenAiRunsController {
     @PostMapping("/{runId}/steer")
     public ResponseEntity<Map<String, Object>> steer(@PathVariable String runId,
                                                      @RequestBody(required = false) String body) {
-        RunRecord run = runService.get(runId);
+        RunRecord run = accessibleRun(runId);
         if (run == null) {
             return openAiError(HttpStatus.NOT_FOUND, "Run not found: " + runId,
                 "invalid_request_error", "run_not_found");
@@ -262,7 +267,17 @@ public class OpenAiRunsController {
 
     @PostMapping("/{runId}/stop")
     public ResponseEntity<Map<String, Object>> stop(@PathVariable String runId) {
+        if (accessibleRun(runId) == null) {
+            return openAiError(HttpStatus.NOT_FOUND, "Run not found: " + runId,
+                "invalid_request_error", "run_not_found");
+        }
         return controlResponse(runId, runService.stop(runId));
+    }
+
+    private RunRecord accessibleRun(String runId) {
+        RunRecord run = runService.get(runId);
+        String scopedUserId = UserContext.scopeUserId();
+        return run != null && (scopedUserId == null || scopedUserId.equals(run.userId())) ? run : null;
     }
 
     private ResponseEntity<Map<String, Object>> controlResponse(String runId, ControlResult result) {
