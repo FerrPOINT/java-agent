@@ -1,23 +1,23 @@
 package com.azhukov.agent.api;
 
 import com.azhukov.agent.api.dto.ApproveRequest;
-import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.api.dto.BackgroundRequest;
 import com.azhukov.agent.api.dto.ChatRequest;
-import com.azhukov.agent.api.dto.ChatResponseDto;
 import com.azhukov.agent.api.dto.ChatRequestIdentity;
-import com.azhukov.agent.core.security.UserContext;
-import com.azhukov.agent.api.dto.RefineRequest;
+import com.azhukov.agent.api.dto.ChatResponseDto;
 import com.azhukov.agent.api.dto.DenyRequest;
 import com.azhukov.agent.api.dto.DoctorDto;
-import com.azhukov.agent.api.dto.StopRequest;
+import com.azhukov.agent.api.dto.RefineRequest;
 import com.azhukov.agent.api.dto.SteerRequest;
+import com.azhukov.agent.api.dto.StopRequest;
 import com.azhukov.agent.api.dto.TtsRequest;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.agent.InterruptToken;
 import com.azhukov.agent.core.agent.SteerBuffer;
 import com.azhukov.agent.core.memory.MemoryProvider;
+import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.security.ApprovalQueue;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.core.tool.ToolRegistry;
 import com.azhukov.agent.metrics.AgentMetrics;
@@ -221,6 +221,7 @@ public class AgentChatController {
             return Map.of("accepted", false, "reason", "session not found");
         }
         var session = sessionOpt.get();
+        requireSessionOwnership(session.getId());
         List<Message> history = this.messageRepository.findBySessionIdOrderByCreatedAtAsc(session.getId())
             .stream()
             .filter(message -> !Boolean.FALSE.equals(message.getActive()))

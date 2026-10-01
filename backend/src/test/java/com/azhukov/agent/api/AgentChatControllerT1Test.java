@@ -357,6 +357,24 @@ class AgentChatControllerT1Test {
     }
 
     @Test
+    void refine_rejectsForeignSessionBeforeReadingMessages() throws Exception {
+        UserContext.set("user-77", UserContext.ROLE_USER);
+        try {
+            when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(sessionOf("owner")));
+
+            String body = objectMapper.writeValueAsString(new RefineRequest(SESSION_ID, null));
+            mockMvc.perform(post("/api/v1/agent/refine")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(body))
+                .andExpect(status().isForbidden());
+
+            verify(messageRepository, never()).findBySessionIdOrderByCreatedAtAsc(SESSION_ID);
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
     void refine_emptyHistory_returnsNotAccepted() throws Exception {
         SessionEntity session = new SessionEntity();
         session.setId(SESSION_ID);
