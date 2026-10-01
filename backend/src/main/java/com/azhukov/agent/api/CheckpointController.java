@@ -50,7 +50,10 @@ public class CheckpointController {
     @GetMapping("/agent/diff")
     public CheckpointDiffDto checkpointDiff(@RequestParam UUID left, @RequestParam UUID right,
                                             @RequestParam(defaultValue = "context") String scope) {
-        JsonNode node = checkpointManager.diff(left, right, scope);
+        String ownerId = UserContext.scopeUserId();
+        JsonNode node = ownerId == null
+            ? checkpointManager.diff(left, right, scope)
+            : checkpointManager.diff(left, right, scope, ownerId);
         return new CheckpointDiffDto(
             left,
             right,
@@ -66,13 +69,23 @@ public class CheckpointController {
 
     @PostMapping("/agent/checkpoint/{id}/restore")
     public String restoreCheckpoint(@PathVariable UUID id) {
-        checkpointManager.restore(id);
+        String ownerId = UserContext.scopeUserId();
+        if (ownerId == null) {
+            checkpointManager.restore(id);
+        } else {
+            checkpointManager.restore(id, ownerId);
+        }
         return "Checkpoint restored: " + id;
     }
 
     @DeleteMapping("/agent/checkpoint/{id}")
     public void deleteCheckpoint(@PathVariable UUID id) {
-        checkpointManager.remove(id);
+        String ownerId = UserContext.scopeUserId();
+        if (ownerId == null) {
+            checkpointManager.remove(id);
+        } else {
+            checkpointManager.remove(id, ownerId);
+        }
     }
 
     public record CheckpointRequest(String description) {}
