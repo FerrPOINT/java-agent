@@ -378,8 +378,9 @@ public class OpenAiResponsesController {
     }
 
     @GetMapping("/{responseId}")
-    public ResponseEntity<Map<String, Object>> getResponse(@PathVariable String responseId) {
-        StoredResponse stored = responseStore.get(responseId);
+    public ResponseEntity<Map<String, Object>> getResponse(@PathVariable String responseId,
+                                                             @RequestHeader(value = OpenAiSessionService.SESSION_KEY_HEADER, required = false) String sessionKeyHeader) {
+        StoredResponse stored = accessibleStoredResponse(responseId, sessionKeyHeader);
         if (stored == null) {
             return openAiError(HttpStatus.NOT_FOUND, "Response not found: " + responseId, "invalid_request_error");
         }
@@ -387,8 +388,9 @@ public class OpenAiResponsesController {
     }
 
     @DeleteMapping("/{responseId}")
-    public ResponseEntity<Map<String, Object>> deleteResponse(@PathVariable String responseId) {
-        if (!responseStore.delete(responseId)) {
+    public ResponseEntity<Map<String, Object>> deleteResponse(@PathVariable String responseId,
+                                                               @RequestHeader(value = OpenAiSessionService.SESSION_KEY_HEADER, required = false) String sessionKeyHeader) {
+        if (accessibleStoredResponse(responseId, sessionKeyHeader) == null || !responseStore.delete(responseId)) {
             return openAiError(HttpStatus.NOT_FOUND, "Response not found: " + responseId, "invalid_request_error");
         }
         Map<String, Object> body = new LinkedHashMap<>();
@@ -396,6 +398,19 @@ public class OpenAiResponsesController {
         body.put("object", "response");
         body.put("deleted", true);
         return ResponseEntity.ok(body);
+    }
+
+    private StoredResponse accessibleStoredResponse(String responseId, String sessionKeyHeader) {
+        StoredResponse stored = responseStore.get(responseId);
+        if (stored == null || stored.sessionId() == null) {
+            return stored;
+        }
+        try {
+            openAiSessionService.resolveStoredResponseSession(stored.sessionId(), sessionKeyHeader);
+            return stored;
+        } catch (IllegalArgumentException ignored) {
+            return null;
+        }
     }
 
     private OpenAiSessionContext resolveSession(String sessionIdHeader,
