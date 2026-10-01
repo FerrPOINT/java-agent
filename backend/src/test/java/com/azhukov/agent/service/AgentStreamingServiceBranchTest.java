@@ -799,6 +799,35 @@ class AgentStreamingServiceBranchTest {
     }
 
     @Test
+    void streamTurnNewSessionUsesAuthenticatedUserRatherThanRequestUser() throws Exception {
+        UserContext.set("scoped-user", UserContext.ROLE_USER);
+        try {
+            AtomicReference<SessionEntity> created = new AtomicReference<>();
+            when(sessionRepository.save(any(SessionEntity.class))).thenAnswer(invocation -> {
+                SessionEntity entity = invocation.getArgument(0);
+                entity.setId(SESSION_ID);
+                created.compareAndSet(null, entity);
+                return entity;
+            });
+            doAnswer(invocation -> {
+                StreamingResponseHandler handler = invocation.getArgument(3);
+                handler.onComplete();
+                return null;
+            }).when(modelClient).stream(any(), any(), any(), any());
+
+            CollectingEmitter emitter = new CollectingEmitter(30_000L);
+            streamingService.streamTurn(
+                ChatRequest.simple(null, "Hello", null, 10_000L).withUserId("other-user"), emitter);
+            emitter.awaitDone();
+
+            assertThat(created.get()).isNotNull();
+            assertThat(created.get().getUserId()).isEqualTo("scoped-user");
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
     void streamTurnWithNullSessionIdDoesNotApplyCliState() throws Exception {
         ChatRequest request = ChatRequest.simple(null, "Hello", null, 10_000L);
 

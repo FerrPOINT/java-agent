@@ -115,6 +115,15 @@ public record ChatRequest(
             (String) null, (String) null, (String) null, (String) null, (String) null, (String) null);
     }
 
+    public ChatRequest withUserId(String value) {
+        return new ChatRequest(sessionId, message, delegationDepth, timeoutMs,
+            model, provider, baseUrl, apiKey, reasoningEffort, fastMode, voiceMode,
+            personality, enabledTools, disabledTools, queuedPrompt, subgoal,
+            maxCompletionTokens, systemPromptOverride, cdpUrl, goal, value, username,
+            firstName, languageCode, chatType, serviceTier, yoloMode, verboseMode,
+            footerEnabled, chatId, threadId, attachments);
+    }
+
     @Override
     public String toString() {
         return "ChatRequest[" +

@@ -139,33 +139,37 @@ class AgentRuntimeServiceTest {
     @Test
     void runTurnCreatesNewSessionWhenSessionIdIsNull() {
         ChatRequest request = ChatRequest.simple(null, USER_MESSAGE, null, null);
+        UserContext.set("scoped-user", UserContext.ROLE_USER);
+        try {
+            SessionEntity savedEntity = newSessionEntity(SESSION_ID, USER_ID, "New chat");
+            when(sessionRepository.save(any(SessionEntity.class))).thenReturn(savedEntity);
 
-        SessionEntity savedEntity = newSessionEntity(SESSION_ID, USER_ID, "New chat");
-        when(sessionRepository.save(any(SessionEntity.class))).thenReturn(savedEntity);
+            TurnResult result = new TurnResult(
+                List.of(Message.user(USER_MESSAGE), Message.assistant(ASSISTANT_REPLY, 1)),
+                true,
+                null
+            );
+            when(agentRuntime.runTurn(any(Session.class), eq(USER_MESSAGE), eq(List.of()), any())).thenReturn(result);
 
-        TurnResult result = new TurnResult(
-            List.of(Message.user(USER_MESSAGE), Message.assistant(ASSISTANT_REPLY, 1)),
-            true,
-            null
-        );
-        when(agentRuntime.runTurn(any(Session.class), eq(USER_MESSAGE), eq(List.of()), any())).thenReturn(result);
+            ChatResponseDto response = agentRuntimeService.runTurn(request);
 
-        ChatResponseDto response = agentRuntimeService.runTurn(request);
+            assertThat(response.sessionId()).isEqualTo(SESSION_ID);
+            assertThat(response.content()).isEqualTo(ASSISTANT_REPLY);
+            assertThat(response.completed()).isTrue();
 
-        assertThat(response.sessionId()).isEqualTo(SESSION_ID);
-        assertThat(response.content()).isEqualTo(ASSISTANT_REPLY);
-        assertThat(response.completed()).isTrue();
+            ArgumentCaptor<SessionEntity> sessionCaptor = ArgumentCaptor.forClass(SessionEntity.class);
+            verify(sessionRepository).save(sessionCaptor.capture());
+            SessionEntity created = sessionCaptor.getValue();
+            assertThat(created.getUserId()).isEqualTo("scoped-user");
+            assertThat(created.getModelProvider()).isEqualTo(MODEL_PROVIDER);
+            assertThat(created.getModelName()).isEqualTo(MODEL_NAME);
+            assertThat(created.getTitle()).isEqualTo("New chat");
 
-        ArgumentCaptor<SessionEntity> sessionCaptor = ArgumentCaptor.forClass(SessionEntity.class);
-        verify(sessionRepository).save(sessionCaptor.capture());
-        SessionEntity created = sessionCaptor.getValue();
-        assertThat(created.getUserId()).isEqualTo(USER_ID);
-        assertThat(created.getModelProvider()).isEqualTo(MODEL_PROVIDER);
-        assertThat(created.getModelName()).isEqualTo(MODEL_NAME);
-        assertThat(created.getTitle()).isEqualTo("New chat");
-
-        verify(agentRuntime).runTurn(any(Session.class), eq(USER_MESSAGE), eq(List.of()), any());
-        verify(sessionTitleService).maybeUpdateTitle(SESSION_ID, result.messages(), true);
+            verify(agentRuntime).runTurn(any(Session.class), eq(USER_MESSAGE), eq(List.of()), any());
+            verify(sessionTitleService).maybeUpdateTitle(SESSION_ID, result.messages(), true);
+        } finally {
+            UserContext.clear();
+        }
     }
 
     @Test
