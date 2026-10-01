@@ -2,6 +2,7 @@ package com.azhukov.agent.core.agent;
 
 import com.azhukov.agent.api.dto.AttachmentRef;
 import com.azhukov.agent.api.dto.ChatRequest;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.service.AttachmentArtifactService;
 import org.springframework.beans.factory.ObjectProvider;
@@ -160,14 +161,18 @@ public class CliStateApplier {
             if (ref == null || !ref.valid()) {
                 continue;
             }
-            AttachmentArtifactService.AttachmentArtifact artifact =
-                service != null ? service.find(ref.artifactId()).orElse(null) : null;
+            String ownerId = UserContext.scopeUserId();
+            AttachmentArtifactService.AttachmentArtifact artifact = service == null ? null
+                : (ownerId == null ? service.find(ref.artifactId())
+                    : service.find(ref.artifactId(), ownerId)).orElse(null);
             if (artifact == null) {
                 sb.append("[unavailable: ").append(ref.artifactId()).append("]\n");
                 appended++;
                 continue;
             }
-            java.util.Optional<Path> content = service.contentPath(ref.artifactId());
+            java.util.Optional<Path> content = ownerId == null
+                ? service.contentPath(ref.artifactId())
+                : service.contentPath(ref.artifactId(), ownerId);
             String preview = content
                 .map(this::boundedTextPreview)
                 .filter(t -> t != null && !t.isBlank())
