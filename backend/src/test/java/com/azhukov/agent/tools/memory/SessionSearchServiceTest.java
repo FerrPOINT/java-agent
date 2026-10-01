@@ -480,6 +480,34 @@ class SessionSearchServiceTest {
     }
 
     @Test
+    void discovery_doesNotExposeAnotherUsersMessages() {
+        UUID sessionId = UUID.randomUUID();
+        SessionEntity foreign = newSessionEntity(sessionId, "Private", "cli");
+        foreign.setUserId("user-b");
+        MessageEntity match = newMessageEntity(sessionId, "user", "private needle", 0);
+        when(messageRepository.searchByContentFtsExcludingSources(eq("needle"), any()))
+            .thenReturn(List.of(match));
+        when(sessionRepository.searchByTitleFtsExcludingSources(eq("needle"), any()))
+            .thenReturn(Collections.emptyList());
+        when(sessionRepository.findByTitleIgnoreCase("needle")).thenReturn(null);
+        when(sessionRepository.findAllById(any())).thenReturn(List.of(foreign));
+        com.azhukov.agent.core.security.UserContext.set("user-a",
+            com.azhukov.agent.core.security.UserContext.ROLE_USER);
+        try {
+            SessionSearchService.SearchResult result = service.search(
+                "needle", null, null, null, null, null, null, null, null, null
+            );
+
+            assertThat(result.success).isTrue();
+            assertThat(result.discoverResults).isEmpty();
+            org.mockito.Mockito.verify(messageRepository, org.mockito.Mockito.never())
+                .findById(match.getId());
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+        }
+    }
+
+    @Test
     void discovery_ftsFails_fallsBackToLikeSearch() {
         UUID sessionId = UUID.randomUUID();
         SessionEntity session = newSessionEntity(sessionId, "Session", "cli");

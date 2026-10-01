@@ -83,6 +83,25 @@ class SessionSearchServiceWebSearchTest {
     }
 
     @Test
+    void directUuidQueryDoesNotExposeAnotherUsersSession() {
+        SessionEntity foreign = session("private", "telegram");
+        foreign.setUserId("user-b");
+        when(sessionRepository.findById(foreign.getId())).thenReturn(Optional.of(foreign));
+        lenient().when(messageRepository.searchByContentFtsExcludingSources(anyString(), any()))
+            .thenReturn(List.of());
+        com.azhukov.agent.core.security.UserContext.set("user-a",
+            com.azhukov.agent.core.security.UserContext.ROLE_USER);
+        try {
+            Map<String, Object> out = service.webSearch(
+                foreign.getId().toString(), 5, null, null, null, null);
+
+            assertThat(out.get("results")).isEqualTo(List.of());
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+        }
+    }
+
+    @Test
     void parseIncludeSourcesPrefersSingleThenCsv() {
         assertThat(service.parseIncludeSources("cli", null)).containsExactly("cli");
         assertThat(service.parseIncludeSources(null, "cli, telegram ,")).containsExactly("cli", "telegram");
