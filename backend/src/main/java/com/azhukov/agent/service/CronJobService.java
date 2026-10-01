@@ -480,6 +480,8 @@ private static final String CRON_EXECUTION_HINT = """
      * admin/global access (all jobs); non-null = only that user's jobs.
      */
     public List<CronJobEntity> list(String userId) {
+        String scopedUserId = UserContext.scopeUserId();
+        if (scopedUserId != null) return cronJobRepository.findByUserId(scopedUserId);
         if (userId == null) return list();
         return cronJobRepository.findByUserId(userId);
     }
@@ -499,6 +501,13 @@ private static final String CRON_EXECUTION_HINT = """
         org.springframework.data.domain.Sort sort = org.springframework.data.domain.Sort.by(
             org.springframework.data.domain.Sort.Direction.DESC, "createdAt");
         String normalizedProfile = normalizeProfileForStorage(profile);
+        String scopedUserId = UserContext.scopeUserId();
+        if (scopedUserId != null) {
+            return cronJobRepository.findByUserId(scopedUserId).stream()
+                .filter(entity -> normalizedProfile.equals(jobProfile(entity)))
+                .filter(entity -> includeDisabled || entity.isEnabled())
+                .toList();
+        }
         return includeDisabled
             ? cronJobRepository.findByProfile(normalizedProfile, sort)
             : cronJobRepository.findByProfileAndEnabledTrue(normalizedProfile, sort);
@@ -729,20 +738,22 @@ private static final String CRON_EXECUTION_HINT = """
     }
 
     public Optional<CronJobEntity> findByName(String name) {
-        return cronJobRepository.findByName(name);
+        return cronJobRepository.findByName(name).filter(this::isVisibleToCurrentUser);
     }
 
     public Optional<CronJobEntity> findByName(String name, String profile) {
-        return cronJobRepository.findByNameAndProfile(name, normalizeProfileForStorage(profile));
+        return cronJobRepository.findByNameAndProfile(name, normalizeProfileForStorage(profile))
+            .filter(this::isVisibleToCurrentUser);
     }
 
     public Optional<CronJobEntity> findById(UUID id) {
-        return cronJobRepository.findById(id);
+        return cronJobRepository.findById(id).filter(this::isVisibleToCurrentUser);
     }
 
     public Optional<CronJobEntity> findById(UUID id, String profile) {
         String normalizedProfile = normalizeProfileForStorage(profile);
         return cronJobRepository.findById(id)
+            .filter(this::isVisibleToCurrentUser)
             .filter(entity -> normalizedProfile.equals(jobProfile(entity)));
     }
 
@@ -2500,6 +2511,11 @@ private static final String CRON_EXECUTION_HINT = """
         } catch (Exception e) {
             throw new IllegalArgumentException("Invalid cron expression: " + schedule + " — " + e.getMessage());
         }
+    }
+
+    private boolean isVisibleToCurrentUser(CronJobEntity entity) {
+        String scoped = UserContext.scopeUserId();
+        return entity != null && (scoped == null || Objects.equals(scoped, entity.getUserId()));
     }
 
     private void requireOwnership(CronJobEntity entity) {

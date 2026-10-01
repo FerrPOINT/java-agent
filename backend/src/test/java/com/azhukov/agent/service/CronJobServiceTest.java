@@ -98,6 +98,68 @@ class CronJobServiceTest {
     }
 
     @Test
+    void profileListingDoesNotExposeAnotherUsersCronJobs() {
+        CronJobEntity foreign = new CronJobEntity();
+        foreign.setUserId("user-b");
+        foreign.setProfile("work");
+        foreign.setEnabled(true);
+        when(cronJobRepository.findByUserId("user-a")).thenReturn(List.of());
+        com.azhukov.agent.core.security.UserContext.set("user-a",
+            com.azhukov.agent.core.security.UserContext.ROLE_USER);
+        try {
+            assertThat(service.listForProfile("work", true)).isEmpty();
+            verify(cronJobRepository).findByUserId("user-a");
+            verify(cronJobRepository, never()).findByProfile(any(), any());
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+        }
+    }
+
+    @Test
+    void requestedUserIdCannotOverrideCurrentUserScope() {
+        when(cronJobRepository.findByUserId("user-a")).thenReturn(List.of());
+        com.azhukov.agent.core.security.UserContext.set("user-a",
+            com.azhukov.agent.core.security.UserContext.ROLE_USER);
+        try {
+            assertThat(service.list("user-b")).isEmpty();
+            verify(cronJobRepository).findByUserId("user-a");
+            verify(cronJobRepository, never()).findByUserId("user-b");
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+        }
+    }
+
+    @Test
+    void findByIdDoesNotExposeAnotherUsersCronJob() {
+        UUID id = UUID.randomUUID();
+        CronJobEntity foreign = new CronJobEntity();
+        foreign.setId(id);
+        foreign.setUserId("user-b");
+        when(cronJobRepository.findById(id)).thenReturn(java.util.Optional.of(foreign));
+        com.azhukov.agent.core.security.UserContext.set("user-a",
+            com.azhukov.agent.core.security.UserContext.ROLE_USER);
+        try {
+            assertThat(service.findById(id)).isEmpty();
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+        }
+    }
+
+    @Test
+    void findByNameDoesNotExposeAnotherUsersCronJob() {
+        CronJobEntity foreign = new CronJobEntity();
+        foreign.setUserId("user-b");
+        when(cronJobRepository.findByName("private")).thenReturn(java.util.Optional.of(foreign));
+        com.azhukov.agent.core.security.UserContext.set("user-a",
+            com.azhukov.agent.core.security.UserContext.ROLE_USER);
+        try {
+            assertThat(service.findByName("private")).isEmpty();
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+        }
+    }
+
+    @Test
     void contextFrom_injectsLatestUpstreamOutput() throws Exception {
         UUID upstreamId = UUID.randomUUID();
         CronJobEntity upstream = new CronJobEntity();
