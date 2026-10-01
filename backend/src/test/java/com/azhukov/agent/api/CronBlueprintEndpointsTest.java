@@ -30,6 +30,7 @@ class CronBlueprintEndpointsTest {
             Mockito.mock(CronSuggestionService.class),
             Mockito.mock(HeartbeatService.class),
             Mockito.mock(com.azhukov.agent.persistence.repository.CronExecutionLogRepository.class),
+            Mockito.mock(com.azhukov.agent.persistence.repository.SessionRepository.class),
             org.mapstruct.factory.Mappers.getMapper(com.azhukov.agent.api.mapper.CronJobDtoMapper.class),
             new CronBlueprintService());
     }
