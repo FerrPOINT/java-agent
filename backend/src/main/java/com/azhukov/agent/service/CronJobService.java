@@ -485,6 +485,11 @@ private static final String CRON_EXECUTION_HINT = """
     }
 
     public List<CronJobEntity> list(boolean includeDisabled) {
+        String scopedUserId = UserContext.scopeUserId();
+        if (scopedUserId != null) {
+            List<CronJobEntity> owned = cronJobRepository.findByUserId(scopedUserId);
+            return includeDisabled ? owned : owned.stream().filter(CronJobEntity::isEnabled).toList();
+        }
         org.springframework.data.domain.Sort sort = org.springframework.data.domain.Sort.by(
             org.springframework.data.domain.Sort.Direction.DESC, "createdAt");
         return includeDisabled ? cronJobRepository.findAll(sort) : cronJobRepository.findByEnabledTrue(sort);

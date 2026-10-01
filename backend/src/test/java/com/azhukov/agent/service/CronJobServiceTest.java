@@ -84,6 +84,20 @@ class CronJobServiceTest {
     }
 
     @Test
+    void listIncludingDisabledDoesNotExposeAnotherUsersCronJobs() {
+        when(cronJobRepository.findByUserId("user-a")).thenReturn(List.of());
+        com.azhukov.agent.core.security.UserContext.set("user-a",
+            com.azhukov.agent.core.security.UserContext.ROLE_USER);
+        try {
+            assertThat(service.list(true)).isEmpty();
+            verify(cronJobRepository).findByUserId("user-a");
+            verify(cronJobRepository, never()).findAll(any(org.springframework.data.domain.Sort.class));
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+        }
+    }
+
+    @Test
     void contextFrom_injectsLatestUpstreamOutput() throws Exception {
         UUID upstreamId = UUID.randomUUID();
         CronJobEntity upstream = new CronJobEntity();
