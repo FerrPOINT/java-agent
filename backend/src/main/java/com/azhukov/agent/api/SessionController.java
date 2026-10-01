@@ -229,6 +229,7 @@ public class SessionController {
     @Operation(summary = "Get the current plan (todo list) for a session")
     @GetMapping("/agent/session/{sessionId}/plan")
     public Map<String, Object> getPlan(@PathVariable UUID sessionId) {
+        agentRuntimeService.requireSessionOwnership(sessionId);
         List<TodoDto> todos = todoService.listBySessionId(sessionId);
         return Map.of(
             "session_id", sessionId.toString(),

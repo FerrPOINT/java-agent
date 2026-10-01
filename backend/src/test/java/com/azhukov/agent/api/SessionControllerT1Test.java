@@ -609,6 +609,17 @@ class SessionControllerT1Test {
     }
 
     @Test
+    void getPlan_rejectsForeignSessionBeforeLoadingTodos() throws Exception {
+        doThrow(new SecurityException("Session does not belong to the current user"))
+            .when(agentRuntimeService).requireSessionOwnership(SESSION_ID);
+
+        mockMvc.perform(get("/api/v1/agent/session/{sessionId}/plan", SESSION_ID))
+            .andExpect(status().isForbidden());
+
+        verify(todoService, never()).listBySessionId(SESSION_ID);
+    }
+
+    @Test
     void getPlan_emptyList() throws Exception {
         when(todoService.listBySessionId(SESSION_ID)).thenReturn(List.of());
 
