@@ -1,6 +1,7 @@
 package com.azhukov.agent.api;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.core.tool.ToolRegistry;
 import com.azhukov.agent.service.ProfileService;
@@ -208,6 +209,12 @@ public class ToolsetsController {
     private final ToolRegistry toolRegistry;
     private final AgentProperties properties;
     private final ProfileService profileService;
+
+    private void requireAdminToolsetConfigurationAccess() {
+        if (UserContext.getUserId() != null && !UserContext.isAdmin()) {
+            throw new SecurityException("Toolset configuration is available to administrators only");
+        }
+    }
     private final org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.service.ProfileEnvStore> envStoreProvider;
 
     @Autowired
@@ -428,6 +435,7 @@ public class ToolsetsController {
         @PathVariable String toolset,
         @RequestParam(name = "profile", required = false) String queryProfile
     ) {
+        requireAdminToolsetConfigurationAccess();
         return toggle(pathProfile, queryProfile, toolset, true);
     }
 
@@ -437,6 +445,7 @@ public class ToolsetsController {
         @PathVariable String toolset,
         @RequestParam(name = "profile", required = false) String queryProfile
     ) {
+        requireAdminToolsetConfigurationAccess();
         return toggle(pathProfile, queryProfile, toolset, false);
     }
 
@@ -447,6 +456,7 @@ public class ToolsetsController {
         @RequestBody(required = false) ToolsetToggleBody body,
         @RequestParam(name = "profile", required = false) String queryProfile
     ) {
+        requireAdminToolsetConfigurationAccess();
         if (body == null || body.enabled() == null) {
             return ResponseEntity.badRequest().body(Map.of("detail", "enabled is required"));
         }
@@ -483,6 +493,7 @@ public class ToolsetsController {
         @RequestBody(required = false) ToolsetModelBody body,
         @RequestParam(name = "profile", required = false) String queryProfile
     ) {
+        requireAdminToolsetConfigurationAccess();
         if (body == null || !hasText(body.model())) {
             return ResponseEntity.badRequest().body(Map.of("detail", "model is required"));
         }
@@ -501,6 +512,7 @@ public class ToolsetsController {
         @RequestBody(required = false) ToolsetProviderBody body,
         @RequestParam(name = "profile", required = false) String queryProfile
     ) {
+        requireAdminToolsetConfigurationAccess();
         if (!isKnownConfigurableToolset(toolset)) {
             return ResponseEntity.badRequest().body(Map.of("detail", "Unknown toolset: " + toolset));
         }
@@ -567,6 +579,7 @@ public class ToolsetsController {
         @RequestBody(required = false) Map<String, Object> body,
         @RequestParam(name = "profile", required = false) String queryProfile
     ) {
+        requireAdminToolsetConfigurationAccess();
         ProfileResolution profile = resolveProfileScope(pathProfile, queryProfile, stringValue(body != null ? body.get("profile") : null));
         if (profile.error() != null) {
             return profile.error();
@@ -616,6 +629,7 @@ public class ToolsetsController {
         @RequestBody(required = false) ToolsetPostSetupBody body,
         @RequestParam(name = "profile", required = false) String queryProfile
     ) {
+        requireAdminToolsetConfigurationAccess();
         ProfileResolution profile = resolveProfileScope(pathProfile, queryProfile, body != null ? body.profile() : null);
         if (profile.error() != null) {
             return profile.error();
@@ -660,6 +674,7 @@ public class ToolsetsController {
         @RequestBody(required = false) TerminalBackendBody body,
         @RequestParam(name = "profile", required = false) String queryProfile
     ) {
+        requireAdminToolsetConfigurationAccess();
         ProfileResolution profile = resolveProfileScope(pathProfile, queryProfile, body != null ? body.profile() : null);
         if (profile.error() != null) {
             return profile.error();
@@ -709,6 +724,7 @@ public class ToolsetsController {
         @PathVariable(name = "profile", required = false) String pathProfile,
         @RequestParam(name = "profile", required = false) String queryProfile
     ) {
+        requireAdminToolsetConfigurationAccess();
         ProfileResolution profile = resolveProfileScope(pathProfile, queryProfile, null);
         if (profile.error() != null) {
             return profile.error();
