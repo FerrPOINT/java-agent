@@ -26,6 +26,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -223,6 +224,17 @@ class SessionCrudControllerTest {
 
         mockMvc.perform(get("/api/v2/sessions/{sessionId}/messages", SESSION_ID))
             .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void sessionModelLockRejectsForeignSessionBeforePersisting() throws Exception {
+        doThrow(new SecurityException("Session does not belong to the current user"))
+            .when(agentRuntimeService).switchModel(SESSION_ID, "gpt-4", "openai");
+
+        mockMvc.perform(post("/api/v2/sessions/{sessionId}/model", SESSION_ID)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"model\":\"gpt-4\",\"provider\":\"openai\"}"))
+            .andExpect(status().isForbidden());
     }
 
     // ── Session-scoped chat (synchronous) ──

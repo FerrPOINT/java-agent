@@ -268,6 +268,8 @@ public class SessionCrudController {
                 "provider", providerObj != null ? providerObj.toString() : ""));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.notFound().build();
+        } catch (SecurityException e) {
+            throw e;
         } catch (Exception e) {
             return ResponseEntity.internalServerError().body(Map.of(
                 "error", Map.of("message", "Could not persist the requested session model lock",
