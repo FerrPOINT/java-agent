@@ -1098,6 +1098,24 @@ class OpenAiResponsesControllerTest {
     }
 
     @Test
+    void getStoredResponseHidesForeignSession() throws Exception {
+        when(agentRuntime.run(anyList(), anyList(), any(ModelRequestOptions.class)))
+            .thenReturn(ChatResponse.text("private"));
+        MvcResult created = mockMvc.perform(post("/v1/responses")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"input\":\"private\"}"))
+            .andExpect(status().isOk())
+            .andReturn();
+        String responseId = objectMapper.readTree(created.getResponse().getContentAsString()).get("id").asText();
+        when(openAiSessionService.resolveStoredResponseSession(SESSION_ID, null))
+            .thenThrow(new IllegalArgumentException("Session not found: " + SESSION_ID));
+
+        mockMvc.perform(get("/v1/responses/{responseId}", responseId))
+            .andExpect(status().isNotFound())
+            .andExpect(jsonPath("$.error.message").value("Response not found: " + responseId));
+    }
+
+    @Test
     void getAndDeleteStoredResponseRoundTrip() throws Exception {
         when(agentRuntime.run(anyList(), anyList(), any(ModelRequestOptions.class)))
             .thenReturn(ChatResponse.text("stored"));

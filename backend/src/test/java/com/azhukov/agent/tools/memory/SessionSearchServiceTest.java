@@ -124,6 +124,26 @@ class SessionSearchServiceTest {
         assertThat(result.browseResults.get(0).link()).isEqualTo("@session:work/" + s1);
     }
 
+    @Test
+    void browse_doesNotExposeAnotherUsersSessions() {
+        UUID foreignId = UUID.randomUUID();
+        SessionEntity foreign = newSessionEntity(foreignId, "Private", "cli");
+        foreign.setUserId("user-b");
+        when(sessionRepository.listRecentExcludingSources(any(), any())).thenReturn(List.of(foreign));
+        com.azhukov.agent.core.security.UserContext.set("user-a",
+            com.azhukov.agent.core.security.UserContext.ROLE_USER);
+        try {
+            SessionSearchService.SearchResult result = service.search(
+                null, null, null, null, null, null, null, null, null, null
+            );
+
+            assertThat(result.success).isTrue();
+            assertThat(result.browseResults).isEmpty();
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+        }
+    }
+
     // ── READ mode (session_id only) ──
 
     @Test
@@ -166,6 +186,28 @@ class SessionSearchServiceTest {
         assertThat(result.success).isFalse();
         assertThat(result.error).contains("session_id not found");
         assertThat(result.error).contains(sessionId.toString());
+    }
+
+    @Test
+    void read_doesNotExposeAnotherUsersSession() {
+        UUID sessionId = UUID.randomUUID();
+        SessionEntity foreign = newSessionEntity(sessionId, "Private", "cli");
+        foreign.setUserId("user-b");
+        when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(foreign));
+        com.azhukov.agent.core.security.UserContext.set("user-a",
+            com.azhukov.agent.core.security.UserContext.ROLE_USER);
+        try {
+            SessionSearchService.SearchResult result = service.search(
+                null, null, null, sessionId.toString(), null, null, null, null, null, null
+            );
+
+            assertThat(result.success).isFalse();
+            assertThat(result.error).contains("session_id not found");
+            org.mockito.Mockito.verify(messageRepository, org.mockito.Mockito.never())
+                .findBySessionIdOrderByCreatedAtAsc(sessionId);
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+        }
     }
 
     @Test
@@ -263,6 +305,29 @@ class SessionSearchServiceTest {
 
         assertThat(result.success).isFalse();
         assertThat(result.error).contains("session_id not found");
+    }
+
+    @Test
+    void scroll_doesNotExposeAnotherUsersSession() {
+        UUID sessionId = UUID.randomUUID();
+        SessionEntity foreign = newSessionEntity(sessionId, "Private", "cli");
+        foreign.setUserId("user-b");
+        when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(foreign));
+        com.azhukov.agent.core.security.UserContext.set("user-a",
+            com.azhukov.agent.core.security.UserContext.ROLE_USER);
+        try {
+            SessionSearchService.SearchResult result = service.search(
+                null, null, null, sessionId.toString(), UUID.randomUUID().toString(), 5,
+                null, null, null, null
+            );
+
+            assertThat(result.success).isFalse();
+            assertThat(result.error).contains("session_id not found");
+            org.mockito.Mockito.verify(messageRepository, org.mockito.Mockito.never())
+                .findBySessionIdOrderByCreatedAtAsc(sessionId);
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+        }
     }
 
     @Test
@@ -412,6 +477,34 @@ class SessionSearchServiceTest {
         assertThat(result.success).isTrue();
         assertThat(result.mode).isEqualTo("discover");
         assertThat(result.discoverResults).isEmpty();
+    }
+
+    @Test
+    void discovery_doesNotExposeAnotherUsersMessages() {
+        UUID sessionId = UUID.randomUUID();
+        SessionEntity foreign = newSessionEntity(sessionId, "Private", "cli");
+        foreign.setUserId("user-b");
+        MessageEntity match = newMessageEntity(sessionId, "user", "private needle", 0);
+        when(messageRepository.searchByContentFtsExcludingSources(eq("needle"), any()))
+            .thenReturn(List.of(match));
+        when(sessionRepository.searchByTitleFtsExcludingSources(eq("needle"), any()))
+            .thenReturn(Collections.emptyList());
+        when(sessionRepository.findByTitleIgnoreCase("needle")).thenReturn(null);
+        when(sessionRepository.findAllById(any())).thenReturn(List.of(foreign));
+        com.azhukov.agent.core.security.UserContext.set("user-a",
+            com.azhukov.agent.core.security.UserContext.ROLE_USER);
+        try {
+            SessionSearchService.SearchResult result = service.search(
+                "needle", null, null, null, null, null, null, null, null, null
+            );
+
+            assertThat(result.success).isTrue();
+            assertThat(result.discoverResults).isEmpty();
+            org.mockito.Mockito.verify(messageRepository, org.mockito.Mockito.never())
+                .findById(match.getId());
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+        }
     }
 
     @Test

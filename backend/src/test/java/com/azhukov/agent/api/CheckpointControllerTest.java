@@ -2,6 +2,7 @@ package com.azhukov.agent.api;
 
 import com.azhukov.agent.api.dto.CheckpointDto;
 import com.azhukov.agent.api.mapper.CheckpointDtoMapper;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.persistence.entity.CheckpointEntity;
 import com.azhukov.agent.service.CheckpointManager;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -52,6 +53,11 @@ class CheckpointControllerTest {
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler(new com.fasterxml.jackson.databind.ObjectMapper()))
             .build();
+    }
+
+    @org.junit.jupiter.api.AfterEach
+    void clearUserContext() {
+        UserContext.clear();
     }
 
     @Test
@@ -160,6 +166,49 @@ class CheckpointControllerTest {
         mockMvc.perform(post("/api/v1/agent/checkpoint/{id}/restore", CHECKPOINT_ID))
             .andExpect(status().isOk())
             .andExpect(content().string("Checkpoint restored: " + CHECKPOINT_ID));
+    }
+
+    @Test
+    void restoreCheckpointScopesLookupToCurrentUser() throws Exception {
+        UserContext.set("user-a", UserContext.ROLE_USER);
+        doNothing().when(checkpointManager).restore(CHECKPOINT_ID, "user-a");
+
+        mockMvc.perform(post("/api/v1/agent/checkpoint/{id}/restore", CHECKPOINT_ID))
+            .andExpect(status().isOk());
+
+        verify(checkpointManager).restore(CHECKPOINT_ID, "user-a");
+        verify(checkpointManager, never()).restore(CHECKPOINT_ID);
+    }
+
+    @Test
+    void deleteCheckpointScopesLookupToCurrentUser() throws Exception {
+        UserContext.set("user-a", UserContext.ROLE_USER);
+        doNothing().when(checkpointManager).remove(CHECKPOINT_ID, "user-a");
+
+        mockMvc.perform(delete("/api/v1/agent/checkpoint/{id}", CHECKPOINT_ID))
+            .andExpect(status().isOk());
+
+        verify(checkpointManager).remove(CHECKPOINT_ID, "user-a");
+        verify(checkpointManager, never()).remove(CHECKPOINT_ID);
+    }
+
+    @Test
+    void diffScopesBothCheckpointsToCurrentUser() throws Exception {
+        ObjectNode diffNode = objectMapper.createObjectNode();
+        diffNode.set("changed", objectMapper.createArrayNode());
+        diffNode.set("added", objectMapper.createArrayNode());
+        diffNode.set("removed", objectMapper.createArrayNode());
+        UserContext.set("user-a", UserContext.ROLE_USER);
+        when(checkpointManager.diff(CHECKPOINT_ID, CHECKPOINT_ID_2, "context", "user-a"))
+            .thenReturn(diffNode);
+
+        mockMvc.perform(get("/api/v1/agent/diff")
+                .param("left", CHECKPOINT_ID.toString())
+                .param("right", CHECKPOINT_ID_2.toString()))
+            .andExpect(status().isOk());
+
+        verify(checkpointManager).diff(CHECKPOINT_ID, CHECKPOINT_ID_2, "context", "user-a");
+        verify(checkpointManager, never()).diff(CHECKPOINT_ID, CHECKPOINT_ID_2, "context");
     }
 
     @Test

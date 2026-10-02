@@ -60,7 +60,8 @@ public class SessionQueryService {
     public Map<String, Object> listSessions(int limit, int offset, String userId) {
         int cappedLimit = Math.min(Math.max(limit, 1), 200);
         int cappedOffset = Math.max(offset, 0);
-        String effectiveUserId = userId != null ? userId : AgentProperties.DEFAULT_USER_ID;
+        String effectiveUserId = UserContext.effectiveUserId(
+            userId != null ? userId : AgentProperties.DEFAULT_USER_ID);
 
         Page<SessionEntity> page = sessionRepository.findAllByUserId(effectiveUserId,
             new OffsetPageRequest(cappedLimit, cappedOffset, Sort.by(Sort.Direction.DESC, "updatedAt")));
@@ -137,7 +138,8 @@ public class SessionQueryService {
      */
     @Transactional
     public Map<String, Object> createSession(String userId, String model, String title) {
-        String effectiveUserId = userId != null ? userId : AgentProperties.DEFAULT_USER_ID;
+        String effectiveUserId = UserContext.effectiveUserId(
+            userId != null ? userId : AgentProperties.DEFAULT_USER_ID);
         String effectiveModel = model != null && !model.isBlank()
             ? model : properties.getModel().getModelName();
         String effectiveTitle = title != null ? title : "New chat";
@@ -258,7 +260,12 @@ public class SessionQueryService {
 
     @Transactional(readOnly = true)
     public boolean sessionExists(UUID sessionId) {
-        return sessionRepository.existsById(sessionId);
+        SessionEntity entity = sessionRepository.findById(sessionId).orElse(null);
+        if (entity == null) {
+            return false;
+        }
+        requireOwnership(entity);
+        return true;
     }
 
     // ── Helpers ──

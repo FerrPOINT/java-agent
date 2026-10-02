@@ -291,6 +291,21 @@ public class CheckpointManager {
     public void restore(UUID id) {
         CheckpointEntity checkpoint = checkpointRepository.findById(id)
             .orElseThrow(() -> new IllegalArgumentException("Checkpoint not found: " + id));
+        restoreCheckpoint(id, checkpoint);
+    }
+
+    @Transactional
+    public void restore(UUID id, String ownerId) {
+        if (ownerId == null) {
+            restore(id);
+            return;
+        }
+        CheckpointEntity checkpoint = checkpointRepository.findByIdAndUserId(id, ownerId)
+            .orElseThrow(() -> new IllegalArgumentException("Checkpoint not found: " + id));
+        restoreCheckpoint(id, checkpoint);
+    }
+
+    private void restoreCheckpoint(UUID id, CheckpointEntity checkpoint) {
         log.info("Restoring checkpoint {} — {} ({} files)", id, checkpoint.getDescription(), checkpoint.getFileCount());
 
         try {
@@ -384,6 +399,19 @@ public class CheckpointManager {
         log.info("Removed checkpoint: {}", id);
     }
 
+    @Transactional
+    public void remove(UUID id, String ownerId) {
+        if (ownerId == null) {
+            remove(id);
+            return;
+        }
+        CheckpointEntity checkpoint = checkpointRepository.findByIdAndUserId(id, ownerId)
+            .orElseThrow(() -> new IllegalArgumentException("Checkpoint not found: " + id));
+        checkpointFileRepository.deleteByCheckpointId(id);
+        checkpointRepository.delete(checkpoint);
+        log.info("Removed checkpoint: {}", id);
+    }
+
     private String hashFile(Path file) {
         try {
             MessageDigest md = MessageDigest.getInstance("SHA-256");
@@ -412,6 +440,22 @@ public class CheckpointManager {
             .orElseThrow(() -> new IllegalArgumentException("Checkpoint not found: " + left));
         CheckpointEntity rightCp = checkpointRepository.findById(right)
             .orElseThrow(() -> new IllegalArgumentException("Checkpoint not found: " + right));
+        return diffCheckpoints(left, right, scope, leftCp, rightCp);
+    }
+
+    public JsonNode diff(UUID left, UUID right, String scope, String ownerId) {
+        if (ownerId == null) {
+            return diff(left, right, scope);
+        }
+        CheckpointEntity leftCp = checkpointRepository.findByIdAndUserId(left, ownerId)
+            .orElseThrow(() -> new IllegalArgumentException("Checkpoint not found: " + left));
+        CheckpointEntity rightCp = checkpointRepository.findByIdAndUserId(right, ownerId)
+            .orElseThrow(() -> new IllegalArgumentException("Checkpoint not found: " + right));
+        return diffCheckpoints(left, right, scope, leftCp, rightCp);
+    }
+
+    private JsonNode diffCheckpoints(UUID left, UUID right, String scope,
+                                     CheckpointEntity leftCp, CheckpointEntity rightCp) {
 
         ObjectNode result = objectMapper.createObjectNode();
         result.put("left", left.toString());

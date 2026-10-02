@@ -1,6 +1,9 @@
 package com.azhukov.agent.api;
 
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.service.CronJobService;
+import com.azhukov.agent.service.CronSuggestionService;
+import com.azhukov.agent.service.HeartbeatService;
 import com.azhukov.agent.persistence.entity.CronJobEntity;
 import com.azhukov.agent.persistence.repository.CronExecutionLogRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -34,11 +37,20 @@ class CronJobControllerTest {
 
     @Mock private CronJobService cronJobService;
     @Mock private CronExecutionLogRepository cronExecutionLogRepository;
+    @Mock private com.azhukov.agent.persistence.repository.SessionRepository sessionRepository;
+    @Mock private HeartbeatService heartbeatService;
 
     @BeforeEach
     void setUp() {
         objectMapper = new ObjectMapper();
-        CronJobController controller = new CronJobController(cronJobService, new com.azhukov.agent.service.CronSuggestionService(null), new com.azhukov.agent.service.HeartbeatService(), cronExecutionLogRepository, org.mapstruct.factory.Mappers.getMapper(com.azhukov.agent.api.mapper.CronJobDtoMapper.class), new com.azhukov.agent.service.CronBlueprintService());
+        CronJobController controller = new CronJobController(
+            cronJobService,
+            new CronSuggestionService(null),
+            heartbeatService,
+            cronExecutionLogRepository,
+            sessionRepository,
+            org.mapstruct.factory.Mappers.getMapper(com.azhukov.agent.api.mapper.CronJobDtoMapper.class),
+            new com.azhukov.agent.service.CronBlueprintService());
         mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
     }
 
@@ -88,6 +100,34 @@ class CronJobControllerTest {
     }
 
     @Test
+    void heartbeatSetRejectsForeignSessionBeforeMutatingState() throws Exception {
+        UUID sessionId = UUID.randomUUID();
+        com.azhukov.agent.persistence.entity.SessionEntity foreign =
+            new com.azhukov.agent.persistence.entity.SessionEntity();
+        foreign.setId(sessionId);
+        foreign.setUserId("user-b");
+        UserContext.set("user-a", UserContext.ROLE_USER);
+        try {
+            when(sessionRepository.findById(sessionId)).thenReturn(java.util.Optional.of(foreign));
+
+            mockMvc.perform(post("/api/v1/agent/cron/heartbeat")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""
+                        {"sessionId":"%s","prompt":"check status","intervalSeconds":60}
+                        """.formatted(sessionId)))
+                .andExpect(status().isForbidden());
+
+            verify(heartbeatService, org.mockito.Mockito.never()).set(
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyInt(),
+                org.mockito.ArgumentMatchers.anyInt());
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
     void listEndpoint() throws Exception {
         CronJobEntity entity = new CronJobEntity();
         entity.setId(UUID.randomUUID());
@@ -109,6 +149,22 @@ class CronJobControllerTest {
 
         mockMvc.perform(post("/api/v1/agent/cron/{id}/pause", id))
             .andExpect(status().isOk());
+    }
+
+    @Test
+    void executionsRejectForeignCronJobBeforeReadingLedger() throws Exception {
+        UUID id = UUID.randomUUID();
+        UserContext.set("user-a", UserContext.ROLE_USER);
+        try {
+            when(cronJobService.findById(id)).thenReturn(java.util.Optional.empty());
+
+            mockMvc.perform(get("/api/v1/agent/cron/{id}/executions", id))
+                .andExpect(status().isNotFound());
+
+            verify(cronExecutionLogRepository, org.mockito.Mockito.never()).findByJobIdOrderByStartedAtDesc(id);
+        } finally {
+            UserContext.clear();
+        }
     }
 
     @Test

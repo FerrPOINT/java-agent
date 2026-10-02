@@ -1,5 +1,6 @@
 package com.azhukov.agent.service;
 
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.repository.SessionRepository;
 import org.junit.jupiter.api.Test;
@@ -129,6 +130,26 @@ class SessionPruneServiceTest {
             null, null, null, null, null, null, null, null, null,
             null, null, true, true));
         assertThat(included.pruned()).hasSize(1);
+    }
+
+    @Test
+    void scopedUserCannotPruneAnotherUsersEndedSessions() {
+        SessionEntity foreign = ended("compression", Instant.now().minusSeconds(120 * 86400), 2);
+        foreign.setUserId("victim");
+        when(sessionRepository.listEndedSessions(isNull(), any(Pageable.class)))
+            .thenReturn(List.of(foreign));
+
+        UserContext.set("owner", UserContext.ROLE_USER);
+        try {
+            var result = service().prune(new SessionPruneService.PruneRequest(
+                null, null, null, null, null, null, null, null, null,
+                null, null, false, false));
+
+            assertThat(result.pruned()).isEmpty();
+            verify(sessionQueryService, never()).deleteSession(foreign.getId());
+        } finally {
+            UserContext.clear();
+        }
     }
 
     @Test

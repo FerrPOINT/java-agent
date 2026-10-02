@@ -178,6 +178,7 @@ public class SessionController {
     public Map<String, Object> getCurrentModel(@RequestParam(required = false) UUID sessionId) {
         if (sessionId != null) {
             try {
+                agentRuntimeService.requireSessionOwnership(sessionId);
                 var session = agentRuntimeService.getContext(sessionId);
                 Map<String, Object> out = new java.util.LinkedHashMap<>();
                 out.put("sessionId", sessionId.toString());
@@ -194,6 +195,8 @@ public class SessionController {
                     out.put("model", defaultModelName());
                 }
                 return out;
+            } catch (SecurityException e) {
+                throw e;
             } catch (Exception e) {
                 return Map.of("error", e.getMessage());
             }
@@ -229,6 +232,7 @@ public class SessionController {
     @Operation(summary = "Get the current plan (todo list) for a session")
     @GetMapping("/agent/session/{sessionId}/plan")
     public Map<String, Object> getPlan(@PathVariable UUID sessionId) {
+        agentRuntimeService.requireSessionOwnership(sessionId);
         List<TodoDto> todos = todoService.listBySessionId(sessionId);
         return Map.of(
             "session_id", sessionId.toString(),

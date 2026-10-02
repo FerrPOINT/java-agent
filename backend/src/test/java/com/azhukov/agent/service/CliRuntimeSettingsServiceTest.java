@@ -1,5 +1,6 @@
 package com.azhukov.agent.service;
 
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.core.tool.ToolRegistry;
 import com.azhukov.agent.persistence.entity.SessionEntity;
@@ -38,6 +39,23 @@ class CliRuntimeSettingsServiceTest {
         e.setId(SESSION_ID);
         when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(e));
         return e;
+    }
+
+    @Test
+    void foreignSessionCannotChangeRuntimeSettings() {
+        SessionEntity foreign = new SessionEntity();
+        foreign.setId(SESSION_ID);
+        foreign.setUserId("user-b");
+        when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(foreign));
+        UserContext.set("user-a", UserContext.ROLE_USER);
+        try {
+            assertThatThrownBy(() -> service.setGoal(SESSION_ID, "private goal"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Session not found");
+            assertThat(foreign.getCliState()).doesNotContainKey("goal");
+        } finally {
+            UserContext.clear();
+        }
     }
 
     @Test

@@ -10,6 +10,7 @@ import com.azhukov.agent.api.dto.UsageDto;
 import com.azhukov.agent.api.mapper.DomainDtoMapper;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.model.Session;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.repository.MessageRepository;
@@ -484,6 +485,24 @@ class SessionControllerT1Test {
     }
 
     @Test
+    void getCurrentModel_rejectsForeignSessionBeforeReadingContext() throws Exception {
+        UserContext.set("current-user", UserContext.ROLE_USER);
+        try {
+            doThrow(new SecurityException("Session does not belong to the current user"))
+                .when(agentRuntimeService).requireSessionOwnership(SESSION_ID);
+
+            mockMvc.perform(get("/api/v1/agent/model").param("sessionId", SESSION_ID.toString()))
+                .andExpect(status().isForbidden());
+
+            verify(agentRuntimeService).requireSessionOwnership(SESSION_ID);
+            verify(agentRuntimeService, never()).getContext(SESSION_ID);
+            verify(sessionRepository, never()).findById(SESSION_ID);
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
     void getCurrentModel_withSessionId_entityFound() throws Exception {
         ContextInfoDto ctx = new ContextInfoDto(SESSION_ID, 4, 50, List.of());
         when(agentRuntimeService.getContext(SESSION_ID)).thenReturn(ctx);
@@ -606,6 +625,17 @@ class SessionControllerT1Test {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.session_id").value(SESSION_ID.toString()))
             .andExpect(jsonPath("$.todos[0].title").value("task"));
+    }
+
+    @Test
+    void getPlan_rejectsForeignSessionBeforeLoadingTodos() throws Exception {
+        doThrow(new SecurityException("Session does not belong to the current user"))
+            .when(agentRuntimeService).requireSessionOwnership(SESSION_ID);
+
+        mockMvc.perform(get("/api/v1/agent/session/{sessionId}/plan", SESSION_ID))
+            .andExpect(status().isForbidden());
+
+        verify(todoService, never()).listBySessionId(SESSION_ID);
     }
 
     @Test

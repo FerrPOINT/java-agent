@@ -177,7 +177,9 @@ class CronJobServiceCrudBranchTest {
     @Test
     void existsDelegatesToRepository() {
         UUID id = UUID.randomUUID();
-        when(cronJobRepository.existsById(id)).thenReturn(true);
+        CronJobEntity job = existing();
+        job.setId(id);
+        when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
         assertThat(service.exists(id)).isTrue();
     }
 

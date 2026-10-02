@@ -5,6 +5,7 @@ import com.azhukov.agent.api.dto.CronJobDto;
 import com.azhukov.agent.api.mapper.CronJobDtoMapper;
 import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.persistence.repository.CronExecutionLogRepository;
+import com.azhukov.agent.persistence.repository.SessionRepository;
 import com.azhukov.agent.service.CronJobService;
 import com.azhukov.agent.service.CronSuggestionService;
 import com.azhukov.agent.service.HeartbeatService;
@@ -26,6 +27,7 @@ public class CronJobController {
     private final CronSuggestionService cronSuggestionService;
     private final HeartbeatService heartbeatService;
     private final CronExecutionLogRepository cronExecutionLogRepository;
+    private final SessionRepository sessionRepository;
     private final CronJobDtoMapper cronJobDtoMapper;
     private final com.azhukov.agent.service.CronBlueprintService cronBlueprintService;
 
@@ -95,8 +97,26 @@ public class CronJobController {
 
     public record HeartbeatSetRequest(UUID sessionId, String prompt, Integer intervalSeconds, Integer maxTicks) {}
 
+    @ExceptionHandler(SecurityException.class)
+    public org.springframework.http.ResponseEntity<java.util.Map<String, String>> handleSecurityException(
+        SecurityException exception
+    ) {
+        return org.springframework.http.ResponseEntity.status(403).body(java.util.Map.of("error", exception.getMessage()));
+    }
+
+    private void requireSessionOwnership(UUID sessionId) {
+        String scopedUserId = UserContext.scopeUserId();
+        if (scopedUserId == null) return;
+        sessionRepository.findById(sessionId).ifPresent(session -> {
+            if (!scopedUserId.equals(session.getUserId())) {
+                throw new SecurityException("Session does not belong to the current user");
+            }
+        });
+    }
+
     @GetMapping("/heartbeat/{sessionId}")
     public java.util.Map<String, Object> heartbeatStatus(@PathVariable UUID sessionId) {
+        requireSessionOwnership(sessionId);
         HeartbeatService.HeartbeatState st = heartbeatService.get(sessionId);
         if (st == null) return java.util.Map.of("set", false);
         return java.util.Map.of(
@@ -116,6 +136,7 @@ public class CronJobController {
             return java.util.Map.of("ok", false,
                 "reason", "sessionId, prompt and intervalSeconds >= " + HeartbeatService.MIN_INTERVAL_SECONDS + " required");
         }
+        requireSessionOwnership(request.sessionId());
         HeartbeatService.HeartbeatState st = heartbeatService.set(request.sessionId(), request.prompt(), request.intervalSeconds(),
             request.maxTicks() != null ? request.maxTicks() : 0);
         return java.util.Map.of("ok", true, "message",
@@ -124,6 +145,7 @@ public class CronJobController {
 
     @PostMapping("/heartbeat/{sessionId}/pause")
     public java.util.Map<String, Object> heartbeatPause(@PathVariable UUID sessionId) {
+        requireSessionOwnership(sessionId);
         HeartbeatService.HeartbeatState st = heartbeatService.pause(sessionId);
         return st == null
             ? java.util.Map.of("ok", false, "reason", "no active heartbeat")
@@ -132,6 +154,7 @@ public class CronJobController {
 
     @PostMapping("/heartbeat/{sessionId}/resume")
     public java.util.Map<String, Object> heartbeatResume(@PathVariable UUID sessionId) {
+        requireSessionOwnership(sessionId);
         HeartbeatService.HeartbeatState st = heartbeatService.resume(sessionId);
         return st == null
             ? java.util.Map.of("ok", false, "reason", "no paused heartbeat")
@@ -142,6 +165,7 @@ public class CronJobController {
     /** Bot polls this to deliver heartbeat/loop results to the chat (PEEK — not destructive). */
     @GetMapping("/heartbeat/{sessionId}/result")
     public java.util.Map<String, Object> heartbeatResult(@PathVariable UUID sessionId) {
+        requireSessionOwnership(sessionId);
         String result = heartbeatService.peekLastFireResult(sessionId);
         return result == null
             ? java.util.Map.of("hasResult", false)
@@ -151,18 +175,21 @@ public class CronJobController {
     /** ACK after a successful chat send — drops the delivered result. */
     @PostMapping("/heartbeat/{sessionId}/result/ack")
     public java.util.Map<String, Object> heartbeatResultAck(@PathVariable UUID sessionId) {
+        requireSessionOwnership(sessionId);
         return java.util.Map.of("acked", heartbeatService.ackFireResult(sessionId));
     }
 
     /** Report a failed send attempt; after 5 the result is dropped as poison. */
     @PostMapping("/heartbeat/{sessionId}/result/nack")
     public java.util.Map<String, Object> heartbeatResultNack(@PathVariable UUID sessionId) {
+        requireSessionOwnership(sessionId);
         return java.util.Map.of("drop", heartbeatService.shouldDropUndeliverable(sessionId));
         // drop=true → caller must call ack to remove the poisoned result
     }
 
     @PostMapping("/heartbeat/{sessionId}/clear")
     public java.util.Map<String, Object> heartbeatClear(@PathVariable UUID sessionId) {
+        requireSessionOwnership(sessionId);
         return java.util.Map.of("ok", heartbeatService.clear(sessionId));
     }
 
@@ -193,6 +220,10 @@ public class CronJobController {
     // h72: Cron execution ledger — list execution history for a job.
     @GetMapping("/{id}/executions")
     public List<CronExecutionLogDto> listExecutions(@PathVariable UUID id) {
+        if (cronJobService.findById(id).isEmpty()) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.NOT_FOUND, "Cron job not found");
+        }
         return cronJobDtoMapper.toExecutionLogDtoList(cronExecutionLogRepository.findByJobIdOrderByStartedAtDesc(id));
     }
 

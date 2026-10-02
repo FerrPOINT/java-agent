@@ -314,6 +314,27 @@ class AgentChatControllerT1Test {
     // ── backgroundStatus() ──
 
     @Test
+    void background_rejectsForeignSessionBeforeSubmittingJob() throws Exception {
+        UserContext.set("user-77", UserContext.ROLE_USER);
+        try {
+            when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(sessionOf("owner")));
+
+            String body = objectMapper.writeValueAsString(new BackgroundRequest("do work", SESSION_ID.toString()));
+            mockMvc.perform(post("/api/v1/agent/background")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(body))
+                .andExpect(status().isForbidden());
+
+            verify(agentRuntimeService, never()).submitBackgroundJob(
+                org.mockito.ArgumentMatchers.<String>any(),
+                org.mockito.ArgumentMatchers.<String>any(),
+                org.mockito.ArgumentMatchers.anyBoolean());
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
     void backgroundStatus_found() throws Exception {
         UUID jobId = UUID.randomUUID();
         BackgroundJobEntity entity = new BackgroundJobEntity();
@@ -354,6 +375,24 @@ class AgentChatControllerT1Test {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.accepted").value(false))
             .andExpect(jsonPath("$.reason").value("session not found"));
+    }
+
+    @Test
+    void refine_rejectsForeignSessionBeforeReadingMessages() throws Exception {
+        UserContext.set("user-77", UserContext.ROLE_USER);
+        try {
+            when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(sessionOf("owner")));
+
+            String body = objectMapper.writeValueAsString(new RefineRequest(SESSION_ID, null));
+            mockMvc.perform(post("/api/v1/agent/refine")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(body))
+                .andExpect(status().isForbidden());
+
+            verify(messageRepository, never()).findBySessionIdOrderByCreatedAtAsc(SESSION_ID);
+        } finally {
+            UserContext.clear();
+        }
     }
 
     @Test

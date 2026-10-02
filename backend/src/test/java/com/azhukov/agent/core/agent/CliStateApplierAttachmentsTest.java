@@ -124,6 +124,25 @@ class CliStateApplierAttachmentsTest {
     }
 
     @Test
+    void authenticatedUserCannotInjectAnotherUsersArtifact() {
+        AttachmentArtifactService service = Mockito.mock(AttachmentArtifactService.class);
+        Mockito.when(service.find("att_private", "user-a")).thenReturn(Optional.empty());
+        com.azhukov.agent.core.security.UserContext.set("user-a",
+            com.azhukov.agent.core.security.UserContext.ROLE_USER);
+        try {
+            CliStateApplier applier = new CliStateApplier(prov(service));
+            ChatRequest out = applier.applyCliState(
+                requestWith(List.of(AttachmentRef.of("att_private"))), session());
+
+            assertThat(out.message()).contains("[unavailable: att_private]");
+            Mockito.verify(service).find("att_private", "user-a");
+            Mockito.verify(service, Mockito.never()).contentPath("att_private", "user-a");
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+        }
+    }
+
+    @Test
     void invalidRefsAreSkippedEntirely() {
         AttachmentArtifactService service = Mockito.mock(AttachmentArtifactService.class);
         CliStateApplier applier = new CliStateApplier(prov(service));

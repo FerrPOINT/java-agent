@@ -345,6 +345,18 @@ class BackgroundReviewServiceTest {
     }
 
     @Test
+    void summarizeAction_reportsSingleSkillMutationProtocol() {
+        ToolCall call = new ToolCall("call_1", "skill_manage", "{\"action\":\"patch\",\"name\":\"skill-library-curation\"}");
+        ToolResult result = ToolResult.ok("""
+            {"success":true,"action":"patch","name":"skill-library-curation",
+             "message":"Patched SKILL.md in skill 'skill-library-curation' (1 replacement)."}
+            """);
+
+        assertThat(BackgroundReviewService.summarizeAction(call, result))
+            .isEqualTo("Skill 'skill-library-curation' patched");
+    }
+
+    @Test
     void getReviewSummary_emptySession_returnsEmptySummary() {
         var svc = createService();
         UUID sessionId = UUID.randomUUID();

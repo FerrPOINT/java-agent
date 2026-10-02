@@ -1,6 +1,7 @@
 package com.azhukov.agent.api;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.repository.MessageRepository;
@@ -414,7 +415,10 @@ public class ProfilesDashboardController {
             return notFound("Unknown profile: " + normalizeProfileName(profile));
         }
 
-        String effectiveUserId = firstNonBlank(userId, userIdSnake, AgentProperties.DEFAULT_USER_ID);
+        String effectiveUserId = UserContext.effectiveUserId(firstNonBlank(userId, userIdSnake));
+        if (effectiveUserId == null) {
+            effectiveUserId = AgentProperties.DEFAULT_USER_ID;
+        }
         String sourceFilter = clean(source);
         boolean includeHiddenFlag = anyTruthy(includeHidden, includeHiddenSnake);
         boolean includeChildrenFlag = anyTruthy(includeChildren, includeChildrenSnake);
@@ -603,7 +607,10 @@ public class ProfilesDashboardController {
                 0L));
         }
 
-        String effectiveUserId = firstNonBlank(userId, userIdSnake, AgentProperties.DEFAULT_USER_ID);
+        String effectiveUserId = UserContext.effectiveUserId(firstNonBlank(userId, userIdSnake));
+        if (effectiveUserId == null) {
+            effectiveUserId = AgentProperties.DEFAULT_USER_ID;
+        }
         List<String> recentsExcludeList = splitCsv(recentsExclude);
         List<String> messagingExcludeList = splitCsv(messagingExclude);
         List<Map<String, Object>> recents = sidebarSlice(
@@ -654,6 +661,9 @@ public class ProfilesDashboardController {
             if (sessionId == null) {
                 continue;
             }
+            if (!isSessionVisibleToCurrentUser(sessionId)) {
+                continue;
+            }
             for (MessageEntity message : nullToEmptyMessages(messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId))) {
                 Map<String, Object> pr = prFromToolOutput(message.getContent());
                 if (pr != null) {
@@ -664,6 +674,16 @@ public class ProfilesDashboardController {
         return Map.of(
             "pull_requests", pullRequests,
             "scanned", ids);
+    }
+
+    private boolean isSessionVisibleToCurrentUser(UUID sessionId) {
+        String scopedUserId = UserContext.scopeUserId();
+        if (scopedUserId == null) {
+            return true;
+        }
+        return sessionRepository.findById(sessionId)
+            .map(session -> scopedUserId.equals(session.getUserId()))
+            .orElse(false);
     }
 
     private List<Map<String, Object>> profileRows() {

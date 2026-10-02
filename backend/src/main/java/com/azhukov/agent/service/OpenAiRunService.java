@@ -97,10 +97,11 @@ public class OpenAiRunService {
 
         String runId = "run_" + UUID.randomUUID().toString().replace("-", "");
         UUID controlSessionId = UUID.randomUUID();
-        RunRecord record = new RunRecord(runId, sessionId, controlSessionId, requestedModel);
+        String userId = sessionContext.session().userId();
+        RunRecord record = new RunRecord(runId, sessionId, controlSessionId, userId, requestedModel);
         runs.put(runId, record);
         record.attachPersistHook((status, reason) -> persistTransition(runId, status, reason));
-        persistRunCreated(runId, sessionId, requestedModel);
+        persistRunCreated(runId, sessionId, userId, requestedModel);
 
         Session runSession = RunControlScope.withControlSessionId(sessionContext.session(), controlSessionId);
         if (instructions != null && !instructions.isBlank()) {
@@ -439,13 +440,13 @@ public class OpenAiRunService {
         return runStateMachineProvider == null ? null : runStateMachineProvider.getIfAvailable();
     }
 
-    private void persistRunCreated(String runId, UUID sessionId, String model) {
+    private void persistRunCreated(String runId, UUID sessionId, String userId, String model) {
         OpenAiRunStateMachine stateMachine = stateMachine();
         if (stateMachine == null) {
             return;
         }
         try {
-            stateMachine.createRun(runId, sessionId, null, "default", model, null);
+            stateMachine.createRun(runId, sessionId, userId, "default", model, null);
             stateMachine.appendEvent(runId, Map.of(
                 "event", "run.created",
                 "run_id", runId,
@@ -484,6 +485,7 @@ public class OpenAiRunService {
         private final String runId;
         private final UUID sessionId;
         private final UUID controlSessionId;
+        private final String userId;
         private final String model;
         private final double createdAt;
         private final BlockingQueue<QueuedEvent> events = new LinkedBlockingQueue<>();
@@ -495,10 +497,11 @@ public class OpenAiRunService {
         private String status = "queued";
         private double updatedAt;
 
-        private RunRecord(String runId, UUID sessionId, UUID controlSessionId, String model) {
+        private RunRecord(String runId, UUID sessionId, UUID controlSessionId, String userId, String model) {
             this.runId = runId;
             this.sessionId = sessionId;
             this.controlSessionId = controlSessionId;
+            this.userId = userId;
             this.model = model;
             this.createdAt = epochSeconds();
             this.updatedAt = this.createdAt;
@@ -514,6 +517,10 @@ public class OpenAiRunService {
 
         public UUID controlSessionId() {
             return controlSessionId;
+        }
+
+        public String userId() {
+            return userId;
         }
 
         public synchronized String status() {

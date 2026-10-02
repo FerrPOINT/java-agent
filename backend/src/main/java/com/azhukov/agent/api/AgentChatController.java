@@ -1,23 +1,23 @@
 package com.azhukov.agent.api;
 
 import com.azhukov.agent.api.dto.ApproveRequest;
-import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.api.dto.BackgroundRequest;
 import com.azhukov.agent.api.dto.ChatRequest;
-import com.azhukov.agent.api.dto.ChatResponseDto;
 import com.azhukov.agent.api.dto.ChatRequestIdentity;
-import com.azhukov.agent.core.security.UserContext;
-import com.azhukov.agent.api.dto.RefineRequest;
+import com.azhukov.agent.api.dto.ChatResponseDto;
 import com.azhukov.agent.api.dto.DenyRequest;
 import com.azhukov.agent.api.dto.DoctorDto;
-import com.azhukov.agent.api.dto.StopRequest;
+import com.azhukov.agent.api.dto.RefineRequest;
 import com.azhukov.agent.api.dto.SteerRequest;
+import com.azhukov.agent.api.dto.StopRequest;
 import com.azhukov.agent.api.dto.TtsRequest;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.agent.InterruptToken;
 import com.azhukov.agent.core.agent.SteerBuffer;
 import com.azhukov.agent.core.memory.MemoryProvider;
+import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.security.ApprovalQueue;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.core.tool.ToolRegistry;
 import com.azhukov.agent.metrics.AgentMetrics;
@@ -180,7 +180,10 @@ public class AgentChatController {
 
     @PostMapping("/agent/background")
     public java.util.Map<String, Object> background(@Valid @RequestBody BackgroundRequest request) {
-        // Hermes parity: job model — id + status, result via GET /agent/background/{id}
+        // A session-bound background job inherits that session's access scope.
+        if (request.sessionId() != null && !request.sessionId().isBlank()) {
+            requireSessionOwnership(UUID.fromString(request.sessionId()));
+        }
         java.util.UUID jobId = agentRuntimeService.submitBackgroundJob(
             request.prompt(), request.sessionId(), false);
         return java.util.Map.of("jobId", jobId.toString(), "status", "PENDING");
@@ -221,6 +224,7 @@ public class AgentChatController {
             return Map.of("accepted", false, "reason", "session not found");
         }
         var session = sessionOpt.get();
+        requireSessionOwnership(session.getId());
         List<Message> history = this.messageRepository.findBySessionIdOrderByCreatedAtAsc(session.getId())
             .stream()
             .filter(message -> !Boolean.FALSE.equals(message.getActive()))
@@ -364,6 +368,7 @@ public class AgentChatController {
 
     @GetMapping("/agent/session/{sessionId}/review/pending")
     public Map<String, Object> pendingReview(@PathVariable String sessionId) {
+        requireClarifySessionOwnership(sessionId);
         if (!properties.getMemory().getBackgroundReview().isEnabled()) {
             return Map.of("pending", false, "reason", "background review disabled");
         }

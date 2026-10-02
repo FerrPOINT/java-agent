@@ -37,6 +37,7 @@ import com.azhukov.agent.core.tool.ToolCallValidator;
 import com.azhukov.agent.core.tool.ToolExecutionService;
 import com.azhukov.agent.core.tool.ToolRegistry;
 import com.azhukov.agent.core.security.ApprovalQueue;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.security.ToolGuardrails;
 import com.azhukov.agent.core.state.TurnState;
 import com.azhukov.agent.core.state.TurnStateManager;
@@ -295,11 +296,24 @@ public class AgentStreamingService {
 
 
     public SseEmitter streamTurn(ChatRequest request) {
+        requireSessionOwnership(request.sessionId());
+        ChatRequest scopedRequest = request.withUserId(UserContext.effectiveUserId(request.userId()));
         // Hermes parity: the in-process turn has no transport deadline. A fixed
         // 600s SseEmitter cap killed legitimate provider-cooldown retries mid-wait
         // (2026-08-27 21:27:54). 0L disables the container timeout; the client-side
         // idle watchdog (refreshed by keepalive events) governs liveness instead.
-        return streamTurn(request, new SseEmitter(request.timeoutMs() != null ? request.timeoutMs() : 0L));
+        return streamTurn(scopedRequest, new SseEmitter(request.timeoutMs() != null ? request.timeoutMs() : 0L));
+    }
+
+    private void requireSessionOwnership(UUID sessionId) {
+        if (sessionId == null) return;
+        String scopedUserId = UserContext.scopeUserId();
+        if (scopedUserId == null) return;
+        SessionEntity session = transactionTemplate.execute(status ->
+            sessionRepository.findById(sessionId).orElse(null));
+        if (session != null && !scopedUserId.equals(session.getUserId())) {
+            throw new SecurityException("Session does not belong to the current user");
+        }
     }
 
     /**
@@ -332,11 +346,12 @@ public class AgentStreamingService {
     }
 
     SseEmitter streamTurn(ChatRequest request, SseEmitter emitter) {
+        ChatRequest scopedRequest = request.withUserId(UserContext.effectiveUserId(request.userId()));
         // Create per-stream context (replaces the old singleton volatile boolean)
         StreamContext streamCtx = new StreamContext();
 
         // Register SseEmitter lifecycle callbacks for cleanup and interrupt
-        UUID callbackSessionId = request.sessionId();
+        UUID callbackSessionId = scopedRequest.sessionId();
         emitter.onTimeout(() -> {
             // SSE transport timeout != turn cancellation. A provider cooldown
             // can legally exceed the emitter cap; the turn itself is bounded
@@ -363,7 +378,7 @@ public class AgentStreamingService {
             // two parallel /agent/chat/stream POSTs returned interleaved content
             // ("CONCURRENT_A\nCONCURRENT_B"). Wait up to 30s like the sync path;
             // on timeout emit a busy error instead of running a torn turn.
-            UUID lockSessionId = request.sessionId();
+            UUID lockSessionId = scopedRequest.sessionId();
             boolean locked = false;
             if (sessionTurnLockManager != null && lockSessionId != null) {
                 locked = sessionTurnLockManager.tryAcquire(lockSessionId, 30);
@@ -377,7 +392,7 @@ public class AgentStreamingService {
             try {
                 long __turnStart = System.currentTimeMillis();
                 try {
-                    runAgenticLoop(applyCliState(request), emitter, streamCtx);
+                    runAgenticLoop(applyCliState(scopedRequest), emitter, streamCtx);
                 } finally {
                     long __turnMs = System.currentTimeMillis() - __turnStart;
                     if (agentMetrics != null) {
@@ -389,7 +404,7 @@ public class AgentStreamingService {
                     // agent.compression.rotations / agent.tool.latency in /metrics.
                     if (__turnMs > 5_000) {
                         log.info("Turn performance: {} ms total (session {})", __turnMs,
-                            request.sessionId());
+                            scopedRequest.sessionId());
                     }
                 }
             } catch (Exception e) {
@@ -423,9 +438,11 @@ public class AgentStreamingService {
         // which is separate from backend's sessions table).
         String sessionSource = request.chatType() != null && !request.chatType().isBlank()
             ? "telegram" : "api_server";
+        String requestedUserId = request.userId() != null && !request.userId().isBlank()
+            ? request.userId() : AgentProperties.DEFAULT_USER_ID;
         var resolved = sessionResolver.resolveOrCreate(
             request.sessionId(),
-            request.userId() != null && !request.userId().isBlank() ? request.userId() : AgentProperties.DEFAULT_USER_ID,
+            requestedUserId,
             properties.getModel().getModelName(), sessionSource);
         boolean isNew = resolved.isNew();
         Session session = resolved.session();

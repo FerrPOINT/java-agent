@@ -1,5 +1,6 @@
 package com.azhukov.agent.service;
 
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.tool.ToolRegistry;
 import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.repository.SessionRepository;
@@ -29,7 +30,13 @@ public class CliRuntimeSettingsService {
 
     private SessionEntity getSession(UUID sessionId) {
         return sessionRepository.findById(sessionId)
+            .filter(this::isVisibleToCurrentUser)
             .orElseThrow(() -> new IllegalArgumentException("Session not found: " + sessionId));
+    }
+
+    private boolean isVisibleToCurrentUser(SessionEntity session) {
+        String scopedUserId = UserContext.scopeUserId();
+        return scopedUserId == null || scopedUserId.equals(session.getUserId());
     }
 
     @Transactional

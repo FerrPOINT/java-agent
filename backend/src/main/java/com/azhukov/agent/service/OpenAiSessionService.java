@@ -7,6 +7,7 @@ import com.azhukov.agent.core.model.ChatResponse;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.core.model.Session;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.mapper.MessageMapper;
 import com.azhukov.agent.persistence.repository.MessageRepository;
@@ -113,10 +114,7 @@ public class OpenAiSessionService {
     public OpenAiSessionContext resolveStoredResponseSession(UUID sessionId, String sessionKeyHeader) {
         String sessionKey = parseSessionKey(sessionKeyHeader);
         UUID resolvedId = sessionResolver.resolveResumeSessionId(sessionId);
-        if (!sessionRepository.existsById(resolvedId)) {
-            throw new IllegalArgumentException("Session not found: " + sessionId);
-        }
-        return new OpenAiSessionContext(sessionResolver.loadSession(resolvedId), false, sessionKey);
+        return new OpenAiSessionContext(loadAccessibleSession(resolvedId, sessionId.toString()), false, sessionKey);
     }
 
     public OpenAiSessionContext resolveRunSession(UUID sessionId, String sessionKeyHeader, String modelName) {
@@ -130,10 +128,7 @@ public class OpenAiSessionService {
             );
         }
         UUID resolvedId = sessionResolver.resolveResumeSessionId(sessionId);
-        if (!sessionRepository.existsById(resolvedId)) {
-            throw new IllegalArgumentException("Session not found: " + sessionId);
-        }
-        return new OpenAiSessionContext(sessionResolver.loadSession(resolvedId), true, sessionKey);
+        return new OpenAiSessionContext(loadAccessibleSession(resolvedId, sessionId.toString()), true, sessionKey);
     }
 
     public OpenAiSessionContext resolveRunSession(String sessionId, String sessionKeyHeader, String modelName) {
@@ -157,11 +152,8 @@ public class OpenAiSessionService {
         UUID uuidSessionId = tryParseUuid(requestedSessionId);
         if (uuidSessionId != null) {
             UUID resolvedId = sessionResolver.resolveResumeSessionId(uuidSessionId);
-            if (!sessionRepository.existsById(resolvedId)) {
-                throw new IllegalArgumentException("Session not found: " + requestedSessionId);
-            }
             return new OpenAiSessionContext(
-                sessionResolver.loadSession(resolvedId),
+                loadAccessibleSession(resolvedId, requestedSessionId),
                 continuationRequested,
                 sessionKey
             );
@@ -177,6 +169,18 @@ public class OpenAiSessionService {
             "api_server"
         );
         return new OpenAiSessionContext(session, continuationRequested, sessionKey, requestedSessionId);
+    }
+
+    private Session loadAccessibleSession(UUID resolvedId, String requestedSessionId) {
+        if (!sessionRepository.existsById(resolvedId)) {
+            throw new IllegalArgumentException("Session not found: " + requestedSessionId);
+        }
+        Session session = sessionResolver.loadSession(resolvedId);
+        String scopedUserId = UserContext.scopeUserId();
+        if (scopedUserId != null && !scopedUserId.equals(session.userId())) {
+            throw new IllegalArgumentException("Session not found: " + requestedSessionId);
+        }
+        return session;
     }
 
     public List<Message> historyFor(OpenAiSessionContext context) {

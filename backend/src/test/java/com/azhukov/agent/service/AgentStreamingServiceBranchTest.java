@@ -21,6 +21,7 @@ import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.prompt.PromptBuilder;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.state.TurnStateManager;
 import com.azhukov.agent.core.tool.ToolExecutionService;
 import com.azhukov.agent.core.tool.ToolRegistry;
@@ -53,6 +54,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -778,6 +780,52 @@ class AgentStreamingServiceBranchTest {
     }
 
     // ── applyCliState: null sessionId returns request unchanged ──
+
+    @Test
+    void streamTurnRejectsAnotherUsersSessionBeforeSchedulingTurn() throws Exception {
+        SessionEntity foreign = newSessionEntity(SESSION_ID, "test-model");
+        foreign.setUserId("other-user");
+        when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(foreign));
+        UserContext.set("user-1", UserContext.ROLE_USER);
+        try {
+            assertThatThrownBy(() -> streamingService.streamTurn(
+                ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L)))
+                .isInstanceOf(SecurityException.class)
+                .hasMessageContaining("does not belong");
+            verify(modelClient, never()).stream(any(), any(), any(), any());
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
+    void streamTurnNewSessionUsesAuthenticatedUserRatherThanRequestUser() throws Exception {
+        UserContext.set("scoped-user", UserContext.ROLE_USER);
+        try {
+            AtomicReference<SessionEntity> created = new AtomicReference<>();
+            when(sessionRepository.save(any(SessionEntity.class))).thenAnswer(invocation -> {
+                SessionEntity entity = invocation.getArgument(0);
+                entity.setId(SESSION_ID);
+                created.compareAndSet(null, entity);
+                return entity;
+            });
+            doAnswer(invocation -> {
+                StreamingResponseHandler handler = invocation.getArgument(3);
+                handler.onComplete();
+                return null;
+            }).when(modelClient).stream(any(), any(), any(), any());
+
+            CollectingEmitter emitter = new CollectingEmitter(30_000L);
+            streamingService.streamTurn(
+                ChatRequest.simple(null, "Hello", null, 10_000L).withUserId("other-user"), emitter);
+            emitter.awaitDone();
+
+            assertThat(created.get()).isNotNull();
+            assertThat(created.get().getUserId()).isEqualTo("scoped-user");
+        } finally {
+            UserContext.clear();
+        }
+    }
 
     @Test
     void streamTurnWithNullSessionIdDoesNotApplyCliState() throws Exception {
