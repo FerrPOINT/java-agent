@@ -169,6 +169,8 @@ public class SessionController {
             return Map.of("ok", true, "model", model,
                 "provider", provider != null ? provider : "",
                 "sessionId", sessionId.toString());
+        } catch (SecurityException e) {
+            throw e;
         } catch (Exception e) {
             return Map.of("ok", false, "error", e.getMessage());
         }

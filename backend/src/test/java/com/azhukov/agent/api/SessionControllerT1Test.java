@@ -180,6 +180,16 @@ class SessionControllerT1Test {
     }
 
     @Test
+    void history_rethrowsForeignSessionOwnershipFailure() throws Exception {
+        doThrow(new SecurityException("Session does not belong to the current user"))
+            .when(agentRuntimeService).requireSessionOwnership(SESSION_ID);
+
+        mockMvc.perform(get("/api/v1/agent/session/{sessionId}/history", SESSION_ID))
+            .andExpect(status().isForbidden());
+        verify(messageRepository, never()).findBySessionIdOrderByCreatedAtAsc(SESSION_ID);
+    }
+
+    @Test
     void history_emptyRepository_returnsEmptyArray() throws Exception {
         when(messageRepository.findBySessionIdOrderByCreatedAtAsc(SESSION_ID))
             .thenReturn(List.of());
@@ -473,6 +483,18 @@ class SessionControllerT1Test {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.ok").value(false))
             .andExpect(jsonPath("$.error").value("model unavailable"));
+    }
+
+    @Test
+    void switchModel_rethrowsForeignSessionOwnershipFailure() throws Exception {
+        doThrow(new SecurityException("Session does not belong to the current user"))
+            .when(agentRuntimeService).switchModel(SESSION_ID, "gpt-4o", null);
+
+        String body = "{\"sessionId\":\"" + SESSION_ID + "\",\"model\":\"gpt-4o\"}";
+        mockMvc.perform(post("/api/v1/agent/model")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+            .andExpect(status().isForbidden());
     }
 
     // ── getCurrentModel() ──

@@ -361,6 +361,18 @@ class ApiKeyAuthFilterTest {
         verify(response, never()).setStatus(401);
     }
 
+    @Test
+    void actuatorInfoConfiguredPublicInSecurityChainBypassesApiKey() throws ServletException, IOException {
+        agentProperties.getSecurity().setApiKey(VALID_KEY);
+        when(request.getRequestURI()).thenReturn("/actuator/info");
+        when(request.getMethod()).thenReturn("GET");
+
+        filter.doFilter(request, response, chain);
+
+        verify(chain).doFilter(request, response);
+        verify(response, never()).setStatus(401);
+    }
+
     // ─── Response format ───
 
     @Test

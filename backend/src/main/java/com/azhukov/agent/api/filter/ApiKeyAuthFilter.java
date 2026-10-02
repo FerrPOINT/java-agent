@@ -88,6 +88,14 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
             return;
         }
 
+        // Actuator info is explicitly public in SecurityConfig for deployment metadata.
+        if ("/actuator/info".equals(requestUri)) {
+            SecurityContextHolder.getContext().setAuthentication(new ApiKeyAuthentication("info"));
+            UserContext.set("info", UserContext.ROLE_ADMIN);
+            filterChain.doFilter(request, response);
+            return;
+        }
+
         if (isPlatformEventEndpoint(requestUri)) {
             SecurityContextHolder.getContext().setAuthentication(new ApiKeyAuthentication("platform-event"));
             filterChain.doFilter(request, response);

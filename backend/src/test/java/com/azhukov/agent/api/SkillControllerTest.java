@@ -1,5 +1,6 @@
 package com.azhukov.agent.api;
 
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.api.mapper.DomainDtoMapper;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.core.skill.SkillsHubService;
@@ -260,6 +261,27 @@ class SkillControllerTest {
             .andExpect(jsonPath("$[0].userId").value("user-1"))
             .andExpect(jsonPath("$[0].oldValue").value("old content"))
             .andExpect(jsonPath("$[0].newValue").value("new content"));
+    }
+
+    @Test
+    void getSkillAuditReturnsOnlyCurrentUsersEntries() throws Exception {
+        UserContext.set("user-a", UserContext.ROLE_USER);
+        try {
+            SkillAuditLogEntity entity = SkillAuditLogEntity.create("python-dev", "update", "user-a", "old", "new");
+            entity.setId(1L);
+            entity.setTimestamp(Instant.parse("2024-01-01T00:00:00Z"));
+            when(skillAuditLogRepository.findBySkillNameAndUserIdOrderByTimestampDesc("python-dev", "user-a"))
+                .thenReturn(List.of(entity));
+
+            mockMvc.perform(get("/api/v1/agent/skills/{name}/audit", "python-dev"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].userId").value("user-a"));
+
+            verify(skillAuditLogRepository).findBySkillNameAndUserIdOrderByTimestampDesc("python-dev", "user-a");
+            verify(skillAuditLogRepository, never()).findBySkillNameOrderByTimestampDesc("python-dev");
+        } finally {
+            UserContext.clear();
+        }
     }
 
     @Test

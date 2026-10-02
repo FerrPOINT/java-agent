@@ -188,6 +188,22 @@ class OpenAiSessionServiceTest {
     }
 
     @Test
+    void authenticatedUserCannotImpersonateAnotherOwnerWithSessionKey() {
+        properties.getSecurity().setApiKey("secret");
+        String suppliedSessionKey = "user-b";
+        Session ownedSession = new Session(SESSION_ID, "user-a", "OpenAI",
+            "openai-compatible", MODEL, null, Map.of(), null);
+        UserContext.set("user-a", UserContext.ROLE_USER);
+        when(sessionResolver.createSession("user-a", "openai-compatible", MODEL, "api_server"))
+            .thenReturn(ownedSession);
+
+        OpenAiSessionService.OpenAiSessionContext context = service.resolve(null, suppliedSessionKey, MODEL);
+
+        assertThat(context.session()).isEqualTo(ownedSession);
+        verify(sessionResolver).createSession("user-a", "openai-compatible", MODEL, "api_server");
+    }
+
+    @Test
     void resolveWithSessionKeyUsesItAsUserScopeForNewSessions() {
         properties.getSecurity().setApiKey("secret");
         String sessionKey = "agent:main:webui:42";
@@ -291,6 +307,25 @@ class OpenAiSessionServiceTest {
         assertThatThrownBy(() -> service.resolve("api\nnot-safe", null, MODEL))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessage("Invalid session ID");
+    }
+
+    @Test
+    void authenticatedUserCannotImpersonateAnotherOwnerForStringRunSessionId() {
+        properties.getSecurity().setApiKey("secret");
+        String externalSessionId = "user-b-run";
+        String suppliedSessionKey = "user-b";
+        UUID mappedId = OpenAiSessionService.deterministicExternalSessionUuid("user-a", externalSessionId);
+        Session ownedSession = new Session(mappedId, "user-a", "OpenAI",
+            "openai-compatible", MODEL, null, Map.of(), null);
+        UserContext.set("user-a", UserContext.ROLE_USER);
+        when(sessionResolver.loadOrCreateSession(mappedId, "user-a", "openai-compatible", MODEL, "api_server"))
+            .thenReturn(ownedSession);
+
+        OpenAiSessionService.OpenAiSessionContext context =
+            service.resolveRunSession(externalSessionId, suppliedSessionKey, MODEL);
+
+        assertThat(context.session()).isEqualTo(ownedSession);
+        verify(sessionResolver).loadOrCreateSession(mappedId, "user-a", "openai-compatible", MODEL, "api_server");
     }
 
     @Test

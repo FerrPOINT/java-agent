@@ -35,7 +35,6 @@ public class AudioDashboardController {
     private static final int MAX_TRANSCRIPTION_UPLOAD_BYTES = 25 * 1024 * 1024;
     private static final int MAX_BASE64_TRANSCRIPTION_CHARS =
         ((MAX_TRANSCRIPTION_UPLOAD_BYTES + 2) / 3) * 4 + 16;
-    private static final String OPENAI_BASE_URL = "https://api.openai.com/v1";
 
     private final TtsService ttsService;
     private final TranscriptionService transcriptionService;
@@ -160,8 +159,8 @@ public class AudioDashboardController {
     public Map<String, Object> voiceConfig(@RequestParam(name = "profile", required = false) String profile) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("ok", true);
-        body.put("stt", sttClientConfig());
-        body.put("tts", ttsClientConfig());
+        body.put("stt", relayConfig(sttRelayReason()));
+        body.put("tts", relayConfig(ttsRelayReason()));
         return body;
     }
 
@@ -180,41 +179,14 @@ public class AudioDashboardController {
         return ResponseEntity.ok(body);
     }
 
-    private Map<String, Object> sttClientConfig() {
+    private String sttRelayReason() {
         AgentProperties.TranscriptionProperties stt = properties.getTranscription();
-        String provider = configuredProvider(stt.getProvider(), "openai");
-        String apiKey = firstNonBlank(stt.getApiKey(), "");
-        if (stt.isEnabled() && "openai".equals(provider) && !apiKey.isBlank()) {
-            Map<String, Object> direct = new LinkedHashMap<>();
-            direct.put("mode", "direct");
-            direct.put("wire", "openai-multipart");
-            direct.put("provider", "openai");
-            direct.put("base_url", OPENAI_BASE_URL);
-            direct.put("api_key", apiKey);
-            direct.put("model", blankToNull(stt.getModel()));
-            direct.put("language", null);
-            return direct;
-        }
-        return relayConfig(stt.isEnabled() ? "provider is not client-callable" : "transcription disabled");
+        return stt.isEnabled() ? "server-managed provider credentials" : "transcription disabled";
     }
 
-    private Map<String, Object> ttsClientConfig() {
+    private String ttsRelayReason() {
         AgentProperties.TtsProperties tts = properties.getTts();
-        String provider = configuredProvider(tts.getProvider(), "edge");
-        String apiKey = firstNonBlank(tts.getApiKey(), "");
-        if (tts.isEnabled() && "openai".equals(provider) && !apiKey.isBlank()) {
-            Map<String, Object> direct = new LinkedHashMap<>();
-            direct.put("mode", "direct");
-            direct.put("wire", "openai-speech");
-            direct.put("provider", "openai");
-            direct.put("base_url", firstNonBlank(properties.getModel().getBaseUrl(), OPENAI_BASE_URL));
-            direct.put("api_key", apiKey);
-            direct.put("model", blankToNull(tts.getModel()));
-            direct.put("voice", blankToNull(tts.getVoice()));
-            direct.put("speed", null);
-            return direct;
-        }
-        return relayConfig(tts.isEnabled() ? "provider is not client-callable" : "tts disabled");
+        return tts.isEnabled() ? "server-managed provider credentials" : "tts disabled";
     }
 
     private static Map<String, Object> relayConfig(String reason) {
@@ -332,10 +304,6 @@ public class AudioDashboardController {
     private static String configuredProvider(String provider, String fallback) {
         String value = firstNonBlank(provider, fallback);
         return value.toLowerCase(Locale.ROOT);
-    }
-
-    private static String blankToNull(String value) {
-        return value == null || value.isBlank() ? null : value;
     }
 
     private static boolean isValidProfileName(String value) {

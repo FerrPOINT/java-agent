@@ -142,7 +142,7 @@ class AudioDashboardControllerTest {
     }
 
     @Test
-    void voiceConfigReturnsClientDirectOpenAiWhenConfigured() throws Exception {
+    void voiceConfigNeverExposesServerManagedProviderCredentials() throws Exception {
         properties.getTranscription().setEnabled(true);
         properties.getTranscription().setProvider("openai");
         properties.getTranscription().setApiKey("stt-key");
@@ -157,15 +157,10 @@ class AudioDashboardControllerTest {
         mockMvc.perform(get("/api/audio/voice-config").param("profile", "worker"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.ok").value(true))
-            .andExpect(jsonPath("$.stt.mode").value("direct"))
-            .andExpect(jsonPath("$.stt.wire").value("openai-multipart"))
-            .andExpect(jsonPath("$.stt.api_key").value("stt-key"))
-            .andExpect(jsonPath("$.stt.model").value("gpt-4o-mini-transcribe"))
-            .andExpect(jsonPath("$.tts.mode").value("direct"))
-            .andExpect(jsonPath("$.tts.wire").value("openai-speech"))
-            .andExpect(jsonPath("$.tts.base_url").value("https://proxy.example/v1"))
-            .andExpect(jsonPath("$.tts.api_key").value("tts-key"))
-            .andExpect(jsonPath("$.tts.voice").value("nova"));
+            .andExpect(jsonPath("$.stt.mode").value("relay"))
+            .andExpect(jsonPath("$.stt.api_key").doesNotExist())
+            .andExpect(jsonPath("$.tts.mode").value("relay"))
+            .andExpect(jsonPath("$.tts.api_key").doesNotExist());
     }
 
     @Test

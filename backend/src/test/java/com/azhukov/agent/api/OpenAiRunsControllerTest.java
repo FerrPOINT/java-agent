@@ -14,11 +14,13 @@ import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.security.ApprovalQueue;
 import com.azhukov.agent.core.security.DefaultRedactor;
 import com.azhukov.agent.core.security.UserContext;
+import com.azhukov.agent.persistence.entity.OpenAiRunStateEntity;
 import com.azhukov.agent.service.ApiRunAdmissionService;
 import com.azhukov.agent.service.AgentRuntimeService;
 import com.azhukov.agent.service.OpenAiResponseStore;
 import com.azhukov.agent.service.OpenAiResponseStore.StoredResponse;
 import com.azhukov.agent.service.OpenAiRunService;
+import com.azhukov.agent.service.OpenAiRunStateMachine;
 import com.azhukov.agent.service.OpenAiSessionService;
 import com.azhukov.agent.service.OpenAiSessionService.OpenAiSessionContext;
 import com.azhukov.agent.tools.terminal.ProcessTool;
@@ -31,6 +33,7 @@ import org.mapstruct.factory.Mappers;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
@@ -146,6 +149,69 @@ class OpenAiRunsControllerTest {
     @org.junit.jupiter.api.AfterEach
     void clearUserContext() {
         UserContext.clear();
+    }
+
+    @Test
+    void foreignUserCannotReadPersistedRunAfterRestart() throws Exception {
+        OpenAiRunStateMachine stateMachine = mock(OpenAiRunStateMachine.class);
+        OpenAiRunStateEntity state = persistedRun("user-b");
+        lenient().when(stateMachine.state("run_persisted")).thenReturn(java.util.Optional.of(state));
+        UserContext.set("user-a", UserContext.ROLE_USER);
+
+        persistedRunsController(stateMachine).perform(get("/v1/runs/run_persisted"))
+            .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void persistedRunControlEndpointsRemainUnavailableAfterRestart() throws Exception {
+        OpenAiRunStateMachine stateMachine = mock(OpenAiRunStateMachine.class);
+        UserContext.set("user-a", UserContext.ROLE_USER);
+        MockMvc persistedMvc = persistedRunsController(stateMachine);
+
+        persistedMvc.perform(post("/v1/runs/run_persisted/stop"))
+            .andExpect(status().isNotFound());
+        persistedMvc.perform(post("/v1/runs/run_persisted/approval")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"choice\":\"once\"}"))
+            .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void getRunUsesPersistedStateAfterRestart() throws Exception {
+        OpenAiRunStateMachine stateMachine = mock(OpenAiRunStateMachine.class);
+        OpenAiRunStateEntity state = persistedRun("user-a");
+        lenient().when(stateMachine.state("run_persisted")).thenReturn(java.util.Optional.of(state));
+        UserContext.set("user-a", UserContext.ROLE_USER);
+
+        persistedRunsController(stateMachine).perform(get("/v1/runs/run_persisted"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.run_id").value("run_persisted"))
+            .andExpect(jsonPath("$.status").value("completed"))
+            .andExpect(jsonPath("$.session_id").value(SESSION_ID.toString()))
+            .andExpect(jsonPath("$.model").value(MODEL));
+    }
+
+    private MockMvc persistedRunsController(OpenAiRunStateMachine stateMachine) {
+        @SuppressWarnings("unchecked")
+        ObjectProvider<OpenAiRunStateMachine> provider = mock(ObjectProvider.class);
+        lenient().when(provider.getIfAvailable()).thenReturn(stateMachine);
+        OpenAiRunsController controller = new OpenAiRunsController(
+            runService, openAiSessionService, responseStore, Mappers.getMapper(OpenAiMapper.class),
+            objectMapper, properties, new DefaultRedactor(properties), runAdmissionService, provider);
+        return MockMvcBuilders.standaloneSetup(controller)
+            .setControllerAdvice(new GlobalExceptionHandler())
+            .build();
+    }
+
+    private OpenAiRunStateEntity persistedRun(String userId) {
+        OpenAiRunStateEntity state = new OpenAiRunStateEntity();
+        state.setRunId("run_persisted");
+        state.setUserId(userId);
+        state.setSessionId(SESSION_ID);
+        state.setState("completed");
+        state.setModel(MODEL);
+        state.setLastSeq(4);
+        return state;
     }
 
     @Test
@@ -1238,6 +1304,27 @@ class OpenAiRunsControllerTest {
         assertThat(historyCaptor.getValue().get(0).content())
             .isEqualTo("old question\n[image_url: https://example.com/a.png]");
         assertThat(historyCaptor.getValue().get(0).imageCount()).isEqualTo(1);
+    }
+
+    @Test
+    void foreignUserCannotContinueStoredResponseRun() throws Exception {
+        responseStore.put("resp_private", new StoredResponse(
+            Map.of("id", "resp_private"),
+            List.of(Message.user("private request"), Message.assistant("private response", 1)),
+            "private instructions",
+            SESSION_ID
+        ), null);
+        UserContext.set("user-2", UserContext.ROLE_USER);
+        when(openAiSessionService.resolveStoredResponseSession(SESSION_ID, null))
+            .thenThrow(new IllegalArgumentException("Session not found: " + SESSION_ID));
+
+        mockMvc.perform(post("/v1/runs")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"previous_response_id\":\"resp_private\",\"input\":\"steal history\"}"))
+            .andExpect(status().isNotFound())
+            .andExpect(jsonPath("$.error.code").value("previous_response_not_found"));
+
+        verify(agentRuntimeService, never()).runApiTurn(any(Session.class), anyString(), any(ModelRequestOptions.class));
     }
 
     @Test

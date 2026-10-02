@@ -1,5 +1,6 @@
 package com.azhukov.agent.api;
 
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.service.EventService;
 import com.azhukov.agent.service.ProfileService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -65,8 +66,12 @@ public class EventWebSocketHandler extends TextWebSocketHandler {
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
         Subscription subscription;
         try {
+            requireAdminEventAccess(session);
             subscription = subscription(session);
         } catch (FileNotFoundException e) {
+            sendErrorAndClose(session, e.getMessage(), CloseStatus.POLICY_VIOLATION);
+            return;
+        } catch (SecurityException e) {
             sendErrorAndClose(session, e.getMessage(), CloseStatus.POLICY_VIOLATION);
             return;
         } catch (IllegalArgumentException e) {
@@ -113,6 +118,13 @@ public class EventWebSocketHandler extends TextWebSocketHandler {
             } catch (Exception ignored) {
                 // The connection is already gone or no longer writable.
             }
+        }
+    }
+
+    private static void requireAdminEventAccess(WebSocketSession session) {
+        Object role = session.getAttributes().get(DashboardWebSocketHandshakeInterceptor.USER_ROLE_ATTRIBUTE);
+        if (UserContext.ROLE_USER.equals(role)) {
+            throw new SecurityException("Event feed is available to administrators only");
         }
     }
 

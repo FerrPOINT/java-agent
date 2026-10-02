@@ -112,6 +112,15 @@ public class OpenAiResponsesController {
                     "Previous response not found: " + previousResponseId,
                     "invalid_request_error");
             }
+            if (previous.sessionId() != null) {
+                try {
+                    openAiSessionService.resolveStoredResponseSession(previous.sessionId(), sessionKeyHeader);
+                } catch (IllegalArgumentException e) {
+                    return openAiError(HttpStatus.NOT_FOUND,
+                        "Previous response not found: " + previousResponseId,
+                        "invalid_request_error");
+                }
+            }
             priorHistory = previous.conversationHistory();
             if (!hasText(instructions)) {
                 instructions = previous.instructions();

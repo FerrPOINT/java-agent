@@ -15,6 +15,7 @@ import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.core.model.TurnResult;
 import com.azhukov.agent.core.prompt.PromptBuilder;
 import com.azhukov.agent.core.security.DefaultRedactor;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.tool.ToolRegistry;
 import com.azhukov.agent.service.ApiRunAdmissionService;
 import com.azhukov.agent.service.OpenAiIdempotencyCache;
@@ -137,6 +138,11 @@ class OpenAiResponsesControllerTest {
             });
         lenient().when(toolRegistry.getDefinitions(Set.of("hermes-api-server")))
             .thenReturn(List.of());
+    }
+
+    @org.junit.jupiter.api.AfterEach
+    void clearUserContext() {
+        UserContext.clear();
     }
 
     @Test
@@ -806,6 +812,28 @@ class OpenAiResponsesControllerTest {
     }
 
     @Test
+    void foreignUserCannotContinueStoredResponseBeforeRuntimeRuns() throws Exception {
+        when(agentRuntime.run(anyList(), anyList(), any(ModelRequestOptions.class)))
+            .thenReturn(ChatResponse.text("owner response"));
+        MvcResult ownerResponse = mockMvc.perform(post("/v1/responses")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"input\":\"owner request\"}"))
+            .andExpect(status().isOk())
+            .andReturn();
+        String responseId = objectMapper.readTree(ownerResponse.getResponse().getContentAsString()).get("id").asText();
+        UserContext.set("user-2", UserContext.ROLE_USER);
+        when(openAiSessionService.resolveStoredResponseSession(SESSION_ID, null))
+            .thenThrow(new IllegalArgumentException("Session not found: " + SESSION_ID));
+
+        mockMvc.perform(post("/v1/responses")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"previous_response_id\":\"%s\",\"input\":\"steal history\"}".formatted(responseId)))
+            .andExpect(status().isNotFound());
+
+        verify(agentRuntime, times(1)).run(anyList(), anyList(), any(ModelRequestOptions.class));
+    }
+
+    @Test
     void previousResponseIdChainsStoredHistoryAndSession() throws Exception {
         when(agentRuntime.run(anyList(), anyList(), any(ModelRequestOptions.class)))
             .thenReturn(ChatResponse.text("first answer"))
@@ -835,7 +863,7 @@ class OpenAiResponsesControllerTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.output[0].content[0].text").value("second answer"));
 
-        verify(openAiSessionService).resolveStoredResponseSession(SESSION_ID, null);
+        verify(openAiSessionService, times(2)).resolveStoredResponseSession(SESSION_ID, null);
 
         @SuppressWarnings({"rawtypes", "unchecked"})
         ArgumentCaptor<List<Message>> messagesCaptor = ArgumentCaptor.forClass((Class) List.class);
@@ -877,7 +905,7 @@ class OpenAiResponsesControllerTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.output[0].content[0].text").value("second answer"));
 
-        verify(openAiSessionService).resolveStoredResponseSession(SESSION_ID, null);
+        verify(openAiSessionService, times(2)).resolveStoredResponseSession(SESSION_ID, null);
 
         @SuppressWarnings({"rawtypes", "unchecked"})
         ArgumentCaptor<List<Message>> messagesCaptor = ArgumentCaptor.forClass((Class) List.class);

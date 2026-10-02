@@ -119,7 +119,10 @@ public class SkillController {
     // h77: Curator audit ledger — list audit history for a skill.
     @GetMapping("/agent/skills/{name}/audit")
     public List<SkillAuditLogDto> getSkillAudit(@PathVariable String name) {
-        return skillAuditLogRepository.findBySkillNameOrderByTimestampDesc(name).stream()
+        String scopedUserId = UserContext.scopeUserId();
+        return (scopedUserId == null
+            ? skillAuditLogRepository.findBySkillNameOrderByTimestampDesc(name)
+            : skillAuditLogRepository.findBySkillNameAndUserIdOrderByTimestampDesc(name, scopedUserId)).stream()
             .map(domainDtoMapper::toSkillAuditLogDto)
             .toList();
     }

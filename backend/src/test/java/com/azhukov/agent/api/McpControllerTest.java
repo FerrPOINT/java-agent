@@ -2,9 +2,11 @@ package com.azhukov.agent.api;
 
 import com.azhukov.agent.client.mcp.McpLifecycleManager;
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.model.ToolDefinition;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.modelcontextprotocol.spec.McpSchema;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -47,6 +49,28 @@ class McpControllerTest {
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler(new com.fasterxml.jackson.databind.ObjectMapper()))
             .build();
+    }
+
+    @AfterEach
+    void clearUserContext() {
+        UserContext.clear();
+    }
+
+    @Test
+    void regularUserCannotInvokeMcpToolsOrReadResources() throws Exception {
+        UserContext.set("user-a", UserContext.ROLE_USER);
+
+        mockMvc.perform(post("/api/v1/mcp/servers/server-a/tools/tool1")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{}"))
+            .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/v1/mcp/servers/server-a/resources")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"uri\":\"file:///private\"}"))
+            .andExpect(status().isForbidden());
+
+        verify(mcpLifecycleManager, org.mockito.Mockito.never()).executeTool(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
+        verify(mcpLifecycleManager, org.mockito.Mockito.never()).readResource(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
     }
 
     // ── List servers ──

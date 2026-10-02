@@ -1,5 +1,6 @@
 package com.azhukov.agent.api;
 
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.persistence.entity.UsageEntity;
 import com.azhukov.agent.persistence.repository.UsageRepository;
 import io.swagger.v3.oas.annotations.Operation;
@@ -47,7 +48,7 @@ public class AnalyticsDashboardController {
         }
         Instant end = Instant.now().plusSeconds(1);
         Instant start = end.minus(periodDays, ChronoUnit.DAYS);
-        List<UsageEntity> rows = usageRepository.findByCreatedAtBetweenOrderByCreatedAtAsc(start, end);
+        List<UsageEntity> rows = usageRows(start, end);
 
         List<Map<String, Object>> models = byModel(rows).stream()
             .map(AnalyticsDashboardController::toModelAnalyticsPayload)
@@ -90,7 +91,7 @@ public class AnalyticsDashboardController {
         }
         Instant end = Instant.now().plusSeconds(1);
         Instant start = end.minus(periodDays, ChronoUnit.DAYS);
-        List<UsageEntity> rows = usageRepository.findByCreatedAtBetweenOrderByCreatedAtAsc(start, end);
+        List<UsageEntity> rows = usageRows(start, end);
 
         List<Map<String, Object>> daily = daily(rows);
         List<Map<String, Object>> byModel = byModel(rows);
@@ -105,6 +106,13 @@ public class AnalyticsDashboardController {
         response.put("skills", emptySkills());
         response.put("tools", List.of());
         return ResponseEntity.ok(response);
+    }
+
+    private List<UsageEntity> usageRows(Instant start, Instant end) {
+        String scopedUserId = UserContext.scopeUserId();
+        return scopedUserId == null
+            ? usageRepository.findByCreatedAtBetweenOrderByCreatedAtAsc(start, end)
+            : usageRepository.findByUserIdAndCreatedAtBetween(scopedUserId, start, end);
     }
 
     private static List<Map<String, Object>> daily(List<UsageEntity> rows) {
