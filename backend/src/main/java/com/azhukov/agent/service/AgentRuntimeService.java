@@ -110,7 +110,8 @@ public class AgentRuntimeService {
 
     public ChatResponseDto runDelegate(ChatRequest request) {
         int depth = request.delegationDepth() != null ? request.delegationDepth() : 0;
-        Session session = createSession(AgentProperties.DEFAULT_USER_ID, "openai-compatible", "")
+        String userId = UserContext.effectiveUserId(AgentProperties.DEFAULT_USER_ID);
+        Session session = createSession(userId, "openai-compatible", "")
             .withMetadata("delegation_depth", String.valueOf(depth));
 
         // P1-5: Persist user message before turn when mid-turn persistence is active
@@ -324,7 +325,8 @@ public class AgentRuntimeService {
 
     @Transactional(readOnly = true)
     public CreditsDto getCreditsSummary() {
-        var credits = usageTracker.getCreditsSummary(null);
+        String userId = UserContext.scopeUserId();
+        var credits = usageTracker.getCreditsSummary(userId);
         return new CreditsDto(credits.totalCost(), credits.totalTokens(), credits.totalMessages());
     }
 
@@ -364,7 +366,9 @@ public class AgentRuntimeService {
 
     @Transactional(readOnly = true)
     public List<ActiveAgentDto> listActiveAgents() {
-        return sessionRepository.findAllByUserId(AgentProperties.DEFAULT_USER_ID, PageRequest.of(0, 50)).stream()
+        String userId = UserContext.scopeUserId();
+        if (userId == null) userId = AgentProperties.DEFAULT_USER_ID;
+        return sessionRepository.findAllByUserId(userId, PageRequest.of(0, 50)).stream()
             .map(e -> new ActiveAgentDto(
                 e.getId().toString(),
                 "active",
@@ -376,7 +380,7 @@ public class AgentRuntimeService {
 
     @Transactional(readOnly = true)
     public InsightsDto getInsights() {
-        return usageTracker.getInsights(null);
+        return usageTracker.getInsights(UserContext.scopeUserId());
     }
 
     @Transactional
@@ -490,6 +494,7 @@ public class AgentRuntimeService {
      * unlike {@link #runBackground} which always creates a fresh session.
      */
     public String runHeartbeatTurn(UUID sessionId, String prompt) {
+        requireSessionOwnership(sessionId);
         SessionEntity entity = sessionRepository.findById(sessionId).orElse(null);
         Session session;
         if (entity != null) {

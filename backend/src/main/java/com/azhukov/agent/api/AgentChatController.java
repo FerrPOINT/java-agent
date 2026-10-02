@@ -368,6 +368,7 @@ public class AgentChatController {
 
     @GetMapping("/agent/session/{sessionId}/review/pending")
     public Map<String, Object> pendingReview(@PathVariable String sessionId) {
+        requireClarifySessionOwnership(sessionId);
         if (!properties.getMemory().getBackgroundReview().isEnabled()) {
             return Map.of("pending", false, "reason", "background review disabled");
         }

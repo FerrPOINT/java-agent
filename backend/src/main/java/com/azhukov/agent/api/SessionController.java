@@ -178,6 +178,7 @@ public class SessionController {
     public Map<String, Object> getCurrentModel(@RequestParam(required = false) UUID sessionId) {
         if (sessionId != null) {
             try {
+                agentRuntimeService.requireSessionOwnership(sessionId);
                 var session = agentRuntimeService.getContext(sessionId);
                 Map<String, Object> out = new java.util.LinkedHashMap<>();
                 out.put("sessionId", sessionId.toString());
@@ -194,6 +195,8 @@ public class SessionController {
                     out.put("model", defaultModelName());
                 }
                 return out;
+            } catch (SecurityException e) {
+                throw e;
             } catch (Exception e) {
                 return Map.of("error", e.getMessage());
             }

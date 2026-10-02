@@ -2,6 +2,8 @@ package com.azhukov.agent.service;
 
 import com.azhukov.agent.api.dto.ChatRequest;
 import com.azhukov.agent.api.dto.ChatResponseDto;
+import com.azhukov.agent.api.dto.InsightsDto;
+import com.azhukov.agent.api.dto.SessionSummaryDto;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.agent.AgentRuntime;
 import com.azhukov.agent.core.agent.CliStateApplier;
@@ -209,6 +211,29 @@ class AgentRuntimeServiceTest {
                 .isInstanceOf(SecurityException.class)
                 .hasMessageContaining("does not belong");
             verify(agentRuntime, never()).runTurn(any(Session.class), anyString(), any(), any());
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
+    void runDelegateCreatesSessionForAuthenticatedUser() {
+        ChatRequest request = ChatRequest.simple(null, USER_MESSAGE, 3, null);
+        UserContext.set("scoped-user", UserContext.ROLE_USER);
+        try {
+            SessionEntity savedEntity = newSessionEntity(SESSION_ID, USER_ID, "New chat");
+            when(sessionRepository.save(any(SessionEntity.class))).thenReturn(savedEntity);
+            TurnResult result = new TurnResult(
+                List.of(Message.user(USER_MESSAGE), Message.assistant(ASSISTANT_REPLY, 1)),
+                true,
+                null);
+            when(agentRuntime.runTurn(any(Session.class), eq(USER_MESSAGE), eq(List.of()), any())).thenReturn(result);
+
+            agentRuntimeService.runDelegate(request);
+
+            ArgumentCaptor<SessionEntity> sessionCaptor = ArgumentCaptor.forClass(SessionEntity.class);
+            verify(sessionRepository).save(sessionCaptor.capture());
+            assertThat(sessionCaptor.getValue().getUserId()).isEqualTo("scoped-user");
         } finally {
             UserContext.clear();
         }
@@ -529,6 +554,55 @@ class AgentRuntimeServiceTest {
             var sessions = agentRuntimeService.listSessions();
             assertThat(sessions).hasSize(1);
             assertThat(sessions.get(0).userId()).isEqualTo("user-1");
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
+    void heartbeatTurnRejectsForeignSessionBeforeRuntimeTurn() {
+        SessionEntity otherUserSession = newSessionEntity(EXISTING_SESSION_ID, "other-user", "Other");
+        when(sessionRepository.findById(EXISTING_SESSION_ID)).thenReturn(Optional.of(otherUserSession));
+        UserContext.set(USER_ID, UserContext.ROLE_USER);
+        try {
+            assertThatThrownBy(() -> agentRuntimeService.runHeartbeatTurn(EXISTING_SESSION_ID, "heartbeat"))
+                .isInstanceOf(SecurityException.class);
+            verify(agentRuntime, never()).runTurn(any(Session.class), eq("heartbeat"));
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
+    void listActiveAgentsReturnsOnlyCurrentUsersSessions() {
+        SessionEntity ownSession = newSessionEntity(EXISTING_SESSION_ID, USER_ID, "Mine");
+        org.springframework.data.domain.Page<SessionEntity> page =
+            new org.springframework.data.domain.PageImpl<>(List.of(ownSession));
+        when(sessionRepository.findAllByUserId(eq(USER_ID), any())).thenReturn(page);
+        UserContext.set(USER_ID, UserContext.ROLE_USER);
+        try {
+            List<com.azhukov.agent.api.dto.ActiveAgentDto> agents = agentRuntimeService.listActiveAgents();
+
+            assertThat(agents).hasSize(1);
+            assertThat(agents.get(0).sessionId()).isEqualTo(EXISTING_SESSION_ID.toString());
+            verify(sessionRepository).findAllByUserId(eq(USER_ID), any());
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
+    void creditsAndInsightsUseCurrentUserScope() {
+        UsageTracker.CreditsSummary credits = new UsageTracker.CreditsSummary(42, 2, 1.5);
+        InsightsDto insights = new InsightsDto(42, 2, java.util.Map.of("model", 42));
+        when(usageTracker.getCreditsSummary(USER_ID)).thenReturn(credits);
+        when(usageTracker.getInsights(USER_ID)).thenReturn(insights);
+        UserContext.set(USER_ID, UserContext.ROLE_USER);
+        try {
+            assertThat(agentRuntimeService.getCreditsSummary().totalTokens()).isEqualTo(42);
+            assertThat(agentRuntimeService.getInsights()).isEqualTo(insights);
+            verify(usageTracker).getCreditsSummary(USER_ID);
+            verify(usageTracker).getInsights(USER_ID);
         } finally {
             UserContext.clear();
         }

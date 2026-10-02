@@ -4,9 +4,11 @@ import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.agent.MemoryNudgeManager;
 import com.azhukov.agent.core.memory.MemoryProvider;
 import com.azhukov.agent.core.security.ApprovalQueue;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.core.tool.ToolRegistry;
 import com.azhukov.agent.metrics.AgentMetrics;
+import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.mapper.MessageMapper;
 import com.azhukov.agent.persistence.repository.BackgroundJobRepository;
 import com.azhukov.agent.persistence.repository.MessageRepository;
@@ -27,8 +29,10 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -140,6 +144,23 @@ class AgentChatControllerPendingReviewTest {
         mockMvc.perform(get("/api/v1/agent/session/{id}/review/pending", SESSION_ID))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.pending").value(false));
+    }
+
+    @Test
+    void foreignSessionCannotConsumePendingReviewSummary() throws Exception {
+        SessionEntity foreign = new SessionEntity();
+        foreign.setId(SESSION_ID);
+        foreign.setUserId("other-user");
+        when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(foreign));
+        when(memoryNudgeManagerProvider.getObject()).thenReturn(memoryNudgeManager);
+        UserContext.set("current-user", UserContext.ROLE_USER);
+        try {
+            mockMvc.perform(get("/api/v1/agent/session/{id}/review/pending", SESSION_ID))
+                .andExpect(status().isForbidden());
+            verifyNoInteractions(memoryNudgeManager);
+        } finally {
+            UserContext.clear();
+        }
     }
 
     @Test
