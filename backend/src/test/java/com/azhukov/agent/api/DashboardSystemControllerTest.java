@@ -1,6 +1,7 @@
 package com.azhukov.agent.api;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.service.ProfileService;
 import com.azhukov.agent.service.RuntimeConfigService;
 import org.junit.jupiter.api.AfterEach;
@@ -61,7 +62,9 @@ class DashboardSystemControllerTest {
             new com.azhukov.agent.service.ProfileEnvStore(providerOf(profileService));
         mockMvc = MockMvcBuilders.standaloneSetup(
             new DashboardSystemController(properties, runtimeConfigService, profileService,
-                null, null, providerOf(actionService), providerOf(configWriter), providerOf(envStore))).build();
+                null, null, providerOf(actionService), providerOf(configWriter), providerOf(envStore)))
+            .setControllerAdvice(new GlobalExceptionHandler())
+            .build();
     }
 
     private static <T> org.springframework.beans.factory.ObjectProvider<T> providerOf(T value) {
@@ -77,8 +80,19 @@ class DashboardSystemControllerTest {
 
     @AfterEach
     void tearDown() {
+        UserContext.clear();
         System.clearProperty("hermes.home");
         DashboardSystemController.clearInstallIdCacheForTests();
+    }
+
+    @Test
+    void regularUserCannotTriggerGatewayLifecycleActions() throws Exception {
+        UserContext.set("user-a", UserContext.ROLE_USER);
+
+        mockMvc.perform(post("/api/gateway/start"))
+            .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/ops/security-audit"))
+            .andExpect(status().isForbidden());
     }
 
     @Test
