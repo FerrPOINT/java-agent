@@ -2,10 +2,12 @@ package com.azhukov.agent.api;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.config.FallbackConfig;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.persistence.entity.CronJobEntity;
 import com.azhukov.agent.service.CronJobService;
 import com.azhukov.agent.service.ProfileService;
 import com.azhukov.agent.service.RuntimeConfigService;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -75,7 +77,24 @@ class ModelOptionsControllerTest {
         profileProperties.getCore().setSoulMdPath(tempDir.resolve("SOUL.md").toString());
         profileService = new ProfileService(profileProperties, runtimeConfigService);
         mockMvc = MockMvcBuilders.standaloneSetup(
-            new ModelOptionsController(properties, runtimeConfigService, profileService)).build();
+            new ModelOptionsController(properties, runtimeConfigService, profileService))
+            .setControllerAdvice(new GlobalExceptionHandler())
+            .build();
+    }
+
+    @AfterEach
+    void clearUserContext() {
+        UserContext.clear();
+    }
+
+    @Test
+    void regularUserCannotChangeModelAssignments() throws Exception {
+        UserContext.set("user-a", UserContext.ROLE_USER);
+
+        mockMvc.perform(post("/api/model/set")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"scope\":\"main\",\"provider\":\"openai-compatible\",\"model\":\"gpt-4\"}"))
+            .andExpect(status().isForbidden());
     }
 
     @Test
