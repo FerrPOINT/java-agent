@@ -2,6 +2,7 @@ package com.azhukov.agent.api;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.memory.MemoryProvider;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.core.skill.WriteOrigin;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -36,6 +37,12 @@ public class LearningDashboardController {
 
     private final SkillManager skillManager;
     private final MemoryProvider memoryProvider;
+
+    private void requireAdminLearningWriteAccess() {
+        if (UserContext.getUserId() != null && !UserContext.isAdmin()) {
+            throw new SecurityException("Learning dashboard changes are available to administrators only");
+        }
+    }
 
     @GetMapping("/graph")
     public Map<String, Object> graph(@RequestParam(name = "profile", required = false) String profile) {
@@ -136,6 +143,7 @@ public class LearningDashboardController {
 
     @DeleteMapping("/node")
     public ResponseEntity<Map<String, Object>> deleteNode(@RequestBody(required = false) LearningNodeRef body) {
+        requireAdminLearningWriteAccess();
         if (body == null || blank(body.id())) {
             return badRequest("id is required");
         }
@@ -164,6 +172,7 @@ public class LearningDashboardController {
 
     @PutMapping("/node")
     public ResponseEntity<Map<String, Object>> editNode(@RequestBody(required = false) LearningNodeEdit body) {
+        requireAdminLearningWriteAccess();
         if (body == null || blank(body.id())) {
             return badRequest("id is required");
         }
