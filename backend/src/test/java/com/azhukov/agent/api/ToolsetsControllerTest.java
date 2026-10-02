@@ -1,10 +1,12 @@
 package com.azhukov.agent.api;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.core.tool.ToolRegistry;
 import com.azhukov.agent.service.ProfileService;
 import com.azhukov.agent.service.RuntimeConfigService;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -56,7 +58,28 @@ class ToolsetsControllerTest {
         when(toolRegistry.getDefinitions(Set.of("hermes-cli"))).thenReturn(List.of(webSearch, termExec));
         when(toolRegistry.getDefinitions(Set.of("hermes-api-server"))).thenReturn(List.of(webSearch, termExec));
 
-        mockMvc = MockMvcBuilders.standaloneSetup(new ToolsetsController(toolRegistry, properties)).build();
+        mockMvc = MockMvcBuilders.standaloneSetup(new ToolsetsController(toolRegistry, properties))
+            .setControllerAdvice(new GlobalExceptionHandler())
+            .build();
+    }
+
+    @AfterEach
+    void clearUserContext() {
+        UserContext.clear();
+    }
+
+    @Test
+    void regularUserCannotMutateToolsetConfiguration() throws Exception {
+        UserContext.set("user-a", UserContext.ROLE_USER);
+
+        mockMvc.perform(post("/v1/toolsets/web/enable"))
+            .andExpect(status().isForbidden());
+        mockMvc.perform(put("/api/tools/toolsets/web")
+                .contentType("application/json")
+                .content("{\"enabled\":false}"))
+            .andExpect(status().isForbidden());
+
+        assertThat(properties.getSkills().getDefaultToolsets()).containsExactly("hermes-cli");
     }
 
     @Test
