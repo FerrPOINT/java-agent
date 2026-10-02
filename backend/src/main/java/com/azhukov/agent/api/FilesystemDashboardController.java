@@ -2,6 +2,7 @@ package com.azhukov.agent.api;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.security.FileSafety;
+import com.azhukov.agent.core.security.UserContext;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
@@ -17,6 +18,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
@@ -158,6 +160,13 @@ public class FilesystemDashboardController {
 
     private final AgentProperties properties;
     private final FileSafety fileSafety;
+
+    @ModelAttribute
+    private void requireAdminFilesystemAccess() {
+        if (UserContext.getUserId() != null && !UserContext.isAdmin()) {
+            throw new SecurityException("Filesystem dashboard is available to administrators only");
+        }
+    }
 
     @GetMapping("/api/media")
     public ResponseEntity<Map<String, Object>> getMedia(

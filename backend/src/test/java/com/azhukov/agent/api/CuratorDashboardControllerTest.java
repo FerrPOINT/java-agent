@@ -1,6 +1,8 @@
 package com.azhukov.agent.api;
 
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.skill.CuratorService;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -36,6 +38,28 @@ class CuratorDashboardControllerTest {
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();
+    }
+
+    @AfterEach
+    void clearUserContext() {
+        UserContext.clear();
+    }
+
+    @Test
+    void regularUserCannotTriggerOrReconfigureCurator() throws Exception {
+        UserContext.set("user-a", UserContext.ROLE_USER);
+
+        mockMvc.perform(post("/api/curator/run")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{}"))
+            .andExpect(status().isForbidden());
+        mockMvc.perform(put("/api/curator/paused")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"paused\":true}"))
+            .andExpect(status().isForbidden());
+
+        verify(curatorService, org.mockito.Mockito.never()).runCycle();
+        verify(curatorService, org.mockito.Mockito.never()).setPaused(true);
     }
 
     @Test

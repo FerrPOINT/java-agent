@@ -1,5 +1,6 @@
 package com.azhukov.agent.api;
 
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.skill.CuratorService;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.annotation.PreDestroy;
@@ -13,6 +14,7 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.LinkedHashMap;
@@ -36,6 +38,13 @@ public class CuratorDashboardController {
         thread.setDaemon(true);
         return thread;
     });
+
+    @ModelAttribute
+    private void requireAdminCuratorAccess() {
+        if (UserContext.getUserId() != null && !UserContext.isAdmin()) {
+            throw new SecurityException("Curator dashboard is available to administrators only");
+        }
+    }
 
     @GetMapping
     public Map<String, Object> status(@RequestParam(name = "profile", required = false) String profile) {

@@ -1,5 +1,6 @@
 package com.azhukov.agent.api;
 
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.service.EventService;
 import com.azhukov.agent.service.ProfileService;
@@ -109,6 +110,24 @@ class EventWebSocketHandlerTest {
         JsonNode error = objectMapper.readTree(((TextMessage) messages.get(0)).getPayload());
         assertThat(error.get("type").asText()).isEqualTo("error");
         assertThat(error.get("error").asText()).isEqualTo("Unknown profile: missing");
+        verify(session).close(CloseStatus.POLICY_VIOLATION);
+    }
+
+    @Test
+    void regularUserCannotSubscribeToCrossUserEventFeed() throws Exception {
+        EventWebSocketHandler handler = handler();
+        CountDownLatch sent = new CountDownLatch(1);
+        List<WebSocketMessage<?>> messages = new CopyOnWriteArrayList<>();
+        AtomicBoolean open = new AtomicBoolean(true);
+        WebSocketSession session = session("ws://localhost/api/events", open, messages, sent);
+        session.getAttributes().put(DashboardWebSocketHandshakeInterceptor.USER_ROLE_ATTRIBUTE, UserContext.ROLE_USER);
+
+        handler.afterConnectionEstablished(session);
+
+        assertThat(sent.await(1, TimeUnit.SECONDS)).isTrue();
+        JsonNode error = objectMapper.readTree(((TextMessage) messages.get(0)).getPayload());
+        assertThat(error.get("type").asText()).isEqualTo("error");
+        assertThat(error.get("error").asText()).isEqualTo("Event feed is available to administrators only");
         verify(session).close(CloseStatus.POLICY_VIOLATION);
     }
 

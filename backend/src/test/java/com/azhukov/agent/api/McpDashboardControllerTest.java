@@ -2,8 +2,10 @@ package com.azhukov.agent.api;
 
 import com.azhukov.agent.client.mcp.McpLifecycleManager;
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.model.ToolDefinition;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -41,6 +43,23 @@ class McpDashboardControllerTest {
                 mcpLifecycleManager, properties, new ObjectMapper(), null, null))
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();
+    }
+
+    @AfterEach
+    void clearUserContext() {
+        UserContext.clear();
+    }
+
+    @Test
+    void regularUserCannotTestOrMutateMcpServers() throws Exception {
+        UserContext.set("user-a", UserContext.ROLE_USER);
+
+        mockMvc.perform(post("/api/mcp/servers/filesystem/test"))
+            .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/mcp/servers")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"name\":\"attacker\",\"transport\":\"stdio\",\"command\":\"id\"}"))
+            .andExpect(status().isForbidden());
     }
 
     @Test

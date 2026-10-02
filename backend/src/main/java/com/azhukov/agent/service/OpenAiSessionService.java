@@ -78,8 +78,8 @@ public class OpenAiSessionService {
                                          String statelessSeed) {
         String sessionKey = parseSessionKey(sessionKeyHeader);
         String requestedSessionId = parseSessionIdHeader(sessionIdHeader);
+        String userId = effectiveSessionUserId(sessionKey);
         if (requestedSessionId == null) {
-            String userId = sessionKey != null ? sessionKey : AgentProperties.DEFAULT_USER_ID;
             UUID derivedSessionId = deterministicChatSessionUuid(userId, statelessSeed);
             Session session = derivedSessionId != null
                 ? sessionResolver.loadOrCreateSession(
@@ -120,7 +120,7 @@ public class OpenAiSessionService {
     public OpenAiSessionContext resolveRunSession(UUID sessionId, String sessionKeyHeader, String modelName) {
         String sessionKey = parseSessionKey(sessionKeyHeader);
         if (sessionId == null) {
-            String userId = sessionKey != null ? sessionKey : AgentProperties.DEFAULT_USER_ID;
+            String userId = effectiveSessionUserId(sessionKey);
             return new OpenAiSessionContext(
                 sessionResolver.createSession(userId, "openai-compatible", effectiveModelName(modelName), "api_server"),
                 false,
@@ -135,7 +135,7 @@ public class OpenAiSessionService {
         String sessionKey = parseSessionKey(sessionKeyHeader);
         String requestedSessionId = parseHeaderValue(sessionId, "Invalid session_id", "Session ID too long");
         if (requestedSessionId == null) {
-            String userId = sessionKey != null ? sessionKey : AgentProperties.DEFAULT_USER_ID;
+            String userId = effectiveSessionUserId(sessionKey);
             return new OpenAiSessionContext(
                 sessionResolver.createSession(userId, "openai-compatible", effectiveModelName(modelName), "api_server"),
                 false,
@@ -159,7 +159,7 @@ public class OpenAiSessionService {
             );
         }
 
-        String userId = sessionKey != null ? sessionKey : AgentProperties.DEFAULT_USER_ID;
+        String userId = effectiveSessionUserId(sessionKey);
         UUID mappedSessionId = deterministicExternalSessionUuid(userId, requestedSessionId);
         Session session = sessionResolver.loadOrCreateSession(
             mappedSessionId,
@@ -298,6 +298,11 @@ public class OpenAiSessionService {
 
     private String preview(String content) {
         return content.length() > 200 ? content.substring(0, 197) + "..." : content;
+    }
+
+    private String effectiveSessionUserId(String sessionKey) {
+        String requestedUserId = sessionKey != null ? sessionKey : AgentProperties.DEFAULT_USER_ID;
+        return UserContext.effectiveUserId(requestedUserId);
     }
 
     private String parseSessionIdHeader(String raw) {

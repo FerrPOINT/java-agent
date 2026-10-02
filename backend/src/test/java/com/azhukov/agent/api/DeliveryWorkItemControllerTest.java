@@ -1,6 +1,8 @@
 package com.azhukov.agent.api;
 
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.service.DeliveryWorkItemService;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -41,9 +43,44 @@ class DeliveryWorkItemControllerTest {
 
     @BeforeEach
     void setUp() {
+        UserContext.set("bot", UserContext.ROLE_ADMIN);
         mockMvc = MockMvcBuilders
             .standaloneSetup(new DeliveryWorkItemController(deliveryService))
             .build();
+    }
+
+    @AfterEach
+    void clearUserContext() {
+        UserContext.clear();
+    }
+
+    @Test
+    void regularUserCannotClaimDeliveryWork() throws Exception {
+        UserContext.set("user-a", UserContext.ROLE_USER);
+
+        mockMvc.perform(post("/api/v1/agent/delivery/claim")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"consumer_id\":\"attacker\",\"profiles\":[\"default\"]}"))
+            .andExpect(status().isForbidden());
+
+        verify(deliveryService, never()).claimNext(any(), any());
+    }
+
+    @Test
+    void regularUserCannotAcknowledgeOrRearmDeliveryWork() throws Exception {
+        UserContext.set("user-a", UserContext.ROLE_USER);
+
+        mockMvc.perform(post("/api/v1/agent/delivery/ack")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"id\":\"" + UUID.randomUUID() + "\",\"claim_token\":\"attacker\"}"))
+            .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/v1/agent/delivery/rearm")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"consumer_id\":\"attacker\"}"))
+            .andExpect(status().isForbidden());
+
+        verify(deliveryService, never()).markDelivered(any(), any(), any());
+        verify(deliveryService, never()).rearmSendPathDegraded(any());
     }
 
     @Test

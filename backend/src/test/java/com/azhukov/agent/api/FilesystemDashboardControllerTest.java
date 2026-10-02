@@ -2,6 +2,8 @@ package com.azhukov.agent.api;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.security.DefaultFileSafety;
+import com.azhukov.agent.core.security.UserContext;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -45,7 +47,28 @@ class FilesystemDashboardControllerTest {
         properties.getSecurity().setFileSafetyEnabled(true);
         properties.getSecurity().getAllowedPaths().add(tempDir.toString());
         mockMvc = MockMvcBuilders.standaloneSetup(
-            new FilesystemDashboardController(properties, new DefaultFileSafety(properties))).build();
+            new FilesystemDashboardController(properties, new DefaultFileSafety(properties)))
+            .setControllerAdvice(new GlobalExceptionHandler())
+            .build();
+    }
+
+    @AfterEach
+    void clearUserContext() {
+        UserContext.clear();
+    }
+
+    @Test
+    void regularUserCannotAccessFilesystemDashboard() throws Exception {
+        UserContext.set("user-a", UserContext.ROLE_USER);
+
+        mockMvc.perform(get("/api/fs/list").param("path", tempDir.toString()))
+            .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/fs/write-text")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"path\":\"" + tempDir.resolve("blocked.txt").toString() + "\",\"content\":\"blocked\"}"))
+            .andExpect(status().isForbidden());
+
+        assertThat(Files.exists(tempDir.resolve("blocked.txt"))).isFalse();
     }
 
     @Test

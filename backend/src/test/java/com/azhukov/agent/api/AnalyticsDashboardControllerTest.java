@@ -1,5 +1,6 @@
 package com.azhukov.agent.api;
 
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.persistence.entity.UsageEntity;
 import com.azhukov.agent.persistence.repository.UsageRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -17,6 +18,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -108,6 +110,25 @@ class AnalyticsDashboardControllerTest {
             .andExpect(jsonPath("$.totals.total_actual_cost").value(0.0))
             .andExpect(jsonPath("$.totals.total_sessions").value(2))
             .andExpect(jsonPath("$.totals.total_api_calls").value(3));
+    }
+
+    @Test
+    void usageScopesRowsToAuthenticatedUser() throws Exception {
+        UserContext.set("user-a", UserContext.ROLE_USER);
+        try {
+            when(usageRepository.findByUserIdAndCreatedAtBetween(eq("user-a"), any(), any()))
+                .thenReturn(List.of(usage(SESSION_1, "gpt-5", 100, 50, 0, 0.02, "2026-01-02T01:00:00Z")));
+
+            mockMvc.perform(get("/api/analytics/usage?days=30"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totals.total_input").value(100))
+                .andExpect(jsonPath("$.totals.total_output").value(50));
+
+            verify(usageRepository).findByUserIdAndCreatedAtBetween(eq("user-a"), any(), any());
+            verify(usageRepository, org.mockito.Mockito.never()).findByCreatedAtBetweenOrderByCreatedAtAsc(any(), any());
+        } finally {
+            UserContext.clear();
+        }
     }
 
     @Test

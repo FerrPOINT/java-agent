@@ -89,7 +89,11 @@ public class OpenAiRunsController {
             return openAiError(HttpStatus.BAD_REQUEST, routeConflict, "invalid_request_error");
         }
         String instructions = normalizeInstructions(request.instructions());
-        StoredResponse previous = previousResponse(request.previousResponseId());
+        StoredResponse previous = previousResponse(request.previousResponseId(), sessionKeyHeader);
+        if (previous == null && request.previousResponseId() != null && !request.previousResponseId().isBlank()) {
+            return openAiError(HttpStatus.NOT_FOUND, "Previous response not found: " + request.previousResponseId(),
+                "invalid_request_error", "previous_response_not_found");
+        }
         if (previous != null && instructions == null) {
             instructions = previous.instructions();
         }
@@ -216,7 +220,8 @@ public class OpenAiRunsController {
     @PostMapping("/{runId}/approval")
     public ResponseEntity<Map<String, Object>> approval(@PathVariable String runId,
                                                         @RequestBody(required = false) String body) {
-        if (accessibleRun(runId) == null) {
+        RunRecord run = activeAccessibleRun(runId);
+        if (run == null) {
             return openAiError(HttpStatus.NOT_FOUND, "Run not found: " + runId,
                 "invalid_request_error", "run_not_found");
         }
@@ -239,7 +244,7 @@ public class OpenAiRunsController {
     @PostMapping("/{runId}/steer")
     public ResponseEntity<Map<String, Object>> steer(@PathVariable String runId,
                                                      @RequestBody(required = false) String body) {
-        RunRecord run = accessibleRun(runId);
+        RunRecord run = activeAccessibleRun(runId);
         if (run == null) {
             return openAiError(HttpStatus.NOT_FOUND, "Run not found: " + runId,
                 "invalid_request_error", "run_not_found");
@@ -267,17 +272,43 @@ public class OpenAiRunsController {
 
     @PostMapping("/{runId}/stop")
     public ResponseEntity<Map<String, Object>> stop(@PathVariable String runId) {
-        if (accessibleRun(runId) == null) {
+        if (activeAccessibleRun(runId) == null) {
             return openAiError(HttpStatus.NOT_FOUND, "Run not found: " + runId,
                 "invalid_request_error", "run_not_found");
         }
         return controlResponse(runId, runService.stop(runId));
     }
 
+    private RunRecord activeAccessibleRun(String runId) {
+        RunRecord run = runService.get(runId);
+        return run != null && isAccessible(run.userId()) ? run : null;
+    }
+
     private RunRecord accessibleRun(String runId) {
         RunRecord run = runService.get(runId);
+        if (run != null) {
+            return isAccessible(run.userId()) ? run : null;
+        }
+        com.azhukov.agent.service.OpenAiRunStateMachine stateMachine =
+            runStateMachineProvider == null ? null : runStateMachineProvider.getIfAvailable();
+        if (stateMachine == null) {
+            return null;
+        }
+        return stateMachine.state(runId)
+            .filter(state -> isAccessible(state.getUserId()))
+            .map(this::persistedRunRecord)
+            .orElse(null);
+    }
+
+    private boolean isAccessible(String ownerId) {
         String scopedUserId = UserContext.scopeUserId();
-        return run != null && (scopedUserId == null || scopedUserId.equals(run.userId())) ? run : null;
+        return scopedUserId == null || scopedUserId.equals(ownerId);
+    }
+
+    private RunRecord persistedRunRecord(com.azhukov.agent.persistence.entity.OpenAiRunStateEntity state) {
+        return OpenAiRunService.restoredRun(
+            state.getRunId(), state.getSessionId(), state.getUserId(), state.getModel(),
+            state.getState(), state.getCreatedAt(), state.getUpdatedAt());
     }
 
     private ResponseEntity<Map<String, Object>> controlResponse(String runId, ControlResult result) {
@@ -291,11 +322,20 @@ public class OpenAiRunsController {
         return openAiError(status, message, "invalid_request_error", result.code());
     }
 
-    private StoredResponse previousResponse(String previousResponseId) {
+    private StoredResponse previousResponse(String previousResponseId, String sessionKeyHeader) {
         if (previousResponseId == null || previousResponseId.isBlank()) {
             return null;
         }
-        return responseStore.get(previousResponseId.trim());
+        StoredResponse stored = responseStore.get(previousResponseId.trim());
+        if (stored == null || stored.sessionId() == null) {
+            return stored;
+        }
+        try {
+            openAiSessionService.resolveStoredResponseSession(stored.sessionId(), sessionKeyHeader);
+            return stored;
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 
     private ParseResult historyToPersist(OpenAiRunRequest request, RunInput input, StoredResponse previous) {

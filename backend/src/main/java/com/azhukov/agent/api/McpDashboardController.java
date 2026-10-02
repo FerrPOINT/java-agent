@@ -2,6 +2,7 @@ package com.azhukov.agent.api;
 
 import com.azhukov.agent.client.mcp.McpLifecycleManager;
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.model.ToolDefinition;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -16,6 +17,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -42,6 +44,13 @@ public class McpDashboardController {
     private final ObjectMapper objectMapper;
     private final org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.service.McpConfigStore> configStoreProvider;
     private final org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.service.McpOAuthFlowService> oauthFlowProvider;
+
+    @ModelAttribute
+    private void requireAdminMcpAccess() {
+        if (UserContext.getUserId() != null && !UserContext.isAdmin()) {
+            throw new SecurityException("MCP dashboard is available to administrators only");
+        }
+    }
 
     @GetMapping("/servers")
     public Map<String, Object> listServers(@RequestParam(name = "profile", required = false) String profile) {

@@ -1,7 +1,9 @@
 package com.azhukov.agent.api;
 
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.skill.CuratorService;
 import com.azhukov.agent.core.skill.CuratorService.CuratorReport;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -30,7 +32,27 @@ class CuratorControllerTest {
     @BeforeEach
     void setUp() {
         CuratorController controller = new CuratorController(curatorService);
-        mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
+        mockMvc = MockMvcBuilders.standaloneSetup(controller)
+            .setControllerAdvice(new GlobalExceptionHandler())
+            .build();
+    }
+
+    @AfterEach
+    void clearUserContext() {
+        UserContext.clear();
+    }
+
+    @Test
+    void regularUserCannotRunOrPauseCurator() throws Exception {
+        UserContext.set("user-a", UserContext.ROLE_USER);
+
+        mockMvc.perform(post("/api/v1/agent/curator/run"))
+            .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/v1/agent/curator/pause"))
+            .andExpect(status().isForbidden());
+
+        verify(curatorService, never()).runCycle();
+        verify(curatorService, never()).setPaused(true);
     }
 
     @Test

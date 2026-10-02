@@ -481,13 +481,20 @@ public class OpenAiRunService {
         }
     }
 
+    public static RunRecord restoredRun(String runId, UUID sessionId, String userId, String model,
+                                        String status, java.time.Instant createdAt, java.time.Instant updatedAt) {
+        RunRecord run = new RunRecord(runId, sessionId, sessionId, userId, model);
+        run.restoreStatus(status, createdAt, updatedAt);
+        return run;
+    }
+
     public static final class RunRecord {
         private final String runId;
         private final UUID sessionId;
         private final UUID controlSessionId;
         private final String userId;
         private final String model;
-        private final double createdAt;
+        private double createdAt;
         private final BlockingQueue<QueuedEvent> events = new LinkedBlockingQueue<>();
         private final AtomicBoolean eventStreamClaimed = new AtomicBoolean(false);
         private final AtomicBoolean stopRequested = new AtomicBoolean(false);
@@ -529,6 +536,16 @@ public class OpenAiRunService {
 
         public synchronized double updatedAt() {
             return updatedAt;
+        }
+
+        private synchronized void restoreStatus(String status, java.time.Instant createdAt, java.time.Instant updatedAt) {
+            this.status = status;
+            if (createdAt != null) {
+                this.createdAt = createdAt.toEpochMilli() / 1000.0;
+            }
+            if (updatedAt != null) {
+                this.updatedAt = updatedAt.toEpochMilli() / 1000.0;
+            }
         }
 
         public synchronized Map<String, Object> snapshot() {

@@ -1,11 +1,13 @@
 package com.azhukov.agent.api;
 
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.skill.CuratorService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.ModelAttribute;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.web.bind.annotation.RestController;
@@ -21,6 +23,13 @@ import java.util.Map;
 public class CuratorController {
 
     private final CuratorService curatorService;
+
+    @ModelAttribute
+    private void requireAdminCuratorAccess() {
+        if (UserContext.getUserId() != null && !UserContext.isAdmin()) {
+            throw new SecurityException("Curator access is available to administrators only");
+        }
+    }
 
     @Operation(summary = "Get curator service status")
     @GetMapping("/agent/curator/status")
