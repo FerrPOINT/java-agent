@@ -1,6 +1,7 @@
 package com.azhukov.agent.api;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.gateway.GatewayLifecycleService;
 import com.azhukov.agent.service.DashboardActionService;
 import com.azhukov.agent.service.GatewayHomeChannelService;
@@ -23,6 +24,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.io.IOException;
@@ -115,6 +117,13 @@ public class DashboardSystemController {
     private final ObjectProvider<ProfileEnvStore> profileEnvStoreProvider;
     private volatile String dashboardTheme = "default";
     private volatile String dashboardFont = "theme";
+
+    @ModelAttribute
+    private void requireAdminDashboardSystemAccess() {
+        if (UserContext.getUserId() != null && !UserContext.isAdmin()) {
+            throw new SecurityException("Dashboard system controls are available to administrators only");
+        }
+    }
 
     @Autowired
     public DashboardSystemController(AgentProperties properties,
