@@ -2,6 +2,7 @@ package com.azhukov.agent.core.context;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.client.ModelClient;
+import com.azhukov.agent.core.agent.SessionMutationLock;
 import com.azhukov.agent.core.model.ChatResponse;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Role;
@@ -828,6 +829,12 @@ public class DefaultContextCompressor implements ContextCompressor {
          return java.util.Optional.empty();
      }
 
+     return SessionMutationLock.withLock(sessionId,
+         () -> rotateSessionLocked(sessionId, sessionIdStr, compacted));
+ }
+
+ private java.util.Optional<SessionRotationResult> rotateSessionLocked(UUID sessionId, String sessionIdStr,
+                                                                        List<Message> compacted) {
      try {
          SessionEntity oldSession = sessionRepository.findById(sessionId).orElse(null);
          if (oldSession == null) {

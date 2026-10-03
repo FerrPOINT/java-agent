@@ -6,6 +6,7 @@ import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.agent.AgentRuntime;
 import com.azhukov.agent.core.agent.CliStateApplier;
 import com.azhukov.agent.core.agent.AgentSessionResolver;
+import com.azhukov.agent.core.agent.SessionMutationLock;
 import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.client.ModelRequestOptions;
 import com.azhukov.agent.core.context.DefaultContextCompressor;
@@ -116,17 +117,7 @@ public class AgentRuntimeService {
 
         // P1-5: Persist user message before turn when mid-turn persistence is active
         if (midTurnPersistenceCallback != null) {
-            transactionTemplate.execute(status -> {
-                Instant now = Instant.now();
-                MessageEntity userMsg = new MessageEntity();
-                userMsg.setSessionId(session.id());
-                userMsg.setRole("user");
-                userMsg.setContent(request.message());
-                userMsg.setTurnIndex(0);
-                userMsg.setCreatedAt(now);
-                messageRepository.save(userMsg);
-                return null;
-            });
+            persistIncomingMessage(session.id(), request.message(), 0, 0);
         }
 
         TurnResult result = agentRuntime.runTurn(session, request.message(), List.of(),
@@ -181,17 +172,7 @@ public class AgentRuntimeService {
         // and tool results mid-turn via the MidTurnPersistenceCallback. This avoids
         // duplicate writes at end-of-turn.
         if (midTurnPersistenceCallback != null) {
-            transactionTemplate.execute(status -> {
-                Instant now = Instant.now();
-                MessageEntity userMsg = new MessageEntity();
-                userMsg.setSessionId(session.id());
-                userMsg.setRole("user");
-                userMsg.setContent(applied.message());
-                userMsg.setTurnIndex(0);
-                userMsg.setCreatedAt(now);
-                messageRepository.save(userMsg);
-                return null;
-            });
+            persistIncomingMessage(session.id(), applied.message(), 0, 0);
         }
 
         ModelRequestOptions options = toModelOptions(applied, session);
@@ -575,17 +556,7 @@ public class AgentRuntimeService {
                 java.util.Map.copyOf(metadata), baseSession.subgoal());
         // P1-5: Persist user message before turn when mid-turn persistence is active
         if (midTurnPersistenceCallback != null) {
-            transactionTemplate.execute(status -> {
-                Instant now = Instant.now();
-                MessageEntity userMsg = new MessageEntity();
-                userMsg.setSessionId(session.id());
-                userMsg.setRole("user");
-                userMsg.setContent(prompt);
-                userMsg.setTurnIndex(0);
-                userMsg.setCreatedAt(now);
-                messageRepository.save(userMsg);
-                return null;
-            });
+            persistIncomingMessage(session.id(), prompt, 0, 0);
         }
         TurnResult result = agentRuntime.runTurn(session, prompt);
         // P1-5: Only call persistMessages if mid-turn persistence is NOT active
@@ -648,7 +619,34 @@ public class AgentRuntimeService {
         return sessionResolver.createSession(userId, provider, modelName);
     }
 
+    private void persistIncomingMessage(UUID sessionId, String content, int imageCount, int turnIndex) {
+        SessionMutationLock.withLock(sessionId, () -> {
+            transactionTemplate.execute(status -> {
+                if (!sessionRepository.existsById(sessionId)) {
+                    return null;
+                }
+                MessageEntity userMsg = new MessageEntity();
+                userMsg.setSessionId(sessionId);
+                userMsg.setRole("user");
+                userMsg.setContent(content);
+                userMsg.setTurnIndex(turnIndex);
+                userMsg.setImageCount(imageCount);
+                userMsg.setCreatedAt(Instant.now());
+                messageRepository.save(userMsg);
+                return null;
+            });
+            return null;
+        });
+    }
+
     private void persistMessages(UUID sessionId, List<Message> messages) {
+        SessionMutationLock.withLock(sessionId, () -> {
+            persistMessagesLocked(sessionId, messages);
+            return null;
+        });
+    }
+
+    private void persistMessagesLocked(UUID sessionId, List<Message> messages) {
         transactionTemplate.execute(status -> {
             Instant now = Instant.now();
             java.util.List<MessageEntity> batch = new java.util.ArrayList<>();
@@ -734,18 +732,7 @@ public ChatResponseDto runApiTurn(Session session, Message message, ModelRequest
         Session runtimeSession = RuntimeModelOptionsResolver.applyEffectiveRuntime(session, properties, effectiveOptions);
         Message userMessage = apiUserMessage(message);
         if (midTurnPersistenceCallback != null) {
-            transactionTemplate.execute(status -> {
-                Instant now = Instant.now();
-                MessageEntity userMsg = new MessageEntity();
-                userMsg.setSessionId(runtimeSession.id());
-                userMsg.setRole("user");
-                userMsg.setContent(userMessage.content());
-                userMsg.setTurnIndex(0);
-                userMsg.setImageCount(userMessage.imageCount());
-                userMsg.setCreatedAt(now);
-                messageRepository.save(userMsg);
-                return null;
-            });
+            persistIncomingMessage(runtimeSession.id(), userMessage.content(), userMessage.imageCount(), 0);
         }
 
         TurnResult result = agentRuntime.runTurn(runtimeSession, userMessage, List.of(), effectiveOptions);

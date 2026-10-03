@@ -3,6 +3,7 @@ package com.azhukov.agent.service;
 import com.azhukov.agent.api.AgentException;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.agent.AgentSessionResolver;
+import com.azhukov.agent.core.agent.SessionMutationLock;
 import com.azhukov.agent.core.model.ChatResponse;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Role;
@@ -194,8 +195,19 @@ public class OpenAiSessionService {
             .toList();
     }
 
-    public void persistTurn(OpenAiSessionContext context, List<Message> incomingMessages, ChatResponse response) {
-        persistTurn(context, incomingMessages, response, List.of());
+    public void persistTurn(OpenAiSessionContext context, List<Message> incoming, ChatResponse response) {
+        if (context == null || context.session() == null || context.session().id() == null) {
+            return;
+        }
+        UUID sessionId = context.session().id();
+        SessionMutationLock.withLock(sessionId, () -> {
+            persistTurnLocked(context, incoming, response);
+            return null;
+        });
+    }
+
+    private void persistTurnLocked(OpenAiSessionContext context, List<Message> incoming, ChatResponse response) {
+        persistTurnLocked(context, incoming, response, List.of());
     }
 
     public void persistTurn(OpenAiSessionContext context,
@@ -205,6 +217,17 @@ public class OpenAiSessionService {
         if (context == null || context.session() == null || context.session().id() == null) {
             return;
         }
+        UUID sessionId = context.session().id();
+        SessionMutationLock.withLock(sessionId, () -> {
+            persistTurnLocked(context, incomingMessages, response, generatedMessages);
+            return null;
+        });
+    }
+
+    private void persistTurnLocked(OpenAiSessionContext context,
+                                   List<Message> incomingMessages,
+                                   ChatResponse response,
+                                   List<Message> generatedMessages) {
         transactionTemplate.execute(status -> {
             UUID sessionId = context.session().id();
             if (!sessionRepository.existsById(sessionId)) {
@@ -239,6 +262,13 @@ public class OpenAiSessionService {
         if (sessionId == null || messages == null || messages.isEmpty()) {
             return;
         }
+        SessionMutationLock.withLock(sessionId, () -> {
+            persistHistoryLocked(sessionId, messages);
+            return null;
+        });
+    }
+
+    private void persistHistoryLocked(UUID sessionId, List<Message> messages) {
         transactionTemplate.execute(status -> {
             if (!sessionRepository.existsById(sessionId)) {
                 return null;
