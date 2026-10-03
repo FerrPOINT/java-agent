@@ -1,6 +1,7 @@
 package com.azhukov.agent.api;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.gateway.GatewayRoutingService;
 import com.azhukov.agent.gateway.model.Platform;
 import com.azhukov.agent.gateway.telegram.TelegramAdapter;
@@ -48,6 +49,12 @@ public class MessagingDashboardController {
     private final Environment environment;
     private final org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.service.GatewayConfigWriter> gatewayConfigWriterProvider;
     private final org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.service.GatewayHomeChannelService> gatewayHomeChannelProvider;
+
+    private void requireAdminMessagingWriteAccess() {
+        if (UserContext.getUserId() != null && !UserContext.isAdmin()) {
+            throw new SecurityException("Messaging dashboard changes are available to administrators only");
+        }
+    }
 
     @PostMapping("/api/messaging/telegram/onboarding/start")
     @Operation(summary = "Reject Telegram QR onboarding not supported by Java port")
@@ -124,6 +131,7 @@ public class MessagingDashboardController {
         @PathVariable String platformId,
         @RequestBody(required = false) Map<String, Object> body
     ) {
+        requireAdminMessagingWriteAccess();
         if (!isKnownPlatform(platformId)) {
             return unknownPlatform(platformId);
         }
@@ -206,6 +214,7 @@ public class MessagingDashboardController {
     public ResponseEntity<Map<String, Object>> approvePairing(
         @RequestBody(required = false) Map<String, Object> body
     ) {
+        requireAdminMessagingWriteAccess();
         String platform = bodyString(body, "platform");
         String requestId = bodyString(body, "request_id");
         String code = bodyString(body, "code");
@@ -253,6 +262,7 @@ public class MessagingDashboardController {
     public ResponseEntity<Map<String, Object>> revokePairing(
         @RequestBody(required = false) Map<String, Object> body
     ) {
+        requireAdminMessagingWriteAccess();
         if (!hasText(bodyString(body, "platform")) || !hasText(bodyString(body, "user_id"))) {
             return badRequest("platform and user_id are required");
         }

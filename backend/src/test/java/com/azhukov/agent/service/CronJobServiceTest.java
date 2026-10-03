@@ -44,6 +44,27 @@ class CronJobServiceTest {
     }
 
     @Test
+    void createPersistsCurrentUserOnTheFirstSave() {
+        java.util.List<CronJobEntity> saves = new java.util.ArrayList<>();
+        when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(invocation -> {
+            CronJobEntity job = invocation.getArgument(0);
+            saves.add(job);
+            job.setId(UUID.randomUUID());
+            return job;
+        });
+        com.azhukov.agent.core.security.UserContext.set("user-a",
+            com.azhukov.agent.core.security.UserContext.ROLE_USER);
+        try {
+            service.create("owned", "0 * * * *", "Run task", null);
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+        }
+
+        assertThat(saves).hasSize(1);
+        assertThat(saves.getFirst().getUserId()).isEqualTo("user-a");
+    }
+
+    @Test
     void createCronJob() {
         when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(inv -> {
             CronJobEntity e = inv.getArgument(0);

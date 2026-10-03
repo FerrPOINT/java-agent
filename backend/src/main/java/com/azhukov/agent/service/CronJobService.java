@@ -289,18 +289,10 @@ private static final String CRON_EXECUTION_HINT = """
         String enabledToolsets, String workdir,
         String modelProvider, String modelName, String baseUrl
     ) {
-        CronJobEntity entity = createScoped(DEFAULT_PROFILE, name, schedule, prompt, deliverTo, skills, contextFrom, repeatCount,
+        return createScoped(DEFAULT_PROFILE, name, schedule, prompt, deliverTo, skills, contextFrom, repeatCount,
             script, noAgent, enabledToolsets, workdir, modelProvider, modelName, baseUrl,
             null, false, null);
-        // h-cron-owner: stamp the creating user so ownership checks work
-        if (entity.getUserId() == null) {
-            String scoped = UserContext.scopeUserId();
-            if (scoped != null) {
-                entity = cronJobRepository.save(entity);
-            }
-        }
-        return entity;
-        }
+    }
 
     public CronJobEntity createInProfile(
         String profile,
@@ -416,6 +408,7 @@ private static final String CRON_EXECUTION_HINT = """
         ScheduleInfo scheduleInfo = parseSchedule(schedule);
 
         CronJobEntity entity = new CronJobEntity();
+        entity.setUserId(UserContext.scopeUserId());
         entity.setProfile(normalizedProfile);
         entity.setName(name);
         entity.setSchedule(schedule);

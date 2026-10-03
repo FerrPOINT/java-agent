@@ -3,8 +3,10 @@ package com.azhukov.agent.api;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.memory.MemoryProvider;
 import com.azhukov.agent.core.memory.MemoryScope;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.service.ProfileService;
 import com.azhukov.agent.service.RuntimeConfigService;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -40,6 +42,29 @@ class MemoryDashboardControllerTest {
         mockMvc = MockMvcBuilders.standaloneSetup(new MemoryDashboardController(memoryProvider))
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();
+    }
+
+    @AfterEach
+    void clearUserContext() {
+        UserContext.clear();
+    }
+
+    @Test
+    void regularUserCannotReadOrResetDefaultUserMemory() throws Exception {
+        memoryProvider.memory.add("default memory");
+        memoryProvider.memoryFor("user-a").add("private memory");
+        UserContext.set("user-a", UserContext.ROLE_USER);
+
+        mockMvc.perform(get("/api/memory"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.builtin_files.memory").value("private memory".length()));
+        mockMvc.perform(post("/api/memory/reset")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"target\":\"memory\"}"))
+            .andExpect(status().isOk());
+
+        assertThat(memoryProvider.memory).containsExactly("default memory");
+        assertThat(memoryProvider.memoryFor("user-a")).isEmpty();
     }
 
     @Test

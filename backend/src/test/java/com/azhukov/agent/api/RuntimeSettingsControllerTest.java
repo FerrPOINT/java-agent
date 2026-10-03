@@ -5,6 +5,7 @@ import com.azhukov.agent.api.dto.CreditsDto;
 import com.azhukov.agent.api.dto.InsightsDto;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.memory.MemoryProvider;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.security.UrlSafetyHandler;
 import com.azhukov.agent.service.AgentRuntimeService;
 import com.azhukov.agent.service.CliRuntimeSettingsService;
@@ -12,6 +13,7 @@ import com.azhukov.agent.service.RuntimeConfigService;
 import com.azhukov.agent.service.tts.TtsService;
 import com.azhukov.agent.service.transcription.TranscriptionService;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -79,6 +81,33 @@ class RuntimeSettingsControllerTest {
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler(new com.fasterxml.jackson.databind.ObjectMapper()))
             .build();
+    }
+
+    @AfterEach
+    void clearUserContext() {
+        UserContext.clear();
+    }
+
+    @Test
+    void regularUserCannotMutateGlobalRuntimeState() throws Exception {
+        UserContext.set("user-a", UserContext.ROLE_USER);
+
+        mockMvc.perform(post("/api/v1/agent/codex-runtime/model")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"model\":\"other-model\"}"))
+            .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/v1/agent/codex-runtime/reset"))
+            .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/v1/agent/restart"))
+            .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/v1/agent/reload-mcp"))
+            .andExpect(status().isForbidden());
+
+        verify(runtimeConfigService, org.mockito.Mockito.never()).setModelOverride(anyString());
+        verify(runtimeConfigService, org.mockito.Mockito.never()).clearModelOverride();
+        verify(cliRuntimeSettingsService, org.mockito.Mockito.never()).resetAllSessions();
+        verify(agentRuntimeService, org.mockito.Mockito.never()).restart();
+        verify(agentRuntimeService, org.mockito.Mockito.never()).reloadMcp();
     }
 
     // ── Config ──

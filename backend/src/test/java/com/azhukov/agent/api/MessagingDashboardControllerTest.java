@@ -1,11 +1,13 @@
 package com.azhukov.agent.api;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.gateway.GatewayRoutingService;
 import com.azhukov.agent.gateway.model.Platform;
 import com.azhukov.agent.gateway.model.PlatformConfig;
 import com.azhukov.agent.gateway.telegram.TelegramAdapter;
 import com.azhukov.agent.gateway.telegram.TelegramBotApiClient;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
@@ -43,7 +45,36 @@ class MessagingDashboardControllerTest {
         mockMvc = MockMvcBuilders.standaloneSetup(
                 new MessagingDashboardController(properties, gatewayRoutingService, environment,
                     writerProvider, null))
+            .setControllerAdvice(new GlobalExceptionHandler())
             .build();
+    }
+
+    @AfterEach
+    void clearUserContext() {
+        UserContext.clear();
+    }
+
+    @Test
+    void regularUserCannotReadOrMutateMessagingDashboard() throws Exception {
+        UserContext.set("user-a", UserContext.ROLE_USER);
+
+        mockMvc.perform(get("/api/messaging/platforms"))
+            .andExpect(status().isOk());
+        mockMvc.perform(put("/api/messaging/platforms/telegram")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"allowed_user_ids\":[\"42\"]}"))
+            .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/pairing/approve")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{}"))
+            .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/pairing/revoke")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{}"))
+            .andExpect(status().isForbidden());
+
+        org.assertj.core.api.Assertions.assertThat(
+            properties.getGateway().getTelegram().getAllowedUserIds()).isEmpty();
     }
 
     private static <T> org.springframework.beans.factory.ObjectProvider<T> providerOf(T value) {

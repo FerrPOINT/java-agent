@@ -104,10 +104,17 @@ public class ProfilesDashboardController {
         return Map.of("profiles", profileService.listProfileRows());
     }
 
+    private void requireAdminProfilesWriteAccess() {
+        if (UserContext.getUserId() != null && !UserContext.isAdmin()) {
+            throw new SecurityException("Profiles dashboard changes are available to administrators only");
+        }
+    }
+
     @PostMapping
     public ResponseEntity<Map<String, Object>> createProfile(
         @RequestBody(required = false) Map<String, Object> body
     ) {
+        requireAdminProfilesWriteAccess();
         String explicitSource = bodyString(body, "clone_from");
         boolean cloneAll = bodyBoolean(body, "clone_all");
         boolean cloneFromDefault = bodyBoolean(body, "clone_from_default");
@@ -140,6 +147,7 @@ public class ProfilesDashboardController {
     public ResponseEntity<Map<String, Object>> setActiveProfile(
         @RequestBody(required = false) Map<String, Object> body
     ) {
+        requireAdminProfilesWriteAccess();
         try {
             return ResponseEntity.ok(profileService.setActiveProfile(bodyString(body, "name")));
         } catch (Exception e) {
@@ -152,6 +160,7 @@ public class ProfilesDashboardController {
         @PathVariable String name,
         @RequestBody(required = false) Map<String, Object> body
     ) {
+        requireAdminProfilesWriteAccess();
         try {
             return ResponseEntity.ok(profileService.renameProfile(name, bodyString(body, "new_name")));
         } catch (Exception e) {
@@ -161,6 +170,7 @@ public class ProfilesDashboardController {
 
     @DeleteMapping("/{name}")
     public ResponseEntity<Map<String, Object>> deleteProfile(@PathVariable String name) {
+        requireAdminProfilesWriteAccess();
         try {
             return ResponseEntity.ok(profileService.deleteProfile(name));
         } catch (Exception e) {
@@ -182,6 +192,7 @@ public class ProfilesDashboardController {
         @PathVariable String name,
         @RequestBody(required = false) Map<String, Object> body
     ) {
+        requireAdminProfilesWriteAccess();
         Object content = body != null ? body.get("content") : null;
         if (!(content instanceof String string)) {
             return badRequest("content is required");
@@ -211,6 +222,7 @@ public class ProfilesDashboardController {
         @PathVariable String name,
         @RequestBody(required = false) Map<String, Object> body
     ) {
+        requireAdminProfilesWriteAccess();
         ResponseEntity<Map<String, Object>> validation = validateKnownProfile(name);
         if (validation != null) {
             return validation;
@@ -233,6 +245,7 @@ public class ProfilesDashboardController {
         @PathVariable String name,
         @RequestBody(required = false) Map<String, Object> body
     ) {
+        requireAdminProfilesWriteAccess();
         try {
             return ResponseEntity.ok(profileService.writeDescription(name, bodyString(body, "description")));
         } catch (Exception e) {
@@ -245,6 +258,7 @@ public class ProfilesDashboardController {
         @PathVariable String name,
         @RequestBody(required = false) Map<String, Object> body
     ) {
+        requireAdminProfilesWriteAccess();
         ResponseEntity<Map<String, Object>> validation = validateKnownProfile(name);
         if (validation != null) {
             return validation;
@@ -266,6 +280,7 @@ public class ProfilesDashboardController {
         @PathVariable String name,
         @RequestBody(required = false) Map<String, Object> body
     ) {
+        requireAdminProfilesWriteAccess();
         ResponseEntity<Map<String, Object>> validation = validateKnownProfile(name);
         if (validation != null) {
             return validation;
@@ -303,6 +318,7 @@ public class ProfilesDashboardController {
         @PathVariable String name,
         @RequestBody(required = false) Map<String, Object> body
     ) {
+        requireAdminProfilesWriteAccess();
         ResponseEntity<Map<String, Object>> validation = validateKnownProfile(name);
         if (validation != null) {
             return validation;
@@ -321,6 +337,7 @@ public class ProfilesDashboardController {
     public ResponseEntity<Map<String, Object>> importProfile(
         @RequestBody(required = false) Map<String, Object> body
     ) {
+        requireAdminProfilesWriteAccess();
         if (bodyString(body, "archive") == null) {
             return badRequest("archive path is required");
         }

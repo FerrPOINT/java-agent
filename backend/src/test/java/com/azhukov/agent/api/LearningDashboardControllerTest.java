@@ -13,6 +13,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -61,6 +62,20 @@ class LearningDashboardControllerTest {
 
         assertThat(skillManager.getSkill("debug-skill")).isEqualTo("body");
         assertThat(memoryProvider.memory).containsExactly("private memory");
+    }
+
+    @Test
+    void regularUserCannotReadOrChangeDefaultUserMemory() throws Exception {
+        memoryProvider.memory.add("default-only");
+        UserContext.set("user-a", UserContext.ROLE_USER);
+
+        mockMvc.perform(get("/api/learning/graph"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.stats.memory_nodes").value(0));
+        mockMvc.perform(get("/api/learning/node?id=memory:memory:0"))
+            .andExpect(status().isNotFound());
+
+        assertThat(memoryProvider.memory).containsExactly("default-only");
     }
 
     @Test
@@ -211,27 +226,31 @@ class LearningDashboardControllerTest {
     }
 
     private static final class InMemoryMemoryProvider implements MemoryProvider {
-        private final List<String> memory = new ArrayList<>();
-        private final List<String> user = new ArrayList<>();
+        private final Map<String, List<String>> memoryByUser = new HashMap<>();
+        private final Map<String, List<String>> userByUser = new HashMap<>();
+        private final List<String> memory = bucket(memoryByUser, com.azhukov.agent.config.AgentProperties.DEFAULT_USER_ID);
+        private final List<String> user = bucket(userByUser, com.azhukov.agent.config.AgentProperties.DEFAULT_USER_ID);
 
         @Override
         public List<String> recall(String userId, String query, int limit) {
-            return memory.stream().limit(limit).toList();
+            return bucket(memoryByUser, userId).stream().limit(limit).toList();
         }
 
         @Override
         public void store(String userId, String category, String fact) {
-            memory.add(fact);
+            bucket(memoryByUser, userId).add(fact);
         }
 
         @Override
         public List<String> getRawEntries(String userId, String target) {
-            return "user".equals(target) ? new ArrayList<>(user) : new ArrayList<>(memory);
+            return new ArrayList<>("user".equals(target)
+                ? bucket(userByUser, userId) : bucket(memoryByUser, userId));
         }
 
         @Override
         public String replace(String userId, String target, String oldText, String newText) {
-            List<String> list = "user".equals(target) ? user : memory;
+            List<String> list = "user".equals(target)
+                ? bucket(userByUser, userId) : bucket(memoryByUser, userId);
             int index = list.indexOf(oldText);
             if (index < 0) {
                 return "not found";
@@ -242,8 +261,15 @@ class LearningDashboardControllerTest {
 
         @Override
         public String remove(String userId, String target, String oldText) {
-            List<String> list = "user".equals(target) ? user : memory;
+            List<String> list = "user".equals(target)
+                ? bucket(userByUser, userId) : bucket(memoryByUser, userId);
             return list.remove(oldText) ? null : "not found";
+        }
+
+        private static List<String> bucket(Map<String, List<String>> values, String userId) {
+            String effectiveUserId = userId == null || userId.isBlank()
+                ? com.azhukov.agent.config.AgentProperties.DEFAULT_USER_ID : userId;
+            return values.computeIfAbsent(effectiveUserId, ignored -> new ArrayList<>());
         }
     }
 }

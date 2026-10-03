@@ -73,6 +73,12 @@ public class SkillController {
         return java.util.Map.of("resolved", true, "message", message);
     }
 
+    private void requireAdminSkillManagementAccess() {
+        if (UserContext.getUserId() != null && !UserContext.isAdmin()) {
+            throw new SecurityException("Global skill management is available to administrators only");
+        }
+    }
+
     // ── Skills hub (SIMPLIFIED Hermes parity: one GitHub repo source) ──
 
     @Operation(summary = "List skills available in the hub repo")
@@ -92,6 +98,7 @@ public class SkillController {
     @Operation(summary = "Install a skill from the hub repo (threat-scanned)")
     @PostMapping("/agent/skills-hub/install")
     public java.util.Map<String, Object> hubInstall(@RequestBody HubInstallRequest body) {
+        requireAdminSkillManagementAccess();
         if (body.skill() == null || body.skill().isBlank()) {
             return Map.of("ok", false, "error", "skill is required");
         }
@@ -132,11 +139,13 @@ public class SkillController {
     @Operation(summary = "Reload skills from disk")
     @PostMapping("/agent/reload-skills")
     public void reloadSkills() {
+        requireAdminSkillManagementAccess();
         agentRuntimeService.reloadSkills();
     }
 
     @PostMapping("/agent/reload")
     public void reloadAll() {
+        requireAdminSkillManagementAccess();
         agentRuntimeService.reloadSkills();
         agentRuntimeService.reloadMcp();
     }
@@ -145,6 +154,7 @@ public class SkillController {
 
     @PostMapping("/agent/bundles/install")
     public Map<String, Object> installBundle(@Valid @RequestBody BundleRequest request) {
+        requireAdminSkillManagementAccess();
         try {
             agentRuntimeService.installBundle(request.bundleName());
             return Map.of("ok", true, "message", "Bundle installed: " + request.bundleName());
@@ -155,6 +165,7 @@ public class SkillController {
 
     @PostMapping("/agent/bundles/uninstall")
     public Map<String, Object> uninstallBundle(@Valid @RequestBody BundleRequest request) {
+        requireAdminSkillManagementAccess();
         try {
             agentRuntimeService.uninstallBundle(request.bundleName());
             return Map.of("ok", true, "message", "Bundle uninstalled: " + request.bundleName());
