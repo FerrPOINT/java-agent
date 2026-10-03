@@ -2,6 +2,7 @@ package com.azhukov.agent.service;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.security.UserContext;
+import com.azhukov.agent.core.agent.SessionMutationLock;
 import com.azhukov.agent.core.security.DefaultUrlSafety;
 import com.azhukov.agent.core.util.CronSilenceFilter;
 import com.azhukov.agent.core.skill.SkillManager;
@@ -1597,16 +1598,19 @@ private static final String CRON_EXECUTION_HINT = """
         }
         try {
             UUID sessionId = job.getAttachedSessionId();
-            transactionTemplate.executeWithoutResult(status -> {
-                List<Integer> indices =
-                    messageRepository.findTurnIndicesBySessionIdDesc(sessionId);
-                MessageEntity note = new MessageEntity();
-                note.setSessionId(sessionId);
-                note.setRole("user");
-                note.setContent("[cron '" + job.getName() + "' output]\n" + payload);
-                note.setTurnIndex(indices.isEmpty() ? 0 : indices.get(0) + 1);
-                note.setCreatedAt(Instant.now());
-                messageRepository.save(note);
+            SessionMutationLock.withLock(sessionId, () -> {
+                transactionTemplate.executeWithoutResult(status -> {
+                    List<Integer> indices =
+                        messageRepository.findTurnIndicesBySessionIdDesc(sessionId);
+                    MessageEntity note = new MessageEntity();
+                    note.setSessionId(sessionId);
+                    note.setRole("user");
+                    note.setContent("[cron '" + job.getName() + "' output]\n" + payload);
+                    note.setTurnIndex(indices.isEmpty() ? 0 : indices.get(0) + 1);
+                    note.setCreatedAt(Instant.now());
+                    messageRepository.save(note);
+                });
+                return null;
             });
             log.debug("Cron job '{}' output mirrored into attached session {}", job.getName(), sessionId);
         } catch (Exception e) {

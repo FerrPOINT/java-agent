@@ -1,6 +1,7 @@
 package com.azhukov.agent.service;
 
 import com.azhukov.agent.core.memory.MemoryContextFence;
+import com.azhukov.agent.core.agent.SessionMutationLock;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.mapper.MessageMapper;
@@ -187,6 +188,14 @@ public class SessionCompressionHelper {
     @Transactional
     void persistCompressed(UUID sessionId, List<Message> compressed, Instant cutoffTimestamp,
                            java.util.Set<UUID> watermarkIds) {
+        SessionMutationLock.withLock(sessionId, () -> {
+            persistCompressedLocked(sessionId, compressed, cutoffTimestamp, watermarkIds);
+            return null;
+        });
+    }
+
+    private void persistCompressedLocked(UUID sessionId, List<Message> compressed, Instant cutoffTimestamp,
+                                         java.util.Set<UUID> watermarkIds) {
         // Hermes archive_and_compact parity (hermes_state.py:11191): old rows are
         // soft-archived (active=false, compacted=true) in one saveAll — NOT deleted, so
         // session_search keeps finding them and the transcript stays recoverable.

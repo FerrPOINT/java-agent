@@ -7,6 +7,7 @@ import com.azhukov.agent.api.mapper.DomainDtoMapper;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.agent.AgentSessionResolver;
 import com.azhukov.agent.core.agent.SessionDeletedEvent;
+import com.azhukov.agent.core.agent.SessionMutationLock;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.persistence.entity.MessageEntity;
@@ -208,6 +209,10 @@ public class SessionQueryService {
      */
     @Transactional
     public boolean deleteSession(UUID sessionId) {
+        return SessionMutationLock.withLock(sessionId, () -> deleteSessionLocked(sessionId));
+    }
+
+    private boolean deleteSessionLocked(UUID sessionId) {
         SessionEntity entity = sessionRepository.findById(sessionId).orElse(null);
         if (entity == null) {
             return false;
