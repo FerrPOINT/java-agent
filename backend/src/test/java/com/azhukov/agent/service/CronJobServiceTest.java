@@ -65,6 +65,23 @@ class CronJobServiceTest {
     }
 
     @Test
+    void scopedCreatePersistsExplicitOwnerOnTheFirstSave() {
+        java.util.List<CronJobEntity> saves = new java.util.ArrayList<>();
+        when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(invocation -> {
+            CronJobEntity job = invocation.getArgument(0);
+            saves.add(job);
+            job.setId(UUID.randomUUID());
+            return job;
+        });
+
+        service.create("session-owner", "owned", "0 * * * *", "Run task", null,
+            null, null, null, null, false, null, null, null, null, null);
+
+        assertThat(saves).hasSize(1);
+        assertThat(saves.getFirst().getUserId()).isEqualTo("session-owner");
+    }
+
+    @Test
     void createCronJob() {
         when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(inv -> {
             CronJobEntity e = inv.getArgument(0);
