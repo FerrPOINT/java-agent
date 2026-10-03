@@ -242,6 +242,10 @@ Mid-turn batches также проверяют и блокируют сесси�
 tool batch не повторял запись в удалённую сессию. Проверка снаружи транзакции
 не защищает от удаления, включая вызов prune во внешней транзакции.
 
+Обычная запись user/turn messages также блокирует сессию один раз на всю
+транзакцию. Streaming auto-title вызывается после successful commit и
+освобождения mutex; при ошибке сохранения transcript генерация title пропускается.
+
 CI проверяет обе очередности usage и mid-turn записи на PostgreSQL командой
 `./gradlew :backend:slowTest --tests 'com.azhukov.agent.service.*PersistenceConcurrencyTest' --no-daemon`.
 Для локальной проверки задать `USAGE_PERSISTENCE_TEST_JDBC_URL`,

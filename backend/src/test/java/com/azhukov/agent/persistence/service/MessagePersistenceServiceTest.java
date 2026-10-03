@@ -40,7 +40,7 @@ class MessagePersistenceServiceTest {
         repository = mock(com.azhukov.agent.persistence.repository.MessageRepository.class);
         sessionRepo = mock(com.azhukov.agent.persistence.repository.SessionRepository.class);
         when(repository.countBySessionId(any(UUID.class))).thenReturn(0L);
-        when(sessionRepo.existsById(any(UUID.class))).thenReturn(true);
+        when(sessionRepo.findMessageParentId(any(UUID.class))).thenReturn(java.util.Optional.of(SESSION_ID));
         service = new MessagePersistenceService(repository, sessionRepo, Mappers.getMapper(MessageMapper.class));
     }
 
@@ -175,7 +175,7 @@ class MessagePersistenceServiceTest {
     @Test
     void persistTurn_skipsQuietlyWhenSessionDeleted() {
         // Live defect (deleted-mid-turn race): no FK violation, no WARN spam.
-        when(sessionRepo.existsById(SESSION_ID)).thenReturn(false);
+        when(sessionRepo.findMessageParentId(SESSION_ID)).thenReturn(java.util.Optional.empty());
         TurnResult result = new TurnResult(List.of(Message.assistant("Hello!", 1)), true, null);
         service.persistTurn(SESSION, "hi", result);
         verify(repository, never()).save(any(MessageEntity.class));

@@ -79,7 +79,7 @@ jobs:
         working-directory: backend
         run: ./gradlew test --no-daemon
 
-      - name: Usage and mid-turn persistence concurrency against PostgreSQL
+      - name: Session persistence and transaction boundaries against PostgreSQL
         working-directory: backend
         run: ./gradlew slowTest --tests 'com.azhukov.agent.service.*PersistenceConcurrencyTest' --no-daemon
         env:
