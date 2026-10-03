@@ -3,6 +3,7 @@ package com.azhukov.agent.service;
 import com.azhukov.agent.api.dto.InsightsDto;
 import com.azhukov.agent.api.dto.UsageDto;
 import com.azhukov.agent.persistence.entity.UsageEntity;
+import com.azhukov.agent.persistence.repository.SessionRepository;
 import com.azhukov.agent.persistence.repository.UsageRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -25,11 +26,25 @@ class UsageTrackerTest {
     @Mock
     private UsageRepository usageRepository;
 
+    @Mock
+    private SessionRepository sessionRepository;
+
     private UsageTracker tracker;
 
     @BeforeEach
     void setUp() {
-        tracker = new UsageTracker(usageRepository);
+        tracker = new UsageTracker(usageRepository, sessionRepository);
+        lenient().when(sessionRepository.existsById(any(UUID.class))).thenReturn(true);
+    }
+
+    @Test
+    void recordTurn_skipsDeletedSessionWithoutWritingUsage() {
+        UUID sessionId = UUID.randomUUID();
+        when(sessionRepository.existsById(sessionId)).thenReturn(false);
+
+        tracker.recordTurn(sessionId, "user-1", "gpt-4", 100, 50);
+
+        verify(usageRepository, never()).save(any());
     }
 
     @Test
