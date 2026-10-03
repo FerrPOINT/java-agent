@@ -52,6 +52,7 @@ class SessionCompressionHelperTest {
     @Test
     void compressSessionInternalBackfillsToolNameWhenPersistingCompressedTail() {
         UUID sessionId = UUID.randomUUID();
+        when(sessionRepository.findMessageParentId(sessionId)).thenReturn(java.util.Optional.of(sessionId));
         List<MessageEntity> existing = List.of(
             entity("user", "one"),
             entity("assistant", "two"),
@@ -89,6 +90,7 @@ class SessionCompressionHelperTest {
     @Test
     void compressSessionInternalClonesConcurrentTailAfterCompactedRowsLikeHermes() {
         UUID sessionId = UUID.randomUUID();
+        when(sessionRepository.findMessageParentId(sessionId)).thenReturn(java.util.Optional.of(sessionId));
         List<MessageEntity> initial = List.of(
             entity("user", "one"),
             entity("assistant", "two"),

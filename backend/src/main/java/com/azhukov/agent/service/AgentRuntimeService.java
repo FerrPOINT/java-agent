@@ -622,7 +622,7 @@ public class AgentRuntimeService {
     private void persistIncomingMessage(UUID sessionId, String content, int imageCount, int turnIndex) {
         SessionMutationLock.withLock(sessionId, () -> {
             transactionTemplate.execute(status -> {
-                if (!sessionRepository.existsById(sessionId)) {
+                if (sessionRepository.findMessageParentId(sessionId).isEmpty()) {
                     return null;
                 }
                 MessageEntity userMsg = new MessageEntity();
@@ -648,6 +648,9 @@ public class AgentRuntimeService {
 
     private void persistMessagesLocked(UUID sessionId, List<Message> messages) {
         transactionTemplate.execute(status -> {
+            if (sessionRepository.findMessageParentId(sessionId).isEmpty()) {
+                return null;
+            }
             Instant now = Instant.now();
             java.util.List<MessageEntity> batch = new java.util.ArrayList<>();
             for (Message m : messages) {

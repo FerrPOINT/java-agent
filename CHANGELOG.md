@@ -6,6 +6,8 @@
 - Mid-turn transcript batches use a transactional parent lock as well, so deletion during a tool batch is treated as a completed flush instead of an FK error and repeated persistence attempts.
 - Ordinary user/turn message persistence acquires the parent lock once for the whole transaction, skipping sessions deleted before the write without repeated existence queries per row.
 - Streaming auto-title generation runs after transcript commit and mutation unlock; slow model calls no longer occupy the persistence transaction or block the session's mutation stripe.
+- OpenAI-compatible history/turn, runtime incoming/batch, streaming, compression and cron mirror acquire the parent write lock inside their transaction and skip deleted sessions before any transcript mutation.
+- Compression watermarks are immutable, call-local snapshots; concurrent compression of another session cannot misclassify old messages as a live tail and duplicate them.
 
 ## [0.1.248] — 2026-09-16
 

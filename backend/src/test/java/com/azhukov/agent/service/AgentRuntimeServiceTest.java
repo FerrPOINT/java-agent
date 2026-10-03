@@ -85,6 +85,8 @@ class AgentRuntimeServiceTest {
     void setUp() {
         agentRuntime = mock(AgentRuntime.class);
         sessionRepository = mock(com.azhukov.agent.persistence.repository.SessionRepository.class);
+        when(sessionRepository.findMessageParentId(SESSION_ID)).thenReturn(Optional.of(SESSION_ID));
+        when(sessionRepository.findMessageParentId(EXISTING_SESSION_ID)).thenReturn(Optional.of(EXISTING_SESSION_ID));
         messageRepository = mock(com.azhukov.agent.persistence.repository.MessageRepository.class);
         sessionTitleService = mock(SessionTitleService.class);
         memoryProvider = mock(MemoryProvider.class);

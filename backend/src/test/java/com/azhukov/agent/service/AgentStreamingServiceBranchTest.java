@@ -137,7 +137,7 @@ class AgentStreamingServiceBranchTest {
 
         SessionEntity sessionEntity = newSessionEntity(SESSION_ID, "test-model");
         when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(sessionEntity));
-        when(sessionRepository.existsById(SESSION_ID)).thenReturn(true);
+        when(sessionRepository.findMessageParentId(SESSION_ID)).thenReturn(Optional.of(SESSION_ID));
         when(messageRepository.findBySessionIdOrderByCreatedAtAsc(SESSION_ID))
             .thenReturn(List.of());
 

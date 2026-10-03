@@ -1600,6 +1600,10 @@ private static final String CRON_EXECUTION_HINT = """
             UUID sessionId = job.getAttachedSessionId();
             SessionMutationLock.withLock(sessionId, () -> {
                 transactionTemplate.executeWithoutResult(status -> {
+                    var sessions = sessionRepositoryProvider == null ? null : sessionRepositoryProvider.getIfAvailable();
+                    if (sessions != null && sessions.findMessageParentId(sessionId).isEmpty()) {
+                        return;
+                    }
                     List<Integer> indices =
                         messageRepository.findTurnIndicesBySessionIdDesc(sessionId);
                     MessageEntity note = new MessageEntity();

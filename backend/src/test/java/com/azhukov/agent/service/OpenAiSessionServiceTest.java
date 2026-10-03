@@ -355,7 +355,7 @@ class OpenAiSessionServiceTest {
 
     @Test
     void persistTurnSavesIncomingAssistantAndUpdatesSessionStats() {
-        when(sessionRepository.existsById(SESSION_ID)).thenReturn(true);
+        when(sessionRepository.findMessageParentId(SESSION_ID)).thenReturn(java.util.Optional.of(SESSION_ID));
         when(messageRepository.countBySessionId(SESSION_ID)).thenReturn(2L);
         OpenAiSessionService.OpenAiSessionContext context =
             new OpenAiSessionService.OpenAiSessionContext(session, false, null);
@@ -379,7 +379,7 @@ class OpenAiSessionServiceTest {
 
     @Test
     void persistTurnPreservesAssistantToolCalls() {
-        when(sessionRepository.existsById(SESSION_ID)).thenReturn(true);
+        when(sessionRepository.findMessageParentId(SESSION_ID)).thenReturn(java.util.Optional.of(SESSION_ID));
         when(messageRepository.countBySessionId(SESSION_ID)).thenReturn(1L);
         OpenAiSessionService.OpenAiSessionContext context =
             new OpenAiSessionService.OpenAiSessionContext(session, false, null);
@@ -403,7 +403,7 @@ class OpenAiSessionServiceTest {
 
     @Test
     void persistTurnSavesGeneratedToolHistoryBeforeFinalAssistant() {
-        when(sessionRepository.existsById(SESSION_ID)).thenReturn(true);
+        when(sessionRepository.findMessageParentId(SESSION_ID)).thenReturn(java.util.Optional.of(SESSION_ID));
         when(messageRepository.countBySessionId(SESSION_ID)).thenReturn(4L);
         OpenAiSessionService.OpenAiSessionContext context =
             new OpenAiSessionService.OpenAiSessionContext(session, false, null);

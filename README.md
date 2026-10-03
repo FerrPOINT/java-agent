@@ -246,7 +246,13 @@ tool batch не повторял запись в удалённую сессию
 транзакцию. Streaming auto-title вызывается после successful commit и
 освобождения mutex; при ошибке сохранения transcript генерация title пропускается.
 
-CI проверяет обе очередности usage и mid-turn записи на PostgreSQL командой
+OpenAI-compatible history/turn, runtime incoming/batch, streaming, compression
+и cron mirror используют тот же parent WRITE lock внутри транзакции записи.
+Compression snapshot и immutable watermark хранятся в текущем вызове:
+параллельная compression другой сессии не меняет набор исходных message IDs.
+
+CI проверяет обе очередности usage и всех перечисленных transcript writers,
+порядок блокировок compression/delete и границы title на PostgreSQL командой
 `./gradlew :backend:slowTest --tests 'com.azhukov.agent.service.*PersistenceConcurrencyTest' --no-daemon`.
 Для локальной проверки задать `USAGE_PERSISTENCE_TEST_JDBC_URL`,
 `USAGE_PERSISTENCE_TEST_DB_USER`, `USAGE_PERSISTENCE_TEST_DB_PASSWORD`

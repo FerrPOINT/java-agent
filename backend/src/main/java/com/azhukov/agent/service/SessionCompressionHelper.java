@@ -81,7 +81,8 @@ public class SessionCompressionHelper {
         // after this timestamp (during the LLM compression call) is preserved.
         Instant cutoff = Instant.now();
         // 1. Read messages in a short read-only transaction
-        List<Message> messages = proxy.readMessages(sessionId);
+        CompressionSnapshot snapshot = proxy.readCompressionSnapshot(sessionId);
+        List<Message> messages = snapshot.messages();
         if (messages.size() <= 4) return;
 
         // 2. Compress OUTSIDE any transaction (LLM call may take 10-60+ seconds)
@@ -101,28 +102,29 @@ public class SessionCompressionHelper {
         }
 
         // 3. Persist results in a short write transaction (race-safe)
-        proxy.persistCompressed(sessionId, compressed, cutoff, compressionWatermarkIds);
+        proxy.persistCompressed(sessionId, compressed, cutoff, snapshot.watermarkIds());
     }
 
     /**
      * Read and map messages in a short read-only transaction.
      */
     @Transactional(readOnly = true)
-    List<Message> readMessages(UUID sessionId) {
+    CompressionSnapshot readCompressionSnapshot(UUID sessionId) {
         List<MessageEntity> messageEntities = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
         // Capture the compression-start watermark (Hermes get_active_message_watermark):
         // ids active at the moment the snapshot was taken. Rows absent from this set
         // at persist time arrived DURING the LLM call and must survive compaction.
-        compressionWatermarkIds = messageIds(
+        Set<UUID> watermarkIds = messageIds(
             messageEntities.stream().filter(SessionCompressionHelper::isActive).toList());
-        return messageEntities.stream()
+        List<Message> messages = messageEntities.stream()
             .filter(SessionCompressionHelper::isActive)
             .map(messageMapper::toDomain)
             .toList();
+        return new CompressionSnapshot(messages, Set.copyOf(watermarkIds));
     }
 
-    /** Compression-start watermark: active row ids when the snapshot was read. */
-    private transient java.util.Set<UUID> compressionWatermarkIds;
+    /** Call-local snapshot; the singleton helper never shares one session's watermark with another. */
+    record CompressionSnapshot(List<Message> messages, Set<UUID> watermarkIds) {}
 
     /**
      * rev-103: Hermes parity — collect the memory provider's pre-compress
@@ -196,6 +198,9 @@ public class SessionCompressionHelper {
 
     private void persistCompressedLocked(UUID sessionId, List<Message> compressed, Instant cutoffTimestamp,
                                          java.util.Set<UUID> watermarkIds) {
+        if (sessionRepository != null && sessionRepository.findMessageParentId(sessionId).isEmpty()) {
+            return;
+        }
         // Hermes archive_and_compact parity (hermes_state.py:11191): old rows are
         // soft-archived (active=false, compacted=true) in one saveAll — NOT deleted, so
         // session_search keeps finding them and the transcript stays recoverable.

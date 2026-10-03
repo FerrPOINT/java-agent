@@ -105,7 +105,7 @@ class UserMessagePersistenceTest {
         sessionEntity.setCreatedAt(Instant.now());
         sessionEntity.setUpdatedAt(Instant.now());
         when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(sessionEntity));
-        org.mockito.Mockito.lenient().when(sessionRepository.existsById(any(UUID.class))).thenReturn(true);
+        when(sessionRepository.findMessageParentId(SESSION_ID)).thenReturn(Optional.of(SESSION_ID));
         when(messageRepository.findBySessionIdOrderByCreatedAtAsc(SESSION_ID)).thenReturn(List.of());
 
         IterationBudget.TurnSnapshot snapshot = mock(IterationBudget.TurnSnapshot.class);
