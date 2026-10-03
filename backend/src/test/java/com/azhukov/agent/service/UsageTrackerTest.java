@@ -33,14 +33,15 @@ class UsageTrackerTest {
 
     @BeforeEach
     void setUp() {
-        tracker = new UsageTracker(usageRepository, sessionRepository);
-        lenient().when(sessionRepository.existsById(any(UUID.class))).thenReturn(true);
+        tracker = new UsageTracker(usageRepository, new UsagePersistenceService(sessionRepository, usageRepository));
+        lenient().when(sessionRepository.findUsageParentId(any(UUID.class)))
+            .thenAnswer(call -> java.util.Optional.of(call.getArgument(0)));
     }
 
     @Test
     void recordTurn_skipsDeletedSessionWithoutWritingUsage() {
         UUID sessionId = UUID.randomUUID();
-        when(sessionRepository.existsById(sessionId)).thenReturn(false);
+        when(sessionRepository.findUsageParentId(sessionId)).thenReturn(java.util.Optional.empty());
 
         tracker.recordTurn(sessionId, "user-1", "gpt-4", 100, 50);
 

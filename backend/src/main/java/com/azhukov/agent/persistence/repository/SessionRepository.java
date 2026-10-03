@@ -12,12 +12,17 @@ import org.springframework.stereotype.Repository;
 import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import jakarta.transaction.Transactional;
 
 @Repository
 public interface SessionRepository extends JpaRepository<SessionEntity, UUID> {
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_READ)
+    @Query("select s.id from SessionEntity s where s.id = :sessionId")
+    Optional<UUID> findUsageParentId(@Param("sessionId") UUID sessionId);
+
     SessionEntity findByUserId(String userId);
 
     List<SessionEntity> findAllByUserId(String userId);

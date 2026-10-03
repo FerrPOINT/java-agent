@@ -2,13 +2,11 @@ package com.azhukov.agent.service;
 
 import com.azhukov.agent.api.dto.InsightsDto;
 import com.azhukov.agent.api.dto.UsageDto;
-import com.azhukov.agent.core.agent.SessionMutationLock;
 import com.azhukov.agent.core.model.TokenUsage;
 import com.azhukov.agent.persistence.entity.UsageEntity;
-import com.azhukov.agent.persistence.repository.SessionRepository;
 import com.azhukov.agent.persistence.repository.UsageRepository;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
@@ -28,23 +26,11 @@ import java.util.UUID;
  */
 @Component
 @Slf4j
+@RequiredArgsConstructor
 public class UsageTracker {
 
     private final UsageRepository usageRepository;
-    private final SessionRepository sessionRepository;
-
-    @Autowired
-    public UsageTracker(UsageRepository usageRepository, SessionRepository sessionRepository) {
-        this.usageRepository = usageRepository;
-        this.sessionRepository = sessionRepository;
-    }
-
-    /**
-     * Keeps existing unit-test call sites source-compatible.
-     */
-    UsageTracker(UsageRepository usageRepository) {
-        this(usageRepository, null);
-    }
+    private final UsagePersistenceService usagePersistence;
     // Format: model_name -> [input_cost_per_1M, output_cost_per_1M, cache_read_cost_per_1M]
     private static final Map<String, double[]> MODEL_PRICING = Map.ofEntries(
         Map.entry("gpt-4o", new double[]{2.50, 10.00, 1.25}),
@@ -116,18 +102,7 @@ public class UsageTracker {
         if (sessionId == null || usage == null) {
             return;
         }
-        SessionMutationLock.withLock(sessionId, () -> {
-            recordTurnLocked(sessionId, userId, model, usage);
-            return null;
-        });
-    }
-
-    private void recordTurnLocked(UUID sessionId, String userId, String model, TokenUsage usage) {
         try {
-            if (sessionRepository != null && !sessionRepository.existsById(sessionId)) {
-                log.debug("Skipping usage persistence for deleted session {}", sessionId);
-                return;
-            }
             int promptTokens = usage.promptTokens();
             int completionTokens = usage.completionTokens();
             int cacheReadTokens = usage.cacheReadTokens();
@@ -144,7 +119,10 @@ public class UsageTracker {
             entity.setCacheReadTokens(cacheReadTokens);
             entity.setCacheWriteTokens(cacheWriteTokens);
             entity.setCreatedAt(Instant.now());
-            usageRepository.save(entity);
+            if (!usagePersistence.saveForExistingSession(entity)) {
+                log.debug("Skipping usage persistence for deleted session {}", sessionId);
+                return;
+            }
             log.debug("Recorded usage: session={}, model={}, prompt={}, completion={}, total={}, cacheRead={}, cacheWrite={}, reasoning={}, cost={}",
                 sessionId, model, promptTokens, completionTokens, entity.getTotalTokens(),
                 cacheReadTokens, cacheWriteTokens, usage.reasoningTokens(), entity.getCost());

@@ -1,3 +1,9 @@
+## [Unreleased]
+
+### Fixed
+
+- Usage persistence locks the parent session in the same database transaction as the insert. Concurrent session deletion either cascades committed usage or causes the recorder to skip the deleted session without a foreign-key failure. Pricing, API contracts and database migrations remain unchanged.
+
 ## [0.1.248] — 2026-09-16
 
 Container test policy and end-to-end turn diagnostics.

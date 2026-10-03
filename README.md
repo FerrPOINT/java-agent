@@ -231,6 +231,20 @@ Docker images используют `eclipse-temurin:25-jre-noble`; slim-обра
 
 ### Стандарт документации и тестов
 
+Usage записывается через `UsagePersistenceService`: блокировка строки сессии и
+insert выполняются в одной транзакции. Если удаление завершилось первым,
+запись пропускается; если первой записалась usage, последующее удаление
+очищает её через существующий `ON DELETE CASCADE`. JVM mutex не заменяет
+эту гарантию: Spring завершает транзакцию после возврата сервисного метода.
+
+CI проверяет обе очередности на PostgreSQL командой
+`./gradlew :backend:slowTest --tests com.azhukov.agent.service.UsagePersistenceConcurrencyTest --no-daemon`.
+Для локальной проверки задать `USAGE_PERSISTENCE_TEST_JDBC_URL`,
+`USAGE_PERSISTENCE_TEST_DB_USER`, `USAGE_PERSISTENCE_TEST_DB_PASSWORD`
+отдельной QA базы; без URL тест использует H2. Тест создаёт и удаляет только
+собственную уникальную schema. Локальный PostgreSQL запускать через временный
+Compose project по правилам Base [LOCAL_GROUPS.md](../services-base/deploy/LOCAL_GROUPS.md).
+
 Действует для всего кода: [docs/standards/documentation.md](docs/standards/documentation.md) (краткая версия — в [AGENTS.md](AGENTS.md)). Суть:
 
 - Javadoc на классах ≥50 строк и кросс-пакетных контрактах; без воды («responsible for», «utility class» — линтер отклоняет).
