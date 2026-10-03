@@ -237,8 +237,13 @@ insert выполняются в одной транзакции. Если уд�
 очищает её через существующий `ON DELETE CASCADE`. JVM mutex не заменяет
 эту гарантию: Spring завершает транзакцию после возврата сервисного метода.
 
-CI проверяет обе очередности на PostgreSQL командой
-`./gradlew :backend:slowTest --tests com.azhukov.agent.service.UsagePersistenceConcurrencyTest --no-daemon`.
+Mid-turn batches также проверяют и блокируют сессию внутри транзакции записи.
+Если удаление завершилось первым, batch считается flushed, чтобы следующий
+tool batch не повторял запись в удалённую сессию. Проверка снаружи транзакции
+не защищает от удаления, включая вызов prune во внешней транзакции.
+
+CI проверяет обе очередности usage и mid-turn записи на PostgreSQL командой
+`./gradlew :backend:slowTest --tests 'com.azhukov.agent.service.*PersistenceConcurrencyTest' --no-daemon`.
 Для локальной проверки задать `USAGE_PERSISTENCE_TEST_JDBC_URL`,
 `USAGE_PERSISTENCE_TEST_DB_USER`, `USAGE_PERSISTENCE_TEST_DB_PASSWORD`
 отдельной QA базы; без URL тест использует H2. Тест создаёт и удаляет только

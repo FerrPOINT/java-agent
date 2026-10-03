@@ -23,6 +23,10 @@ public interface SessionRepository extends JpaRepository<SessionEntity, UUID> {
     @Query("select s.id from SessionEntity s where s.id = :sessionId")
     Optional<UUID> findUsageParentId(@Param("sessionId") UUID sessionId);
 
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("select s.id from SessionEntity s where s.id = :sessionId")
+    Optional<UUID> findMessageParentId(@Param("sessionId") UUID sessionId);
+
     SessionEntity findByUserId(String userId);
 
     List<SessionEntity> findAllByUserId(String userId);

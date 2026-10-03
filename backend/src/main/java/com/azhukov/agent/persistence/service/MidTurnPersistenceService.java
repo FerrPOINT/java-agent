@@ -53,16 +53,13 @@ public class MidTurnPersistenceService implements MidTurnPersistenceCallback {
         if (messages == null || messages.isEmpty() || fromIndex >= messages.size()) {
             return true; // Nothing to persist — treat as success
         }
-        // Deleted-session guard: a session can be removed (user /reset, session
-        // cleanup) while a turn is still streaming. Hermes' flush no-ops when
-        // the session store is gone; without this guard every tool batch
-        // retries the INSERT and logs an FK-violation WARN to the journal.
-        if (!sessionRepository.existsById(sessionId)) {
-            log.debug("Mid-turn persistence skipped: session {} no longer exists", sessionId);
-            return true; // treat as flushed so the caller advances its cursor
-        }
         try {
             int persistedCount = transactionTemplate.execute(status -> {
+                // Deletion may have released the JVM mutex while its transaction is still committing.
+                if (sessionRepository.findMessageParentId(sessionId).isEmpty()) {
+                    log.debug("Mid-turn persistence skipped: session {} no longer exists", sessionId);
+                    return 0;
+                }
                 Instant now = Instant.now();
                 java.util.List<MessageEntity> batch = new java.util.ArrayList<>();
                 for (int i = fromIndex; i < messages.size(); i++) {

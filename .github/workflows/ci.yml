@@ -79,9 +79,9 @@ jobs:
         working-directory: backend
         run: ./gradlew test --no-daemon
 
-      - name: Usage persistence concurrency against PostgreSQL
+      - name: Usage and mid-turn persistence concurrency against PostgreSQL
         working-directory: backend
-        run: ./gradlew slowTest --tests com.azhukov.agent.service.UsagePersistenceConcurrencyTest --no-daemon
+        run: ./gradlew slowTest --tests 'com.azhukov.agent.service.*PersistenceConcurrencyTest' --no-daemon
         env:
           USAGE_PERSISTENCE_TEST_JDBC_URL: jdbc:postgresql://127.0.0.1:5432/usage_regression
           USAGE_PERSISTENCE_TEST_DB_USER: qa
