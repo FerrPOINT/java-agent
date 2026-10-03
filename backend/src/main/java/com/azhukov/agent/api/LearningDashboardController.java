@@ -38,6 +38,11 @@ public class LearningDashboardController {
     private final SkillManager skillManager;
     private final MemoryProvider memoryProvider;
 
+    private String memoryUserId() {
+        String userId = UserContext.scopeUserId();
+        return userId != null ? userId : AgentProperties.DEFAULT_USER_ID;
+    }
+
     private void requireAdminLearningWriteAccess() {
         if (UserContext.getUserId() != null && !UserContext.isAdmin()) {
             throw new SecurityException("Learning dashboard changes are available to administrators only");
@@ -154,7 +159,7 @@ public class LearningDashboardController {
                 if (entry == null) {
                     return badRequest("memory node not found");
                 }
-                String error = memoryProvider.remove(AgentProperties.DEFAULT_USER_ID, ref.target(), entry.content());
+                String error = memoryProvider.remove(memoryUserId(), ref.target(), entry.content());
                 if (error != null) {
                     return badRequest(error);
                 }
@@ -190,7 +195,7 @@ public class LearningDashboardController {
                 if (entry == null) {
                     return badRequest("memory node not found");
                 }
-                String error = memoryProvider.replace(AgentProperties.DEFAULT_USER_ID, ref.target(), entry.content(), content);
+                String error = memoryProvider.replace(memoryUserId(), ref.target(), entry.content(), content);
                 if (error != null) {
                     return badRequest(error);
                 }
@@ -244,7 +249,7 @@ public class LearningDashboardController {
     }
 
     private void appendMemoryCards(List<Map<String, Object>> cards, String target, String source) {
-        List<String> entries = memoryProvider.getRawEntries(AgentProperties.DEFAULT_USER_ID, target);
+        List<String> entries = memoryProvider.getRawEntries(memoryUserId(), target);
         if (entries == null) {
             return;
         }
@@ -285,7 +290,7 @@ public class LearningDashboardController {
         if (ref.kind() != NodeKind.MEMORY || ref.index() < 0) {
             return null;
         }
-        List<String> entries = memoryProvider.getRawEntries(AgentProperties.DEFAULT_USER_ID, ref.target());
+        List<String> entries = memoryProvider.getRawEntries(memoryUserId(), ref.target());
         if (entries == null || ref.localIndex() < 0 || ref.localIndex() >= entries.size()) {
             return null;
         }
@@ -314,7 +319,7 @@ public class LearningDashboardController {
     }
 
     private List<String> safeEntries(String target) {
-        List<String> entries = memoryProvider.getRawEntries(AgentProperties.DEFAULT_USER_ID, target);
+        List<String> entries = memoryProvider.getRawEntries(memoryUserId(), target);
         return entries != null ? entries : List.of();
     }
 

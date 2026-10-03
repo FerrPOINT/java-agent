@@ -1,6 +1,7 @@
 package com.azhukov.agent.api;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.core.skill.SkillUtils;
 import com.azhukov.agent.core.skill.SkillsHubService;
@@ -72,6 +73,12 @@ public class SkillsDashboardController {
         this(skillManager, properties, skillsHubService, null, null);
     }
 
+    private void requireAdminSkillsWriteAccess() {
+        if (UserContext.getUserId() != null && !UserContext.isAdmin()) {
+            throw new SecurityException("Skills dashboard changes are available to administrators only");
+        }
+    }
+
     @GetMapping
     public ResponseEntity<?> listSkills(
         @PathVariable(name = "profile", required = false) String pathProfile,
@@ -106,6 +113,7 @@ public class SkillsDashboardController {
         @PathVariable(name = "profile", required = false) String pathProfile,
         @RequestParam(name = "profile", required = false) String queryProfile
     ) {
+        requireAdminSkillsWriteAccess();
         if (body == null || blank(body.name())) {
             return badRequest("name is required");
         }
@@ -195,6 +203,7 @@ public class SkillsDashboardController {
         @RequestParam(name = "profile", required = false) String queryProfile,
         @RequestBody(required = false) SkillContentBody body
     ) {
+        requireAdminSkillsWriteAccess();
         if (body == null || blank(body.name())) {
             return badRequest("name is required");
         }
@@ -239,6 +248,7 @@ public class SkillsDashboardController {
         @RequestParam(name = "profile", required = false) String queryProfile,
         @RequestBody(required = false) SkillContentBody body
     ) {
+        requireAdminSkillsWriteAccess();
         if (body == null || blank(body.name())) {
             return badRequest("name is required");
         }
@@ -386,6 +396,7 @@ public class SkillsDashboardController {
         @RequestParam(name = "profile", required = false) String queryProfile,
         @RequestBody(required = false) HubInstallBody body
     ) {
+        requireAdminSkillsWriteAccess();
         if (body == null || blank(body.identifier())) {
             return badRequest("identifier is required");
         }
@@ -408,6 +419,7 @@ public class SkillsDashboardController {
         @RequestParam(name = "profile", required = false) String queryProfile,
         @RequestBody(required = false) HubUninstallBody body
     ) {
+        requireAdminSkillsWriteAccess();
         if (body == null || blank(body.name())) {
             return badRequest("name is required");
         }
@@ -430,6 +442,7 @@ public class SkillsDashboardController {
         @RequestParam(name = "profile", required = false) String queryProfile,
         @RequestBody(required = false) Map<String, Object> body
     ) {
+        requireAdminSkillsWriteAccess();
         ProfileResolution profile = resolveProfileScope(pathProfile, queryProfile, stringValue(body != null ? body.get("profile") : null));
         if (profile.error() != null) {
             return profile.error();

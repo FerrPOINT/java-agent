@@ -3,6 +3,7 @@ package com.azhukov.agent.api;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.memory.MemoryProvider;
 import com.azhukov.agent.core.memory.MemoryScope;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.service.ProfileService;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -230,7 +231,8 @@ public class MemoryDashboardController {
     }
 
     private String memoryUserId(String profile) {
-        return MemoryScope.userId(AgentProperties.DEFAULT_USER_ID, profile);
+        String userId = UserContext.scopeUserId();
+        return MemoryScope.userId(userId != null ? userId : AgentProperties.DEFAULT_USER_ID, profile);
     }
 
     private ProfileResolution resolveProfileScope(String pathProfile, String queryProfile) {

@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -72,7 +73,9 @@ class ProfilesDashboardControllerTest {
                 sessionRepository,
                 messageRepository,
                 command -> {
-                })).build();
+                }))
+            .setControllerAdvice(new GlobalExceptionHandler())
+            .build();
     }
 
     @org.junit.jupiter.api.AfterEach
@@ -89,6 +92,40 @@ class ProfilesDashboardControllerTest {
                 sessionRepository,
                 messageRepository,
                 launcher)).build();
+    }
+
+    @Test
+    void regularUserCannotReadOrMutateProfilesDashboard() throws Exception {
+        UserContext.set("user-a", UserContext.ROLE_USER);
+
+        mockMvc.perform(get("/api/profiles"))
+            .andExpect(status().isOk());
+        mockMvc.perform(post("/api/profiles")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"name\":\"user-profile\"}"))
+            .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/profiles/active").contentType(MediaType.APPLICATION_JSON).content("{}"))
+            .andExpect(status().isForbidden());
+        mockMvc.perform(patch("/api/profiles/default").contentType(MediaType.APPLICATION_JSON).content("{}"))
+            .andExpect(status().isForbidden());
+        mockMvc.perform(delete("/api/profiles/default"))
+            .andExpect(status().isForbidden());
+        mockMvc.perform(put("/api/profiles/default/soul").contentType(MediaType.APPLICATION_JSON).content("{}"))
+            .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/profiles/default/open-terminal").contentType(MediaType.APPLICATION_JSON).content("{}"))
+            .andExpect(status().isForbidden());
+        mockMvc.perform(put("/api/profiles/default/description").contentType(MediaType.APPLICATION_JSON).content("{}"))
+            .andExpect(status().isForbidden());
+        mockMvc.perform(put("/api/profiles/default/model").contentType(MediaType.APPLICATION_JSON).content("{}"))
+            .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/profiles/default/describe-auto").contentType(MediaType.APPLICATION_JSON).content("{}"))
+            .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/profiles/default/export").contentType(MediaType.APPLICATION_JSON).content("{}"))
+            .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/profiles/import").contentType(MediaType.APPLICATION_JSON).content("{}"))
+            .andExpect(status().isForbidden());
+
+        assertThat(profileService.knownProfile("user-profile")).isFalse();
     }
 
     @Test

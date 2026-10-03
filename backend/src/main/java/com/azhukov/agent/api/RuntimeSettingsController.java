@@ -19,6 +19,7 @@ import com.azhukov.agent.api.dto.TitleRequest;
 import com.azhukov.agent.api.dto.VoiceModeRequest;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.memory.MemoryProvider;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.security.UrlSafetyHandler;
 import com.azhukov.agent.service.AgentRuntimeService;
 import com.azhukov.agent.service.CliRuntimeSettingsService;
@@ -290,6 +291,12 @@ public class RuntimeSettingsController {
         return agentRuntimeService.listActiveAgents();
     }
 
+    private void requireAdminGlobalRuntimeAccess() {
+        if (UserContext.getUserId() != null && !UserContext.isAdmin()) {
+            throw new SecurityException("Global runtime configuration is available to administrators only");
+        }
+    }
+
     // ── Codex Runtime ──
 
     @GetMapping("/agent/codex-runtime")
@@ -313,12 +320,14 @@ public class RuntimeSettingsController {
 
     @PostMapping("/agent/codex-runtime/model")
     public void codexRuntimeModel(@Valid @RequestBody CodexRuntimeModelRequest body) {
+        requireAdminGlobalRuntimeAccess();
         String model = body.model();
         runtimeConfigService.setModelOverride(model);
     }
 
     @PostMapping("/agent/codex-runtime/reset")
     public void codexRuntimeReset() {
+        requireAdminGlobalRuntimeAccess();
         cliRuntimeSettingsService.resetAllSessions();
         runtimeConfigService.clearModelOverride();
     }
@@ -327,11 +336,13 @@ public class RuntimeSettingsController {
 
     @PostMapping("/agent/restart")
     public void restart() {
+        requireAdminGlobalRuntimeAccess();
         agentRuntimeService.restart();
     }
 
     @PostMapping("/agent/reload-mcp")
     public void reloadMcp() {
+        requireAdminGlobalRuntimeAccess();
         agentRuntimeService.reloadMcp();
     }
 }

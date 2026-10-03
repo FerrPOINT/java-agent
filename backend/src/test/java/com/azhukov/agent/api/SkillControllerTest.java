@@ -8,6 +8,7 @@ import com.azhukov.agent.persistence.entity.SkillAuditLogEntity;
 import com.azhukov.agent.persistence.repository.SkillAuditLogRepository;
 import com.azhukov.agent.service.AgentRuntimeService;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -65,6 +66,39 @@ class SkillControllerTest {
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler(new com.fasterxml.jackson.databind.ObjectMapper()))
             .build();
+    }
+
+    @AfterEach
+    void clearUserContext() {
+        UserContext.clear();
+    }
+
+    @Test
+    void regularUserCannotMutateGlobalSkills() throws Exception {
+        UserContext.set("user-a", UserContext.ROLE_USER);
+
+        mockMvc.perform(post("/api/v1/agent/skills-hub/install")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"skill\":\"python-dev\"}"))
+            .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/v1/agent/reload-skills"))
+            .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/v1/agent/reload"))
+            .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/v1/agent/bundles/install")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"bundleName\":\"core\"}"))
+            .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/v1/agent/bundles/uninstall")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"bundleName\":\"core\"}"))
+            .andExpect(status().isForbidden());
+
+        verify(skillsHubService, never()).install(anyString(), anyString(), anyBoolean());
+        verify(agentRuntimeService, never()).reloadSkills();
+        verify(agentRuntimeService, never()).reloadMcp();
+        verify(agentRuntimeService, never()).installBundle(anyString());
+        verify(agentRuntimeService, never()).uninstallBundle(anyString());
     }
 
     // ── List skills ──

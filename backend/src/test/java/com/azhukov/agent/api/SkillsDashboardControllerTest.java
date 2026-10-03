@@ -2,9 +2,11 @@ package com.azhukov.agent.api;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.memory.MemoryThreatScanner;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.core.skill.SkillsHubService;
 import com.azhukov.agent.core.skill.TrustLevel;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -56,7 +58,49 @@ class SkillsDashboardControllerTest {
         skillManager = new InMemorySkillManager();
         SkillsHubService hubService = new SkillsHubService(skillManager, properties, mock(MemoryThreatScanner.class));
         mockMvc = MockMvcBuilders.standaloneSetup(
-            new SkillsDashboardController(skillManager, properties, hubService)).build();
+            new SkillsDashboardController(skillManager, properties, hubService))
+            .setControllerAdvice(new GlobalExceptionHandler())
+            .build();
+    }
+
+    @AfterEach
+    void clearUserContext() {
+        UserContext.clear();
+    }
+
+    @Test
+    void regularUserCannotMutateSkillsDashboard() throws Exception {
+        skillManager.saveSkill("dashboard-skill", SKILL_MD.formatted("dashboard-skill", "dashboard-skill"));
+        UserContext.set("user-a", UserContext.ROLE_USER);
+
+        mockMvc.perform(put("/api/skills/toggle")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"name\":\"dashboard-skill\",\"enabled\":false}"))
+            .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/skills")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"name\":\"new-skill\",\"content\":\"" + escaped(SKILL_MD.formatted("new-skill", "new-skill")) + "\"}"))
+            .andExpect(status().isForbidden());
+        mockMvc.perform(put("/api/skills/content")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"name\":\"dashboard-skill\",\"content\":\"" + escaped(SKILL_MD.formatted("dashboard-skill", "changed")) + "\"}"))
+            .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/skills/hub/install")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"identifier\":\"official/demo\"}"))
+            .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/skills/hub/uninstall")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"name\":\"dashboard-skill\"}"))
+            .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/skills/hub/update")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"name\":\"dashboard-skill\"}"))
+            .andExpect(status().isForbidden());
+
+        assertThat(properties.getSkills().getDisabled()).isEmpty();
+        assertThat(skillManager.getSkill("dashboard-skill")).isEqualTo(SKILL_MD.formatted("dashboard-skill", "dashboard-skill"));
+        assertThat(skillManager.getSkill("new-skill")).isNull();
     }
 
     @Test
