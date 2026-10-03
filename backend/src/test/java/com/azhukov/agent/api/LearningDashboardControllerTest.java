@@ -1,7 +1,9 @@
 package com.azhukov.agent.api;
 
 import com.azhukov.agent.core.memory.MemoryProvider;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.skill.SkillManager;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
@@ -32,7 +34,33 @@ class LearningDashboardControllerTest {
         skillManager = new InMemorySkillManager();
         memoryProvider = new InMemoryMemoryProvider();
         mockMvc = MockMvcBuilders.standaloneSetup(
-            new LearningDashboardController(skillManager, memoryProvider)).build();
+            new LearningDashboardController(skillManager, memoryProvider))
+            .setControllerAdvice(new GlobalExceptionHandler())
+            .build();
+    }
+
+    @AfterEach
+    void clearUserContext() {
+        UserContext.clear();
+    }
+
+    @Test
+    void regularUserCannotMutateLearningNodes() throws Exception {
+        UserContext.set("user-a", UserContext.ROLE_USER);
+        skillManager.saveSkill("debug-skill", "body");
+        memoryProvider.memory.add("private memory");
+
+        mockMvc.perform(put("/api/learning/node")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"id\":\"debug-skill\",\"content\":\"changed\"}"))
+            .andExpect(status().isForbidden());
+        mockMvc.perform(delete("/api/learning/node")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"id\":\"memory:memory:0\"}"))
+            .andExpect(status().isForbidden());
+
+        assertThat(skillManager.getSkill("debug-skill")).isEqualTo("body");
+        assertThat(memoryProvider.memory).containsExactly("private memory");
     }
 
     @Test
