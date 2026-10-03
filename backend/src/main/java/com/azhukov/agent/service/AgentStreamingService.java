@@ -29,6 +29,7 @@ import com.azhukov.agent.core.agent.MemoryNudgeManager;
 import com.azhukov.agent.core.agent.SteerBuffer;
 import com.azhukov.agent.core.agent.StreamContext;
 import com.azhukov.agent.core.agent.TokenEstimator;
+import com.azhukov.agent.core.agent.SessionMutationLock;
 import com.azhukov.agent.core.agent.ToolResultFormatter;
 import com.azhukov.agent.core.agent.MidTurnPersistenceCallback;
 import com.azhukov.agent.core.prompt.DefaultPromptBuilder;
@@ -1704,6 +1705,14 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
 
     private void persistTurn(Session session, List<Message> turnMessages, boolean isNew, int fromIndex,
                              TurnExitReason exitReason) {
+        SessionMutationLock.withLock(session.id(), () -> {
+            persistTurnLocked(session, turnMessages, isNew, fromIndex, exitReason);
+            return null;
+        });
+    }
+
+    private void persistTurnLocked(Session session, List<Message> turnMessages, boolean isNew, int fromIndex,
+                                   TurnExitReason exitReason) {
         // Deleted-session guard (same race as MidTurnPersistenceService): the
         // session row can be removed while the turn is still streaming; a
         // pre-check keeps the FK violation out of the journal entirely.

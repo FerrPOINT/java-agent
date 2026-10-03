@@ -1,5 +1,6 @@
 package com.azhukov.agent.persistence.service;
 
+import com.azhukov.agent.core.agent.SessionMutationLock;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.core.model.Session;
@@ -43,11 +44,21 @@ public class MessagePersistenceService {
      */
     @Transactional
     public void persistUserMessage(Session session, String userInput) {
-        saveMessage(session.id(), Role.USER.name().toLowerCase(), userInput, null, null, null, 0);
+        SessionMutationLock.withLock(session.id(), () -> {
+            saveMessage(session.id(), Role.USER.name().toLowerCase(), userInput, null, null, null, 0);
+            return null;
+        });
     }
 
     @Transactional
     public void persistTurn(Session session, String userInput, TurnResult turnResult) {
+        SessionMutationLock.withLock(session.id(), () -> {
+            persistTurnLocked(session, userInput, turnResult);
+            return null;
+        });
+    }
+
+    private void persistTurnLocked(Session session, String userInput, TurnResult turnResult) {
         // Save user message
         saveMessage(session.id(), Role.USER.name().toLowerCase(), userInput, null, null, null, 0);
 

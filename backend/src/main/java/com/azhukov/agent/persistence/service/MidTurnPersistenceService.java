@@ -1,6 +1,7 @@
 package com.azhukov.agent.persistence.service;
 
 import com.azhukov.agent.core.agent.MidTurnPersistenceCallback;
+import com.azhukov.agent.core.agent.SessionMutationLock;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.persistence.entity.MessageEntity;
@@ -44,6 +45,11 @@ public class MidTurnPersistenceService implements MidTurnPersistenceCallback {
 
     @Override
     public boolean persistNewMessages(UUID sessionId, List<Message> messages, int fromIndex) {
+        return SessionMutationLock.withLock(sessionId,
+            () -> persistNewMessagesLocked(sessionId, messages, fromIndex));
+    }
+
+    private boolean persistNewMessagesLocked(UUID sessionId, List<Message> messages, int fromIndex) {
         if (messages == null || messages.isEmpty() || fromIndex >= messages.size()) {
             return true; // Nothing to persist — treat as success
         }
