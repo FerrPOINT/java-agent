@@ -289,7 +289,7 @@ private static final String CRON_EXECUTION_HINT = """
         String enabledToolsets, String workdir,
         String modelProvider, String modelName, String baseUrl
     ) {
-        return createScoped(DEFAULT_PROFILE, name, schedule, prompt, deliverTo, skills, contextFrom, repeatCount,
+        return createScoped(null, DEFAULT_PROFILE, name, schedule, prompt, deliverTo, skills, contextFrom, repeatCount,
             script, noAgent, enabledToolsets, workdir, modelProvider, modelName, baseUrl,
             null, false, null);
     }
@@ -303,7 +303,7 @@ private static final String CRON_EXECUTION_HINT = """
         String enabledToolsets, String workdir,
         String modelProvider, String modelName, String baseUrl
     ) {
-        return createScoped(profile, name, schedule, prompt, deliverTo, skills, contextFrom, repeatCount,
+        return createScoped(null, profile, name, schedule, prompt, deliverTo, skills, contextFrom, repeatCount,
             script, noAgent, enabledToolsets, workdir, modelProvider, modelName, baseUrl,
             null, false, null);
     }
@@ -322,10 +322,9 @@ private static final String CRON_EXECUTION_HINT = """
         String enabledToolsets, String workdir,
         String modelProvider, String modelName, String baseUrl
     ) {
-        CronJobEntity entity = create(name, schedule, prompt, deliverTo, skills, contextFrom,
-            repeatCount, script, noAgent, enabledToolsets, workdir, modelProvider, modelName, baseUrl);
-        entity.setUserId(userId);
-        return cronJobRepository.save(entity);
+        return createScoped(userId, DEFAULT_PROFILE, name, schedule, prompt, deliverTo, skills, contextFrom,
+            repeatCount, script, noAgent, enabledToolsets, workdir, modelProvider, modelName, baseUrl,
+            null, false, null);
     }
     /** PR-3 parity: create with monitor/continuity/attached-session, userId-scoped. */
     public CronJobEntity create(
@@ -338,10 +337,9 @@ private static final String CRON_EXECUTION_HINT = """
         String modelProvider, String modelName, String baseUrl,
         String monitor, boolean continuity, UUID attachedSessionId
     ) {
-        CronJobEntity entity = create(name, schedule, prompt, deliverTo, skills, contextFrom,
-            repeatCount, script, noAgent, enabledToolsets, workdir, modelProvider, modelName, baseUrl);
-        entity.setUserId(userId);
-        return cronJobRepository.save(entity);
+        return createScoped(userId, DEFAULT_PROFILE, name, schedule, prompt, deliverTo, skills, contextFrom,
+            repeatCount, script, noAgent, enabledToolsets, workdir, modelProvider, modelName, baseUrl,
+            monitor, continuity, attachedSessionId);
     }
 
 
@@ -357,7 +355,7 @@ private static final String CRON_EXECUTION_HINT = """
         String modelProvider, String modelName, String baseUrl,
         String monitor, boolean continuityEnabled, UUID attachedSessionId
     ) {
-        return createScoped(DEFAULT_PROFILE, name, schedule, prompt, deliverTo, skills, contextFrom,
+        return createScoped(null, DEFAULT_PROFILE, name, schedule, prompt, deliverTo, skills, contextFrom,
             repeatCount, script, noAgent, enabledToolsets, workdir, modelProvider, modelName, baseUrl,
             monitor, continuityEnabled, attachedSessionId);
     }
@@ -372,12 +370,13 @@ private static final String CRON_EXECUTION_HINT = """
         String modelProvider, String modelName, String baseUrl,
         String monitor, boolean continuityEnabled, UUID attachedSessionId
     ) {
-        return createScoped(profile, name, schedule, prompt, deliverTo, skills, contextFrom,
+        return createScoped(null, profile, name, schedule, prompt, deliverTo, skills, contextFrom,
             repeatCount, script, noAgent, enabledToolsets, workdir, modelProvider, modelName, baseUrl,
             monitor, continuityEnabled, attachedSessionId);
     }
 
     private CronJobEntity createScoped(
+        String userId,
         String profile,
         String name, String schedule, String prompt, String deliverTo,
         String skills, String contextFrom,
@@ -408,7 +407,7 @@ private static final String CRON_EXECUTION_HINT = """
         ScheduleInfo scheduleInfo = parseSchedule(schedule);
 
         CronJobEntity entity = new CronJobEntity();
-        entity.setUserId(UserContext.scopeUserId());
+        entity.setUserId(userId != null ? userId : UserContext.scopeUserId());
         entity.setProfile(normalizedProfile);
         entity.setName(name);
         entity.setSchedule(schedule);
