@@ -109,6 +109,22 @@ class MessageApiClientMetadataOnErrorTest {
     }
 
     @Test
+    void chatStream_reviewForwardsHumanSummaryToConsumer() {
+        String summary = "💾 Self-improvement review: Memory updated";
+        serveSse(
+            "{\"type\":\"review\",\"error\":\"" + summary + "\"}",
+            "{\"type\":\"done\"}"
+        );
+        AtomicReference<String> review = new AtomicReference<>();
+
+        MessageApiClient client = new MessageApiClient(restClient, mapper);
+        client.chatStream("hi", null, null, token -> { }, toolCall -> { }, (name, preview) -> { },
+            retry -> { }, review::set, clarify -> { }, complete -> { }, error -> { });
+
+        assertThat(review.get()).isEqualTo(summary);
+    }
+
+    @Test
     void chatStream_clarifyCarriesSseSessionIdWhenOriginalRequestHasNoSession() {
         String backendSession = "550e8400-e29b-41d4-a716-446655440000";
         serveSse(

@@ -147,6 +147,12 @@ class StreamingOrchestratorTest {
     }
 
     @Test
+    void shouldSchedulePendingReviewPoll_requiresPrimaryResponseDelivery() {
+        assertThat(StreamingOrchestrator.shouldSchedulePendingReviewPoll(true)).isTrue();
+        assertThat(StreamingOrchestrator.shouldSchedulePendingReviewPoll(false)).isFalse();
+    }
+
+    @Test
     void streamChat_tokens_thenComplete_finalizesStreamAndReturnsContent() {
         stubChatStream(ctx -> {
             ctx.tokenConsumer.accept("Hello ");
@@ -216,6 +222,7 @@ class StreamingOrchestratorTest {
 
         assertThat(result.streamFinalized()).isFalse();
         verify(streamEditor).recordFinalDeliveryFailure(100L, "draft answer");
+        verify(backendClient, never()).getPendingReview(anyString());
     }
 
     @Test

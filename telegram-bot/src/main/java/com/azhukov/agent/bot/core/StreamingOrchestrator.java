@@ -99,6 +99,10 @@ public class StreamingOrchestrator {
         return resolvedSessionId != null ? resolvedSessionId.toString() : requestSessionId;
     }
 
+    static boolean shouldSchedulePendingReviewPoll(boolean primaryResponseDelivered) {
+        return primaryResponseDelivered;
+    }
+
     private void schedulePendingReviewPoll(String requestSessionId, java.util.UUID resolvedSessionId,
                                            long chatId, long userMessageId, long messageThreadId,
                                            ProcessorHooks hooks) {
@@ -440,11 +444,12 @@ public class StreamingOrchestrator {
             // If streaming produced content, return it (with metadata from the stream)
             if (accumulated.length() > 0 || finalized[0]) {
                 progressBubbles.remove(chatId);
-                // Hermes parity: autonomously deliver the async background-review
-                // summary (armed post-delivery; review typically finishes 15-60s
-                // after the answer). Suppresses when review found nothing.
-                schedulePendingReviewPoll(sessionId, streamResult.backendSessionId(),
-                    chatId, userMessageId, messageThreadId, hooks);
+                // Hermes parity: only arm autonomous review delivery after the
+                // primary response was actually finalized for the user.
+                if (shouldSchedulePendingReviewPoll(finalized[0])) {
+                    schedulePendingReviewPoll(sessionId, streamResult.backendSessionId(),
+                        chatId, userMessageId, messageThreadId, hooks);
+                }
                 return new AgentBackendClient.ChatResult(
                     accumulated.toString(),
                     streamResult.modelUsed(),
