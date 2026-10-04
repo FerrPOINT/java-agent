@@ -38,7 +38,7 @@ class MidTurnPersistenceServiceTest {
         // Use Mappers.getMapper for real mapper (per AGENTS.md: don't mock mappers)
         MessageMapper messageMapper = org.mapstruct.factory.Mappers.getMapper(MessageMapper.class);
         lenient().when(messageRepository.countBySessionId(any())).thenReturn(0L);
-        lenient().when(sessionRepository.existsById(any())).thenReturn(true);
+        lenient().when(sessionRepository.findMessageParentId(any())).thenAnswer(call -> java.util.Optional.of(call.getArgument(0)));
         service = new MidTurnPersistenceService(messageRepository, messageMapper, transactionTemplate, sessionRepository,
             new com.azhukov.agent.metrics.AgentMetrics(new io.micrometer.core.instrument.simple.SimpleMeterRegistry()));
     }
@@ -170,13 +170,14 @@ class MidTurnPersistenceServiceTest {
     void persistNewMessages_skipsQuietlyWhenSessionDeleted() {
         // Live defect (0.1.35 e2e run): session deleted mid-turn -> every tool
         // batch retried the INSERT and logged an FK-violation WARN.
-        when(sessionRepository.existsById(any())).thenReturn(false);
+        stubTransaction();
+        doReturn(java.util.Optional.empty()).when(sessionRepository).findMessageParentId(any());
         UUID sessionId = UUID.randomUUID();
         List<Message> messages = List.of(Message.user("hi"));
         boolean result = service.persistNewMessages(sessionId, messages, 0);
         assertThat(result).isTrue(); // treated as flushed, caller advances cursor
         verify(messageRepository, never()).save(any());
         verify(messageRepository, never()).saveAll(any());
-        verify(transactionTemplate, never()).execute(any());
+        verify(transactionTemplate).execute(any());
     }
 }

@@ -230,7 +230,7 @@ public class OpenAiSessionService {
                                    List<Message> generatedMessages) {
         transactionTemplate.execute(status -> {
             UUID sessionId = context.session().id();
-            if (!sessionRepository.existsById(sessionId)) {
+            if (sessionRepository.findMessageParentId(sessionId).isEmpty()) {
                 return null;
             }
             Instant now = Instant.now();
@@ -270,7 +270,7 @@ public class OpenAiSessionService {
 
     private void persistHistoryLocked(UUID sessionId, List<Message> messages) {
         transactionTemplate.execute(status -> {
-            if (!sessionRepository.existsById(sessionId)) {
+            if (sessionRepository.findMessageParentId(sessionId).isEmpty()) {
                 return null;
             }
             Instant now = Instant.now();

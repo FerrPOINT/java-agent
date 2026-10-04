@@ -1705,21 +1705,19 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
 
     private void persistTurn(Session session, List<Message> turnMessages, boolean isNew, int fromIndex,
                              TurnExitReason exitReason) {
-        SessionMutationLock.withLock(session.id(), () -> {
-            persistTurnLocked(session, turnMessages, isNew, fromIndex, exitReason);
-            return null;
-        });
+        boolean persisted = SessionMutationLock.withLock(session.id(),
+            () -> persistTurnLocked(session, turnMessages, isNew, fromIndex, exitReason));
+        if (persisted && isNew && sessionTitleService != null) {
+            try {
+                sessionTitleService.maybeUpdateTitle(session.id(), turnMessages, true);
+            } catch (Exception e) {
+                log.debug("Auto-title failed for session {}: {}", session.id(), e.getMessage());
+            }
+        }
     }
 
-    private void persistTurnLocked(Session session, List<Message> turnMessages, boolean isNew, int fromIndex,
+    private boolean persistTurnLocked(Session session, List<Message> turnMessages, boolean isNew, int fromIndex,
                                    TurnExitReason exitReason) {
-        // Deleted-session guard (same race as MidTurnPersistenceService): the
-        // session row can be removed while the turn is still streaming; a
-        // pre-check keeps the FK violation out of the journal entirely.
-        if (!sessionRepository.existsById(session.id())) {
-            log.debug("persistTurn skipped: session {} no longer exists", session.id());
-            return;
-        }
         // Hermes parity (message_sanitization.py:296): close interrupted tool
         // sequence before persisting. If the last message is a TOOL result
         // (interrupt/error/budget cut the turn short), append a synthetic
@@ -1728,7 +1726,11 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
         TurnFinalizer.closeInterruptedToolSequence(turnMessages, exitReason);
         log.info("turn_persist_started session={} messages={} fromIndex={}", session.id(), turnMessages.size(), fromIndex);
         try {
-            transactionTemplate.execute(status -> {
+            boolean persisted = Boolean.TRUE.equals(transactionTemplate.execute(status -> {
+                if (sessionRepository.findMessageParentId(session.id()).isEmpty()) {
+                    log.debug("persistTurn skipped: session {} no longer exists", session.id());
+                    return false;
+                }
                 Instant now = Instant.now();
                 for (int idx = fromIndex; idx < turnMessages.size(); idx++) {
                     Message m = turnMessages.get(idx);
@@ -1749,23 +1751,16 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     }
                     sessionRepository.save(se);
                 });
-                // rev-91: LLM-backed auto-title for streaming sessions (Hermes
-                // parity with the sync path) — runs AFTER the transaction so a
-                // slow model call doesn't hold the DB. maybeUpdateTitle guards
-                // against overwriting manually set titles (h91).
-                if (isNew && sessionTitleService != null) {
-                    try {
-                        sessionTitleService.maybeUpdateTitle(session.id(), turnMessages, true);
-                    } catch (Exception e) {
-                        log.debug("Auto-title failed for session {}: {}", session.id(), e.getMessage());
-                    }
-                }
-                return null;
-            });
-            log.info("turn_persist_finished session={} messages={} fromIndex={}", session.id(), turnMessages.size(), fromIndex);
+                return true;
+            }));
+            if (persisted) {
+                log.info("turn_persist_finished session={} messages={} fromIndex={}", session.id(), turnMessages.size(), fromIndex);
+            }
+            return persisted;
         } catch (Exception e) {
             log.warn("turn_persist_failed session={} messages={} fromIndex={} error={}",
                 session.id(), turnMessages.size(), fromIndex, e.getMessage());
+            return false;
         }
     }
 

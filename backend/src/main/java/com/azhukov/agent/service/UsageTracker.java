@@ -30,8 +30,7 @@ import java.util.UUID;
 public class UsageTracker {
 
     private final UsageRepository usageRepository;
-
-    // Per-model pricing map (USD per 1M tokens)
+    private final UsagePersistenceService usagePersistence;
     // Format: model_name -> [input_cost_per_1M, output_cost_per_1M, cache_read_cost_per_1M]
     private static final Map<String, double[]> MODEL_PRICING = Map.ofEntries(
         Map.entry("gpt-4o", new double[]{2.50, 10.00, 1.25}),
@@ -100,6 +99,9 @@ public class UsageTracker {
      * Uses real token counts (prompt_tokens, completion_tokens, cache_read, cache_write, reasoning).
      */
     public void recordTurn(UUID sessionId, String userId, String model, TokenUsage usage) {
+        if (sessionId == null || usage == null) {
+            return;
+        }
         try {
             int promptTokens = usage.promptTokens();
             int completionTokens = usage.completionTokens();
@@ -117,7 +119,10 @@ public class UsageTracker {
             entity.setCacheReadTokens(cacheReadTokens);
             entity.setCacheWriteTokens(cacheWriteTokens);
             entity.setCreatedAt(Instant.now());
-            usageRepository.save(entity);
+            if (!usagePersistence.saveForExistingSession(entity)) {
+                log.debug("Skipping usage persistence for deleted session {}", sessionId);
+                return;
+            }
             log.debug("Recorded usage: session={}, model={}, prompt={}, completion={}, total={}, cacheRead={}, cacheWrite={}, reasoning={}, cost={}",
                 sessionId, model, promptTokens, completionTokens, entity.getTotalTokens(),
                 cacheReadTokens, cacheWriteTokens, usage.reasoningTokens(), entity.getCost());

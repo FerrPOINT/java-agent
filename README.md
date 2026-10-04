@@ -231,6 +231,35 @@ Docker images используют `eclipse-temurin:25-jre-noble`; slim-обра
 
 ### Стандарт документации и тестов
 
+Usage записывается через `UsagePersistenceService`: блокировка строки сессии и
+insert выполняются в одной транзакции. Если удаление завершилось первым,
+запись пропускается; если первой записалась usage, последующее удаление
+очищает её через существующий `ON DELETE CASCADE`. JVM mutex не заменяет
+эту гарантию: Spring завершает транзакцию после возврата сервисного метода.
+
+Mid-turn batches также проверяют и блокируют сессию внутри транзакции записи.
+Если удаление завершилось первым, batch считается flushed, чтобы следующий
+tool batch не повторял запись в удалённую сессию. Проверка снаружи транзакции
+не защищает от удаления, включая вызов prune во внешней транзакции.
+
+Обычная запись user/turn messages также блокирует сессию один раз на всю
+транзакцию. Streaming auto-title вызывается после successful commit и
+освобождения mutex; при ошибке сохранения transcript генерация title пропускается.
+
+OpenAI-compatible history/turn, runtime incoming/batch, streaming, compression
+и cron mirror используют тот же parent WRITE lock внутри транзакции записи.
+Compression snapshot и immutable watermark хранятся в текущем вызове:
+параллельная compression другой сессии не меняет набор исходных message IDs.
+
+CI проверяет обе очередности usage и всех перечисленных transcript writers,
+порядок блокировок compression/delete и границы title на PostgreSQL командой
+`./gradlew :backend:slowTest --tests 'com.azhukov.agent.service.*PersistenceConcurrencyTest' --no-daemon`.
+Для локальной проверки задать `USAGE_PERSISTENCE_TEST_JDBC_URL`,
+`USAGE_PERSISTENCE_TEST_DB_USER`, `USAGE_PERSISTENCE_TEST_DB_PASSWORD`
+отдельной QA базы; без URL тест использует H2. Тест создаёт и удаляет только
+собственную уникальную schema. Локальный PostgreSQL запускать через временный
+Compose project по правилам Base [LOCAL_GROUPS.md](../services-base/deploy/LOCAL_GROUPS.md).
+
 Действует для всего кода: [docs/standards/documentation.md](docs/standards/documentation.md) (краткая версия — в [AGENTS.md](AGENTS.md)). Суть:
 
 - Javadoc на классах ≥50 строк и кросс-пакетных контрактах; без воды («responsible for», «utility class» — линтер отклоняет).

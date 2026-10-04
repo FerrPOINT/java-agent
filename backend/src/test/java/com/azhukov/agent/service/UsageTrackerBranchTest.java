@@ -5,6 +5,7 @@ import com.azhukov.agent.api.dto.UsageDto;
 import com.azhukov.agent.core.model.TokenUsage;
 import com.azhukov.agent.persistence.entity.UsageEntity;
 import com.azhukov.agent.persistence.repository.UsageRepository;
+import com.azhukov.agent.persistence.repository.SessionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -39,11 +40,16 @@ class UsageTrackerBranchTest {
     @Mock
     private UsageRepository usageRepository;
 
+    @Mock
+    private SessionRepository sessionRepository;
+
     private UsageTracker tracker;
 
     @BeforeEach
     void setUp() {
-        tracker = new UsageTracker(usageRepository);
+        tracker = new UsageTracker(usageRepository, new UsagePersistenceService(sessionRepository, usageRepository));
+        lenient().when(sessionRepository.findUsageParentId(any(UUID.class)))
+            .thenAnswer(call -> java.util.Optional.of(call.getArgument(0)));
     }
 
     private UsageEntity createUsageEntity(UUID sessionId, String userId, String model, int tokens, Double cost) {

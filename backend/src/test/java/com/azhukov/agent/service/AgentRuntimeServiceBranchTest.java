@@ -57,6 +57,7 @@ class AgentRuntimeServiceBranchTest {
     void setUp() {
         agentRuntime = mock(AgentRuntime.class);
         sessionRepository = mock(com.azhukov.agent.persistence.repository.SessionRepository.class);
+        when(sessionRepository.findMessageParentId(any(UUID.class))).thenAnswer(inv -> Optional.of(inv.getArgument(0)));
         messageRepository = mock(com.azhukov.agent.persistence.repository.MessageRepository.class);
         transactionTemplate = mock(TransactionTemplate.class);
         properties = mock(AgentProperties.class);

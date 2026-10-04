@@ -45,6 +45,9 @@ public class MessagePersistenceService {
     @Transactional
     public void persistUserMessage(Session session, String userInput) {
         SessionMutationLock.withLock(session.id(), () -> {
+            if (sessionRepository.findMessageParentId(session.id()).isEmpty()) {
+                return null;
+            }
             saveMessage(session.id(), Role.USER.name().toLowerCase(), userInput, null, null, null, 0);
             return null;
         });
@@ -53,6 +56,9 @@ public class MessagePersistenceService {
     @Transactional
     public void persistTurn(Session session, String userInput, TurnResult turnResult) {
         SessionMutationLock.withLock(session.id(), () -> {
+            if (sessionRepository.findMessageParentId(session.id()).isEmpty()) {
+                return null;
+            }
             persistTurnLocked(session, userInput, turnResult);
             return null;
         });
@@ -92,12 +98,6 @@ public class MessagePersistenceService {
     private void saveMessage(UUID sessionId, String role, String content,
                              String toolCallId, String toolCallName,
                              String toolCallArguments, int turnIndex) {
-        // Deleted-session guard: skip silently when the session row is gone
-        // (deleted mid-turn race) — mirrors MidTurnPersistenceService.
-        if (!sessionRepository.existsById(sessionId)) {
-            log.debug("saveMessage skipped: session {} no longer exists", sessionId);
-            return;
-        }
         MessageEntity entity = new MessageEntity();
         entity.setSessionId(sessionId);
         entity.setRole(role);
@@ -137,10 +137,6 @@ private String resolveToolName(List<Message> messages, String toolCallId) {
 
     private void saveAssistantMessage(UUID sessionId, String content, List<ToolCall> calls, String reasoning,
                                       int turnIndex) {
-        if (!sessionRepository.existsById(sessionId)) {
-            log.debug("saveAssistantMessage skipped: session {} no longer exists", sessionId);
-            return;
-        }
         MessageEntity entity = new MessageEntity();
         entity.setSessionId(sessionId);
         entity.setRole(Role.ASSISTANT.name().toLowerCase());
