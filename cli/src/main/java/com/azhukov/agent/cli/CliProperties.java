@@ -17,7 +17,7 @@ import org.springframework.stereotype.Component;
 @ConfigurationProperties(prefix = "cli")
 public class CliProperties {
 
-    private String backendUrl = "http://localhost:8090";
+    private String backendUrl = System.getenv().getOrDefault("CLI_BACKEND_URL", "http://localhost:8090");
     private String sessionId;
     private String model;
     private boolean newSession = false;
