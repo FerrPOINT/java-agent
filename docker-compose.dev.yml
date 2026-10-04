@@ -95,8 +95,10 @@ services:
       - ./docker/searxng/settings.yml:/etc/searxng/settings.yml:ro
     networks:
       - runtime
-    # Not published to the host: single trusted consumer on the internal
-    # network. Healthcheck via the same JSON API the agent uses.
+    # The systemd dev backend runs on the host, so publish only to loopback.
+    # This is the same self-hosted SearXNG JSON API used by the container stack.
+    ports:
+      - "127.0.0.1:8889:8080"
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null 'http://localhost:8080/search?q=health&format=json' || exit 1"]
       interval: 15s

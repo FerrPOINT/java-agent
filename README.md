@@ -187,6 +187,11 @@ flowchart TD
 # изолированный unprivileged container stack на localhost:8090.
 ./scripts/deploy-dev-docker.sh
 
+# Host systemd backend + self-hosted SearXNG: start only the search service,
+# then set AGENT_WEB_SEARXNG_URL=http://127.0.0.1:8889 in its EnvironmentFile
+# (or a systemd drop-in) and restart the backend.
+docker compose -f docker-compose.dev.yml up -d searxng
+
 # Другие compose-профили
 docker compose -f docker-compose.local.yml up --build
 docker compose -f docker-compose.e2e.yml up --build
