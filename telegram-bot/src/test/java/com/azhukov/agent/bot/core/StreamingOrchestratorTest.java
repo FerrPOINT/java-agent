@@ -77,6 +77,7 @@ class StreamingOrchestratorTest {
         when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong())).thenReturn(Optional.of(1L));
         when(streamEditor.editStream(anyLong(), anyLong(), anyString())).thenReturn(true);
         when(streamEditor.finalizeStream(anyLong(), anyLong(), anyString())).thenReturn(true);
+        when(streamEditor.sendFormattedFinalMessage(anyLong(), anyString())).thenReturn(Optional.of(1L));
 
         // TelegramClient getMe stub so StreamEditor init works (not strictly needed since editor is mocked)
         TelegramResponse meResponse = mock(TelegramResponse.class);
@@ -176,6 +177,12 @@ class StreamingOrchestratorTest {
     }
 
     @Test
+    void shouldSchedulePendingReviewPoll_requiresPrimaryResponseDelivery() {
+        assertThat(StreamingOrchestrator.shouldSchedulePendingReviewPoll(true)).isTrue();
+        assertThat(StreamingOrchestrator.shouldSchedulePendingReviewPoll(false)).isFalse();
+    }
+
+    @Test
     void streamChat_tokens_thenComplete_finalizesStreamAndReturnsContent() {
         stubChatStream(ctx -> {
             ctx.tokenConsumer.accept("Hello ");
@@ -245,6 +252,7 @@ class StreamingOrchestratorTest {
 
         assertThat(result.streamFinalized()).isFalse();
         verify(streamEditor).recordFinalDeliveryFailure(100L, "draft answer");
+        verify(backendClient, never()).getPendingReview(anyString());
     }
 
     @Test
@@ -545,4 +553,58 @@ class StreamingOrchestratorTest {
             any(), any(), any(), any(), any(), any(), any(), any());
     }
 
+
+    @Test
+    void errorDeliveryFailedEditRetainsErrorAndRequiresFallback() {
+        when(streamEditor.finalizeStream(eq(100L), eq(1L), anyString())).thenReturn(false);
+        stubChatStream(ctx -> {
+            ctx.tokenConsumer.accept("partial answer");
+            ctx.onError.accept(new RuntimeException("backend disconnected"));
+            ctx.returnResult = new AgentBackendClient.ChatResult("partial answer", "model", 1, 10, true);
+        });
+
+        var response = orchestrator.streamChat(100L, "hi", "existing-session", session(), 5L, 0L, hooks);
+
+        assertThat(response.streamFinalized()).isFalse();
+        verify(streamEditor).recordFinalDeliveryFailure(100L,
+            "partial answer\n\nTemporary issue. Please try again.");
+        verify(backendClient, never()).chat(anyString(), nullable(String.class), any());
+    }
+
+    @Test
+    void errorDeliveryFailedDraftSendRetainsErrorWithoutRepeatingModelRequest() {
+        when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong()))
+            .thenReturn(Optional.empty());
+        when(streamEditor.sendFormattedFinalMessage(anyLong(), anyString())).thenReturn(Optional.empty());
+        stubChatStream(ctx -> {
+            ctx.onError.accept(new RuntimeException("backend disconnected"));
+            ctx.returnResult = new AgentBackendClient.ChatResult("", "model", 1, 10, true);
+        });
+
+        var response = orchestrator.streamChat(100L, "hi", "existing-session", session(), 5L, 0L, hooks);
+
+        assertThat(response.streamFinalized()).isFalse();
+        InOrder cleanupAndRetention = inOrder(streamEditor);
+        cleanupAndRetention.verify(streamEditor).clearStream(100L);
+        cleanupAndRetention.verify(streamEditor).recordFinalDeliveryFailure(100L,
+            "Temporary issue. Please try again.");
+        verify(backendClient, never()).chat(anyString(), nullable(String.class), any());
+    }
+
+    @Test
+    void errorDeliverySuccessfulDraftSendRemainsFinalized() {
+        when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong()))
+            .thenReturn(Optional.empty());
+        when(streamEditor.sendFormattedFinalMessage(anyLong(), anyString())).thenReturn(Optional.of(99L));
+        stubChatStream(ctx -> {
+            ctx.onError.accept(new RuntimeException("backend disconnected"));
+            ctx.returnResult = new AgentBackendClient.ChatResult("", "model", 1, 10, true);
+        });
+
+        var response = orchestrator.streamChat(100L, "hi", "existing-session", session(), 5L, 0L, hooks);
+
+        assertThat(response.streamFinalized()).isTrue();
+        verify(streamEditor, never()).recordFinalDeliveryFailure(anyLong(), anyString());
+        verify(backendClient, never()).chat(anyString(), nullable(String.class), any());
+    }
 }

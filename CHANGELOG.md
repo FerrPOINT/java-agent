@@ -2,6 +2,8 @@
 
 ### Fixed
 
+- Failed Telegram finalization/error sends no longer claim successful delivery or arm background review. The complete error response is retained for the existing fallback send; an empty-token failure does not repeat the model request.
+
 - CI and all four Dockerfiles pin Temurin 25.0.4.1+1; Docker stages use immutable image digests and the committed Gradle wrappers. The bot JAR includes its canonical license and notice files. Backend and workspace wrapper versions are documented separately.
 
 - CI evaluates coverage after bot/CLI tests and fails when a module with a configured coverage floor has no usable LINE report; existing floors are unchanged.
