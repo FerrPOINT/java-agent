@@ -5,6 +5,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
+import org.springframework.beans.ConversionNotSupportedException;
 import org.springframework.beans.TypeMismatchException;
 import org.springframework.web.bind.ServletRequestBindingException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -144,6 +145,11 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler({TypeMismatchException.class, ServletRequestBindingException.class})
     public ResponseEntity<?> handleRequestBinding(Exception ex, HttpServletRequest request) {
+        // Binding also covers server configuration failures; missing-after-conversion stays a client error.
+        if (ex instanceof ConversionNotSupportedException
+                || (ex instanceof ServletRequestBindingException binding && binding.getStatusCode().is5xxServerError())) {
+            return handleGeneric(ex, request);
+        }
         if (requestsSse(request)) return handleRequestBindingSse(ex);
         log.debug("Invalid or missing request parameter: {}", ex.getClass().getSimpleName());
         return ResponseEntity.badRequest().body(Map.of(

@@ -3,7 +3,10 @@ package com.azhukov.agent.api;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.beans.ConversionNotSupportedException;
+import org.springframework.format.support.DefaultFormattingConversionService;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -12,6 +15,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.MissingPathVariableException;
 
 import java.util.Map;
 import java.util.UUID;
@@ -54,6 +58,47 @@ class GlobalExceptionHandlerBindingTest {
             .andExpect(status().isOk());
         mvc.perform(get("/binding?limit=2&offset=1"))
             .andExpect(status().isOk()).andExpect(jsonPath("$.limit").value(2));
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+        "/missing-route-variable, application/json",
+        "/missing-route-variable, text/event-stream",
+        "/unsupported-parameter?value=valid-input, application/json",
+        "/unsupported-parameter?value=valid-input, text/event-stream"
+    })
+    void internalBindingFailuresRemainSafe500(String path, String accept) throws Exception {
+        MvcResult result = mvc.perform(get(path).header("Accept", accept))
+            .andExpect(status().isInternalServerError()).andReturn();
+        assertThat(result.getResolvedException()).isInstanceOfAny(
+            ConversionNotSupportedException.class, MissingPathVariableException.class);
+        String body = result.getResponse().getContentAsString();
+        assertThat(body).doesNotContain("java.lang.Runnable", "valid-input", "Required URI template variable");
+        if (accept.equals(MediaType.TEXT_EVENT_STREAM_VALUE)) {
+            assertThat(result.getResponse().getContentType()).startsWith(MediaType.TEXT_EVENT_STREAM_VALUE);
+            assertThat(body).startsWith("event:error\ndata:").endsWith("\n\n");
+            body = body.lines().filter(line -> line.startsWith("data:")).findFirst().orElseThrow().substring(5);
+        } else {
+            assertThat(result.getResponse().getContentType()).startsWith(MediaType.APPLICATION_JSON_VALUE);
+        }
+        var payload = new com.fasterxml.jackson.databind.ObjectMapper().readTree(body);
+        assertThat(payload.path("type").asText()).isEqualTo("internal");
+        assertThat(payload.path("error").asText()).isEqualTo("Internal server error");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"application/json", "text/event-stream"})
+    void requiredPathValueConvertedToNullRemains400(String accept) throws Exception {
+        DefaultFormattingConversionService conversion = new DefaultFormattingConversionService();
+        conversion.addConverter(String.class, UUID.class, value -> null);
+        MockMvc customMvc = MockMvcBuilders.standaloneSetup(new BindingController())
+            .setConversionService(conversion).setControllerAdvice(new GlobalExceptionHandler()).build();
+        MvcResult result = customMvc.perform(get("/binding/null-value").header("Accept", accept))
+            .andExpect(status().isBadRequest()).andReturn();
+        assertThat(result.getResolvedException()).isInstanceOf(MissingPathVariableException.class);
+        assertThat(((MissingPathVariableException) result.getResolvedException()).isMissingAfterConversion()).isTrue();
+        assertThat(result.getResponse().getContentAsString())
+            .contains("bad_request", "Invalid or missing request parameter").doesNotContain("internal");
     }
 
     @Test
@@ -112,6 +157,16 @@ class GlobalExceptionHandlerBindingTest {
 
     @RestController
     static class BindingController {
+        @GetMapping("/missing-route-variable")
+        String missingRouteVariable(@PathVariable("id") String id) {
+            return id;
+        }
+
+        @GetMapping("/unsupported-parameter")
+        String unsupportedParameter(@RequestParam("value") Runnable value) {
+            return "ok";
+        }
+
         @GetMapping({"/binding/{id}", "/binding/{id}/messages"})
         Map<String, Object> session(@PathVariable("id") UUID id) {
             return Map.of("id", id);
