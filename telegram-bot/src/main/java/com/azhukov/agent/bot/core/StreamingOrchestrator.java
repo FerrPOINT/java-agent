@@ -95,6 +95,20 @@ public class StreamingOrchestrator {
             15, java.util.concurrent.TimeUnit.SECONDS);
     }
 
+    static String reviewPollSessionId(String requestSessionId, java.util.UUID resolvedSessionId) {
+        return resolvedSessionId != null ? resolvedSessionId.toString() : requestSessionId;
+    }
+
+    private void schedulePendingReviewPoll(String requestSessionId, java.util.UUID resolvedSessionId,
+                                           long chatId, long userMessageId, long messageThreadId,
+                                           ProcessorHooks hooks) {
+        String pollSessionId = reviewPollSessionId(requestSessionId, resolvedSessionId);
+        if (pollSessionId == null || pollSessionId.isBlank()) return;
+        reviewPollScheduler.schedule(() ->
+            pollPendingReview(pollSessionId, chatId, userMessageId, messageThreadId, hooks, 4),
+            20, java.util.concurrent.TimeUnit.SECONDS);
+    }
+
     @jakarta.annotation.PreDestroy
     void shutdownReviewPollScheduler() {
         reviewPollScheduler.shutdown();
@@ -429,11 +443,8 @@ public class StreamingOrchestrator {
                 // Hermes parity: autonomously deliver the async background-review
                 // summary (armed post-delivery; review typically finishes 15-60s
                 // after the answer). Suppresses when review found nothing.
-                if (sessionId != null && !sessionId.isBlank()) {
-                    reviewPollScheduler.schedule(() ->
-                        pollPendingReview(sessionId, chatId, userMessageId, messageThreadId, hooks, 4),
-                        20, java.util.concurrent.TimeUnit.SECONDS);
-                }
+                schedulePendingReviewPoll(sessionId, streamResult.backendSessionId(),
+                    chatId, userMessageId, messageThreadId, hooks);
                 return new AgentBackendClient.ChatResult(
                     accumulated.toString(),
                     streamResult.modelUsed(),
