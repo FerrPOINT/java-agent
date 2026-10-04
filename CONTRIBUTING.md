@@ -2,6 +2,11 @@
 
 ## Build & Test
 
+Use Temurin **25.0.4.1+1-LTS**, matching CI and the pinned Docker stages.
+Always use the committed wrapper: the workspace wrapper is **9.6.1** and
+the standalone backend wrapper is **9.8.0**. Run backend/PG gates from
+`backend/`, and bot/CLI gates from the repository root.
+
 ```bash
 # Compile
 ./gradlew compileJava
@@ -57,7 +62,7 @@ For offline development without a real LLM or database:
 - Call `init()` after `new` in tests for `@PostConstruct` derived fields.
 - `@Tag("slow")` for Testcontainers integration tests.
 - `@Tag("live")` for tests requiring external services (disabled in CI).
-- Coverage gate: LINE ≥ 80%.
+- Blocking LINE floors are configured in `docs/standards/coverage-baseline.json`: backend 79.38%, bot 82.47%. Run module tests before `python3 scripts/check_docs_standard.py --check-coverage`; a missing configured report fails. The separate 80% backend summary is informational.
 
 ### Spring Patterns
 

@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM eclipse-temurin:25-jdk-noble AS builder
+FROM eclipse-temurin:25.0.4.1_1-jdk-noble@sha256:0d623ea18d7b0fe1e12a2c0a920f7e950cad433387e5a49d3611e1507fa07602 AS builder
 
 WORKDIR /workspace
 COPY backend/gradle/ gradle/
@@ -11,7 +11,7 @@ COPY backend/src src
 COPY shared/ shared/
 RUN ./gradlew bootJar --no-daemon -x test
 
-FROM eclipse-temurin:25-jre-noble
+FROM eclipse-temurin:25.0.4.1_1-jre-noble@sha256:398f810215757dc1926390014272579fb0e57c41ef1c8aa4f64ae761613a168b
 
 # Chromium runtime dependencies
 RUN apt-get update \
