@@ -50,7 +50,7 @@
 | Data | PostgreSQL 16, JPA/Hibernate, Flyway |
 | AI/tooling | LangChain4j 1.18, MCP Java SDK 2.0, Repomix MCP, built-in tool registry |
 | Interfaces | REST/SSE, OpenAI-compatible `/v1/*`, Telegram bot, CLI REPL |
-| Base workspace | API `18090`, PostgreSQL `18091` (loopback); Telegram gateway `18092` only when started separately |
+| Base workspace | Local Compose: API `1180`, PostgreSQL `1181`, Telegram gateway `1182`, SearXNG `1183` (all loopback-only) |
 | Тесты | 6221 (backend 4710 + bot 1511), 567 файлов, 0 падений |
 | License | FerrPOINT Proprietary Source-Available Evaluation License v1.0 |
 
@@ -192,8 +192,12 @@ flowchart TD
 # (or a systemd drop-in) and restart the backend.
 docker compose -f docker-compose.dev.yml up -d searxng
 
-# Другие compose-профили
-docker compose -f docker-compose.local.yml up --build
+# Local Compose runtime: PostgreSQL, SearXNG, backend, and Telegram bot.
+# Host ports are loopback-only: 1180 (API), 1181 (PostgreSQL),
+# 1182 (Telegram bot), and 1183 (SearXNG).
+docker compose -f docker-compose.local.yml up -d --build
+# Start the optional CLI; it reaches the backend over the internal Compose network.
+docker compose -f docker-compose.local.yml --profile cli run --rm cli
 docker compose -f docker-compose.e2e.yml up --build
 ```
 

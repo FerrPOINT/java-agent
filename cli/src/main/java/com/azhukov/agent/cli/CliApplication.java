@@ -23,7 +23,9 @@ public class CliApplication {
 
     public static void main(String[] args) {
         // Translate --backend.url, --session.id, --model, --new-session into cli.* properties
-        String backendUrl = "http://localhost:8090";
+        // Prefer an explicitly configured endpoint for containerized clients;
+        // preserve the standalone default for local CLI use.
+        String backendUrl = System.getenv().getOrDefault("CLI_BACKEND_URL", "http://localhost:8090");
         String sessionId = "";
         String model = "";
         boolean newSession = false;
