@@ -201,6 +201,14 @@ docker compose -f docker-compose.local.yml --profile cli run --rm cli
 docker compose -f docker-compose.e2e.yml up --build
 ```
 
+The CLI image packages `LICENSE`, `NOTICE`, and `THIRD_PARTY_NOTICES.md`
+inside its executable JAR under `META-INF`, alongside the license metadata.
+Profile regression tests load the shipped `application.yml` and verify that
+`AGENT_MODEL_*` overrides retain priority over legacy Ollama/OpenAI variables,
+while the legacy settings and operational defaults continue to work.
+CI enforces the existing backend and bot coverage floors after all module
+tests finish; a missing required LINE report fails the gate.
+
 | Compose file | Назначение |
 |---|---|
 | `docker-compose.dev.yml` + `scripts/deploy-dev-docker.sh` | Dev runtime: isolated backend/bot containers на `127.0.0.1:8090`; reuses existing PostgreSQL |

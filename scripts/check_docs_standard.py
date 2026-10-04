@@ -161,8 +161,11 @@ def main() -> int:
         for module in MODULES:
             floor = cov_baseline.get(module)
             actual = line_coverage(module)
-            if floor is None or actual is None:
+            if floor is None:
                 print(f"{module}: coverage not enforced (baseline={floor} actual={actual})")
+                continue
+            if actual is None:
+                failures.append(f"{module}: required LINE coverage report is missing or has no usable LINE counter")
                 continue
             status = "OK" if actual >= floor else "REGRESSION"
             print(f"{module}: LINE {actual}% (floor {floor}%) {status}")

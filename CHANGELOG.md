@@ -2,6 +2,8 @@
 
 ### Fixed
 
+- CI evaluates coverage after bot/CLI tests and fails when a module with a configured coverage floor has no usable LINE report; existing floors are unchanged.
+- The new CLI Docker image includes the license and notice files referenced by its JAR manifest. Regression coverage now verifies real first-turn background-review polling and shipped model-profile environment precedence, including legacy variables and defaults. The silent-notification test establishes an eligible edit directly instead of relying on a wall-clock sleep.
 - Usage persistence locks the parent session in the same database transaction as the insert. Concurrent session deletion either cascades committed usage or causes the recorder to skip the deleted session without a foreign-key failure. Pricing, API contracts and database migrations remain unchanged.
 - Mid-turn transcript batches use a transactional parent lock as well, so deletion during a tool batch is treated as a completed flush instead of an FK error and repeated persistence attempts.
 - Ordinary user/turn message persistence acquires the parent lock once for the whole transaction, skipping sessions deleted before the write without repeated existence queries per row.

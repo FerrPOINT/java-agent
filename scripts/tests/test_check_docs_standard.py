@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import json
 import tempfile
 import unittest
@@ -37,6 +39,49 @@ class PatchedRoot(unittest.TestCase):
     def tearDown(self) -> None:
         mod.ROOT, mod.BASELINE = self._orig_root, self._orig_baseline
         self._tmp.cleanup()
+
+
+class CoverageGateTests(PatchedRoot):
+    def setUp(self) -> None:
+        super().setUp()
+        mod.BASELINE.parent.mkdir(parents=True)
+        mod.BASELINE.write_text(json.dumps({
+            "doc_violations": {name: mod.check_module(name) for name in mod.MODULES},
+            "line_coverage": {"backend": 79.38, "telegram-bot": 82.47},
+        }))
+
+    def report(self, module: str, covered: int = 85, missed: int = 15,
+               counter_type: str = "LINE") -> None:
+        report = self.root / module / "build/reports/jacoco/test/jacocoTestReport.xml"
+        report.parent.mkdir(parents=True)
+        report.write_text(f'<report><counter type="{counter_type}" covered="{covered}" missed="{missed}"/></report>')
+
+    def run_gate(self) -> int:
+        with mock.patch("sys.argv", [str(SCRIPT), "--check-coverage"]), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            return mod.main()
+
+    def test_missing_required_reports_fail(self) -> None:
+        self.assertEqual(self.run_gate(), 1)
+
+    def test_missing_bot_report_fails_even_with_passing_backend_coverage(self) -> None:
+        self.report("backend")
+        self.assertEqual(self.run_gate(), 1)
+
+    def test_report_without_line_counter_fails(self) -> None:
+        self.report("backend")
+        self.report("telegram-bot", counter_type="BRANCH")
+        self.assertEqual(self.run_gate(), 1)
+
+    def test_real_passing_reports_do_not_require_a_report_for_unconfigured_cli(self) -> None:
+        self.report("backend")
+        self.report("telegram-bot")
+        self.assertEqual(self.run_gate(), 0)
+
+    def test_coverage_below_the_existing_floor_fails(self) -> None:
+        self.report("backend")
+        self.report("telegram-bot", covered=82, missed=18)
+        self.assertEqual(self.run_gate(), 1)
 
 
 class ClassJavadocTests(PatchedRoot):

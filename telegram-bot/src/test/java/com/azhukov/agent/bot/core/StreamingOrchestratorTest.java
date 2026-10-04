@@ -8,6 +8,7 @@ import com.azhukov.agent.bot.media.MediaDeliveryService;
 import com.azhukov.agent.bot.session.BotSessionEntity;
 import com.azhukov.agent.bot.session.BusySessionHandler;
 import com.azhukov.agent.bot.streaming.StreamEditor;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
@@ -85,6 +86,11 @@ class StreamingOrchestratorTest {
         when(telegramClient.getLastApiErrorCode()).thenReturn(0);
     }
 
+    @AfterEach
+    void tearDown() {
+        orchestrator.shutdownReviewPollScheduler();
+    }
+
     private BotSessionEntity session() {
         BotSessionEntity s = new BotSessionEntity();
         s.setId(UUID.randomUUID());
@@ -144,6 +150,29 @@ class StreamingOrchestratorTest {
     void reviewPollSessionId_usesRequestSessionWhenBackendMetadataIsUnavailable() {
         assertThat(StreamingOrchestrator.reviewPollSessionId("existing-session", null))
             .isEqualTo("existing-session");
+    }
+
+    @Test
+    void firstTurnDeliversThePendingReviewForTheBackendAssignedSessionAfterFinalAnswer() {
+        UUID backendSessionId = UUID.randomUUID();
+        var result = new AgentBackendClient.ChatResult("answer", "model", 10, 100,
+            true, false, backendSessionId);
+        stubChatStream(ctx -> {
+            ctx.tokenConsumer.accept("answer");
+            ctx.onComplete.accept(result);
+            ctx.returnResult = result;
+        });
+        var review = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode()
+            .put("pending", true).put("summary", "review summary");
+        when(backendClient.getPendingReview(backendSessionId.toString())).thenReturn(review);
+
+        var response = orchestrator.streamChat(100L, "hi", null, session(), 5L, 7L, hooks);
+
+        assertThat(response.content()).isEqualTo("answer");
+        verify(streamEditor).finalizeStream(eq(100L), eq(1L), anyString());
+        verify(hooks, never()).sendReviewMessage(anyLong(), anyString(), anyLong(), anyLong());
+        verify(hooks, timeout(25_000)).sendReviewMessage(100L, "review summary", 5L, 7L);
+        verify(backendClient).getPendingReview(backendSessionId.toString());
     }
 
     @Test

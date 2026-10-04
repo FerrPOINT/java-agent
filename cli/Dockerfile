@@ -1,5 +1,6 @@
 FROM gradle:jdk25 AS builder
 WORKDIR /workspace
+COPY LICENSE NOTICE THIRD_PARTY_NOTICES.md ./
 COPY settings.gradle ./
 COPY gradle ./gradle
 COPY gradlew ./

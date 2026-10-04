@@ -103,13 +103,13 @@ jobs:
               summary.write(f'## Backend LINE coverage: {pct:.2f}% (gate 80.00%, deficit {int((c+m)*0.80)-c} lines)\n')
           EOF
 
+      - name: Run telegram-bot and cli tests
+        run: ./gradlew :telegram-bot:test :cli:test --no-daemon
+
       - name: Coverage ratchet (blocking, baseline in docs/standards/coverage-baseline.json)
         run: |
           ./gradlew :telegram-bot:jacocoTestReport --no-daemon -x test
           python3 scripts/check_docs_standard.py --check-coverage
-
-      - name: Run telegram-bot and cli tests
-        run: ./gradlew :telegram-bot:test :cli:test --no-daemon
 
   build:
     name: Build bootJar
