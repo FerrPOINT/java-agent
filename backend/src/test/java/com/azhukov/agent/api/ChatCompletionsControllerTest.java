@@ -322,7 +322,7 @@ class ChatCompletionsControllerTest {
                 .content(requestBody))
             .andExpect(status().isInternalServerError())
             .andExpect(jsonPath("$.type").value("internal"))
-            .andExpect(jsonPath("$.error").value("Internal error: model service unavailable"));
+            .andExpect(jsonPath("$.error").value("Internal server error"));
     }
 
     @Test

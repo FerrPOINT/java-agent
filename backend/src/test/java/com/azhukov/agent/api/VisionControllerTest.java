@@ -99,6 +99,6 @@ class VisionControllerTest {
                 .content(requestBody))
             .andExpect(status().isInternalServerError())
             .andExpect(jsonPath("$.type").value("internal"))
-            .andExpect(jsonPath("$.error").value("Internal error: vision model failed"));
+            .andExpect(jsonPath("$.error").value("Internal server error"));
     }
 }

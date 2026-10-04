@@ -137,7 +137,7 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
-    void genericExceptionReturns500WithInternalTypeAndMessage() {
+    void genericExceptionReturns500WithInternalTypeWithoutDiagnostics() {
         Object result = h.handleGeneric(
             new RuntimeException("unexpected NPE in service layer"));
         assertThat(result).isInstanceOf(ResponseEntity.class);
@@ -146,7 +146,7 @@ class GlobalExceptionHandlerTest {
         assertThat(r.getStatusCode().value()).isEqualTo(500);
         assertThat(r.getBody()).isNotNull();
         assertThat(r.getBody().get("type")).isEqualTo("internal");
-        assertThat(r.getBody().get("error")).asString().contains("unexpected NPE in service layer");
+        assertThat(r.getBody().get("error")).isEqualTo("Internal server error");
     }
 
     @Test
