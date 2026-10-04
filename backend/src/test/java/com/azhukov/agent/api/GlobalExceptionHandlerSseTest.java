@@ -18,46 +18,54 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * Tests for Bug 2: GlobalExceptionHandler SSE error handling.
- * <p>
- * When an exception occurs during SSE streaming, the response content type is
- * text/event-stream. The GlobalExceptionHandler previously tried to return JSON
- * ResponseEntity, which caused HttpMessageNotWritableException because Spring
- * can't convert Map to text/event-stream.
- * <p>
- * Fix: Detect SSE requests (Accept header contains text/event-stream) and return
- * an SseEmitter with an error event instead of a JSON ResponseEntity.
- * <p>
- * Also: AgentStreamingService.safeCompleteWithError() now calls emitter.complete()
- * instead of emitter.completeWithError() to prevent exceptions from propagating
- * to GlobalExceptionHandler in the first place.
+ * Checks terminal SSE framing, error statuses and JSON escaping.
+ * Actual MVC binding and content negotiation are covered by GlobalExceptionHandlerBindingTest.
  */
 class GlobalExceptionHandlerSseTest {
 
     GlobalExceptionHandler h = new GlobalExceptionHandler(new com.fasterxml.jackson.databind.ObjectMapper());
 
+    @Test
+    void terminalFrameKeepsEscapedJsonEvenWhenMapperUsesPrettyPrinting() throws Exception {
+        com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper()
+            .enable(com.fasterxml.jackson.databind.SerializationFeature.INDENT_OUTPUT);
+        String message = "quote \" and newline\nbackslash\\";
+        String frame = new GlobalExceptionHandler(mapper)
+            .handleAgentExceptionSse(new AgentException(HttpStatus.BAD_REQUEST, message)).getBody();
+        assertThat(frame).isNotNull().startsWith("event:error\ndata:").endsWith("\n\n");
+        java.util.List<String> data = frame.lines().filter(line -> line.startsWith("data:")).toList();
+        assertThat(data).hasSize(1);
+        assertThat(mapper.readTree(data.getFirst().substring(5)).get("error").asText()).isEqualTo(message);
+    }
+
     // ── SSE detection: AgentException on SSE endpoint ──
 
     @Test
-    void agentExceptionOnSseRequestReturnsSseEmitterNotJson() {
+    void agentExceptionOnSseRequestReturnsTerminalEvent() {
         setSseRequestContext();
 
-        Object result = h.handleAgentException(
+        Object result = h.handleAgentExceptionSse(
             new AgentException(HttpStatus.INTERNAL_SERVER_ERROR, "stream failed"));
 
-        assertThat(result).isInstanceOf(SseEmitter.class);
+        assertThat(result).isInstanceOf(org.springframework.http.ResponseEntity.class);
+        org.springframework.http.ResponseEntity<?> response = (org.springframework.http.ResponseEntity<?>) result;
+        assertThat(response.getBody()).asString().startsWith("event:error\ndata:").endsWith("\n\n");
+        assertThat(response.getStatusCode().value()).isEqualTo(500);
         clearRequestContext();
     }
 
     // ── SSE detection: generic exception on SSE endpoint ──
 
     @Test
-    void genericExceptionOnSseRequestReturnsSseEmitterNotJson() {
+    void genericExceptionOnSseRequestReturnsSafeTerminalEvent() {
         setSseRequestContext();
 
-        Object result = h.handleGeneric(new RuntimeException("internal stream error"));
+        Object result = h.handleGenericSse(new RuntimeException("internal stream error"));
 
-        assertThat(result).isInstanceOf(SseEmitter.class);
+        assertThat(result).isInstanceOf(org.springframework.http.ResponseEntity.class);
+        org.springframework.http.ResponseEntity<?> response = (org.springframework.http.ResponseEntity<?>) result;
+        assertThat(response.getBody()).asString().contains("Internal server error").doesNotContain("internal stream error");
+        assertThat(response.getStatusCode().value()).isEqualTo(500);
         clearRequestContext();
     }
 

@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+- API binding errors return safe400; unexpected JSON/SSE errors retain500
+  without private diagnostics. Terminal SSE uses a supported synchronous MVC
+  response and honours specific Accept ranges before wildcard quality.
+
 ### Fixed
 
 - Failed Telegram finalization/error sends no longer claim successful delivery or arm background review. The complete error response is retained for the existing fallback send; an empty-token failure does not repeat the model request.
