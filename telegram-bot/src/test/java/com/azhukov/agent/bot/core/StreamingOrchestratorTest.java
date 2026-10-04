@@ -133,6 +133,20 @@ class StreamingOrchestratorTest {
     }
 
     @Test
+    void reviewPollSessionId_prefersBackendAssignedSessionForFirstTurn() {
+        UUID backendSessionId = UUID.randomUUID();
+
+        assertThat(StreamingOrchestrator.reviewPollSessionId(null, backendSessionId))
+            .isEqualTo(backendSessionId.toString());
+    }
+
+    @Test
+    void reviewPollSessionId_usesRequestSessionWhenBackendMetadataIsUnavailable() {
+        assertThat(StreamingOrchestrator.reviewPollSessionId("existing-session", null))
+            .isEqualTo("existing-session");
+    }
+
+    @Test
     void streamChat_tokens_thenComplete_finalizesStreamAndReturnsContent() {
         stubChatStream(ctx -> {
             ctx.tokenConsumer.accept("Hello ");
