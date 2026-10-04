@@ -212,7 +212,7 @@ class AgentControllerTest {
                 .content(requestBody))
             .andExpect(status().isInternalServerError())
             .andExpect(jsonPath("$.type").value("internal"))
-            .andExpect(jsonPath("$.error").value("Internal error: agent runtime failure"));
+            .andExpect(jsonPath("$.error").value("Internal server error"));
     }
 
     // ── SessionController tests ──

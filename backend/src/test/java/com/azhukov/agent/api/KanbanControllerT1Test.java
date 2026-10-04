@@ -164,11 +164,9 @@ class KanbanControllerT1Test {
 
     @Test
     void completeKanbanItem_invalidUuid_returnsError() throws Exception {
-        // Invalid UUID in path variable triggers a conversion error.
-        // With GlobalExceptionHandler in standalone setup, TypeMismatchException
-        // falls through to the generic 500 handler (no specific handler registered).
         mockMvc.perform(post("/api/v1/agent/kanban/done/{id}", "not-a-uuid"))
-            .andExpect(status().is5xxServerError());
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.type").value("bad_request"));
     }
 
     @Test

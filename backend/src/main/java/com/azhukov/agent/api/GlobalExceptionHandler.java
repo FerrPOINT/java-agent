@@ -5,11 +5,14 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
+import org.springframework.beans.TypeMismatchException;
+import org.springframework.web.bind.ServletRequestBindingException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import jakarta.validation.ConstraintViolation;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
 import java.util.HashMap;
 import java.util.Map;
@@ -19,8 +22,8 @@ import org.springframework.http.MediaType;
 import org.springframework.web.context.request.RequestAttributes;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+/** Preserves protocol-specific errors while keeping unexpected diagnostics out of client responses. */
 @Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -36,58 +39,58 @@ public class GlobalExceptionHandler {
         this.objectMapper = new com.fasterxml.jackson.databind.ObjectMapper();
     }
 
-    /**
-     * Detect whether the current request is an SSE streaming endpoint by checking
-     * the Accept header for text/event-stream. When an exception propagates here
-     * during SSE streaming, returning a JSON ResponseEntity fails with
-     * HttpMessageNotWritableException because the response content type is
-     * text/event-stream. In that case, return an SseEmitter that emits an error event.
-     */
-    private static boolean isSseRequest() {
-        try {
-            RequestAttributes attrs = RequestContextHolder.getRequestAttributes();
-            if (attrs instanceof ServletRequestAttributes sra) {
-                String accept = sra.getRequest().getHeader("Accept");
-                return accept != null && accept.contains(MediaType.TEXT_EVENT_STREAM_VALUE);
-            }
-        } catch (Exception e) {
-            log.debug("Failed to detect SSE request type: {}", e.getMessage());
-            // Ignore — fallback to non-SSE handling
-        }
-        return false;
-    }
-
-    /**
-     * Build an SSE error response for streaming endpoints.
-     * Returns an SseEmitter that immediately emits an error event and completes.
-     */
-    private SseEmitter sseErrorEvent(HttpStatus status, String type, String message) {
-        SseEmitter emitter = new SseEmitter(5_000L);
+    // ExceptionHandlerExceptionResolver does not support SseEmitter return values.
+    // A terminal event is synchronous and must retain its error status and SSE framing.
+    private ResponseEntity<String> sseErrorEvent(HttpStatus status, String type, String message) {
+        String json;
         try {
             // rev-75: use ObjectMapper for proper JSON escaping instead of manual
             // string concatenation — the old code only escaped " and \n, missing
             // backslash, \t, \r, and control characters, producing invalid JSON
             // on messages containing those bytes.
             Map<String, String> payload = Map.of("type", type, "error", message);
-            String json = objectMapper.writeValueAsString(payload);
-            emitter.send(SseEmitter.event().name("error").data(json));
-            emitter.complete();
+            json = objectMapper.writer().without(com.fasterxml.jackson.databind.SerializationFeature.INDENT_OUTPUT)
+                .writeValueAsString(payload);
         } catch (Exception e) {
-            emitter.completeWithError(e);
+            log.error("Cannot serialize terminal streaming error", e);
+            status = HttpStatus.INTERNAL_SERVER_ERROR;
+            json = "{\"type\":\"internal\",\"error\":\"Internal server error\"}";
         }
-        return emitter;
+        return ResponseEntity.status(status).contentType(MediaType.TEXT_EVENT_STREAM)
+            .body("event:error\ndata:" + json + "\n\n");
+    }
+
+    private static boolean requestsSse(HttpServletRequest request) {
+        if (request == null || request.getHeader("Accept") == null) return false;
+        try {
+            java.util.List<MediaType> accepted = MediaType.parseMediaTypes(request.getHeader("Accept"));
+            double stream = accepted.stream()
+                .filter(type -> type.getType().equals("text") && type.getSubtype().equals("event-stream"))
+                .mapToDouble(MediaType::getQualityValue).max().orElse(0);
+            double json = accepted.stream().filter(type -> type.isCompatibleWith(MediaType.APPLICATION_JSON))
+                .mapToDouble(MediaType::getQualityValue).max().orElse(0);
+            return stream > json;
+        } catch (IllegalArgumentException ignored) {
+            return false;
+        }
     }
 
     @ExceptionHandler(AgentException.class)
-    public Object handleAgentException(AgentException ex) {
+    public ResponseEntity<?> handleAgentException(AgentException ex, HttpServletRequest request) {
+        return requestsSse(request) ? handleAgentExceptionSse(ex) : handleAgentException(ex);
+    }
+
+    public ResponseEntity<Map<String, Object>> handleAgentException(AgentException ex) {
         log.warn("Agent exception: {}", ex.getMessage());
-        if (isSseRequest()) {
-            return sseErrorEvent(ex.getStatus(), "agent", ex.getMessage());
-        }
         return ResponseEntity.status(ex.getStatus()).body(Map.of(
             "type", "agent",
             "error", ex.getMessage()
         ));
+    }
+
+    public ResponseEntity<String> handleAgentExceptionSse(AgentException ex) {
+        log.warn("Agent exception: {}", ex.getMessage());
+        return sseErrorEvent(ex.getStatus(), "agent", ex.getMessage());
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
@@ -137,6 +140,21 @@ public class GlobalExceptionHandler {
             "type", "bad_request",
             "error", ex.getMessage()
         ));
+    }
+
+    @ExceptionHandler({TypeMismatchException.class, ServletRequestBindingException.class})
+    public ResponseEntity<?> handleRequestBinding(Exception ex, HttpServletRequest request) {
+        if (requestsSse(request)) return handleRequestBindingSse(ex);
+        log.debug("Invalid or missing request parameter: {}", ex.getClass().getSimpleName());
+        return ResponseEntity.badRequest().body(Map.of(
+            "type", "bad_request",
+            "error", "Invalid or missing request parameter"
+        ));
+    }
+
+    public ResponseEntity<String> handleRequestBindingSse(Exception ex) {
+        log.debug("Invalid or missing request parameter: {}", ex.getClass().getSimpleName());
+        return sseErrorEvent(HttpStatus.BAD_REQUEST, "bad_request", "Invalid or missing request parameter");
     }
 
     @ExceptionHandler(TimeoutException.class)
@@ -240,15 +258,20 @@ public class GlobalExceptionHandler {
     }
 
     @ExceptionHandler(Exception.class)
-    public Object handleGeneric(Exception ex) {
+    public ResponseEntity<?> handleGeneric(Exception ex, HttpServletRequest request) {
+        return requestsSse(request) ? handleGenericSse(ex) : handleGeneric(ex);
+    }
+
+    public ResponseEntity<Map<String, Object>> handleGeneric(Exception ex) {
         log.error("Unhandled exception", ex);
-        if (isSseRequest()) {
-            return sseErrorEvent(HttpStatus.INTERNAL_SERVER_ERROR, "internal",
-                "Internal error: " + ex.getMessage());
-        }
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of(
             "type", "internal",
-            "error", "Internal error: " + ex.getMessage()
+            "error", "Internal server error"
         ));
+    }
+
+    public ResponseEntity<String> handleGenericSse(Exception ex) {
+        log.error("Unhandled streaming exception", ex);
+        return sseErrorEvent(HttpStatus.INTERNAL_SERVER_ERROR, "internal", "Internal server error");
     }
 }
