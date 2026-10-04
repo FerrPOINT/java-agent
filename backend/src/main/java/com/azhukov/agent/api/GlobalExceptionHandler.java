@@ -2,9 +2,11 @@ package com.azhukov.agent.api;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
+import org.springframework.beans.ConversionNotSupportedException;
 import org.springframework.beans.TypeMismatchException;
 import org.springframework.web.bind.ServletRequestBindingException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -15,6 +17,9 @@ import jakarta.validation.ConstraintViolation;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
 import java.util.HashMap;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
@@ -61,23 +66,23 @@ public class GlobalExceptionHandler {
     }
 
     private static boolean requestsSse(HttpServletRequest request) {
-        if (request == null || request.getHeader("Accept") == null) return false;
+        if (request == null) return false;
         try {
-            java.util.List<MediaType> accepted = MediaType.parseMediaTypes(request.getHeader("Accept"));
-            double stream = acceptedQuality(accepted, MediaType.TEXT_EVENT_STREAM);
-            double json = acceptedQuality(accepted, MediaType.APPLICATION_JSON);
-            return stream > json;
+            List<MediaType> accepted = MediaType.parseMediaTypes(Collections.list(request.getHeaders(HttpHeaders.ACCEPT)));
+            boolean explicitStream = accepted.stream()
+                .anyMatch(type -> type.getType().equals("text") && type.getSubtype().equals("event-stream"));
+            return explicitStream && acceptedQuality(accepted, MediaType.TEXT_EVENT_STREAM)
+                > acceptedQuality(accepted, MediaType.APPLICATION_JSON);
         } catch (IllegalArgumentException ignored) {
             return false;
         }
     }
 
-    private static double acceptedQuality(java.util.List<MediaType> accepted, MediaType representation) {
-        // A specific range overrides a wildcard even when its quality is lower or zero.
-        // Only compare quality after selecting the most specific matching media range.
-        return accepted.stream().filter(type -> type.includes(representation))
-            .max(java.util.Comparator.<MediaType>comparingInt(type ->
-                type.isWildcardType() ? 0 : type.isWildcardSubtype() ? 1 : 2)
+    private static double acceptedQuality(List<MediaType> accepted, MediaType format) {
+        // RFC 9110: a specific media range overrides a wildcard even when its q is lower or zero.
+        return accepted.stream().filter(type -> type.includes(format))
+            .max(Comparator.comparing((MediaType type) -> !type.isWildcardType())
+                .thenComparing(type -> !type.isWildcardSubtype())
                 .thenComparingDouble(MediaType::getQualityValue))
             .map(MediaType::getQualityValue).orElse(0.0);
     }
@@ -151,6 +156,11 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler({TypeMismatchException.class, ServletRequestBindingException.class})
     public ResponseEntity<?> handleRequestBinding(Exception ex, HttpServletRequest request) {
+        // Binding also covers server configuration failures; missing-after-conversion stays a client error.
+        if (ex instanceof ConversionNotSupportedException
+                || (ex instanceof ServletRequestBindingException binding && binding.getStatusCode().is5xxServerError())) {
+            return handleGeneric(ex, request);
+        }
         if (requestsSse(request)) return handleRequestBindingSse(ex);
         log.debug("Invalid or missing request parameter: {}", ex.getClass().getSimpleName());
         return ResponseEntity.badRequest().body(Map.of(
