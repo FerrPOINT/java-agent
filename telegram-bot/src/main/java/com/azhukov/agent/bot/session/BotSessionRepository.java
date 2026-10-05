@@ -12,6 +12,9 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+/**
+ * Persists chat-scoped bot state so recovered deliveries retain the backend session identity.
+ */
 @Repository
 public interface BotSessionRepository extends JpaRepository<BotSessionEntity, UUID> {
 

@@ -9,7 +9,10 @@ import lombok.Data;
 import java.time.Instant;
 import java.util.UUID;
 
-/** Local receipt prevents re-sending a review after an ambiguous backend acknowledgement. */
+/**
+ * Stores a Telegram acceptance receipt keyed by the backend review delivery ID.
+ * A retained receipt allows retrying only the backend acknowledgement after process loss.
+ */
 @Entity
 @Table(name = "review_delivery_receipts")
 @Data
