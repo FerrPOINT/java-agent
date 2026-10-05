@@ -12,6 +12,8 @@ import com.azhukov.agent.core.memory.ReviewToolProvider;
 import com.azhukov.agent.core.memory.WriteApprovalGate;
 import com.azhukov.agent.core.ports.MemoryStorePort;
 import com.azhukov.agent.core.ports.PendingMemoryStorePort;
+import com.azhukov.agent.persistence.repository.MemoryWriteAuditRepository;
+import com.azhukov.agent.persistence.repository.ReviewSummaryRepository;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
@@ -28,6 +30,18 @@ public class MemoryConfig {
     @Bean
     @ConditionalOnProperty(name = "agent.memory.enabled", havingValue = "true", matchIfMissing = true)
     @ConditionalOnMissingBean(MemoryProvider.class)
+    public MemoryProvider memoryProvider(MemoryStorePort memoryRepository,
+                                          MemoryWriteAuditRepository memoryWriteAuditRepository,
+                                          AgentProperties agentProperties,
+                                          MemoryThreatScanner memoryThreatScanner) {
+        return new DatabaseMemoryProvider(memoryRepository, memoryWriteAuditRepository,
+            agentProperties, memoryThreatScanner);
+    }
+
+    /**
+     * Test-facing compatibility overload. Spring uses the four-argument bean
+     * factory above, while direct callers without auditing retain the old API.
+     */
     public MemoryProvider memoryProvider(MemoryStorePort memoryRepository,
                                           AgentProperties agentProperties,
                                           MemoryThreatScanner memoryThreatScanner) {
@@ -64,8 +78,9 @@ public class MemoryConfig {
                                                             MemoryProvider memoryProvider,
                                                             WriteApprovalGate writeApprovalGate,
                                                             ReviewToolProvider reviewToolProvider,
-                                                            AgentProperties properties) {
+                                                            AgentProperties properties,
+                                                            ReviewSummaryRepository reviewSummaryRepository) {
         return new BackgroundReviewService(modelClient, memoryProvider, writeApprovalGate,
-                                            reviewToolProvider, properties);
+                                            reviewToolProvider, properties, reviewSummaryRepository);
     }
 }

@@ -33,6 +33,8 @@ public interface BotSessionRepository extends JpaRepository<BotSessionEntity, UU
 
     List<BotSessionEntity> findByUserIdOrderByUpdatedAtDesc(String userId);
 
+    List<BotSessionEntity> findByBackendSessionIdIsNotNull();
+
     // P0: Session expiry watcher — list all active sessions
     List<BotSessionEntity> findByActiveTrue();
 

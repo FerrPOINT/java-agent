@@ -15,5 +15,11 @@ public record AgentConfigDto(
     int timeoutSeconds,
     String defaultSystemPrompt,
     String reasoningConfig,
+    int memoryNudgeInterval,
+    int skillCreationNudgeInterval,
+    boolean backgroundReviewEnabled,
+    int backgroundReviewDelayMs,
+    int backgroundReviewMaxTurns,
+    int backgroundReviewMaxInputTokens,
     Map<String, Boolean> features
 ) {}

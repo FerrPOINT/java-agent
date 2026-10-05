@@ -5,10 +5,11 @@ import com.azhukov.agent.bot.core.RuntimeFooter;
 import com.azhukov.agent.bot.media.MediaDeliveryService;
 import com.azhukov.agent.bot.session.BotSessionEntity;
 import com.azhukov.agent.bot.session.BusySessionHandler;
+import com.azhukov.agent.bot.session.ReviewDeliveryReceiptEntity;
+import com.azhukov.agent.bot.session.ReviewDeliveryReceiptRepository;
 import com.azhukov.agent.bot.streaming.StreamEditor;
 import com.azhukov.agent.bot.streaming.ToolEmojiMap;
 import com.azhukov.agent.bot.streaming.ToolProgressBubble;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -38,7 +39,6 @@ import java.util.function.Consumer;
  */
 @Service
 @Slf4j
-@RequiredArgsConstructor
 public class StreamingOrchestrator {
 
     private final AgentBackendClient backendClient;
@@ -50,13 +50,42 @@ public class StreamingOrchestrator {
     private final com.azhukov.agent.bot.client.TelegramClient telegramClient;
     private final com.azhukov.agent.bot.session.BotSessionStore sessionStore;
     private final com.azhukov.agent.bot.keyboard.ClarifyInteractionRenderer clarificationInteraction;
+    private final ReviewDeliveryReceiptRepository reviewDeliveryReceiptRepository;
+
+    public StreamingOrchestrator(AgentBackendClient backendClient, StreamEditor streamEditor,
+                                 BusySessionHandler busyHandler, RuntimeFooter runtimeFooter,
+                                 BotProperties properties, MediaDeliveryService mediaDeliveryService,
+                                 com.azhukov.agent.bot.client.TelegramClient telegramClient,
+                                 com.azhukov.agent.bot.session.BotSessionStore sessionStore,
+                                 com.azhukov.agent.bot.keyboard.ClarifyInteractionRenderer clarificationInteraction) {
+        this(backendClient, streamEditor, busyHandler, runtimeFooter, properties, mediaDeliveryService,
+            telegramClient, sessionStore, clarificationInteraction, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public StreamingOrchestrator(AgentBackendClient backendClient, StreamEditor streamEditor,
+                                 BusySessionHandler busyHandler, RuntimeFooter runtimeFooter,
+                                 BotProperties properties, MediaDeliveryService mediaDeliveryService,
+                                 com.azhukov.agent.bot.client.TelegramClient telegramClient,
+                                 com.azhukov.agent.bot.session.BotSessionStore sessionStore,
+                                 com.azhukov.agent.bot.keyboard.ClarifyInteractionRenderer clarificationInteraction,
+                                 ReviewDeliveryReceiptRepository reviewDeliveryReceiptRepository) {
+        this.backendClient = backendClient;
+        this.streamEditor = streamEditor;
+        this.busyHandler = busyHandler;
+        this.runtimeFooter = runtimeFooter;
+        this.properties = properties;
+        this.mediaDeliveryService = mediaDeliveryService;
+        this.telegramClient = telegramClient;
+        this.sessionStore = sessionStore;
+        this.clarificationInteraction = clarificationInteraction;
+        this.reviewDeliveryReceiptRepository = reviewDeliveryReceiptRepository;
+    }
+
 
     /**
-     * Hermes parity (display.tool_progress_grouping="accumulate"): tool
-     * progress renders as ONE accumulating bubble per turn — first tool sends
-     * a silent message, subsequent tools EDIT it (throttled 1.5s, dedup ×N,
-     * overflow roll). Kills the per-tool message spam that caused real
-     * Telegram 429 flood limits.
+     * Hermes parity: tool progress renders as one accumulating bubble per turn.
+     * Subsequent tools edit it with throttling, deduplication, and overflow rollover.
      */
     private final java.util.concurrent.ConcurrentHashMap<Long, ToolProgressBubble> progressBubbles =
         new java.util.concurrent.ConcurrentHashMap<>();
@@ -75,18 +104,84 @@ public class StreamingOrchestrator {
             return t;
         });
 
+    private boolean deliverAndAcknowledgeReview(String sessionId, String deliveryId, long chatId, String summary,
+                                                long userMessageId, long messageThreadId, ProcessorHooks hooks) {
+        final java.util.UUID backendSessionId;
+        final java.util.UUID backendDeliveryId;
+        try {
+            backendSessionId = java.util.UUID.fromString(sessionId);
+            backendDeliveryId = java.util.UUID.fromString(deliveryId);
+        } catch (IllegalArgumentException | NullPointerException e) {
+            log.warn("Review message has no valid backend delivery identity; leaving summary pending");
+            return false;
+        }
+
+        if (reviewDeliveryReceiptRepository != null) {
+            Optional<ReviewDeliveryReceiptEntity> delivered = reviewDeliveryReceiptRepository
+                .findByBackendSessionIdAndBackendDeliveryId(backendSessionId, backendDeliveryId);
+            if (delivered.isPresent()) {
+                boolean acknowledged = backendClient.acknowledgePendingReview(sessionId, deliveryId);
+                if (acknowledged) {
+                    reviewDeliveryReceiptRepository.delete(delivered.get());
+                } else {
+                    log.warn("Review acknowledgement failed for chat {}; receipt retained for retry", chatId);
+                }
+                return acknowledged;
+            }
+        }
+
+        if (!hooks.sendReviewMessage(chatId, summary, userMessageId, messageThreadId)) {
+            return false;
+        }
+        if (reviewDeliveryReceiptRepository != null) {
+            ReviewDeliveryReceiptEntity receipt = new ReviewDeliveryReceiptEntity();
+            receipt.setId(java.util.UUID.randomUUID());
+            receipt.setBackendSessionId(backendSessionId);
+            receipt.setBackendDeliveryId(backendDeliveryId);
+            receipt.setDeliveredAt(java.time.Instant.now());
+            reviewDeliveryReceiptRepository.save(receipt);
+        }
+        boolean acknowledged = backendClient.acknowledgePendingReview(sessionId, deliveryId);
+        if (!acknowledged) {
+            log.warn("Review delivery acknowledgement failed for chat {}; receipt retained for acknowledgement retry", chatId);
+            return false;
+        }
+        if (reviewDeliveryReceiptRepository != null) {
+            reviewDeliveryReceiptRepository.findByBackendSessionIdAndBackendDeliveryId(backendSessionId, backendDeliveryId)
+                .ifPresent(reviewDeliveryReceiptRepository::delete);
+        }
+        return true;
+    }
+
+    private boolean tryDeliverPendingReview(String sessionId, long chatId, long userMessageId,
+                                            long messageThreadId, ProcessorHooks hooks) {
+        com.fasterxml.jackson.databind.JsonNode pending = backendClient.getPendingReview(sessionId);
+        if (pending == null || !pending.path("pending").asBoolean(false)) {
+            return false;
+        }
+        String summary = pending.path("summary").asText("");
+        String deliveryId = pending.path("deliveryId").asText("");
+        return !summary.isBlank() && !deliveryId.isBlank()
+            && deliverAndAcknowledgeReview(sessionId, deliveryId, chatId, summary,
+                userMessageId, messageThreadId, hooks);
+    }
+
+    /**
+     * Recovery-safe entry point for a durable review polling lane.
+     */
+    boolean deliverPendingReview(String sessionId, long chatId, long userMessageId,
+                                 long messageThreadId, ProcessorHooks hooks) {
+        return tryDeliverPendingReview(sessionId, chatId, userMessageId, messageThreadId, hooks);
+    }
+
     private void pollPendingReview(String sessionId, long chatId, long userMessageId, long messageThreadId,
                                    ProcessorHooks hooks, int attemptsLeft) {
         if (attemptsLeft <= 0 || busyHandler.isInterrupted(chatId)) return;
         try {
-            com.fasterxml.jackson.databind.JsonNode pending = backendClient.getPendingReview(sessionId);
-            if (pending != null && pending.path("pending").asBoolean(false)) {
-                String summary = pending.path("summary").asText("");
-                if (!summary.isBlank()) {
-                    hooks.sendReviewMessage(chatId, summary, userMessageId, messageThreadId);
-                    return;
-                }
+            if (tryDeliverPendingReview(sessionId, chatId, userMessageId, messageThreadId, hooks)) {
+                return;
             }
+            log.debug("Pending review not yet delivered for chat {}; retrying", chatId);
         } catch (Exception e) {
             log.debug("Pending review poll failed for chat {}: {}", chatId, e.getMessage());
         }
@@ -144,7 +239,8 @@ public class StreamingOrchestrator {
          * review summary message to the chat AFTER the final answer.
          * Default no-op so existing test doubles keep compiling.
          */
-        default void sendReviewMessage(long chatId, String reviewMessage, long userMessageId, long messageThreadId) {
+        default boolean sendReviewMessage(long chatId, String reviewMessage, long userMessageId, long messageThreadId) {
+            return false;
         }
     }
 
@@ -180,6 +276,8 @@ public class StreamingOrchestrator {
         StringBuilder accumulated = new StringBuilder(); // clean LLM text only
         final long[] messageId = {-1};
         final boolean[] finalized = {false};
+        // Review notifications are read from the durable pending queue only
+        // after finalizing the primary response; the SSE callback is ignored.
 
         // WP-b: mark the turn in flight BEFORE the first backend call. If the
         // process dies mid-stream the flag survives (V6 column) and startup
@@ -288,17 +386,9 @@ public class StreamingOrchestrator {
                         streamEditor.editStream(chatId, messageId[0], display);
                     }
                 },
-                // reviewConsumer (Hermes parity: background_review_callback) —
-                // "💾 Self-improvement review: …" surfaces AFTER the final answer.
-                reviewMsg -> {
-                    if (reviewMsg != null && !reviewMsg.isBlank()) {
-                        try {
-                            hooks.sendReviewMessage(chatId, reviewMsg, userMessageId, messageThreadId);
-                        } catch (Exception e) {
-                            log.warn("Review message delivery failed for chat {}: {}", chatId, e.getMessage());
-                        }
-                    }
-                },
+                // reviewConsumer is deliberately ignored: delivery reads the
+                // immutable pending record after primary finalization.
+                reviewMsg -> { },
                 // clarifyConsumer (Hermes clarify_gateway parity): the backend's
                 // BLOCKING clarify prompt — render an inline keyboard bound to
                 // the pending entry; button taps resolve it via the backend.
@@ -444,8 +534,6 @@ public class StreamingOrchestrator {
             // If streaming produced content, return it (with metadata from the stream)
             if (accumulated.length() > 0 || finalized[0]) {
                 progressBubbles.remove(chatId);
-                // Hermes parity: only arm autonomous review delivery after the
-                // primary response was actually finalized for the user.
                 if (shouldSchedulePendingReviewPoll(finalized[0])) {
                     schedulePendingReviewPoll(sessionId, streamResult.backendSessionId(),
                         chatId, userMessageId, messageThreadId, hooks);

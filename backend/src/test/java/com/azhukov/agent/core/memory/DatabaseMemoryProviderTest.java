@@ -5,6 +5,7 @@ import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.persistence.entity.MemoryEntity;
 import com.azhukov.agent.persistence.repository.MemoryRepository;
+import com.azhukov.agent.persistence.repository.MemoryWriteAuditRepository;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -19,6 +20,59 @@ import static org.mockito.Mockito.*;
 
 class DatabaseMemoryProviderTest {
 
+    @Test
+    void storePersistsProvenanceAudit() {
+        com.azhukov.agent.core.ports.MemoryStorePort repo = mock(com.azhukov.agent.core.ports.MemoryStorePort.class);
+        MemoryWriteAuditRepository auditRepository = mock(MemoryWriteAuditRepository.class);
+        java.util.UUID memoryId = java.util.UUID.randomUUID();
+        when(repo.save(any(MemoryEntity.class))).thenAnswer(invocation -> {
+            MemoryEntity entity = invocation.getArgument(0);
+            entity.setId(memoryId);
+            return entity;
+        });
+        DatabaseMemoryProvider provider = new DatabaseMemoryProvider(repo, auditRepository, new AgentProperties(), null);
+
+        provider.store("user-1", "memory", "auto", "durable fact", Map.of(
+            "write_origin", "BACKGROUND_REVIEW",
+            "execution_context", "background_review",
+            "session_id", "session-1",
+            "parent_session_id", "parent-1",
+            "platform", "telegram",
+            "tool_name", "memory"));
+
+        ArgumentCaptor<com.azhukov.agent.persistence.entity.MemoryWriteAuditEntity> audit =
+            ArgumentCaptor.forClass(com.azhukov.agent.persistence.entity.MemoryWriteAuditEntity.class);
+        verify(auditRepository).save(audit.capture());
+        assertThat(audit.getValue())
+            .extracting(a -> a.getMemoryId(), a -> a.getUserId(), a -> a.getTarget(), a -> a.getAction(), a -> a.getFact(),
+                a -> a.getOldFact(), a -> a.getWriteOrigin(), a -> a.getExecutionContext(),
+                a -> a.getSourceSessionId(), a -> a.getParentSessionId(), a -> a.getPlatform(), a -> a.getToolName())
+            .containsExactly((Object) memoryId, "user-1", "memory", "add", "durable fact", null, "BACKGROUND_REVIEW",
+                "background_review", "session-1", "parent-1", "telegram", "memory");
+    }
+
+    @Test
+    void batchRemoveAndReplacePersistSeparateAuditsWithOldFacts() {
+        com.azhukov.agent.core.ports.MemoryStorePort repo = mock(com.azhukov.agent.core.ports.MemoryStorePort.class);
+        MemoryWriteAuditRepository auditRepository = mock(MemoryWriteAuditRepository.class);
+        MemoryEntity replaced = memoryEntity("u", "memory", "replace me");
+        MemoryEntity removed = memoryEntity("u", "memory", "remove me");
+        when(repo.findByUserIdAndTargetOrderByCreatedAtDesc("u", "memory"))
+            .thenReturn(List.of(replaced, removed));
+        DatabaseMemoryProvider provider = new DatabaseMemoryProvider(repo, auditRepository, new AgentProperties(), null);
+
+        assertThat(provider.applyBatch("u", "memory", List.of(
+            new MemoryProvider.MemoryBatchOperation("replace", "replacement", "replace me"),
+            new MemoryProvider.MemoryBatchOperation("remove", null, "remove me")
+        ), Map.of("session_id", "s1"))).isNull();
+
+        ArgumentCaptor<com.azhukov.agent.persistence.entity.MemoryWriteAuditEntity> audit =
+            ArgumentCaptor.forClass(com.azhukov.agent.persistence.entity.MemoryWriteAuditEntity.class);
+        verify(auditRepository, times(2)).save(audit.capture());
+        assertThat(audit.getAllValues())
+            .extracting(a -> a.getAction() + ":" + a.getFact() + ":" + a.getOldFact())
+            .containsExactlyInAnyOrder("replace:replacement:replace me", "remove:null:remove me");
+    }
     @Test
     void recallFormatsResults() {
         com.azhukov.agent.core.ports.MemoryStorePort repo = mock(com.azhukov.agent.core.ports.MemoryStorePort.class);

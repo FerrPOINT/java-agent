@@ -3,7 +3,6 @@ package com.azhukov.agent.core.agent;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.context.ContextEngine;
 import com.azhukov.agent.core.memory.BackgroundReviewService;
-import com.azhukov.agent.core.memory.ReviewSummary;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import org.junit.jupiter.api.BeforeEach;
@@ -287,40 +286,56 @@ class MemoryNudgeManagerTest {
     // ─── getReviewSummaryForSurface ───
 
     @Test
-    void getReviewSummaryForSurface_noSummary_returnsNull() {
+    void peekDoesNotConsumeAndMatchingDeliveryAcknowledgementClearsOnce() {
         MemoryNudgeManager manager = createManager();
-        when(backgroundReviewService.hasReviewSummary(sessionId)).thenReturn(false);
-        assertThat(manager.getReviewSummaryForSurface(sessionId)).isNull();
+        UUID deliveryId = UUID.randomUUID();
+        var pending = new MemoryNudgeManager.PendingReviewSummary(deliveryId, "Memory: added fact");
+        when(backgroundReviewService.getPendingReviewSummary(sessionId)).thenReturn(java.util.Optional.of(
+            reviewEntity(sessionId, deliveryId, pending.summary())));
+        when(backgroundReviewService.removePendingReviewSummary(eq(sessionId), any())).thenAnswer(invocation ->
+            deliveryId.equals(invocation.getArgument(1)));
+
+        assertThat(manager.peekPendingReviewSummary(sessionId)).isEqualTo(pending);
+        assertThat(manager.acknowledgeReviewSummary(sessionId, UUID.randomUUID())).isFalse();
+        assertThat(manager.acknowledgeReviewSummary(sessionId, deliveryId)).isTrue();
+        verify(backgroundReviewService).removePendingReviewSummary(sessionId, deliveryId);
     }
 
     @Test
-    void getReviewSummaryForSurface_emptySummary_returnsNull() {
+    void previewReturnsNullWhenNoSummaryExists() {
         MemoryNudgeManager manager = createManager();
-        when(backgroundReviewService.hasReviewSummary(sessionId)).thenReturn(true);
-        when(backgroundReviewService.getReviewSummary(sessionId)).thenReturn(ReviewSummary.empty());
-        assertThat(manager.getReviewSummaryForSurface(sessionId)).isNull();
+        when(backgroundReviewService.getPendingReviewSummary(sessionId)).thenReturn(java.util.Optional.empty());
+        assertThat(manager.peekReviewSummary(sessionId)).isNull();
+    }
+
+    private static com.azhukov.agent.persistence.entity.ReviewSummaryEntity reviewEntity(
+        UUID sessionId, UUID deliveryId, String summary) {
+        var entity = new com.azhukov.agent.persistence.entity.ReviewSummaryEntity();
+        entity.setSessionId(sessionId);
+        entity.setDeliveryId(deliveryId);
+        entity.setSummary(summary);
+        return entity;
     }
 
     @Test
-    void getReviewSummaryForSurface_summaryWithActions_returnsFormatted() {
+    void previewReturnsNullForEmptySummary() {
         MemoryNudgeManager manager = createManager();
-        ReviewSummary summary = ReviewSummary.of(true, List.of("Memory: added fact"));
-        when(backgroundReviewService.hasReviewSummary(sessionId)).thenReturn(true);
-        when(backgroundReviewService.getReviewSummary(sessionId)).thenReturn(summary);
-        String result = manager.getReviewSummaryForSurface(sessionId);
-        assertThat(result).isNotBlank();
+        when(backgroundReviewService.getPendingReviewSummary(sessionId)).thenReturn(java.util.Optional.of(
+            reviewEntity(sessionId, UUID.randomUUID(), "   ")));
+        assertThat(manager.peekReviewSummary(sessionId)).isNull();
+    }
+
+    @Test
+    void previewSummaryWithActionsDoesNotClearFlag() {
+        MemoryNudgeManager manager = createManager();
+        UUID deliveryId = UUID.randomUUID();
+        when(backgroundReviewService.getPendingReviewSummary(sessionId)).thenReturn(java.util.Optional.of(
+            reviewEntity(sessionId, deliveryId, "Memory: added fact")));
+
+        String result = manager.peekReviewSummary(sessionId);
+
         assertThat(result).contains("Memory: added fact");
-        verify(backgroundReviewService).clearFlag(sessionId);
-    }
-
-    @Test
-    void getReviewSummaryForSurface_clearsFlagAfterRetrieving() {
-        MemoryNudgeManager manager = createManager();
-        ReviewSummary summary = ReviewSummary.of(false, List.of("Skill: patched skill"));
-        when(backgroundReviewService.hasReviewSummary(sessionId)).thenReturn(true);
-        when(backgroundReviewService.getReviewSummary(sessionId)).thenReturn(summary);
-        manager.getReviewSummaryForSurface(sessionId);
-        verify(backgroundReviewService).clearFlag(sessionId);
+        verify(backgroundReviewService, never()).removePendingReviewSummary(any(), any());
     }
 
     // ─── clearSession ───

@@ -7,6 +7,7 @@ import com.azhukov.agent.bot.core.RuntimeFooter;
 import com.azhukov.agent.bot.media.MediaDeliveryService;
 import com.azhukov.agent.bot.session.BotSessionEntity;
 import com.azhukov.agent.bot.session.BusySessionHandler;
+import com.azhukov.agent.bot.session.ReviewDeliveryReceiptRepository;
 import com.azhukov.agent.bot.streaming.StreamEditor;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -42,6 +43,7 @@ class StreamingOrchestratorTest {
     private MediaDeliveryService mediaDeliveryService;
     private StreamingOrchestrator orchestrator;
     private StreamingOrchestrator.ProcessorHooks hooks;
+    private ReviewDeliveryReceiptRepository reviewReceiptRepository;
     private final com.azhukov.agent.bot.session.BotSessionStore sessionStoreMock = org.mockito.Mockito.mock(com.azhukov.agent.bot.session.BotSessionStore.class);
 
 
@@ -59,16 +61,19 @@ class StreamingOrchestratorTest {
         when(runtimeFooter.format(anyString(), anyInt(), anyInt(), anyString())).thenReturn("");
         when(runtimeFooter.format(anyString(), anyInt(), anyInt(), anyString(), anyLong(), anyBoolean())).thenReturn("");
         mediaDeliveryService = new MediaDeliveryService();
+        reviewReceiptRepository = mock(ReviewDeliveryReceiptRepository.class);
         orchestrator = new StreamingOrchestrator(backendClient, streamEditor, busyHandler,
             runtimeFooter, properties, mediaDeliveryService,
             telegramClient, sessionStoreMock,
-            mock(com.azhukov.agent.bot.keyboard.ClarifyInteractionRenderer.class));
+            mock(com.azhukov.agent.bot.keyboard.ClarifyInteractionRenderer.class), reviewReceiptRepository);
 
         // Hooks: the processor's media delivery / model resolution / PII prefix
         hooks = mock(StreamingOrchestrator.ProcessorHooks.class);
         when(hooks.buildMessageWithContext(anyString(), any(), anyLong())).thenAnswer(
             inv -> inv.getArgument(0)); // passthrough when redactPii is false
         when(hooks.resolveModelUsed(any(), any())).thenReturn("resolved-model");
+        when(hooks.sendReviewMessage(anyLong(), anyString(), anyLong(), anyLong())).thenReturn(true);
+        when(backendClient.acknowledgePendingReview(anyString(), anyString())).thenReturn(true);
 
         // StreamEditor defaults
         when(streamEditor.startStream(anyLong(), anyString())).thenReturn(Optional.of(1L));
@@ -112,6 +117,7 @@ class StreamingOrchestratorTest {
         final Consumer<String> toolCallConsumer;
         final java.util.function.BiConsumer<String, String> toolResultConsumer;
         final Consumer<String> retryConsumer;
+        final Consumer<String> reviewConsumer;
         final Consumer<String> clarifyConsumer;
         final Consumer<AgentBackendClient.ChatResult> onComplete;
         final Consumer<Throwable> onError;
@@ -126,6 +132,7 @@ class StreamingOrchestratorTest {
             this.toolCallConsumer = inv.getArgument(5);
             this.toolResultConsumer = inv.getArgument(6);
             this.retryConsumer = inv.getArgument(7);
+            this.reviewConsumer = inv.getArgument(8);
             this.clarifyConsumer = inv.getArgument(9);
             this.onComplete = inv.getArgument(10);
             this.onError = inv.getArgument(11);
@@ -150,6 +157,82 @@ class StreamingOrchestratorTest {
     void shouldSchedulePendingReviewPoll_requiresPrimaryResponseDelivery() {
         assertThat(StreamingOrchestrator.shouldSchedulePendingReviewPoll(true)).isTrue();
         assertThat(StreamingOrchestrator.shouldSchedulePendingReviewPoll(false)).isFalse();
+    }
+
+    @Test
+    void pendingReviewPollDeliversAfterPrimaryFinalization() {
+        UUID backendSessionId = UUID.randomUUID();
+        UUID deliveryId = UUID.randomUUID();
+        String review = "Self-improvement review: Memory updated";
+        when(backendClient.getPendingReview(backendSessionId.toString())).thenReturn(
+            new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode()
+                .put("pending", true).put("summary", review).put("deliveryId", deliveryId.toString()));
+
+        stubChatStream(ctx -> {
+            ctx.tokenConsumer.accept("answer");
+            ctx.reviewConsumer.accept(review);
+            ctx.onComplete.accept(new AgentBackendClient.ChatResult("answer", "model", 1, 10, true));
+            ctx.returnResult = new AgentBackendClient.ChatResult("answer", "model", 1, 10, true, false, backendSessionId);
+        });
+
+        orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
+        invokePendingReviewPoll(backendSessionId, hooks);
+
+        InOrder inOrder = inOrder(streamEditor, hooks);
+        inOrder.verify(streamEditor).finalizeStream(eq(100L), eq(1L), anyString());
+        inOrder.verify(hooks).sendReviewMessage(100L, review, 5L, 0L);
+        verify(backendClient).acknowledgePendingReview(backendSessionId.toString(), deliveryId.toString());
+    }
+
+    @Test
+    void streamReviewAckFailureRetainsReceiptAndDoesNotResendOnRetry() {
+        UUID backendSessionId = UUID.randomUUID();
+        UUID deliveryId = UUID.randomUUID();
+        String review = "Self-improvement review: Memory updated";
+        when(backendClient.getPendingReview(backendSessionId.toString())).thenReturn(
+            new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode()
+                .put("pending", true).put("summary", review).put("deliveryId", deliveryId.toString()));
+        when(backendClient.acknowledgePendingReview(backendSessionId.toString(), deliveryId.toString()))
+            .thenReturn(false, true);
+
+        invokePendingReviewPoll(backendSessionId, hooks);
+        var saved = org.mockito.ArgumentCaptor.forClass(com.azhukov.agent.bot.session.ReviewDeliveryReceiptEntity.class);
+        verify(reviewReceiptRepository).save(saved.capture());
+        when(reviewReceiptRepository.findByBackendSessionIdAndBackendDeliveryId(backendSessionId, deliveryId))
+            .thenReturn(Optional.of(saved.getValue()));
+
+        invokePendingReviewPoll(backendSessionId, hooks);
+
+        verify(hooks, times(1)).sendReviewMessage(100L, review, 5L, 0L);
+        verify(backendClient, times(2)).acknowledgePendingReview(backendSessionId.toString(), deliveryId.toString());
+        verify(reviewReceiptRepository).delete(saved.getValue());
+    }
+
+    private void invokePendingReviewPoll(UUID backendSessionId, StreamingOrchestrator.ProcessorHooks hooks) {
+        try {
+            java.lang.reflect.Method retry = StreamingOrchestrator.class.getDeclaredMethod(
+                "pollPendingReview", String.class, long.class, long.class, long.class,
+                StreamingOrchestrator.ProcessorHooks.class, int.class);
+            retry.setAccessible(true);
+            retry.invoke(orchestrator, backendSessionId.toString(), 100L, 5L, 0L, hooks, 1);
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    @Test
+    void streamChat_reviewIsNotDeliveredWhenPrimaryFinalizationFails() {
+        when(streamEditor.finalizeStream(anyLong(), anyLong(), anyString())).thenReturn(false);
+        stubChatStream(ctx -> {
+            ctx.tokenConsumer.accept("answer");
+            ctx.reviewConsumer.accept("💾 Self-improvement review: Memory updated");
+            ctx.onComplete.accept(new AgentBackendClient.ChatResult("answer", "model", 1, 10, true));
+            ctx.returnResult = new AgentBackendClient.ChatResult("answer", "model", 1, 10, true, false, null);
+        });
+
+        orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
+
+        verify(hooks, never()).sendReviewMessage(anyLong(), anyString(), anyLong(), anyLong());
     }
 
     @Test

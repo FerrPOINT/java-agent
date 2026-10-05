@@ -538,9 +538,8 @@ public class AgentStreamingService {
             }
         }
 
-        // Pending self-improvement review summary captured at trigger time —
-        // surfaced as an SSE "review" event just before "done".
-        final String[] pendingReviewSummary = { null };
+        // Pending review summaries are retrieved and acknowledged only by the
+        // delivery channel after its primary response succeeds.
 
         int maxTurns = properties.getCore().getMaxTurns();
         int turnIndex = 1;
@@ -638,6 +637,8 @@ public class AgentStreamingService {
                     log.debug("Budget summary call failed for {}: {}", session.id(), summaryEx.getMessage());
                     budgetMsg = turnExecutor().formatBudgetExhaustionMessage(budget, exhaustionReason);
                 }
+                turnMessages.add(Message.assistant(budgetMsg, turnIndex));
+                triggerBackgroundReview(session, turnMessages);
                 eventHelper().send(emitter, new StreamEvent("token", budgetMsg, null, null), streamCtx);
                 eventHelper().send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                 eventHelper().safeComplete(emitter);
@@ -1378,19 +1379,6 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     }
                 }
 
-                // ── Background self-improvement review (Hermes parity:
-                // turn_finalizer.py:790-802) ──
-                // Fire AFTER the final response is delivered, not before:
-                // the review must not delay the user-visible answer. It runs
-                // async (scheduled with delay) and cannot fail the turn.
-                if (memoryNudgeManager != null) {
-                    try {
-                        boolean interrupted = interruptToken != null && interruptToken.isCancelled(session.id());
-                        pendingReviewSummary[0] = memoryNudgeManager.triggerNudgedBackgroundReview(session, turnMessages, interrupted);
-                    } catch (Exception e) {
-                        log.debug("Background review trigger failed for {}: {}", session.id(), e.getMessage());
-                    }
-                }
                 // Check for empty response after continuation exhaustion — send error to user
                 // instead of silently delivering an empty message (Hermes parity)
                 if ((response.content() == null || response.content().isBlank())
@@ -1402,26 +1390,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     eventHelper().send(emitter, new StreamEvent("token", errorMsg, null, null), streamCtx);
                 }
                 turnMessages.add(Message.assistant(response.content(), turnIndex, response.reasoning()));
-                // Self-improvement (Hermes parity): surface a PENDING review
-                // summary from an earlier turn's background review as an SSE
-                // "review" event before "done" — the bot renders it as
-                // "💾 Self-improvement review: …". This turn's review runs
-                // async and surfaces on the NEXT turn (Hermes pending-release
-                // semantics via background_review_callback). Prefer the value
-                // captured at trigger time (line ~1331): the trigger reads and
-                // CLEARS the pending summary exactly once, so a second read
-                // here would always be null.
-                try {
-                    String pendingReview = pendingReviewSummary[0] != null
-                        ? pendingReviewSummary[0]
-                        : (memoryNudgeManager != null
-                            ? memoryNudgeManager.getReviewSummaryForSurface(session.id()) : null);
-                    if (pendingReview != null && !pendingReview.isBlank()) {
-                        eventHelper().send(emitter, new StreamEvent("review", null, null, pendingReview), streamCtx);
-                    }
-                } catch (Exception reviewEx) {
-                    log.debug("Review summary surface failed for {}: {}", session.id(), reviewEx.getMessage());
-                }
+                triggerBackgroundReview(session, turnMessages);
                 eventHelper().sendMetadataEvent(emitter, session, streamCtx, budget.totalInputTokens(), response.reasoning());
                 eventHelper().send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                 eventHelper().safeComplete(emitter);
@@ -1693,6 +1662,19 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
     private int estimateResponseTokens(String content, List<ToolCall> toolCalls) {
         // c2: delegate to TurnExecutor's shared static helper
         return com.azhukov.agent.core.agent.TurnExecutorUtils.estimateResponseTokens(content, toolCalls);
+    }
+
+    private String triggerBackgroundReview(Session session, List<Message> turnMessages) {
+        if (memoryNudgeManager == null) {
+            return null;
+        }
+        try {
+            boolean interrupted = interruptToken != null && interruptToken.isCancelled(session.id());
+            return memoryNudgeManager.triggerNudgedBackgroundReview(session, turnMessages, interrupted);
+        } catch (Exception e) {
+            log.debug("Background review trigger failed for {}: {}", session.id(), e.getMessage());
+            return null;
+        }
     }
 
     private void persistTurn(Session session, List<Message> turnMessages, boolean isNew) {

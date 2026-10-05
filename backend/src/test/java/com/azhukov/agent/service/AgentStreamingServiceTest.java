@@ -218,6 +218,37 @@ class AgentStreamingServiceTest {
     }
 
     @Test
+    void streamingTurnKeepsPendingReviewForDeliveryPoll() throws Exception {
+        when(toolRegistry.getDefinitions(any(Set.class))).thenReturn(List.of(
+            new ToolDefinition("memory", "Store durable facts", Map.of())
+        ));
+        MemoryNudgeManager nudgeManager = mock(MemoryNudgeManager.class);
+        when(nudgeManager.triggerNudgedBackgroundReview(any(Session.class), any(List.class), eq(false)))
+            .thenReturn("💾 Self-improvement review: Memory updated");
+        streamingService.setMemoryNudgeManager(nudgeManager);
+
+        CollectingEmitter emitter = new CollectingEmitter(30_000L);
+        doAnswer(invocation -> {
+            StreamingResponseHandler handler = invocation.getArgument(3);
+            handler.onToken("Done");
+            handler.onComplete();
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+
+        streamingService.streamTurn(ChatRequest.simple(SESSION_ID, USER_MESSAGE, null, 10_000L), emitter);
+        emitter.awaitDone();
+
+        int reviewIndex = -1;
+        int doneIndex = -1;
+        for (int i = 0; i < emitter.events.size(); i++) {
+            if ("done".equals(emitter.events.get(i).name)) doneIndex = i;
+        }
+        assertThat(doneIndex).isGreaterThanOrEqualTo(0);
+        assertThat(emitter.events.stream().noneMatch(event -> "review".equals(event.name))).isTrue();
+        verify(nudgeManager).triggerNudgedBackgroundReview(any(Session.class), any(List.class), eq(false));
+    }
+
+    @Test
     void streamTurnRemovesUnpairedHistoricalToolCallsBeforeCallingModel() throws Exception {
         ChatRequest request = ChatRequest.simple(SESSION_ID, USER_MESSAGE, null, 10_000L);
         List<Message> malformedContext = List.of(

@@ -868,8 +868,13 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
      * formatted message AFTER the final answer (pending-release semantics).
      */
     @Override
-    public void sendReviewMessage(long chatId, String reviewMessage, long userMessageId, long messageThreadId) {
-        sendFormatted(chatId, reviewMessage, userMessageId, messageThreadId);
+    public boolean sendReviewMessage(long chatId, String reviewMessage, long userMessageId, long messageThreadId) {
+        try {
+            return sendFormattedWithReceipt(chatId, reviewMessage, userMessageId, messageThreadId);
+        } catch (Exception e) {
+            log.warn("Review message delivery failed for chat {}: {}", chatId, e.getMessage());
+            return false;
+        }
     }
 
     public String buildMessageWithContext(String messageText, BotSessionEntity session, long chatId) {
@@ -966,6 +971,52 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
     static String stripArtifactMarkers(String messageText) {
         if (messageText == null) return null;
         return messageText.replaceAll("\\s*\\(artifact=att_[a-f0-9]+\\)", "");
+    }
+
+    private boolean sendFormattedWithReceipt(long chatId, String text, long userMessageId, long messageThreadId) {
+        if (responseFilter.shouldFilter(text)) {
+            return false;
+        }
+        Integer threadId = messageThreadId > 0 ? (int) messageThreadId : null;
+        String textForDisplay = text;
+        if (properties.isMediaDeliveryEnabled()) {
+            MediaDeliveryService.ExtractionResult extraction = mediaDeliveryService.extractMediaTags(text);
+            textForDisplay = extraction.cleanedText();
+            if (!extraction.media().isEmpty()) {
+                deliverMedia(chatId, extraction.media(), threadId);
+            }
+        }
+        if (textForDisplay == null || textForDisplay.isBlank()) {
+            return false;
+        }
+        String parseMode = properties.getParseMode();
+        String formatted = StreamEditor.stripThinkTagsRegex(textForDisplay);
+        if ("MarkdownV2".equalsIgnoreCase(parseMode)) {
+            formatted = MarkdownConverter.convert(formatted);
+        } else if ("HTML".equalsIgnoreCase(parseMode)) {
+            formatted = formatted.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;");
+        }
+        boolean sentAny = false;
+        List<String> chunks = MessageSplitter.split(formatted);
+        for (int i = 0; i < chunks.size(); i++) {
+            String chunk = chunks.get(i);
+            if (chunk.isBlank()) {
+                continue;
+            }
+            Long replyToMessageId = "all".equalsIgnoreCase(properties.getReplyToMode()) && userMessageId > 0
+                || "first".equalsIgnoreCase(properties.getReplyToMode()) && i == 0 && userMessageId > 0
+                ? userMessageId : null;
+            Optional<Long> sent = threadId == null
+                ? telegramClient.sendMessage(chatId, chunk, parseMode, replyToMessageId, null)
+                : telegramClient.sendMessage(chatId, chunk, parseMode, replyToMessageId, threadId, false);
+            if (sent.isEmpty()) {
+                return false;
+            }
+            sentAny = true;
+        }
+        return sentAny;
     }
 
     /**
