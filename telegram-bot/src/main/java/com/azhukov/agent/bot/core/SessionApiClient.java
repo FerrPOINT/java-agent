@@ -99,6 +99,25 @@ public class SessionApiClient extends BaseBackendClient {
         }
     }
 
+    public boolean acknowledgePendingReview(String sessionId, String deliveryId) {
+        if (sessionId == null || sessionId.isBlank() || deliveryId == null || deliveryId.isBlank()) {
+            return false;
+        }
+        try {
+            String json = restClient.post()
+                .uri("/api/v1/agent/session/{sessionId}/review/ack", sessionId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("deliveryId", deliveryId))
+                .retrieve()
+                .body(String.class);
+            JsonNode response = readTree(json);
+            return response != null && response.path("acknowledged").asBoolean(false);
+        } catch (Exception e) {
+            log.debug("acknowledgePendingReview failed for sessionId={}: {}", sessionId, e.getMessage());
+            return false;
+        }
+    }
+
     public JsonNode listSessionsByUser(String userId) {
         try {
             String json = restClient.get()

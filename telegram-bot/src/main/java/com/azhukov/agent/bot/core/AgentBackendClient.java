@@ -216,6 +216,10 @@ public class AgentBackendClient {
         return sessions.getPendingReview(sessionId);
     }
 
+    public boolean acknowledgePendingReview(String sessionId, String deliveryId) {
+        return sessions.acknowledgePendingReview(sessionId, deliveryId);
+    }
+
     public JsonNode listSessionsByUser(String userId) {
         return sessions.listSessionsByUser(userId);
     }

@@ -4,6 +4,8 @@ import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.persistence.entity.MemoryEntity;
+import com.azhukov.agent.persistence.entity.MemoryWriteAuditEntity;
+import com.azhukov.agent.persistence.repository.MemoryWriteAuditRepository;
 import com.azhukov.agent.core.ports.MemoryStorePort;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
@@ -35,6 +37,7 @@ import java.util.Optional;
 public class DatabaseMemoryProvider implements MemoryProvider {
 
     private final MemoryStorePort memoryRepository;
+    private final MemoryWriteAuditRepository memoryWriteAuditRepository;
     private final AgentProperties agentProperties;
     private final MemoryThreatScanner threatScanner;
 
@@ -52,25 +55,33 @@ public class DatabaseMemoryProvider implements MemoryProvider {
      * @param threatScanner    scans content for prompt injection / exfiltration
      */
     public DatabaseMemoryProvider(MemoryStorePort memoryRepository,
+                                  MemoryWriteAuditRepository memoryWriteAuditRepository,
                                   AgentProperties agentProperties,
                                   MemoryThreatScanner threatScanner) {
         this.memoryRepository = memoryRepository;
+        this.memoryWriteAuditRepository = memoryWriteAuditRepository;
         this.agentProperties = agentProperties;
         this.threatScanner = threatScanner;
+    }
+
+    public DatabaseMemoryProvider(MemoryStorePort memoryRepository,
+                                  AgentProperties agentProperties,
+                                  MemoryThreatScanner threatScanner) {
+        this(memoryRepository, null, agentProperties, threatScanner);
     }
 
     /**
      * Backward-compatible constructor without threat scanning (for unit tests).
      */
     public DatabaseMemoryProvider(MemoryStorePort memoryRepository) {
-        this(memoryRepository, null, null);
+        this(memoryRepository, null, null, null);
     }
 
     /**
      * Constructor with properties but without threat scanner (for unit tests).
      */
     public DatabaseMemoryProvider(MemoryStorePort memoryRepository, AgentProperties agentProperties) {
-        this(memoryRepository, agentProperties, null);
+        this(memoryRepository, null, agentProperties, null);
     }
 
     private int memoryCharLimit() {
@@ -201,6 +212,13 @@ public class DatabaseMemoryProvider implements MemoryProvider {
     @Override
     @Transactional
     public void store(String userId, String target, String category, String fact) {
+        store(userId, target, category, fact, Map.of());
+    }
+
+    @Override
+    @Transactional
+    public void store(String userId, String target, String category, String fact,
+                      Map<String, String> provenance) {
         // H2: Trim content before saving
         String trimmedFact = fact != null ? fact.trim() : fact;
         if (trimmedFact == null || trimmedFact.isBlank()) {
@@ -270,6 +288,7 @@ public class DatabaseMemoryProvider implements MemoryProvider {
         e.setUpdatedAt(Instant.now());
         try {
             memoryRepository.save(e);
+            recordAudit(userId, effectiveTarget, "add", e, trimmedFact, null, provenance);
         } catch (ObjectOptimisticLockingFailureException ex) {
             throw new IllegalStateException(driftErrorFromLock(effectiveTarget), ex);
         }
@@ -359,12 +378,16 @@ public class DatabaseMemoryProvider implements MemoryProvider {
             // new/changed rows. Transaction rolls back on optimistic-lock errors.
             for (MemoryEntity entity : original) {
                 boolean retained = working.stream().anyMatch(entry -> entry.entity() == entity);
-                if (!retained) memoryRepository.delete(entity);
+                if (!retained) {
+                    memoryRepository.delete(entity);
+                    recordAudit(userId, effectiveTarget, "remove", entity, null, entity.getFact(), provenance);
+                }
             }
             Instant now = Instant.now();
             for (WorkingMemoryEntry entry : working) {
                 MemoryEntity entity = entry.entity();
                 boolean isNew = entity == null;
+                String oldFact = isNew ? null : entity.getFact();
                 if (isNew) {
                     entity = new MemoryEntity();
                     entity.setUserId(userId);
@@ -372,7 +395,7 @@ public class DatabaseMemoryProvider implements MemoryProvider {
                     entity.setCategory("auto");
                     entity.setCreatedAt(now);
                 }
-                boolean changed = !Objects.equals(entity.getFact(), entry.fact());
+                boolean changed = !Objects.equals(oldFact, entry.fact());
                 if (changed) {
                     entity.setFact(entry.fact());
                     entity.setUpdatedAt(now);
@@ -382,6 +405,8 @@ public class DatabaseMemoryProvider implements MemoryProvider {
                 }
                 if (isNew || changed) {
                     memoryRepository.save(entity);
+                    recordAudit(userId, effectiveTarget, isNew ? "add" : "replace", entity,
+                        entry.fact(), oldFact, provenance);
                 }
             }
         } catch (ObjectOptimisticLockingFailureException ex) {
@@ -404,6 +429,13 @@ public class DatabaseMemoryProvider implements MemoryProvider {
     @Override
     @Transactional
     public String replace(String userId, String target, String oldText, String newText) {
+        return replace(userId, target, oldText, newText, Map.of());
+    }
+
+    @Override
+    @Transactional
+    public String replace(String userId, String target, String oldText, String newText,
+                          Map<String, String> provenance) {
         // H2: Trim new content before saving
         String trimmedNewText = newText != null ? newText.trim() : newText;
         if (trimmedNewText == null || trimmedNewText.isBlank()) {
@@ -461,10 +493,12 @@ public class DatabaseMemoryProvider implements MemoryProvider {
                 + "to make room, then retry — all in this turn.";
         }
         MemoryEntity e = matches.get(0);
+        String oldFact = e.getFact();
         e.setFact(trimmedNewText);
         e.setUpdatedAt(Instant.now());
         try {
             memoryRepository.save(e);
+            recordAudit(userId, target, "replace", e, trimmedNewText, oldFact, provenance);
         } catch (ObjectOptimisticLockingFailureException ex) {
             log.warn("Optimistic lock conflict on memory replace for user={}, target={}: {}",
                 userId, target, ex.getMessage());
@@ -476,6 +510,13 @@ public class DatabaseMemoryProvider implements MemoryProvider {
     @Override
     @Transactional
     public String remove(String userId, String target, String oldText) {
+        return remove(userId, target, oldText, Map.of());
+    }
+
+    @Override
+    @Transactional
+    public String remove(String userId, String target, String oldText,
+                         Map<String, String> provenance) {
         // Parity with Hermes: substring match (contains), not exact equals
         List<MemoryEntity> all = memoryRepository.findByUserIdAndTargetOrderByCreatedAtDesc(userId, target);
         List<MemoryEntity> matches = all.stream()
@@ -501,8 +542,10 @@ public class DatabaseMemoryProvider implements MemoryProvider {
             }
             // All identical — safe to remove first
         }
+        MemoryEntity removed = matches.get(0);
         try {
-            memoryRepository.delete(matches.get(0));
+            memoryRepository.delete(removed);
+            recordAudit(userId, target, "remove", removed, null, removed.getFact(), provenance);
         } catch (ObjectOptimisticLockingFailureException ex) {
             log.warn("Optimistic lock conflict on memory remove for user={}, target={}: {}",
                 userId, target, ex.getMessage());
@@ -521,10 +564,35 @@ public class DatabaseMemoryProvider implements MemoryProvider {
         }
         try {
             memoryRepository.deleteAll(entries);
+            for (MemoryEntity entry : entries) {
+                recordAudit(userId, effectiveTarget, "clear", entry, null, entry.getFact(), Map.of());
+            }
         } catch (ObjectOptimisticLockingFailureException ex) {
             throw new IllegalStateException(driftErrorFromLock(effectiveTarget), ex);
         }
         return entries.size();
+    }
+
+    private void recordAudit(String userId, String target, String action, MemoryEntity memory,
+                             String fact, String oldFact, Map<String, String> provenance) {
+        if (memoryWriteAuditRepository == null) {
+            return;
+        }
+        Map<String, String> metadata = provenance == null ? Map.of() : provenance;
+        MemoryWriteAuditEntity audit = new MemoryWriteAuditEntity();
+        audit.setUserId(userId);
+        audit.setTarget(target != null ? target : "memory");
+        audit.setAction(action);
+        audit.setMemoryId(memory == null ? null : memory.getId());
+        audit.setFact(fact);
+        audit.setOldFact(oldFact);
+        audit.setWriteOrigin(metadata.getOrDefault("write_origin", "FOREGROUND"));
+        audit.setExecutionContext(metadata.getOrDefault("execution_context", "foreground"));
+        audit.setSourceSessionId(metadata.get("session_id"));
+        audit.setParentSessionId(metadata.get("parent_session_id"));
+        audit.setPlatform(metadata.get("platform"));
+        audit.setToolName(metadata.get("tool_name"));
+        memoryWriteAuditRepository.save(audit);
     }
 
     @Override

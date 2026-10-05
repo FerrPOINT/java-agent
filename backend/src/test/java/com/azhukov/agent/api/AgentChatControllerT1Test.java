@@ -101,6 +101,8 @@ class AgentChatControllerT1Test {
     @Mock private AgentProperties.CoreProperties coreProperties;
     @Mock private AgentProperties.BudgetProperties budgetProperties;
     @Mock private AgentProperties.SkillsProperties skillsProperties;
+    @Mock private AgentProperties.MemoryProperties memoryProperties;
+    @Mock private AgentProperties.BackgroundReviewProperties backgroundReviewProperties;
     @Mock private AgentMetrics agentMetrics;
     @Mock private com.azhukov.agent.core.security.CommandApprovalManager commandApprovalManager;
 
@@ -113,6 +115,9 @@ class AgentChatControllerT1Test {
         lenient().when(properties.getCore()).thenReturn(coreProperties);
         lenient().when(properties.getBudget()).thenReturn(budgetProperties);
         lenient().when(properties.getSkills()).thenReturn(skillsProperties);
+        lenient().when(properties.getMemory()).thenReturn(memoryProperties);
+        lenient().when(memoryProperties.getBackgroundReview()).thenReturn(backgroundReviewProperties);
+        lenient().when(memoryProperties.isMemoryEnabled()).thenReturn(true);
         lenient().when(properties.getName()).thenReturn("Test Agent");
         lenient().when(modelProperties.getModelName()).thenReturn("gpt-4o");
         lenient().when(modelProperties.getProvider()).thenReturn("openai-compatible");

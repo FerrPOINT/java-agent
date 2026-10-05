@@ -319,7 +319,16 @@ public class MessageApiClient extends BaseBackendClient {
                                     // earlier turn's background review. Delivered to the
                                     // chat AFTER the main response (pending-release).
                                     if ("review".equalsIgnoreCase(type)) {
-                                        String reviewMsg = event.path("error").asText(null);
+                                        String reviewMsg = event.path("review").asText(null);
+                                        if (reviewMsg == null || reviewMsg.isBlank()) {
+                                            reviewMsg = event.path("summary").asText(null);
+                                        }
+                                        if (reviewMsg == null || reviewMsg.isBlank()) {
+                                            reviewMsg = event.path("message").asText(null);
+                                        }
+                                        if (reviewMsg == null || reviewMsg.isBlank()) {
+                                            reviewMsg = event.path("error").asText(null);
+                                        }
                                         if (reviewMsg != null && !reviewMsg.isBlank() && reviewConsumer != null) {
                                             reviewConsumer.accept(reviewMsg);
                                         }

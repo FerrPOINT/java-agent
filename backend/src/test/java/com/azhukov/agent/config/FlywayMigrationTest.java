@@ -56,7 +56,7 @@ class FlywayMigrationTest extends PostgresTestContainer {
         List<String> versions = jdbcTemplate.queryForList(
             "SELECT version FROM flyway_schema_history WHERE success = TRUE ORDER BY version", String.class);
 
-        assertThat(versions).contains("1", "2", "3", "4", "5", "35");
+        assertThat(versions).contains("1", "2", "3", "4", "5", "35", "69", "70", "71");
     }
 
     @Test
@@ -73,6 +73,18 @@ class FlywayMigrationTest extends PostgresTestContainer {
     }
 
     @Test
+    void memoryWriteAuditContainsAffectedMemoryId() throws Exception {
+        Set<String> columns = new HashSet<>();
+        DatabaseMetaData metaData = dataSource.getConnection().getMetaData();
+        try (ResultSet rs = metaData.getColumns(null, null, "memory_write_audit", "%")) {
+            while (rs.next()) {
+                columns.add(rs.getString("COLUMN_NAME").toLowerCase());
+            }
+        }
+        assertThat(columns).contains("memory_id");
+    }
+
+    @Test
     void keyTablesAreCreated() throws Exception {
         Set<String> tables = new HashSet<>();
         DatabaseMetaData metaData = dataSource.getConnection().getMetaData();
@@ -83,6 +95,7 @@ class FlywayMigrationTest extends PostgresTestContainer {
         }
 
         assertThat(tables)
-            .contains("sessions", "messages", "memory", "skills", "todos", "audit_log");
+            .contains("sessions", "messages", "memory", "skills", "todos", "audit_log",
+                "memory_write_audit", "pending_review_summaries");
     }
 }

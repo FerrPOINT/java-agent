@@ -12,6 +12,8 @@ import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.skill.NoOpSkillManager;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.core.skill.WriteOrigin;
+import com.azhukov.agent.persistence.entity.ReviewSummaryEntity;
+import com.azhukov.agent.persistence.repository.ReviewSummaryRepository;
 import com.azhukov.agent.tools.memory.MemoryTool;
 import com.azhukov.agent.tools.memory.SkillManageTool;
 import com.azhukov.agent.tools.memory.SkillViewTool;
@@ -47,6 +49,7 @@ class BackgroundReviewServiceTest {
     private SkillsListTool skillsListTool;
     private SkillViewTool skillViewTool;
     private ReviewToolProvider reviewToolProvider;
+    private ReviewSummaryRepository reviewSummaryRepository;
     private AgentProperties properties;
     private AgentProperties.MemoryProperties memProps;
     private AgentProperties.BackgroundReviewProperties reviewProps;
@@ -61,6 +64,7 @@ class BackgroundReviewServiceTest {
         skillsListTool = mock(SkillsListTool.class);
         skillViewTool = mock(SkillViewTool.class);
         reviewToolProvider = mock(ReviewToolProvider.class);
+        reviewSummaryRepository = mock(ReviewSummaryRepository.class);
         // Delegate reviewToolProvider calls to the individual tool mocks
         when(reviewToolProvider.execute(eq("memory"), any(), any()))
             .thenAnswer(inv -> memoryTool.execute(inv.getArgument(1), null, inv.getArgument(2)));
@@ -94,7 +98,7 @@ class BackgroundReviewServiceTest {
 
     private BackgroundReviewService createService() {
         return new BackgroundReviewService(modelClient, memoryProvider, writeApprovalGate,
-            reviewToolProvider, properties);
+            reviewToolProvider, properties, reviewSummaryRepository);
     }
 
     @Test
@@ -366,7 +370,7 @@ class BackgroundReviewServiceTest {
     }
 
     @Test
-    void clearFlag_alsoClearsReviewSummary() {
+    void clearFlagClearsOnlyTransientSummaryState() {
         // First, trigger a review that produces a summary
         String toolArguments = "{\"action\":\"add\",\"content\":\"User prefers Java\"}";
         ChatResponse response = new ChatResponse("", List.of(
@@ -385,9 +389,8 @@ class BackgroundReviewServiceTest {
             assertThat(svc.hasReviewSummary(sessionId)).isTrue()
         );
 
-        // Now clearFlag should remove the summary
+        // Clear in-memory state without deleting the durable row.
         svc.clearFlag(sessionId);
-        assertThat(svc.hasReviewSummary(sessionId)).isFalse();
         assertThat(svc.wasMemoryUpdated(sessionId)).isFalse();
         svc.shutdown();
     }
@@ -653,6 +656,50 @@ class BackgroundReviewServiceTest {
         assertThat(lastUserMsg).isNotNull();
         // When only skill nudge fired, the prompt should be SKILL_REVIEW_PROMPT
         assertThat(lastUserMsg.content()).isEqualTo(ReviewPrompts.SKILL_REVIEW_PROMPT);
+        svc.shutdown();
+    }
+
+    @Test
+    void pendingSummaryLoadsAndAcknowledgementRemovesOnlyMatchingDelivery() {
+        UUID sessionId = UUID.randomUUID();
+        UUID deliveryId = UUID.randomUUID();
+        ReviewSummaryEntity entity = new ReviewSummaryEntity();
+        entity.setDeliveryId(deliveryId);
+        entity.setSessionId(sessionId);
+        entity.setSummary("Memory updated");
+        when(reviewSummaryRepository.findFirstBySessionIdOrderByCreatedAtAsc(sessionId))
+            .thenReturn(java.util.Optional.of(entity));
+        when(reviewSummaryRepository.deleteBySessionIdAndDeliveryId(sessionId, deliveryId)).thenReturn(1);
+
+        var svc = createService();
+
+        assertThat(svc.hasReviewSummary(sessionId)).isTrue();
+        assertThat(svc.getPendingReviewSummary(sessionId)).contains(entity);
+        assertThat(svc.getReviewSummary(sessionId).formattedSummary()).isEqualTo("Memory updated");
+        assertThat(svc.removePendingReviewSummary(sessionId, deliveryId)).isTrue();
+        verify(reviewSummaryRepository).deleteBySessionIdAndDeliveryId(sessionId, deliveryId);
+        svc.shutdown();
+    }
+
+    @Test
+    void clearFlagRetainsDurablePendingSummariesForDelivery() {
+        UUID sessionId = UUID.randomUUID();
+        var svc = createService();
+
+        svc.clearFlag(sessionId);
+
+        verify(reviewSummaryRepository, never()).delete(any());
+        svc.shutdown();
+    }
+
+    @Test
+    void sessionDeletionRemovesAllDurablePendingSummaries() {
+        UUID sessionId = UUID.randomUUID();
+        var svc = createService();
+
+        svc.onSessionDeleted(new com.azhukov.agent.core.agent.SessionDeletedEvent(sessionId));
+
+        verify(reviewSummaryRepository).deleteBySessionId(sessionId);
         svc.shutdown();
     }
 

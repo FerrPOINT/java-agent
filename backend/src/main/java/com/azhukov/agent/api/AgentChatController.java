@@ -14,6 +14,7 @@ import com.azhukov.agent.api.dto.TtsRequest;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.agent.InterruptToken;
 import com.azhukov.agent.core.agent.SteerBuffer;
+import com.azhukov.agent.core.agent.MemoryNudgeManager;
 import com.azhukov.agent.core.memory.MemoryProvider;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.security.ApprovalQueue;
@@ -122,6 +123,12 @@ public class AgentChatController {
             properties.getBudget().isEnabled(),
             properties.getBudget().getRunBudgetSeconds(),
             memoryProvider != null && isMemoryConfiguredEnabled(),
+            properties.getMemory().getNudgeInterval(),
+            properties.getSkills().getCreationNudgeInterval(),
+            properties.getMemory().getBackgroundReview().isEnabled(),
+            properties.getMemory().getBackgroundReview().getDelayMs(),
+            properties.getMemory().getBackgroundReview().getMaxReviewTurns(),
+            properties.getMemory().getBackgroundReview().getMaxInputTokens(),
             ttsService != null,
             transcriptionService != null,
             skillManager.listSkillNames().size(),
@@ -376,14 +383,31 @@ public class AgentChatController {
             return Map.of("pending", false);
         }
         try {
-            String summary = memoryNudgeManagerProvider() != null
-                ? memoryNudgeManagerProvider().getObject().getReviewSummaryForSurface(java.util.UUID.fromString(sessionId))
-                : null;
-            return summary == null || summary.isBlank()
+            MemoryNudgeManager.PendingReviewSummary pending = memoryNudgeManagerProvider().getObject()
+                .peekPendingReviewSummary(java.util.UUID.fromString(sessionId));
+            return pending == null || pending.summary().isBlank()
                 ? Map.of("pending", false)
-                : Map.of("pending", true, "summary", summary);
+                : Map.of("pending", true, "summary", pending.summary(),
+                    "deliveryId", pending.deliveryId().toString());
         } catch (IllegalArgumentException e) {
             return Map.of("pending", false, "error", "invalid session id");
+        }
+    }
+
+    @PostMapping("/agent/session/{sessionId}/review/ack")
+    public Map<String, Object> acknowledgePendingReview(@PathVariable String sessionId,
+                                                         @RequestBody Map<String, String> request) {
+        requireClarifySessionOwnership(sessionId);
+        if (memoryNudgeManagerProvider() == null) {
+            return Map.of("acknowledged", false);
+        }
+        try {
+            String deliveryId = request == null ? null : request.get("deliveryId");
+            boolean acknowledged = deliveryId != null && memoryNudgeManagerProvider().getObject()
+                .acknowledgeReviewSummary(UUID.fromString(sessionId), UUID.fromString(deliveryId));
+            return Map.of("acknowledged", acknowledged);
+        } catch (IllegalArgumentException e) {
+            return Map.of("acknowledged", false, "error", "invalid session id");
         }
     }
 

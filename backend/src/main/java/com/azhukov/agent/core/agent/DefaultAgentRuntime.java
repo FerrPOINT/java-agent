@@ -1381,17 +1381,16 @@ public class DefaultAgentRuntime implements AgentRuntime {
             log.warn("Background review trigger failed: {}", e.getMessage());
         }
 
-        // H9: Surface the review summary if one was produced by a prior review.
-        // The async review may not have completed yet, so this logs any pending
-        // summary from a previous turn's review. The current turn's review will
-        // be surfaced on the next turn.
+        // The synchronous runtime has no external delivery acknowledgement; it
+        // may inspect pending work for diagnostics but must not consume it.
         try {
-            String summary = getReviewSummaryForSurface(session.id());
+            String summary = backgroundReviewService.hasReviewSummary(session.id())
+                ? backgroundReviewService.getReviewSummary(session.id()).formattedSummary() : null;
             if (summary != null && !summary.isBlank()) {
-                log.info("Background review summary for session {}: {}", session.id(), summary);
+                log.info("Background review summary pending delivery for session {}", session.id());
             }
         } catch (Exception e) {
-            log.debug("No review summary to surface for session {}", session.id());
+            log.debug("No review summary pending for session {}", session.id());
         }
     }
 
@@ -1410,10 +1409,9 @@ public class DefaultAgentRuntime implements AgentRuntime {
         if (summary == null || !summary.hasActions()) {
             return null;
         }
-        // Return the formatted summary and clear it so it's only surfaced once
-        String result = summary.formattedSummary();
-        backgroundReviewService.clearFlag(sessionId);
-        return result;
+        // Synchronous callers have no delivery acknowledgement channel. Preserve
+        // the durable item for the bot recovery poller instead of consuming it.
+        return summary.formattedSummary();
     }
 
     // c2: executeToolsInParallel removed — the canonical parallel dispatch
@@ -1453,6 +1451,8 @@ public class DefaultAgentRuntime implements AgentRuntime {
         turnStateManager.clear(sessionId);
         interruptToken.remove(sessionId);
         contextEngine.evict(sessionId);
+        // Durable review rows are removed by BackgroundReviewService's
+        // SessionDeletedEvent listener after the session transaction commits.
         backgroundReviewService.clearFlag(sessionId);
         if (steerBuffer != null) {
             steerBuffer.clear(sessionId);
