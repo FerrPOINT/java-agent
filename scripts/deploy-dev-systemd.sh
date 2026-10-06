@@ -24,7 +24,7 @@ if [ "$SKIP_BUILD" = false ]; then
     (cd "$ROOT" && ./gradlew :backend:bootJar :telegram-bot:bootJar --no-daemon)
 fi
 
-backend_jar="$ROOT/backend/build/libs/java-agent-backend-0.0.1-SNAPSHOT.jar"
+backend_jar="$ROOT/backend/build/libs/backend-0.0.1-SNAPSHOT.jar"
 bot_jar="$ROOT/telegram-bot/build/libs/telegram-bot-0.0.1-SNAPSHOT.jar"
 for artifact in "$backend_jar" "$bot_jar"; do
     if [ ! -f "$artifact" ]; then
