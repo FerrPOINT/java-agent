@@ -31,7 +31,7 @@ class DeployDevSystemdTest(unittest.TestCase):
             fake_systemctl.chmod(0o755)
             fake_curl.chmod(0o755)
 
-            backend = REPO / "backend/build/libs/java-agent-backend-0.0.1-SNAPSHOT.jar"
+            backend = REPO / "backend/build/libs/backend-0.0.1-SNAPSHOT.jar"
             bot = REPO / "telegram-bot/build/libs/telegram-bot-0.0.1-SNAPSHOT.jar"
             backend.parent.mkdir(parents=True, exist_ok=True)
             bot.parent.mkdir(parents=True, exist_ok=True)
