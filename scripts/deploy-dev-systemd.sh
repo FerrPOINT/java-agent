@@ -4,6 +4,7 @@ set -euo pipefail
 
 ROOT="${JAVA_AGENT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/java-agent}"
+SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
 SYSTEMCTL="${SYSTEMCTL:-systemctl}"
 CURL="${CURL:-curl}"
 RELEASE_ID="${DEPLOY_RELEASE_ID:-$(git -C "$ROOT" rev-parse --short HEAD)-$(date -u +%Y%m%d%H%M%S)}"
@@ -37,6 +38,17 @@ releases_dir="$INSTALL_DIR/releases"
 release_dir="$releases_dir/$RELEASE_ID"
 lib_dir="$INSTALL_DIR/lib"
 mkdir -p "$releases_dir" "$lib_dir"
+for component in backend bot; do
+    unit="java-agent-$component.service"
+    if [ ! -f "$SYSTEMD_DIR/$unit" ]; then
+        echo "Missing systemd unit: $SYSTEMD_DIR/$unit" >&2
+        exit 1
+    fi
+    if ! grep -Fq "$lib_dir/java-agent-$component-latest.jar" "$SYSTEMD_DIR/$unit"; then
+        echo "Systemd unit does not run the managed artifact path: $SYSTEMD_DIR/$unit" >&2
+        exit 1
+    fi
+done
 if [ -e "$release_dir" ]; then
     echo "Release directory already exists: $release_dir" >&2
     exit 1
