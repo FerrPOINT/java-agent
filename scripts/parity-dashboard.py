@@ -15,7 +15,8 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 MODULES = ("backend", "telegram-bot", "cli")
-RUNTIME_VERSION_FILE = Path("/opt/java-agent/VERSION")
+RUNTIME_LATEST = Path("/opt/java-agent/latest")
+RUNTIME_VERSION_FILE = RUNTIME_LATEST / "VERSION"
 MIGRATIONS_DIR = REPO / "backend/src/main/resources/db/migration"
 
 

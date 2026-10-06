@@ -97,13 +97,22 @@ class ReleaseVerifyTest(unittest.TestCase):
         metrics = verify.collect_metrics()
         self.assertIsInstance(json.dumps(metrics), str)
 
-    def test_run_command_clears_missing_root_dbus_environment(self) -> None:
+    def test_run_command_clears_root_dbus_environment(self) -> None:
         verify = load_module("release_verify_env", "release_verify.py")
         original_environ = os.environ.copy()
         try:
             os.environ["DBUS_SESSION_BUS_ADDRESS"] = "unix:path=/run/user/0/bus"
             os.environ["XDG_RUNTIME_DIR"] = "/run/user/0"
-            result = verify.run_command("environment", [sys.executable, "-c", "import os; assert 'DBUS_SESSION_BUS_ADDRESS' not in os.environ"], 10)
+            result = verify.run_command(
+                "environment",
+                [
+                    sys.executable,
+                    "-c",
+                    "import os; assert 'DBUS_SESSION_BUS_ADDRESS' not in os.environ; "
+                    "assert 'XDG_RUNTIME_DIR' not in os.environ",
+                ],
+                10,
+            )
         finally:
             os.environ.clear()
             os.environ.update(original_environ)
