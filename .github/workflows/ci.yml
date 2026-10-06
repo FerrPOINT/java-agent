@@ -21,8 +21,8 @@ jobs:
         run: python3 scripts/check_docs_standard.py
       - name: Verify shipped-default documentation coverage
         run: python3 scripts/check_default_settings_reference.py
-      - name: Linter unit tests
-        run: python3 -m unittest scripts.tests.test_check_docs_standard scripts.tests.test_check_default_settings_reference
+      - name: Documentation and release-script unit tests
+        run: python3 -m unittest scripts.tests.test_check_docs_standard scripts.tests.test_check_default_settings_reference scripts.tests.test_release_verify scripts.tests.test_deploy_dev_systemd scripts.tests.test_parity_dashboard
 
   readme:
     name: README evidence
