@@ -75,6 +75,7 @@ class DeployDevSystemdTest(unittest.TestCase):
             self.assertEqual(bot_bytes, (release / "telegram-bot.jar").read_bytes())
             self.assertEqual(
                 [
+                    "systemctl stop java-agent-bot.service",
                     "systemctl restart java-agent-backend.service",
                     "curl -fsS --max-time 3 http://127.0.0.1:8090/actuator/health/readiness",
                     "curl -fsS --max-time 5 http://127.0.0.1:8090/actuator/health/readiness",

@@ -65,23 +65,24 @@ for component in backend bot; do
     mv -Tf "$lib_dir/.java-agent-$component-latest.jar.new" "$link"
 done
 
+"$SYSTEMCTL" stop java-agent-bot.service
 "$SYSTEMCTL" restart java-agent-backend.service
 for _ in $(seq 1 30); do
-    if "$CURL" -fsS --max-time 3 http://127.0.0.1:8090/actuator/health/readiness >/dev/null; then
+    if "$CURL" -fsS --max-time 3 http://127.0.0.1:8090/actuator/health/readiness >/dev/null 2>&1; then
         break
     fi
     sleep 2
 done
-"$CURL" -fsS --max-time 5 http://127.0.0.1:8090/actuator/health/readiness >/dev/null
+"$CURL" -fsS --max-time 5 http://127.0.0.1:8090/actuator/health/readiness >/dev/null 2>&1
 
 "$SYSTEMCTL" restart java-agent-bot.service
 for _ in $(seq 1 30); do
-    if "$CURL" -fsS --max-time 3 http://127.0.0.1:8091/actuator/health >/dev/null; then
+    if "$CURL" -fsS --max-time 3 http://127.0.0.1:8091/actuator/health >/dev/null 2>&1; then
         break
     fi
     sleep 2
 done
-"$CURL" -fsS --max-time 5 http://127.0.0.1:8091/actuator/health >/dev/null
+"$CURL" -fsS --max-time 5 http://127.0.0.1:8091/actuator/health >/dev/null 2>&1
 "$SYSTEMCTL" is-active java-agent-backend.service java-agent-bot.service >/dev/null
 
 for path in "$INSTALL_DIR/latest" "$lib_dir/java-agent-backend-latest.jar" "$lib_dir/java-agent-bot-latest.jar"; do
