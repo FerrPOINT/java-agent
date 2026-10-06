@@ -185,6 +185,50 @@ class StreamingOrchestratorTest {
     }
 
     @Test
+    void concurrentRecoveryAttemptsSendOnlyOnceForOneDelivery() throws Exception {
+        UUID backendSessionId = UUID.randomUUID();
+        UUID deliveryId = UUID.randomUUID();
+        String review = "Self-improvement review: Memory updated";
+        java.util.concurrent.CountDownLatch pendingRequested = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch releasePending = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicInteger pendingReads = new java.util.concurrent.atomic.AtomicInteger();
+        when(backendClient.getPendingReview(backendSessionId.toString())).thenAnswer(invocation -> {
+            if (pendingReads.getAndIncrement() > 0) {
+                return new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode()
+                    .put("pending", false);
+            }
+            pendingRequested.countDown();
+            try {
+                if (!releasePending.await(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                    throw new AssertionError("timed out waiting to release concurrent review delivery");
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError(e);
+            }
+            return new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode()
+                .put("pending", true).put("summary", review).put("deliveryId", deliveryId.toString());
+        });
+        java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            var first = executor.submit(() -> orchestrator.deliverPendingReview(
+                backendSessionId.toString(), 100L, 5L, 0L, hooks));
+            assertThat(pendingRequested.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            var second = executor.submit(() -> orchestrator.deliverPendingReview(
+                backendSessionId.toString(), 100L, 5L, 0L, hooks));
+            releasePending.countDown();
+            assertThat(first.get(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(second.get(5, java.util.concurrent.TimeUnit.SECONDS)).isFalse();
+        } finally {
+            releasePending.countDown();
+            executor.shutdownNow();
+        }
+
+        verify(hooks, times(1)).sendReviewMessage(100L, review, 5L, 0L);
+        verify(backendClient, times(1)).acknowledgePendingReview(backendSessionId.toString(), deliveryId.toString());
+    }
+
+    @Test
     void streamReviewAckFailureRetainsReceiptAndDoesNotResendOnRetry() {
         UUID backendSessionId = UUID.randomUUID();
         UUID deliveryId = UUID.randomUUID();
