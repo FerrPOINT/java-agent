@@ -16,6 +16,12 @@ class DeployDevSystemdTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             install_dir = root / "install"
+            systemd_dir = root / "systemd"
+            systemd_dir.mkdir()
+            for component in ("backend", "bot"):
+                (systemd_dir / f"java-agent-{component}.service").write_text(
+                    f"ExecStart=/usr/bin/java -jar {install_dir}/lib/java-agent-{component}-latest.jar\n"
+                )
             fake_systemctl = root / "systemctl"
             fake_curl = root / "curl"
             calls = root / "calls.log"
@@ -46,6 +52,7 @@ class DeployDevSystemdTest(unittest.TestCase):
             try:
                 environment = os.environ | {
                     "INSTALL_DIR": str(install_dir),
+                    "SYSTEMD_DIR": str(systemd_dir),
                     "SYSTEMCTL": str(fake_systemctl),
                     "CURL": str(fake_curl),
                     "DEPLOY_CALLS": str(calls),
