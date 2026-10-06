@@ -104,6 +104,13 @@ public class StreamingOrchestrator {
             return t;
         });
 
+    // The recovery scheduler and the post-stream scheduler can observe the same
+    // pending row. Fixed stripes serialize a session's read-send-ack sequence
+    // without retaining every session id forever.
+    private final Object[] reviewDeliveryLocks = java.util.stream.IntStream.range(0, 64)
+        .mapToObj(ignored -> new Object())
+        .toArray(Object[]::new);
+
     private boolean deliverAndAcknowledgeReview(String sessionId, String deliveryId, long chatId, String summary,
                                                 long userMessageId, long messageThreadId, ProcessorHooks hooks) {
         final java.util.UUID backendSessionId;
@@ -155,15 +162,21 @@ public class StreamingOrchestrator {
 
     private boolean tryDeliverPendingReview(String sessionId, long chatId, long userMessageId,
                                             long messageThreadId, ProcessorHooks hooks) {
-        com.fasterxml.jackson.databind.JsonNode pending = backendClient.getPendingReview(sessionId);
-        if (pending == null || !pending.path("pending").asBoolean(false)) {
+        if (sessionId == null || sessionId.isBlank()) {
             return false;
         }
-        String summary = pending.path("summary").asText("");
-        String deliveryId = pending.path("deliveryId").asText("");
-        return !summary.isBlank() && !deliveryId.isBlank()
-            && deliverAndAcknowledgeReview(sessionId, deliveryId, chatId, summary,
-                userMessageId, messageThreadId, hooks);
+        Object deliveryLock = reviewDeliveryLocks[Math.floorMod(sessionId.hashCode(), reviewDeliveryLocks.length)];
+        synchronized (deliveryLock) {
+            com.fasterxml.jackson.databind.JsonNode pending = backendClient.getPendingReview(sessionId);
+            if (pending == null || !pending.path("pending").asBoolean(false)) {
+                return false;
+            }
+            String summary = pending.path("summary").asText("");
+            String deliveryId = pending.path("deliveryId").asText("");
+            return !summary.isBlank() && !deliveryId.isBlank()
+                && deliverAndAcknowledgeReview(sessionId, deliveryId, chatId, summary,
+                    userMessageId, messageThreadId, hooks);
+        }
     }
 
     /**

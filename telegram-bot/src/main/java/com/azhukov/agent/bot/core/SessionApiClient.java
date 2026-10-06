@@ -82,9 +82,8 @@ public class SessionApiClient extends BaseBackendClient {
     }
 
     /**
-     * Pending self-improvement review summary (Hermes parity:
-     * background_review_callback pending-release). Consumed-once: a non-empty
-     * {@code summary} means the caller owns delivering it to the chat.
+     * Durable review preview. Reading this endpoint never transfers ownership
+     * or clears the pending item; acknowledgement by delivery id does that.
      */
     public JsonNode getPendingReview(String sessionId) {
         try {
