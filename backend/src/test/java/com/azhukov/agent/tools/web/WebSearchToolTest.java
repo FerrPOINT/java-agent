@@ -26,6 +26,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -43,6 +44,12 @@ class WebSearchToolTest {
         AgentProperties p = new AgentProperties();
         p.getWeb().setSearchResults(5);
         return p;
+    }
+
+    private WebSearchTool tool(AgentProperties properties) {
+        WebSearchTool tool = new WebSearchTool(properties, objectMapper, urlSafety, redactor);
+        tool.init();
+        return tool;
     }
 
     private Map<String, Object> errorPayload(ToolResult result) throws Exception {
@@ -213,6 +220,51 @@ class WebSearchToolTest {
 
             assertThat(result.success()).isFalse();
             assertThat(errorPayload(result).get("error").toString()).contains("Web search failed").contains("timeout");
+        }
+    }
+
+    @Test
+    void emptySearxngResultFallsBackToGoogleNewsRss() throws Exception {
+        AgentProperties properties = properties();
+        properties.getWeb().setSearxngUrl("http://searxng.local");
+        GoogleNewsRssSearchProvider news = mock(GoogleNewsRssSearchProvider.class);
+        when(news.search("latest technology news", 2)).thenReturn(List.of(Map.of(
+            "title", "News", "url", "https://news.example", "description", "Latest news")));
+
+        WebSearchTool tool = new WebSearchTool(properties, objectMapper, urlSafety, redactor, news);
+        tool.init();
+        SearXngSearchProvider searxng = mock(SearXngSearchProvider.class);
+        when(searxng.isAvailable()).thenReturn(true);
+        when(searxng.search("latest technology news", 2)).thenReturn(List.of());
+        org.springframework.test.util.ReflectionTestUtils.setField(tool, "searXngProvider", searxng);
+
+        ToolResult result = tool.execute("{\"query\":\"latest technology news\",\"limit\":2}", null, null);
+
+        assertThat(result.success()).isTrue();
+        assertThat(objectMapper.readTree(result.content()).path("data").path("web").get(0).path("title").asText())
+            .isEqualTo("News");
+        verify(news).search("latest technology news", 2);
+    }
+
+    @Test
+    void searchFailureWithoutExceptionMessageNamesTheFailureType() throws Exception {
+        AgentProperties properties = properties();
+        when(urlSafety.isUrlAllowed(anyString())).thenReturn(true);
+
+        Connection connection = mock(Connection.class);
+        when(connection.userAgent(anyString())).thenReturn(connection);
+        when(connection.timeout(anyInt())).thenReturn(connection);
+        when(connection.get()).thenThrow(new java.net.ConnectException());
+
+        try (MockedStatic<Jsoup> jsoup = mockStatic(Jsoup.class)) {
+            jsoup.when(() -> Jsoup.connect(contains("q=offline"))).thenReturn(connection);
+
+            WebSearchTool tool = new WebSearchTool(properties, objectMapper, urlSafety, redactor); tool.init();
+            var result = tool.execute("{\"query\":\"offline\",\"limit\":5}", null, null);
+
+            assertThat(result.success()).isFalse();
+            assertThat(errorPayload(result).get("error").toString())
+                .isEqualTo("Web search failed: ConnectException");
         }
     }
 

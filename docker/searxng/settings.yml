@@ -65,6 +65,12 @@ engines:
     disabled: true
   - name: yandex
     disabled: true
+  - name: yep
+    disabled: false
+    # Yep is the only general-web engine currently returning relevant results
+    # from this host's datacenter IP; include it in the provider's default
+    # category so queries without categories= do not collapse to zero results.
+    categories: [general]
   - name: baidu
     disabled: true
   - name: aol
