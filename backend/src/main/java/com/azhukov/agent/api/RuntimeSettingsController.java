@@ -79,6 +79,12 @@ public class RuntimeSettingsController {
             properties.getModel().getTimeoutSeconds(),
             properties.getCore().getDefaultSystemPrompt(),
             properties.getCore().getReasoningConfig(),
+            properties.getMemory().getNudgeInterval(),
+            properties.getSkills().getCreationNudgeInterval(),
+            properties.getMemory().getBackgroundReview().isEnabled(),
+            properties.getMemory().getBackgroundReview().getDelayMs(),
+            properties.getMemory().getBackgroundReview().getMaxReviewTurns(),
+            properties.getMemory().getBackgroundReview().getMaxInputTokens(),
             Map.of(
                 "memory", memoryProvider != null,
                 "tts", ttsService != null && ttsService.isAvailable(),

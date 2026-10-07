@@ -11,14 +11,16 @@ import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.core.memory.ReviewToolProvider;
 import com.azhukov.agent.core.context.HistorySanitizer;
+import com.azhukov.agent.persistence.entity.ReviewSummaryEntity;
+import com.azhukov.agent.persistence.repository.ReviewSummaryRepository;
 import jakarta.annotation.PreDestroy;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -49,9 +51,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * <li>Stale-action filtering — skips prior conversation tool results</li>
  * </ul>
  */
-@Service
 @Slf4j
-@RequiredArgsConstructor
 public class BackgroundReviewService {
 
  private static final int DEFAULT_MAX_REVIEW_TURNS = 16;
@@ -69,6 +69,18 @@ public class BackgroundReviewService {
  private final WriteApprovalGate writeApprovalGate;
  private final ReviewToolProvider reviewToolProvider;
  private final AgentProperties properties;
+ private final ReviewSummaryRepository reviewSummaryRepository;
+
+ public BackgroundReviewService(ModelClient modelClient, MemoryProvider memoryProvider,
+                                WriteApprovalGate writeApprovalGate, ReviewToolProvider reviewToolProvider,
+                                AgentProperties properties, ReviewSummaryRepository reviewSummaryRepository) {
+     this.modelClient = modelClient;
+     this.memoryProvider = memoryProvider;
+     this.writeApprovalGate = writeApprovalGate;
+     this.reviewToolProvider = reviewToolProvider;
+     this.properties = properties;
+     this.reviewSummaryRepository = reviewSummaryRepository;
+ }
 
  private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor(r -> {
  Thread t = new Thread(r, "background-review");
@@ -92,10 +104,15 @@ public class BackgroundReviewService {
      private final AtomicBoolean cancelled = new AtomicBoolean(false);
  }
 
+ public BackgroundReviewService(ModelClient modelClient, MemoryProvider memoryProvider,
+                                WriteApprovalGate writeApprovalGate, ReviewToolProvider reviewToolProvider,
+                                AgentProperties properties) {
+     this(modelClient, memoryProvider, writeApprovalGate, reviewToolProvider, properties, null);
+ }
+
  /**
-  * P-05: cancel any scheduled/in-flight review for a session. Called at the
-  * start of a new foreground turn and on session reset — mirrors Hermes
-  * cancel_background_review_for_live_turn (#84423).
+  * Cancel any scheduled/in-flight review for a session. Called at the start of
+  * a new foreground turn and on session reset.
   */
  public void cancelForNewForegroundTurn(UUID sessionId) {
      if (sessionId == null) {
@@ -226,26 +243,78 @@ public class BackgroundReviewService {
  /**
  * S3: Get the review summary for a session (for user-facing notification).
  */
- public ReviewSummary getReviewSummary(UUID sessionId) {
- return reviewSummaries.getOrDefault(sessionId, ReviewSummary.empty());
- }
+    public ReviewSummary getReviewSummary(UUID sessionId) {
+        ReviewSummary cached = reviewSummaries.get(sessionId);
+        if (cached != null) {
+            return cached;
+        }
+        return loadPendingSummary(sessionId).orElse(ReviewSummary.empty());
+    }
+
+    public Optional<ReviewSummaryEntity> getPendingReviewSummary(UUID sessionId) {
+        if (reviewSummaryRepository == null || sessionId == null) {
+            return Optional.empty();
+        }
+        return reviewSummaryRepository.findFirstBySessionIdOrderByCreatedAtAsc(sessionId);
+    }
 
  /**
- * S3: Check if a session has a pending review summary to surface to the user.
- */
+  * S3: Check if a session has a pending review summary to surface to the user.
+  */
  public boolean hasReviewSummary(UUID sessionId) {
- ReviewSummary summary = reviewSummaries.get(sessionId);
- return summary != null && summary.hasActions();
+     if (reviewSummaries.containsKey(sessionId)) {
+         return true;
+     }
+        return getPendingReviewSummary(sessionId).isPresent();
  }
 
- /**
- * Clear the memory updated flag and review summary for a session.
- */
- public void clearFlag(UUID sessionId) {
- memoryUpdatedFlags.remove(sessionId);
- reviewActions.remove(sessionId);
- reviewSummaries.remove(sessionId);
- priorResultsCache.remove(sessionId);
+    public boolean removePendingReviewSummary(UUID sessionId, UUID deliveryId) {
+        if (reviewSummaryRepository == null || sessionId == null || deliveryId == null) {
+            return false;
+        }
+        int deleted = reviewSummaryRepository.deleteBySessionIdAndDeliveryId(sessionId, deliveryId);
+        if (deleted != 1) {
+            return false;
+        }
+        reviewSummaries.remove(sessionId);
+        return true;
+    }
+
+    @Transactional
+    public void deleteBySessionId(UUID sessionId) {
+        if (reviewSummaryRepository == null || sessionId == null) {
+            return;
+        }
+        reviewSummaryRepository.deleteBySessionId(sessionId);
+        clearFlag(sessionId);
+    }
+
+    /**
+     * Clear transient review state for a session reset.
+     */
+    public void clearFlag(UUID sessionId) {
+        memoryUpdatedFlags.remove(sessionId);
+        reviewActions.remove(sessionId);
+        reviewSummaries.remove(sessionId);
+        priorResultsCache.remove(sessionId);
+    }
+
+    private Optional<ReviewSummary> loadPendingSummary(UUID sessionId) {
+        return getPendingReviewSummary(sessionId)
+            .map(entity -> new ReviewSummary(false, 0, 0, List.of(entity.getSummary()), entity.getSummary()));
+    }
+
+ private void persistPendingSummary(UUID sessionId, ReviewSummary summary) {
+     if (reviewSummaryRepository == null || sessionId == null || summary == null
+         || !summary.hasActions() || summary.formattedSummary().isBlank()) {
+         return;
+     }
+        ReviewSummaryEntity entity = new ReviewSummaryEntity();
+        entity.setDeliveryId(UUID.randomUUID());
+        entity.setSessionId(sessionId);
+        entity.setSummary(summary.formattedSummary());
+        entity.setUpdatedAt(java.time.Instant.now());
+        reviewSummaryRepository.save(entity);
  }
 
  /**
@@ -421,6 +490,7 @@ public class BackgroundReviewService {
  // S3: Build and store the ReviewSummary for user notification
  ReviewSummary summary = ReviewSummary.of(memoryUpdated, actions);
  reviewSummaries.put(sessionId, summary);
+ persistPendingSummary(sessionId, summary);
  // H9: Log the formatted summary so the review result is surfaced (not dead code).
  log.info("Background review completed for session {}: memoryUpdated={}, actions={}",
  sessionId, memoryUpdated, actions);
@@ -565,7 +635,12 @@ public class BackgroundReviewService {
  /**
  * Shutdown the executor.
  */
- @PreDestroy
+    @org.springframework.context.event.EventListener
+    public void onSessionDeleted(com.azhukov.agent.core.agent.SessionDeletedEvent event) {
+        deleteBySessionId(event.sessionId());
+    }
+
+    @PreDestroy
  public void shutdown() {
  executor.shutdown();
  }

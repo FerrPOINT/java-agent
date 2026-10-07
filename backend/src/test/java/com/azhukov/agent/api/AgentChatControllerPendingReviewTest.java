@@ -32,9 +32,11 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -127,20 +129,50 @@ class AgentChatControllerPendingReviewTest {
     }
 
     @Test
-    void pendingSummaryIsReleasedOnce() throws Exception {
+    void pendingSummaryIsPreviewedWithoutConsumption() throws Exception {
+        UUID deliveryId = UUID.randomUUID();
         when(memoryNudgeManagerProvider.getObject()).thenReturn(memoryNudgeManager);
-        when(memoryNudgeManager.getReviewSummaryForSurface(SESSION_ID))
-            .thenReturn("Self-improvement review: memory updated");
+        when(memoryNudgeManager.peekPendingReviewSummary(SESSION_ID))
+            .thenReturn(new MemoryNudgeManager.PendingReviewSummary(deliveryId,
+                "Self-improvement review: memory updated"));
         mockMvc.perform(get("/api/v1/agent/session/{id}/review/pending", SESSION_ID))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.pending").value(true))
-            .andExpect(jsonPath("$.summary").value("Self-improvement review: memory updated"));
+            .andExpect(jsonPath("$.summary").value("Self-improvement review: memory updated"))
+            .andExpect(jsonPath("$.deliveryId").value(deliveryId.toString()));
+        verify(memoryNudgeManager).peekPendingReviewSummary(SESSION_ID);
+    }
+
+    @Test
+    void matchingAcknowledgementConsumesOnlyIdentifiedPendingSummary() throws Exception {
+        UUID deliveryId = UUID.randomUUID();
+        when(memoryNudgeManagerProvider.getObject()).thenReturn(memoryNudgeManager);
+        when(memoryNudgeManager.acknowledgeReviewSummary(SESSION_ID, deliveryId)).thenReturn(true);
+        mockMvc.perform(post("/api/v1/agent/session/{id}/review/ack", SESSION_ID)
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"deliveryId\":\"" + deliveryId + "\"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.acknowledged").value(true));
+        verify(memoryNudgeManager).acknowledgeReviewSummary(SESSION_ID, deliveryId);
+    }
+
+    @Test
+    void staleAcknowledgementDoesNotConsumeNewerSummary() throws Exception {
+        UUID staleDeliveryId = UUID.randomUUID();
+        when(memoryNudgeManagerProvider.getObject()).thenReturn(memoryNudgeManager);
+        when(memoryNudgeManager.acknowledgeReviewSummary(SESSION_ID, staleDeliveryId)).thenReturn(false);
+        mockMvc.perform(post("/api/v1/agent/session/{id}/review/ack", SESSION_ID)
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"deliveryId\":\"" + staleDeliveryId + "\"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.acknowledged").value(false));
     }
 
     @Test
     void blankSummaryMeansNothingPending() throws Exception {
         when(memoryNudgeManagerProvider.getObject()).thenReturn(memoryNudgeManager);
-        when(memoryNudgeManager.getReviewSummaryForSurface(SESSION_ID)).thenReturn("   ");
+        when(memoryNudgeManager.peekPendingReviewSummary(SESSION_ID))
+            .thenReturn(new MemoryNudgeManager.PendingReviewSummary(UUID.randomUUID(), "   "));
         mockMvc.perform(get("/api/v1/agent/session/{id}/review/pending", SESSION_ID))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.pending").value(false));

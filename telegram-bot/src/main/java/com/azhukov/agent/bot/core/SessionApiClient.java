@@ -82,9 +82,8 @@ public class SessionApiClient extends BaseBackendClient {
     }
 
     /**
-     * Pending self-improvement review summary (Hermes parity:
-     * background_review_callback pending-release). Consumed-once: a non-empty
-     * {@code summary} means the caller owns delivering it to the chat.
+     * Durable review preview. Reading this endpoint never transfers ownership
+     * or clears the pending item; acknowledgement by delivery id does that.
      */
     public JsonNode getPendingReview(String sessionId) {
         try {
@@ -96,6 +95,25 @@ public class SessionApiClient extends BaseBackendClient {
         } catch (Exception e) {
             log.debug("getPendingReview failed for sessionId={}: {}", sessionId, e.getMessage());
             return null;
+        }
+    }
+
+    public boolean acknowledgePendingReview(String sessionId, String deliveryId) {
+        if (sessionId == null || sessionId.isBlank() || deliveryId == null || deliveryId.isBlank()) {
+            return false;
+        }
+        try {
+            String json = restClient.post()
+                .uri("/api/v1/agent/session/{sessionId}/review/ack", sessionId)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("deliveryId", deliveryId))
+                .retrieve()
+                .body(String.class);
+            JsonNode response = readTree(json);
+            return response != null && response.path("acknowledged").asBoolean(false);
+        } catch (Exception e) {
+            log.debug("acknowledgePendingReview failed for sessionId={}: {}", sessionId, e.getMessage());
+            return false;
         }
     }
 

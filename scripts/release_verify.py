@@ -35,11 +35,10 @@ class GateResult:
 def run_command(name: str, command: list[str], timeout: int) -> GateResult:
     started = dt.datetime.now(dt.timezone.utc)
     environment = dict(os.environ)
-    # Hermes can export a root user-bus path even when that runtime directory is
-    # absent. Gradle's forked workers then fail before running any test.
-    if not Path("/run/user/0/bus").exists():
-        environment.pop("DBUS_SESSION_BUS_ADDRESS", None)
-        environment.pop("XDG_RUNTIME_DIR", None)
+    # Release gates run independently of a user session. Inherited D-Bus variables
+    # can point at a stale or inaccessible root bus and break Gradle worker startup.
+    environment.pop("DBUS_SESSION_BUS_ADDRESS", None)
+    environment.pop("XDG_RUNTIME_DIR", None)
     try:
         completed = subprocess.run(
             command,

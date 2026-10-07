@@ -225,12 +225,41 @@ class PatchToolBranchTest {
     }
 
     @Test
-    void v4a_addFile_blockedPath_returnsError() {
-        String patch = "*** Add File: /.env\n+secret\n*** End Patch";
+    void v4a_addFile_projectEnvPath_isAllowedOutsideGuardHome(@TempDir Path dir) throws Exception {
+        Path target = dir.resolve(".env");
+        String patch = "*** Add File: " + target + "\n+LOCAL_SETTING=enabled\n*** End Patch";
         String json = "{\"mode\":\"patch\",\"patch\":" + toJson(patch) + "}";
-        ToolResult r = tool.execute(json, null, session);
-        // Should have errors about blocked path — since all operations failed, returns fail
-        assertThat(r.success()).isFalse();
+
+        ToolResult result = tool.execute(json, null, session);
+
+        assertThat(result.success()).withFailMessage(String.valueOf(result.error())).isTrue();
+        assertThat(Files.readString(target)).isEqualTo("LOCAL_SETTING=enabled");
+    }
+
+    @Test
+    void v4a_addFile_envPathInsideGuardHome_isBlocked() {
+        Path target = Path.of(System.getProperty("user.home"), ".env");
+        String patch = "*** Add File: " + target + "\n+SECRET=value\n*** End Patch";
+        String json = "{\"mode\":\"patch\",\"patch\":" + toJson(patch) + "}";
+
+        ToolResult result = tool.execute(json, null, session);
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.error()).contains("not allowed");
+    }
+
+    @Test
+    void v4a_moveWithoutDestination_returnsError(@TempDir Path dir) throws Exception {
+        Path source = dir.resolve("source.txt");
+        Files.writeString(source, "payload");
+        String patch = "*** Move File: " + source + "\n*** End Patch";
+        String json = "{\"mode\":\"patch\",\"patch\":" + toJson(patch) + "}";
+
+        ToolResult result = tool.execute(json, null, session);
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.error()).contains("Invalid move header");
+        assertThat(Files.readString(source)).isEqualTo("payload");
     }
 
     @Test

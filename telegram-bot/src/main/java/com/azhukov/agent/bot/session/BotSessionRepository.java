@@ -12,6 +12,9 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+/**
+ * Persists chat-scoped bot state so recovered deliveries retain the backend session identity.
+ */
 @Repository
 public interface BotSessionRepository extends JpaRepository<BotSessionEntity, UUID> {
 
@@ -32,6 +35,8 @@ public interface BotSessionRepository extends JpaRepository<BotSessionEntity, UU
     Page<BotSessionEntity> findByChatIdAndActiveTrue(String chatId, Pageable pageable);
 
     List<BotSessionEntity> findByUserIdOrderByUpdatedAtDesc(String userId);
+
+    List<BotSessionEntity> findByBackendSessionIdIsNotNull();
 
     // P0: Session expiry watcher — list all active sessions
     List<BotSessionEntity> findByActiveTrue();

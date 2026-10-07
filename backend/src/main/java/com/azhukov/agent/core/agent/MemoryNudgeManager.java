@@ -141,6 +141,10 @@ public class MemoryNudgeManager {
 
         if (!shouldReviewMemory && !shouldReviewSkills) return null;
 
+        // Snapshot the previous pending summary before scheduling its successor.
+        // Delivery code uses this value only after primary Telegram finalization.
+        String pendingSummary = peekReviewSummary(session.id());
+
         // Build full conversation history for the review
         List<Message> fullHistory;
         try {
@@ -150,17 +154,6 @@ public class MemoryNudgeManager {
             fullHistory = turnMessages;
         }
 
-        // ── Surface any PENDING review summary from a prior turn FIRST ──
-        // Defect (live-found 2026-09-19): clearFlag() used to run BEFORE
-        // reviewTurn(), wiping any pending summary produced by the previous
-        // turn's still-running review before anyone could read it — so the
-        // "💾 Self-improvement review: …" notification never reached the user.
-        // Hermes parity (gateway run_turn_runner._make_bg_review_callbacks):
-        // the pending summary is released to the chat first; only then may a
-        // new review be scheduled (its own summary lands when it completes and
-        // is released on the next turn — pending-release semantics).
-        String pendingSummary = getReviewSummaryForSurface(session.id());
-
         try {
             backgroundReviewService.reviewTurn(session.id(), fullHistory, session.userId(),
                 shouldReviewMemory, shouldReviewSkills);
@@ -168,21 +161,58 @@ public class MemoryNudgeManager {
             log.warn("Background review trigger failed: {}", e.getMessage());
         }
 
+        // A review may finish immediately in tests or under a local model. The
+        // post-delivery poll is still authoritative, but return the earlier
+        // snapshot so the streaming path can deliver it after finalization.
         return pendingSummary;
     }
 
     /**
-     * Check if the background review produced a summary to surface to the user.
+     * Read a pending summary without consuming it. SSE may expose this preview,
+     * but only an explicit delivery acknowledgement may clear the durable
+     * in-process pending state.
      */
-    public String getReviewSummaryForSurface(UUID sessionId) {
-        if (backgroundReviewService == null) return null;
-        if (!backgroundReviewService.hasReviewSummary(sessionId)) return null;
-        ReviewSummary summary = backgroundReviewService.getReviewSummary(sessionId);
-        if (summary == null || !summary.hasActions()) return null;
-        String result = summary.formattedSummary();
-        backgroundReviewService.clearFlag(sessionId);
-        return result;
+    public PendingReviewSummary peekPendingReviewSummary(UUID sessionId) {
+        if (backgroundReviewService == null) {
+            return null;
+        }
+        return backgroundReviewService.getPendingReviewSummary(sessionId)
+            .map(entity -> new PendingReviewSummary(entity.getDeliveryId(), entity.getSummary()))
+            .filter(summary -> !summary.summary().isBlank())
+            .orElse(null);
     }
+
+    public String peekReviewSummary(UUID sessionId) {
+        PendingReviewSummary pending = peekPendingReviewSummary(sessionId);
+        return pending == null ? null : pending.summary();
+    }
+
+    /**
+     * Consume the summary only after the owning delivery channel confirms it
+     * reached the user. Requiring the expected text prevents a stale retry from
+     * clearing a newer review for the same session.
+     */
+    public boolean acknowledgeReviewSummary(UUID sessionId, UUID deliveryId) {
+        if (deliveryId == null) {
+            return false;
+        }
+        return backgroundReviewService.removePendingReviewSummary(sessionId, deliveryId);
+    }
+
+    /**
+     * Backward-compatible acknowledgement for callers which only carry the
+     * visible text. New delivery code must use the immutable delivery id.
+     */
+    public boolean acknowledgeReviewSummary(UUID sessionId, String expectedSummary) {
+        if (expectedSummary == null || expectedSummary.isBlank()) {
+            return false;
+        }
+        PendingReviewSummary pending = peekPendingReviewSummary(sessionId);
+        return pending != null && pending.summary().equals(expectedSummary)
+            && acknowledgeReviewSummary(sessionId, pending.deliveryId());
+    }
+
+    public record PendingReviewSummary(UUID deliveryId, String summary) {}
 
     /**
      * Clear nudge state for a session (on session end/reset).

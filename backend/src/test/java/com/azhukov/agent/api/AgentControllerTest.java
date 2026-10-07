@@ -158,6 +158,8 @@ class AgentControllerTest {
         when(agentProperties.getModel()).thenReturn(modelProperties);
         when(agentProperties.getCore()).thenReturn(coreProperties);
         when(agentProperties.getBudget()).thenReturn(budgetProperties);
+        when(agentProperties.getMemory()).thenReturn(new AgentProperties.MemoryProperties());
+        when(agentProperties.getSkills()).thenReturn(new AgentProperties.SkillsProperties());
         when(agentProperties.getName()).thenReturn("Test Agent");
         when(modelProperties.getModelName()).thenReturn("test-model");
         when(modelProperties.getProvider()).thenReturn("test-provider");
@@ -175,6 +177,12 @@ class AgentControllerTest {
             .andExpect(jsonPath("$.maxTurns").value(100))
             .andExpect(jsonPath("$.maxModelCallsPerTurn").value(100))
             .andExpect(jsonPath("$.maxToolExecutionsPerTurn").value(100))
+            .andExpect(jsonPath("$.memoryNudgeInterval").value(10))
+            .andExpect(jsonPath("$.skillCreationNudgeInterval").value(10))
+            .andExpect(jsonPath("$.backgroundReviewEnabled").value(true))
+            .andExpect(jsonPath("$.backgroundReviewDelayMs").value(2000))
+            .andExpect(jsonPath("$.backgroundReviewMaxTurns").value(16))
+            .andExpect(jsonPath("$.backgroundReviewMaxInputTokens").value(600000))
             .andExpect(jsonPath("$.skillCount").value(2));
     }
 
@@ -529,6 +537,8 @@ class AgentControllerTest {
         when(agentProperties.getModel()).thenReturn(modelProperties);
         when(agentProperties.getCore()).thenReturn(coreProperties);
         when(agentProperties.getBudget()).thenReturn(budgetProperties);
+        when(agentProperties.getMemory()).thenReturn(new AgentProperties.MemoryProperties());
+        when(agentProperties.getSkills()).thenReturn(new AgentProperties.SkillsProperties());
         when(agentProperties.getName()).thenReturn("Test Agent");
         when(modelProperties.getModelName()).thenReturn("test-model");
         when(modelProperties.getProvider()).thenReturn("test-provider");
