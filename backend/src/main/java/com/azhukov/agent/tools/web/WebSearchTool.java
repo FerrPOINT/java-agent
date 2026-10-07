@@ -25,6 +25,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Autowired;
 
@@ -39,6 +40,9 @@ public class WebSearchTool implements ToolHandler {
     private static final String DUCKDUCKGO_HTML = "https://html.duckduckgo.com/html/";
     private static final int DEFAULT_LIMIT = 5;
     private static final int MAX_LIMIT = 100;
+    private static final Set<String> NEWS_TERMS = Set.of(
+        "news", "headlines", "новости", "новость", "дайджест"
+    );
 
     private final AgentProperties agentProperties;
     private int configuredLimit;
@@ -94,7 +98,7 @@ public class WebSearchTool implements ToolHandler {
             // before surfacing the failure to the model.
             if (searXngProvider != null && searXngProvider.isAvailable()) {
                 results = searXngProvider.search(query, limit);
-                if (results.isEmpty()) {
+                if (results.isEmpty() && isNewsQuery(query)) {
                     results = googleNewsRssSearchProvider.search(query, limit);
                 }
             } else {
@@ -122,6 +126,15 @@ public class WebSearchTool implements ToolHandler {
         } catch (Exception e) {
             return jsonFailureResponse("Web search failed: " + failureDetail(e));
         }
+    }
+
+    private static boolean isNewsQuery(String query) {
+        for (String token : query.toLowerCase(Locale.ROOT).split("[^\\p{L}\\p{N}]+")) {
+            if (NEWS_TERMS.contains(token)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static String failureDetail(Exception failure) {

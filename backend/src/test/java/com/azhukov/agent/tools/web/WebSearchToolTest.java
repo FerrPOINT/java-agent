@@ -224,19 +224,14 @@ class WebSearchToolTest {
     }
 
     @Test
-    void emptySearxngResultFallsBackToGoogleNewsRss() throws Exception {
+    void emptySearxngNewsQueryFallsBackToGoogleNewsRss() throws Exception {
         AgentProperties properties = properties();
         properties.getWeb().setSearxngUrl("http://searxng.local");
         GoogleNewsRssSearchProvider news = mock(GoogleNewsRssSearchProvider.class);
         when(news.search("latest technology news", 2)).thenReturn(List.of(Map.of(
             "title", "News", "url", "https://news.example", "description", "Latest news")));
 
-        WebSearchTool tool = new WebSearchTool(properties, objectMapper, urlSafety, redactor, news);
-        tool.init();
-        SearXngSearchProvider searxng = mock(SearXngSearchProvider.class);
-        when(searxng.isAvailable()).thenReturn(true);
-        when(searxng.search("latest technology news", 2)).thenReturn(List.of());
-        org.springframework.test.util.ReflectionTestUtils.setField(tool, "searXngProvider", searxng);
+        WebSearchTool tool = configuredSearxngTool(properties, news, "latest technology news");
 
         ToolResult result = tool.execute("{\"query\":\"latest technology news\",\"limit\":2}", null, null);
 
@@ -244,6 +239,51 @@ class WebSearchToolTest {
         assertThat(objectMapper.readTree(result.content()).path("data").path("web").get(0).path("title").asText())
             .isEqualTo("News");
         verify(news).search("latest technology news", 2);
+    }
+
+    @Test
+    void emptySearxngRussianNewsQueryFallsBackToGoogleNewsRss() throws Exception {
+        AgentProperties properties = properties();
+        properties.getWeb().setSearxngUrl("http://searxng.local");
+        GoogleNewsRssSearchProvider news = mock(GoogleNewsRssSearchProvider.class);
+        when(news.search("последние новости технологий октябрь", 2)).thenReturn(List.of(Map.of(
+            "title", "Новости", "url", "https://news.example/ru", "description", "Дайджест")));
+
+        WebSearchTool tool = configuredSearxngTool(properties, news, "последние новости технологий октябрь");
+
+        ToolResult result = tool.execute(
+            "{\"query\":\"последние новости технологий октябрь\",\"limit\":2}", null, null);
+
+        assertThat(result.success()).isTrue();
+        assertThat(objectMapper.readTree(result.content()).path("data").path("web")).hasSize(1);
+        verify(news).search("последние новости технологий октябрь", 2);
+    }
+
+    @Test
+    void emptySearxngNonNewsQueryDoesNotFallBackToGoogleNewsRss() throws Exception {
+        AgentProperties properties = properties();
+        properties.getWeb().setSearxngUrl("http://searxng.local");
+        GoogleNewsRssSearchProvider news = mock(GoogleNewsRssSearchProvider.class);
+
+        WebSearchTool tool = configuredSearxngTool(properties, news, "Spring Boot reference documentation");
+
+        ToolResult result = tool.execute(
+            "{\"query\":\"Spring Boot reference documentation\",\"limit\":2}", null, null);
+
+        assertThat(result.success()).isTrue();
+        assertThat(objectMapper.readTree(result.content()).path("data").path("web")).isEmpty();
+        verify(news, org.mockito.Mockito.never()).search(anyString(), anyInt());
+    }
+
+    private WebSearchTool configuredSearxngTool(AgentProperties properties, GoogleNewsRssSearchProvider news,
+                                                String query) throws IOException {
+        WebSearchTool tool = new WebSearchTool(properties, objectMapper, urlSafety, redactor, news);
+        tool.init();
+        SearXngSearchProvider searxng = mock(SearXngSearchProvider.class);
+        when(searxng.isAvailable()).thenReturn(true);
+        when(searxng.search(query, 2)).thenReturn(List.of());
+        org.springframework.test.util.ReflectionTestUtils.setField(tool, "searXngProvider", searxng);
+        return tool;
     }
 
     @Test
