@@ -25,8 +25,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import lombok.RequiredArgsConstructor;
 import jakarta.annotation.PostConstruct;
+import org.springframework.beans.factory.annotation.Autowired;
 
 @AgentTool(
     name = "web_search",
@@ -34,7 +34,6 @@ import jakarta.annotation.PostConstruct;
     toolset = "web"
 )
 @Component
-@RequiredArgsConstructor
 public class WebSearchTool implements ToolHandler {
 
     private static final String DUCKDUCKGO_HTML = "https://html.duckduckgo.com/html/";
@@ -46,7 +45,23 @@ public class WebSearchTool implements ToolHandler {
     private final ObjectMapper objectMapper;
     private final UrlSafety urlSafety;
     private final Redactor redactor;
+    private final GoogleNewsRssSearchProvider googleNewsRssSearchProvider;
     private SearXngSearchProvider searXngProvider;
+
+    @Autowired
+    public WebSearchTool(AgentProperties agentProperties, ObjectMapper objectMapper, UrlSafety urlSafety,
+                         Redactor redactor, GoogleNewsRssSearchProvider googleNewsRssSearchProvider) {
+        this.agentProperties = agentProperties;
+        this.objectMapper = objectMapper;
+        this.urlSafety = urlSafety;
+        this.redactor = redactor;
+        this.googleNewsRssSearchProvider = googleNewsRssSearchProvider;
+    }
+
+    WebSearchTool(AgentProperties agentProperties, ObjectMapper objectMapper, UrlSafety urlSafety,
+                  Redactor redactor) {
+        this(agentProperties, objectMapper, urlSafety, redactor, new GoogleNewsRssSearchProvider());
+    }
 
     @PostConstruct
     void init() {
@@ -79,6 +94,9 @@ public class WebSearchTool implements ToolHandler {
             // before surfacing the failure to the model.
             if (searXngProvider != null && searXngProvider.isAvailable()) {
                 results = searXngProvider.search(query, limit);
+                if (results.isEmpty()) {
+                    results = googleNewsRssSearchProvider.search(query, limit);
+                }
             } else {
                 results = searchDuckDuckGoWithRetry(query, limit);
             }
@@ -100,10 +118,18 @@ public class WebSearchTool implements ToolHandler {
             response.put("data", java.util.Map.of("web", webResults));
             return ToolResult.ok(redact(objectMapper.writeValueAsString(response)));
         } catch (IOException e) {
-            return jsonFailureResponse("Web search failed: " + e.getMessage());
+            return jsonFailureResponse("Web search failed: " + failureDetail(e));
         } catch (Exception e) {
-            return jsonFailureResponse("Web search failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+            return jsonFailureResponse("Web search failed: " + failureDetail(e));
         }
+    }
+
+    private static String failureDetail(Exception failure) {
+        String message = failure.getMessage();
+        if (message == null || message.isBlank()) {
+            return failure.getClass().getSimpleName();
+        }
+        return failure.getClass().getSimpleName() + ": " + message;
     }
 
     private ToolResult jsonFailureResponse(String error) {
