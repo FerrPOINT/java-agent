@@ -46,7 +46,7 @@
 | Поле | Значение |
 |---|---|
 | Модули | `backend`, `telegram-bot`, `cli` (+ `shared` DTO) |
-| Runtime | Java 25 LTS, Spring Boot 4.1, Gradle 9.6.1 |
+| Runtime | Temurin 25.0.4.1+1 LTS, Spring Boot 4.1; workspace Gradle 9.6.1, standalone backend 9.8.0 |
 | Data | PostgreSQL 16, JPA/Hibernate, Flyway |
 | AI/tooling | LangChain4j 1.18, MCP Java SDK 2.0, Repomix MCP, built-in tool registry |
 | Interfaces | REST/SSE, OpenAI-compatible `/v1/*`, Telegram bot, CLI REPL |
@@ -78,7 +78,7 @@
 |---|---|
 | Backend | Java 25, Spring Boot 4.1, Spring Framework 7, Spring Security, WebSocket, Actuator |
 | Persistence | PostgreSQL 16, JPA/Hibernate, Flyway 12, Testcontainers |
-| LLM/MCP | LangChain4j 1.18, OpenAI-compatible clients, MCP Java SDK 2.0, Repomix |
+| LLM/MCP | LangChain4j 1.20.2, OpenAI-compatible clients, MCP Java SDK 2.0, Repomix |
 | CLI | Spring Boot, Picocli, JLine, ANSI Markdown renderer |
 | Bot | Telegram Bot API client, polling/webhook, streaming/edit-message delivery |
 | Codegen/helpers | Lombok, MapStruct, Jackson 3, Pebble templates, Resilience4j |
@@ -200,6 +200,14 @@ docker compose -f docker-compose.local.yml up -d --build
 docker compose -f docker-compose.local.yml --profile cli run --rm cli
 docker compose -f docker-compose.e2e.yml up --build
 ```
+
+The CLI image packages `LICENSE`, `NOTICE`, and `THIRD_PARTY_NOTICES.md`
+inside its executable JAR under `META-INF`, alongside the license metadata.
+Profile regression tests load the shipped `application.yml` and verify that
+`AGENT_MODEL_*` overrides retain priority over legacy Ollama/OpenAI variables,
+while the legacy settings and operational defaults continue to work.
+CI enforces the existing backend and bot coverage floors after all module
+tests finish; a missing required LINE report fails the gate.
 
 | Compose file | Назначение |
 |---|---|

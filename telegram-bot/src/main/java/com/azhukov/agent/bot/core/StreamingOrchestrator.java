@@ -289,6 +289,7 @@ public class StreamingOrchestrator {
         StringBuilder accumulated = new StringBuilder(); // clean LLM text only
         final long[] messageId = {-1};
         final boolean[] finalized = {false};
+        final boolean[] failedFinalDelivery = {false};
         // Review notifications are read from the durable pending queue only
         // after finalizing the primary response; the SSE callback is ignored.
 
@@ -490,6 +491,7 @@ public class StreamingOrchestrator {
                             boolean delivered = streamEditor.finalizeStream(chatId, messageId[0], finalText);
                             if (!delivered) {
                                 streamEditor.recordFinalDeliveryFailure(chatId, finalText);
+                                failedFinalDelivery[0] = true;
                             }
                             finalized[0] = delivered;
                             // Deliver extracted media files only after text finalization succeeds.
@@ -501,6 +503,7 @@ public class StreamingOrchestrator {
                             boolean delivered = streamEditor.finalizeStream(chatId, messageId[0], finalText);
                             if (!delivered) {
                                 streamEditor.recordFinalDeliveryFailure(chatId, finalText);
+                                failedFinalDelivery[0] = true;
                             }
                             finalized[0] = delivered;
                         }
@@ -511,9 +514,8 @@ public class StreamingOrchestrator {
                     if (error instanceof StreamInterruptedException) {
                         // Interrupted — finalize with accumulated content (no raw error text)
                         if (messageId[0] >= 0 && accumulated.length() > 0) {
-                            streamEditor.finalizeStream(chatId, messageId[0],
+                            finalized[0] = streamEditor.finalizeStream(chatId, messageId[0],
                                 accumulated.toString());
-                            finalized[0] = true;
                         } else if (messageId[0] < 0) {
                             // Draft streaming (no message id): drop the draft session
                             // and its heartbeat so they don't leak.
@@ -526,9 +528,9 @@ public class StreamingOrchestrator {
                         String errorText = accumulated.length() > 0
                             ? accumulated + "\n\n" + userFriendlyError
                             : userFriendlyError;
+                        boolean delivered;
                         if (messageId[0] >= 0) {
-                            streamEditor.finalizeStream(chatId, messageId[0], errorText);
-                            finalized[0] = true;
+                            delivered = streamEditor.finalizeStream(chatId, messageId[0], errorText);
                         } else {
                             // P0: no streaming message exists (draft streaming keeps
                             // messageId at -1 until the first token arrives; a model
@@ -536,16 +538,20 @@ public class StreamingOrchestrator {
                             // all). Deliver the error text as a standalone message so
                             // the user is never left in silence. clearStream drops the
                             // draft StreamSession and its heartbeat.
-                            streamEditor.sendFormattedFinalMessage(chatId, errorText);
+                            delivered = streamEditor.sendFormattedFinalMessage(chatId, errorText).isPresent();
                             streamEditor.clearStream(chatId);
-                            finalized[0] = true;
+                        }
+                        finalized[0] = delivered;
+                        if (!delivered) {
+                            streamEditor.recordFinalDeliveryFailure(chatId, errorText);
+                            failedFinalDelivery[0] = true;
                         }
                     }
                 }
             );
 
             // If streaming produced content, return it (with metadata from the stream)
-            if (accumulated.length() > 0 || finalized[0]) {
+            if (accumulated.length() > 0 || finalized[0] || failedFinalDelivery[0]) {
                 progressBubbles.remove(chatId);
                 if (shouldSchedulePendingReviewPoll(finalized[0])) {
                     schedulePendingReviewPoll(sessionId, streamResult.backendSessionId(),

@@ -41,3 +41,13 @@ documentation ratchet прошли. Публичный PR содержит то�
 но конвертер вернул null, сохраняется штатная пользовательская ошибка 400.
 Добавлены шесть проверок через настоящие MVC argument resolvers: четыре
 регрессии внутренних ошибок и два случая missing-after-conversion.
+
+## Согласование PR79 с текущим main
+
+Сохранены исправления main: repeated Accept, явный SSE preference, safe500
+для внутренних binding failures и400 для missing-after-conversion. R35
+сохраняет specificity перед quality: точный JSON q=0 не переопределяется
+wildcard. Два направленных SSE случая и JSON fallback при text wildcard с допустимым JSON и SSE q=0
+дополняют native MVC regressions. Неявный text wildcard не включает SSE,
+в соответствии с действующей HTTP policy. Полная квалификация объединённого
+candidate и финальные merged images фиксируются во внешнем receipt.

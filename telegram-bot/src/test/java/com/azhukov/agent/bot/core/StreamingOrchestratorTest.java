@@ -9,6 +9,7 @@ import com.azhukov.agent.bot.session.BotSessionEntity;
 import com.azhukov.agent.bot.session.BusySessionHandler;
 import com.azhukov.agent.bot.session.ReviewDeliveryReceiptRepository;
 import com.azhukov.agent.bot.streaming.StreamEditor;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
@@ -81,6 +82,7 @@ class StreamingOrchestratorTest {
         when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong())).thenReturn(Optional.of(1L));
         when(streamEditor.editStream(anyLong(), anyLong(), anyString())).thenReturn(true);
         when(streamEditor.finalizeStream(anyLong(), anyLong(), anyString())).thenReturn(true);
+        when(streamEditor.sendFormattedFinalMessage(anyLong(), anyString())).thenReturn(Optional.of(1L));
 
         // TelegramClient getMe stub so StreamEditor init works (not strictly needed since editor is mocked)
         TelegramResponse meResponse = mock(TelegramResponse.class);
@@ -88,6 +90,11 @@ class StreamingOrchestratorTest {
         when(meResponse.resultAsMap()).thenReturn(Map.of());
         when(telegramClient.callApi(anyString(), any())).thenReturn(Optional.of(meResponse));
         when(telegramClient.getLastApiErrorCode()).thenReturn(0);
+    }
+
+    @AfterEach
+    void tearDown() {
+        orchestrator.shutdownReviewPollScheduler();
     }
 
     private BotSessionEntity session() {
@@ -151,6 +158,51 @@ class StreamingOrchestratorTest {
     void reviewPollSessionId_usesRequestSessionWhenBackendMetadataIsUnavailable() {
         assertThat(StreamingOrchestrator.reviewPollSessionId("existing-session", null))
             .isEqualTo("existing-session");
+    }
+
+    @Test
+    void firstTurnDeliversThePendingReviewForTheBackendAssignedSessionAfterFinalAnswer() {
+        UUID backendSessionId = UUID.randomUUID();
+        UUID deliveryId = UUID.randomUUID();
+        var result = new AgentBackendClient.ChatResult("answer", "model", 10, 100,
+            true, false, backendSessionId);
+        stubChatStream(ctx -> {
+            ctx.tokenConsumer.accept("answer");
+            ctx.onComplete.accept(result);
+            ctx.returnResult = result;
+        });
+        var review = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode()
+            .put("pending", true).put("summary", "review summary").put("deliveryId", deliveryId.toString());
+        when(backendClient.getPendingReview(backendSessionId.toString())).thenReturn(review);
+
+        var response = orchestrator.streamChat(100L, "hi", null, session(), 5L, 7L, hooks);
+
+        assertThat(response.content()).isEqualTo("answer");
+        verify(streamEditor).finalizeStream(eq(100L), eq(1L), anyString());
+        verify(hooks, never()).sendReviewMessage(anyLong(), anyString(), anyLong(), anyLong());
+        verify(hooks, timeout(25_000)).sendReviewMessage(100L, "review summary", 5L, 7L);
+        verify(backendClient).getPendingReview(backendSessionId.toString());
+        verify(backendClient, timeout(5_000)).acknowledgePendingReview(backendSessionId.toString(), deliveryId.toString());
+    }
+
+    @Test
+    void pendingReviewWithoutAValidDeliveryIdentityRemainsUnsentAndUnacknowledged() {
+        UUID backendSessionId = UUID.randomUUID();
+        for (String deliveryId : new String[] {null, "", "not-a-uuid"}) {
+            var review = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode()
+                .put("pending", true).put("summary", "review summary");
+            if (deliveryId != null) {
+                review.put("deliveryId", deliveryId);
+            }
+            when(backendClient.getPendingReview(backendSessionId.toString())).thenReturn(review);
+
+            assertThat(orchestrator.deliverPendingReview(backendSessionId.toString(), 100L, 5L, 7L, hooks))
+                .isFalse();
+        }
+
+        verify(hooks, never()).sendReviewMessage(anyLong(), anyString(), anyLong(), anyLong());
+        verify(backendClient, never()).acknowledgePendingReview(anyString(), anyString());
+        verifyNoInteractions(reviewReceiptRepository);
     }
 
     @Test
@@ -650,4 +702,58 @@ class StreamingOrchestratorTest {
             any(), any(), any(), any(), any(), any(), any(), any());
     }
 
+
+    @Test
+    void errorDeliveryFailedEditRetainsErrorAndRequiresFallback() {
+        when(streamEditor.finalizeStream(eq(100L), eq(1L), anyString())).thenReturn(false);
+        stubChatStream(ctx -> {
+            ctx.tokenConsumer.accept("partial answer");
+            ctx.onError.accept(new RuntimeException("backend disconnected"));
+            ctx.returnResult = new AgentBackendClient.ChatResult("partial answer", "model", 1, 10, true);
+        });
+
+        var response = orchestrator.streamChat(100L, "hi", "existing-session", session(), 5L, 0L, hooks);
+
+        assertThat(response.streamFinalized()).isFalse();
+        verify(streamEditor).recordFinalDeliveryFailure(100L,
+            "partial answer\n\nTemporary issue. Please try again.");
+        verify(backendClient, never()).chat(anyString(), nullable(String.class), any());
+    }
+
+    @Test
+    void errorDeliveryFailedDraftSendRetainsErrorWithoutRepeatingModelRequest() {
+        when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong()))
+            .thenReturn(Optional.empty());
+        when(streamEditor.sendFormattedFinalMessage(anyLong(), anyString())).thenReturn(Optional.empty());
+        stubChatStream(ctx -> {
+            ctx.onError.accept(new RuntimeException("backend disconnected"));
+            ctx.returnResult = new AgentBackendClient.ChatResult("", "model", 1, 10, true);
+        });
+
+        var response = orchestrator.streamChat(100L, "hi", "existing-session", session(), 5L, 0L, hooks);
+
+        assertThat(response.streamFinalized()).isFalse();
+        InOrder cleanupAndRetention = inOrder(streamEditor);
+        cleanupAndRetention.verify(streamEditor).clearStream(100L);
+        cleanupAndRetention.verify(streamEditor).recordFinalDeliveryFailure(100L,
+            "Temporary issue. Please try again.");
+        verify(backendClient, never()).chat(anyString(), nullable(String.class), any());
+    }
+
+    @Test
+    void errorDeliverySuccessfulDraftSendRemainsFinalized() {
+        when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong()))
+            .thenReturn(Optional.empty());
+        when(streamEditor.sendFormattedFinalMessage(anyLong(), anyString())).thenReturn(Optional.of(99L));
+        stubChatStream(ctx -> {
+            ctx.onError.accept(new RuntimeException("backend disconnected"));
+            ctx.returnResult = new AgentBackendClient.ChatResult("", "model", 1, 10, true);
+        });
+
+        var response = orchestrator.streamChat(100L, "hi", "existing-session", session(), 5L, 0L, hooks);
+
+        assertThat(response.streamFinalized()).isTrue();
+        verify(streamEditor, never()).recordFinalDeliveryFailure(anyLong(), anyString());
+        verify(backendClient, never()).chat(anyString(), nullable(String.class), any());
+    }
 }

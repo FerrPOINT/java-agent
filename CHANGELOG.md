@@ -1,7 +1,17 @@
 ## [Unreleased]
 
+- API binding errors return safe400; unexpected JSON/SSE errors retain500
+  without private diagnostics. Terminal SSE uses a supported synchronous MVC
+  response and honours specific Accept ranges before wildcard quality.
+
 ### Fixed
 
+- Failed Telegram finalization/error sends no longer claim successful delivery or arm background review. The complete error response is retained for the existing fallback send; an empty-token failure does not repeat the model request.
+
+- CI and all four Dockerfiles pin Temurin 25.0.4.1+1; Docker stages use immutable image digests and the committed Gradle wrappers. The bot JAR includes its canonical license and notice files. Backend and workspace wrapper versions are documented separately.
+
+- CI evaluates coverage after bot/CLI tests and fails when a module with a configured coverage floor has no usable LINE report; existing floors are unchanged.
+- The new CLI Docker image includes the license and notice files referenced by its JAR manifest. Regression coverage now verifies real first-turn background-review polling and shipped model-profile environment precedence, including legacy variables and defaults. The silent-notification test establishes an eligible edit directly instead of relying on a wall-clock sleep.
 - Usage persistence locks the parent session in the same database transaction as the insert. Concurrent session deletion either cascades committed usage or causes the recorder to skip the deleted session without a foreign-key failure. Pricing, API contracts and database migrations remain unchanged.
 - Mid-turn transcript batches use a transactional parent lock as well, so deletion during a tool batch is treated as a completed flush instead of an FK error and repeated persistence attempts.
 - Ordinary user/turn message persistence acquires the parent lock once for the whole transaction, skipping sessions deleted before the write without repeated existence queries per row.

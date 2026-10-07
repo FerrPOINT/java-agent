@@ -6,9 +6,13 @@ Java-агент: Spring Boot 4.1 + Java 25 + Telegram bot + MCP. Gradle multi-pr
 
 ## Build & Test
 
+CI and Docker use Temurin **25.0.4.1+1-LTS**; all Docker stages pin image
+digests. Use committed wrappers: **9.6.1** at the repository root for
+bot/CLI and **9.8.0** from `backend/` for the standalone backend gates.
+
 ```bash
 cd /opt/dev/java-agent
-./gradlew check                # 6221 tests, 0 failures
+./gradlew check                # workspace regression suite
 ./gradlew compileJava          # compile only
 ./gradlew bootJar              # build JAR
 ./gradlew slowTest             # @Tag("slow") integration tests
@@ -89,12 +93,12 @@ SSE streaming для real-time token output. JLine autocomplete.
 
 | Component | Version |
 |-----------|---------|
-| Java | 25 LTS |
+| Java | Temurin 25.0.4.1+1 LTS |
 | Spring Boot | 4.1.0 |
-| Gradle | 9.6.1 (Groovy DSL) |
+| Gradle | workspace 9.6.1; standalone backend 9.8.0 (Groovy DSL) |
 | Lombok | 1.18.38 |
 | MapStruct | 1.6.3 |
-| LangChain4j | 1.18.0 |
+| LangChain4j | 1.20.2 |
 | MCP Java SDK | 2.0.0 |
 | Repomix | 1.18.0 (MCP server, npm) |
 | PostgreSQL | 16 |
@@ -201,8 +205,8 @@ private final ScheduledExecutorService executor = Executors.newSingleThreadSched
 
 ### 5. Testing
 
-- **6221 тестов** (backend 4710 + bot 1511), 567 test files, 0 failures.
-- Coverage gate: LINE ≥ 80%.
+- Точное число тестов берётся из XML текущего прогона; исторические totals не подтверждают новый commit.
+- Blocking LINE floors: backend 79.38%, bot 82.47%, source `docs/standards/coverage-baseline.json`. Tests precede the coverage ratchet; missing configured reports fail. The separate 80% backend summary is informational.
 - Маппер-тесты: `Mappers.getMapper(X.class)`, edge cases (nulls, enums, empty collections).
 - Service-тесты с `new`: вызывать `init()` после конструирования (для `@PostConstruct`).
 - `@ExtendWith(MockitoExtension.class)` + `@Mock` для зависимостей; real mappers для mapping.

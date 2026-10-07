@@ -137,12 +137,25 @@ class GlobalExceptionHandlerBindingTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"application/json", "*/*", "application/json, text/event-stream;q=0.2"})
+    @ValueSource(strings = {"application/json", "*/*", "application/json, text/event-stream;q=0.2",
+        "text/event-stream;q=0, */*;q=0.8", "text/*, application/json"})
     void jsonClientsKeepJsonErrors(String accept) throws Exception {
         mvc.perform(get("/failure").header("Accept", accept))
             .andExpect(status().isInternalServerError())
             .andExpect(jsonPath("$.type").value("internal"))
             .andExpect(jsonPath("$.error").value("Internal server error"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "application/json;q=0, */*;q=0.8, text/event-stream;q=0.5",
+        "application/json;q=0.4, application/*;q=1, text/event-stream;q=0.8"
+    })
+    void specificJsonQualityOverridesWildcardBeforeChoosingTerminalStream(String accept) throws Exception {
+        MvcResult result = mvc.perform(get("/failure").header("Accept", accept)).andReturn();
+        assertThat(result.getResponse().getStatus()).isEqualTo(500);
+        assertThat(result.getResponse().getContentType()).startsWith(MediaType.TEXT_EVENT_STREAM_VALUE);
+        assertThat(result.getResponse().getContentAsString()).contains("event:error", "Internal server error");
     }
 
     @Test

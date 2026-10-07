@@ -583,7 +583,7 @@ class StreamEditorTest {
     // --- B7: Silent notification tests ---
 
     @Test
-    void editStream_usesSilentNotificationWhenConfigured() throws InterruptedException {
+    void editStream_usesSilentNotificationWhenConfigured() {
         BotProperties props = new BotProperties();
         props.setStreamEditInterval(Duration.ofMillis(100));
         props.setParseMode("MarkdownV2");
@@ -599,8 +599,9 @@ class StreamEditorTest {
             .thenReturn(true);
 
         silentEditor.startStream(123L, "Hello");
-        // Actual timing: wait past 100ms throttle interval
-        Thread.sleep(110); // timing-assertion
+        // This test checks notification mode; establish an eligible edit without
+        // depending on wall-clock timing or background heartbeat scheduling.
+        silentEditor.sessionFor(123L).lastEditTime = 0L;
         boolean result = silentEditor.editStream(123L, 42L, "text");
         assertThat(result).isTrue();
         verify(client).editMessageText(anyLong(), anyLong(), anyString(), any(), eq(true));

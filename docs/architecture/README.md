@@ -30,6 +30,7 @@ All diagrams use **Mermaid** syntax (renders inline in GitLab/GitHub).
 | [ADR-008](adr/ADR-008-agentic-loop-deduplication.md) | Agentic Loop Deduplication | Accepted |
 | [ADR-009](adr/ADR-009-micrometer-metrics.md) | Micrometer Metrics with Prometheus | Accepted |
 | [ADR-010](adr/ADR-010-testcontainers.md) | Testcontainers for Integration Tests | Accepted |
+| [ADR-016](adr/ADR-016-reproducible-build-toolchain.md) | Exact Temurin JDK and committed Gradle wrappers | Proposed; exact-source gates required |
 
 ## Quick Stats
 
