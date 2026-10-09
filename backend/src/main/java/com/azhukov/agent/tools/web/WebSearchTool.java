@@ -100,6 +100,7 @@ public class WebSearchTool implements ToolHandler {
                 Math.max(1, args.limit() > 0 ? args.limit() : configuredLimit),
                 MAX_LIMIT
             );
+            int providerLimit = expandedProviderLimit(query, limit);
 
             List<Map<String, String>> results;
             // Feature 1: Use SearXNG if configured, otherwise fall back to DuckDuckGo.
@@ -108,7 +109,7 @@ public class WebSearchTool implements ToolHandler {
             // terminated the handshake"). Retry transient IOExceptions with backoff
             // before surfacing the failure to the model.
             if (searXngProvider != null && searXngProvider.isAvailable()) {
-                results = searchConfiguredSearxng(query, limit);
+                results = searchConfiguredSearxng(query, limit, providerLimit);
             } else {
                 results = sanitizeResults(searchDuckDuckGoWithRetry(query, limit));
             }
@@ -116,7 +117,7 @@ public class WebSearchTool implements ToolHandler {
             // Hermes parity: return {"data":{"web":[{title,url,description,position}]}}
             // instead of a flat array. Add position field for result ordering.
             List<Map<String, Object>> webResults = new java.util.ArrayList<>();
-            for (int i = 0; i < results.size(); i++) {
+            for (int i = 0; i < results.size() && i < limit; i++) {
                 Map<String, Object> entry = new java.util.LinkedHashMap<>();
                 Map<String, String> src = results.get(i);
                 entry.put("title", src.getOrDefault("title", ""));
@@ -136,6 +137,15 @@ public class WebSearchTool implements ToolHandler {
         }
     }
 
+    private int expandedProviderLimit(String query, int requestedLimit) {
+        if (!isNewsQuery(query) || queryTopicTerms(query).isEmpty()) {
+            return requestedLimit;
+        }
+        // A metasearch engine can rank a stock ticker ahead of a technology topic.
+        // Fetch a bounded candidate window, then return only the requested count.
+        return Math.min(MAX_LIMIT, requestedLimit * 10);
+    }
+
     private List<Map<String, String>> sanitizeResults(List<Map<String, String>> results) {
         List<Map<String, String>> safeResults = new ArrayList<>();
         for (Map<String, String> result : results) {
@@ -148,21 +158,22 @@ public class WebSearchTool implements ToolHandler {
         return safeResults;
     }
 
-    private List<Map<String, String>> searchConfiguredSearxng(String query, int limit) throws IOException {
+    private List<Map<String, String>> searchConfiguredSearxng(String query, int requestedLimit, int providerLimit)
+        throws IOException {
         try {
-            List<Map<String, String>> results = sanitizeResults(searXngProvider.search(query, limit));
+            List<Map<String, String>> results = sanitizeResults(searXngProvider.search(query, providerLimit));
             if (isNewsQuery(query)) {
                 results = filterQueryRelevance(query, results);
             }
             return results.isEmpty() && isNewsQuery(query)
-                ? searchNewsFallback(query, limit)
+                ? searchNewsFallback(query, requestedLimit)
                 : results;
         } catch (IOException searxngFailure) {
             if (!isNewsQuery(query)) {
                 throw searxngFailure;
             }
             try {
-                return searchNewsFallback(query, limit);
+                return searchNewsFallback(query, requestedLimit);
             } catch (IOException newsFailure) {
                 searxngFailure.addSuppressed(newsFailure);
                 throw searxngFailure;
