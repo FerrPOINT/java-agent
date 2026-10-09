@@ -11,6 +11,8 @@ import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -363,6 +365,112 @@ class WebSearchToolTest {
         assertThat(result.success()).isTrue();
         assertThat(objectMapper.readTree(result.content()).path("data").path("web")).isEmpty();
         verify(news, org.mockito.Mockito.never()).search(anyString(), anyInt());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december",
+        "январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь",
+        "января", "январе", "ноября", "ноябре", "2026"
+    })
+    void newsMonthCannotAdmitAnUnrelatedTopic(String period) throws Exception {
+        String query = "technology news " + period;
+        AgentProperties properties = properties();
+        properties.getWeb().setSearxngUrl("http://searxng.local");
+        GoogleNewsRssSearchProvider news = mock(GoogleNewsRssSearchProvider.class);
+        when(news.search(org.mockito.ArgumentMatchers.eq(query), anyInt())).thenReturn(List.of(
+            Map.of("title", "Technology research", "url", "https://news.example/tech", "description", "New chips"),
+            Map.of("title", period + " city news", "url", "https://news.example/city", "description", "Local events")));
+        when(urlSafety.isUrlAllowed(anyString())).thenReturn(true);
+        WebSearchTool tool = configuredSearxngTool(properties, news, query);
+
+        ToolResult result = tool.execute(objectMapper.writeValueAsString(Map.of("query", query, "limit", 2)), null, null);
+
+        assertThat(result.success()).isTrue();
+        assertThat(objectMapper.readTree(result.content()).path("data").path("web")).hasSize(1);
+        assertThat(objectMapper.readTree(result.content()).path("data").path("web").get(0).path("title").asText())
+            .isEqualTo("Technology research");
+    }
+
+    @Test
+    void shortNewsTopicDoesNotMatchInsideAnotherWord() throws Exception {
+        String query = "AI news";
+        AgentProperties properties = properties();
+        properties.getWeb().setSearxngUrl("http://searxng.local");
+        GoogleNewsRssSearchProvider news = mock(GoogleNewsRssSearchProvider.class);
+        when(news.search(org.mockito.ArgumentMatchers.eq(query), anyInt())).thenReturn(List.of(
+            Map.of("title", "AI chips", "url", "https://news.example/ai", "description", "Machine learning"),
+            Map.of("title", "Rail services", "url", "https://news.example/rail", "description", "City transport")));
+        when(urlSafety.isUrlAllowed(anyString())).thenReturn(true);
+        WebSearchTool tool = configuredSearxngTool(properties, news, query);
+
+        ToolResult result = tool.execute(objectMapper.writeValueAsString(Map.of("query", query, "limit", 2)), null, null);
+
+        assertThat(result.success()).isTrue();
+        assertThat(objectMapper.readTree(result.content()).path("data").path("web")).hasSize(1);
+        assertThat(objectMapper.readTree(result.content()).path("data").path("web").get(0).path("title").asText())
+            .isEqualTo("AI chips");
+    }
+
+    @Test
+    void unrelatedSearxngNewsUsesTheFilteredFallback() throws Exception {
+        String query = "AI news";
+        AgentProperties properties = properties();
+        properties.getWeb().setSearxngUrl("http://searxng.local");
+        GoogleNewsRssSearchProvider news = mock(GoogleNewsRssSearchProvider.class);
+        when(news.search(org.mockito.ArgumentMatchers.eq(query), anyInt())).thenReturn(List.of(
+            Map.of("title", "AI chips", "url", "https://news.example/ai", "description", "Machine learning")));
+        when(urlSafety.isUrlAllowed(anyString())).thenReturn(true);
+        WebSearchTool tool = configuredSearxngTool(properties, news, query);
+        SearXngSearchProvider searxng = (SearXngSearchProvider) org.springframework.test.util.ReflectionTestUtils
+            .getField(tool, "searXngProvider");
+        when(searxng.search(query, 20)).thenReturn(List.of(
+            Map.of("title", "Rail services", "url", "https://news.example/rail", "description", "City transport")));
+
+        ToolResult result = tool.execute(objectMapper.writeValueAsString(Map.of("query", query, "limit", 2)), null, null);
+
+        assertThat(result.success()).isTrue();
+        assertThat(objectMapper.readTree(result.content()).path("data").path("web")).hasSize(1);
+        assertThat(objectMapper.readTree(result.content()).path("data").path("web").get(0).path("title").asText())
+            .isEqualTo("AI chips");
+        verify(news).search(org.mockito.ArgumentMatchers.eq(query), anyInt());
+    }
+
+    @Test
+    void longNewsTopicStillMatchesWordExtensions() throws Exception {
+        String query = "crypto news";
+        AgentProperties properties = properties();
+        properties.getWeb().setSearxngUrl("http://searxng.local");
+        GoogleNewsRssSearchProvider news = mock(GoogleNewsRssSearchProvider.class);
+        when(news.search(org.mockito.ArgumentMatchers.eq(query), anyInt())).thenReturn(List.of(
+            Map.of("title", "Cryptocurrency research", "url", "https://news.example/crypto", "description", "New tokens")));
+        when(urlSafety.isUrlAllowed(anyString())).thenReturn(true);
+        WebSearchTool tool = configuredSearxngTool(properties, news, query);
+
+        ToolResult result = tool.execute(objectMapper.writeValueAsString(Map.of("query", query, "limit", 2)), null, null);
+
+        assertThat(result.success()).isTrue();
+        assertThat(objectMapper.readTree(result.content()).path("data").path("web")).hasSize(1);
+    }
+
+    @Test
+    void technologySemanticAiDoesNotMatchInsideOtherWords() throws Exception {
+        String query = "новости технологий";
+        AgentProperties properties = properties();
+        properties.getWeb().setSearxngUrl("http://searxng.local");
+        GoogleNewsRssSearchProvider news = mock(GoogleNewsRssSearchProvider.class);
+        when(news.search(query, 20)).thenReturn(List.of(
+            Map.of("title", "AI chips", "url", "https://news.example/ai", "description", "Machine learning"),
+            Map.of("title", "Rail services", "url", "https://news.example/rail", "description", "City transport")));
+        when(urlSafety.isUrlAllowed(anyString())).thenReturn(true);
+        WebSearchTool tool = configuredSearxngTool(properties, news, query);
+
+        ToolResult result = tool.execute(objectMapper.writeValueAsString(Map.of("query", query, "limit", 2)), null, null);
+
+        assertThat(result.success()).isTrue();
+        assertThat(objectMapper.readTree(result.content()).path("data").path("web")).hasSize(1);
+        assertThat(objectMapper.readTree(result.content()).path("data").path("web").get(0).path("title").asText())
+            .isEqualTo("AI chips");
     }
 
     private WebSearchTool configuredSearxngTool(AgentProperties properties, GoogleNewsRssSearchProvider news,

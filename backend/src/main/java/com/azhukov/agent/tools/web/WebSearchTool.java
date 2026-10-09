@@ -43,11 +43,17 @@ public class WebSearchTool implements ToolHandler {
     private static final int MAX_LIMIT = 100;
     private static final Set<String> NEWS_STOP_TERMS = Set.of(
         "latest", "news", "headline", "headlines", "последние", "последний", "новости", "новость", "новост",
-        "дайджест", "сегодня", "свежие", "свежий", "октябрь", "октября", "октябре", "today", "recent",
-        "recently", "october"
+        "дайджест", "сегодня", "свежие", "свежий", "today", "recent", "recently", "last",
+        "the", "and", "for", "from", "with", "about", "in", "on", "of", "to",
+        "по", "об", "про", "из", "за", "на", "для", "новые", "новый", "новая", "самые", "самый",
+        "january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december",
+        "январь", "января", "январе", "февраль", "февраля", "феврале", "март", "марта", "марте",
+        "апрель", "апреля", "апреле", "май", "мая", "мае", "июнь", "июня", "июне",
+        "июль", "июля", "июле", "август", "августа", "августе", "сентябрь", "сентября", "сентябре",
+        "октябрь", "октября", "октябре", "ноябрь", "ноября", "ноябре", "декабрь", "декабря", "декабре"
     );
     private static final Pattern TECHNOLOGY_RESULT = Pattern.compile(
-        "технолог(?:ии|ий|ия|ию|иями|иях)?|(?<!\\p{L})ит(?!\\p{L})|телеком|data|ai|цифров|беспилот|электробатар|программ"
+        "технолог(?:ии|ий|ия|ию|иями|иях)?|(?<!\\p{L})ит(?!\\p{L})|телеком|data|(?<![\\p{L}\\p{N}])ai(?![\\p{L}\\p{N}])|цифров|беспилот|электробатар|программ"
     );
 
     private final AgentProperties agentProperties;
@@ -201,7 +207,8 @@ public class WebSearchTool implements ToolHandler {
     private List<String> queryTopicTerms(String query) {
         List<String> terms = new ArrayList<>();
         for (String token : query.toLowerCase(Locale.ROOT).split("[^\\p{L}\\p{N}]+")) {
-            if (token.length() >= 4 && !NEWS_STOP_TERMS.contains(token) && !token.startsWith("новост")) {
+            if (token.length() >= 2 && token.codePoints().anyMatch(Character::isLetter)
+                && !NEWS_STOP_TERMS.contains(token) && !token.startsWith("новост")) {
                 terms.add(token.startsWith("технолог") ? "технолог" : token);
             }
         }
@@ -216,7 +223,12 @@ public class WebSearchTool implements ToolHandler {
 
     private boolean matchesTopicTerm(String text, String term) {
         if (!"технолог".equals(term)) {
-            return text.contains(term);
+            for (String token : text.split("[^\\p{L}\\p{N}]+")) {
+                if (term.length() >= 4 ? token.startsWith(term) : token.equals(term)) {
+                    return true;
+                }
+            }
+            return false;
         }
         // The ticker name "Т-Технологии" is not a technology-news topic.
         return !text.contains("т-технологии") && TECHNOLOGY_RESULT.matcher(text).find();
