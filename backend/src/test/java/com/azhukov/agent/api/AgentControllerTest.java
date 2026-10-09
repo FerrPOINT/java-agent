@@ -60,6 +60,7 @@ class AgentControllerTest {
     @Mock private AgentProperties.ModelProperties modelProperties;
     @Mock private AgentProperties.CoreProperties coreProperties;
     @Mock private AgentProperties.BudgetProperties budgetProperties;
+    @Mock private AgentProperties.WebProperties webProperties;
     private final DomainDtoMapper domainDtoMapper = Mappers.getMapper(DomainDtoMapper.class);
     @Mock private com.azhukov.agent.core.skill.CuratorService curatorService;
     @Mock private com.azhukov.agent.service.CliRuntimeSettingsService cliRuntimeSettingsService;
@@ -550,6 +551,9 @@ class AgentControllerTest {
         when(coreProperties.getDefaultSystemPrompt()).thenReturn("Be concise.");
         when(coreProperties.getReasoningConfig()).thenReturn("medium");
         when(budgetProperties.getMaxModelCallsPerTurn()).thenReturn(100);
+        when(agentProperties.getWeb()).thenReturn(webProperties);
+        when(webProperties.getSearxngUrl()).thenReturn("");
+        when(webProperties.getSearchResults()).thenReturn(5);
 
         mockMvc.perform(get("/api/v1/agent/config"))
             .andExpect(status().isOk())

@@ -21,5 +21,6 @@ public record AgentConfigDto(
     int backgroundReviewDelayMs,
     int backgroundReviewMaxTurns,
     int backgroundReviewMaxInputTokens,
-    Map<String, Boolean> features
+    Map<String, Boolean> features,
+    Map<String, Object> webSearch
 ) {}

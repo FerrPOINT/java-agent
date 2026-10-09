@@ -29,21 +29,23 @@ import java.util.Map;
 public class SearXngSearchProvider {
 
     private final String baseUrl;
+    private final UrlSafety resultUrlSafety;
     private final HttpClient httpClient;
-
-    public SearXngSearchProvider(String baseUrl, UrlSafety urlSafety) {
-        this(baseUrl, urlSafety, HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(15))
-            .followRedirects(HttpClient.Redirect.NEVER)
-            .build());
-    }
 
     SearXngSearchProvider(String baseUrl, UrlSafety urlSafety, HttpClient httpClient) {
         // Intentionally do not apply generic UrlSafety to the configured
         // backend URL: Hermes treats local SearXNG as an operator-trusted
         // service, and localhost is the documented default setup.
         this.baseUrl = baseUrl == null ? "" : baseUrl.replaceAll("/+$", "");
+        this.resultUrlSafety = urlSafety;
         this.httpClient = httpClient;
+    }
+
+    public SearXngSearchProvider(String baseUrl, UrlSafety urlSafety) {
+        this(baseUrl, urlSafety, HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(15))
+            .followRedirects(HttpClient.Redirect.NEVER)
+            .build());
     }
 
     public boolean isAvailable() {
@@ -106,9 +108,13 @@ public class SearXngSearchProvider {
         int count = 0;
         for (JsonNode r : sorted) {
             if (count >= limit) break;
+            String url = r.path("url").asText("");
+            if (url.isBlank() || !resultUrlSafety.isUrlAllowed(url)) {
+                continue;
+            }
             Map<String, String> item = new LinkedHashMap<>();
             item.put("title", r.path("title").asText(""));
-            item.put("url", r.path("url").asText(""));
+            item.put("url", url);
             item.put("description", r.path("content").asText(""));
             out.add(item);
             count++;

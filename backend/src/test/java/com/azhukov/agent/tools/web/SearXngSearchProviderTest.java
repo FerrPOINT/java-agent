@@ -17,7 +17,6 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -34,6 +33,7 @@ class SearXngSearchProviderTest {
 
     @Test
     void searchAllowsConfiguredLocalSearxngEvenWhenUrlSafetyWouldBlockIt() throws Exception {
+        when(urlSafety.isUrlAllowed(any())).thenReturn(true);
         when(response.statusCode()).thenReturn(200);
         when(response.body()).thenReturn("""
             {"results":[
@@ -61,6 +61,28 @@ class SearXngSearchProviderTest {
         verify(httpClient).send(request.capture(), ArgumentMatchers.<HttpResponse.BodyHandler<String>>any());
         assertThat(request.getValue().uri().toString())
             .isEqualTo("http://localhost:8080/search?q=test+query&format=json&pageno=1");
-        verifyNoInteractions(urlSafety);
+        verify(urlSafety).isUrlAllowed("https://high.example");
+    }
+
+    @Test
+    void searchDropsUnsafeResultUrlsWithoutBlockingTrustedSearxngTransport() throws Exception {
+        when(urlSafety.isUrlAllowed("https://safe.example")).thenReturn(true);
+        when(urlSafety.isUrlAllowed("http://127.0.0.1/admin")).thenReturn(false);
+        when(response.statusCode()).thenReturn(200);
+        when(response.body()).thenReturn("""
+            {"results":[
+              {"title":"Private","url":"http://127.0.0.1/admin","content":"private","score":1.0},
+              {"title":"Safe","url":"https://safe.example","content":"safe","score":0.5}
+            ]}
+            """);
+        when(httpClient.send(any(HttpRequest.class), ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()))
+            .thenReturn(response);
+
+        SearXngSearchProvider provider = new SearXngSearchProvider("http://localhost:8080", urlSafety, httpClient);
+
+        assertThat(provider.search("test", 2)).containsExactly(Map.of(
+            "title", "Safe", "url", "https://safe.example", "description", "safe"));
+        verify(urlSafety).isUrlAllowed("http://127.0.0.1/admin");
+        verify(urlSafety).isUrlAllowed("https://safe.example");
     }
 }

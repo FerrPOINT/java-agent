@@ -91,8 +91,21 @@ public class RuntimeSettingsController {
                 "transcription", transcriptionService != null && transcriptionService.isAvailable(),
                 "browser", properties.getBrowser() != null,
                 "cron", properties.getCron() != null && properties.getCron().isEnabled()
-            )
+            ),
+            webSearchConfig()
         );
+    }
+
+    private Map<String, Object> webSearchConfig() {
+        String searxngUrl = properties.getWeb().getSearxngUrl();
+        boolean searxngConfigured = searxngUrl != null && !searxngUrl.isBlank();
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("provider", searxngConfigured ? "searxng" : "ddg");
+        result.put("searxngConfigured", searxngConfigured);
+        result.put("newsFallback", "google-news-rss");
+        result.put("newsFallbackScope", "explicit-news-queries-only");
+        result.put("resultLimit", properties.getWeb().getSearchResults());
+        return result;
     }
 
     // ── CLI runtime settings endpoints ──

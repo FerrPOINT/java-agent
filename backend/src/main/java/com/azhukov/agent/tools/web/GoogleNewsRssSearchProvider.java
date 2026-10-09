@@ -29,15 +29,15 @@ public class GoogleNewsRssSearchProvider {
 
     private final HttpClient httpClient;
 
+    GoogleNewsRssSearchProvider(HttpClient httpClient) {
+        this.httpClient = httpClient;
+    }
+
     public GoogleNewsRssSearchProvider() {
         this(HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(15))
             .followRedirects(HttpClient.Redirect.NORMAL)
             .build());
-    }
-
-    GoogleNewsRssSearchProvider(HttpClient httpClient) {
-        this.httpClient = httpClient;
     }
 
     public List<Map<String, String>> search(String query, int limit) throws IOException {
