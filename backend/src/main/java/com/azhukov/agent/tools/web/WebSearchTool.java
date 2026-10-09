@@ -26,6 +26,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Autowired;
 
@@ -44,6 +45,9 @@ public class WebSearchTool implements ToolHandler {
         "latest", "news", "headline", "headlines", "последние", "последний", "новости", "новость", "новост",
         "дайджест", "сегодня", "свежие", "свежий", "октябрь", "октября", "октябре", "today", "recent",
         "recently", "october"
+    );
+    private static final Pattern TECHNOLOGY_RESULT = Pattern.compile(
+        "технолог(?:ии|ий|ия|ию|иями|иях)?|(?<!\\p{L})ит(?!\\p{L})|телеком|data|ai|цифров|беспилот|электробатар|программ"
     );
 
     private final AgentProperties agentProperties;
@@ -182,7 +186,8 @@ public class WebSearchTool implements ToolHandler {
     }
 
     private List<Map<String, String>> searchNewsFallback(String query, int limit) throws IOException {
-        return filterQueryRelevance(query, sanitizeResults(googleNewsRssSearchProvider.search(query, limit)));
+        return filterQueryRelevance(query, sanitizeResults(
+            googleNewsRssSearchProvider.search(query, expandedProviderLimit(query, limit))));
     }
 
     private List<Map<String, String>> filterQueryRelevance(String query, List<Map<String, String>> results) {
@@ -206,7 +211,15 @@ public class WebSearchTool implements ToolHandler {
     private boolean containsAnyTopicTerm(Map<String, String> result, List<String> topicTerms) {
         String text = (result.getOrDefault("title", "") + " "
             + result.getOrDefault("description", "")).toLowerCase(Locale.ROOT);
-        return topicTerms.stream().anyMatch(text::contains);
+        return topicTerms.stream().anyMatch(term -> matchesTopicTerm(text, term));
+    }
+
+    private boolean matchesTopicTerm(String text, String term) {
+        if (!"технолог".equals(term)) {
+            return text.contains(term);
+        }
+        // The ticker name "Т-Технологии" is not a technology-news topic.
+        return !text.contains("т-технологии") && TECHNOLOGY_RESULT.matcher(text).find();
     }
 
     private static boolean isNewsTerm(String token) {
