@@ -40,8 +40,10 @@ public class WebSearchTool implements ToolHandler {
     private static final String DUCKDUCKGO_HTML = "https://html.duckduckgo.com/html/";
     private static final int DEFAULT_LIMIT = 5;
     private static final int MAX_LIMIT = 100;
-    private static final Set<String> NEWS_TERMS = Set.of(
-        "news", "headline", "headlines", "новости", "новость", "новост", "дайджест"
+    private static final Set<String> NEWS_STOP_TERMS = Set.of(
+        "latest", "news", "headline", "headlines", "последние", "последний", "новости", "новость", "новост",
+        "дайджест", "сегодня", "свежие", "свежий", "октябрь", "октября", "октябре", "today", "recent",
+        "recently", "october"
     );
 
     private final AgentProperties agentProperties;
@@ -149,15 +151,18 @@ public class WebSearchTool implements ToolHandler {
     private List<Map<String, String>> searchConfiguredSearxng(String query, int limit) throws IOException {
         try {
             List<Map<String, String>> results = sanitizeResults(searXngProvider.search(query, limit));
+            if (isNewsQuery(query)) {
+                results = filterQueryRelevance(query, results);
+            }
             return results.isEmpty() && isNewsQuery(query)
-                ? sanitizeResults(googleNewsRssSearchProvider.search(query, limit))
+                ? searchNewsFallback(query, limit)
                 : results;
         } catch (IOException searxngFailure) {
             if (!isNewsQuery(query)) {
                 throw searxngFailure;
             }
             try {
-                return sanitizeResults(googleNewsRssSearchProvider.search(query, limit));
+                return searchNewsFallback(query, limit);
             } catch (IOException newsFailure) {
                 searxngFailure.addSuppressed(newsFailure);
                 throw searxngFailure;
@@ -165,9 +170,43 @@ public class WebSearchTool implements ToolHandler {
         }
     }
 
+    private List<Map<String, String>> searchNewsFallback(String query, int limit) throws IOException {
+        return filterQueryRelevance(query, sanitizeResults(googleNewsRssSearchProvider.search(query, limit)));
+    }
+
+    private List<Map<String, String>> filterQueryRelevance(String query, List<Map<String, String>> results) {
+        List<String> topicTerms = queryTopicTerms(query);
+        if (topicTerms.isEmpty()) {
+            return results;
+        }
+        return results.stream().filter(result -> containsAnyTopicTerm(result, topicTerms)).toList();
+    }
+
+    private List<String> queryTopicTerms(String query) {
+        List<String> terms = new ArrayList<>();
+        for (String token : query.toLowerCase(Locale.ROOT).split("[^\\p{L}\\p{N}]+")) {
+            if (token.length() >= 4 && !NEWS_STOP_TERMS.contains(token) && !token.startsWith("новост")) {
+                terms.add(token.startsWith("технолог") ? "технолог" : token);
+            }
+        }
+        return terms;
+    }
+
+    private boolean containsAnyTopicTerm(Map<String, String> result, List<String> topicTerms) {
+        String text = (result.getOrDefault("title", "") + " "
+            + result.getOrDefault("description", "")).toLowerCase(Locale.ROOT);
+        return topicTerms.stream().anyMatch(text::contains);
+    }
+
+    private static boolean isNewsTerm(String token) {
+        return token.equals("news") || token.equals("headline") || token.equals("headlines")
+            || token.equals("новости") || token.equals("новость") || token.equals("дайджест")
+            || token.startsWith("новост");
+    }
+
     private static boolean isNewsQuery(String query) {
         for (String token : query.toLowerCase(Locale.ROOT).split("[^\\p{L}\\p{N}]+")) {
-            if (NEWS_TERMS.contains(token) || token.startsWith("новост")) {
+            if (isNewsTerm(token)) {
                 return true;
             }
         }

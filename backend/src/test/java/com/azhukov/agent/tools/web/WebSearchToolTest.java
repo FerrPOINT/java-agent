@@ -229,7 +229,7 @@ class WebSearchToolTest {
         properties.getWeb().setSearxngUrl("http://searxng.local");
         GoogleNewsRssSearchProvider news = mock(GoogleNewsRssSearchProvider.class);
         when(news.search("latest technology news", 2)).thenReturn(List.of(Map.of(
-            "title", "News", "url", "https://news.example", "description", "Latest news")));
+            "title", "Technology news", "url", "https://news.example", "description", "Latest technology news")));
 
         when(urlSafety.isUrlAllowed(anyString())).thenReturn(true);
         WebSearchTool tool = configuredSearxngTool(properties, news, "latest technology news");
@@ -238,7 +238,7 @@ class WebSearchToolTest {
 
         assertThat(result.success()).isTrue();
         assertThat(objectMapper.readTree(result.content()).path("data").path("web").get(0).path("title").asText())
-            .isEqualTo("News");
+            .isEqualTo("Technology news");
         verify(news).search("latest technology news", 2);
     }
 
@@ -248,7 +248,7 @@ class WebSearchToolTest {
         properties.getWeb().setSearxngUrl("http://searxng.local");
         GoogleNewsRssSearchProvider news = mock(GoogleNewsRssSearchProvider.class);
         when(news.search("technology news", 2)).thenReturn(List.of(Map.of(
-            "title", "News", "url", "https://news.example", "description", "Latest news")));
+            "title", "Technology news", "url", "https://news.example", "description", "Latest technology news")));
 
         when(urlSafety.isUrlAllowed(anyString())).thenReturn(true);
         WebSearchTool tool = configuredSearxngTool(properties, news, "technology news");
@@ -288,8 +288,9 @@ class WebSearchToolTest {
         AgentProperties properties = properties();
         properties.getWeb().setSearxngUrl("http://searxng.local");
         GoogleNewsRssSearchProvider news = mock(GoogleNewsRssSearchProvider.class);
-        when(news.search("последние новости технологий октябрь", 2)).thenReturn(List.of(Map.of(
-            "title", "Новости", "url", "https://news.example/ru", "description", "Дайджест")));
+        when(news.search("последние новости технологий октябрь", 2)).thenReturn(List.of(
+            Map.of("title", "Технологии: дайджест", "url", "https://news.example/ru", "description", "Новые технологии"),
+            Map.of("title", "Городские новости", "url", "https://news.example/city", "description", "События города")));
 
         when(urlSafety.isUrlAllowed(anyString())).thenReturn(true);
         WebSearchTool tool = configuredSearxngTool(properties, news, "последние новости технологий октябрь");
@@ -299,6 +300,8 @@ class WebSearchToolTest {
 
         assertThat(result.success()).isTrue();
         assertThat(objectMapper.readTree(result.content()).path("data").path("web")).hasSize(1);
+        assertThat(objectMapper.readTree(result.content()).path("data").path("web").get(0).path("title").asText())
+            .contains("Технологии");
         verify(news).search("последние новости технологий октябрь", 2);
     }
 
@@ -308,7 +311,7 @@ class WebSearchToolTest {
         properties.getWeb().setSearxngUrl("http://searxng.local");
         GoogleNewsRssSearchProvider news = mock(GoogleNewsRssSearchProvider.class);
         when(news.search("новостями технологий", 2)).thenReturn(List.of(Map.of(
-            "title", "Новости", "url", "https://news.example/ru", "description", "Дайджест")));
+            "title", "Новости технологий", "url", "https://news.example/ru", "description", "Дайджест технологий")));
 
         when(urlSafety.isUrlAllowed(anyString())).thenReturn(true);
         WebSearchTool tool = configuredSearxngTool(properties, news, "новостями технологий");
