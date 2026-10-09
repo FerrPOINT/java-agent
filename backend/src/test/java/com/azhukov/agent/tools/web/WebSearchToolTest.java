@@ -231,6 +231,7 @@ class WebSearchToolTest {
         when(news.search("latest technology news", 2)).thenReturn(List.of(Map.of(
             "title", "News", "url", "https://news.example", "description", "Latest news")));
 
+        when(urlSafety.isUrlAllowed(anyString())).thenReturn(true);
         WebSearchTool tool = configuredSearxngTool(properties, news, "latest technology news");
 
         ToolResult result = tool.execute("{\"query\":\"latest technology news\",\"limit\":2}", null, null);
@@ -242,6 +243,47 @@ class WebSearchToolTest {
     }
 
     @Test
+    void failedSearxngNewsQueryFallsBackToGoogleNewsRss() throws Exception {
+        AgentProperties properties = properties();
+        properties.getWeb().setSearxngUrl("http://searxng.local");
+        GoogleNewsRssSearchProvider news = mock(GoogleNewsRssSearchProvider.class);
+        when(news.search("technology news", 2)).thenReturn(List.of(Map.of(
+            "title", "News", "url", "https://news.example", "description", "Latest news")));
+
+        when(urlSafety.isUrlAllowed(anyString())).thenReturn(true);
+        WebSearchTool tool = configuredSearxngTool(properties, news, "technology news");
+        SearXngSearchProvider searxng = (SearXngSearchProvider) org.springframework.test.util.ReflectionTestUtils
+            .getField(tool, "searXngProvider");
+        when(searxng.search("technology news", 2)).thenThrow(new IOException("connection refused"));
+
+        ToolResult result = tool.execute("{\"query\":\"technology news\",\"limit\":2}", null, null);
+
+        assertThat(result.success()).isTrue();
+        assertThat(objectMapper.readTree(result.content()).path("data").path("web")).hasSize(1);
+        verify(news).search("technology news", 2);
+    }
+
+    @Test
+    void failedSearxngNonNewsQueryReportsPrimaryFailureWithoutNewsFallback() throws Exception {
+        AgentProperties properties = properties();
+        properties.getWeb().setSearxngUrl("http://searxng.local");
+        GoogleNewsRssSearchProvider news = mock(GoogleNewsRssSearchProvider.class);
+
+        WebSearchTool tool = configuredSearxngTool(properties, news, "Spring Boot reference documentation");
+        SearXngSearchProvider searxng = (SearXngSearchProvider) org.springframework.test.util.ReflectionTestUtils
+            .getField(tool, "searXngProvider");
+        when(searxng.search("Spring Boot reference documentation", 2))
+            .thenThrow(new IOException("connection refused"));
+
+        ToolResult result = tool.execute(
+            "{\"query\":\"Spring Boot reference documentation\",\"limit\":2}", null, null);
+
+        assertThat(result.success()).isFalse();
+        assertThat(errorPayload(result).get("error").toString()).contains("connection refused");
+        verify(news, org.mockito.Mockito.never()).search(anyString(), anyInt());
+    }
+
+    @Test
     void emptySearxngRussianNewsQueryFallsBackToGoogleNewsRss() throws Exception {
         AgentProperties properties = properties();
         properties.getWeb().setSearxngUrl("http://searxng.local");
@@ -249,6 +291,7 @@ class WebSearchToolTest {
         when(news.search("последние новости технологий октябрь", 2)).thenReturn(List.of(Map.of(
             "title", "Новости", "url", "https://news.example/ru", "description", "Дайджест")));
 
+        when(urlSafety.isUrlAllowed(anyString())).thenReturn(true);
         WebSearchTool tool = configuredSearxngTool(properties, news, "последние новости технологий октябрь");
 
         ToolResult result = tool.execute(
@@ -257,6 +300,24 @@ class WebSearchToolTest {
         assertThat(result.success()).isTrue();
         assertThat(objectMapper.readTree(result.content()).path("data").path("web")).hasSize(1);
         verify(news).search("последние новости технологий октябрь", 2);
+    }
+
+    @Test
+    void emptySearxngRussianNewsInflectionFallsBackToGoogleNewsRss() throws Exception {
+        AgentProperties properties = properties();
+        properties.getWeb().setSearxngUrl("http://searxng.local");
+        GoogleNewsRssSearchProvider news = mock(GoogleNewsRssSearchProvider.class);
+        when(news.search("новостями технологий", 2)).thenReturn(List.of(Map.of(
+            "title", "Новости", "url", "https://news.example/ru", "description", "Дайджест")));
+
+        when(urlSafety.isUrlAllowed(anyString())).thenReturn(true);
+        WebSearchTool tool = configuredSearxngTool(properties, news, "новостями технологий");
+
+        ToolResult result = tool.execute("{\"query\":\"новостями технологий\",\"limit\":2}", null, null);
+
+        assertThat(result.success()).isTrue();
+        assertThat(objectMapper.readTree(result.content()).path("data").path("web")).hasSize(1);
+        verify(news).search("новостями технологий", 2);
     }
 
     @Test

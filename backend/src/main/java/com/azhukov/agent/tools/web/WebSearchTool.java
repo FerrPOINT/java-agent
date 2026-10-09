@@ -41,7 +41,7 @@ public class WebSearchTool implements ToolHandler {
     private static final int DEFAULT_LIMIT = 5;
     private static final int MAX_LIMIT = 100;
     private static final Set<String> NEWS_TERMS = Set.of(
-        "news", "headlines", "новости", "новость", "дайджест"
+        "news", "headline", "headlines", "новости", "новость", "новост", "дайджест"
     );
 
     private final AgentProperties agentProperties;
@@ -49,28 +49,37 @@ public class WebSearchTool implements ToolHandler {
     private final ObjectMapper objectMapper;
     private final UrlSafety urlSafety;
     private final Redactor redactor;
+    private final WebsitePolicy websitePolicy;
     private final GoogleNewsRssSearchProvider googleNewsRssSearchProvider;
     private SearXngSearchProvider searXngProvider;
 
     @Autowired
     public WebSearchTool(AgentProperties agentProperties, ObjectMapper objectMapper, UrlSafety urlSafety,
-                         Redactor redactor, GoogleNewsRssSearchProvider googleNewsRssSearchProvider) {
+                         Redactor redactor, WebsitePolicy websitePolicy,
+                         GoogleNewsRssSearchProvider googleNewsRssSearchProvider) {
         this.agentProperties = agentProperties;
         this.objectMapper = objectMapper;
         this.urlSafety = urlSafety;
         this.redactor = redactor;
+        this.websitePolicy = websitePolicy;
         this.googleNewsRssSearchProvider = googleNewsRssSearchProvider;
     }
 
     WebSearchTool(AgentProperties agentProperties, ObjectMapper objectMapper, UrlSafety urlSafety,
+                  Redactor redactor, GoogleNewsRssSearchProvider googleNewsRssSearchProvider) {
+        this(agentProperties, objectMapper, urlSafety, redactor, new WebsitePolicy(agentProperties),
+            googleNewsRssSearchProvider);
+    }
+
+    WebSearchTool(AgentProperties agentProperties, ObjectMapper objectMapper, UrlSafety urlSafety,
                   Redactor redactor) {
-        this(agentProperties, objectMapper, urlSafety, redactor, new GoogleNewsRssSearchProvider());
+        this(agentProperties, objectMapper, urlSafety, redactor, new WebsitePolicy(agentProperties),
+            new GoogleNewsRssSearchProvider());
     }
 
     @PostConstruct
     void init() {
         configuredLimit = agentProperties.getWeb().getSearchResults();
-        // Feature 1: SearXNG provider — if searxng-url is set, use it; fall back to DuckDuckGo
         String searxngUrl = agentProperties.getWeb().getSearxngUrl();
         if (searxngUrl != null && !searxngUrl.isBlank()) {
             searXngProvider = new SearXngSearchProvider(searxngUrl, urlSafety);
@@ -97,12 +106,9 @@ public class WebSearchTool implements ToolHandler {
             // terminated the handshake"). Retry transient IOExceptions with backoff
             // before surfacing the failure to the model.
             if (searXngProvider != null && searXngProvider.isAvailable()) {
-                results = searXngProvider.search(query, limit);
-                if (results.isEmpty() && isNewsQuery(query)) {
-                    results = googleNewsRssSearchProvider.search(query, limit);
-                }
+                results = searchConfiguredSearxng(query, limit);
             } else {
-                results = searchDuckDuckGoWithRetry(query, limit);
+                results = sanitizeResults(searchDuckDuckGoWithRetry(query, limit));
             }
 
             // Hermes parity: return {"data":{"web":[{title,url,description,position}]}}
@@ -128,9 +134,40 @@ public class WebSearchTool implements ToolHandler {
         }
     }
 
+    private List<Map<String, String>> sanitizeResults(List<Map<String, String>> results) {
+        List<Map<String, String>> safeResults = new ArrayList<>();
+        for (Map<String, String> result : results) {
+            String url = result.getOrDefault("url", "");
+            if (!urlSafety.isUrlAllowed(url) || websitePolicy.checkAccess(url) != null) {
+                continue;
+            }
+            safeResults.add(result);
+        }
+        return safeResults;
+    }
+
+    private List<Map<String, String>> searchConfiguredSearxng(String query, int limit) throws IOException {
+        try {
+            List<Map<String, String>> results = sanitizeResults(searXngProvider.search(query, limit));
+            return results.isEmpty() && isNewsQuery(query)
+                ? sanitizeResults(googleNewsRssSearchProvider.search(query, limit))
+                : results;
+        } catch (IOException searxngFailure) {
+            if (!isNewsQuery(query)) {
+                throw searxngFailure;
+            }
+            try {
+                return sanitizeResults(googleNewsRssSearchProvider.search(query, limit));
+            } catch (IOException newsFailure) {
+                searxngFailure.addSuppressed(newsFailure);
+                throw searxngFailure;
+            }
+        }
+    }
+
     private static boolean isNewsQuery(String query) {
         for (String token : query.toLowerCase(Locale.ROOT).split("[^\\p{L}\\p{N}]+")) {
-            if (NEWS_TERMS.contains(token)) {
+            if (NEWS_TERMS.contains(token) || token.startsWith("новост")) {
                 return true;
             }
         }

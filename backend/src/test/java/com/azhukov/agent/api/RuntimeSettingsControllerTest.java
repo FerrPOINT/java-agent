@@ -130,10 +130,26 @@ class RuntimeSettingsControllerTest {
             .andExpect(jsonPath("$.features.tts").value(true))
             .andExpect(jsonPath("$.features.transcription").value(true))
             .andExpect(jsonPath("$.features.browser").value(true))
-            .andExpect(jsonPath("$.features.cron").value(false)); // cron disabled by default
+            .andExpect(jsonPath("$.features.cron").value(false)) // cron disabled by default
+            .andExpect(jsonPath("$.webSearch.provider").value("ddg"))
+            .andExpect(jsonPath("$.webSearch.searxngConfigured").value(false))
+            .andExpect(jsonPath("$.webSearch.newsFallback").value("google-news-rss"))
+            .andExpect(jsonPath("$.webSearch.newsFallbackScope").value("explicit-news-queries-only"))
+            .andExpect(jsonPath("$.webSearch.resultLimit").value(properties.getWeb().getSearchResults()));
     }
 
-    // ── Reasoning levels ──
+    @Test
+    void configReportsConfiguredSearxngWithoutLeakingItsUrl() throws Exception {
+        properties.getWeb().setSearxngUrl("http://127.0.0.1:8889");
+
+        mockMvc.perform(get("/api/v1/agent/config"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.webSearch.provider").value("searxng"))
+            .andExpect(jsonPath("$.webSearch.searxngConfigured").value(true))
+            .andExpect(content().string(org.hamcrest.Matchers.not(
+                org.hamcrest.Matchers.containsString("http://127.0.0.1:8889"))));
+    }
+
 
     @Test
     void reasoningLevelsReturnsSortedLevels() throws Exception {
