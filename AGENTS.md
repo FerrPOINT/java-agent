@@ -98,7 +98,7 @@ SSE streaming для real-time token output. JLine autocomplete.
 | Gradle | workspace 9.6.1; standalone backend 9.8.0 (Groovy DSL) |
 | Lombok | 1.18.38 |
 | MapStruct | 1.6.3 |
-| LangChain4j | 1.20.2 |
+| LangChain4j | 1.21.0 |
 | MCP Java SDK | 2.0.0 |
 | Repomix | 1.18.0 (MCP server, npm) |
 | PostgreSQL | 16 |
