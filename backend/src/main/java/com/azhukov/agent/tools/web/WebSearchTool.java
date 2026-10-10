@@ -41,6 +41,7 @@ public class WebSearchTool implements ToolHandler {
     private static final String DUCKDUCKGO_HTML = "https://html.duckduckgo.com/html/";
     private static final int DEFAULT_LIMIT = 5;
     private static final int MAX_LIMIT = 100;
+    private static final Set<String> SHORT_NEWS_TOPIC_TERMS = Set.of("ai");
     private static final Set<String> NEWS_STOP_TERMS = Set.of(
         "latest", "news", "headline", "headlines", "последние", "последний", "новости", "новость", "новост",
         "дайджест", "сегодня", "свежие", "свежий", "today", "recent", "recently", "last",
@@ -207,7 +208,8 @@ public class WebSearchTool implements ToolHandler {
     private List<String> queryTopicTerms(String query) {
         List<String> terms = new ArrayList<>();
         for (String token : query.toLowerCase(Locale.ROOT).split("[^\\p{L}\\p{N}]+")) {
-            if (token.length() >= 2 && token.codePoints().anyMatch(Character::isLetter)
+            if ((token.length() >= 4 || SHORT_NEWS_TOPIC_TERMS.contains(token))
+                && token.codePoints().anyMatch(Character::isLetter)
                 && !NEWS_STOP_TERMS.contains(token) && !token.startsWith("новост")) {
                 terms.add(token.startsWith("технолог") ? "технолог" : token);
             }
