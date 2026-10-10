@@ -78,7 +78,7 @@
 |---|---|
 | Backend | Java 25, Spring Boot 4.1, Spring Framework 7, Spring Security, WebSocket, Actuator |
 | Persistence | PostgreSQL 16, JPA/Hibernate, Flyway 12, Testcontainers |
-| LLM/MCP | LangChain4j 1.20.2, OpenAI-compatible clients, MCP Java SDK 2.0, Repomix |
+| LLM/MCP | LangChain4j 1.21.0, OpenAI-compatible clients, MCP Java SDK 2.0, Repomix |
 | CLI | Spring Boot, Picocli, JLine, ANSI Markdown renderer |
 | Bot | Telegram Bot API client, polling/webhook, streaming/edit-message delivery |
 | Codegen/helpers | Lombok, MapStruct, Jackson 3, Pebble templates, Resilience4j |
