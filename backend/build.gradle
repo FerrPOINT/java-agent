@@ -178,7 +178,8 @@ tasks.register('e2eTest', Test) {
 }
 
 tasks.named('jacocoTestReport') {
-    dependsOn test
+    dependsOn test, slowTest
+    executionData(test, slowTest)
     reports {
         xml.required = true
         html.required = true
