@@ -1,5 +1,6 @@
 package com.azhukov.agent.config;
 
+import com.azhukov.agent.support.BackendIntegrationTestBase;
 import com.azhukov.agent.client.NoOpModelClient;
 import com.azhukov.agent.core.agent.AgentRuntime;
 import com.azhukov.agent.core.client.ModelClient;
@@ -9,7 +10,6 @@ import com.azhukov.agent.gateway.telegram.TelegramLongPollingService;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.ApplicationContext;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ActiveProfiles;
@@ -20,9 +20,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 @Tag("slow")
 class AgentConfigProfilesTest {
 
-    @SpringBootTest
     @ActiveProfiles("test")
-    static class TestProfileTest {
+    static class TestProfileTest extends BackendIntegrationTestBase {
 
         @Autowired
         private ApplicationContext context;
@@ -41,7 +40,6 @@ class AgentConfigProfilesTest {
         }
     }
 
-    @SpringBootTest
     @ActiveProfiles({"noop"})
     @TestPropertySource(properties = {
         "agent.model.provider=noop",
@@ -49,7 +47,7 @@ class AgentConfigProfilesTest {
         "agent.skills.enabled=false"
     })
     @DirtiesContext
-    static class NoOpProfileTest {
+    static class NoOpProfileTest extends BackendIntegrationTestBase {
 
         @Autowired
         private ApplicationContext context;
@@ -61,7 +59,6 @@ class AgentConfigProfilesTest {
         }
     }
 
-    @SpringBootTest
     @ActiveProfiles("dev")
     @TestPropertySource(properties = {
         "agent.gateway.telegram.long-polling.enabled=false",
@@ -74,7 +71,7 @@ class AgentConfigProfilesTest {
         "agent.mcp.servers=",
         "spring.flyway.enabled=false"
     })
-    static class DevProfileLongPollingAbsentTest {
+    static class DevProfileLongPollingAbsentTest extends BackendIntegrationTestBase {
 
         @Autowired
         private ApplicationContext context;
@@ -86,7 +83,6 @@ class AgentConfigProfilesTest {
         }
     }
 
-    @SpringBootTest
     @ActiveProfiles("dev")
     @TestPropertySource(properties = {
         "agent.gateway.telegram.long-polling.enabled=true",
@@ -99,7 +95,7 @@ class AgentConfigProfilesTest {
         "agent.mcp.servers=",
         "spring.flyway.enabled=false"
     })
-    static class DevProfileLongPollingPresentTest {
+    static class DevProfileLongPollingPresentTest extends BackendIntegrationTestBase {
 
         @Autowired
         private ApplicationContext context;

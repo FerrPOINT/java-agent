@@ -1,16 +1,13 @@
 package com.azhukov.agent.api;
 
+import com.azhukov.agent.support.NoopSpringIntegrationTest;
 import com.azhukov.agent.core.model.ChatResponse;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.tool.ToolExecutionService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
-import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
@@ -24,16 +21,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * model again with the tool result (Hermes _run_agent parity), returning the
  * final textual answer — not the raw tool-call response.
  */
-@SpringBootTest
-@AutoConfigureMockMvc
-@ActiveProfiles("noop")
-@TestPropertySource(properties = {
-    "agent.model.provider=noop",
-    "agent.model.model-name=noop",
-    "agent.model.base-url=http://localhost:0",
-    "agent.security.api-key=",
-})
-class ChatCompletionsToolLoopTest {
+class ChatCompletionsToolLoopTest extends NoopSpringIntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;
@@ -59,6 +47,7 @@ class ChatCompletionsToolLoopTest {
             """;
         MvcResult result = mockMvc.perform(post("/v1/chat/completions")
                 .contentType(MediaType.APPLICATION_JSON)
+                .header("Authorization", "Bearer test-key-123")
                 .content(body))
             .andExpect(status().isOk())
             .andReturn();

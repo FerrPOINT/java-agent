@@ -7,9 +7,7 @@ import com.azhukov.agent.persistence.entity.ProfileRuntimeStateEntity;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.test.context.TestPropertySource;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
@@ -23,17 +21,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * append-only revision ordering, action ledger lifecycle.
  */
 @Tag("slow")
-@SpringBootTest
-@TestPropertySource(properties = {
-    "spring.datasource.driver-class-name=org.postgresql.Driver",
-    "spring.flyway.enabled=true",
-    "spring.flyway.baseline-on-migrate=true",
-    "spring.flyway.locations=classpath:db/migration",
-    "spring.jpa.hibernate.ddl-auto=none",
-    "agent.model.provider=noop",
-    "agent.memory.enabled=false",
-    "agent.skills.enabled=false",
-})
 class ProfileRuntimeRepositoryTest extends PostgresTestContainer {
 
     @Autowired

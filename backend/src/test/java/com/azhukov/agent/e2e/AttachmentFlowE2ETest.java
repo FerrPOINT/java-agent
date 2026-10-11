@@ -4,11 +4,8 @@ import com.azhukov.agent.persistence.PostgresTestContainer;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockMultipartFile;
-import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
@@ -32,18 +29,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * platform message id recorded (V64).
  */
 @Tag("slow")
-@SpringBootTest
-@AutoConfigureMockMvc
-@TestPropertySource(properties = {
-    "spring.datasource.driver-class-name=org.postgresql.Driver",
-    "spring.jpa.hibernate.ddl-auto=none",
-    "spring.flyway.enabled=true",
-    "spring.flyway.baseline-on-migrate=true",
-    "spring.flyway.locations=classpath:db/migration",
-    "agent.model.provider=noop",
-    "agent.memory.enabled=false",
-    "agent.skills.enabled=false"
-})
 class AttachmentFlowE2ETest extends PostgresTestContainer {
 
     @Autowired

@@ -5,8 +5,6 @@ import com.azhukov.agent.persistence.entity.McpOAuthEntity;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.TestPropertySource;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
@@ -20,17 +18,6 @@ import static org.assertj.core.api.Assertions.assertThat;
  * profile — unique (profile, server_name), scoped lookups only.
  */
 @Tag("slow")
-@SpringBootTest
-@TestPropertySource(properties = {
-    "spring.datasource.driver-class-name=org.postgresql.Driver",
-    "spring.flyway.enabled=true",
-    "spring.flyway.baseline-on-migrate=true",
-    "spring.flyway.locations=classpath:db/migration",
-    "spring.jpa.hibernate.ddl-auto=none",
-    "agent.model.provider=noop",
-    "agent.memory.enabled=false",
-    "agent.skills.enabled=false"
-})
 class McpOAuthProfileIsolationTest extends PostgresTestContainer {
 
     @Autowired

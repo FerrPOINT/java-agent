@@ -6,14 +6,11 @@ import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.repository.MessageRepository;
 import com.azhukov.agent.persistence.repository.SessionRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.azhukov.agent.persistence.PostgresTestContainer;
+import com.azhukov.agent.persistence.PostgresActiveServicesTestContainer;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
-import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.List;
@@ -30,18 +27,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * Verifies that sessions and messages survive across requests and that
  * session-management endpoints (reset, compress, undo, branch) behave correctly.
  */
-@SpringBootTest
 @Tag("slow")
-@AutoConfigureMockMvc
-@TestPropertySource(properties = {
-    "spring.datasource.driver-class-name=org.postgresql.Driver",
-    "spring.jpa.hibernate.ddl-auto=none",
-    "spring.flyway.enabled=true",
-    "spring.flyway.baseline-on-migrate=true",
-    "spring.flyway.locations=classpath:db/migration",
-    "agent.model.provider=noop"
-})
-class SessionPersistenceE2ETest extends PostgresTestContainer {
+class SessionPersistenceE2ETest extends PostgresActiveServicesTestContainer {
 
     @Autowired
     private MockMvc mockMvc;

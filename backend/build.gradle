@@ -135,7 +135,6 @@ tasks.named('test') {
         junitXml.required = true
         html.required = false
     }
-    finalizedBy jacocoTestReport
 }
 
 
@@ -162,7 +161,6 @@ tasks.register('liveTest', Test) {
     }
     jvmArgs '-XX:+EnableDynamicAgentLoading'
     maxHeapSize = '4g'
-    finalizedBy jacocoTestReport
 }
 
 tasks.register('e2eTest', Test) {

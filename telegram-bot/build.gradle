@@ -87,7 +87,6 @@ tasks.named('test') {
     }
     jvmArgs '-XX:+EnableDynamicAgentLoading'
     maxHeapSize = '2g'
-    finalizedBy jacocoTestReport
 }
 
 tasks.named('jacocoTestReport') {

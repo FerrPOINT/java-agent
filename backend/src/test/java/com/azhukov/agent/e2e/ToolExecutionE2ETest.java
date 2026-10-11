@@ -1,5 +1,6 @@
 package com.azhukov.agent.e2e;
 
+import com.azhukov.agent.support.NoopSpringIntegrationTest;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.core.model.ToolResult;
@@ -8,8 +9,6 @@ import com.azhukov.agent.core.tool.ToolRegistry;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.ActiveProfiles;
 
 import java.util.Map;
 
@@ -20,10 +19,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Verifies that a tool registered dynamically in the Spring context can be
  * invoked through {@link ToolExecutionService} and that the result is captured.
  */
-@SpringBootTest
-@ActiveProfiles("noop")
 @Tag("slow")
-class ToolExecutionE2ETest {
+class ToolExecutionE2ETest extends NoopSpringIntegrationTest {
 
     @Autowired
     private ToolExecutionService toolExecutionService;
