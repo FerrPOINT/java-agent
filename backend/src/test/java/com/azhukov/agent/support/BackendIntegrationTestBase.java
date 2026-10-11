@@ -1,8 +1,7 @@
 package com.azhukov.agent.support;
 
-import com.azhukov.agent.support.BackendIntegrationTestBase;
-
 import org.junit.jupiter.api.Tag;
+import org.springframework.boot.test.context.SpringBootTest;
 
 /**
  * Common root for backend tests that start the Spring application.
@@ -10,5 +9,6 @@ import org.junit.jupiter.api.Tag;
  * class so their environment variants can share stable base configurations.
  */
 @Tag("slow")
+@SpringBootTest
 public abstract class BackendIntegrationTestBase {
 }
