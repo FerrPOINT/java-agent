@@ -6,6 +6,8 @@
 
 ### Fixed
 
+- News relevance ignores calendar dates and month names, retains short topics such as AI, and matches short topics as complete words. Semantic technology results remain supported without treating the `ai` inside unrelated words such as `Rail` as an AI topic.
+
 - Failed Telegram finalization/error sends no longer claim successful delivery or arm background review. The complete error response is retained for the existing fallback send; an empty-token failure does not repeat the model request.
 
 - CI and all four Dockerfiles pin Temurin 25.0.4.1+1; Docker stages use immutable image digests and the committed Gradle wrappers. The bot JAR includes its canonical license and notice files. Backend and workspace wrapper versions are documented separately.
