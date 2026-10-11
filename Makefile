@@ -58,14 +58,14 @@ build:
 	$(GRADLE) compileJava compileTestJava
 	@echo "$(GREEN)Build successful.$(NC)"
 
-test: build
+test:
 	@echo "$(CYAN)Running tests...$(NC)"
 	$(GRADLE) test
 	@echo "$(GREEN)All tests passed.$(NC)"
 
-jar: test
+jar:
 	@echo "$(CYAN)Building JARs...$(NC)"
-	$(GRADLE) bootJar
+	$(GRADLE) test bootJar
 	@echo "$(GREEN)JARs built.$(NC)"
 
 coverage:
