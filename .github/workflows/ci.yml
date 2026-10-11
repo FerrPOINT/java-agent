@@ -81,9 +81,9 @@ jobs:
         working-directory: backend
         run: ./gradlew test --no-daemon
 
-      - name: Session persistence and transaction boundaries against PostgreSQL
+      - name: Run slow backend integration tests
         working-directory: backend
-        run: ./gradlew slowTest --tests 'com.azhukov.agent.service.*PersistenceConcurrencyTest' --no-daemon
+        run: ./gradlew slowTest --no-daemon
         env:
           USAGE_PERSISTENCE_TEST_JDBC_URL: jdbc:postgresql://127.0.0.1:5432/usage_regression
           USAGE_PERSISTENCE_TEST_DB_USER: qa
@@ -92,7 +92,7 @@ jobs:
       - name: Coverage report (visibility, non-blocking)
         working-directory: backend
         run: |
-          ./gradlew jacocoTestReport --no-daemon -x test
+          ./gradlew jacocoTestReport --no-daemon -x test -x slowTest
           # The XML is a JaCoCo-generated local artifact, not untrusted input; stdlib parse is safe here.
           python3 - <<'EOF'
           import os, xml.etree.ElementTree as ET
@@ -117,7 +117,6 @@ jobs:
     name: Build bootJar
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    needs: test
     steps:
       - uses: actions/checkout@v7
       - name: Set up JDK 25

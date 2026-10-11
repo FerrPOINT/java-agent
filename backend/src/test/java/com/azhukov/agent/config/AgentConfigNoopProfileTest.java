@@ -1,15 +1,14 @@
 package com.azhukov.agent.config;
 
+import com.azhukov.agent.support.BackendIntegrationTestBase;
+
 import com.azhukov.agent.core.client.ModelClient;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.TestPropertySource;
 
 import static org.assertj.core.api.Assertions.assertThat;
-
-@SpringBootTest
 @Tag("slow")
 @TestPropertySource(properties = {
     "spring.profiles.active=noop",
@@ -20,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
     "agent.chromium.auto-start=false",
     "agent.gateway.telegram.long-polling.enabled=false"
 })
-class AgentConfigNoopProfileTest {
+class AgentConfigNoopProfileTest extends BackendIntegrationTestBase {
 
     @Autowired
     private ModelClient modelClient;

@@ -1,7 +1,10 @@
 package com.azhukov.agent.persistence;
 
+import com.azhukov.agent.support.BackendIntegrationTestBase;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.TestPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
@@ -18,7 +21,22 @@ import org.testcontainers.utility.DockerImageName;
  * With one shared container the cached context stays valid across classes.
  */
 @Testcontainers
-public abstract class PostgresTestContainer {
+@AutoConfigureMockMvc
+@TestPropertySource(properties = {
+    "spring.datasource.driver-class-name=org.postgresql.Driver",
+    "spring.jpa.hibernate.ddl-auto=none",
+    "spring.flyway.enabled=true",
+    "spring.flyway.baseline-on-migrate=true",
+    "spring.flyway.locations=classpath:db/migration",
+    "agent.model.provider=noop",
+    "agent.memory.enabled=false",
+    "agent.skills.enabled=false",
+    "agent.mcp.enabled=false",
+    "agent.mcp.servers=",
+    "agent.chromium.auto-start=false",
+    "agent.chromium.auto-install=false"
+})
+public abstract class PostgresTestContainer extends BackendIntegrationTestBase {
 
     private static final PostgreSQLContainer<?> POSTGRES =
         new PostgreSQLContainer<>(DockerImageName.parse("postgres:16-alpine"))

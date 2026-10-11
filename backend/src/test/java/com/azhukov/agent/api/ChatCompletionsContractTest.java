@@ -1,14 +1,11 @@
 package com.azhukov.agent.api;
 
+import com.azhukov.agent.support.NoopSpringIntegrationTest;
 import com.azhukov.agent.api.dto.OpenAiChatRequest;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
-import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
@@ -21,16 +18,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * 1. omitted `model` must NOT 400 — the configured advertised model is used;
  * 2. X-Hermes-Session-Id continuity header is honored and echoed back.
  */
-@SpringBootTest
-@AutoConfigureMockMvc
-@ActiveProfiles("noop")
-@TestPropertySource(properties = {
-    "agent.model.provider=noop",
-    "agent.model.model-name=noop",
-    "agent.model.base-url=http://localhost:0",
-    "agent.security.api-key=test-key-123",
-})
-class ChatCompletionsContractTest {
+class ChatCompletionsContractTest extends NoopSpringIntegrationTest {
 
     @Autowired
     private MockMvc mockMvc;

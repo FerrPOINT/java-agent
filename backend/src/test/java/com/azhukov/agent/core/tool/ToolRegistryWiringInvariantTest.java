@@ -1,9 +1,8 @@
 package com.azhukov.agent.core.tool;
 
+import com.azhukov.agent.support.NoopSpringIntegrationTest;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.ActiveProfiles;
 
 import java.util.HashSet;
 import java.util.List;
@@ -20,9 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  *    blocked names post-expansion (delegation leak fix).
  * 3. send_message schema must expose every action the handler supports.
  */
-@SpringBootTest
-@ActiveProfiles("noop")
-class ToolRegistryWiringInvariantTest {
+class ToolRegistryWiringInvariantTest extends NoopSpringIntegrationTest {
 
     @Autowired
     private SpringToolRegistry registry;

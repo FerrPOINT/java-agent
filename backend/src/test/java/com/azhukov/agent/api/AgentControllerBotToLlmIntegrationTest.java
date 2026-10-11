@@ -7,14 +7,11 @@ import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.repository.MessageRepository;
 import com.azhukov.agent.persistence.repository.SessionRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.azhukov.agent.persistence.PostgresTestContainer;
+import com.azhukov.agent.persistence.PostgresActiveServicesTestContainer;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
-import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
@@ -34,18 +31,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * Verifies that a chat request creates a session, persists messages, returns a
  * response, and produces usage/context metadata.
  */
-@SpringBootTest
 @Tag("slow")
-@AutoConfigureMockMvc
-@TestPropertySource(properties = {
-    "spring.datasource.driver-class-name=org.postgresql.Driver",
-    "spring.jpa.hibernate.ddl-auto=none",
-    "spring.flyway.enabled=true",
-    "spring.flyway.baseline-on-migrate=true",
-    "spring.flyway.locations=classpath:db/migration",
-    "agent.model.provider=noop"
-})
-class AgentControllerBotToLlmIntegrationTest extends PostgresTestContainer {
+class AgentControllerBotToLlmIntegrationTest extends PostgresActiveServicesTestContainer {
 
     @Autowired
     private MockMvc mockMvc;

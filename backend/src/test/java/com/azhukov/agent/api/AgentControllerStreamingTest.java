@@ -1,12 +1,13 @@
 package com.azhukov.agent.api;
 
+import com.azhukov.agent.support.BackendIntegrationTestBase;
+
 import com.azhukov.agent.api.dto.ChatRequest;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
@@ -17,8 +18,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.request;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-
-@SpringBootTest
 @Tag("slow")
 @AutoConfigureMockMvc
 @TestPropertySource(properties = {
@@ -30,7 +29,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
     "spring.flyway.enabled=false",
     "agent.model.provider=noop"
 })
-class AgentControllerStreamingTest {
+class AgentControllerStreamingTest extends BackendIntegrationTestBase {
 
     @Autowired
     private MockMvc mockMvc;
