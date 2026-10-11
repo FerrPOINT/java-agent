@@ -28,6 +28,14 @@ tasks.withType(JavaCompile).configureEach {
     ]
 }
 
+// Instrument application code only. Instrumenting Spring/Hibernate classes
+// makes JaCoCo shutdown contend with Spring's own shutdown hook.
+tasks.withType(Test).configureEach {
+    jacoco {
+        includes = ['com/azhukov/agent/*']
+    }
+}
+
 repositories {
     mavenCentral()
     maven { url = 'https://repo.spring.io/milestone' }
