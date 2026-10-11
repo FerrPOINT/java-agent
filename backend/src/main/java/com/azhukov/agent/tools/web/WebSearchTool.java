@@ -45,7 +45,9 @@ public class WebSearchTool implements ToolHandler {
     private static final Set<String> NEWS_STOP_TERMS = Set.of(
         "latest", "news", "headline", "headlines", "последние", "последний", "новости", "новость", "новост",
         "дайджест", "сегодня", "свежие", "свежий", "today", "recent", "recently", "last",
-        "the", "and", "for", "from", "with", "about", "in", "on", "of", "to",
+        "the", "and", "for", "from", "with", "about", "in", "on", "of", "to", "this", "year", "years",
+        "этот", "эта", "эти", "этого", "этой", "этому", "этим", "этом", "эту", "этих", "этими",
+        "года", "году", "годом", "годе", "годы", "годов", "годах",
         "по", "об", "про", "из", "за", "на", "для", "новые", "новый", "новая", "самые", "самый",
         "january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december",
         "январь", "января", "январе", "февраль", "февраля", "феврале", "март", "марта", "марте",
@@ -122,7 +124,10 @@ public class WebSearchTool implements ToolHandler {
             if (searXngProvider != null && searXngProvider.isAvailable()) {
                 results = searchConfiguredSearxng(query, limit, providerLimit);
             } else {
-                results = sanitizeResults(searchDuckDuckGoWithRetry(query, limit));
+                results = sanitizeResults(searchDuckDuckGoWithRetry(query, providerLimit));
+            }
+            if (isNewsQuery(query)) {
+                results = filterQueryRelevance(query, results);
             }
 
             // Hermes parity: return {"data":{"web":[{title,url,description,position}]}}

@@ -169,6 +169,36 @@ class WebSearchToolTest {
     }
 
     @Test
+    void duckDuckGoNewsFallbackFiltersUnrelatedResultsAndKeepsRelevantTopics() throws Exception {
+        AgentProperties properties = properties();
+        when(urlSafety.isUrlAllowed(anyString())).thenReturn(true);
+
+        Document doc = Jsoup.parse("""
+            <html><body>
+            <div class="result"><a class="result__a" href="https://news.example/rail">Rail services</a><span class="result__snippet">City transport</span></div>
+            <div class="result"><a class="result__a" href="https://news.example/ai">AI chips</a><span class="result__snippet">Machine learning</span></div>
+            </body></html>
+            """, "https://html.duckduckgo.com/html/");
+        Connection connection = mock(Connection.class);
+        when(connection.userAgent(anyString())).thenReturn(connection);
+        when(connection.timeout(anyInt())).thenReturn(connection);
+        when(connection.get()).thenReturn(doc);
+
+        try (MockedStatic<Jsoup> jsoup = mockStatic(Jsoup.class)) {
+            jsoup.when(() -> Jsoup.connect(contains("q=AI+news"))).thenReturn(connection);
+
+            WebSearchTool tool = new WebSearchTool(properties, objectMapper, urlSafety, redactor);
+            tool.init();
+            ToolResult result = tool.execute("{\"query\":\"AI news\",\"limit\":1}", null, null);
+
+            assertThat(result.success()).isTrue();
+            var items = objectMapper.readTree(result.content()).path("data").path("web");
+            assertThat(items).hasSize(1);
+            assertThat(items.get(0).path("title").asText()).isEqualTo("AI chips");
+        }
+    }
+
+    @Test
     void searchReturnsNoResultsMessageWhenEmpty() throws Exception {
         AgentProperties properties = properties();
         when(urlSafety.isUrlAllowed(anyString())).thenReturn(true);
@@ -422,6 +452,46 @@ class WebSearchToolTest {
         when(news.search(org.mockito.ArgumentMatchers.eq(query), anyInt())).thenReturn(List.of(
             Map.of("title", "AI chips", "url", "https://news.example/ai", "description", "Machine learning"),
             Map.of("title", "This " + filler + " local news", "url", "https://news.example/local", "description", "Community events")));
+        when(urlSafety.isUrlAllowed(anyString())).thenReturn(true);
+        WebSearchTool tool = configuredSearxngTool(properties, news, query);
+
+        ToolResult result = tool.execute(objectMapper.writeValueAsString(Map.of("query", query, "limit", 2)), null, null);
+
+        assertThat(result.success()).isTrue();
+        assertThat(objectMapper.readTree(result.content()).path("data").path("web")).hasSize(1);
+        assertThat(objectMapper.readTree(result.content()).path("data").path("web").get(0).path("title").asText())
+            .isEqualTo("AI chips");
+    }
+
+    @Test
+    void genericYearPhraseDoesNotBecomeANewsTopic() throws Exception {
+        String query = "AI news this year";
+        AgentProperties properties = properties();
+        properties.getWeb().setSearxngUrl("http://searxng.local");
+        GoogleNewsRssSearchProvider news = mock(GoogleNewsRssSearchProvider.class);
+        when(news.search(org.mockito.ArgumentMatchers.eq(query), anyInt())).thenReturn(List.of(
+            Map.of("title", "AI chips", "url", "https://news.example/ai", "description", "Machine learning"),
+            Map.of("title", "This year in our city", "url", "https://news.example/local", "description", "Community events")));
+        when(urlSafety.isUrlAllowed(anyString())).thenReturn(true);
+        WebSearchTool tool = configuredSearxngTool(properties, news, query);
+
+        ToolResult result = tool.execute(objectMapper.writeValueAsString(Map.of("query", query, "limit", 2)), null, null);
+
+        assertThat(result.success()).isTrue();
+        assertThat(objectMapper.readTree(result.content()).path("data").path("web")).hasSize(1);
+        assertThat(objectMapper.readTree(result.content()).path("data").path("web").get(0).path("title").asText())
+            .isEqualTo("AI chips");
+    }
+
+    @Test
+    void genericRussianYearPhraseDoesNotBecomeANewsTopic() throws Exception {
+        String query = "новости AI этого года";
+        AgentProperties properties = properties();
+        properties.getWeb().setSearxngUrl("http://searxng.local");
+        GoogleNewsRssSearchProvider news = mock(GoogleNewsRssSearchProvider.class);
+        when(news.search(org.mockito.ArgumentMatchers.eq(query), anyInt())).thenReturn(List.of(
+            Map.of("title", "AI chips", "url", "https://news.example/ai", "description", "Machine learning"),
+            Map.of("title", "В этом году в городе", "url", "https://news.example/local", "description", "События и программы")));
         when(urlSafety.isUrlAllowed(anyString())).thenReturn(true);
         WebSearchTool tool = configuredSearxngTool(properties, news, query);
 
