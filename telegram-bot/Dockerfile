@@ -4,13 +4,12 @@ COPY LICENSE NOTICE THIRD_PARTY_NOTICES.md ./
 COPY settings.gradle ./
 COPY gradle ./gradle
 COPY gradlew ./
-# settings.gradle includes ':cli'; gradle requires the directory to exist even
-# when the bot does not depend on it — copy its build files too.
+# settings.gradle configures every module, so keep their build files available
+# even though this image only builds the bot and shared modules.
 COPY cli/build.gradle ./cli/build.gradle
 COPY shared/build.gradle ./shared/build.gradle
 COPY shared/src ./shared/src
 COPY backend/build.gradle ./backend/build.gradle
-COPY backend/src ./backend/src
 COPY telegram-bot/build.gradle ./telegram-bot/build.gradle
 COPY telegram-bot/src ./telegram-bot/src
 RUN chmod +x gradlew && ./gradlew :telegram-bot:bootJar -x test
