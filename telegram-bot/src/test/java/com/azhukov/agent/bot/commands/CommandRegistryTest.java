@@ -59,6 +59,18 @@ class CommandRegistryTest {
     }
 
     @Test
+    void quickHelpDoesNotSuggestMissingCommandsAndExplainsArguments() {
+        var registry = new CommandRegistry(List.of(
+            new NewSessionCommand(mock(BotSessionStore.class), mock(AgentBackendClient.class)),
+            new YoloCommand(mock(BotSessionStore.class))
+        ));
+        assertThat(registry.helpText("")).contains("/new", "/help all").doesNotContain("/yolo", "/model");
+        assertThat(registry.helpText("all")).contains("/yolo");
+        assertThat(registry.helpText("unknown")).contains("/help all");
+        assertThat(registry.has("yolo")).isTrue();
+    }
+
+    @Test
     void all_returnsImmutableCopy() {
         var registry = new CommandRegistry(List.of(
             new NewSessionCommand(mock(BotSessionStore.class), mock(AgentBackendClient.class))

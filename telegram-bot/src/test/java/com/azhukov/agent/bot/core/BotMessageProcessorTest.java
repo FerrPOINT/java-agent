@@ -8,6 +8,8 @@ import com.azhukov.agent.bot.client.TelegramClient;
 import com.azhukov.agent.bot.commands.CommandHandler;
 import com.azhukov.agent.bot.commands.CommandRegistry;
 import com.azhukov.agent.bot.commands.impl.GoalCommand;
+import com.azhukov.agent.bot.commands.impl.HelpCommand;
+import com.azhukov.agent.bot.commands.impl.YoloCommand;
 import com.azhukov.agent.bot.config.BotProperties;
 import com.azhukov.agent.bot.core.RuntimeFooter;
 import com.azhukov.agent.bot.formatting.ResponseFilter;
@@ -29,6 +31,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentCaptor;
+import org.springframework.beans.factory.ObjectProvider;
 
 import java.io.File;
 import java.nio.file.Files;
@@ -373,6 +376,26 @@ class BotMessageProcessorTest {
         when(slashAccessPolicy.canRun(anyLong(), anyString())).thenReturn(false);
         processor.accept(commandEvent(1, 100L, "admin", ""));
         verify(telegramClient).sendMessage(eq(100L), contains("don't have access"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void realHelpRoutesQuickFullAndUnknownArgumentsThroughTestTransport() {
+        ObjectProvider<CommandRegistry> provider = mock(ObjectProvider.class);
+        HelpCommand help = new HelpCommand(provider);
+        CommandRegistry registry = new CommandRegistry(List.of(help, new YoloCommand(mock(BotSessionStore.class))));
+        when(provider.getIfAvailable()).thenReturn(registry);
+        when(commandRegistry.get("help")).thenReturn(help);
+
+        processor.accept(commandEvent(1, 100L, "help", ""));
+        processor.accept(commandEvent(2, 100L, "help", "all"));
+        processor.accept(commandEvent(3, 100L, "help", "unexpected"));
+
+        ArgumentCaptor<String> sent = ArgumentCaptor.forClass(String.class);
+        verify(telegramClient, times(3)).sendMessage(eq(100L), sent.capture(), anyString(), any(), any());
+        assertThat(sent.getAllValues().get(0)).contains("/help all").doesNotContain("/yolo");
+        assertThat(sent.getAllValues().get(1)).contains("/yolo");
+        assertThat(sent.getAllValues().get(2)).contains("/help all").doesNotContain("/yolo");
     }
 
     @Test

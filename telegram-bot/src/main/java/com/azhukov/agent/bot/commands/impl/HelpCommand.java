@@ -28,7 +28,7 @@ public class HelpCommand implements CommandHandler {
     public String handle(UpdateEvent event, BotSessionEntity session) {
         CommandRegistry registry = registryProvider.getIfAvailable();
         if (registry != null) {
-            return registry.helpText();
+            return registry.helpText(event.commandArgs());
         }
         return "No help available.";
     }
