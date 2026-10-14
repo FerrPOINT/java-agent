@@ -163,6 +163,11 @@ curl -s -X POST http://localhost:8090/v1/chat/completions \
 
 CLI — отдельный Spring Boot модуль, не зависит от backend-кода и общается с ним через REST: REPL со slash-командами (`/new`, `/status`, `/compress`, `/undo`, `/checkpoint`, `/rollback`, `/memory`, `/skills`, `/help` и др.), SSE streaming и JLine autocomplete.
 
+В CLI и Telegram-боте `/help` показывает короткий старт и основные доступные
+команды. `/help all` открывает полный каталог; существующие aliases продолжают
+работать. Неизвестный аргумент справки объясняет эти два варианта. Справка
+формируется локально из registry и не вызывает AI-провайдера.
+
 ## 🏗️ Architecture
 
 ```mermaid
