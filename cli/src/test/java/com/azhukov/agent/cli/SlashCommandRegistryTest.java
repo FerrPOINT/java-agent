@@ -58,13 +58,21 @@ class SlashCommandRegistryTest {
 
     @Test
     void helpListsAllCommands() {
-        String result = registry.execute("/help", client, "session-1");
+        String result = registry.execute("/help all", client, "session-1");
         assertThat(result).isNotNull();
         assertThat(result).contains("Available Commands");
         // Help should list every registered command
         for (String name : registry.getCommandNames()) {
             assertThat(result).contains("/" + name);
         }
+    }
+
+    @Test
+    void helpProvidesQuickStartAndExplainsUnknownArguments() {
+        String result = registry.execute("/help", client, "session-1");
+        assertThat(result).contains("/new", "/status", "/help all", "Type any text");
+        assertThat(result).doesNotContain("/yolo", "/cron-delete");
+        assertThat(registry.execute("/help unknown", client, "session-1")).contains("/help all");
     }
 
     @Test

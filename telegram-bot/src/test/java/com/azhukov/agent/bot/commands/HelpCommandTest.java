@@ -19,7 +19,7 @@ import static org.mockito.Mockito.when;
 class HelpCommandTest {
 
     @Test
-    void helpText_containsAllCommands() {
+    void helpText_providesQuickEntryAndFullCatalogue() {
         @SuppressWarnings("unchecked")
         ObjectProvider<CommandRegistry> provider = mock(ObjectProvider.class);
         HelpCommand helpCommand = new HelpCommand(provider);
@@ -38,7 +38,11 @@ class HelpCommandTest {
         String result = helpCommand.handle(event, null);
         assertThat(result).contains("/new");
         assertThat(result).contains("/status");
-        assertThat(result).contains("/yolo");
+        assertThat(result).doesNotContain("/yolo");
+        assertThat(result).contains("/help all");
+        UpdateEvent complete = new UpdateEvent(2, Type.COMMAND, 123, 456, "user",
+            "/help all", null, null, null, null, null, null, true, "help", "all");
+        assertThat(helpCommand.handle(complete, null)).contains("/yolo");
         assertThat(result).contains("/help");
     }
 

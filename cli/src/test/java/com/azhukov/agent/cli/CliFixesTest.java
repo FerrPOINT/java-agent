@@ -324,7 +324,7 @@ class CliFixesTest {
     void prefixMatchExecutesCommand() {
         when(client.health()).thenReturn(true);
         // "hel" should execute /help via prefix matching
-        String result = registry.execute("/hel", client, "sid");
+        String result = registry.execute("/hel all", client, "sid");
         assertThat(result).contains("Available Commands");
     }
 
@@ -401,7 +401,7 @@ class CliFixesTest {
         // "help" is already registered; registering a dynamic skill "help" should be ignored
         registry.registerDynamicSkill("help");
         // Verify the original help command still works
-        String result = registry.execute("/help", client, "sid");
+        String result = registry.execute("/help all", client, "sid");
         assertThat(result).contains("Available Commands");
     }
 
@@ -438,7 +438,7 @@ class CliFixesTest {
 
     @Test
     void helpListsAliases() {
-        String result = registry.execute("/help", client, "sid");
+        String result = registry.execute("/help all", client, "sid");
         assertThat(result).contains("Aliases");
         assertThat(result).contains("/q");
         assertThat(result).contains("→ /queue");

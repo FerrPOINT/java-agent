@@ -773,7 +773,7 @@ class P1CliFixesTest {
 
     @Test
     void helpListsNewP1Commands() {
-        String result = registry.execute("/help", client, "sid");
+        String result = registry.execute("/help all", client, "sid");
         assertThat(result).contains("/retry");
         assertThat(result).contains("/verbose");
         assertThat(result).contains("/yolo");

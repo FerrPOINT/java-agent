@@ -53,6 +53,19 @@ public class CommandRegistry {
  return List.copyOf(handlers.values());
  }
 
+ /** Quick entry delegates the complete catalogue to the existing registry projection. */
+ public String helpText(String argument) {
+ String args = argument == null ? "" : argument.strip();
+ if (args.equalsIgnoreCase("all")) return helpText();
+ if (!args.isEmpty()) return "Use /help for quick start or /help all for all commands.";
+ StringBuilder text = new StringBuilder("Quick start\n\nSend any text message to chat with the agent.\n");
+ for (String name : List.of("new", "status", "model", "skills")) {
+ CommandHandler handler = handlers.get(name);
+ if (handler != null) text.append("/").append(name).append(" — ").append(handler.description()).append("\n");
+ }
+ return text.append("\n/help all — all commands").toString();
+ }
+
  /** Generate help text listing all commands. */
  public String helpText() {
  StringBuilder sb = new StringBuilder("Available commands:\n\n");

@@ -24,6 +24,17 @@ public class UtilityCommands implements CommandGroup {
     public void registerAll(SlashCommandRegistry registry) {
         // ── Help ──
         registry.register("help", "Show this help message", (args, client, sessionId) -> {
+            if (args.isBlank()) {
+                StringBuilder quick = new StringBuilder("Quick start\n\nType any text to chat with the agent.\n");
+                for (String name : java.util.List.of("new", "status", "model", "skills", "exit")) {
+                    String description = registry.getCommandDescriptions().get(name);
+                    if (description != null) quick.append("/").append(name).append(" — ").append(description).append("\n");
+                }
+                return quick.append("\n/help all — all commands and aliases").toString();
+            }
+            if (!args.strip().equalsIgnoreCase("all")) {
+                return "Use /help for quick start or /help all for all commands and aliases.";
+            }
             StringBuilder sb = new StringBuilder();
             sb.append("═══════════════════════════════════════════════════\n");
             sb.append("  Available Commands\n");
