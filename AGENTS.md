@@ -420,7 +420,7 @@ Full conventions doc: `backend/docs/conventions.md`
 
 ## Быстрые проверки и сборка
 
-Перед тестами, build и CI читать обязательный [стандарт Base](https://github.com/FerrPOINT/services-base/blob/2a8b5e905ab2a6fd4c12d0d2a70d9436e745765d/docs/BUILD_PERFORMANCE.md).
+Перед тестами, build и CI читать обязательный [стандарт Base](https://github.com/FerrPOINT/services-base/blob/6ba8b64e7175ebc0175d4ac0b5ef130f6a7366df/docs/BUILD_PERFORMANCE.md).
 Scoped checks во время реализации; полный gate на одной интегрированной вехе.
 Сохранять полезный cache, не переустанавливать неизменные dependencies и не
 пересобирать приложение из-за test-only. До повторного тяжёлого запуска назвать
