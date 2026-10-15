@@ -3,11 +3,15 @@ package com.azhukov.agent.bot.typing;
 import com.azhukov.agent.bot.client.TelegramClient;
 import com.azhukov.agent.bot.config.BotProperties;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Duration;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
@@ -24,6 +28,11 @@ class TypingManagerTest {
         props.setTypingRefreshInterval(Duration.ofMillis(50));
         manager = new TypingManager(client, props);
         manager.init();
+    }
+
+    @AfterEach
+    void closeTimers() {
+        manager.destroy();
     }
 
     @Test
@@ -77,6 +86,13 @@ class TypingManagerTest {
 
     @Test
     void flushTyping_sendsOneFinalActionBeforeStopping() {
+        // Periodic delivery has its own real-scheduler tests. This case measures
+        // only the explicit flush, without a racing timer adding another call.
+        manager.destroy();
+        ScheduledExecutorService timer = mock(ScheduledExecutorService.class);
+        ScheduledFuture<?> periodic = mock(ScheduledFuture.class);
+        doReturn(periodic).when(timer).scheduleAtFixedRate(any(Runnable.class), anyLong(), anyLong(), any());
+        ReflectionTestUtils.setField(manager, "scheduler", timer);
         when(client.sendTyping(anyLong(), any())).thenReturn(true);
         manager.startTyping(123L);
         clearInvocations(client);

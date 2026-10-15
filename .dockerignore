@@ -1,5 +1,20 @@
-.git
-.gradle
+# Only committed Docker build inputs; reports and private state stay outside.
+**
+!LICENSE
+!NOTICE
+!THIRD_PARTY_NOTICES.md
+!settings.gradle
+!gradle/
+!gradle/**
+!gradlew
+!backend/
+!backend/**
+!shared/
+!shared/**
+!telegram-bot/
+!telegram-bot/**
+!cli/
+!cli/**
 **/build
 **/.idea
 **/*.iml
@@ -7,3 +22,19 @@
 work
 .tmp
 .tmp/**
+**/src/test
+**/docs
+
+# Private state, dependency trees and QA evidence are never build context.
+**/.local
+**/.git
+**/.gradle
+**/node_modules
+**/.venv
+**/__pycache__
+**/.env
+**/.env.*
+**/*.dump
+**/*.backup
+**/coverage
+**/test-results
