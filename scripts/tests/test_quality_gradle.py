@@ -41,7 +41,7 @@ class QualityGradleTests(unittest.TestCase):
         return result, result.stdout.splitlines()
 
     def test_native_ordinary_graphs_enable_strict_cache_without_losing_arguments(self):
-        for arguments in (("--backend", "test", "bootJar", "--no-daemon", "--max-workers=2"),
+        for arguments in (("--backend", ":test", ":bootJar", "--no-daemon", "--max-workers=2"),
                           (":telegram-bot:test", ":cli:test", ":shared:test", ":telegram-bot:bootJar", ":cli:bootJar", "--offline")):
             with self.subTest(arguments=arguments):
                 result, lines = self.invoke(*arguments)

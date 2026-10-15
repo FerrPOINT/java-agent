@@ -121,7 +121,7 @@ jobs:
         run: chmod +x gradlew backend/gradlew
       - name: Fast backend units and candidate JAR
         if: needs.changes.outputs.java_backend == 'true'
-        run: bash scripts/quality-gradle.sh --backend test ${{ needs.changes.outputs.backend_build == 'true' && 'bootJar' || '' }} --no-daemon --max-workers=2
+        run: bash scripts/quality-gradle.sh --backend :test ${{ needs.changes.outputs.backend_build == 'true' && ':bootJar' || '' }} --no-daemon --max-workers=2
       - name: Run telegram-bot and cli tests
         if: needs.changes.outputs.java_root == 'true'
         run: bash scripts/quality-gradle.sh :telegram-bot:test :cli:test :shared:test --no-daemon --max-workers=2

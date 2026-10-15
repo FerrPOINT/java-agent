@@ -5,8 +5,10 @@
 
 ## Разработка и сборка
 
-Backend: `bash scripts/quality-gradle.sh --backend test`.
+Backend: `bash scripts/quality-gradle.sh --backend :test`.
 Bot/CLI/shared: `bash scripts/quality-gradle.sh :telegram-bot:test :cli:test :shared:test`.
+Backend использует точные `:test`/`:bootJar`: unqualified `test` выбирает также
+Shared subproject и дублирует его проверку в последующем root graph.
 `bootJar` и обычный `build/check` включают unit, без integration/slow.
 Unit entrypoint не требует PostgreSQL fixture variables. DB/disposable guards
 сохраняются в backend integration/slow/release; unit не подготавливает БД.
