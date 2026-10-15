@@ -1,5 +1,4 @@
-# Automatic build: unit tests plus static/security/compatibility checks.
-# Full integration/slow acceptance is the manual release.yml workflow.
+# Automatic unit/static checks; subprocess tooling regressions remain manual in release.yml.
 name: CI
 on:
   push:
@@ -62,7 +61,7 @@ jobs:
       - name: Verify shipped-default documentation coverage
         run: python3 scripts/check_default_settings_reference.py
       - name: Documentation and release-script unit tests
-        run: python3 -m unittest scripts.tests.test_check_docs_standard scripts.tests.test_check_default_settings_reference scripts.tests.test_release_verify scripts.tests.test_deploy_dev_systemd scripts.tests.test_parity_dashboard
+        run: python3 -m unittest scripts.tests.test_check_docs_standard scripts.tests.test_check_default_settings_reference scripts.tests.test_release_verify scripts.tests.test_parity_dashboard
   readme:
     name: README evidence
     runs-on: ubuntu-latest
