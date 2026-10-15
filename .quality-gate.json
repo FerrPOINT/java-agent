@@ -612,6 +612,42 @@
       ],
       "test_tier": "slow",
       "external_state": true
+    },
+    {
+      "id": "bot:slow",
+      "component": "bot",
+      "profiles": [
+        "slow"
+      ],
+      "argv": [
+        "bash",
+        "scripts/quality-gradle.sh",
+        ":telegram-bot:slowTest",
+        "--no-daemon",
+        "--max-workers=2"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1"
+        }
+      ],
+      "environment_inputs": [
+        "SOURCE_DATE_EPOCH"
+      ],
+      "test_tier": "slow",
+      "external_state": true
     }
   ],
   "additional_acceptance": "Existing product CI/CONTRIBUTING: MSRV/features, ignored DB, OpenAPI/packed consumer/themes, security and live acceptance remain separate mandatory gates where applicable.",

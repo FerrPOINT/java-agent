@@ -22,3 +22,15 @@ workflow_dispatch на exact ref. Автоматический CI не подн�
 
 Required security/data/compatibility checks и thresholds сохраняются.
 Unit success не заменяет ручную приёмку; NOT RUN не означает PASS.
+
+## Измеренный unit budget
+
+Linux qualification: backend 4805 cases, 76 с с запуском Gradle/JVM;
+bot/CLI/shared 1660 cases, 47 с. Цель прогретого runner: backend до 90 с,
+остальные вместе до 60 с; cold preparation учитывается отдельно.
+Inventory: 586 unit, 183 integration, 68 slow, 9 live test files.
+25 файлов с измеренными ожиданиями/долгими cases перенесены в slow;
+реальные DNS URL safety проверки — в integration. Изолированные URL safety
+с контролируемым resolver остаются unit. Assertions и production code сохранены.
+Первичная загрузка Mockito/инструментации может занимать несколько секунд;
+это отдельно от искусственных задержек и внешних зависимостей.
