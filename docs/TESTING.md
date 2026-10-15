@@ -1,6 +1,6 @@
 # Тестовые уровни
 
-Обязательная общая политика: [Base TESTING](https://github.com/FerrPOINT/services-base/blob/c9e4182e460ee57ac38a0ab1a866ce9626d297a4/docs/TESTING.md).
+Обязательная общая политика: [Base TESTING](https://github.com/FerrPOINT/services-base/blob/ad724088e9a63b1e353fb5b28e4308e9ae6f45ae/docs/TESTING.md).
 Выбор компонентов и native commands: `.quality-gate.json`.
 
 ## Разработка и сборка

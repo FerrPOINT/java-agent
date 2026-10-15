@@ -52,6 +52,15 @@ def load(root):
         raise ValueError("Unsupported quality manifest")
     if not manifest["components"] or not isinstance(manifest.get("gates"), list):
         raise ValueError("Components and gate list are required")
+    if manifest.get("test_policy") and (root / ".github/workflows/ci.yml").is_file():
+        # A literal canonical header is a lint contract, not a general YAML parser.
+        # Fail closed on any extra event; CRLF is normalized by read_text.
+        release = inside(root, ".github/workflows/release.yml")
+        content = release.read_text(encoding="utf-8")
+        marker = "\non:\n"
+        header = content.split(marker, 1)[1].split("\n\n", 1)[0] if marker in content else ""
+        if header.strip() != "workflow_dispatch:":
+            raise ValueError("Release workflow must use only the canonical manual workflow_dispatch header")
     for component, patterns in manifest["components"].items():
         if (
             not re.fullmatch(r"[a-zA-Z0-9_-]+", component)

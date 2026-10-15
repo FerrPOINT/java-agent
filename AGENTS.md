@@ -420,7 +420,7 @@ Full conventions doc: `backend/docs/conventions.md`
 
 ## Быстрые проверки и сборка
 
-Перед тестами, build и CI читать обязательный [стандарт Base](https://github.com/FerrPOINT/services-base/blob/c9e4182e460ee57ac38a0ab1a866ce9626d297a4/docs/BUILD_PERFORMANCE.md).
+Перед тестами, build и CI читать обязательный [стандарт Base](https://github.com/FerrPOINT/services-base/blob/ad724088e9a63b1e353fb5b28e4308e9ae6f45ae/docs/BUILD_PERFORMANCE.md).
 При разработке и сборке unit/static. Integration/slow/full coverage —
 ручной gate при подготовке релиза по docs/TESTING.md.
 Сохранять полезный cache, не переустанавливать неизменные dependencies и не

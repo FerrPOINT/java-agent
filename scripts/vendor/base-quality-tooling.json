@@ -1,7 +1,7 @@
 {
   "schema": "base-quality-tooling/v1",
   "repository": "https://github.com/FerrPOINT/services-base",
-  "revision": "c9e4182e460ee57ac38a0ab1a866ce9626d297a4",
+  "revision": "ad724088e9a63b1e353fb5b28e4308e9ae6f45ae",
   "source": "scripts/quality_selection.py",
-  "sha256": "7aadbf17ce18ccbcbaf9d37dac54e806ddc5f618c27e938c58397f787cf1f86b"
+  "sha256": "396714c72322d9bb32ab5c23f5ae3698a6fbcea3cd77fb083d82946073bc2bc1"
 }
