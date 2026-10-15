@@ -1,6 +1,6 @@
 # Быстрые повторные проверки и сборка
 
-Применить [стандарт Base](https://github.com/FerrPOINT/services-base/blob/ad724088e9a63b1e353fb5b28e4308e9ae6f45ae/docs/BUILD_PERFORMANCE.md) без изменения runtime и SDK/UI/skills pins.
+Применить [стандарт Base](https://github.com/FerrPOINT/services-base/blob/197ead9d9b6cf6901e8f9dd31f43f719885502c3/docs/BUILD_PERFORMANCE.md) без изменения runtime и SDK/UI/skills pins.
 Product-owned команды описаны в .quality-gate.json. При разработке/сборке —
 unit/static; integration/slow/full coverage — вручную перед релизом.
 Security/data/compatibility/live gates сохранены; reuse только для допустимых
