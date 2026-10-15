@@ -2,9 +2,24 @@ package com.azhukov.agent.persistence;
 
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
+import java.sql.DriverManager;
+import java.sql.SQLException;
 
 /** Explicit test-runner contract; never infer permission to mutate an external DB. */
 record DisposablePostgres(String url, String username, String password) {
+    DisposablePostgres isolatedSchema() {
+        String schema = "qa_" + UUID.randomUUID().toString().replace("-", "");
+        try (var connection = DriverManager.getConnection(url, username, password);
+             var statement = connection.createStatement()) {
+            statement.execute("CREATE SCHEMA " + schema);
+        } catch (SQLException failure) {
+            throw new IllegalStateException("Cannot prepare isolated disposable PostgreSQL schema", failure);
+        }
+        return new DisposablePostgres(url + (url.contains("?") ? "&" : "?")
+            + "currentSchema=" + schema + ",public", username, password);
+    }
+
     static Optional<DisposablePostgres> fromEnvironment(Map<String, String> environment) {
         String prefix = "JAVA_AGENT_TEST_DB_";
         String url = environment.get(prefix + "URL");

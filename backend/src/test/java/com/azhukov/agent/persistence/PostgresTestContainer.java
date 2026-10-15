@@ -39,12 +39,12 @@ import org.testcontainers.utility.DockerImageName;
 public abstract class PostgresTestContainer extends BackendIntegrationTestBase {
 
     private static final DisposablePostgres DATABASE =
-        DisposablePostgres.fromEnvironment(System.getenv()).orElseGet(() -> {
+        DisposablePostgres.fromEnvironment(System.getenv()).map(DisposablePostgres::isolatedSchema).orElseGet(() -> {
             PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>(DockerImageName.parse("postgres:16-alpine"))
-            .withDatabaseName("test")
-            .withUsername("test")
-            .withPassword("test")
-            .withReuse(true);
+                .withDatabaseName("test")
+                .withUsername("test")
+                .withPassword("test")
+                .withReuse(true);
 
             postgres.start(); // singleton — started once per JVM, Ryuk cleans up
             return new DisposablePostgres(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
