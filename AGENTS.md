@@ -12,12 +12,18 @@ bot/CLI and **9.8.0** from `backend/` for the standalone backend gates.
 
 ```bash
 cd /opt/dev/java-agent
-./gradlew check                # workspace regression suite
-./gradlew compileJava          # compile only
-./gradlew bootJar              # build JAR
-./gradlew slowTest             # @Tag("slow") integration tests
-./gradlew jacocoTestReport     # coverage report
+# One integrated milestone: backend tests, real integration, coverage and JAR.
+bash scripts/quality-gradle.sh --backend test slowTest jacocoTestReport bootJar --no-daemon --max-workers=2
+bash scripts/quality-gradle.sh :telegram-bot:test :cli:test :telegram-bot:jacocoTestReport --no-daemon --max-workers=2
+# During implementation: one affected test class, without packaging.
+bash scripts/quality-gradle.sh --backend :test --tests 'com.azhukov.agent.gateway.GatewayLifecycleServiceTest' --no-daemon --max-workers=2
 ```
+
+Backend integration requires the disposable PostgreSQL fixture declared in
+`.quality-gate.json`. Use an owned Linux runner for POSIX-dependent tests.
+The helper freezes SOURCE_DATE_EPOCH from the candidate; preserve the tested JAR
+and its digest for delivery. Coverage tasks use the same Gradle graph and do not
+need a second test invocation. Keep maxParallelForks and product coverage gates.
 
 ## Run
 
