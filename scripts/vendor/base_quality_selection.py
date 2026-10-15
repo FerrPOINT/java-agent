@@ -77,6 +77,10 @@ def load(root):
             "fast",
             "integrated",
             "build",
+            "unit",
+            "integration",
+            "slow",
+            "release",
         }:
             raise ValueError("Unsupported gate profile")
         if not isinstance(gate.get("inputs"), list) or not gate["inputs"]:
@@ -90,10 +94,28 @@ def load(root):
         inside(root, gate.get("cwd", "."))
         for name in gate.get("outputs", []):
             inside(root, name)
+        if "artifact_outputs" in gate:
+            if not isinstance(gate["artifact_outputs"], list) or not gate["artifact_outputs"]:
+                raise ValueError("Managed artifact outputs require a nonempty path list")
+            if gate.get("kind") != "artifact" or gate.get("outputs"):
+                raise ValueError("Managed artifact outputs require an artifact gate")
+            for name in gate["artifact_outputs"]:
+                if not isinstance(name, str) or not name:
+                    raise ValueError("Managed artifact output must be a relative path")
+                inside(root, name)
+        if gate.get("artifact_toolchain") not in (None, "pinned-image"):
+            raise ValueError("Unsupported artifact toolchain qualification")
         if gate.get("cacheable") and (
             gate.get("requires_env") or gate.get("external_state")
         ):
             raise ValueError("External-state gates cannot reuse receipts")
+        if manifest.get("test_policy"):
+            tier = gate.get("test_tier")
+            if tier not in ("unit", "integration", "slow", "static", "artifact"):
+                raise ValueError("Every gate requires an explicit test tier")
+            if set(gate["profiles"]) & {"fast", "unit", "build"}:
+                if tier in ("integration", "slow") or gate.get("external_state"):
+                    raise ValueError("Automatic build profiles cannot run boundary or slow tests")
     return manifest
 
 
@@ -143,8 +165,10 @@ def components_for_paths(manifest, files, components=None):
     return sorted(selected), reasons
 
 
-def plan(root, profile="fast", base="HEAD", changed=None, components=None):
-    manifest = load(root)
+def plan(
+    root, profile="fast", base="HEAD", changed=None, components=None, manifest=None
+):
+    manifest = load(root) if manifest is None else manifest
     files = (
         ([] if components else changed_files(root, base))
         if changed is None
@@ -183,6 +207,7 @@ def plan(root, profile="fast", base="HEAD", changed=None, components=None):
         "reasons": reasons,
         "gates": gates,
         "manifest_sha256": digest(manifest),
+        "additional_acceptance": manifest.get("additional_acceptance"),
     }
 
 

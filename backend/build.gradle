@@ -189,8 +189,8 @@ tasks.register('e2eTest', Test) {
 }
 
 tasks.named('jacocoTestReport') {
-    dependsOn test, slowTest
-    executionData(test, slowTest)
+    dependsOn test, integrationTest, slowTest
+    executionData(test, integrationTest, slowTest)
     reports {
         xml.required = true
         html.required = true
@@ -218,7 +218,7 @@ tasks.named('jacocoTestCoverageVerification', JacocoCoverageVerification) {
     }
 }
 
-check.dependsOn jacocoTestCoverageVerification
+tasks.register('releaseCheck') { dependsOn jacocoTestCoverageVerification }
 
 tasks.withType(JavaCompile).configureEach {
     options.release = 25
@@ -275,3 +275,6 @@ tasks.named('bootJar') {
 
 // For plain java -jar runs, add this option via environment or wrapper script.
 // Example: JAVA_TOOL_OPTIONS='--enable-native-access=ALL-UNNAMED' java -jar ...
+
+// Base test policy: automatic unit checks; explicit integration/slow release lanes.
+apply from: file("../gradle/test-lanes.gradle").exists() ? file("../gradle/test-lanes.gradle") : file("gradle/test-lanes.gradle")

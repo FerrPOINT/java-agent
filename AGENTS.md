@@ -420,10 +420,14 @@ Full conventions doc: `backend/docs/conventions.md`
 
 ## Быстрые проверки и сборка
 
-Перед тестами, build и CI читать обязательный [стандарт Base](https://github.com/FerrPOINT/services-base/blob/68cb8b930b0543a7ecb7f8a34c347b96fd0cd8ba/docs/BUILD_PERFORMANCE.md).
-Scoped checks во время реализации; полный gate на одной интегрированной вехе.
+Перед тестами, build и CI читать обязательный [стандарт Base](https://github.com/FerrPOINT/services-base/blob/c9e4182e460ee57ac38a0ab1a866ce9626d297a4/docs/BUILD_PERFORMANCE.md).
+При разработке и сборке unit/static. Integration/slow/full coverage —
+ручной gate при подготовке релиза по docs/TESTING.md.
 Сохранять полезный cache, не переустанавливать неизменные dependencies и не
 пересобирать приложение из-за test-only. До повторного тяжёлого запуска назвать
 изменившиеся inputs/недостающее evidence; передавать один artifact между этапами.
 Required security/data/compatibility/live checks и product toolchains сохраняются.
 Компоненты и команды: `.quality-gate.json`; общие правила не копировать.
+
+Уровни и команды: [TESTING](docs/TESTING.md). Полный `.github/workflows/release.yml`
+запускается вручную на exact ref; зелёный unit build не означает release acceptance.

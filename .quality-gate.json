@@ -30,7 +30,8 @@
       "component": "docs",
       "profiles": [
         "fast",
-        "integrated"
+        "integrated",
+        "release"
       ],
       "argv": [
         "{python}",
@@ -41,21 +42,22 @@
       "inputs": [
         "**"
       ],
-      "cacheable": true
+      "cacheable": true,
+      "test_tier": "static"
     },
     {
-      "id": "backend:quality",
+      "id": "backend:unit",
       "component": "backend",
       "profiles": [
-        "integrated"
+        "fast",
+        "unit",
+        "build"
       ],
       "argv": [
         "bash",
         "scripts/quality-gradle.sh",
         "--backend",
         "test",
-        "slowTest",
-        "jacocoTestReport",
         "--no-daemon",
         "--max-workers=2"
       ],
@@ -76,7 +78,6 @@
           "pattern": "25\\.0\\.4\\.1"
         }
       ],
-      "external_state": true,
       "requires_env": [
         "USAGE_PERSISTENCE_TEST_JDBC_URL",
         "USAGE_PERSISTENCE_TEST_DB_USER",
@@ -88,7 +89,8 @@
       ],
       "environment_inputs": [
         "SOURCE_DATE_EPOCH"
-      ]
+      ],
+      "test_tier": "unit"
     },
     {
       "id": "backend:build",
@@ -102,9 +104,7 @@
         "--backend",
         "bootJar",
         "--no-daemon",
-        "--max-workers=2",
-        "-x",
-        "test"
+        "--max-workers=2"
       ],
       "cwd": ".",
       "inputs": [
@@ -134,19 +134,21 @@
       "kind": "artifact",
       "environment_inputs": [
         "SOURCE_DATE_EPOCH"
-      ]
+      ],
+      "test_tier": "artifact"
     },
     {
-      "id": "bot:quality",
+      "id": "bot:unit",
       "component": "bot",
       "profiles": [
-        "integrated"
+        "fast",
+        "unit",
+        "build"
       ],
       "argv": [
         "bash",
         "scripts/quality-gradle.sh",
         ":telegram-bot:test",
-        ":telegram-bot:jacocoTestReport",
         "--no-daemon",
         "--max-workers=2"
       ],
@@ -169,13 +171,16 @@
       ],
       "environment_inputs": [
         "SOURCE_DATE_EPOCH"
-      ]
+      ],
+      "test_tier": "unit"
     },
     {
-      "id": "cli:quality",
+      "id": "cli:unit",
       "component": "cli",
       "profiles": [
-        "integrated"
+        "fast",
+        "unit",
+        "build"
       ],
       "argv": [
         "bash",
@@ -203,13 +208,16 @@
       ],
       "environment_inputs": [
         "SOURCE_DATE_EPOCH"
-      ]
+      ],
+      "test_tier": "unit"
     },
     {
-      "id": "shared:quality",
+      "id": "shared:unit",
       "component": "shared",
       "profiles": [
-        "integrated"
+        "fast",
+        "unit",
+        "build"
       ],
       "argv": [
         "bash",
@@ -237,7 +245,373 @@
       ],
       "environment_inputs": [
         "SOURCE_DATE_EPOCH"
-      ]
+      ],
+      "test_tier": "unit"
+    },
+    {
+      "id": "backend:integration",
+      "component": "backend",
+      "profiles": [
+        "integration"
+      ],
+      "argv": [
+        "bash",
+        "scripts/quality-gradle.sh",
+        "--backend",
+        "integrationTest",
+        "--no-daemon",
+        "--max-workers=2"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1"
+        }
+      ],
+      "requires_env": [
+        "USAGE_PERSISTENCE_TEST_JDBC_URL",
+        "USAGE_PERSISTENCE_TEST_DB_USER",
+        "USAGE_PERSISTENCE_TEST_DB_PASSWORD",
+        "JAVA_AGENT_TEST_DB_DISPOSABLE",
+        "JAVA_AGENT_TEST_DB_URL",
+        "JAVA_AGENT_TEST_DB_USER",
+        "JAVA_AGENT_TEST_DB_PASSWORD"
+      ],
+      "environment_inputs": [
+        "SOURCE_DATE_EPOCH"
+      ],
+      "test_tier": "integration",
+      "external_state": true
+    },
+    {
+      "id": "bot:integration",
+      "component": "bot",
+      "profiles": [
+        "integration"
+      ],
+      "argv": [
+        "bash",
+        "scripts/quality-gradle.sh",
+        ":telegram-bot:integrationTest",
+        "--no-daemon",
+        "--max-workers=2"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1"
+        }
+      ],
+      "environment_inputs": [
+        "SOURCE_DATE_EPOCH"
+      ],
+      "test_tier": "integration",
+      "external_state": true
+    },
+    {
+      "id": "cli:integration",
+      "component": "cli",
+      "profiles": [
+        "integration"
+      ],
+      "argv": [
+        "bash",
+        "scripts/quality-gradle.sh",
+        ":cli:integrationTest",
+        "--no-daemon",
+        "--max-workers=2"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1"
+        }
+      ],
+      "environment_inputs": [
+        "SOURCE_DATE_EPOCH"
+      ],
+      "test_tier": "integration",
+      "external_state": true
+    },
+    {
+      "id": "shared:integration",
+      "component": "shared",
+      "profiles": [
+        "integration"
+      ],
+      "argv": [
+        "bash",
+        "scripts/quality-gradle.sh",
+        ":shared:integrationTest",
+        "--no-daemon",
+        "--max-workers=2"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1"
+        }
+      ],
+      "environment_inputs": [
+        "SOURCE_DATE_EPOCH"
+      ],
+      "test_tier": "integration",
+      "external_state": true
+    },
+    {
+      "id": "backend:release",
+      "component": "backend",
+      "profiles": [
+        "release",
+        "integrated"
+      ],
+      "argv": [
+        "bash",
+        "scripts/quality-gradle.sh",
+        "--backend",
+        "test",
+        "integrationTest",
+        "slowTest",
+        "jacocoTestReport",
+        "--no-daemon",
+        "--max-workers=2"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1"
+        }
+      ],
+      "requires_env": [
+        "USAGE_PERSISTENCE_TEST_JDBC_URL",
+        "USAGE_PERSISTENCE_TEST_DB_USER",
+        "USAGE_PERSISTENCE_TEST_DB_PASSWORD",
+        "JAVA_AGENT_TEST_DB_DISPOSABLE",
+        "JAVA_AGENT_TEST_DB_URL",
+        "JAVA_AGENT_TEST_DB_USER",
+        "JAVA_AGENT_TEST_DB_PASSWORD"
+      ],
+      "environment_inputs": [
+        "SOURCE_DATE_EPOCH"
+      ],
+      "test_tier": "integration",
+      "external_state": true
+    },
+    {
+      "id": "bot:release",
+      "component": "bot",
+      "profiles": [
+        "release",
+        "integrated"
+      ],
+      "argv": [
+        "bash",
+        "scripts/quality-gradle.sh",
+        ":telegram-bot:test",
+        ":telegram-bot:integrationTest",
+        ":telegram-bot:jacocoTestReport",
+        "--no-daemon",
+        "--max-workers=2"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1"
+        }
+      ],
+      "environment_inputs": [
+        "SOURCE_DATE_EPOCH"
+      ],
+      "test_tier": "integration",
+      "external_state": true
+    },
+    {
+      "id": "cli:release",
+      "component": "cli",
+      "profiles": [
+        "release",
+        "integrated"
+      ],
+      "argv": [
+        "bash",
+        "scripts/quality-gradle.sh",
+        ":cli:test",
+        ":cli:integrationTest",
+        "--no-daemon",
+        "--max-workers=2"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1"
+        }
+      ],
+      "environment_inputs": [
+        "SOURCE_DATE_EPOCH"
+      ],
+      "test_tier": "integration",
+      "external_state": true
+    },
+    {
+      "id": "shared:release",
+      "component": "shared",
+      "profiles": [
+        "release",
+        "integrated"
+      ],
+      "argv": [
+        "bash",
+        "scripts/quality-gradle.sh",
+        ":shared:test",
+        ":shared:integrationTest",
+        "--no-daemon",
+        "--max-workers=2"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1"
+        }
+      ],
+      "environment_inputs": [
+        "SOURCE_DATE_EPOCH"
+      ],
+      "test_tier": "integration",
+      "external_state": true
+    },
+    {
+      "id": "backend:slow",
+      "component": "backend",
+      "profiles": [
+        "slow"
+      ],
+      "argv": [
+        "bash",
+        "scripts/quality-gradle.sh",
+        "--backend",
+        "slowTest",
+        "--no-daemon",
+        "--max-workers=2"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1"
+        }
+      ],
+      "requires_env": [
+        "USAGE_PERSISTENCE_TEST_JDBC_URL",
+        "USAGE_PERSISTENCE_TEST_DB_USER",
+        "USAGE_PERSISTENCE_TEST_DB_PASSWORD",
+        "JAVA_AGENT_TEST_DB_DISPOSABLE",
+        "JAVA_AGENT_TEST_DB_URL",
+        "JAVA_AGENT_TEST_DB_USER",
+        "JAVA_AGENT_TEST_DB_PASSWORD"
+      ],
+      "environment_inputs": [
+        "SOURCE_DATE_EPOCH"
+      ],
+      "test_tier": "slow",
+      "external_state": true
     }
   ],
   "additional_acceptance": "Existing product CI/CONTRIBUTING: MSRV/features, ignored DB, OpenAPI/packed consumer/themes, security and live acceptance remain separate mandatory gates where applicable.",
@@ -265,5 +639,18 @@
         "shared"
       ]
     }
-  ]
+  ],
+  "test_policy": {
+    "automatic": [
+      "unit",
+      "static",
+      "artifact"
+    ],
+    "manual_release": [
+      "integration",
+      "slow",
+      "live"
+    ],
+    "release_required": true
+  }
 }

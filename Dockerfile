@@ -4,6 +4,7 @@ ARG TARGETARCH
 
 WORKDIR /workspace
 COPY backend/gradle/ gradle/
+COPY gradle/test-lanes.gradle gradle/test-lanes.json gradle/
 COPY backend/gradlew backend/build.gradle backend/settings.gradle backend/gradle.properties ./
 RUN sed -i 's/\r$//' gradlew && chmod +x gradlew
 COPY LICENSE NOTICE THIRD_PARTY_NOTICES.md ./
@@ -11,7 +12,7 @@ COPY backend/src src
 # h10: the backend build resolves :shared as a sibling module (backend/settings.gradle
 # includes ../shared when present) — copy it in so the container layout matches the repo.
 COPY shared/ shared/
-RUN --mount=type=cache,id=java-agent-gradle-9.8.0-temurin25.0.4.1-${TARGETARCH},target=/root/.gradle,sharing=locked ./gradlew bootJar --no-daemon -x test --build-cache
+RUN --mount=type=cache,id=java-agent-gradle-9.8.0-temurin25.0.4.1-${TARGETARCH},target=/root/.gradle,sharing=locked ./gradlew bootJar --no-daemon --build-cache
 
 FROM eclipse-temurin:25.0.4.1_1-jre-noble@sha256:398f810215757dc1926390014272579fb0e57c41ef1c8aa4f64ae761613a168b
 

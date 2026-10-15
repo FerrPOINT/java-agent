@@ -1,0 +1,74 @@
+import groovy.json.JsonSlurper
+
+// The reviewed inventory is shared by the standalone backend and root graph.
+def laneRoot = new File(projectDir, '..')
+if (!new File(laneRoot, 'gradle/test-lanes.json').isFile()) {
+    // Standalone Docker backend keeps shared/ and gradle/ inside /workspace.
+    laneRoot = projectDir
+}
+def inventory = new JsonSlurper().parse(new File(laneRoot, 'gradle/test-lanes.json'))
+def moduleName = project.name == 'java-agent-backend' ? 'backend' : projectDir.name
+def modulePrefix = moduleName + '/src/test/'
+def classPatterns = { String path ->
+    def className = path.substring(path.indexOf('/src/test/') + '/src/test/'.length())
+        .replaceFirst('^(java|groovy)/', '').replaceFirst(/\.(java|groovy)$/, '')
+    [className + '.class', className + '$*.class']
+}
+def unitPatterns = inventory.files.findAll { path, tier ->
+    path.startsWith(modulePrefix) && tier == 'unit'
+}.keySet().collectMany(classPatterns)
+def slowPatterns = inventory.files.findAll { path, tier ->
+    path.startsWith(modulePrefix) && tier == 'slow'
+}.keySet().collectMany(classPatterns)
+
+tasks.named('test', Test) {
+    description = 'Fast isolated unit tests; runs with ordinary build/check/bootJar'
+    useJUnitPlatform { excludeTags 'integration', 'slow', 'live', 'e2e' }
+    // Never interpret an empty allowlist as "run every test".
+    include(unitPatterns ?: ['__no_reviewed_unit_tests__.class'])
+}
+
+tasks.register('integrationTest', Test) {
+    description = 'Manual release lane: boundary tests outside the reviewed unit set'
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform { excludeTags 'slow', 'live', 'e2e' }
+    exclude(unitPatterns + slowPatterns)
+    def unit = tasks.named('test', Test).get()
+    jvmArgs unit.jvmArgs
+    maxHeapSize = unit.maxHeapSize
+    maxParallelForks = unit.maxParallelForks
+    forkEvery = unit.forkEvery
+    // External state must be checked again for each release invocation.
+    outputs.upToDateWhen { false }
+    outputs.cacheIf { false }
+}
+
+if (tasks.findByName('slowTest') == null) {
+    tasks.register('slowTest', Test) {
+        group = 'verification'
+        testClassesDirs = sourceSets.test.output.classesDirs
+        classpath = sourceSets.test.runtimeClasspath
+    }
+}
+tasks.named('slowTest', Test) {
+    description = 'Manual release lane: tagged and measured slow test classes'
+    useJUnitPlatform {
+        // File inventory includes untagged timers/expensive cases; tags alone lost them.
+        includeTags = [] as Set
+        excludeTags 'live', 'e2e'
+    }
+    include(slowPatterns ?: ['__no_declared_slow_tests__.class'])
+    onlyIf { !slowPatterns.isEmpty() }
+    def unit = tasks.named('test', Test).get()
+    jvmArgs unit.jvmArgs
+    maxHeapSize = unit.maxHeapSize
+    maxParallelForks = unit.maxParallelForks
+    outputs.upToDateWhen { false }
+    outputs.cacheIf { false }
+}
+
+if (tasks.findByName('bootJar') != null) {
+    tasks.named('bootJar') { dependsOn tasks.named('test') }
+}

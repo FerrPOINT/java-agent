@@ -12,7 +12,7 @@ COPY backend/build.gradle ./backend/build.gradle
 COPY telegram-bot/build.gradle ./telegram-bot/build.gradle
 COPY cli/build.gradle ./cli/build.gradle
 COPY cli/src ./cli/src
-RUN --mount=type=cache,id=java-agent-gradle-9.6.1-temurin25.0.4.1-${TARGETARCH},target=/root/.gradle,sharing=locked chmod +x gradlew && ./gradlew :cli:bootJar -x test --build-cache --no-daemon
+RUN --mount=type=cache,id=java-agent-gradle-9.6.1-temurin25.0.4.1-${TARGETARCH},target=/root/.gradle,sharing=locked chmod +x gradlew && ./gradlew :cli:bootJar --build-cache --no-daemon
 
 FROM eclipse-temurin:25.0.4.1_1-jre-noble@sha256:398f810215757dc1926390014272579fb0e57c41ef1c8aa4f64ae761613a168b
 RUN groupadd --gid 10001 agent \

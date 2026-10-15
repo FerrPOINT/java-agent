@@ -22,7 +22,6 @@
 work
 .tmp
 .tmp/**
-**/src/test
 **/docs
 
 # Private state, dependency trees and QA evidence are never build context.
