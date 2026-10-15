@@ -1,0 +1,229 @@
+{
+  "schema": "base-quality-product/v1",
+  "product": "java-agent",
+  "components": {
+    "docs": [
+      "docs/**",
+      "*.md",
+      "LICENSE"
+    ],
+    "backend": [
+      "backend/**"
+    ],
+    "bot": [
+      "telegram-bot/**"
+    ],
+    "cli": [
+      "cli/**"
+    ],
+    "shared": [
+      "shared/**",
+      "build.gradle",
+      "gradle.properties",
+      "gradle/**",
+      ".github/**"
+    ]
+  },
+  "gates": [
+    {
+      "id": "docs:readme",
+      "component": "docs",
+      "profiles": [
+        "fast",
+        "integrated"
+      ],
+      "argv": [
+        "{python}",
+        "-B",
+        "scripts/verify_readme.py"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": true
+    },
+    {
+      "id": "backend:quality",
+      "component": "backend",
+      "profiles": [
+        "integrated"
+      ],
+      "argv": [
+        "bash",
+        "./gradlew",
+        "test",
+        "slowTest",
+        "jacocoTestReport",
+        "--no-daemon",
+        "--max-workers=2"
+      ],
+      "cwd": "backend",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1"
+        }
+      ],
+      "external_state": true,
+      "requires_env": [
+        "USAGE_PERSISTENCE_TEST_JDBC_URL",
+        "USAGE_PERSISTENCE_TEST_DB_USER",
+        "USAGE_PERSISTENCE_TEST_DB_PASSWORD"
+      ]
+    },
+    {
+      "id": "backend:build",
+      "component": "backend",
+      "profiles": [
+        "build"
+      ],
+      "argv": [
+        "bash",
+        "./gradlew",
+        "bootJar",
+        "--no-daemon",
+        "--max-workers=2",
+        "-x",
+        "test"
+      ],
+      "cwd": "backend",
+      "inputs": [
+        "backend/src/main/**",
+        "shared/src/main/**",
+        "backend/*.gradle",
+        "backend/gradle.properties",
+        "backend/gradle/**",
+        "*.gradle",
+        "gradle.properties",
+        "gradle/**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1"
+        }
+      ],
+      "kind": "artifact"
+    },
+    {
+      "id": "bot:quality",
+      "component": "bot",
+      "profiles": [
+        "integrated"
+      ],
+      "argv": [
+        "bash",
+        "./gradlew",
+        ":telegram-bot:test",
+        ":telegram-bot:jacocoTestReport",
+        "--no-daemon",
+        "--max-workers=2"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1"
+        }
+      ]
+    },
+    {
+      "id": "cli:quality",
+      "component": "cli",
+      "profiles": [
+        "integrated"
+      ],
+      "argv": [
+        "bash",
+        "./gradlew",
+        ":cli:test",
+        "--no-daemon",
+        "--max-workers=2"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1"
+        }
+      ]
+    },
+    {
+      "id": "shared:quality",
+      "component": "shared",
+      "profiles": [
+        "integrated"
+      ],
+      "argv": [
+        "bash",
+        "./gradlew",
+        ":shared:test",
+        "--no-daemon",
+        "--max-workers=2"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1"
+        }
+      ]
+    }
+  ],
+  "additional_acceptance": "Existing product CI/CONTRIBUTING: MSRV/features, ignored DB, OpenAPI/packed consumer/themes, security and live acceptance remain separate mandatory gates where applicable.",
+  "backend_unit_inputs": [
+    "backend/src/test/**",
+    "backend/src/slowTest/**",
+    "shared/src/test/**",
+    "telegram-bot/src/test/**",
+    "cli/src/test/**"
+  ]
+}

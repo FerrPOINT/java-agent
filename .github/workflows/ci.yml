@@ -11,6 +11,46 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.classify.outputs.backend }}
+      backend_build: ${{ steps.classify.outputs.backend_build }}
+      frontend: ${{ steps.classify.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: java-agent
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Fetch exact comparison commits
+        working-directory: java-agent
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          if [ -n "$BASE_SHA" ] && [ "$BASE_SHA" != 0000000000000000000000000000000000000000 ]; then
+            git fetch --no-tags --depth=1 origin "$BASE_SHA" "$HEAD_SHA"
+          fi
+      - name: Verify packaged Base selector
+        run: |
+          python3 - <<'PY'
+          import hashlib,json,re
+          from pathlib import Path
+          root=Path('java-agent')
+          pin=(root/'.quality-tooling-revision').read_text().strip()
+          receipt=json.loads((root/'scripts/vendor/base-quality-tooling.json').read_text())
+          if not re.fullmatch(r'[0-9a-f]{40}',pin) or receipt['schema']!='base-quality-tooling/v1' or receipt['revision']!=pin:
+              raise SystemExit('Packaged Base revision mismatch')
+          if hashlib.sha256((root/'scripts/vendor/base_quality_selection.py').read_bytes()).hexdigest()!=receipt['sha256']:
+              raise SystemExit('Packaged Base selector checksum mismatch')
+          PY
+      - id: classify
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 java-agent/scripts/vendor/base_quality_selection.py --root java-agent
+
   docs:
     name: Docs standard ratchet
     runs-on: ubuntu-latest
@@ -36,6 +76,8 @@ jobs:
         run: python3 scripts/verify_readme.py
 
   test:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     name: Test
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -77,13 +119,9 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew backend/gradlew
 
-      - name: Run backend tests
+      - name: Backend tests, integration and coverage (one task graph)
         working-directory: backend
-        run: ./gradlew test --no-daemon
-
-      - name: Run slow backend integration tests
-        working-directory: backend
-        run: ./gradlew slowTest --no-daemon
+        run: ./gradlew test slowTest jacocoTestReport ${{ needs.changes.outputs.backend_build == 'true' && 'bootJar' || '' }} --no-daemon --max-workers=2
         env:
           USAGE_PERSISTENCE_TEST_JDBC_URL: jdbc:postgresql://127.0.0.1:5432/usage_regression
           USAGE_PERSISTENCE_TEST_DB_USER: qa
@@ -92,7 +130,6 @@ jobs:
       - name: Coverage report (visibility, non-blocking)
         working-directory: backend
         run: |
-          ./gradlew jacocoTestReport --no-daemon -x test -x slowTest
           # The XML is a JaCoCo-generated local artifact, not untrusted input; stdlib parse is safe here.
           python3 - <<'EOF'
           import os, xml.etree.ElementTree as ET
@@ -106,29 +143,35 @@ jobs:
           EOF
 
       - name: Run telegram-bot and cli tests
-        run: ./gradlew :telegram-bot:test :cli:test --no-daemon
+        run: ./gradlew :telegram-bot:test :cli:test :telegram-bot:jacocoTestReport --no-daemon --max-workers=2
 
       - name: Coverage ratchet (blocking, baseline in docs/standards/coverage-baseline.json)
         run: |
-          ./gradlew :telegram-bot:jacocoTestReport --no-daemon -x test
           python3 scripts/check_docs_standard.py --check-coverage
 
+      - name: Identify tested application artifact
+        if: needs.changes.outputs.backend_build == 'true'
+        working-directory: backend/build/libs
+        run: sha256sum *.jar > SHA256SUMS
+      - uses: actions/upload-artifact@v7
+        if: needs.changes.outputs.backend_build == 'true'
+        with:
+          name: tested-backend-bootjar
+          path: backend/build/libs/
+          retention-days: 7
+
   build:
+    needs: [changes, test]
+    if: needs.changes.outputs.backend_build == 'true'
     name: Build bootJar
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
-      - name: Set up JDK 25
-        uses: actions/setup-java@v6
+      - uses: actions/download-artifact@v8
         with:
-          distribution: 'temurin'
-          java-version: '25.0.4+101.0.LTS'
-      - name: Verify exact Temurin runtime
-        run: java -XshowSettings:properties -version 2>&1 | grep -F 'java.runtime.version = 25.0.4.1+1-LTS'
-      - name: Build bootJar
-        working-directory: backend
-        run: ./gradlew bootJar --no-daemon -x test
+          name: tested-backend-bootjar
+      - name: Verify tested bootJar identity
+        run: sha256sum --check SHA256SUMS
 
   lint:
     name: Markdown / YAML lint
