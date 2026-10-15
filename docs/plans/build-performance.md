@@ -25,3 +25,16 @@ Linux QA получает отдельные PostgreSQL 16 (миграции/rep
 реальное commit time через Docker build argument. Это input JAR, а не время запуска.
 `slowTest` всегда выполняется заново:
 внешнее состояние PostgreSQL не покрывается Gradle build cache.
+
+Native unit/JAR qualification на Linux/amd64 выполнена для backend 9.8.0 и
+совместного bot/CLI/shared 9.6.1, Temurin 25.0.4.1. Helper включает configuration
+cache только для соответствующих обычных tasks/options, `problems=fail`;
+toolchain changes и явные flags не наследуют этот default. Подготовка dependencies
+Base разрешает также Groovy compiler classpath до offline запуска. Integration,
+slow и coverage в этой квалификации не выполняются.
+
+Notices вынесены в `gradle/ferrpoint-notices.gradle`: одна repository-owned
+конфигурация вместо трёх копий; library JAR также получает notices. Изменение
+notice файла выбирает JVM consumers и backend artifact; потеря input — ошибка.
+Нативные JAR checks подтверждают bytes notices и frozen build time, а не только
+успешный Gradle exit. Проверка full/slim builder reuse остаётся отдельным image gate.

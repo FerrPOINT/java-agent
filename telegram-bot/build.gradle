@@ -109,28 +109,7 @@ tasks.withType(JavaCompile).configureEach {
 
 apply from: file('../gradle/build-info.gradle').exists() ? file('../gradle/build-info.gradle') : file('gradle/build-info.gradle')
 
-def ferrpointNoticeFiles = [
-    rootProject.file('LICENSE'),
-    rootProject.file('NOTICE'),
-    rootProject.file('THIRD_PARTY_NOTICES.md')
-]
-
-tasks.withType(Jar).configureEach {
-    ferrpointNoticeFiles.each { noticeFile ->
-        from(noticeFile) {
-            into 'META-INF'
-        }
-    }
-    manifest {
-        attributes(
-            'Implementation-Vendor': 'FerrPOINT',
-            'Implementation-Vendor-Id': 'FerrPOINT',
-            'License': 'LicenseRef-FerrPOINT-Proprietary',
-            'License-Name': 'FerrPOINT Proprietary Source-Available Evaluation License v1.0',
-            'License-File': 'META-INF/LICENSE'
-        )
-    }
-}
+apply from: file('../gradle/ferrpoint-notices.gradle').exists() ? file('../gradle/ferrpoint-notices.gradle') : file('gradle/ferrpoint-notices.gradle')
 
 // maxHeapSize prevents OOM/SIGKILL when real LLM calls buffer large payloads
 // inside the Gradle daemon JVM. For production-like runs prefer `java -jar`.

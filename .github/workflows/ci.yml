@@ -69,7 +69,7 @@ jobs:
       - name: Verify shipped-default documentation coverage
         run: python3 scripts/check_default_settings_reference.py
       - name: Documentation and release-script unit tests
-        run: python3 -m unittest scripts.tests.test_check_docs_standard scripts.tests.test_check_default_settings_reference scripts.tests.test_release_verify scripts.tests.test_parity_dashboard scripts.tests.test_select_java_modules
+        run: python3 -m unittest scripts.tests.test_check_docs_standard scripts.tests.test_check_default_settings_reference scripts.tests.test_release_verify scripts.tests.test_parity_dashboard scripts.tests.test_select_java_modules scripts.tests.test_quality_gradle
   readme:
     name: README evidence
     runs-on: ubuntu-latest

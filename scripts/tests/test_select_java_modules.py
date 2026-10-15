@@ -10,3 +10,4 @@ class JavaModuleSelectionTests(unittest.TestCase):
         self.assertEqual(groups(["backend"]), {"java_backend": True, "java_root": False})
         self.assertEqual(groups(["shared"]), {"java_backend": True, "java_root": True})
         self.assertEqual(groups(["docs"]), {"java_backend": False, "java_root": False})
+        self.assertEqual(groups(["tooling"]), {"java_backend": False, "java_root": False})

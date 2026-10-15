@@ -31,6 +31,20 @@ helper фиксирует SOURCE_DATE_EPOCH из commit, Docker принимае
 CI выбирает backend и bot/CLI/shared graphs отдельно: CLI-only не запускает backend,
 shared запускает оба. Root tasks передаются одним совместимым Gradle вызовом.
 
+Для обычных unit/JAR tasks helper автоматически добавляет строгий configuration
+cache (`problems=fail`) только на квалифицированных Linux/amd64,
+Temurin 25.0.4.1 и wrapper 9.6.1/9.8.0. Версия читается из фактических properties,
+а не комментариев. Init scripts, release/integration/slow, фильтр `--tests`,
+неизвестные tasks/options и явные cache flags передаются без добавления default.
+Configuration cache сохраняет task graph; Gradle up-to-date/build cache отдельно
+проверяет outputs. Он не разрешает пропускать live/DB проверки.
+
+`gradle/ferrpoint-notices.gradle` задаёт единые JAR inputs для всех модулей:
+LICENSE/NOTICE/THIRD_PARTY_NOTICES.md из корня репозитория. Обычный root build,
+standalone backend и flattened Docker layout используют один источник. Отсутствие
+любого файла останавливает конфигурацию; notices не исчезают из standalone JAR
+из-за другого `rootProject.projectDir`.
+
 ## Измеренный unit budget
 
 Linux qualification: backend 4805 cases, 76 с с запуском Gradle/JVM;

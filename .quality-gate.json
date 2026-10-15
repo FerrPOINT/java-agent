@@ -7,6 +7,9 @@
       "*.md",
       "LICENSE"
     ],
+    "tooling": [
+      "scripts/tests/test_quality_gradle.py"
+    ],
     "backend": [
       "backend/**"
     ],
@@ -44,6 +47,15 @@
       ],
       "cacheable": true,
       "test_tier": "static"
+    },
+    {
+      "id": "tooling:gradle-helper-unit",
+      "component": "tooling",
+      "profiles": ["fast", "unit", "build", "release"],
+      "test_tier": "unit",
+      "argv": ["{python}", "-B", "-m", "unittest", "scripts.tests.test_quality_gradle", "-q"],
+      "inputs": ["scripts/quality-gradle.sh", "scripts/tests/test_quality_gradle.py", "gradle/wrapper/gradle-wrapper.properties", "backend/gradle/wrapper/gradle-wrapper.properties"],
+      "cacheable": true
     },
     {
       "id": "backend:unit",
@@ -107,7 +119,10 @@
         "*.gradle",
         "gradle.properties",
         "gradle/**",
-        "scripts/quality-gradle.sh"
+        "scripts/quality-gradle.sh",
+        "LICENSE",
+        "NOTICE",
+        "THIRD_PARTY_NOTICES.md"
       ],
       "cacheable": false,
       "platforms": [
@@ -651,6 +666,10 @@
   ],
   "impacts": [
     {
+      "paths": ["LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"],
+      "components": ["backend", "bot", "cli", "shared"]
+    },
+    {
       "paths": [
         "shared/**",
         "*.gradle",
@@ -663,7 +682,8 @@
         "backend",
         "bot",
         "cli",
-        "shared"
+        "shared",
+        "tooling"
       ]
     }
   ],

@@ -29,6 +29,8 @@ the manual lanes. Backend integration requires the disposable PostgreSQL fixture
 The helper freezes SOURCE_DATE_EPOCH from the candidate; preserve the tested JAR
 and its digest for delivery. Coverage tasks use the same Gradle graph and do not
 need a second test invocation. Keep maxParallelForks and product coverage gates.
+Ordinary helper tasks use the qualified strict configuration-cache default;
+scope and notice-input requirements are in [TESTING](docs/TESTING.md).
 
 ## Run
 
