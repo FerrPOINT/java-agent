@@ -8,6 +8,8 @@
 Backend: `bash scripts/quality-gradle.sh --backend test`.
 Bot/CLI/shared: `bash scripts/quality-gradle.sh :telegram-bot:test :cli:test :shared:test`.
 `bootJar` и обычный `build/check` включают unit, без integration/slow.
+Unit entrypoint не требует PostgreSQL fixture variables. DB/disposable guards
+сохраняются в backend integration/slow/release; unit не подготавливает БД.
 Ручная проверка: backend `releaseCheck` (полный coverage ratchet),
 `integrationTest`, `slowTest`, необходимые `liveTest`/`e2eTest`.
 Gradle inventory — gradle/test-lanes.json; `python scripts/check_test_lanes.py`
