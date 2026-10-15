@@ -419,7 +419,7 @@ Full conventions doc: `backend/docs/conventions.md`
 
 **Enforcement (CI, job `docs`)**
 
-- `python3 scripts/check_docs_standard.py` — ratchet против `docs/standards/coverage-baseline.json` (DOC001/DOC002/DOC003 + LINE coverage per модуль). Нарастание нарушений или падение coverage ниже baseline = красный CI.
+- `python3 scripts/check_docs_standard.py` — быстрый DOC001/DOC002/DOC003 ratchet против documentation counters в `docs/standards/coverage-baseline.json`, без тестов и компиляции. LINE coverage проверяется отдельно ручным Gradle release graph; отсутствие обязательного coverage report не объявляется PASS.
 - Baseline повышается только осознанно: вместе с новыми тестами, `--update-baseline`, коммит "chore: raise docs baseline".
 - Текущий долг: backend 513×DOC001 / bot 58 / cli 6; LINE backend 79.15% / bot 82.16%. Гасить пакетами из bottom-списка, не разом.
 
