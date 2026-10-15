@@ -15,7 +15,8 @@ Linux QA получает отдельные PostgreSQL 16 (миграции/rep
 удаляет весь собственный fixture после операции. Host Docker socket не нужен;
 без external fixture сохраняется штатный Testcontainers-вариант.
 
-Канонический Gradle entrypoint: `bash scripts/quality-gradle.sh --backend test slowTest jacocoTestReport bootJar --no-daemon --max-workers=2`.
+Обычная сборка: `bash scripts/quality-gradle.sh --backend test bootJar --no-daemon --max-workers=2`.
+Ручной release gate: `bash scripts/quality-gradle.sh --backend releaseCheck bootJar --no-daemon --max-workers=2`.
 Без `--backend` helper выбирает корневой multi-project build. Он фиксирует
 `SOURCE_DATE_EPOCH` из exact candidate commit; явное значение сохраняется и остаётся
 полноценным входом `build.time`. В повторном запуске одного кандидата время не меняется.
