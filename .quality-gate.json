@@ -51,14 +51,15 @@
       ],
       "argv": [
         "bash",
-        "./gradlew",
+        "scripts/quality-gradle.sh",
+        "--backend",
         "test",
         "slowTest",
         "jacocoTestReport",
         "--no-daemon",
         "--max-workers=2"
       ],
-      "cwd": "backend",
+      "cwd": ".",
       "inputs": [
         "**"
       ],
@@ -80,6 +81,9 @@
         "USAGE_PERSISTENCE_TEST_JDBC_URL",
         "USAGE_PERSISTENCE_TEST_DB_USER",
         "USAGE_PERSISTENCE_TEST_DB_PASSWORD"
+      ],
+      "environment_inputs": [
+        "SOURCE_DATE_EPOCH"
       ]
     },
     {
@@ -90,14 +94,15 @@
       ],
       "argv": [
         "bash",
-        "./gradlew",
+        "scripts/quality-gradle.sh",
+        "--backend",
         "bootJar",
         "--no-daemon",
         "--max-workers=2",
         "-x",
         "test"
       ],
-      "cwd": "backend",
+      "cwd": ".",
       "inputs": [
         "backend/src/main/**",
         "shared/src/main/**",
@@ -106,7 +111,8 @@
         "backend/gradle/**",
         "*.gradle",
         "gradle.properties",
-        "gradle/**"
+        "gradle/**",
+        "scripts/quality-gradle.sh"
       ],
       "cacheable": false,
       "platforms": [
@@ -121,7 +127,10 @@
           "pattern": "25\\.0\\.4\\.1"
         }
       ],
-      "kind": "artifact"
+      "kind": "artifact",
+      "environment_inputs": [
+        "SOURCE_DATE_EPOCH"
+      ]
     },
     {
       "id": "bot:quality",
@@ -131,7 +140,7 @@
       ],
       "argv": [
         "bash",
-        "./gradlew",
+        "scripts/quality-gradle.sh",
         ":telegram-bot:test",
         ":telegram-bot:jacocoTestReport",
         "--no-daemon",
@@ -153,6 +162,9 @@
           ],
           "pattern": "25\\.0\\.4\\.1"
         }
+      ],
+      "environment_inputs": [
+        "SOURCE_DATE_EPOCH"
       ]
     },
     {
@@ -163,7 +175,7 @@
       ],
       "argv": [
         "bash",
-        "./gradlew",
+        "scripts/quality-gradle.sh",
         ":cli:test",
         "--no-daemon",
         "--max-workers=2"
@@ -184,6 +196,9 @@
           ],
           "pattern": "25\\.0\\.4\\.1"
         }
+      ],
+      "environment_inputs": [
+        "SOURCE_DATE_EPOCH"
       ]
     },
     {
@@ -194,7 +209,7 @@
       ],
       "argv": [
         "bash",
-        "./gradlew",
+        "scripts/quality-gradle.sh",
         ":shared:test",
         "--no-daemon",
         "--max-workers=2"
@@ -215,6 +230,9 @@
           ],
           "pattern": "25\\.0\\.4\\.1"
         }
+      ],
+      "environment_inputs": [
+        "SOURCE_DATE_EPOCH"
       ]
     }
   ],
@@ -225,5 +243,23 @@
     "shared/src/test/**",
     "telegram-bot/src/test/**",
     "cli/src/test/**"
+  ],
+  "impacts": [
+    {
+      "paths": [
+        "shared/**",
+        "*.gradle",
+        "*.gradle.kts",
+        "gradle.properties",
+        "gradle/**",
+        "scripts/quality-gradle.sh"
+      ],
+      "components": [
+        "backend",
+        "bot",
+        "cli",
+        "shared"
+      ]
+    }
   ]
 }

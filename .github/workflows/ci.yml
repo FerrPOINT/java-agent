@@ -120,8 +120,7 @@ jobs:
         run: chmod +x gradlew backend/gradlew
 
       - name: Backend tests, integration and coverage (one task graph)
-        working-directory: backend
-        run: ./gradlew test slowTest jacocoTestReport ${{ needs.changes.outputs.backend_build == 'true' && 'bootJar' || '' }} --no-daemon --max-workers=2
+        run: bash scripts/quality-gradle.sh --backend test slowTest jacocoTestReport ${{ needs.changes.outputs.backend_build == 'true' && 'bootJar' || '' }} --no-daemon --max-workers=2
         env:
           USAGE_PERSISTENCE_TEST_JDBC_URL: jdbc:postgresql://127.0.0.1:5432/usage_regression
           USAGE_PERSISTENCE_TEST_DB_USER: qa
@@ -143,7 +142,7 @@ jobs:
           EOF
 
       - name: Run telegram-bot and cli tests
-        run: ./gradlew :telegram-bot:test :cli:test :telegram-bot:jacocoTestReport --no-daemon --max-workers=2
+        run: bash scripts/quality-gradle.sh :telegram-bot:test :cli:test :telegram-bot:jacocoTestReport --no-daemon --max-workers=2
 
       - name: Coverage ratchet (blocking, baseline in docs/standards/coverage-baseline.json)
         run: |

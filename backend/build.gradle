@@ -157,6 +157,9 @@ tasks.register('slowTest', Test) {
     }
     jvmArgs '-XX:+EnableDynamicAgentLoading'
     maxHeapSize = '4g'
+    // Database state is not a Gradle input; integration acceptance must be fresh.
+    outputs.upToDateWhen { false }
+    outputs.cacheIf { false }
 }
 
 tasks.register('liveTest', Test) {
@@ -222,7 +225,15 @@ tasks.withType(JavaCompile).configureEach {
 }
 
 springBoot {
-    buildInfo()
+    buildInfo {
+        // The quality helper freezes this real artifact input for the candidate.
+        // Direct builds retain Spring's default when no source epoch is supplied.
+        if (providers.environmentVariable('SOURCE_DATE_EPOCH').isPresent()) {
+            properties {
+                time = java.time.Instant.ofEpochSecond(providers.environmentVariable('SOURCE_DATE_EPOCH').get().toLong())
+            }
+        }
+    }
 }
 
 def ferrpointNoticeFiles = [
