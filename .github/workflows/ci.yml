@@ -82,6 +82,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     services:
+      migrations-postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: java_agent_regression
+          POSTGRES_USER: qa
+          POSTGRES_PASSWORD: owned-qa-only
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U qa -d java_agent_regression"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 30
       postgres:
         image: postgres:17.6-alpine
         env:
@@ -122,6 +135,10 @@ jobs:
       - name: Backend tests, integration and coverage (one task graph)
         run: bash scripts/quality-gradle.sh --backend test slowTest jacocoTestReport ${{ needs.changes.outputs.backend_build == 'true' && 'bootJar' || '' }} --no-daemon --max-workers=2
         env:
+          JAVA_AGENT_TEST_DB_DISPOSABLE: 'true'
+          JAVA_AGENT_TEST_DB_URL: jdbc:postgresql://127.0.0.1:5433/java_agent_regression
+          JAVA_AGENT_TEST_DB_USER: qa
+          JAVA_AGENT_TEST_DB_PASSWORD: owned-qa-only
           USAGE_PERSISTENCE_TEST_JDBC_URL: jdbc:postgresql://127.0.0.1:5432/usage_regression
           USAGE_PERSISTENCE_TEST_DB_USER: qa
           USAGE_PERSISTENCE_TEST_DB_PASSWORD: owned-qa-only

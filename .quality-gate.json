@@ -80,7 +80,11 @@
       "requires_env": [
         "USAGE_PERSISTENCE_TEST_JDBC_URL",
         "USAGE_PERSISTENCE_TEST_DB_USER",
-        "USAGE_PERSISTENCE_TEST_DB_PASSWORD"
+        "USAGE_PERSISTENCE_TEST_DB_PASSWORD",
+        "JAVA_AGENT_TEST_DB_DISPOSABLE",
+        "JAVA_AGENT_TEST_DB_URL",
+        "JAVA_AGENT_TEST_DB_USER",
+        "JAVA_AGENT_TEST_DB_PASSWORD"
       ],
       "environment_inputs": [
         "SOURCE_DATE_EPOCH"
