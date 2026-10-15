@@ -230,7 +230,7 @@ springBoot {
         // Direct builds retain Spring's default when no source epoch is supplied.
         if (providers.environmentVariable('SOURCE_DATE_EPOCH').isPresent()) {
             properties {
-                time = java.time.Instant.ofEpochSecond(providers.environmentVariable('SOURCE_DATE_EPOCH').get().toLong())
+                time = java.time.Instant.ofEpochSecond(providers.environmentVariable('SOURCE_DATE_EPOCH').get().toLong()).toString()
             }
         }
     }
