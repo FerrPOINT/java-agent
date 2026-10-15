@@ -15,7 +15,9 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       backend: ${{ steps.classify.outputs.backend }}
-      backend_build: ${{ steps.classify.outputs.backend_build }}
+      backend_build: ${{ steps.modules.outputs.backend_build }}
+      java_backend: ${{ steps.modules.outputs.java_backend }}
+      java_root: ${{ steps.modules.outputs.java_root }}
       frontend: ${{ steps.classify.outputs.frontend }}
     steps:
       - uses: actions/checkout@v7
@@ -50,6 +52,12 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: python3 java-agent/scripts/vendor/base_quality_selection.py --root java-agent
+      - id: modules
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 java-agent/scripts/select_java_modules.py
   docs:
     name: Docs standard ratchet
     runs-on: ubuntu-latest
@@ -61,7 +69,7 @@ jobs:
       - name: Verify shipped-default documentation coverage
         run: python3 scripts/check_default_settings_reference.py
       - name: Documentation and release-script unit tests
-        run: python3 -m unittest scripts.tests.test_check_docs_standard scripts.tests.test_check_default_settings_reference scripts.tests.test_release_verify scripts.tests.test_parity_dashboard
+        run: python3 -m unittest scripts.tests.test_check_docs_standard scripts.tests.test_check_default_settings_reference scripts.tests.test_release_verify scripts.tests.test_parity_dashboard scripts.tests.test_select_java_modules
   readme:
     name: README evidence
     runs-on: ubuntu-latest
@@ -106,14 +114,16 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('backend/**/gradle-wrapper.properties', 'backend/**/*.gradle', 'backend/**/gradle.properties') }}
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/gradle-wrapper.properties', '**/*.gradle', '**/gradle.properties', 'gradle/test-lanes.json') }}
           restore-keys: |
             ${{ runner.os }}-gradle-
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew backend/gradlew
       - name: Fast backend units and candidate JAR
+        if: needs.changes.outputs.java_backend == 'true'
         run: bash scripts/quality-gradle.sh --backend test ${{ needs.changes.outputs.backend_build == 'true' && 'bootJar' || '' }} --no-daemon --max-workers=2
       - name: Run telegram-bot and cli tests
+        if: needs.changes.outputs.java_root == 'true'
         run: bash scripts/quality-gradle.sh :telegram-bot:test :cli:test :shared:test --no-daemon --max-workers=2
       - name: Identify tested application artifact
         if: needs.changes.outputs.backend_build == 'true'

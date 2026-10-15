@@ -25,6 +25,12 @@ workflow_dispatch на exact ref. Автоматический CI не подн�
 Required security/data/compatibility checks и thresholds сохраняются.
 Unit success не заменяет ручную приёмку; NOT RUN не означает PASS.
 
+`gradle/build-info.gradle` задаёт одинаковую deterministic policy backend/bot/CLI:
+helper фиксирует SOURCE_DATE_EPOCH из commit, Docker принимает его как build arg.
+Без epoch bare build явно unversioned (epoch 0). Изменение epoch меняет JAR input.
+CI выбирает backend и bot/CLI/shared graphs отдельно: CLI-only не запускает backend,
+shared запускает оба. Root tasks передаются одним совместимым Gradle вызовом.
+
 ## Измеренный unit budget
 
 Linux qualification: backend 4805 cases, 76 с с запуском Gradle/JVM;

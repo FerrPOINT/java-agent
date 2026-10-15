@@ -1,10 +1,12 @@
 # syntax=docker/dockerfile:1
 FROM eclipse-temurin:25.0.4.1_1-jdk-noble@sha256:0d623ea18d7b0fe1e12a2c0a920f7e950cad433387e5a49d3611e1507fa07602 AS builder
 ARG TARGETARCH
+ARG SOURCE_DATE_EPOCH=0
+ENV SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
 
 WORKDIR /workspace
 COPY backend/gradle/ gradle/
-COPY gradle/test-lanes.gradle gradle/test-lanes.json gradle/
+COPY gradle/test-lanes.gradle gradle/test-lanes.json gradle/build-info.gradle gradle/
 COPY backend/gradlew backend/build.gradle backend/settings.gradle backend/gradle.properties ./
 RUN sed -i 's/\r$//' gradlew && chmod +x gradlew
 COPY LICENSE NOTICE THIRD_PARTY_NOTICES.md ./

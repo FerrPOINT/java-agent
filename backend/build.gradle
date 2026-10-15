@@ -224,17 +224,7 @@ tasks.withType(JavaCompile).configureEach {
     options.release = 25
 }
 
-springBoot {
-    buildInfo {
-        // The quality helper freezes this real artifact input for the candidate.
-        // Direct builds retain Spring's default when no source epoch is supplied.
-        if (providers.environmentVariable('SOURCE_DATE_EPOCH').isPresent()) {
-            properties {
-                time = java.time.Instant.ofEpochSecond(providers.environmentVariable('SOURCE_DATE_EPOCH').get().toLong()).toString()
-            }
-        }
-    }
-}
+apply from: file('../gradle/build-info.gradle').exists() ? file('../gradle/build-info.gradle') : file('gradle/build-info.gradle')
 
 def ferrpointNoticeFiles = [
     rootProject.file('LICENSE'),

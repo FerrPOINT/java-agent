@@ -107,9 +107,7 @@ tasks.withType(JavaCompile).configureEach {
     ]
 }
 
-springBoot {
-    buildInfo()
-}
+apply from: file('../gradle/build-info.gradle').exists() ? file('../gradle/build-info.gradle') : file('gradle/build-info.gradle')
 
 def ferrpointNoticeFiles = [
     rootProject.file('LICENSE'),
