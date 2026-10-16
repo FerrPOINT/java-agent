@@ -5,6 +5,26 @@
 # or execute the java-agent source tree unless an operator deliberately changes
 # this deployment contract.
 services:
+  volume-init:
+    profiles: [maintenance]
+    image: java-agent-backend:dev
+    user: "0:0"
+    entrypoint: [chown, -R, "10001:10001"]
+    command: [/runtime/state, /runtime/workspace, /runtime/tmp]
+    volumes:
+      - java_agent_state:/runtime/state
+      - java_agent_workspace:/runtime/workspace
+      - java_agent_tmp:/runtime/tmp
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE]
+    security_opt: [no-new-privileges:true]
+    cpus: 0.25
+    mem_limit: 64m
+    memswap_limit: 64m
+    pids_limit: 32
+
   backend:
     build:
       context: .

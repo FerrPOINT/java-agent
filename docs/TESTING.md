@@ -41,6 +41,15 @@ Temurin 25.0.4.1 и wrapper 9.6.1/9.8.0. Версия читается из фа
 Configuration cache сохраняет task graph; Gradle up-to-date/build cache отдельно
 проверяет outputs. Он не разрешает пропускать live/DB проверки.
 
+Быстрый tooling-набор включает `python -B -m unittest
+scripts.tests.test_quality_gradle scripts.tests.test_deploy_dev_docker -q`.
+Deployment helper проверяется через заглушки команд: сначала единственная сборка
+backend/bot, затем Compose `volume-init`, затем остановка host services и запуск
+готовых образов с `--no-build`. Ошибка сборки/init или отсутствующая прежняя БД
+останавливает сценарий до переключения runtime. Сам deploy этот unit не выполняет.
+Maintenance-сервис использует тот же backend image и именованные volumes текущего
+Compose project; отдельного Alpine image и вычисления имени volume из имени папки нет.
+
 `gradle/ferrpoint-notices.gradle` задаёт единые JAR inputs для всех модулей:
 LICENSE/NOTICE/THIRD_PARTY_NOTICES.md из корня репозитория. Обычный root build,
 standalone backend и flattened Docker layout используют один источник. Отсутствие
