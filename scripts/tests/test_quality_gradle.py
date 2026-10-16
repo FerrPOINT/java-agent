@@ -1,6 +1,7 @@
 """Exercise the public helper boundary without starting Gradle or a JVM."""
 
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -84,6 +85,27 @@ class QualityGradleTests(unittest.TestCase):
         result, lines = self.invoke("--backend", "test", epoch="not-unix-seconds")
         self.assertEqual(result.returncode, 64)
         self.assertEqual(lines, [])
+
+
+@unittest.skipUnless(BASH and Path(BASH).is_file(), "native Bash is required; WSL is not used")
+class ContainerGradleWrapperTests(unittest.TestCase):
+    def test_module_builds_accept_crlf_and_lf_wrappers_without_changing_arguments(self):
+        payload = b'#!/bin/sh\nprintf \'%s\\n\' "$@" > invoked.txt\n'
+        for module in ("telegram-bot", "cli"):
+            recipe = (ROOT / module / "Dockerfile").read_text(encoding="utf-8")
+            run = next(line for line in recipe.splitlines() if "&& ./gradlew" in line)
+            command = re.sub(r"^RUN(?: --mount=\S+)* ", "", run)
+            for newline in (b"\n", b"\r\n"):
+                with self.subTest(module=module, newline=newline), tempfile.TemporaryDirectory() as temporary:
+                    directory = Path(temporary)
+                    wrapper = directory / "gradlew"
+                    wrapper.write_bytes(payload.replace(b"\n", newline))
+                    result = subprocess.run([BASH, "-c", command], cwd=directory,
+                                            capture_output=True, text=True, check=False)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(wrapper.read_bytes(), payload)
+                    self.assertEqual((directory / "invoked.txt").read_text().splitlines(),
+                                     [":" + module + ":bootJar", "--build-cache", "--no-daemon"])
 
 
 if __name__ == "__main__":
