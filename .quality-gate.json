@@ -102,7 +102,8 @@
       "environment_inputs": [
         "SOURCE_DATE_EPOCH"
       ],
-      "test_tier": "unit"
+      "test_tier": "unit",
+      "outputs": ["backend/build/test-results/test"]
     },
     {
       "id": "backend:build",
@@ -122,6 +123,9 @@
       "inputs": [
         "backend/src/main/**",
         "shared/src/main/**",
+        "shared/*.gradle",
+        "shared/gradle.properties",
+        "backend/gradlew",
         "backend/*.gradle",
         "backend/gradle.properties",
         "backend/gradle/**",
@@ -150,7 +154,9 @@
       "environment_inputs": [
         "SOURCE_DATE_EPOCH"
       ],
-      "test_tier": "artifact"
+      "test_tier": "artifact",
+      "covers_units": ["backend:unit"],
+      "outputs": ["backend/build/libs/java-agent-backend-0.0.1-SNAPSHOT.jar"]
     },
     {
       "id": "bot:unit",

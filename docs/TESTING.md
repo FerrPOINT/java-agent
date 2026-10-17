@@ -15,6 +15,14 @@ Backend9.8.0 не смешивается с root9.6.1. Старый pinned selec
 Backend использует точные `:test`/`:bootJar`: unqualified `test` выбирает также
 Shared subproject и дублирует его проверку в последующем root graph.
 `bootJar` и обычный `build/check` включают unit, без integration/slow.
+Backend artifact gate объявляет `covers_units: [backend:unit]`: новый Base
+выполняет один `:bootJar` graph с его `:test` prerequisite, затем отдельно
+сертифицирует unit inputs/reports без второго Gradle-вызова. При test-only
+выбирается unit; artifact reuse не подменяет свежий test proof. Shared log
+принадлежит producer. Старый quality packet выполняет прежние два argv до adoption.
+JAR output и test-result directory заданы явно; wrapper/shared Gradle scripts
+входят в inputs. Base receipt reuse настоящего JAR/units остаётся выключенным
+до qualification SOURCE_DATE_EPOCH, toolchain и Gradle home/init configuration.
 Unit entrypoint не требует PostgreSQL fixture variables. DB/disposable guards
 сохраняются в backend integration/slow/release; unit не подготавливает БД.
 Ручная проверка: backend `releaseCheck` (полный coverage ratchet),
