@@ -67,6 +67,12 @@ Gradle inventory — gradle/test-lanes.json; `python scripts/check_test_lanes.py
 
 ### Раздельная компиляция unit и ручных lanes
 
+Backend unit heap cap —1536m; `maxParallelForks=1` и `forkEvery=750` сохранены.
+Ручные backend integration/slow/live сохраняют4g, e2e —2g. Unit tuning не
+наследуется ими как новый лимит. Gradle daemon budget остаётся1g. Эти значения —
+caps, не measured usage; native qualification/фактические CPU/RAM/time публикует
+Base, а unit task логирует свой применённый cap перед исполнением.
+
 `gradle/test-lanes.json` содержит полный `files` inventory и `support` ownership.
 Существующие пути тестов сохранены. `test` компилирует unit sources и unit-only
 helpers; `testSupport` — общие pure fixtures; `manualTest` — integration/slow/live

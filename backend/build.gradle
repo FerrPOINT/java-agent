@@ -128,12 +128,13 @@ tasks.named('test') {
     // Env-mutation tests (HERMES_HOME artifact-path resolution) need reflective
     // access to the unmodifiable env map backing System.getenv().
     jvmArgs '--add-opens=java.base/java.util=ALL-UNNAMED', '--add-opens=java.base/java.lang=ALL-UNNAMED'
-    maxHeapSize = '4g'
+    maxHeapSize = '1536m'
     // DEBT-3: strict-stubs flakes (OpenAiRunsControllerTest) under parallel forks —
     // async run tests race Mockito verification. Serialized forks + periodic
     // fork recycling (audit 2026-09-01 stabilization, ported from 0b348696).
     maxParallelForks = 1
     forkEvery = 750
+    doFirst { task -> task.logger.lifecycle('Backend unit heap cap: ' + task.maxHeapSize) }
     // Workaround for Gradle 9.x EOFException in test result serialization
     reports {
         junitXml.required = true
@@ -243,6 +244,11 @@ tasks.named('bootJar') {
 
 // Base test policy: automatic unit checks; explicit integration/slow release lanes.
 apply from: file("../gradle/test-lanes.gradle").exists() ? file("../gradle/test-lanes.gradle") : file("gradle/test-lanes.gradle")
+
+// Unit tuning must not lower the independent manual release budgets.
+['integrationTest', 'slowTest'].each { name ->
+    tasks.named(name, Test) { maxHeapSize = '4g' }
+}
 dependencies {
     // These are manual boundary consumers, not ordinary unit dependencies.
     manualTestImplementation 'org.testcontainers:testcontainers:1.21.4'
