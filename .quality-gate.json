@@ -102,6 +102,7 @@
       "environment_inputs": [
         "SOURCE_DATE_EPOCH"
       ],
+      "source_date_epoch": "git-head",
       "test_tier": "unit",
       "outputs": ["backend/build/test-results/test"]
     },
@@ -154,6 +155,7 @@
       "environment_inputs": [
         "SOURCE_DATE_EPOCH"
       ],
+      "source_date_epoch": "git-head",
       "test_tier": "artifact",
       "covers_units": ["backend:unit"],
       "outputs": ["backend/build/libs/java-agent-backend-0.0.1-SNAPSHOT.jar"]
@@ -193,6 +195,7 @@
       "environment_inputs": [
         "SOURCE_DATE_EPOCH"
       ],
+      "source_date_epoch": "git-head",
       "test_tier": "unit",
       "gradle_unit_group": "root:unit"
     },
@@ -231,6 +234,7 @@
       "environment_inputs": [
         "SOURCE_DATE_EPOCH"
       ],
+      "source_date_epoch": "git-head",
       "test_tier": "unit",
       "gradle_unit_group": "root:unit"
     },
@@ -269,6 +273,7 @@
       "environment_inputs": [
         "SOURCE_DATE_EPOCH"
       ],
+      "source_date_epoch": "git-head",
       "test_tier": "unit",
       "gradle_unit_group": "root:unit"
     },
@@ -315,6 +320,7 @@
       "environment_inputs": [
         "SOURCE_DATE_EPOCH"
       ],
+      "source_date_epoch": "git-head",
       "test_tier": "integration",
       "external_state": true
     },
@@ -351,6 +357,7 @@
       "environment_inputs": [
         "SOURCE_DATE_EPOCH"
       ],
+      "source_date_epoch": "git-head",
       "test_tier": "integration",
       "external_state": true
     },
@@ -387,6 +394,7 @@
       "environment_inputs": [
         "SOURCE_DATE_EPOCH"
       ],
+      "source_date_epoch": "git-head",
       "test_tier": "integration",
       "external_state": true
     },
@@ -423,6 +431,7 @@
       "environment_inputs": [
         "SOURCE_DATE_EPOCH"
       ],
+      "source_date_epoch": "git-head",
       "test_tier": "integration",
       "external_state": true
     },
@@ -473,6 +482,7 @@
       "environment_inputs": [
         "SOURCE_DATE_EPOCH"
       ],
+      "source_date_epoch": "git-head",
       "test_tier": "integration",
       "external_state": true
     },
@@ -512,6 +522,7 @@
       "environment_inputs": [
         "SOURCE_DATE_EPOCH"
       ],
+      "source_date_epoch": "git-head",
       "test_tier": "integration",
       "external_state": true
     },
@@ -550,6 +561,7 @@
       "environment_inputs": [
         "SOURCE_DATE_EPOCH"
       ],
+      "source_date_epoch": "git-head",
       "test_tier": "integration",
       "external_state": true
     },
@@ -588,6 +600,7 @@
       "environment_inputs": [
         "SOURCE_DATE_EPOCH"
       ],
+      "source_date_epoch": "git-head",
       "test_tier": "integration",
       "external_state": true
     },
@@ -634,6 +647,7 @@
       "environment_inputs": [
         "SOURCE_DATE_EPOCH"
       ],
+      "source_date_epoch": "git-head",
       "test_tier": "slow",
       "external_state": true
     },
@@ -670,6 +684,7 @@
       "environment_inputs": [
         "SOURCE_DATE_EPOCH"
       ],
+      "source_date_epoch": "git-head",
       "test_tier": "slow",
       "external_state": true
     }

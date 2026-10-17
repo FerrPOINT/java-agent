@@ -23,6 +23,20 @@ Backend artifact gate объявляет `covers_units: [backend:unit]`: нов�
 JAR output и test-result directory заданы явно; wrapper/shared Gradle scripts
 входят в inputs. Base receipt reuse настоящего JAR/units остаётся выключенным
 до qualification SOURCE_DATE_EPOCH, toolchain и Gradle home/init configuration.
+Source gates теперь объявляют `source_date_epoch: git-head` с явным
+`environment_inputs: [SOURCE_DATE_EPOCH]`. Новый Base до fingerprint вычисляет
+effective epoch exact candidate, передаёт его producer и указывает в result.
+Непустое явное значение имеет приоритет; пустое соответствует прежнему helper
+default. Неизвестная policy/нечисловое значение отклоняются. Shared producer и
+unit обязаны иметь одинаковый epoch contract. Сам shell helper сохраняет прежний
+fallback для standalone запуска, но Base уже передаёт frozen значение.
+
+Build time — реальный JAR input, поэтому новый commit с implicit epoch меняет
+его даже при прежних application bytes. Нельзя выдавать старое встроенное время
+за новую сборку. При сохранённом explicit epoch одинаковые production inputs
+могут использовать прежний artifact; свежий test proof всё равно относится к
+новому commit. Эта source qualification не включает настоящий JAR receipt reuse
+и не закрывает qualification JDK/Gradle home/init или artifact handoff.
 Unit entrypoint не требует PostgreSQL fixture variables. DB/disposable guards
 сохраняются в backend integration/slow/release; unit не подготавливает БД.
 Ручная проверка: backend `releaseCheck` (полный coverage ratchet),
