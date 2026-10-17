@@ -1,5 +1,21 @@
 {
   "schema": "java-test-lanes/v1",
+  "support": {
+    "backend/src/test/java/com/azhukov/agent/TestJavaAgentApplication.java": "manual",
+    "backend/src/test/java/com/azhukov/agent/persistence/DisposablePostgres.java": "manual",
+    "backend/src/test/java/com/azhukov/agent/persistence/PostgresActiveServicesTestContainer.java": "manual",
+    "backend/src/test/java/com/azhukov/agent/persistence/PostgresTestContainer.java": "manual",
+    "backend/src/test/java/com/azhukov/agent/support/BackendIntegrationTestBase.java": "manual",
+    "backend/src/test/java/com/azhukov/agent/support/NoopSpringIntegrationTest.java": "manual",
+    "backend/src/test/java/com/azhukov/agent/core/agent/MockModelClient.java": "manual",
+    "backend/src/test/java/com/azhukov/agent/core/budget/AgentPropertiesStub.java": "unit",
+    "backend/src/test/java/com/azhukov/agent/client/mcp/McpTestFactory.java": "unit",
+    "backend/src/test/java/com/azhukov/agent/tools/browser/CdpTestWebSocket.java": "shared",
+    "backend/src/test/java/com/azhukov/agent/tools/fixtures/MockArgsTool.java": "shared",
+    "backend/src/test/java/com/azhukov/agent/tools/fixtures/MockEchoTool.java": "shared",
+    "backend/src/test/java/com/azhukov/agent/tools/fixtures/MockFailingTool.java": "shared",
+    "telegram-bot/src/test/java/com/azhukov/agent/bot/BotIntegrationTestBase.java": "manual"
+  },
   "files": {
     "backend/src/test/java/com/azhukov/agent/api/AdvertisedSessionEndpointsContractTest.java": "integration",
     "backend/src/test/java/com/azhukov/agent/api/AgentChatControllerPendingReviewTest.java": "slow",

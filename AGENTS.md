@@ -31,6 +31,14 @@ and its digest for delivery. Coverage tasks use the same Gradle graph and do not
 need a second test invocation. Keep maxParallelForks and product coverage gates.
 Ordinary helper tasks use the qualified strict configuration-cache default;
 scope and notice-input requirements are in [TESTING](docs/TESTING.md).
+`gradle/test-lanes.json` also owns every support source. Unit compilation uses
+unit and pure shared support; manual lanes have their own source set/classpath.
+Do not add a dependency on manual test classes to unit/shared code, including
+reflection: extract a pure shared fixture instead. Testcontainers dependencies
+belong to manual compilation. `check_test_lanes.py` verifies the full partition;
+Gradle rejects unknown/stale sources before compilation. Preserve shared test
+resources and full release coverage. This sourceSet change needs application
+qualification; the bounded Gradle metadata fixture alone does not qualify it.
 New Base context readers verify the actual selected JDK/configuration using
 `scripts/gradle-context.py`. Keep all Gradle receipt reuse disabled until the
 distribution/resolved-input and native JAR proofs in TESTING are complete.

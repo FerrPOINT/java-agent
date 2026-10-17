@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from scripts.check_test_lanes import validate
+from scripts.check_test_lanes import validate, compilation_layout
 
 
 class TestLaneTests(unittest.TestCase):
@@ -60,6 +60,74 @@ class TestLaneTests(unittest.TestCase):
     def test_existing_direct_network_boundary_still_rejected(self):
         self.inventory("class BoundaryTest { @Test void test() { new MockWebServer(); } }")
         with self.assertRaisesRegex(ValueError, "cannot be unit"):
+            validate(self.root)
+
+    def support(self, body, tier=None):
+        name = 'backend/src/test/java/fixture/Fixture.java'
+        path = self.root / name
+        path.write_text(body, encoding='utf-8')
+        if tier is not None:
+            inventory_path = self.root / 'gradle/test-lanes.json'
+            data = json.loads(inventory_path.read_text())
+            data['support'] = {name: tier}
+            inventory_path.write_text(json.dumps(data))
+        return name
+
+    def manual_test(self):
+        name = 'backend/src/test/java/fixture/ManualBoundaryTest.java'
+        (self.root / name).write_text('class ManualBoundaryTest { @Test void boundary() {} }')
+        path = self.root / 'gradle/test-lanes.json'
+        data = json.loads(path.read_text())
+        data['files'][name] = 'integration'
+        path.write_text(json.dumps(data))
+        return name
+
+    def test_unclassified_support_source_does_not_silently_join_unit_compilation(self):
+        self.inventory('class BoundaryTest { @Test void test() {} }')
+        self.support('class Fixture {}')
+        with self.assertRaisesRegex(ValueError, 'support source'):
+            validate(self.root)
+
+    def test_shared_fixture_has_one_owner_without_compiling_manual_test_for_unit(self):
+        self.inventory('class BoundaryTest { @Test void test() { new Fixture(); } }')
+        shared = self.support('class Fixture {}', 'shared')
+        manual = self.manual_test()
+        self.assertEqual(validate(self.root), {'unit': 1, 'integration': 1, 'slow': 0, 'live': 0})
+        layout = compilation_layout(self.root)['backend']
+        self.assertEqual(layout['shared'], [shared])
+        self.assertEqual(layout['manual'], [manual])
+        self.assertNotIn(manual, layout['unit'])
+
+    def test_boundary_fixture_cannot_leak_into_unit_or_shared_classpath(self):
+        self.inventory('class BoundaryTest { @Test void test() {} }')
+        for tier in ('unit', 'shared'):
+            with self.subTest(tier=tier):
+                self.support('class Fixture { ProcessBuilder process; }', tier)
+                with self.assertRaisesRegex(ValueError, 'Boundary helper'):
+                    validate(self.root)
+        self.support('class Fixture { ProcessBuilder process; }', 'manual')
+        self.assertEqual(validate(self.root)['unit'], 1)
+
+    def test_reflective_manual_fixture_dependency_is_rejected_but_comment_is_allowed(self):
+        self.inventory('class BoundaryTest { @Test void test() { Class.forName("fixture.ManualBoundaryTest$Fixture"); } }')
+        self.manual_test()
+        with self.assertRaisesRegex(ValueError, 'extract a shared fixture'):
+            validate(self.root)
+        self.inventory('/** ManualBoundaryTest covers the integration path. */ class BoundaryTest { @Test void test() {} }')
+        self.manual_test()
+        self.assertEqual(validate(self.root)['unit'], 1)
+
+    def test_stale_or_overlapping_support_inventory_is_rejected(self):
+        self.inventory('class BoundaryTest { @Test void test() {} }')
+        helper = self.support('class Fixture {}', 'shared')
+        (self.root / helper).unlink()
+        with self.assertRaisesRegex(ValueError, 'stale support'):
+            validate(self.root)
+        path = self.root / 'gradle/test-lanes.json'
+        data = json.loads(path.read_text())
+        data['support'] = {next(iter(data['files'])): 'shared'}
+        path.write_text(json.dumps(data))
+        with self.assertRaisesRegex(ValueError, 'disjoint'):
             validate(self.root)
 
 

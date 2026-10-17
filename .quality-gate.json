@@ -28,6 +28,9 @@
       "scripts/tests/test_gradle_context.py",
       "scripts/tests/test_dependency_inputs.py",
       "gradle/quality-inputs.gradle",
+      "gradle/test-lanes.gradle",
+      "gradle/test-lanes.json",
+      "scripts/tests/test_source_sets_native.py",
       "gradle/java-preparation.json",
       "java-artifacts.json",
       "scripts/check_test_lanes.py",
@@ -54,6 +57,26 @@
     ]
   },
   "gates": [
+    {
+      "id": "tooling:source-sets-native",
+      "component": "tooling",
+      "profiles": ["integration"],
+      "test_tier": "integration",
+      "argv": ["{python}", "-B", "-m", "unittest", "scripts.tests.test_source_sets_native", "-q"],
+      "inputs": ["gradle/test-lanes.gradle", "scripts/tests/test_source_sets_native.py"],
+      "requires_env": ["PDLC_GRADLE_HOME", "JAVA_HOME"],
+      "external_state": true,
+      "cacheable": false
+    },
+    {
+      "id": "tooling:test-lane-inventory",
+      "component": "tooling",
+      "profiles": ["fast", "unit", "build", "release"],
+      "test_tier": "static",
+      "argv": ["{python}", "-B", "scripts/check_test_lanes.py"],
+      "inputs": ["gradle/test-lanes.json", "gradle/test-lanes.gradle", "*/src/test/**", "scripts/check_test_lanes.py"],
+      "cacheable": true
+    },
     {
       "id": "docs:readme",
       "component": "docs",

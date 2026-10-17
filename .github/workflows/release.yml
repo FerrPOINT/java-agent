@@ -108,6 +108,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Validate test and support source ownership before preparation
+        run: python3 scripts/check_test_lanes.py
+
       - name: Set up JDK 25
         uses: actions/setup-java@v6
         with:

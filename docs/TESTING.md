@@ -63,7 +63,45 @@ Unit entrypoint не требует PostgreSQL fixture variables. DB/disposable 
 `integrationTest`, `slowTest`, необходимые `liveTest`/`e2eTest`.
 Gradle inventory — gradle/test-lanes.json; `python scripts/check_test_lanes.py`
 требует классификацию новых файлов. JaCoCo объединяет unit/integration/slow
-для backend, unit/integration для bot; прежние coverage baselines сохраняются.
+для backend и bot; прежние coverage baselines сохраняются.
+
+### Раздельная компиляция unit и ручных lanes
+
+`gradle/test-lanes.json` содержит полный `files` inventory и `support` ownership.
+Существующие пути тестов сохранены. `test` компилирует unit sources и unit-only
+helpers; `testSupport` — общие pure fixtures; `manualTest` — integration/slow/live
+и их helpers. Ручные Test tasks используют manual output, main и shared support,
+без unit classes. Ресурсы приходят из штатного `processTestResources`, без второй
+копии. Все ручные lanes могут использовать один manual compilation output,
+но обычный build их не запускает. Testcontainers объявлены только в
+`manualTestImplementation`; общий JUnit/Mockito tooling остаётся у потребителей.
+
+Изменение shared fixture касается обеих сторон. Unit→manual ссылки, включая
+reflection, заменяются общей fixture; assertions не удаляются. Неизвестные,
+устаревшие и пересекающиеся source entries блокируются до compilation.
+Metadata-only dependency preparation не требует materialized test sources.
+Обычный и ручной CI выполняют Python inventory check до подготовки Gradle;
+release coverage и ограничения forks/heap сохранены.
+
+Сейчас inventory содержит 584 unit, 186 integration, 68 slow, 9 live source files;
+это не число выполненных test cases. С учётом helpers unit/shared compilation
+выбирает 590 из 861 source files; 271 manual-only source не входит в этот graph.
+Эти числа описывают source ownership и не доказывают экономию CPU/RAM/времени.
+
+Короткая проверка без JVM: `python -B -m unittest scripts.tests.test_test_lanes`.
+Ручной native DSL control: `python -B -m unittest scripts.tests.test_source_sets_native`
+в существующем host execution slot, с `JAVA_HOME` принятого JDK и
+`PDLC_GRADLE_HOME` установленного принятого Gradle. Он работает offline с builtin
+Java/Groovy plugins, проверяет classpaths/resources, unit/manual dry-run graphs,
+configuration cache reuse и отказ неизвестного source. Он не компилирует
+fixtures/приложение, не запускает Test workers и не устанавливает dependencies.
+Gate `tooling:source-sets-native` относится только к ручному integration profile;
+`tooling:test-lane-inventory` — static при разработке/обычной сборке.
+
+На общей native вехе остаются фактические compiler/Test/JAR consumers, оба
+wrappers (9.6.1/9.8.0), Groovy 6, manual inventory/fixtures, coverage и измерение
+полного необходимого graph. До их квалификации 15 Gradle gates остаются
+noncacheable, JAR receipt reuse не включается; installed pins не меняются.
 
 Spring Test contexts (`@SpringJUnitConfig`/`@SpringJUnitWebConfig`) и реально
 созданные application contexts относятся к integration. Импорт или mock

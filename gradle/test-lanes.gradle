@@ -1,4 +1,21 @@
 import groovy.json.JsonSlurper
+import org.gradle.work.DisableCachingByDefault
+
+@DisableCachingByDefault(because = 'Source inventory is a local verification prerequisite')
+abstract class VerifyTestCompilationInventory extends DefaultTask {
+    @Input abstract ListProperty<String> getDeclaredSources()
+    @InputFiles @PathSensitive(PathSensitivity.RELATIVE)
+    abstract ConfigurableFileCollection getSourceFiles()
+    @Internal abstract DirectoryProperty getSourceRoot()
+
+    @TaskAction void verify() {
+        def root = sourceRoot.get().asFile.toPath()
+        def actual = sourceFiles.files.collect { root.relativize(it.toPath()).toString().replace('\\', '/') } as Set
+        if (actual != declaredSources.get().toSet()) {
+            throw new GradleException('Classify every test/support source before compilation; remove stale inventory entries')
+        }
+    }
+}
 
 // The reviewed inventory is shared by the standalone backend and root graph.
 def laneRoot = new File(projectDir, '..')
@@ -21,7 +38,77 @@ def slowPatterns = inventory.files.findAll { path, tier ->
     path.startsWith(modulePrefix) && tier == 'slow'
 }.keySet().collectMany(classPatterns)
 
+// Execution filters alone still compile every test. Keep the reviewed sources
+// in their existing paths, with independent unit/manual compilation outputs.
+def support = inventory.support ?: [:]
+def sourceRoles = [:]
+inventory.files.each { path, tier ->
+    if (path.startsWith(modulePrefix)) {
+        if (!(tier in ['unit', 'integration', 'slow', 'live'])) {
+            throw new GradleException("Unknown test tier: ${path}")
+        }
+        sourceRoles[path.substring(modulePrefix.length())] = tier == 'unit' ? 'unit' : 'manual'
+    }
+}
+support.each { path, role ->
+    if (path.startsWith(modulePrefix)) {
+        if (!(role in ['unit', 'manual', 'shared']) || inventory.files.containsKey(path)) {
+            throw new GradleException("Invalid or overlapping test support: ${path}")
+        }
+        sourceRoles[path.substring(modulePrefix.length())] = role
+    }
+}
+// Metadata-only dependency preparation has no source files. Validate when
+// compilation/testing is requested, without attaching it to dependency views.
+def verifySources = tasks.register('verifyTestCompilationInventory', VerifyTestCompilationInventory) {
+    declaredSources = sourceRoles.keySet().toList().sort()
+    sourceRoot = layout.projectDirectory.dir('src/test')
+    sourceFiles.from(fileTree('src/test') { include '**/*.java', '**/*.groovy' })
+    group = 'verification'
+    description = 'Verify complete test/support source partition without compiling manual lanes'
+}
+def javaDirs = sourceSets.test.java.srcDirs.toList()
+def hasGroovy = plugins.hasPlugin('groovy')
+def groovyDirs = hasGroovy ? sourceSets.test.groovy.srcDirs.toList() : []
+def configureSources = { sourceSet, String role ->
+    def selected = sourceRoles.findAll { path, lane -> lane == role }.keySet()
+    def javaFiles = selected.findAll { it.startsWith('java/') }.collect { it.substring('java/'.length()) }
+    sourceSet.java.setSrcDirs(javaDirs)
+    sourceSet.java.setIncludes(javaFiles ?: ['__no_reviewed_sources__.java'])
+    if (hasGroovy) {
+        def groovyFiles = selected.findAll { it.startsWith('groovy/') }.collect { it.substring('groovy/'.length()) }
+        sourceSet.groovy.setSrcDirs(groovyDirs)
+        sourceSet.groovy.setIncludes(groovyFiles ?: ['__no_reviewed_sources__.groovy'])
+    }
+}
+def commonSources = sourceSets.create('testSupport')
+def manualSources = sourceSets.create('manualTest')
+configureSources(sourceSets.test, 'unit')
+configureSources(commonSources, 'shared')
+configureSources(manualSources, 'manual')
+commonSources.resources.setSrcDirs([])
+manualSources.resources.setSrcDirs([])
+// Share processTestResources outputs directly. Manual tests need neither unit
+// classes nor a second copy of the same fixture resources.
+manualSources.runtimeClasspath += files(tasks.named('processTestResources'))
+['Implementation', 'CompileOnly', 'RuntimeOnly', 'AnnotationProcessor'].each { suffix ->
+    def unitConfiguration = configurations.getByName('test' + suffix)
+    configurations.named('testSupport' + suffix) { extendsFrom(unitConfiguration) }
+    configurations.named('manualTest' + suffix) { extendsFrom(unitConfiguration) }
+}
+commonSources.compileClasspath += sourceSets.main.output
+commonSources.runtimeClasspath += sourceSets.main.output
+sourceSets.test.compileClasspath += commonSources.output
+sourceSets.test.runtimeClasspath += commonSources.output
+manualSources.compileClasspath += sourceSets.main.output + commonSources.output
+manualSources.runtimeClasspath += sourceSets.main.output + commonSources.output
+[sourceSets.test, commonSources, manualSources].each { sourceSet ->
+    tasks.named(sourceSet.compileJavaTaskName) { dependsOn verifySources }
+    if (hasGroovy) { tasks.named(sourceSet.getCompileTaskName('groovy')) { dependsOn verifySources } }
+}
+
 tasks.named('test', Test) {
+    dependsOn verifySources
     description = 'Fast isolated unit tests; runs with ordinary build/check/bootJar'
     useJUnitPlatform { excludeTags 'integration', 'slow', 'live', 'e2e' }
     // Never interpret an empty allowlist as "run every test".
@@ -31,8 +118,8 @@ tasks.named('test', Test) {
 tasks.register('integrationTest', Test) {
     description = 'Manual release lane: boundary tests outside the reviewed unit set'
     group = 'verification'
-    testClassesDirs = sourceSets.test.output.classesDirs
-    classpath = sourceSets.test.runtimeClasspath
+    testClassesDirs = manualSources.output.classesDirs
+    classpath = manualSources.runtimeClasspath
     useJUnitPlatform { excludeTags 'slow', 'live', 'e2e' }
     exclude(unitPatterns + slowPatterns)
     def unit = tasks.named('test', Test).get()
@@ -48,12 +135,14 @@ tasks.register('integrationTest', Test) {
 if (tasks.findByName('slowTest') == null) {
     tasks.register('slowTest', Test) {
         group = 'verification'
-        testClassesDirs = sourceSets.test.output.classesDirs
-        classpath = sourceSets.test.runtimeClasspath
+        testClassesDirs = manualSources.output.classesDirs
+        classpath = manualSources.runtimeClasspath
     }
 }
 tasks.named('slowTest', Test) {
     description = 'Manual release lane: tagged and measured slow test classes'
+    testClassesDirs = manualSources.output.classesDirs
+    classpath = manualSources.runtimeClasspath
     useJUnitPlatform {
         // File inventory includes untagged timers/expensive cases; tags alone lost them.
         includeTags = [] as Set
@@ -67,6 +156,17 @@ tasks.named('slowTest', Test) {
     maxParallelForks = unit.maxParallelForks
     outputs.upToDateWhen { false }
     outputs.cacheIf { false }
+}
+
+['liveTest', 'e2eTest'].each { name ->
+    if (tasks.findByName(name) != null) {
+        tasks.named(name, Test) {
+            testClassesDirs = manualSources.output.classesDirs
+            classpath = manualSources.runtimeClasspath
+            outputs.upToDateWhen { false }
+            outputs.cacheIf { false }
+        }
+    }
 }
 
 if (tasks.findByName('bootJar') != null) {
