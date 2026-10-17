@@ -149,10 +149,41 @@ dependency bytes либо hash всего index/store. Index budget4MiB/module;
 выбранная общая closure ограничена4096files/2GiB, hashing потоковый.
 
 Этот opt-in snapshot **не является READY или artifact receipt**. Он не доказывает,
-что index получен из текущей configuration: seal preparation inputs/provenance,
-подключение Base owner/native runner и native JAR proof ещё открыты. Ответ
+что index получен из текущей configuration: Base source owner описан ниже,
+а native qualification/adoption и JAR proof ещё открыты. Ответ
 сохраняет `reuse_qualified:false`; все15 ordinary/manual Gradle declarations
 по-прежнему используют legacy context arguments и `cacheable:false`.
+
+### Base owner подготовки dependency image
+
+`gradle/java-preparation.json` — единственный product-native descriptor входов
+preparation и project dependency closure. Правила/состояние принадлежат Base
+`scripts/prepare_java.py`. Этот descriptor вынесен из `.quality-gate.json`, чтобы
+правки несвязанных CI gates не сбрасывали dependency layer; второй runner не создаётся.
+
+Source QA image получает descriptor, wrappers/build scripts и context reader до
+application source/SOURCE_DATE_EPOCH. В admitted Docker RUN Base вызывает только
+`qualityDependencyInputs` нужной closure и атомарно сохраняет owner seal после
+успешного producer и свежих input/output checks. Shared входит в closure приложений.
+Изменение test/source/docs не обновляет dependency environment само по себе.
+Неполный/изменённый seal не признаётся готовым; неизвестный owner сохраняется.
+
+Gradle cache mounts используют окончательные пути root/backend homes. Cache
+материализуется одной копией и rename после unmount, поэтому index paths не
+переписываются. IDs downloads прежние; root/backend homes и версии раздельны.
+Образ пока подготавливает оба wrapper environments: минимальный cold scope
+для одного выбранного приложения остаётся отдельной задачей P3.
+
+Native QA перед выбранными tasks выполняет только read-only `check`; miss
+останавливает compilation без скрытого запуска resolver. Helper не берёт второй
+host slot: это внутренний child уже admitted image producer/QA, а не Windows
+entrypoint с собственным admission. Legacy outer QA по-прежнему требует штатный
+внешний slot owner. `READY` dependency environment не означает test/JAR receipt.
+
+Принятие source path требует native проверки нового image layer, cold/warm,
+home/cache materialization, actual resolved inputs и invalidation; затем JAR/unit
+handoff и exact caller adoption. До этого нет утверждения об actual speedup,
+измеренном RAM либо готовности Windows root quality adapter.
 
 ## Ручная релизная проверка
 

@@ -41,6 +41,10 @@ Prepared input inspection is opt-in through `--prepared-module` and `--role`
 on the context reader. It validates the selected cached distribution and role
 files without Gradle/bootstrap. It does not certify resolution provenance or
 enable receipt reuse; ordinary gate declarations remain unchanged.
+`gradle/java-preparation.json` owns native dependency-preparation inputs and the
+Shared project closure. Base seals these in the dependency image layer; the QA
+runner checks readiness without another resolver. This source path still needs
+native qualification and exact adoption; it does not enable JAR receipts.
 
 ## Run
 

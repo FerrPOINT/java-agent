@@ -171,13 +171,15 @@ def distribution_snapshot(directory, home):
     return version, state
 
 
-def dependency_snapshot(repository, home, modules, version, backend, role):
+def dependency_snapshot(repository, home, modules, version, backend, role, *, indices=None):
     """Validate selected external role bytes, sharing reads across module indexes."""
     locations = {'backend': ('backend', ':' if backend else ':backend'),
                  'shared': ('shared', ':shared'), 'cli': ('cli', ':cli'), 'bot': ('telegram-bot', ':telegram-bot')}
     if (role not in ('production', 'unit') or not modules or len(modules) != len(set(modules))
             or any(name not in locations or (backend and name not in ('backend', 'shared')) for name in modules)):
         raise ValueError('Prepared modules/role do not match the selected wrapper')
+    if indices is not None and (not isinstance(indices, dict) or set(indices) != set(modules)):
+        raise ValueError('Prepared index bundle does not match selected modules')
     records, checked, consumed = {}, set(), 0
 
     def unique(pairs):
@@ -190,15 +192,20 @@ def dependency_snapshot(repository, home, modules, version, backend, role):
 
     for name in sorted(modules):
         relative, identity = locations[name]
-        path = plain(repository / relative / 'build/quality' / ('gradle-' + version + '-dependency-inputs.json'), repository)
-        with path.open('rb') as stream:
-            payload = stream.read(4 * 1024**2 + 1)
-        if len(payload) > 4 * 1024**2:
-            raise ValueError('Dependency index exceeds its byte budget')
-        try:
-            value = json.loads(payload, object_pairs_hook=unique)
-        except (UnicodeError, RecursionError, json.JSONDecodeError) as error:
-            raise ValueError('Invalid dependency index JSON') from error
+        if indices is not None:
+            # The Base owner binds this one bounded, immutable metadata snapshot
+            # to producer provenance and byte validation; do not reopen it midway.
+            value = indices[name]
+        else:
+            path = plain(repository / relative / 'build/quality' / ('gradle-' + version + '-dependency-inputs.json'), repository)
+            with path.open('rb') as stream:
+                payload = stream.read(4 * 1024**2 + 1)
+            if len(payload) > 4 * 1024**2:
+                raise ValueError('Dependency index exceeds its byte budget')
+            try:
+                value = json.loads(payload, object_pairs_hook=unique)
+            except (UnicodeError, RecursionError, json.JSONDecodeError) as error:
+                raise ValueError('Invalid dependency index JSON') from error
         if (not isinstance(value, dict) or set(value) != {'schema', 'module', 'gradle', 'roles', 'files'}
                 or value.get('schema') != 'java-gradle-dependency-inputs/v1'
                 or value.get('module') != identity or value.get('gradle') != version):
@@ -207,7 +214,7 @@ def dependency_snapshot(repository, home, modules, version, backend, role):
         if not isinstance(roles, dict) or set(roles) != {'production', 'unit'} or not isinstance(files, dict) or len(files) > 4096:
             raise ValueError('Invalid dependency index roles/inventory')
         for members in roles.values():
-            if (not isinstance(members, list) or any(not isinstance(member, str) for member in members)
+            if (not isinstance(members, list) or len(members) > 4096 or any(not isinstance(member, str) for member in members)
                     or members != sorted(set(members))):
                 raise ValueError('Invalid dependency role members')
         if not set(roles['production']).issubset(roles['unit']) or set(files) != set(roles['unit']):

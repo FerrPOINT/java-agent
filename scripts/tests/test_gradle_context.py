@@ -201,6 +201,21 @@ class GradleContextTests(unittest.TestCase):
         self.assertEqual(opened.count(jars['production.jar']), 1)
         self.assertNotIn(jars['unit.jar'], opened)
 
+    def test_owner_index_snapshot_is_not_reopened_and_still_checks_external_bytes(self):
+        _, _, jars = self.prepared_fixture(backend=False)
+        bundle = {'cli': json.loads(self.index.read_text())}
+        self.index.unlink()
+        result = probe.dependency_snapshot(self.root, self.home, ['cli'], '9.6.1', False,
+                                           'production', indices=bundle)
+        self.assertEqual(result['files'], 1)
+        jars['production.jar'].write_bytes(b'DDDD')
+        with self.assertRaisesRegex(ValueError, 'integrity'):
+            probe.dependency_snapshot(self.root, self.home, ['cli'], '9.6.1', False,
+                                      'production', indices=bundle)
+        with self.assertRaisesRegex(ValueError, 'bundle'):
+            probe.dependency_snapshot(self.root, self.home, ['shared'], '9.6.1', False,
+                                      'production', indices=bundle)
+
     def test_malformed_duplicate_or_oversized_index_is_not_trusted(self):
         self.prepared_fixture(backend=False)
         original = self.index.read_text()

@@ -17,6 +17,7 @@
       "scripts/tests/test_gradle_context.py",
       "scripts/tests/test_dependency_inputs.py",
       "gradle/quality-inputs.gradle",
+      "gradle/java-preparation.json",
       "scripts/check_test_lanes.py",
       "scripts/tests/test_test_lanes.py",
       "scripts/tests/test_deploy_dev_docker.py",
@@ -81,6 +82,7 @@
       ],
       "inputs": [
         "gradle/quality-inputs.gradle",
+        "gradle/java-preparation.json",
         "backend/build.gradle",
         "shared/build.gradle",
         "cli/build.gradle",
