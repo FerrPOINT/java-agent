@@ -61,6 +61,24 @@ class QualityGradleTests(unittest.TestCase):
                 self.assertEqual(lines[0], "EPOCH=1792072450")
                 self.assertEqual(lines[1].endswith("/backend"), arguments[0] == "--backend")
 
+    def test_backend_patch_wrapper_gets_strict_default_only_for_qualified_role_and_version(self):
+        backend = self.root / 'backend/gradle/wrapper/gradle-wrapper.properties'
+        root = self.root / 'gradle/wrapper/gradle-wrapper.properties'
+        arguments = ['--backend', ':test', ':bootJar', '--no-daemon', '--max-workers=2']
+        backend.write_text('distributionUrl=https\\://services.gradle.org/distributions/gradle-9.8.1-bin.zip\n')
+        result, lines = self.invoke(*arguments)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(lines[2:], arguments[1:] + ['--configuration-cache', '--configuration-cache-problems=fail'])
+        backend.write_text('distributionUrl=https\\://services.gradle.org/distributions/gradle-9.8.2-bin.zip\n')
+        result, lines = self.invoke(*arguments)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(lines[2:], arguments[1:])
+        root.write_text('distributionUrl=https\\://services.gradle.org/distributions/gradle-9.8.1-bin.zip\n')
+        root_arguments = [':cli:test', '--no-daemon', '--max-workers=2']
+        result, lines = self.invoke(*root_arguments)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(lines[2:], root_arguments)
+
     def test_release_preparation_unknown_and_explicit_cache_options_are_preserved(self):
         cases = [("--backend", "releaseCheck"), ("--backend", "integrationTest", "slowTest"),
                  ("--backend", "-I", "fixture.gradle", "qaResolveDependencies"),
