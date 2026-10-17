@@ -18,6 +18,7 @@ jobs:
       backend_build: ${{ steps.modules.outputs.backend_build }}
       java_backend: ${{ steps.modules.outputs.java_backend }}
       java_root: ${{ steps.modules.outputs.java_root }}
+      java_root_tasks: ${{ steps.modules.outputs.java_root_tasks }}
       frontend: ${{ steps.classify.outputs.frontend }}
     steps:
       - uses: actions/checkout@v7
@@ -124,9 +125,14 @@ jobs:
       - name: Fast backend units and candidate JAR
         if: needs.changes.outputs.java_backend == 'true'
         run: bash scripts/quality-gradle.sh --backend :test ${{ needs.changes.outputs.backend_build == 'true' && ':bootJar' || '' }} --no-daemon --max-workers=2
-      - name: Run telegram-bot and cli tests
+      - name: Run selected root-module units in one Gradle invocation
         if: needs.changes.outputs.java_root == 'true'
-        run: bash scripts/quality-gradle.sh :telegram-bot:test :cli:test :shared:test --no-daemon --max-workers=2
+        env:
+          ROOT_UNIT_TASKS: ${{ needs.changes.outputs.java_root_tasks }}
+        run: |
+          read -r -a tasks <<< "$ROOT_UNIT_TASKS"
+          test "${#tasks[@]}" -gt 0
+          bash scripts/quality-gradle.sh "${tasks[@]}" --no-daemon --max-workers=2
       - name: Identify tested application artifact
         if: needs.changes.outputs.backend_build == 'true'
         working-directory: backend/build/libs

@@ -12,6 +12,10 @@ Bot/CLI/shared: `bash scripts/quality-gradle.sh :telegram-bot:test :cli:test :sh
 `member_gates` в plan/result. Одна CLI правка не добавляет bot/shared tests.
 Backend9.8.0 не смешивается с root9.6.1. Старый pinned selector исполняет прежние
 отдельные argv до adoption новой quality version; это не смена runtime/pins.
+Обычный GitHub CI получает `java_root_tasks` от product selector и передаёт
+только эти allowlisted tasks одним вызовом: CLI-only не выбирает bot/Shared units,
+bot-only не выбирает CLI/Shared units. Изменение Shared сохраняет backend и
+все root consumers; manual release продолжает проверять полный набор.
 Backend использует точные `:test`/`:bootJar`: unqualified `test` выбирает также
 Shared subproject и дублирует его проверку в последующем root graph.
 `bootJar` и обычный `build/check` включают unit, без integration/slow.

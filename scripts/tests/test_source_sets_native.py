@@ -20,7 +20,7 @@ class NativeSourceSetTests(unittest.TestCase):
         java = Path(java_home) / 'bin' / ('java.exe' if os.name == 'nt' else 'java')
         launchers = list((home / 'lib').glob('gradle-gradle-cli-main-*.jar'))
         self.assertEqual(len(launchers), 1, 'Use one installed pinned Gradle distribution')
-        self.assertIn(home.name, ('gradle-9.6.1', 'gradle-9.8.0'))
+        self.assertIn(home.name, ('gradle-9.6.1', 'gradle-9.8.0', 'gradle-9.8.1'))
         self.assertIn('JAVA_VERSION="25.0.4.1"', (Path(java_home) / 'release').read_text())
         temporary = tempfile.TemporaryDirectory(prefix='java-source-set-contract-')
         self.addCleanup(temporary.cleanup)

@@ -43,15 +43,16 @@ class GradleContextTests(unittest.TestCase):
         }):
             return probe.snapshot(self.root, backend, self.environment, **options)
 
-    def prepared_fixture(self, backend=True):
-        version = '9.8.0' if backend else '9.6.1'
+    def prepared_fixture(self, backend=True, version=None):
+        version = version or ('9.8.0' if backend else '9.6.1')
         directory = self.root / 'backend' if backend else self.root
         properties = directory / 'gradle/wrapper/gradle-wrapper.properties'
         properties.write_text('distributionBase=GRADLE_USER_HOME\ndistributionPath=wrapper/dists\n'
                               'zipStoreBase=GRADLE_USER_HOME\nzipStorePath=wrapper/dists\n'
                               'distributionUrl=https\\://services.gradle.org/distributions/gradle-' + version + '-bin.zip\n')
         # Golden cache keys from the pinned Wrapper PathAssembler URL algorithm.
-        keys = {'9.8.0': '3m7h6ceboy5k31n8kzwzuxssm', '9.6.1': '4ticwg1pgcbps2hj28r8so764'}
+        keys = {'9.8.0': '3m7h6ceboy5k31n8kzwzuxssm', '9.6.1': '4ticwg1pgcbps2hj28r8so764',
+                '9.8.1': 'a2l6ltp3k1vth6lwipzm5p2jp'}
         parent = self.home / 'wrapper/dists' / ('gradle-' + version + '-bin') / keys[version]
         distribution = parent / ('gradle-' + version)
         launcher = distribution / 'lib' / ('gradle-launcher-' + version + '.jar')
@@ -96,6 +97,24 @@ class GradleContextTests(unittest.TestCase):
         os.utime(launcher, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
         self.assertNotEqual(before['inputs_sha256'],
                             self.snapshot(backend=False, prepared_modules=['cli'], role='production')['inputs_sha256'])
+
+    def test_committed_backend_patch_wrapper_keeps_readonly_integrity_and_reuse_disabled(self):
+        distribution, launcher, _ = self.prepared_fixture(backend=True, version='9.8.1')
+        with patch.object(probe.subprocess, 'run', side_effect=AssertionError('No resolver or JVM bootstrap')):
+            before = self.snapshot(prepared_modules=['backend'])
+        self.assertEqual(before['inputs']['prepared']['gradle_version'], '9.8.1')
+        self.assertFalse(before['reuse_qualified'])
+        stamp = launcher.stat()
+        launcher.write_bytes(b'LAUNCHER')
+        os.utime(launcher, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+        self.assertNotEqual(before['inputs_sha256'], self.snapshot(prepared_modules=['backend'])['inputs_sha256'])
+        (distribution.parent / 'gradle-9.8.1-bin.zip.ok').unlink()
+        with self.assertRaisesRegex(ValueError, 'unavailable'):
+            self.snapshot(prepared_modules=['backend'])
+        props = self.root / 'backend/gradle/wrapper/gradle-wrapper.properties'
+        props.write_text(props.read_text().replace('9.8.1-bin.zip', '9.8.2-bin.zip'))
+        with self.assertRaisesRegex(ValueError, 'not qualified'):
+            self.snapshot(prepared_modules=['backend'])
 
     def test_unit_only_dependency_change_preserves_production_but_changes_unit_context(self):
         _, _, jars = self.prepared_fixture(backend=False)

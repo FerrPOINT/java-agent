@@ -139,11 +139,11 @@ def distribution_snapshot(directory, home):
         if values.get(key) != expected:
             raise ValueError('Prepared wrapper layout is not qualified')
     url = values.get('distributionUrl', '')
-    version = re.fullmatch(r'https://services\.gradle\.org/distributions/gradle-(9\.6\.1|9\.8\.0)-bin\.zip', url)
+    version = re.fullmatch(r'https://services\.gradle\.org/distributions/gradle-(9\.6\.1|9\.8\.0|9\.8\.1)-bin\.zip', url)
     if not version:
         raise ValueError('Prepared distribution URL is not qualified')
     version = version[1]
-    # Match Gradle 9.6.1/9.8.0 PathAssembler: URL MD5 as an unsigned base36
+    # Match the committed wrappers' PathAssembler: URL MD5 as unsigned base36
     # directory name. This locates the wrapper cache; integrity uses SHA-256.
     number = int.from_bytes(hashlib.md5(url.encode(), usedforsecurity=False).digest(), 'big')
     key = ''
