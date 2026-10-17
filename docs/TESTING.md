@@ -207,8 +207,11 @@ application source/SOURCE_DATE_EPOCH. В admitted Docker RUN Base вызывае
 Неполный/изменённый seal не признаётся готовым; неизвестный owner сохраняется.
 
 Gradle cache mounts используют окончательные пути root/backend homes. Cache
-материализуется одной копией и rename после unmount, поэтому index paths не
-переписываются. IDs downloads прежние; root/backend homes и версии раздельны.
+в новой Base recipe проецируется из preparation stage в отдельный final stage
+по тем же paths; index paths не переписываются. Это исключает наследование
+временного payload слоя перед отдельным RUN rename. IDs downloads прежние;
+root/backend homes и версии раздельны. Алгоритм и qualification принадлежат Base;
+эта source recipe не меняет автоматически принятую quality/operator version.
 Base source QA выбирает независимые `qa-root-deps`/`qa-backend-deps`, либо
 объединяет их в `qa-all-deps`. Backend-only не готовит root wrapper; CLI/bot
 готовят root indices своей closure. CLI и CLI+Shared нормализуются одинаково.
