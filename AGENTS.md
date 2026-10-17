@@ -438,3 +438,19 @@ Required security/data/compatibility/live checks и product toolchains сохр�
 
 Уровни и команды: [TESTING](docs/TESTING.md). Полный `.github/workflows/release.yml`
 запускается вручную на exact ref; зелёный unit build не означает release acceptance.
+
+## Выбор сборки и повторное использование
+
+Перед build/test/install определить нужные компоненты и изменившиеся реальные
+inputs; проверить готовый artifact, environment и cache. Неизменные inputs и
+проверенный artifact означают отсутствие повторных install/compile/source export.
+Docs/test-only не пересобирают приложение без изменения его build inputs.
+Во время работы выполнять scoped unit/static; полный gate — на согласованной
+вехе. Integration/slow/full coverage — вручную перед релизом; необходимые
+security/data/compatibility/live gates сохраняются. Полные команды в этом
+документе — каталог проверок, а не требование выполнять всё после каждой правки.
+Перед повторным heavy назвать changed inputs или missing proof; REUSED не
+выдавать за новый тест. Полезный прогретый cache сохранять в его бюджете.
+В source workspace читать `docs/BUILD_PERFORMANCE.md` из `qualityTooling.path`
+в `../source-workspace.json` и [правила workspace](../AGENTS.md).
+В standalone checkout использовать стандарт принятой версии Base.
