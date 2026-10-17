@@ -89,23 +89,30 @@ class QualityGradleTests(unittest.TestCase):
 
 @unittest.skipUnless(BASH and Path(BASH).is_file(), "native Bash is required; WSL is not used")
 class ContainerGradleWrapperTests(unittest.TestCase):
-    def test_module_builds_accept_crlf_and_lf_wrappers_without_changing_arguments(self):
+    def test_all_runtime_builders_bound_gradle_workers_and_accept_wrapper_newlines(self):
         payload = b'#!/bin/sh\nprintf \'%s\\n\' "$@" > invoked.txt\n'
-        for module in ("telegram-bot", "cli"):
-            recipe = (ROOT / module / "Dockerfile").read_text(encoding="utf-8")
-            run = next(line for line in recipe.splitlines() if "&& ./gradlew" in line)
-            command = re.sub(r"^RUN(?: --mount=\S+)* ", "", run)
+        variants = (("Dockerfile", ["bootJar", "--no-daemon", "--build-cache"]),
+                    ("Dockerfile.slim", ["bootJar", "--no-daemon", "--build-cache"]),
+                    ("telegram-bot/Dockerfile", [":telegram-bot:bootJar", "--build-cache", "--no-daemon"]),
+                    ("cli/Dockerfile", [":cli:bootJar", "--build-cache", "--no-daemon"]))
+        for name, arguments in variants:
+            recipe = (ROOT / name).read_text(encoding="utf-8")
+            commands = [re.sub(r"^RUN(?: --mount=\S+)* ", "", line)
+                        for line in recipe.splitlines()
+                        if line.startswith("RUN ") and
+                        ("chmod +x gradlew" in line or "./gradlew " in line)]
+            self.assertTrue(commands, name)
             for newline in (b"\n", b"\r\n"):
-                with self.subTest(module=module, newline=newline), tempfile.TemporaryDirectory() as temporary:
+                with self.subTest(recipe=name, newline=newline), tempfile.TemporaryDirectory() as temporary:
                     directory = Path(temporary)
                     wrapper = directory / "gradlew"
                     wrapper.write_bytes(payload.replace(b"\n", newline))
-                    result = subprocess.run([BASH, "-c", command], cwd=directory,
+                    result = subprocess.run([BASH, "-c", "set -e\n" + "\n".join(commands)], cwd=directory,
                                             capture_output=True, text=True, check=False)
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertEqual(wrapper.read_bytes(), payload)
                     self.assertEqual((directory / "invoked.txt").read_text().splitlines(),
-                                     [":" + module + ":bootJar", "--build-cache", "--no-daemon"])
+                                     arguments + ["--max-workers=2"])
 
 
 if __name__ == "__main__":

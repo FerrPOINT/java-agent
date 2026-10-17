@@ -41,6 +41,13 @@ Temurin 25.0.4.1 и wrapper 9.6.1/9.8.0. Версия читается из фа
 Configuration cache сохраняет task graph; Gradle up-to-date/build cache отдельно
 проверяет outputs. Он не разрешает пропускать live/DB проверки.
 
+Full/slim/backend, bot и CLI Docker producers передают `--max-workers=2`,
+как обычные quality commands. Это ограничение Gradle worker leases, не лимит
+всех JVM threads или всей памяти процесса. Heap/fork settings тестов и ручных
+lanes сохраняются; меньший heap требует отдельного измерения aggregate peak/GC.
+Runtime recipes сохраняют прежние cache flags; strict configuration-cache default
+публичного helper не распространяется на raw Gradle без отдельной qualification.
+
 Быстрый tooling-набор включает `python -B -m unittest
 scripts.tests.test_quality_gradle scripts.tests.test_deploy_dev_docker -q`.
 Deployment helper проверяется через заглушки команд: сначала единственная сборка

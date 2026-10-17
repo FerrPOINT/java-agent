@@ -8,6 +8,10 @@
       "LICENSE"
     ],
     "tooling": [
+      "Dockerfile",
+      "Dockerfile.slim",
+      "telegram-bot/Dockerfile",
+      "cli/Dockerfile",
       "scripts/tests/test_quality_gradle.py",
       "scripts/tests/test_deploy_dev_docker.py",
       "scripts/deploy-dev-docker.sh",
@@ -57,7 +61,7 @@
       "profiles": ["fast", "unit", "build", "release"],
       "test_tier": "unit",
       "argv": ["{python}", "-B", "-m", "unittest", "scripts.tests.test_quality_gradle", "scripts.tests.test_deploy_dev_docker", "-q"],
-      "inputs": ["scripts/quality-gradle.sh", "scripts/tests/test_quality_gradle.py", "scripts/tests/test_deploy_dev_docker.py", "scripts/deploy-dev-docker.sh", "docker-compose.dev.yml", "gradle/wrapper/gradle-wrapper.properties", "backend/gradle/wrapper/gradle-wrapper.properties"],
+      "inputs": ["scripts/quality-gradle.sh", "scripts/tests/test_quality_gradle.py", "scripts/tests/test_deploy_dev_docker.py", "scripts/deploy-dev-docker.sh", "docker-compose.dev.yml", "Dockerfile", "Dockerfile.slim", "telegram-bot/Dockerfile", "cli/Dockerfile", "gradle/wrapper/gradle-wrapper.properties", "backend/gradle/wrapper/gradle-wrapper.properties"],
       "cacheable": true
     },
     {

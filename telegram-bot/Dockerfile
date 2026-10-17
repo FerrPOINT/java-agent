@@ -17,7 +17,7 @@ COPY shared/src ./shared/src
 COPY backend/build.gradle ./backend/build.gradle
 COPY telegram-bot/build.gradle ./telegram-bot/build.gradle
 COPY telegram-bot/src ./telegram-bot/src
-RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} --mount=type=cache,id=java-agent-gradle-9.6.1-temurin25.0.4.1-${TARGETARCH},target=/root/.gradle,sharing=locked sed -i 's/\r$//' gradlew && chmod +x gradlew && ./gradlew :telegram-bot:bootJar --build-cache --no-daemon
+RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} --mount=type=cache,id=java-agent-gradle-9.6.1-temurin25.0.4.1-${TARGETARCH},target=/root/.gradle,sharing=locked sed -i 's/\r$//' gradlew && chmod +x gradlew && ./gradlew :telegram-bot:bootJar --build-cache --no-daemon --max-workers=2
 
 FROM eclipse-temurin:25.0.4.1_1-jre-noble@sha256:398f810215757dc1926390014272579fb0e57c41ef1c8aa4f64ae761613a168b
 ARG PDLC_RUN_SLOT_SHARING=locked

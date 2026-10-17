@@ -15,7 +15,7 @@ COPY backend/src src
 # h10: the backend build resolves :shared as a sibling module (backend/settings.gradle
 # includes ../shared when present) — copy it in so the container layout matches the repo.
 COPY shared/ shared/
-RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} --mount=type=cache,id=java-agent-gradle-9.8.0-temurin25.0.4.1-${TARGETARCH},target=/root/.gradle,sharing=locked ./gradlew bootJar --no-daemon --build-cache
+RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} --mount=type=cache,id=java-agent-gradle-9.8.0-temurin25.0.4.1-${TARGETARCH},target=/root/.gradle,sharing=locked ./gradlew bootJar --no-daemon --build-cache --max-workers=2
 
 FROM eclipse-temurin:25.0.4.1_1-jre-noble@sha256:398f810215757dc1926390014272579fb0e57c41ef1c8aa4f64ae761613a168b
 ARG PDLC_RUN_SLOT_SHARING=locked
