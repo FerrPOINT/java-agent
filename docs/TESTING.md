@@ -263,11 +263,22 @@ shared запускает оба. Root tasks передаются одним с�
 
 Для обычных unit/JAR tasks helper автоматически добавляет строгий configuration
 cache (`problems=fail`) только на квалифицированных Linux/amd64,
-Temurin 25.0.4.1 и wrapper 9.6.1/9.8.1. Версия читается из фактических properties,
+Temurin 25.0.4.1 и root wrapper9.6.1 либо backend9.8.0/9.8.1. Версия читается из фактических properties,
 а не комментариев. Init scripts, release/integration/slow, фильтр `--tests`,
 неизвестные tasks/options и явные cache flags передаются без добавления default.
 Configuration cache сохраняет task graph; Gradle up-to-date/build cache отдельно
 проверяет outputs. Он не разрешает пропускать live/DB проверки.
+
+Backend9.8.1 strict cache квалифицирован на immutable Linux/amd64/Temurin25.0.4.1
+image от abb28f06: full unit/JAR task graph cold/warm dry-run,8existing unit
+cases и JAR, unchanged UP-TO-DATE и cached Test action после удаления только
+JUnit output. JAR остался byte-identical прежнему6917ff24; contexts одинаковы.
+Подробный proof: Base source commit0ac2fe74,
+`docs/plans/data/java981-configuration-cache-20261018.json`.
+Полный4796 ordinary suite квалифицирован отдельно; он не повторялся как strict
+suite в этом bounded control. Configuration model reuse внутри одной owned
+среды не включает cross-operation test/JAR receipts. Base15receipts остаются
+выключенными до отдельных context/cache-loss/cancel/retention controls.
 
 Full/slim/backend, bot и CLI Docker producers передают `--max-workers=2`,
 как обычные quality commands. Это ограничение Gradle worker leases, не лимит

@@ -7,11 +7,11 @@ fi
 [[ "$SOURCE_DATE_EPOCH" =~ ^[0-9]+$ ]] || { echo 'SOURCE_DATE_EPOCH must be candidate Unix seconds' >&2; exit 64; }
 export SOURCE_DATE_EPOCH
 directory=$repository
-qualified_wrapper=9.6.1
+qualified_wrappers=(9.6.1)
 backend_graph=false
 if [[ "${1:-}" == --backend ]]; then
     directory=$repository/backend
-    qualified_wrapper=9.8.0
+    qualified_wrappers=(9.8.0 9.8.1)
     backend_graph=true
     shift
 fi
@@ -41,8 +41,18 @@ property_value() {
     done < "$1"
     printf '%s' "$found"
 }
+matches_wrapper() {
+    local actual version
+    actual=$(property_value "$wrapper" distributionUrl)
+    for version in "${qualified_wrappers[@]}"; do
+        if [[ "$actual" == "https\\://services.gradle.org/distributions/gradle-${version}-bin.zip" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
 if $qualified_graph && $selected_task && [[ -f "$wrapper" && -f "$jdk_release" ]] \
-    && [[ "$(property_value "$wrapper" distributionUrl)" == "https\\://services.gradle.org/distributions/gradle-${qualified_wrapper}-bin.zip" ]] \
+    && matches_wrapper \
     && [[ "$(property_value "$jdk_release" JAVA_VERSION)" == '"25.0.4.1"' ]] \
     && [[ "$(property_value "$jdk_release" IMPLEMENTOR)" == '"Eclipse Adoptium"' ]] \
     && [[ "$(property_value "$jdk_release" OS_NAME)" == '"Linux"' ]] \
