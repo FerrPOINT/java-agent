@@ -31,6 +31,9 @@ and its digest for delivery. Coverage tasks use the same Gradle graph and do not
 need a second test invocation. Keep maxParallelForks and product coverage gates.
 Ordinary helper tasks use the qualified strict configuration-cache default;
 scope and notice-input requirements are in [TESTING](docs/TESTING.md).
+New Base context readers verify the actual selected JDK/configuration using
+`scripts/gradle-context.py`. Keep all Gradle receipt reuse disabled until the
+distribution/resolved-input and native JAR proofs in TESTING are complete.
 
 ## Run
 

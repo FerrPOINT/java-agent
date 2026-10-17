@@ -13,6 +13,8 @@
       "telegram-bot/Dockerfile",
       "cli/Dockerfile",
       "scripts/tests/test_quality_gradle.py",
+      "scripts/gradle-context.py",
+      "scripts/tests/test_gradle_context.py",
       "scripts/check_test_lanes.py",
       "scripts/tests/test_test_lanes.py",
       "scripts/tests/test_deploy_dev_docker.py",
@@ -62,8 +64,8 @@
       "component": "tooling",
       "profiles": ["fast", "unit", "build", "release"],
       "test_tier": "unit",
-      "argv": ["{python}", "-B", "-m", "unittest", "scripts.tests.test_quality_gradle", "scripts.tests.test_deploy_dev_docker", "scripts.tests.test_test_lanes", "-q"],
-      "inputs": ["scripts/quality-gradle.sh", "scripts/tests/test_quality_gradle.py", "scripts/check_test_lanes.py", "scripts/tests/test_test_lanes.py", "scripts/tests/test_deploy_dev_docker.py", "scripts/deploy-dev-docker.sh", "docker-compose.dev.yml", "Dockerfile", "Dockerfile.slim", "telegram-bot/Dockerfile", "cli/Dockerfile", "gradle/wrapper/gradle-wrapper.properties", "backend/gradle/wrapper/gradle-wrapper.properties"],
+      "argv": ["{python}", "-B", "-m", "unittest", "scripts.tests.test_quality_gradle", "scripts.tests.test_gradle_context", "scripts.tests.test_deploy_dev_docker", "scripts.tests.test_test_lanes", "-q"],
+      "inputs": ["scripts/quality-gradle.sh", "scripts/tests/test_quality_gradle.py", "scripts/check_test_lanes.py", "scripts/tests/test_test_lanes.py", "scripts/tests/test_deploy_dev_docker.py", "scripts/deploy-dev-docker.sh", "docker-compose.dev.yml", "Dockerfile", "Dockerfile.slim", "telegram-bot/Dockerfile", "cli/Dockerfile", "gradle/wrapper/gradle-wrapper.properties", "backend/gradle/wrapper/gradle-wrapper.properties", "scripts/gradle-context.py", "scripts/tests/test_gradle_context.py"],
       "cacheable": true
     },
     {
@@ -96,7 +98,16 @@
             "java",
             "-version"
           ],
-          "pattern": "25\\.0\\.4\\.1"
+          "pattern": "25\\.0\\.4\\.1",
+          "context_argv": [
+            "{python}",
+            "scripts/gradle-context.py",
+            "--backend"
+          ],
+          "cwd": ".",
+          "context_pattern": "\"java_version\":\"25\\.0\\.4\\.1\"",
+          "reuse_pattern": "\"reuse_qualified\":true",
+          "recheck": true
         }
       ],
       "environment_inputs": [
@@ -136,7 +147,8 @@
         "scripts/quality-gradle.sh",
         "LICENSE",
         "NOTICE",
-        "THIRD_PARTY_NOTICES.md"
+        "THIRD_PARTY_NOTICES.md",
+        "scripts/gradle-context.py"
       ],
       "cacheable": false,
       "platforms": [
@@ -148,7 +160,16 @@
             "java",
             "-version"
           ],
-          "pattern": "25\\.0\\.4\\.1"
+          "pattern": "25\\.0\\.4\\.1",
+          "context_argv": [
+            "{python}",
+            "scripts/gradle-context.py",
+            "--backend"
+          ],
+          "cwd": ".",
+          "context_pattern": "\"java_version\":\"25\\.0\\.4\\.1\"",
+          "reuse_pattern": "\"reuse_qualified\":true",
+          "recheck": true
         }
       ],
       "kind": "artifact",
@@ -189,7 +210,15 @@
             "java",
             "-version"
           ],
-          "pattern": "25\\.0\\.4\\.1"
+          "pattern": "25\\.0\\.4\\.1",
+          "context_argv": [
+            "{python}",
+            "scripts/gradle-context.py"
+          ],
+          "cwd": ".",
+          "context_pattern": "\"java_version\":\"25\\.0\\.4\\.1\"",
+          "reuse_pattern": "\"reuse_qualified\":true",
+          "recheck": true
         }
       ],
       "environment_inputs": [
@@ -228,7 +257,15 @@
             "java",
             "-version"
           ],
-          "pattern": "25\\.0\\.4\\.1"
+          "pattern": "25\\.0\\.4\\.1",
+          "context_argv": [
+            "{python}",
+            "scripts/gradle-context.py"
+          ],
+          "cwd": ".",
+          "context_pattern": "\"java_version\":\"25\\.0\\.4\\.1\"",
+          "reuse_pattern": "\"reuse_qualified\":true",
+          "recheck": true
         }
       ],
       "environment_inputs": [
@@ -267,7 +304,15 @@
             "java",
             "-version"
           ],
-          "pattern": "25\\.0\\.4\\.1"
+          "pattern": "25\\.0\\.4\\.1",
+          "context_argv": [
+            "{python}",
+            "scripts/gradle-context.py"
+          ],
+          "cwd": ".",
+          "context_pattern": "\"java_version\":\"25\\.0\\.4\\.1\"",
+          "reuse_pattern": "\"reuse_qualified\":true",
+          "recheck": true
         }
       ],
       "environment_inputs": [
@@ -305,7 +350,16 @@
             "java",
             "-version"
           ],
-          "pattern": "25\\.0\\.4\\.1"
+          "pattern": "25\\.0\\.4\\.1",
+          "context_argv": [
+            "{python}",
+            "scripts/gradle-context.py",
+            "--backend"
+          ],
+          "cwd": ".",
+          "context_pattern": "\"java_version\":\"25\\.0\\.4\\.1\"",
+          "reuse_pattern": "\"reuse_qualified\":true",
+          "recheck": true
         }
       ],
       "requires_env": [
@@ -351,7 +405,15 @@
             "java",
             "-version"
           ],
-          "pattern": "25\\.0\\.4\\.1"
+          "pattern": "25\\.0\\.4\\.1",
+          "context_argv": [
+            "{python}",
+            "scripts/gradle-context.py"
+          ],
+          "cwd": ".",
+          "context_pattern": "\"java_version\":\"25\\.0\\.4\\.1\"",
+          "reuse_pattern": "\"reuse_qualified\":true",
+          "recheck": true
         }
       ],
       "environment_inputs": [
@@ -388,7 +450,15 @@
             "java",
             "-version"
           ],
-          "pattern": "25\\.0\\.4\\.1"
+          "pattern": "25\\.0\\.4\\.1",
+          "context_argv": [
+            "{python}",
+            "scripts/gradle-context.py"
+          ],
+          "cwd": ".",
+          "context_pattern": "\"java_version\":\"25\\.0\\.4\\.1\"",
+          "reuse_pattern": "\"reuse_qualified\":true",
+          "recheck": true
         }
       ],
       "environment_inputs": [
@@ -425,7 +495,15 @@
             "java",
             "-version"
           ],
-          "pattern": "25\\.0\\.4\\.1"
+          "pattern": "25\\.0\\.4\\.1",
+          "context_argv": [
+            "{python}",
+            "scripts/gradle-context.py"
+          ],
+          "cwd": ".",
+          "context_pattern": "\"java_version\":\"25\\.0\\.4\\.1\"",
+          "reuse_pattern": "\"reuse_qualified\":true",
+          "recheck": true
         }
       ],
       "environment_inputs": [
@@ -467,7 +545,16 @@
             "java",
             "-version"
           ],
-          "pattern": "25\\.0\\.4\\.1"
+          "pattern": "25\\.0\\.4\\.1",
+          "context_argv": [
+            "{python}",
+            "scripts/gradle-context.py",
+            "--backend"
+          ],
+          "cwd": ".",
+          "context_pattern": "\"java_version\":\"25\\.0\\.4\\.1\"",
+          "reuse_pattern": "\"reuse_qualified\":true",
+          "recheck": true
         }
       ],
       "requires_env": [
@@ -516,7 +603,15 @@
             "java",
             "-version"
           ],
-          "pattern": "25\\.0\\.4\\.1"
+          "pattern": "25\\.0\\.4\\.1",
+          "context_argv": [
+            "{python}",
+            "scripts/gradle-context.py"
+          ],
+          "cwd": ".",
+          "context_pattern": "\"java_version\":\"25\\.0\\.4\\.1\"",
+          "reuse_pattern": "\"reuse_qualified\":true",
+          "recheck": true
         }
       ],
       "environment_inputs": [
@@ -555,7 +650,15 @@
             "java",
             "-version"
           ],
-          "pattern": "25\\.0\\.4\\.1"
+          "pattern": "25\\.0\\.4\\.1",
+          "context_argv": [
+            "{python}",
+            "scripts/gradle-context.py"
+          ],
+          "cwd": ".",
+          "context_pattern": "\"java_version\":\"25\\.0\\.4\\.1\"",
+          "reuse_pattern": "\"reuse_qualified\":true",
+          "recheck": true
         }
       ],
       "environment_inputs": [
@@ -594,7 +697,15 @@
             "java",
             "-version"
           ],
-          "pattern": "25\\.0\\.4\\.1"
+          "pattern": "25\\.0\\.4\\.1",
+          "context_argv": [
+            "{python}",
+            "scripts/gradle-context.py"
+          ],
+          "cwd": ".",
+          "context_pattern": "\"java_version\":\"25\\.0\\.4\\.1\"",
+          "reuse_pattern": "\"reuse_qualified\":true",
+          "recheck": true
         }
       ],
       "environment_inputs": [
@@ -632,7 +743,16 @@
             "java",
             "-version"
           ],
-          "pattern": "25\\.0\\.4\\.1"
+          "pattern": "25\\.0\\.4\\.1",
+          "context_argv": [
+            "{python}",
+            "scripts/gradle-context.py",
+            "--backend"
+          ],
+          "cwd": ".",
+          "context_pattern": "\"java_version\":\"25\\.0\\.4\\.1\"",
+          "reuse_pattern": "\"reuse_qualified\":true",
+          "recheck": true
         }
       ],
       "requires_env": [
@@ -678,7 +798,15 @@
             "java",
             "-version"
           ],
-          "pattern": "25\\.0\\.4\\.1"
+          "pattern": "25\\.0\\.4\\.1",
+          "context_argv": [
+            "{python}",
+            "scripts/gradle-context.py"
+          ],
+          "cwd": ".",
+          "context_pattern": "\"java_version\":\"25\\.0\\.4\\.1\"",
+          "reuse_pattern": "\"reuse_qualified\":true",
+          "recheck": true
         }
       ],
       "environment_inputs": [
@@ -709,7 +837,8 @@
         "*.gradle.kts",
         "gradle.properties",
         "gradle/**",
-        "scripts/quality-gradle.sh"
+        "scripts/quality-gradle.sh",
+        "scripts/gradle-context.py"
       ],
       "components": [
         "backend",

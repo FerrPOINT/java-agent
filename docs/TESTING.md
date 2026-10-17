@@ -37,6 +37,26 @@ Build time — реальный JAR input, поэтому новый commit с i
 могут использовать прежний artifact; свежий test proof всё равно относится к
 новому commit. Эта source qualification не включает настоящий JAR receipt reuse
 и не закрывает qualification JDK/Gradle home/init или artifact handoff.
+
+Новый Base reader использует `scripts/gradle-context.py` из product root:
+реальный `JAVA_HOME/bin/java` (PATH только без JAVA_HOME), content inventory JDK,
+wrapper bytes, Gradle home properties/init scripts, daemon JVM criteria и hashes
+effective flags. Probe не запускает Gradle, install или приложение и не печатает
+значения JVM options/секретов. Inventory streaming/bounded, old-mtime byte changes
+меняют identity; external links не обходятся. Injection options удалены только
+из version probe, окружение настоящего Gradle не меняется.
+
+`context_argv/context_pattern` сохраняют legacy `java -version` для старого
+reader. Новый reader проверяет context перед/после исполнения и перед reuse;
+`reuse_qualified: false` запрещает receipt даже при ошибочном `cacheable: true`.
+Сейчас false возвращается всегда: Gradle distribution/resolved input closure
+и настоящий JAR handoff ещё не квалифицированы. Все 15 Gradle gates сохраняют
+`cacheable: false`; pins автоматически не обновляются. Полный JDK inventory
+переиспользуется для совместимых unit keys внутри одного checked snapshot,
+а свежие boundary checks не пропускаются.
+
+Scoped contract checks: `python -B -m unittest scripts.tests.test_gradle_context`.
+JVM в них mocked; Linux symlink fixture проверен отдельно, без Gradle/сборки.
 Unit entrypoint не требует PostgreSQL fixture variables. DB/disposable guards
 сохраняются в backend integration/slow/release; unit не подготавливает БД.
 Ручная проверка: backend `releaseCheck` (полный coverage ratchet),
