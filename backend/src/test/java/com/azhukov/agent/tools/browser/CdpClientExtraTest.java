@@ -83,7 +83,7 @@ class CdpClientExtraTest {
     @Test
     void sendCreatesMessageWithParams() throws Exception {
         CdpClient client = new CdpClient(new ObjectMapper());
-        FakeWebSocket ws = new FakeWebSocket();
+        CdpTestWebSocket ws = new CdpTestWebSocket();
         setWebSocketClient(client, ws);
 
         ObjectNode params = new ObjectMapper().createObjectNode().put("url", "http://example.com");
@@ -103,7 +103,7 @@ class CdpClientExtraTest {
     @Test
     void disconnectClosesClientAndResetsState() throws Exception {
         CdpClient client = new CdpClient(new ObjectMapper());
-        FakeWebSocket ws = new FakeWebSocket();
+        CdpTestWebSocket ws = new CdpTestWebSocket();
         setWebSocketClient(client, ws);
         setConnected(client, true);
 
@@ -139,36 +139,4 @@ class CdpClientExtraTest {
         method.invoke(client, message);
     }
 
-    static class FakeWebSocket extends WebSocketClient {
-        final java.util.List<String> sent = new java.util.ArrayList<>();
-        boolean closed = false;
-
-        FakeWebSocket() {
-            super(java.net.URI.create("ws://localhost:1"));
-        }
-
-        @Override
-        public void onOpen(org.java_websocket.handshake.ServerHandshake handshake) { }
-
-        @Override
-        public void onMessage(String message) { }
-
-        @Override
-        public void onClose(int code, String reason, boolean remote) {
-            closed = true;
-        }
-
-        @Override
-        public void onError(Exception ex) { }
-
-        @Override
-        public void send(String text) {
-            sent.add(text);
-        }
-
-        @Override
-        public void close() {
-            closed = true;
-        }
-    }
 }

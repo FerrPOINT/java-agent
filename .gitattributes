@@ -1,0 +1,2 @@
+# Preserve the exact bytes checked against the Base selector receipt.
+scripts/vendor/base_quality_selection.py text eol=lf

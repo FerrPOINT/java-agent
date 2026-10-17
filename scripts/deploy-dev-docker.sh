@@ -18,16 +18,16 @@ require_container "$DB_CONTAINER"
 docker network create "$NETWORK" >/dev/null 2>&1 || true
 docker network connect --alias db "$NETWORK" "$DB_CONTAINER" >/dev/null 2>&1 || true
 
-# Ensure named runtime volumes are owned by the unprivileged application user.
-for volume in java_agent_state java_agent_workspace java_agent_tmp; do
-    docker run --rm -v "${ROOT##*/}_${volume}:/volume" alpine:3.22 chown -R 10001:10001 /volume
-done
+# Prepare both artifacts before stopping the running host services. The init
+# service reuses that backend image and Compose's actual project volume names.
+"${COMPOSE[@]}" build backend bot
+"${COMPOSE[@]}" run --rm --no-deps volume-init
 
 # The host services have unrestricted /opt/dev/java-agent access. Stop them
 # before the container claims their localhost ports and Telegram polling token.
 systemctl stop java-agent-bot.service java-agent-backend.service
 
-"${COMPOSE[@]}" up -d --build --remove-orphans
+"${COMPOSE[@]}" up -d --no-build --remove-orphans
 
 for _ in $(seq 1 30); do
     if curl -fsS --max-time 5 http://127.0.0.1:8090/actuator/health/readiness >/dev/null; then

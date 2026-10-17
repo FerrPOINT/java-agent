@@ -8,16 +8,63 @@ Java-агент: Spring Boot 4.1 + Java 25 + Telegram bot + MCP. Gradle multi-pr
 
 CI and Docker use Temurin **25.0.4.1+1-LTS**; all Docker stages pin image
 digests. Use committed wrappers: **9.6.1** at the repository root for
-bot/CLI and **9.8.0** from `backend/` for the standalone backend gates.
+bot/CLI and **9.8.1** from `backend/` for the standalone backend gates.
 
 ```bash
 cd /opt/dev/java-agent
-./gradlew check                # workspace regression suite
-./gradlew compileJava          # compile only
-./gradlew bootJar              # build JAR
-./gradlew slowTest             # @Tag("slow") integration tests
-./gradlew jacocoTestReport     # coverage report
+# Ordinary build: reviewed isolated units and the candidate JAR.
+bash scripts/quality-gradle.sh --backend :test :bootJar --no-daemon --max-workers=2
+bash scripts/quality-gradle.sh :telegram-bot:test :cli:test --no-daemon --max-workers=2
+# Manual release only: integration, slow checks and full coverage in one graph.
+bash scripts/quality-gradle.sh --backend releaseCheck bootJar --no-daemon --max-workers=2
+bash scripts/quality-gradle.sh :telegram-bot:jacocoTestReport :cli:test --no-daemon --max-workers=2
+# During implementation: one affected test class, without packaging.
+bash scripts/quality-gradle.sh --backend :test --tests 'com.azhukov.agent.gateway.GatewayLifecycleServiceTest' --no-daemon --max-workers=2
 ```
+
+Integration/slow/full coverage run manually before release. Ordinary build/check
+uses the reviewed unit inventory in `gradle/test-lanes.json`; it does not select
+the manual lanes. Backend integration requires the disposable PostgreSQL fixture declared in
+`.quality-gate.json`. Use an owned Linux runner for POSIX-dependent tests.
+The helper freezes SOURCE_DATE_EPOCH from the candidate; preserve the tested JAR
+and its digest for delivery. Coverage tasks use the same Gradle graph and do not
+need a second test invocation. Keep maxParallelForks and product coverage gates.
+Ordinary helper tasks use the qualified strict configuration-cache default;
+scope and notice-input requirements are in [TESTING](docs/TESTING.md).
+`gradle/test-lanes.json` also owns every support source. Unit compilation uses
+unit and pure shared support; manual lanes have their own source set/classpath.
+Do not add a dependency on manual test classes to unit/shared code, including
+reflection: extract a pure shared fixture instead. Testcontainers dependencies
+belong to manual compilation. `check_test_lanes.py` verifies the full partition;
+Gradle rejects unknown/stale sources before compilation. Preserve shared test
+resources and full release coverage. This sourceSet change needs application
+qualification; the bounded Gradle metadata fixture alone does not qualify it.
+New Base context readers verify the actual selected JDK/configuration using
+`scripts/gradle-context.py`. Keep all Gradle receipt reuse disabled until the
+distribution/resolved-input and native JAR proofs in TESTING are complete.
+`qualityDependencyInputs` is explicit preparation only; ordinary test/bootJar
+must not run it automatically. It indexes external production/unit inputs;
+it is not an artifact receipt. Commands and scope are in TESTING.
+Prepared input inspection is opt-in through `--prepared-module` and `--role`
+on the context reader. It validates the selected cached distribution and role
+files without Gradle/bootstrap. It does not certify resolution provenance or
+enable receipt reuse; ordinary gate declarations remain unchanged.
+`gradle/java-preparation.json` owns native dependency-preparation inputs and the
+Shared project closure. Base seals these in the dependency image layer; the QA
+runner checks readiness without another resolver. This source path still needs
+native qualification and exact adoption; it does not enable JAR receipts.
+`java-artifacts.json` owns source QA JAR filenames, entrypoints and notices;
+keep it outside dependency-preparation inputs. Base QA accepts a selected JAR
+subset so backend packaging with CLI units does not package CLI. It retains
+selected JAR hashes/source/image in the private handoff after unit/cleanup/source
+checks. Actual native JAR qualification and generic Windows/root adoption remain
+separate; metadata/ZIP fixture checks do not enable receipt reuse.
+New Base quality tooling uses the explicit `native_execution` declaration for
+Windows ordinary gates. It keeps per-gate results, validates selected JDK/tool
+contexts before/after tasks in Linux and owns one shared host slot through
+handoff publication. It requires clean source and the candidate epoch until
+broader context qualification. Integration/slow/release keep their Linux fixture
+gates; supported exact packet adoption/native measurements remain separate.
 
 ## Run
 
@@ -95,7 +142,7 @@ SSE streaming для real-time token output. JLine autocomplete.
 |-----------|---------|
 | Java | Temurin 25.0.4.1+1 LTS |
 | Spring Boot | 4.1.0 |
-| Gradle | workspace 9.6.1; standalone backend 9.8.0 (Groovy DSL) |
+| Gradle | workspace 9.6.1; standalone backend 9.8.1 (Groovy DSL) |
 | Lombok | 1.18.38 |
 | MapStruct | 1.6.3 |
 | LangChain4j | 1.21.0 |
@@ -408,6 +455,36 @@ Full conventions doc: `backend/docs/conventions.md`
 
 **Enforcement (CI, job `docs`)**
 
-- `python3 scripts/check_docs_standard.py` — ratchet против `docs/standards/coverage-baseline.json` (DOC001/DOC002/DOC003 + LINE coverage per модуль). Нарастание нарушений или падение coverage ниже baseline = красный CI.
+- `python3 scripts/check_docs_standard.py` — быстрый DOC001/DOC002/DOC003 ratchet против documentation counters в `docs/standards/coverage-baseline.json`, без тестов и компиляции. LINE coverage проверяется отдельно ручным Gradle release graph; отсутствие обязательного coverage report не объявляется PASS.
 - Baseline повышается только осознанно: вместе с новыми тестами, `--update-baseline`, коммит "chore: raise docs baseline".
 - Текущий долг: backend 513×DOC001 / bot 58 / cli 6; LINE backend 79.15% / bot 82.16%. Гасить пакетами из bottom-списка, не разом.
+
+## Быстрые проверки и сборка
+
+Перед тестами, build и CI читать обязательный [стандарт Base](https://github.com/FerrPOINT/services-base/blob/197ead9d9b6cf6901e8f9dd31f43f719885502c3/docs/BUILD_PERFORMANCE.md).
+При разработке и сборке unit/static. Integration/slow/full coverage —
+ручной gate при подготовке релиза по docs/TESTING.md.
+Сохранять полезный cache, не переустанавливать неизменные dependencies и не
+пересобирать приложение из-за test-only. До повторного тяжёлого запуска назвать
+изменившиеся inputs/недостающее evidence; передавать один artifact между этапами.
+Required security/data/compatibility/live checks и product toolchains сохраняются.
+Компоненты и команды: `.quality-gate.json`; общие правила не копировать.
+
+Уровни и команды: [TESTING](docs/TESTING.md). Полный `.github/workflows/release.yml`
+запускается вручную на exact ref; зелёный unit build не означает release acceptance.
+
+## Выбор сборки и повторное использование
+
+Перед build/test/install определить нужные компоненты и изменившиеся реальные
+inputs; проверить готовый artifact, environment и cache. Неизменные inputs и
+проверенный artifact означают отсутствие повторных install/compile/source export.
+Docs/test-only не пересобирают приложение без изменения его build inputs.
+Во время работы выполнять scoped unit/static; полный gate — на согласованной
+вехе. Integration/slow/full coverage — вручную перед релизом; необходимые
+security/data/compatibility/live gates сохраняются. Полные команды в этом
+документе — каталог проверок, а не требование выполнять всё после каждой правки.
+Перед повторным heavy назвать changed inputs или missing proof; REUSED не
+выдавать за новый тест. Полезный прогретый cache сохранять в его бюджете.
+В source workspace читать `docs/BUILD_PERFORMANCE.md` из `qualityTooling.path`
+в `../source-workspace.json` и [правила workspace](../AGENTS.md).
+В standalone checkout использовать стандарт принятой версии Base.

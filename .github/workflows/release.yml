@@ -1,0 +1,204 @@
+name: release-checks (manual)
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.classify.outputs.backend }}
+      backend_build: ${{ steps.classify.outputs.backend_build }}
+      frontend: ${{ steps.classify.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: java-agent
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Fetch exact comparison commits
+        working-directory: java-agent
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          if [ -n "$BASE_SHA" ] && [ "$BASE_SHA" != 0000000000000000000000000000000000000000 ]; then
+            git fetch --no-tags --depth=1 origin "$BASE_SHA" "$HEAD_SHA"
+          fi
+      - name: Verify packaged Base selector
+        run: |
+          python3 - <<'PY'
+          import hashlib,json,re
+          from pathlib import Path
+          root=Path('java-agent')
+          pin=(root/'.quality-tooling-revision').read_text().strip()
+          receipt=json.loads((root/'scripts/vendor/base-quality-tooling.json').read_text())
+          if not re.fullmatch(r'[0-9a-f]{40}',pin) or receipt['schema']!='base-quality-tooling/v1' or receipt['revision']!=pin:
+              raise SystemExit('Packaged Base revision mismatch')
+          if hashlib.sha256((root/'scripts/vendor/base_quality_selection.py').read_bytes()).hexdigest()!=receipt['sha256']:
+              raise SystemExit('Packaged Base selector checksum mismatch')
+          PY
+      - id: classify
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 java-agent/scripts/vendor/base_quality_selection.py --root java-agent
+
+  docs:
+    name: Docs standard ratchet
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Docs & test-standard ratchet (baseline in docs/standards/coverage-baseline.json)
+        run: python3 scripts/check_docs_standard.py
+      - name: Verify shipped-default documentation coverage
+        run: python3 scripts/check_default_settings_reference.py
+      - name: Documentation and release-script unit tests
+        run: python3 -m unittest scripts.tests.test_check_docs_standard scripts.tests.test_check_default_settings_reference scripts.tests.test_release_verify scripts.tests.test_deploy_dev_systemd scripts.tests.test_parity_dashboard scripts.tests.test_quality_gradle scripts.tests.test_test_lanes
+
+  readme:
+    name: README evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: README validator tests
+        run: python3 -m unittest scripts.tests.test_verify_readme
+      - name: README structural validation
+        run: python3 scripts/verify_readme.py
+
+  test:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      migrations-postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: java_agent_regression
+          POSTGRES_USER: qa
+          POSTGRES_PASSWORD: owned-qa-only
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U qa -d java_agent_regression"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 30
+      postgres:
+        image: postgres:17.6-alpine
+        env:
+          POSTGRES_DB: usage_regression
+          POSTGRES_USER: qa
+          POSTGRES_PASSWORD: owned-qa-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U qa -d usage_regression"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Validate test and support source ownership before preparation
+        run: python3 scripts/check_test_lanes.py
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v6
+        with:
+          distribution: 'temurin'
+          java-version: '25.0.4+101.0.LTS'
+      - name: Verify exact Temurin runtime
+        run: java -XshowSettings:properties -version 2>&1 | grep -F 'java.runtime.version = 25.0.4.1+1-LTS'
+
+      - name: Cache Gradle
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('backend/**/gradle-wrapper.properties', 'backend/**/*.gradle', 'backend/**/gradle.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew backend/gradlew
+
+      - name: Backend tests, integration and coverage (one task graph)
+        run: bash scripts/quality-gradle.sh --backend test integrationTest slowTest jacocoTestReport ${{ needs.changes.outputs.backend_build == 'true' && 'bootJar' || '' }} --no-daemon --max-workers=2
+        env:
+          JAVA_AGENT_TEST_DB_DISPOSABLE: 'true'
+          JAVA_AGENT_TEST_DB_URL: jdbc:postgresql://127.0.0.1:5433/java_agent_regression
+          JAVA_AGENT_TEST_DB_USER: qa
+          JAVA_AGENT_TEST_DB_PASSWORD: owned-qa-only
+          USAGE_PERSISTENCE_TEST_JDBC_URL: jdbc:postgresql://127.0.0.1:5432/usage_regression
+          USAGE_PERSISTENCE_TEST_DB_USER: qa
+          USAGE_PERSISTENCE_TEST_DB_PASSWORD: owned-qa-only
+
+      - name: Coverage report (visibility, non-blocking)
+        working-directory: backend
+        run: |
+          # The XML is a JaCoCo-generated local artifact, not untrusted input; stdlib parse is safe here.
+          python3 - <<'EOF'
+          import os, xml.etree.ElementTree as ET
+          root = ET.parse('build/reports/jacoco/test/jacocoTestReport.xml').getroot()
+          line = next(x for x in root.findall('counter') if x.get('type') == 'LINE')
+          c, m = int(line.get('covered')), int(line.get('missed'))
+          pct = 100 * c / (c + m)
+          print(f'backend LINE coverage: {pct:.2f}% (gate: 80.00%)')
+          with open(os.environ.get('GITHUB_STEP_SUMMARY', '/dev/null'), 'a') as summary:
+              summary.write(f'## Backend LINE coverage: {pct:.2f}% (gate 80.00%, deficit {int((c+m)*0.80)-c} lines)\n')
+          EOF
+
+      - name: Run telegram-bot and cli tests
+        run: bash scripts/quality-gradle.sh :telegram-bot:test :cli:test :cli:integrationTest :cli:slowTest :shared:test :shared:integrationTest :telegram-bot:jacocoTestReport --no-daemon --max-workers=2
+
+      - name: Coverage ratchet (blocking, baseline in docs/standards/coverage-baseline.json)
+        run: |
+          python3 scripts/check_docs_standard.py --check-coverage
+
+      - name: Identify tested application artifact
+        if: needs.changes.outputs.backend_build == 'true'
+        working-directory: backend/build/libs
+        run: sha256sum *.jar > SHA256SUMS
+      - uses: actions/upload-artifact@v7
+        if: needs.changes.outputs.backend_build == 'true'
+        with:
+          name: tested-backend-bootjar
+          path: backend/build/libs/
+          retention-days: 7
+
+  build:
+    needs: [changes, test]
+    if: needs.changes.outputs.backend_build == 'true'
+    name: Build bootJar
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: tested-backend-bootjar
+      - name: Verify tested bootJar identity
+        run: sha256sum --check SHA256SUMS
+
+  lint:
+    name: Markdown / YAML lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Verify bot/backend auth Compose wiring
+        run: python3 scripts/check-compose-backend-auth.py
+      - uses: articulate/actions-markdownlint@v1
+        with:
+          config: .markdownlint.json
+          files: 'docs/**/*.md, *.md'
+        continue-on-error: false

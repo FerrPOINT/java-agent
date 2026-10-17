@@ -118,10 +118,6 @@ dependencies {
     runtimeOnly 'com.h2database:h2'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 
-    // Testcontainers for real PostgreSQL integration tests
-    testImplementation 'org.testcontainers:testcontainers:1.21.4'
-    testImplementation 'org.testcontainers:postgresql:1.21.4'
-    testImplementation 'org.testcontainers:junit-jupiter:1.21.4'
 }
 
 tasks.named('test') {
@@ -132,12 +128,13 @@ tasks.named('test') {
     // Env-mutation tests (HERMES_HOME artifact-path resolution) need reflective
     // access to the unmodifiable env map backing System.getenv().
     jvmArgs '--add-opens=java.base/java.util=ALL-UNNAMED', '--add-opens=java.base/java.lang=ALL-UNNAMED'
-    maxHeapSize = '4g'
+    maxHeapSize = '1536m'
     // DEBT-3: strict-stubs flakes (OpenAiRunsControllerTest) under parallel forks —
     // async run tests race Mockito verification. Serialized forks + periodic
     // fork recycling (audit 2026-09-01 stabilization, ported from 0b348696).
     maxParallelForks = 1
     forkEvery = 750
+    doFirst { task -> task.logger.lifecycle('Backend unit heap cap: ' + task.maxHeapSize) }
     // Workaround for Gradle 9.x EOFException in test result serialization
     reports {
         junitXml.required = true
@@ -157,6 +154,9 @@ tasks.register('slowTest', Test) {
     }
     jvmArgs '-XX:+EnableDynamicAgentLoading'
     maxHeapSize = '4g'
+    // Database state is not a Gradle input; integration acceptance must be fresh.
+    outputs.upToDateWhen { false }
+    outputs.cacheIf { false }
 }
 
 tasks.register('liveTest', Test) {
@@ -186,8 +186,8 @@ tasks.register('e2eTest', Test) {
 }
 
 tasks.named('jacocoTestReport') {
-    dependsOn test, slowTest
-    executionData(test, slowTest)
+    dependsOn test, integrationTest, slowTest
+    executionData(test, integrationTest, slowTest)
     reports {
         xml.required = true
         html.required = true
@@ -215,38 +215,15 @@ tasks.named('jacocoTestCoverageVerification', JacocoCoverageVerification) {
     }
 }
 
-check.dependsOn jacocoTestCoverageVerification
+tasks.register('releaseCheck') { dependsOn jacocoTestCoverageVerification }
 
 tasks.withType(JavaCompile).configureEach {
     options.release = 25
 }
 
-springBoot {
-    buildInfo()
-}
+apply from: file('../gradle/build-info.gradle').exists() ? file('../gradle/build-info.gradle') : file('gradle/build-info.gradle')
 
-def ferrpointNoticeFiles = [
-    rootProject.file('LICENSE'),
-    rootProject.file('NOTICE'),
-    rootProject.file('THIRD_PARTY_NOTICES.md')
-]
-
-tasks.withType(Jar).configureEach {
-    ferrpointNoticeFiles.each { noticeFile ->
-        from(noticeFile) {
-            into 'META-INF'
-        }
-    }
-    manifest {
-        attributes(
-            'Implementation-Vendor': 'FerrPOINT',
-            'Implementation-Vendor-Id': 'FerrPOINT',
-            'License': 'LicenseRef-FerrPOINT-Proprietary',
-            'License-Name': 'FerrPOINT Proprietary Source-Available Evaluation License v1.0',
-            'License-File': 'META-INF/LICENSE'
-        )
-    }
-}
+apply from: file('../gradle/ferrpoint-notices.gradle').exists() ? file('../gradle/ferrpoint-notices.gradle') : file('gradle/ferrpoint-notices.gradle')
 
 // Allow JLine native terminal access without warning on Java 25.
 // maxHeapSize prevents OOM/SIGKILL when real LLM calls buffer large payloads
@@ -264,3 +241,18 @@ tasks.named('bootJar') {
 
 // For plain java -jar runs, add this option via environment or wrapper script.
 // Example: JAVA_TOOL_OPTIONS='--enable-native-access=ALL-UNNAMED' java -jar ...
+
+// Base test policy: automatic unit checks; explicit integration/slow release lanes.
+apply from: file("../gradle/test-lanes.gradle").exists() ? file("../gradle/test-lanes.gradle") : file("gradle/test-lanes.gradle")
+
+// Unit tuning must not lower the independent manual release budgets.
+['integrationTest', 'slowTest'].each { name ->
+    tasks.named(name, Test) { maxHeapSize = '4g' }
+}
+dependencies {
+    // These are manual boundary consumers, not ordinary unit dependencies.
+    manualTestImplementation 'org.testcontainers:testcontainers:1.21.4'
+    manualTestImplementation 'org.testcontainers:postgresql:1.21.4'
+    manualTestImplementation 'org.testcontainers:junit-jupiter:1.21.4'
+}
+apply from: file('../gradle/quality-inputs.gradle').exists() ? file('../gradle/quality-inputs.gradle') : file('gradle/quality-inputs.gradle')

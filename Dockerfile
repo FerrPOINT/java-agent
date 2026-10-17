@@ -1,20 +1,27 @@
-# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1.27.1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
 FROM eclipse-temurin:25.0.4.1_1-jdk-noble@sha256:0d623ea18d7b0fe1e12a2c0a920f7e950cad433387e5a49d3611e1507fa07602 AS builder
+ARG PDLC_RUN_SLOT_SHARING=locked
+ARG TARGETARCH
+ARG SOURCE_DATE_EPOCH=0
+ENV SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
 
 WORKDIR /workspace
 COPY backend/gradle/ gradle/
+COPY gradle/test-lanes.gradle gradle/test-lanes.json gradle/build-info.gradle gradle/ferrpoint-notices.gradle gradle/quality-inputs.gradle gradle/
 COPY backend/gradlew backend/build.gradle backend/settings.gradle backend/gradle.properties ./
-RUN sed -i 's/\r$//' gradlew && chmod +x gradlew
+RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} sed -i 's/\r$//' gradlew && chmod +x gradlew
+COPY LICENSE NOTICE THIRD_PARTY_NOTICES.md ./
 COPY backend/src src
 # h10: the backend build resolves :shared as a sibling module (backend/settings.gradle
 # includes ../shared when present) — copy it in so the container layout matches the repo.
 COPY shared/ shared/
-RUN ./gradlew bootJar --no-daemon -x test
+RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} --mount=type=cache,id=java-agent-gradle-9.8.1-temurin25.0.4.1-${TARGETARCH},target=/root/.gradle,sharing=locked ./gradlew bootJar --no-daemon --build-cache --max-workers=2
 
 FROM eclipse-temurin:25.0.4.1_1-jre-noble@sha256:398f810215757dc1926390014272579fb0e57c41ef1c8aa4f64ae761613a168b
+ARG PDLC_RUN_SLOT_SHARING=locked
 
 # Chromium runtime dependencies
-RUN apt-get update \
+RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
@@ -68,13 +75,13 @@ RUN apt-get update \
     && /opt/edge-tts/bin/pip install --no-cache-dir edge-tts==7.2.7 \
     && rm -rf /var/lib/apt/lists/*
 
-RUN groupadd --gid 10001 agent && useradd --uid 10001 --gid agent --create-home agent
+RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} groupadd --gid 10001 agent && useradd --uid 10001 --gid agent --create-home agent
 WORKDIR /app
 COPY --from=builder /workspace/build/libs/*.jar app.jar
-RUN chown -R agent:agent /app
+RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} chown -R agent:agent /app
 
 # Cache dir for Chromium auto-install
-RUN mkdir -p /home/agent/.azhukov-agent && chown -R agent:agent /home/agent/.azhukov-agent
+RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} mkdir -p /home/agent/.azhukov-agent && chown -R agent:agent /home/agent/.azhukov-agent
 
 USER agent
 ENV AGENT_SERVER_PORT=8080

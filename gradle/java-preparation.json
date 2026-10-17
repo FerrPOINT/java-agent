@@ -1,0 +1,8 @@
+{
+  "schema": "base-java-preparation/v1",
+  "inputs": {
+    "root": ["build.gradle", "build.gradle.kts", "settings.gradle", "gradle.properties", "gradlew", "gradle/**", "*/build.gradle", "*/settings.gradle", "*/gradle.properties", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "scripts/quality-gradle.sh", "scripts/gradle-context.py"],
+    "backend": ["backend/build.gradle", "backend/settings.gradle", "backend/gradle.properties", "backend/gradlew", "backend/gradle/**", "shared/build.gradle", "gradle/*.gradle", "gradle/test-lanes.json", "gradle/*.toml", "gradle/verification-metadata.xml", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "scripts/quality-gradle.sh", "scripts/gradle-context.py"]
+  },
+  "dependencies": {"backend": ["shared"], "shared": [], "cli": ["shared"], "bot": ["shared"]}
+}

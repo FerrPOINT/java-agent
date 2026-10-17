@@ -38,21 +38,22 @@ import org.testcontainers.utility.DockerImageName;
 })
 public abstract class PostgresTestContainer extends BackendIntegrationTestBase {
 
-    private static final PostgreSQLContainer<?> POSTGRES =
-        new PostgreSQLContainer<>(DockerImageName.parse("postgres:16-alpine"))
-            .withDatabaseName("test")
-            .withUsername("test")
-            .withPassword("test")
-            .withReuse(true);
+    private static final DisposablePostgres DATABASE =
+        DisposablePostgres.fromEnvironment(System.getenv()).map(DisposablePostgres::isolatedSchema).orElseGet(() -> {
+            PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>(DockerImageName.parse("postgres:16-alpine"))
+                .withDatabaseName("test")
+                .withUsername("test")
+                .withPassword("test")
+                .withReuse(true);
 
-    static {
-        POSTGRES.start(); // singleton — started once per JVM, Ryuk cleans up
-    }
+            postgres.start(); // singleton — started once per JVM, Ryuk cleans up
+            return new DisposablePostgres(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+        });
 
     @DynamicPropertySource
     static void configureProperties(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
-        registry.add("spring.datasource.username", POSTGRES::getUsername);
-        registry.add("spring.datasource.password", POSTGRES::getPassword);
+        registry.add("spring.datasource.url", DATABASE::url);
+        registry.add("spring.datasource.username", DATABASE::username);
+        registry.add("spring.datasource.password", DATABASE::password);
     }
 }

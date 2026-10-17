@@ -1,0 +1,94 @@
+import groovy.json.JsonOutput
+import java.nio.charset.StandardCharsets
+import java.nio.file.Files
+import java.nio.file.LinkOption
+import java.nio.file.StandardCopyOption
+import java.security.MessageDigest
+import org.gradle.api.artifacts.component.ProjectComponentIdentifier
+import org.gradle.api.tasks.compile.GroovyCompile
+import org.gradle.work.DisableCachingByDefault
+
+// This is a preparation input index, never a successful build/test receipt.
+@DisableCachingByDefault(because = 'Explicit preparation must read current dependency bytes')
+abstract class QualityDependencyInputs extends DefaultTask {
+    @Input abstract Property<String> getModuleIdentity()
+    @Input abstract Property<String> getWrapperVersion()
+    @InputFiles @PathSensitive(PathSensitivity.NONE)
+    abstract ConfigurableFileCollection getProductionFiles()
+    @InputFiles @PathSensitive(PathSensitivity.NONE)
+    abstract ConfigurableFileCollection getUnitFiles()
+    @OutputFile abstract RegularFileProperty getManifestFile()
+
+    @TaskAction void snapshot() {
+        def roles = [production: productionFiles.files, unit: unitFiles.files]
+                .collectEntries { role, files -> [role, files.collect { it.canonicalPath }.toSorted().unique()] }
+        def inventory = new TreeMap<String, Object>()
+        long totalBytes = 0
+        (roles.production + roles.unit).toSorted().unique().each { name ->
+            def path = new File(name).toPath()
+            if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
+                throw new GradleException('Dependency snapshot requires regular artifact files')
+            }
+            long size = Files.size(path)
+            totalBytes += size
+            if (inventory.size() >= 4096 || totalBytes > 2L * 1024 * 1024 * 1024) {
+                throw new GradleException('Dependency snapshot exceeds its bounded file/byte budget')
+            }
+            def hash = MessageDigest.getInstance('SHA-256')
+            Files.newInputStream(path).withCloseable { input ->
+                byte[] buffer = new byte[65536]
+                int count
+                while ((count = input.read(buffer)) != -1) hash.update(buffer, 0, count)
+            }
+            inventory[name] = [sha256: hash.digest().encodeHex().toString(), bytes: size]
+        }
+        def value = [schema: 'java-gradle-dependency-inputs/v1', module: moduleIdentity.get(),
+                     gradle: wrapperVersion.get(), roles: roles, files: inventory]
+        def destination = manifestFile.get().asFile.toPath()
+        Files.createDirectories(destination.parent)
+        def temporary = Files.createTempFile(destination.parent, '.dependency-inputs-', '.tmp')
+        try {
+            Files.writeString(temporary, JsonOutput.toJson(value) + '\n', StandardCharsets.UTF_8)
+            Files.move(temporary, destination, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+        } finally {
+            Files.deleteIfExists(temporary)
+        }
+    }
+}
+
+tasks.register('qualityDependencyInputs', QualityDependencyInputs) {
+    // Project outputs belong to source/build keys. Resolving these views must not
+    // compile Shared or another application merely to prepare external dependencies.
+    def externalFiles = { configuration ->
+        configuration.incoming.artifactView {
+            componentFilter { identifier -> !(identifier instanceof ProjectComponentIdentifier) }
+        }.files
+    }
+    def production = ['compileClasspath', 'runtimeClasspath', 'annotationProcessor']
+            .collect { configurations.findByName(it) }.findAll { it != null && it.canBeResolved }
+            .collect(externalFiles)
+    production.add(externalFiles(buildscript.configurations.classpath))
+    def units = ['testCompileClasspath', 'testRuntimeClasspath', 'testAnnotationProcessor', 'jacocoAgent']
+            .collect { configurations.findByName(it) }.findAll { it != null && it.canBeResolved }
+            .collect(externalFiles)
+    ['compileGroovy', 'compileTestGroovy'].each { name ->
+        def compile = tasks.findByName(name)
+        // Gradle infers a detached Groovy compiler classpath, outside testRuntimeClasspath.
+        // Keep its actual compiler files, without the source classpath's builtBy
+        // links to Shared compilation. This runs only in explicit preparation.
+        // Resolving them can realize tasks; do not iterate a live TaskCollection.
+        if (compile instanceof GroovyCompile) {
+            if (name == 'compileGroovy') production.add(compile.groovyClasspath.files)
+            else units.add(compile.groovyClasspath.files)
+        }
+    }
+    group = 'build setup'
+    description = 'Snapshot external production/unit dependency inputs without application compilation'
+    moduleIdentity = project.path
+    wrapperVersion = gradle.gradleVersion
+    productionFiles.from(production)
+    unitFiles.from(production, units)
+    manifestFile = layout.buildDirectory.file("quality/gradle-${gradle.gradleVersion}-dependency-inputs.json")
+    // Do not trust Gradle's timestamp shortcut at this explicit integrity boundary.
+    outputs.upToDateWhen { false }
+}
