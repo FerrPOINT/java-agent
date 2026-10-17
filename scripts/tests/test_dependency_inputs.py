@@ -9,6 +9,29 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class DependencyInputContracts(unittest.TestCase):
+    def test_qa_artifact_descriptor_matches_entrypoints_names_and_notice_contract(self):
+        from fnmatch import fnmatchcase
+        descriptor = json.loads((ROOT / 'java-artifacts.json').read_text(encoding='utf-8'))
+        self.assertEqual(descriptor['schema'], 'base-java-artifacts/v1')
+        self.assertEqual(set(descriptor['applications']), {'backend', 'cli', 'bot'})
+        preparation = json.loads((ROOT / 'gradle/java-preparation.json').read_text(encoding='utf-8'))
+        for patterns in preparation['inputs'].values():
+            self.assertFalse(any(fnmatchcase('java-artifacts.json', pattern) for pattern in patterns))
+        for component, app in descriptor['applications'].items():
+            script = (ROOT / app['module'] / 'build.gradle').read_text(encoding='utf-8')
+            self.assertIn("attributes 'Start-Class': '" + app['start_class'] + "'", script)
+            version = re.search(r"(?m)^version = '([^']+)'", script)[1]
+            name = app['module']
+            if component == 'backend':
+                name = re.search(r"rootProject.name = '([^']+)'", (ROOT / 'backend/settings.gradle').read_text())[1]
+            self.assertEqual(app['filename'], name + '-' + version + '.jar')
+        notices = (ROOT / 'gradle/ferrpoint-notices.gradle').read_text(encoding='utf-8')
+        for name in descriptor['notices']:
+            self.assertIn("'" + name + "'", notices)
+        for name, value in descriptor['manifest'].items():
+            if name != 'Main-Class':
+                self.assertIn("'" + value + "'", notices)
+
     def test_native_preparation_descriptor_matches_real_shared_project_consumers(self):
         descriptor = json.loads((ROOT / 'gradle/java-preparation.json').read_text(encoding='utf-8'))
         self.assertEqual(descriptor['schema'], 'base-java-preparation/v1')
@@ -54,7 +77,7 @@ class DependencyInputContracts(unittest.TestCase):
         helper = next(g for g in manifest['gates'] if g['id'] == 'tooling:gradle-helper-unit')
         self.assertEqual(helper['execution_slot'], 'none')
         self.assertIn('scripts.tests.test_dependency_inputs', gate['argv'])
-        for name in ('gradle/quality-inputs.gradle', 'gradle/java-preparation.json', 'backend/build.gradle', 'shared/build.gradle',
+        for name in ('gradle/quality-inputs.gradle', 'gradle/java-preparation.json', 'java-artifacts.json', 'backend/build.gradle', 'shared/build.gradle',
                      'cli/build.gradle', 'telegram-bot/build.gradle', 'Dockerfile', 'Dockerfile.slim'):
             self.assertIn(name, gate['inputs'])
 

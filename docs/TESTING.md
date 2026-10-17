@@ -234,6 +234,29 @@ standalone backend и flattened Docker layout используют один ис
 любого файла останавливает конфигурацию; notices не исчезают из standalone JAR
 из-за другого `rootProject.projectDir`.
 
+## Source QA: mixed unit/JAR graph и handoff
+
+Base source `verify-java-qa.ps1` поддерживает `-Component backend,cli -Profile
+build -ArtifactComponent backend`: Backend выполняет unit+bootJar, CLI только
+unit. Для плана добавить `-PlanOnly`; он не обращается к Docker. Без отдельного
+ArtifactComponent Build сохраняет JAR для всех выбранных приложений. Shared
+не имеет самостоятельного bootJar; его library dependency остаётся в graph.
+Совместимые root tasks выполняются вместе, backend wrapper отдельно.
+
+`java-artifacts.json` задаёт filenames/Start-Class/notices/manifest, сверяемые
+с исходными Gradle declarations быстрым dependency-inputs contract test.
+Этот descriptor не входит в environment preparation inputs: его изменение
+не требует повторной установки зависимостей. Base QA копирует выбранные JAR
+в private output и проверяет main manifest/entrypoint member, notices из frozen
+source, bounded bytes/hash и отсутствие stale siblings/aliases. Report связывает
+JAR с source head/epoch и QA image; после cleanup и source guards повторная
+проверка bytes предшествует успешной публикации. Unit-only не копирует libs.
+
+Это контракт source path. ZIP fixtures не доказывают actual class loading,
+embedded build epoch, resolved classpaths или native artifact handoff; эти
+controls и generic Windows/root integration остаются открыты. Все15 Gradle
+gates по-прежнему noncacheable, prepared context не выдаёт reuse qualification.
+
 ## Измеренный unit budget
 
 Linux qualification: backend 4805 cases, 76 с с запуском Gradle/JVM;

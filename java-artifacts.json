@@ -1,0 +1,15 @@
+{
+  "schema": "base-java-artifacts/v1",
+  "applications": {
+    "backend": {"module": "backend", "filename": "java-agent-backend-0.0.1-SNAPSHOT.jar", "start_class": "com.azhukov.agent.JavaAgentApplication"},
+    "cli": {"module": "cli", "filename": "cli-0.0.1-SNAPSHOT.jar", "start_class": "com.azhukov.agent.cli.CliApplication"},
+    "bot": {"module": "telegram-bot", "filename": "telegram-bot-0.0.1-SNAPSHOT.jar", "start_class": "com.azhukov.agent.bot.BotApplication"}
+  },
+  "notices": ["LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"],
+  "manifest": {
+    "Main-Class": "org.springframework.boot.loader.launch.JarLauncher",
+    "Implementation-Vendor": "FerrPOINT",
+    "License": "LicenseRef-FerrPOINT-Proprietary",
+    "License-File": "META-INF/LICENSE"
+  }
+}

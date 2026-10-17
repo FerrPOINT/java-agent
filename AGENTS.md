@@ -45,6 +45,12 @@ enable receipt reuse; ordinary gate declarations remain unchanged.
 Shared project closure. Base seals these in the dependency image layer; the QA
 runner checks readiness without another resolver. This source path still needs
 native qualification and exact adoption; it does not enable JAR receipts.
+`java-artifacts.json` owns source QA JAR filenames, entrypoints and notices;
+keep it outside dependency-preparation inputs. Base QA accepts a selected JAR
+subset so backend packaging with CLI units does not package CLI. It retains
+selected JAR hashes/source/image in the private handoff after unit/cleanup/source
+checks. Actual native JAR qualification and generic Windows/root adoption remain
+separate; metadata/ZIP fixture checks do not enable receipt reuse.
 
 ## Run
 
