@@ -30,7 +30,10 @@ def validate(root=ROOT):
             if files[relative] not in ("unit", "integration", "slow", "live"):
                 raise ValueError("Unknown test tier: " + relative)
             if files[relative] == "unit" and re.search(
-                r"@(SpringBootTest|WebMvcTest|DataJpaTest|ContextConfiguration)|SpringExtension|"
+                r"@(SpringBootTest|WebMvcTest|DataJpaTest|ContextConfiguration|SpringJUnitConfig|SpringJUnitWebConfig)|SpringExtension|"
+                r"new\s+(?:org\.springframework\.[\w.]+\.)?"
+                r"(?:Static|Generic|GenericXml|AnnotationConfig|AnnotationConfigWeb|ClassPathXml|FileSystemXml|XmlWeb|StaticWeb|GenericWeb)ApplicationContext\s*\(|"
+                r'@Tag\s*\(\s*"(?:integration|slow|live|e2e)"\s*\)|'
                 r"Testcontainers|PostgresTestContainer|DisposablePostgres|ServerSocket|HttpServer|"
                 r"MockWebServer|WireMock|ProcessBuilder|Thread\.sleep",
                 text,

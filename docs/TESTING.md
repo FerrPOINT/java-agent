@@ -18,6 +18,18 @@ Gradle inventory — gradle/test-lanes.json; `python scripts/check_test_lanes.py
 требует классификацию новых файлов. JaCoCo объединяет unit/integration/slow
 для backend, unit/integration для bot; прежние coverage baselines сохраняются.
 
+Spring Test contexts (`@SpringJUnitConfig`/`@SpringJUnitWebConfig`) и реально
+созданные application contexts относятся к integration. Импорт или mock
+`ApplicationContext`, как и standalone MockMvc с mocked dependencies, не
+означают запуск контекста. Validator также запрещает manual tags в unit inventory;
+его короткие проверки: `python -m unittest scripts.tests.test_test_lanes`.
+
+Unit-проверка Telegram log redaction использует mock HTTP transport и проверяет
+фактическое сообщение лога; запуск с fake token и немедленный stop не изолируют
+настоящий HTTP client от сети. Bot conflict counter проверяется прямым вызовом
+с нулевым retry budget, без backoff. Реальный start/stop с filesystem/PID lock
+сохранён отдельно в `LongPollingServiceConflictLifecycleTest` (integration).
+
 ## Ручная релизная проверка
 
 Полный прежний набор сохранён в `.github/workflows/release.yml`: только
