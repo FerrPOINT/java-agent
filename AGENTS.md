@@ -51,6 +51,12 @@ subset so backend packaging with CLI units does not package CLI. It retains
 selected JAR hashes/source/image in the private handoff after unit/cleanup/source
 checks. Actual native JAR qualification and generic Windows/root adoption remain
 separate; metadata/ZIP fixture checks do not enable receipt reuse.
+New Base quality tooling uses the explicit `native_execution` declaration for
+Windows ordinary gates. It keeps per-gate results, validates selected JDK/tool
+contexts before/after tasks in Linux and owns one shared host slot through
+handoff publication. It requires clean source and the candidate epoch until
+broader context qualification. Integration/slow/release keep their Linux fixture
+gates; supported exact packet adoption/native measurements remain separate.
 
 ## Run
 

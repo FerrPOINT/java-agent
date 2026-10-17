@@ -254,8 +254,31 @@ JAR с source head/epoch и QA image; после cleanup и source guards пов
 
 Это контракт source path. ZIP fixtures не доказывают actual class loading,
 embedded build epoch, resolved classpaths или native artifact handoff; эти
-controls и generic Windows/root integration остаются открыты. Все15 Gradle
+controls и native qualification/exact Windows root adoption остаются открыты. Все15 Gradle
 gates по-прежнему noncacheable, prepared context не выдаёт reuse qualification.
+
+## Source Windows quality bridge
+
+`.quality-gate.json/native_execution` объявляет только ordinary Backend unit/JAR
+и bot/CLI/Shared unit через Base `java-compose-v1`. Generic source quality runner
+сохраняет исходные gate IDs и объединяет selected graph в один QA operation;
+на Linux сохраняется прежнее Gradle grouping. Tool/argv/epoch/fixture contracts
+проверяются до dispatch. В контейнере исходные context patterns проверяются по
+readiness snapshot выбранного wrapper до и после tasks, без второго JDK inventory.
+
+После exact tooling adoption root `-Repository java-agent -Component backend,cli
+-Profile Build -NativeDockerContext desktop-linux -PlanOnly` показывает Backend JAR
+и CLI unit. План не обращается к Docker. Старый pinned launcher при новом flag
+даёт явный отказ, а обычные прежние команды сохраняются. До qualification path
+требует clean checkout; он не разрешает JAR/test receipt reuse. Ручные
+integration/slow/release остаются отдельными Linux fixture gates.
+
+Parent держит один общий host slot через native cleanup/certification/publication,
+не создаёт subprocess reentrance через env. Отчёт содержит каждый selected unit
+proof и producer JAR identity; shared wall учитывается один раз. Missing/changed
+context/source/output либо failing unit не дают зелёный результат. Source tests
+используют protocol fixtures, Git и PowerShell; actual Linux image/JAR/resources,
+dirty context и полный installed root путь ещё требуют native proof.
 
 ## Измеренный unit budget
 

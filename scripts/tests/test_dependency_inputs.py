@@ -9,6 +9,25 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class DependencyInputContracts(unittest.TestCase):
+    def test_windows_native_adapter_declares_only_ordinary_unit_and_backend_jar_gates(self):
+        manifest = json.loads((ROOT / '.quality-gate.json').read_text(encoding='utf-8'))
+        native = manifest['native_execution']
+        self.assertEqual(native['adapter'], 'java-compose-v1')
+        self.assertEqual(native['host_platforms'], ['win32'])
+        self.assertEqual(set(native['gates']), {'backend:unit', 'backend:build', 'cli:unit', 'bot:unit', 'shared:unit'})
+        gates = {gate['id']: gate for gate in manifest['gates']}
+        for name, request in native['gates'].items():
+            gate = gates[name]
+            self.assertEqual(gate['component'], request['component'])
+            self.assertFalse(gate['cacheable'])
+            self.assertFalse(gate.get('requires_env'))
+            self.assertFalse(gate.get('external_state'))
+            self.assertLessEqual(set(gate['profiles']), {'fast', 'unit', 'build'})
+            self.assertTrue(gate['tools'][0]['recheck'])
+        for name in ('backend:integration', 'backend:slow', 'backend:release'):
+            self.assertNotIn(name, native['gates'])
+            self.assertTrue(gates[name]['requires_env'])
+
     def test_qa_artifact_descriptor_matches_entrypoints_names_and_notice_contract(self):
         from fnmatch import fnmatchcase
         descriptor = json.loads((ROOT / 'java-artifacts.json').read_text(encoding='utf-8'))
