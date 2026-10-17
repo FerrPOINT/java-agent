@@ -34,6 +34,13 @@ class QualityGradleTests(unittest.TestCase):
         self.jdk.mkdir()
         (self.jdk / "release").write_text('IMPLEMENTOR="Eclipse Adoptium"\nJAVA_VERSION="25.0.4.1"\nOS_NAME="Linux"\nOS_ARCH="x86_64"\n')
 
+    def test_dependency_snapshot_is_explicit_and_does_not_add_unit_or_jar_tasks(self):
+        arguments = ['--backend', ':qualityDependencyInputs', '--offline',
+                     '--configuration-cache', '--configuration-cache-problems=fail']
+        result, lines = self.invoke(*arguments)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(lines[2:], arguments[1:])
+
     def invoke(self, *arguments, epoch="1792072450"):
         environment = {**os.environ, "SOURCE_DATE_EPOCH": epoch, "JAVA_HOME": self.jdk.as_posix()}
         # Git Bash translates its standard JAVA_HOME environment to POSIX itself.

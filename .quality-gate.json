@@ -15,6 +15,8 @@
       "scripts/tests/test_quality_gradle.py",
       "scripts/gradle-context.py",
       "scripts/tests/test_gradle_context.py",
+      "scripts/tests/test_dependency_inputs.py",
+      "gradle/quality-inputs.gradle",
       "scripts/check_test_lanes.py",
       "scripts/tests/test_test_lanes.py",
       "scripts/tests/test_deploy_dev_docker.py",
@@ -60,13 +62,45 @@
       "test_tier": "static"
     },
     {
+      "id": "tooling:dependency-inputs-unit",
+      "component": "tooling",
+      "profiles": [
+        "fast",
+        "unit",
+        "build",
+        "release"
+      ],
+      "test_tier": "unit",
+      "argv": [
+        "{python}",
+        "-B",
+        "-m",
+        "unittest",
+        "scripts.tests.test_dependency_inputs",
+        "-q"
+      ],
+      "inputs": [
+        "gradle/quality-inputs.gradle",
+        "backend/build.gradle",
+        "shared/build.gradle",
+        "cli/build.gradle",
+        "telegram-bot/build.gradle",
+        "Dockerfile",
+        "Dockerfile.slim",
+        "scripts/tests/test_dependency_inputs.py"
+      ],
+      "cacheable": true,
+      "execution_slot": "none"
+    },
+    {
       "id": "tooling:gradle-helper-unit",
       "component": "tooling",
       "profiles": ["fast", "unit", "build", "release"],
       "test_tier": "unit",
       "argv": ["{python}", "-B", "-m", "unittest", "scripts.tests.test_quality_gradle", "scripts.tests.test_gradle_context", "scripts.tests.test_deploy_dev_docker", "scripts.tests.test_test_lanes", "-q"],
       "inputs": ["scripts/quality-gradle.sh", "scripts/tests/test_quality_gradle.py", "scripts/check_test_lanes.py", "scripts/tests/test_test_lanes.py", "scripts/tests/test_deploy_dev_docker.py", "scripts/deploy-dev-docker.sh", "docker-compose.dev.yml", "Dockerfile", "Dockerfile.slim", "telegram-bot/Dockerfile", "cli/Dockerfile", "gradle/wrapper/gradle-wrapper.properties", "backend/gradle/wrapper/gradle-wrapper.properties", "scripts/gradle-context.py", "scripts/tests/test_gradle_context.py"],
-      "cacheable": true
+      "cacheable": true,
+      "execution_slot": "none"
     },
     {
       "id": "backend:unit",

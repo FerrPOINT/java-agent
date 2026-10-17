@@ -34,6 +34,9 @@ scope and notice-input requirements are in [TESTING](docs/TESTING.md).
 New Base context readers verify the actual selected JDK/configuration using
 `scripts/gradle-context.py`. Keep all Gradle receipt reuse disabled until the
 distribution/resolved-input and native JAR proofs in TESTING are complete.
+`qualityDependencyInputs` is explicit preparation only; ordinary test/bootJar
+must not run it automatically. It indexes external production/unit inputs;
+it is not an artifact receipt. Commands and scope are in TESTING.
 
 ## Run
 

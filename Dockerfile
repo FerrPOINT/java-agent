@@ -7,7 +7,7 @@ ENV SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
 
 WORKDIR /workspace
 COPY backend/gradle/ gradle/
-COPY gradle/test-lanes.gradle gradle/test-lanes.json gradle/build-info.gradle gradle/ferrpoint-notices.gradle gradle/
+COPY gradle/test-lanes.gradle gradle/test-lanes.json gradle/build-info.gradle gradle/ferrpoint-notices.gradle gradle/quality-inputs.gradle gradle/
 COPY backend/gradlew backend/build.gradle backend/settings.gradle backend/gradle.properties ./
 RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} sed -i 's/\r$//' gradlew && chmod +x gradlew
 COPY LICENSE NOTICE THIRD_PARTY_NOTICES.md ./

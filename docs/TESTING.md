@@ -77,6 +77,40 @@ Unit-проверка Telegram log redaction использует mock HTTP tran
 с нулевым retry budget, без backoff. Реальный start/stop с filesystem/PID lock
 сохранён отдельно в `LongPollingServiceConflictLifecycleTest` (integration).
 
+## Подготовительный snapshot зависимостей Gradle
+
+`gradle/quality-inputs.gradle` регистрирует `qualityDependencyInputs` в backend,
+Shared, CLI и bot. Это явная подготовительная операция; обычные test/bootJar
+не добавляют её автоматически. Task создаёт индекс внешних dependency files
+с отдельными production/unit roles и SHA-256, а не build/test receipt.
+Plugin classpath, annotation processors, unit agent и inferred Groovy compiler
+учитываются; project outputs принадлежат source/build keys и не компилируются
+ради индекса. Groovy compiler files материализуются без унаследованных builtBy
+связей с Shared. Число файлов/байты ограничены, hashing потоковый и общий для
+двух roles модуля, публикация JSON атомарная.
+
+В разрешённом owned Linux runner под общим host slot, с уже подготовленными
+downloads, можно выполнить отдельно:
+
+```bash
+bash scripts/quality-gradle.sh --backend :qualityDependencyInputs :shared:qualityDependencyInputs --offline --no-daemon --max-workers=1 --configuration-cache --configuration-cache-problems=fail
+bash scripts/quality-gradle.sh :cli:qualityDependencyInputs :telegram-bot:qualityDependencyInputs :shared:qualityDependencyInputs --offline --no-daemon --max-workers=1 --configuration-cache --configuration-cache-problems=fail
+```
+
+Неполный cache требует штатной подготовки зависимостей; application compile
+не используется для её замены. Индекс лежит в `build/quality/gradle-<version>-dependency-inputs.json`
+каждого модуля; Shared9.6.1 и Shared9.8.0 не перезаписывают друг друга.
+Явный snapshot всегда заново читает bytes, включая old-mtime изменения;
+configuration cache сохраняет совместимый task model. Не запускать эту команду
+перед каждым build: будущий qualified preparation adapter должен проверять
+готовый индекс/контекст и выполнять её только при missing/stale proof.
+
+Для artifact key брать production closure нужных модулей; для unit — unit.
+Hash всего combined index либо shared download store не заменяет этот выбор.
+Сам индекс ещё не квалифицирует Gradle distribution/prepared resolution identity,
+не разрешает JAR reuse и не меняет `cacheable: false`. Native JAR/output/unit
+handoff controls и отдельное exact adoption остаются обязательными.
+
 ## Ручная релизная проверка
 
 Полный прежний набор сохранён в `.github/workflows/release.yml`: только
