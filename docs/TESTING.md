@@ -174,7 +174,7 @@ Gradle cache mounts используют окончательные пути roo
 Образ пока подготавливает оба wrapper environments: минимальный cold scope
 для одного выбранного приложения остаётся отдельной задачей P3.
 
-Native QA перед выбранными tasks выполняет только read-only `check`; miss
+Native QA до и после выбранных tasks выполняет только read-only `check`; miss
 останавливает compilation без скрытого запуска resolver. Helper не берёт второй
 host slot: это внутренний child уже admitted image producer/QA, а не Windows
 entrypoint с собственным admission. Legacy outer QA по-прежнему требует штатный
