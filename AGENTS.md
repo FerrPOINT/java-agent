@@ -37,6 +37,10 @@ distribution/resolved-input and native JAR proofs in TESTING are complete.
 `qualityDependencyInputs` is explicit preparation only; ordinary test/bootJar
 must not run it automatically. It indexes external production/unit inputs;
 it is not an artifact receipt. Commands and scope are in TESTING.
+Prepared input inspection is opt-in through `--prepared-module` and `--role`
+on the context reader. It validates the selected cached distribution and role
+files without Gradle/bootstrap. It does not certify resolution provenance or
+enable receipt reuse; ordinary gate declarations remain unchanged.
 
 ## Run
 

@@ -111,6 +111,49 @@ Hash всего combined index либо shared download store не заменя�
 не разрешает JAR reuse и не меняет `cacheable: false`. Native JAR/output/unit
 handoff controls и отдельное exact adoption остаются обязательными.
 
+### Read-only inspection подготовленных inputs
+
+`scripts/gradle-context.py --prepared-module <component> --role production|unit`
+добавляет к existing JDK/config snapshot содержимое выбранной distribution и
+external dependency files нужных modules/role. Component IDs: `backend`, `shared`,
+`cli`, `bot`; для standalone backend дополнительно `--backend`.
+Модули передаются повторяющимся флагом; caller обязан выбрать полную потребляемую
+project closure, включая Shared для текущих приложений. Это normal repository
+layout; произвольный flat layout или cache root не подбирается автоматически.
+
+После отдельной preparation, в той же owned Linux environment/home:
+
+```bash
+python3 scripts/gradle-context.py --backend --prepared-module backend --prepared-module shared --role production
+python3 scripts/gradle-context.py --prepared-module cli --prepared-module shared --role unit
+```
+
+Reader не вызывает Gradle, не скачивает distribution, не пишет index и не
+исправляет cache. Existing selected-JDK version probe остаётся read-only JVM
+вызовом. При missing/invalid input он завершает проверку с ошибкой: preparation
+выполняет её владелец под host slot, а не скрытый fallback этого reader.
+
+Поддержаны только committed wrappers9.6.1/9.8.0, их HTTPS distribution URL и
+явный `GRADLE_USER_HOME/wrapper/dists` layout. URL cache directory соответствует
+[Gradle PathAssembler9.8](https://github.com/gradle/gradle/blob/v9.8.0/platforms/core-runtime/wrapper-shared/src/main/java/org/gradle/wrapper/PathAssembler.java);
+unsigned MD5/base36 используется лишь для поиска, integrity — SHA-256.
+Проверяются готовность wrapper marker, единственный distribution root/launcher
+и bounded content inventory. Лишняя installed version не меняет выбранный context.
+
+Index reader проверяет schema/module/wrapper/roles, уникальные JSON keys,
+согласованность records и текущие bytes/hash выбранных external files. Пути
+ограничены выбранным Gradle home, aliases/escapes отвергаются. File dependencies
+вне него требуют будущего явно квалифицированного contract. Совместимые modules
+читают общий external file один раз. В production hash не входят unit-only
+dependency bytes либо hash всего index/store. Index budget4MiB/module;
+выбранная общая closure ограничена4096files/2GiB, hashing потоковый.
+
+Этот opt-in snapshot **не является READY или artifact receipt**. Он не доказывает,
+что index получен из текущей configuration: seal preparation inputs/provenance,
+подключение Base owner/native runner и native JAR proof ещё открыты. Ответ
+сохраняет `reuse_qualified:false`; все15 ordinary/manual Gradle declarations
+по-прежнему используют legacy context arguments и `cacheable:false`.
+
 ## Ручная релизная проверка
 
 Полный прежний набор сохранён в `.github/workflows/release.yml`: только
