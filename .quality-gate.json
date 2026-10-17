@@ -163,9 +163,9 @@
       "argv": [
         "bash",
         "scripts/quality-gradle.sh",
-        ":telegram-bot:test",
         "--no-daemon",
-        "--max-workers=2"
+        "--max-workers=2",
+        ":telegram-bot:test"
       ],
       "cwd": ".",
       "inputs": [
@@ -187,7 +187,8 @@
       "environment_inputs": [
         "SOURCE_DATE_EPOCH"
       ],
-      "test_tier": "unit"
+      "test_tier": "unit",
+      "gradle_unit_group": "root:unit"
     },
     {
       "id": "cli:unit",
@@ -200,9 +201,9 @@
       "argv": [
         "bash",
         "scripts/quality-gradle.sh",
-        ":cli:test",
         "--no-daemon",
-        "--max-workers=2"
+        "--max-workers=2",
+        ":cli:test"
       ],
       "cwd": ".",
       "inputs": [
@@ -224,7 +225,8 @@
       "environment_inputs": [
         "SOURCE_DATE_EPOCH"
       ],
-      "test_tier": "unit"
+      "test_tier": "unit",
+      "gradle_unit_group": "root:unit"
     },
     {
       "id": "shared:unit",
@@ -237,9 +239,9 @@
       "argv": [
         "bash",
         "scripts/quality-gradle.sh",
-        ":shared:test",
         "--no-daemon",
-        "--max-workers=2"
+        "--max-workers=2",
+        ":shared:test"
       ],
       "cwd": ".",
       "inputs": [
@@ -261,7 +263,8 @@
       "environment_inputs": [
         "SOURCE_DATE_EPOCH"
       ],
-      "test_tier": "unit"
+      "test_tier": "unit",
+      "gradle_unit_group": "root:unit"
     },
     {
       "id": "backend:integration",

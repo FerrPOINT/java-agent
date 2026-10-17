@@ -7,6 +7,11 @@
 
 Backend: `bash scripts/quality-gradle.sh --backend :test`.
 Bot/CLI/shared: `bash scripts/quality-gradle.sh :telegram-bot:test :cli:test :shared:test`.
+В новом Base selector эти три gates явно объединены через `gradle_unit_group`:
+один native invocation содержит только выбранные module tasks и сохраняет
+`member_gates` в plan/result. Одна CLI правка не добавляет bot/shared tests.
+Backend9.8.0 не смешивается с root9.6.1. Старый pinned selector исполняет прежние
+отдельные argv до adoption новой quality version; это не смена runtime/pins.
 Backend использует точные `:test`/`:bootJar`: unqualified `test` выбирает также
 Shared subproject и дублирует его проверку в последующем root graph.
 `bootJar` и обычный `build/check` включают unit, без integration/slow.
