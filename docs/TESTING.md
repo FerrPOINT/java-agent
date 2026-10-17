@@ -171,8 +171,12 @@ application source/SOURCE_DATE_EPOCH. В admitted Docker RUN Base вызывае
 Gradle cache mounts используют окончательные пути root/backend homes. Cache
 материализуется одной копией и rename после unmount, поэтому index paths не
 переписываются. IDs downloads прежние; root/backend homes и версии раздельны.
-Образ пока подготавливает оба wrapper environments: минимальный cold scope
-для одного выбранного приложения остаётся отдельной задачей P3.
+Base source QA выбирает независимые `qa-root-deps`/`qa-backend-deps`, либо
+объединяет их в `qa-all-deps`. Backend-only не готовит root wrapper; CLI/bot
+готовят root indices своей closure. CLI и CLI+Shared нормализуются одинаково.
+Root по-прежнему содержит multi-project configuration metadata; это не обещание
+исключить чужую plugin configuration. Source/application COPY пока общий.
+Требуется BuildKit/buildx: legacy all-stage fallback не используется.
 
 Native QA до и после выбранных tasks выполняет только read-only `check`; miss
 останавливает compilation без скрытого запуска resolver. Helper не берёт второй
