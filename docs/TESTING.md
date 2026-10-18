@@ -24,6 +24,12 @@ graphs, явный SOURCE_DATE_EPOCH сохраняется и проверяе�
 Jar выбирает `:bootJar` нужного приложения с его unit prerequisite, без отдельного
 повторного `test`; `MODULE=shared` выполняет `:shared:test :shared:jar`.
 Совместный `make build test jar MODULE=cli` передаёт один packaging graph;
+`make test coverage MODULE=all` и `make jar coverage MODULE=all` объединяют
+запрошенные tasks в один вызов каждого wrapper, независимо от порядка goals.
+Coverage остаётся явно запрошенным ручным graph. Его report tasks уже требуют
+тесты; при сочетании с units сохраняются CLI/shared units, при сочетании с JAR
+сохраняются выбранные bootJar. Один `make coverage MODULE=all` по-прежнему
+выбирает только объявленные backend/bot reports, без добавления CLI/shared.
 `make -j` не распараллеливает wrapper invocations. Installer/release сохраняют
 полный комплект и требуют `MODULE=all` до recipes, не устанавливая частичный
 набор рядом со старыми JAR. Install/deploy здесь не выполнялись.

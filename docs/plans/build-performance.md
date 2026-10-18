@@ -47,6 +47,13 @@ Make entrypoints больше не выбирают unqualified root tasks дл�
 не получают частичный scope. Полные команды и ограничения —
 [TESTING](../TESTING.md#явный-scope-makefile).
 
+Сочетание explicit coverage с test/build/jar использует общий Make prerequisite:
+один wrapper start на совместимый graph вместо второго старта ради report.
+Union сохраняет CLI/shared units и запрошенные JAR; coverage-only не расширяется.
+Тесты recording wrappers проверяют union и failure propagation; новые реальные
+Make controls остаются явным skip без установленного GNU Make. Новая native
+qualification actual coverage/JAR union и её CPU/RAM/wall пока не выполнена.
+
 Проверки adapter/wrapper не запускают JVM. GNU Make dispatch, actual selected
 Gradle graph и JAR остаются отдельными применимыми qualification gates;
 не повторять закрытые backend4796 cases только ради Makefile/документации.

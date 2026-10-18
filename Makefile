@@ -31,7 +31,7 @@ YELLOW := \033[0;33m
 CYAN := \033[0;36m
 NC := \033[0m
 
-.PHONY: build test jar install version patch minor release clean run cli bot coverage help
+.PHONY: build test jar coverage quality-graph install version patch minor release clean run cli bot help
 # Backend and root wrappers share this host's build budget, including make -j.
 .NOTPARALLEL:
 ifneq ($(filter install release,$(MAKECMDGOALS)),)
@@ -61,26 +61,21 @@ help:
 version:
 	@echo "$(GREEN)java-agent version: $(VERSION)$(NC)"
 
-build: test
-
-# bootJar already requires units; combined `make build test jar` owns one graph.
+# Coalesce all explicit goals before starting either compatible wrapper. Reports
+# imply tests, while all+coverage alone must not add CLI/shared unit consumers.
 ifneq ($(filter jar install release,$(MAKECMDGOALS)),)
-test: jar
+QUALITY_OPERATION := jar
+else ifneq ($(filter build test,$(MAKECMDGOALS)),)
+QUALITY_OPERATION := test
+else ifneq ($(filter coverage,$(MAKECMDGOALS)),)
+QUALITY_OPERATION := coverage
 else
-test:
-	@echo "$(CYAN)Running tests...$(NC)"
-	bash scripts/quality-make.sh test "$(MODULE)"
-	@echo "$(GREEN)Reviewed unit tests passed.$(NC)"
+QUALITY_OPERATION := test
 endif
-
-jar:
-	@echo "$(CYAN)Building JARs...$(NC)"
-	bash scripts/quality-make.sh jar "$(MODULE)"
-	@echo "$(GREEN)JARs built.$(NC)"
-
-coverage:
-	bash scripts/quality-make.sh coverage "$(MODULE)"
-	@echo "Coverage: selected MODULE=$(MODULE) outputs under build/reports/jacoco/test/html/"
+QUALITY_COVERAGE := $(if $(filter coverage,$(MAKECMDGOALS)),--coverage,)
+build test jar coverage: quality-graph
+quality-graph:
+	bash scripts/quality-make.sh $(QUALITY_OPERATION) "$(MODULE)" $(QUALITY_COVERAGE)
 
 clean:
 	$(GRADLE) clean

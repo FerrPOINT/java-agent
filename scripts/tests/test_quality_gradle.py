@@ -119,9 +119,9 @@ class QualityGradleTests(unittest.TestCase):
         self.assertEqual(result.returncode, 64)
         self.assertEqual(lines, [])
 
-    def invoke_make_adapter(self, action, module, **overrides):
+    def invoke_make_adapter(self, action, module, *arguments, **overrides):
         environment = {**os.environ, "SOURCE_DATE_EPOCH": "1792072450", "JAVA_HOME": self.jdk.as_posix(), **overrides}
-        result = subprocess.run([BASH, self.adapter.as_posix(), action, module], env=environment,
+        result = subprocess.run([BASH, self.adapter.as_posix(), action, module, *arguments], env=environment,
                                 capture_output=True, text=True, timeout=10)
         blocks = result.stdout.split("EPOCH=")[1:]
         records = []
@@ -193,6 +193,37 @@ class QualityGradleTests(unittest.TestCase):
         self.assertEqual(result.returncode, 64, result.stderr)
         self.assertEqual(records, [])
 
+    def test_make_adapter_combines_manual_reports_with_requested_units_or_jars(self):
+        expected = {
+            ("test", "all"): [[":jacocoTestReport"],
+                              [":telegram-bot:jacocoTestReport", ":cli:test", ":shared:test"]],
+            ("jar", "all"): [[":bootJar", ":jacocoTestReport"],
+                             [":telegram-bot:bootJar", ":telegram-bot:jacocoTestReport", ":cli:bootJar", ":shared:test"]],
+            ("test", "backend"): [[":jacocoTestReport"]],
+            ("jar", "bot"): [[":telegram-bot:bootJar", ":telegram-bot:jacocoTestReport"]],
+        }
+        for (action, module), tasks in expected.items():
+            with self.subTest(action=action, module=module):
+                result, records = self.invoke_make_adapter(action, module, "--coverage")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual([row["arguments"] for row in records],
+                                 [graph + ["--no-daemon", "--max-workers=2"] for graph in tasks])
+                self.assertEqual({row["epoch"] for row in records}, {"1792072450"})
+                self.assertEqual([row["backend"] for row in records],
+                                 [True, False] if module == "all" else [module == "backend"])
+
+    def test_combined_make_reports_reject_unsupported_scope_and_preserve_failure(self):
+        for module in ("cli", "shared"):
+            result, records = self.invoke_make_adapter("jar", module, "--coverage")
+            self.assertEqual(result.returncode, 64, result.stderr)
+            self.assertEqual(records, [])
+        result, records = self.invoke_make_adapter("test", "all", "--typo")
+        self.assertEqual(result.returncode, 64)
+        self.assertEqual(records, [])
+        result, records = self.invoke_make_adapter("jar", "all", "--coverage", FAIL_GRAPH="backend")
+        self.assertEqual(result.returncode, 51, result.stderr)
+        self.assertEqual([row["backend"] for row in records], [True])
+
     def test_make_adapter_freezes_implicit_epoch_before_the_two_graphs(self):
         environment = {**os.environ, "GIT_AUTHOR_DATE": "@1792072450 +0000",
                        "GIT_COMMITTER_DATE": "@1792072450 +0000"}
@@ -231,6 +262,23 @@ class QualityGradleTests(unittest.TestCase):
                 self.assertIn("require MODULE=all", result.stderr)
                 self.assertNotIn("EPOCH=", result.stdout)
                 self.assertFalse((self.root / ".version").exists())
+
+    @unittest.skipUnless(shutil.which("make"), "GNU Make is required for real Makefile dispatch")
+    def test_real_make_combined_coverage_goals_use_one_graph_per_wrapper(self):
+        (self.root / "Makefile").write_bytes((ROOT / "Makefile").read_bytes())
+        environment = {**os.environ, "SOURCE_DATE_EPOCH": "1792072450", "JAVA_HOME": self.jdk.as_posix()}
+        for goals in (("test", "coverage"), ("coverage", "build", "test"),
+                      ("jar", "coverage"), ("coverage", "jar", "test")):
+            with self.subTest(goals=goals):
+                result = subprocess.run([shutil.which("make"), "--no-print-directory", "-j8", *goals,
+                                         "MODULE=all", "SHELL=" + BASH], cwd=self.root, env=environment,
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.count("EPOCH="), 2, result.stdout)
+                self.assertEqual(result.stdout.count(":jacocoTestReport\n"), 1, result.stdout)
+                self.assertEqual(result.stdout.count(":telegram-bot:jacocoTestReport\n"), 1, result.stdout)
+                self.assertIn(":shared:test\n", result.stdout)
+                self.assertIn(":cli:bootJar\n" if "jar" in goals else ":cli:test\n", result.stdout)
 
     def test_make_source_changes_select_fast_tooling_without_application_builds(self):
         import importlib.util
