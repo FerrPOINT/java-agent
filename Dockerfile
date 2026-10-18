@@ -20,6 +20,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
+        git \
         fonts-liberation \
         libasound2t64 \
         libatk-bridge2.0-0 \
