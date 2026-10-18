@@ -38,3 +38,15 @@ Notices вынесены в `gradle/ferrpoint-notices.gradle`: одна reposito
 notice файла выбирает JVM consumers и backend artifact; потеря input — ошибка.
 Нативные JAR checks подтверждают bytes notices и frozen build time, а не только
 успешный Gradle exit. Проверка full/slim builder reuse остаётся отдельным image gate.
+
+Make entrypoints больше не выбирают unqualified root tasks для всех модулей.
+Явный MODULE передаётся thin adapter `scripts/quality-make.sh`, который сохраняет
+штатный `quality-gradle.sh` без изменения wrapper/cache policy. Backend и root
+идут раздельно и последовательно; epoch общий, workers=2, packaging использует
+существующий unit prerequisite. Полный coverage остаётся ручным; install/release
+не получают частичный scope. Полные команды и ограничения —
+[TESTING](../TESTING.md#явный-scope-makefile).
+
+Проверки adapter/wrapper не запускают JVM. GNU Make dispatch, actual selected
+Gradle graph и JAR остаются отдельными применимыми qualification gates;
+не повторять закрытые backend4796 cases только ради Makefile/документации.
