@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- Недопустимый резерв ответа больше не отменяется молча при расчёте сжатия: он отклоняется до смены модели и порогов. Preflight и compressor сохраняют одинаковый настроенный резерв, включая повторный пересчёт после overflow. Telegram объясняет необходимость уменьшить лимит ответа вместо предложения повторить запрос.
+
 - News relevance ignores calendar dates and month names, retains short topics such as AI, and matches short topics as complete words. Semantic technology results remain supported without treating the `ai` inside unrelated words such as `Rail` as an AI topic.
 
 - Failed Telegram finalization/error sends no longer claim successful delivery or arm background review. The complete error response is retained for the existing fallback send; an empty-token failure does not repeat the model request.

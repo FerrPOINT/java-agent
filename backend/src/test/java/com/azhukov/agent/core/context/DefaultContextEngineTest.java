@@ -56,6 +56,8 @@ class DefaultContextEngineTest {
         // Small limits for deterministic trimming / compressor tests.
         contextProps.setMaxContextMessages(5);
         contextProps.setMaxTokens(100);
+        // These history fixtures have no provider output, so their synthetic window reserves none.
+        properties.getModel().setMaxTokens(0);
         contextProps.setTargetTokens(80);
 
         contextEngine = new DefaultContextEngine(

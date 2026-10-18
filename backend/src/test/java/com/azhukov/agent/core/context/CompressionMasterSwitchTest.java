@@ -30,6 +30,8 @@ class CompressionMasterSwitchTest {
         AgentProperties props = new AgentProperties();
         props.getCompression().setEnabled(compressionEnabled);
         props.getContext().setMaxTokens(1000);
+        // The synthetic window exercises compression only, without a model response budget.
+        props.getModel().setMaxTokens(0);
         props.getContext().setThresholdPercent(0.5);
         return props;
     }

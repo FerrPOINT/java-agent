@@ -82,6 +82,7 @@ class RotationStormRegressionTest {
 
         // small config window so preflight trips; compressor returns trimmed; rotation returns child
         p.getContext().setMaxTokens(100);
+        p.getModel().setMaxTokens(0); // This tiny rotation fixture never requests provider output.
         p.getContext().setTargetTokens(25);   // targetChars=100 < bulky 2000 → trim active
         org.mockito.Mockito.doReturn((Object) null).when(cc).compress(any(), any(Integer.class));
         org.mockito.Mockito.doReturn(java.util.Optional.of(

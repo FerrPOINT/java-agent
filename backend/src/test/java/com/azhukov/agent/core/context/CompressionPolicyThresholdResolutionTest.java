@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * rev-129 Hermes parity: _compute_threshold_tokens / _effective_threshold_percent
@@ -59,6 +60,32 @@ class CompressionPolicyThresholdResolutionTest {
             window, 0.50, "m", null, reserved);
         // floor 0.75 on the effective budget: 98304*0.75=73728
         assertThat(threshold).isEqualTo((int) (effective * 0.75));
+    }
+
+    @Test
+    @DisplayName("output reservation must leave input capacity instead of restoring the whole window")
+    void impossibleOutputReservationIsRejected() {
+        for (int reserved : new int[] {131_072, 131_073, Integer.MAX_VALUE}) {
+            assertThatThrownBy(() -> CompressionPolicy.computeThresholdTokens(
+                131_072, 0.50, "model", null, reserved))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Output token reservation must be smaller than the context window");
+        }
+    }
+
+    @Test
+    @DisplayName("invalid recalculation preserves the last threshold and failure cooldown")
+    void invalidRecalculationDoesNotChangePolicy() {
+        var policy = new CompressionPolicy();
+        policy.recalculateThreshold(131_072, "model", null, 32_768);
+        int previous = policy.getCompressionThresholdChars();
+        policy.setCompressionFailureCooldown(60_000);
+
+        assertThatThrownBy(() -> policy.recalculateThreshold(8_192, "small", null, 8_192))
+            .isInstanceOf(IllegalArgumentException.class);
+
+        assertThat(policy.getCompressionThresholdChars()).isEqualTo(previous);
+        assertThat(policy.isCompressionFailureCooldownActive()).isTrue();
     }
 
     @Test

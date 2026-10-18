@@ -22,12 +22,27 @@ class DefaultContextCompressorThresholdTest {
     private DefaultContextCompressor createCompressor() {
         AgentProperties props = new AgentProperties();
         props.getContext().setMaxTokens(16000);
+        props.getModel().setMaxTokens(0);
         return new DefaultContextCompressor(mock(ModelClient.class), null, props);
     }
 
     @Nested
     @DisplayName("recalculateThreshold")
     class RecalculateThreshold {
+
+        @Test
+        @DisplayName("all compressor recalculation overloads preserve the configured output reservation")
+        void configuredOutputReservationAppliesToAllOverloads() {
+            AgentProperties props = new AgentProperties();
+            props.getModel().setMaxTokens(32_768);
+            var compressor = new DefaultContextCompressor(mock(ModelClient.class), null, props);
+
+            compressor.recalculateThreshold(131_072);
+            assertThat(compressor.getCompressionThresholdChars()).isEqualTo(73_728 * 4);
+
+            compressor.recalculateThreshold(131_072, "model", java.util.Map.of("model", 0.90));
+            assertThat(compressor.getCompressionThresholdChars()).isEqualTo((int) (98_304 * 0.90) * 4);
+        }
 
         @Test
         @DisplayName("Threshold is 0 before recalculateThreshold is called")

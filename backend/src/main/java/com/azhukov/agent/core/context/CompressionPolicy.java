@@ -138,7 +138,7 @@ class CompressionPolicy {
      * rev-129 Hermes parity (context_compressor.py:3062 _compute_threshold_tokens):
      * the single source of truth for the compaction trigger in tokens.
      * 1. effective input budget = window − reserved output tokens
-     *    (nonsensical reservation falls back to the full window);
+     *    (a reservation leaving no input capacity is rejected);
      * 2. threshold = budget × effective percent (per-model overrides already
      *    resolved by the caller, small-ctx floor via {@link #effectiveThresholdPercent});
      * 3. floored at {@link #MINIMUM_CONTEXT_LENGTH};
@@ -160,12 +160,13 @@ class CompressionPolicy {
         if (contextWindow <= 0) {
             return 0;
         }
+        if (maxOutputTokens >= contextWindow) {
+            throw new IllegalArgumentException(
+                "Output token reservation must be smaller than the context window");
+        }
         double resolved = resolveModelThreshold(model, modelThresholds, thresholdPercent);
         double effective = effectiveThresholdPercent(contextWindow, resolved);
         int effectiveWindow = contextWindow - Math.max(0, maxOutputTokens);
-        if (effectiveWindow <= 0) {
-            effectiveWindow = contextWindow;
-        }
         int floored = Math.max((int) (effectiveWindow * effective), MINIMUM_CONTEXT_LENGTH);
         if (floored >= effectiveWindow) {
             return Math.max(1, Math.min((int) (effectiveWindow * MIN_CTX_TRIGGER_RATIO), effectiveWindow - 1));
@@ -253,31 +254,24 @@ class CompressionPolicy {
      */
     void recalculateThreshold(int newContextWindowSize, String model,
                               java.util.Map<String, Double> modelThresholds, int maxOutputTokens) {
+        recalculateThreshold(newContextWindowSize, model, modelThresholds,
+            maxOutputTokens, COMPRESSION_THRESHOLD_FRACTION);
+    }
+
+    void recalculateThreshold(int newContextWindowSize, String model,
+                              java.util.Map<String, Double> modelThresholds, int maxOutputTokens,
+                              double thresholdPercent) {
         if (newContextWindowSize <= 0) {
             log.debug("recalculateThreshold: ignoring non-positive context window size {}", newContextWindowSize);
             return;
         }
-        // h60: Reset compression failure cooldown when the model/context switches.
+        // Validate before changing cooldown/threshold, and use the same calculation as preflight.
+        int thresholdTokens = computeThresholdTokens(newContextWindowSize,
+            thresholdPercent, model, modelThresholds, maxOutputTokens);
         resetCompressionFailureCooldown("ctx-" + newContextWindowSize);
-
-        double thresholdFraction = resolveModelThreshold(model, modelThresholds, COMPRESSION_THRESHOLD_FRACTION);
-        if (newContextWindowSize < SMALL_CTX_WINDOW_LIMIT && thresholdFraction < SMALL_CTX_THRESHOLD_PERCENT) {
-            thresholdFraction = SMALL_CTX_THRESHOLD_PERCENT;
-        }
-
-        // Hermes _compute_threshold_tokens: reserve output capacity from the same
-        // context window. A nonsensical reservation falls back to the full window.
-        int effectiveWindow = newContextWindowSize - Math.max(0, maxOutputTokens);
-        if (effectiveWindow <= 0) {
-            effectiveWindow = newContextWindowSize;
-        }
-        int floorAdjusted = Math.max((int) (effectiveWindow * thresholdFraction), MINIMUM_CONTEXT_LENGTH);
-        int thresholdTokens = floorAdjusted >= effectiveWindow
-            ? Math.max(1, Math.min((int) (effectiveWindow * MIN_CTX_TRIGGER_RATIO), effectiveWindow - 1))
-            : floorAdjusted;
         this.compressionThresholdChars = thresholdTokens * CHARS_PER_TOKEN;
-        log.info("Compression threshold recalculated for context window {} (model={}, fraction={}, outputReservation={}): thresholdTokens={}, thresholdChars={}",
-            newContextWindowSize, model, thresholdFraction, maxOutputTokens, thresholdTokens, this.compressionThresholdChars);
+        log.info("Compression threshold recalculated for context window {} (model={}, outputReservation={}): thresholdTokens={}, thresholdChars={}",
+            newContextWindowSize, model, maxOutputTokens, thresholdTokens, this.compressionThresholdChars);
     }
 
     /**

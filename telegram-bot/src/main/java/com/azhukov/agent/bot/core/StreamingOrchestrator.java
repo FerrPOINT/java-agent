@@ -677,6 +677,10 @@ public class StreamingOrchestrator {
             || msg.contains("too many requests") || msg.contains("retry after")) {
             return "Rate limited by Telegram. Retrying...";
         }
+        // Invalid local configuration is not a truncated provider response and replay cannot fix it.
+        if (msg.contains("output token reservation must be smaller than the context window")) {
+            return "Резерв ответа не оставляет места для запроса. Уменьшите лимит ответа в настройках модели.";
+        }
         // Output-length truncation (Hermes turn_truncation copy): the model hit
         // its output-token cap mid tool-call. The backend already retried with a
         // boosted budget; the user must know the action was NOT executed and that

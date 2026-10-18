@@ -18,6 +18,7 @@ import java.util.Collections;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -69,7 +70,7 @@ class DefaultContextEngineUpdateModelTest {
 
         // Compressor's threshold should also be recalculated (with 64K floor)
         int expectedThresholdTokens = Math.max(
-            (int) (131_072 * 0.75),
+            (int) ((131_072 - properties.getModel().getMaxTokens()) * 0.75),
             DefaultContextCompressor.MINIMUM_CONTEXT_LENGTH
         );
         int expectedThresholdChars = expectedThresholdTokens * 4; // CHARS_PER_TOKEN = 4
@@ -131,7 +132,8 @@ class DefaultContextEngineUpdateModelTest {
         engine.updateModel("small-model");
 
         assertThat(engine.getContextLength()).isEqualTo(8_192);
-        int expectedThreshold = (int) (8_192 * CompressionPolicy.MIN_CTX_TRIGGER_RATIO) * 4;
+        int expectedThreshold = (int) ((8_192 - properties.getModel().getMaxTokens())
+            * CompressionPolicy.MIN_CTX_TRIGGER_RATIO) * 4;
         assertThat(compressor.getCompressionThresholdChars()).isEqualTo(expectedThreshold);
     }
 
@@ -150,8 +152,66 @@ class DefaultContextEngineUpdateModelTest {
     }
 
     @Test
+    @DisplayName("model switch applies the same output reserve to preflight and compressor")
+    void updateModelSharesOutputReservation() {
+        properties.getModel().setMaxTokens(32_768);
+        var compressor = new DefaultContextCompressor(null, null, properties);
+        var engine = new DefaultContextEngine(
+            memoryProvider, skillManager, messageRepository, compressor, properties, null, modelMetadataService);
+        when(modelMetadataService.detectContextLength("model-128k")).thenReturn(131_072);
+
+        engine.updateModel("model-128k");
+
+        int expected = 73_728; // (131072 - 32768) * 0.75
+        assertThat(engine.getStatus().get("thresholdTokens")).isEqualTo(expected);
+        assertThat(compressor.getCompressionThresholdChars()).isEqualTo(expected * 4);
+    }
+
+    @Test
+    @DisplayName("configured threshold and output reserve reach the compressor together")
+    void updateModelUsesConfiguredThresholdWithOutputReservation() {
+        properties.getContext().setThresholdPercent(0.90);
+        properties.getModel().setMaxTokens(32_768);
+        var compressor = new DefaultContextCompressor(null, null, properties);
+        var engine = new DefaultContextEngine(
+            memoryProvider, skillManager, messageRepository, compressor, properties, null, modelMetadataService);
+        when(modelMetadataService.detectContextLength("model-128k")).thenReturn(131_072);
+
+        engine.updateModel("model-128k");
+
+        assertThat(engine.getStatus().get("thresholdTokens")).isEqualTo(88_473);
+        assertThat(compressor.getCompressionThresholdChars()).isEqualTo(88_473 * 4);
+    }
+
+    @Test
+    @DisplayName("invalid output reserve leaves the previous model and compressor unchanged")
+    void invalidModelSwitchPreservesState() {
+        properties.getModel().setMaxTokens(32_768);
+        var compressor = new DefaultContextCompressor(null, null, properties);
+        var engine = new DefaultContextEngine(
+            memoryProvider, skillManager, messageRepository, compressor, properties, null, modelMetadataService);
+        when(modelMetadataService.detectContextLength("model-128k")).thenReturn(131_072);
+        when(modelMetadataService.detectContextLength("small-model")).thenReturn(16_384);
+        engine.updateModel("model-128k");
+        var previous = engine.getStatus();
+        int previousCompressor = compressor.getCompressionThresholdChars();
+
+        assertThatThrownBy(() -> engine.updateModel("small-model"))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("Output token reservation must be smaller than the context window");
+
+        assertThat(engine.getStatus()).isEqualTo(previous);
+        assertThat(compressor.getCompressionThresholdChars()).isEqualTo(previousCompressor);
+        when(modelMetadataService.getMetadata("model-128k")).thenReturn(
+            new ModelMetadataService.ModelMetadata("model-128k", "model-128k", 131_072, 4));
+        assertThat(engine.shouldCompressPreflight(List.of(Message.user("still the old model")))).isFalse();
+        verify(modelMetadataService).getMetadata("model-128k");
+    }
+
+    @Test
     @DisplayName("preflight token estimate uses chars-per-token metadata for the active model")
     void shouldCompressPreflightUsesActiveModelMetadata() {
+        properties.getModel().setMaxTokens(0);
         ContextCompressor compressor = mock(ContextCompressor.class);
         var engine = new DefaultContextEngine(
             memoryProvider, skillManager, messageRepository, compressor, properties, null, modelMetadataService
