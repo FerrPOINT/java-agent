@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Run local release gates and write a machine-readable evidence report.
 
-Default gates are deterministic and local: JVM tests, JaCoCo reports, boot JARs,
-and static endpoint-to-test-reference inventory. HTTP/CLI/Docker E2E require an
-explicit flag because they need a running backend or Docker.
+Manual release gates include JVM units, integration/slow tests, full JaCoCo
+reports, boot JARs and static endpoint-to-test-reference inventory.
+HTTP/CLI/Docker E2E require an explicit flag because they need a running backend
+or Docker.
 """
 from __future__ import annotations
 
@@ -125,7 +126,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--report", type=Path, default=DEFAULT_REPORT)
     parser.add_argument("--timeout", type=int, default=600)
-    parser.add_argument("--skip-slow", action="store_true")
+    parser.add_argument("--skip-slow", action="store_true", help="reject this incomplete release request; full coverage requires slow tests")
     parser.add_argument("--skip-boot-jars", action="store_true")
     parser.add_argument("--run-http-e2e", action="store_true")
     parser.add_argument("--run-cli-e2e", action="store_true")
@@ -139,7 +140,7 @@ def write_report(report_path: Path, gates: list[GateResult], state: str) -> None
         "repository": str(REPO),
         "state": state,
         "gates": [asdict(gate) for gate in gates],
-        "metrics": collect_metrics(),
+        "metrics": collect_metrics() if state != "INCOMPLETE" else {},
     }
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps(report, ensure_ascii=True, indent=2) + "\n")
@@ -147,48 +148,40 @@ def write_report(report_path: Path, gates: list[GateResult], state: str) -> None
 
 def main() -> int:
     args = parse_args()
-    gradle = ["./gradlew", "--no-daemon"]
+    gradle = ["bash", "scripts/quality-gradle.sh"]
+    options = ["--no-daemon", "--max-workers=2"]
     gates: list[GateResult] = []
 
     def record(gate: GateResult) -> None:
         gates.append(gate)
         write_report(args.report, gates, "RUNNING")
 
+    if args.skip_slow:
+        reason = "--skip-slow is incompatible with full release coverage; use the ordinary unit gates in docs/TESTING.md"
+        gates.append(GateResult("release-coverage", "FAIL", None, 0.0, reason))
+        write_report(args.report, gates, "INCOMPLETE")
+        print(reason)
+        print(f"report: {args.report}")
+        return 1
+
+    # Each report owns its unit/integration/slow prerequisites in one graph.
+    # Backend and root use different pinned wrappers and cannot share a graph.
+    backend_tasks = [":jacocoTestReport"]
+    root_tasks = [":telegram-bot:jacocoTestReport", ":cli:test"]
+    if not args.skip_boot_jars:
+        backend_tasks.append(":bootJar")
+        root_tasks.extend([":telegram-bot:bootJar", ":cli:bootJar"])
+
     write_report(args.report, gates, "RUNNING")
-    record(run_command(
-        "module-tests",
-        gradle + [":backend:test", ":telegram-bot:test", ":cli:test"],
-        args.timeout,
-    ))
-    record(run_command(
-        "coverage-reports",
-        gradle + [
-            ":backend:jacocoTestReport",
-            ":telegram-bot:jacocoTestReport",
-            "-x",
-            ":backend:test",
-            "-x",
-            ":telegram-bot:test",
-        ],
-        args.timeout,
-    ))
+    record(run_command("backend-release", gradle + ["--backend"] + backend_tasks + options, args.timeout))
+    record(run_command("module-release", gradle + root_tasks + options, args.timeout))
     record(run_command(
         "endpoint-coverage-inventory",
         [sys.executable, "scripts/endpoint_coverage_report.py"],
         args.timeout,
     ))
-    if args.skip_slow:
-        record(not_run("slow-postgresql-integration", "disabled by --skip-slow"))
-    else:
-        record(run_command("slow-postgresql-integration", gradle + [":backend:slowTest"], args.timeout))
     if args.skip_boot_jars:
         record(not_run("boot-jars", "disabled by --skip-boot-jars"))
-    else:
-        record(run_command(
-            "boot-jars",
-            gradle + [":backend:bootJar", ":telegram-bot:bootJar", ":cli:bootJar"],
-            args.timeout,
-        ))
     record(run_command(
         "release-runner-self-test",
         [sys.executable, "-m", "unittest", "scripts.tests.test_release_verify"],

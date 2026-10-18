@@ -251,6 +251,19 @@ Docker images используют `eclipse-temurin:25-jre-noble`; slim-обра
 
 `release_verify.py` фиксирует pass/fail/not-run gates, точные счётчики тестов, JaCoCo-метрики и консервативный endpoint-reference inventory в `build/release-verification.json`. HTTP и CLI E2E опциональны: им нужен живой локальный backend; Docker E2E опционален, потому что поднимает изолированный стек.
 
+Это ручной release entrypoint для подготовленного Linux-окружения с нужным
+PostgreSQL fixture, а не обычная проверка разработки. Он вызывает
+`scripts/quality-gradle.sh` по одному разу для backend wrapper 9.8.1
+(`backend-release`) и root wrapper 9.6.1 (`module-release`), последовательно с
+`--no-daemon --max-workers=2`. Полные coverage reports владеют unit/integration/slow
+prerequisites; выбранные boot JAR включены в те же graphs. `--skip-boot-jars`
+сохраняет полный тестовый набор и отмечает packaging как `NOT_RUN`.
+`--skip-slow` отклоняется до запуска дочерних команд: exit 1, отчёт `INCOMPLETE`
+с failed `release-coverage` gate и без метрик от прежних прогонов. Полный coverage
+требует slow lane; для scoped units использовать [TESTING](docs/TESTING.md).
+Coverage floors, inventory и необходимые release gates сохраняются; этот отчёт
+не заменяет blocking coverage ratchet и live acceptance.
+
 ### Стандарт документации и тестов
 
 Usage записывается через `UsagePersistenceService`: блокировка строки сессии и
