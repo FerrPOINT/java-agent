@@ -10,7 +10,8 @@ fi
 case "$SDLC_PROJECT" in sdlc1|sdlc2|sdlc3) ;; *) echo 'Unknown workspace project' >&2; exit 2 ;; esac
 test -f "$SDLC_WORKSPACE_DIR/workspace.local.json"
 test -f "$SDLC_WORKSPACE_DIR/workspace.ps1"
-"${SDLC_PYTHON:-python3}" - "$SDLC_WORKSPACE_DIR" "$SDLC_PROJECT" <<'PY'
+workspace_python="${SDLC_PYTHON:-python3}"
+"$workspace_python" - "$SDLC_WORKSPACE_DIR" "$SDLC_PROJECT" <<'PY'
 import json,sys
 from pathlib import Path
 root=Path(sys.argv[1]).resolve(strict=True)
@@ -26,4 +27,4 @@ target=(root/runtime).resolve(strict=True)
 if not target.is_relative_to(root) or not target.is_file():
     raise SystemExit("The runtime must be a file inside the selected workspace")
 PY
-exec pwsh -NoProfile -File "$SDLC_WORKSPACE_DIR/workspace.ps1" Start -Service java-agent-backend
+exec pwsh -NoProfile -File "$SDLC_WORKSPACE_DIR/workspace.ps1" Start -Service java-agent-backend -Python "$workspace_python"

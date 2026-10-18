@@ -57,7 +57,7 @@ class DeployDevDockerTest(unittest.TestCase):
                 completed, calls, workspace = self.run_launcher(project=project, profile_project=project)
                 self.assertEqual(23, completed.returncode, completed.stderr)
                 self.assertEqual(["pwsh", "-NoProfile", "-File", workspace + "/workspace.ps1",
-                    "Start", "-Service", "java-agent-backend"], calls)
+                    "Start", "-Service", "java-agent-backend", "-Python", Path(sys.executable).as_posix()], calls)
 
     def test_rejects_foreign_project_before_any_command(self):
         completed, calls, _ = self.run_launcher(profile_project="sdlc1")

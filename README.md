@@ -202,7 +202,7 @@ Launcher вызывает PowerShell7 `workspace.ps1 Start -Service java-agent-b
 кандидата выполняются отдельно штатным helper. Профиль должен совпадать с
 `SDLC_PROJECT` (`sdlc1`, `sdlc2`, `sdlc3`), иметь `initialized=true` и существующий
 runtime внутри своего workspace. При необходимости путь к Python3 задаётся
-через `SDLC_PYTHON`. Docker/systemd команды, chown, создание volumes и fresh init
+через `SDLC_PYTHON`; тот же interpreter передаётся workspace helper. Docker/systemd команды, chown, создание volumes и fresh init
 этим launcher не выполняются. Launcher и квалифицированный Base helper должны
 быть установлены в выбранном workspace.
 
