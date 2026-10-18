@@ -51,6 +51,8 @@ class DefaultContextEngineTrimToFitTest {
         properties = new AgentProperties();
         properties.getContext().setMaxContextMessages(5);
         properties.getContext().setMaxTokens(100);
+        // Tool-pair trimming uses a tiny window and does not call a model.
+        properties.getModel().setMaxTokens(0);
         properties.getContext().setTargetTokens(80);
 
         contextEngine = new DefaultContextEngine(

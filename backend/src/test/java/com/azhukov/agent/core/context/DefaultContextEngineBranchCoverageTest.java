@@ -57,6 +57,8 @@ class DefaultContextEngineBranchCoverageTest {
         contextProps = properties.getContext();
         contextProps.setMaxContextMessages(5);
         contextProps.setMaxTokens(100);
+        // Keep the tiny fixture valid independently of output-reservation validation.
+        properties.getModel().setMaxTokens(0);
         contextProps.setTargetTokens(80);
         session = Session.create("user-42", "openai-compatible", "gpt-4o-mini");
     }

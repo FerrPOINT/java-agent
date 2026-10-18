@@ -398,18 +398,14 @@ public class DefaultContextEngine implements ContextEngine {
  @Override
  public void updateModel(String model) {
      if (modelMetadataService != null && model != null && !model.isBlank()) {
-         this.contextLength = modelMetadataService.detectContextLength(model);
-         if (agentMetrics != null) {
-             agentMetrics.setContextWindow(this.contextLength);
-         }
+         int nextContextLength = modelMetadataService.detectContextLength(model);
+         int outputReservation = maxOutputTokens();
          // P7 parity (context_compressor.py __init__): the configured threshold
          // percent (default 0.50) drives both preflight and the compressor —
          // no hard-coded 75%.
-         this.currentModel = model;
- this.thresholdTokens = CompressionPolicy.computeThresholdTokens(
-     contextLength, contextProps.getThresholdPercent(),
-     model, contextProps.getModelThresholds(), maxOutputTokens());
-         log.debug("Updated model: {}, contextLength={}, threshold={}", model, contextLength, thresholdTokens);
+         int nextThresholdTokens = CompressionPolicy.computeThresholdTokens(
+             nextContextLength, contextProps.getThresholdPercent(),
+             model, contextProps.getModelThresholds(), outputReservation);
          // Wire recalculateThreshold in the compressor so it stays calibrated
          // after a model switch (e.g., 200K → 32K). Mirrors Hermes update_model():
          //   self.threshold_tokens = max(int(context_length * threshold_percent), MINIMUM_CONTEXT_LENGTH)
@@ -417,12 +413,19 @@ public class DefaultContextEngine implements ContextEngine {
          //   self.max_summary_tokens = min(int(context_length * 0.05), _SUMMARY_TOKENS_CEILING)
          if (contextCompressor != null) {
              if (contextCompressor instanceof DefaultContextCompressor dcc) {
-                 dcc.recalculateThreshold(contextLength, model,
-                     contextProps.getModelThresholds());
+                 dcc.recalculateThreshold(nextContextLength, model,
+                     contextProps.getModelThresholds(), outputReservation);
              } else {
-                 contextCompressor.recalculateThreshold(contextLength);
+                 contextCompressor.recalculateThreshold(nextContextLength);
              }
          }
+         this.contextLength = nextContextLength;
+         this.currentModel = model;
+         this.thresholdTokens = nextThresholdTokens;
+         if (agentMetrics != null) {
+             agentMetrics.setContextWindow(nextContextLength);
+         }
+         log.debug("Updated model: {}, contextLength={}, threshold={}", model, contextLength, thresholdTokens);
      }
  }
 

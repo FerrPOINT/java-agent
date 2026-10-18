@@ -45,6 +45,18 @@ class StreamErrorClassificationTest {
     }
 
     @Test
+    void invalidOutputReservationAsksForConfigurationChangeNotRequestReplay() {
+        String message = "Output token reservation must be smaller than the context window";
+        for (String text : new String[] {message, message.toUpperCase(java.util.Locale.ROOT)}) {
+            String out = StreamingOrchestrator.toUserFriendlyError(new IllegalArgumentException(text));
+            assertThat(out)
+                .containsIgnoringCase("резерв ответа")
+                .containsIgnoringCase("уменьшите лимит ответа")
+                .doesNotContain("Resend", "Retry", "automatic retries", "Temporary issue");
+        }
+    }
+
+    @Test
     void providerOverloadMentionsCooldownNotTelegram() {
         String out = StreamingOrchestrator.toUserFriendlyError(
             new RuntimeException(LITELLM_NO_DEPLOYMENTS));

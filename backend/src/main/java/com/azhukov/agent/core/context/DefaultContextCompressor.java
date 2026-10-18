@@ -270,7 +270,7 @@ public class DefaultContextCompressor implements ContextCompressor {
    */
   @Override
   public void recalculateThreshold(int newContextWindowSize) {
-      policy.recalculateThreshold(newContextWindowSize);
+      recalculateThreshold(newContextWindowSize, null, null);
   }
 
   /**
@@ -280,13 +280,15 @@ public class DefaultContextCompressor implements ContextCompressor {
    * @param modelThresholds per-model threshold overrides (substring→fraction), or null
    */
   public void recalculateThreshold(int newContextWindowSize, String model, java.util.Map<String, Double> modelThresholds) {
-      policy.recalculateThreshold(newContextWindowSize, model, modelThresholds);
+      policy.recalculateThreshold(newContextWindowSize, model, modelThresholds,
+          properties.getModel().getMaxTokens(), properties.getContext().getThresholdPercent());
   }
 
   /** Hermes parity: reserve the configured output budget from the input window. */
   public void recalculateThreshold(int newContextWindowSize, String model,
                                    java.util.Map<String, Double> modelThresholds, int maxOutputTokens) {
-      policy.recalculateThreshold(newContextWindowSize, model, modelThresholds, maxOutputTokens);
+      policy.recalculateThreshold(newContextWindowSize, model, modelThresholds,
+          maxOutputTokens, properties.getContext().getThresholdPercent());
   }
 
  /**
