@@ -264,6 +264,17 @@ prerequisites; выбранные boot JAR включены в те же graphs.
 Coverage floors, inventory и необходимые release gates сохраняются; этот отчёт
 не заменяет blocking coverage ratchet и live acceptance.
 
+`tooling:release-verifier-unit` включает pure Python checks в fast/unit/build
+и ручной release profile, без запуска Bash или Gradle. Изменения entrypoint,
+endpoint inventory helper и их тестов выбирают tooling, без application build.
+Обычный `python3 -B -m unittest scripts.tests.test_release_verify -q` использует
+тот же pure набор через стандартный `load_tests`; module discovery в CI
+не запускает process protocol. Отдельный ручной integration gate
+`tooling:release-verifier-protocol` выбирает
+`python3 -B -m unittest scripts.tests.test_release_verify.ReleaseVerifyProtocolTest -q`:
+он проверяет Bash helper с recording wrappers, без JVM и настоящего Gradle.
+Этот fixture не является native qualification приложения.
+
 ### Стандарт документации и тестов
 
 Usage записывается через `UsagePersistenceService`: блокировка строки сессии и
