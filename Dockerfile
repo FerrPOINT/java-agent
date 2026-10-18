@@ -13,6 +13,8 @@ RUN ./gradlew bootJar --no-daemon -x test
 
 FROM eclipse-temurin:25.0.4.1_1-jre-noble@sha256:398f810215757dc1926390014272579fb0e57c41ef1c8aa4f64ae761613a168b
 
+LABEL sdlc.java.central-auth-contract="v2"
+
 # Chromium runtime dependencies
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \

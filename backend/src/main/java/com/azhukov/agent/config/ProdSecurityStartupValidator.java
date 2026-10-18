@@ -22,6 +22,9 @@ public class ProdSecurityStartupValidator implements ApplicationRunner {
         if (!isProdProfileActive()) {
             return;
         }
+        if (environment.getProperty("agent.central-auth.enabled", Boolean.class, false)) {
+            return;
+        }
         String apiKey = properties.getSecurity().getApiKey();
         if (apiKey == null || apiKey.isBlank()) {
             throw new IllegalStateException(

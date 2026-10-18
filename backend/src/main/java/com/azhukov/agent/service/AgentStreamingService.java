@@ -348,6 +348,8 @@ public class AgentStreamingService {
 
     SseEmitter streamTurn(ChatRequest request, SseEmitter emitter) {
         ChatRequest scopedRequest = request.withUserId(UserContext.effectiveUserId(request.userId()));
+        String requestUser = UserContext.getUserId();
+        String requestRole = UserContext.getRole();
         // Create per-stream context (replaces the old singleton volatile boolean)
         StreamContext streamCtx = new StreamContext();
 
@@ -391,6 +393,9 @@ public class AgentStreamingService {
                 }
             }
             try {
+                if (requestUser != null) {
+                    UserContext.set(requestUser, requestRole);
+                }
                 long __turnStart = System.currentTimeMillis();
                 try {
                     runAgenticLoop(applyCliState(scopedRequest), emitter, streamCtx);
@@ -413,6 +418,7 @@ public class AgentStreamingService {
                 eventHelper().send(emitter, new StreamEvent("error", null, null, e.getMessage()), streamCtx);
                 eventHelper().safeCompleteWithError(emitter, e);
             } finally {
+                UserContext.clear();
                 if (locked && sessionTurnLockManager != null && lockSessionId != null) {
                     sessionTurnLockManager.release(lockSessionId);
                 }

@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+- Explicit Central Auth mode validates the own Auth JWT and active session without falling back to gateway keys. Session identity remains available in streaming workers, owner checks protect resolver loads and model changes, and SSO production deployments do not require an unused legacy global key. Standalone key authentication remains available when Central Auth is disabled.
+
 - API binding errors return safe400; unexpected JSON/SSE errors retain500
   without private diagnostics. Terminal SSE uses a supported synchronous MVC
   response and honours specific Accept ranges before wildcard quality.

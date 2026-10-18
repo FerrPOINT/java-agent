@@ -64,6 +64,13 @@ server:
 agent:
   # Deployment identity. Default stays generic; set AGENT_NAME=Wartz Java Agent for Wartz.
   name: ${AGENT_NAME:Джава агент}
+
+  central-auth:
+    enabled: ${AGENT_CENTRAL_AUTH_ENABLED:false}
+    issuer: ${AGENT_CENTRAL_AUTH_ISSUER:}
+    jwks-uri: ${AGENT_CENTRAL_AUTH_JWKS_URI:}
+    audience: ${AGENT_CENTRAL_AUTH_AUDIENCE:}
+    session-uri: ${AGENT_CENTRAL_AUTH_SESSION_URI:}
   
   # ─── Model ───
   model:
