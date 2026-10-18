@@ -10,6 +10,18 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class ProdSecurityStartupValidatorTest {
 
     @Test
+    void prodCentralSessionDoesNotRequireLegacyGlobalKey() {
+        AgentProperties properties = new AgentProperties();
+        MockEnvironment environment = new MockEnvironment()
+            .withProperty("agent.central-auth.enabled", "true");
+        environment.setActiveProfiles("prod");
+        ProdSecurityStartupValidator validator = new ProdSecurityStartupValidator(properties, environment);
+
+        assertThatCode(() -> validator.run(new DefaultApplicationArguments()))
+            .doesNotThrowAnyException();
+    }
+
+    @Test
     void prodProfileRequiresApiKey() {
         AgentProperties properties = new AgentProperties();
         MockEnvironment environment = new MockEnvironment();

@@ -105,6 +105,11 @@
 
 ### Multi-user и аутентификация
 
+Общий вход SDLC включается явно через `agent.central-auth.enabled=true`:
+используется bearer собственного Auth, действующая сессия и owner scope без
+fallback на global key. Настройки и ограничения — [общая авторизация](docs/central-auth.md).
+Ниже описан standalone-режим при выключенном общем входе.
+
 - **Global key** (`agent.security.api-key`, env `API_SERVER_KEY`) — админ-доступ; когда пуст — auth выключен (dev-режим).
 - **Per-user ключи** (`agk_…`) выдаются админом через `/api/v1/admin/users/{id}/keys`, хранится только SHA-256 fingerprint. Держатель ключа получает свою userId-область: сессии, память, cron, чекпойнты, usage; приватные скиллы других юзеров недоступны.
 - **CLI**: ключ задаётся env `AGENT_API_KEY` (или `CLI_API_KEY`) и уходит заголовком `X-API-Key` на каждый запрос.

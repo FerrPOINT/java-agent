@@ -2,6 +2,19 @@
 
 This is the complete shipped-default reference for the Java agent runtime. It covers every leaf in the backend, Telegram bot, and CLI `application.yml` documents, every literal `@ConfigurationProperties` fallback, direct `@Value` fallbacks, and non-configurable transport defaults that affect a user-visible lifecycle.
 
+## Central Auth Deployment
+
+| Setting | Default | Intent |
+|---|---|---|
+| `agent.central-auth.enabled` | `false` | Keep standalone authentication until explicitly configured |
+| `agent.central-auth.issuer` | empty | Required own Auth issuer when enabled |
+| `agent.central-auth.jwks-uri` | empty | Required own Auth JWKS endpoint when enabled |
+| `agent.central-auth.audience` | empty | Required expected audience when enabled |
+| `agent.central-auth.session-uri` | empty | Required own Auth active-session endpoint when enabled |
+
+See [Central Auth](central-auth.md). Empty values fail startup when enabled;
+they never select a legacy credential fallback.
+
 ## Scope And Precedence
 
 1. Base YAML is loaded first.

@@ -85,6 +85,28 @@ class SessionPruneServiceTest {
     }
 
     @Test
+    void dryRunDoesNotRevealAnotherOwnersEndedSessions() {
+        SessionEntity owned = ended("new_session", Instant.now().minusSeconds(120 * 86400), 3);
+        owned.setUserId("owner");
+        SessionEntity foreign = ended("new_session", Instant.now().minusSeconds(120 * 86400), 5);
+        foreign.setUserId("foreign");
+        when(sessionRepository.listEndedSessions(isNull(), any(Pageable.class)))
+                .thenReturn(List.of(owned, foreign));
+        com.azhukov.agent.core.security.UserContext.set("owner",
+                com.azhukov.agent.core.security.UserContext.ROLE_USER);
+        try {
+            var result = service().prune(new SessionPruneService.PruneRequest(
+                    null, null, null, null, "foreign", null, null, null, null,
+                    null, null, false, true));
+            assertThat(result.pruned()).isEmpty();
+            assertThat(result.skippedOpen()).isEmpty();
+            verify(sessionQueryService, never()).deleteSession(any(UUID.class));
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+        }
+    }
+
+    @Test
     void endReasonAndSourceFiltersNarrowMatches() {
         SessionEntity compression = ended("compression", Instant.now().minusSeconds(120 * 86400), 2);
         SessionEntity userExit = ended("new_session", Instant.now().minusSeconds(120 * 86400), 2);

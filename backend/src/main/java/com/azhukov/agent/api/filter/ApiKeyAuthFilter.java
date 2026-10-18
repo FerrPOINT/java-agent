@@ -2,6 +2,7 @@ package com.azhukov.agent.api.filter;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.security.UserContext;
+import com.azhukov.agent.core.security.CentralJwtVerifier;
 import com.azhukov.agent.service.UserAccessService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -13,6 +14,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.security.authentication.AbstractAuthenticationToken;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.oauth2.jwt.JwtException;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -25,10 +29,11 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * API key authentication filter.
+ * Explicit Central Auth mode takes precedence over standalone gateway keys.
  * <p>
  * Reads {@code Authorization: Bearer ...}, {@code X-API-Key}, or {@code ?api_key=}
- * and validates it against {@code agent.security.api-key}. When the configured key is empty/null,
+ * and validates it against {@code agent.security.api-key} only in standalone mode.
+ * When the standalone configured key is empty/null,
  * authentication is disabled (dev mode).
  * <p>
  * Simple health endpoints are always exempt; detailed health stays authenticated.
@@ -39,6 +44,7 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
 
     private final AgentProperties agentProperties;
     private final UserAccessService userAccessService;
+    private CentralJwtVerifier centralJwtVerifier;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -47,10 +53,14 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
         this.userAccessService = userAccessService;
     }
 
+    @org.springframework.beans.factory.annotation.Autowired
+    void configureCentralVerifier(ObjectProvider<CentralJwtVerifier> provider) {
+        centralJwtVerifier = provider.getIfAvailable();
+    }
+
     /** Test-only compatibility constructor without per-user auth. */
     public ApiKeyAuthFilter(AgentProperties agentProperties) {
-        this.agentProperties = agentProperties;
-        this.userAccessService = null;
+        this(agentProperties, null);
     }
 
     @Override
@@ -58,6 +68,10 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
                                      HttpServletResponse response,
                                      FilterChain filterChain) throws ServletException, IOException {
         try {
+        if (centralJwtVerifier != null) {
+            authenticateCentral(request, response, filterChain);
+            return;
+        }
         String configuredKey = agentProperties.getSecurity().getApiKey();
 
         // Auth disabled — dev mode: set a default authenticated principal
@@ -137,6 +151,40 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
             // Always clear ThreadLocal to prevent leakage across virtual threads
             UserContext.clear();
         }
+    }
+
+    private void authenticateCentral(HttpServletRequest request, HttpServletResponse response,
+                                     FilterChain chain) throws ServletException, IOException {
+        String uri = request.getRequestURI();
+        if (isHealthEndpoint(uri) || "/actuator/prometheus".equals(uri)) {
+            SecurityContextHolder.getContext().setAuthentication(
+                    UsernamePasswordAuthenticationToken.authenticated("health", null, List.of()));
+            chain.doFilter(request, response);
+            return;
+        }
+        final String subject;
+        try {
+            subject = centralJwtVerifier.verifySubject(extractBearerToken(request.getHeader("Authorization")));
+        } catch (CentralJwtVerifier.CentralAuthUnavailableException unavailable) {
+            response.setStatus(HttpStatus.SERVICE_UNAVAILABLE.value());
+            response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+            response.setCharacterEncoding("UTF-8");
+            response.getWriter().write(errorJson("Central authentication unavailable", "authentication_error",
+                    "central_auth_unavailable"));
+            return;
+        } catch (JwtException rejected) {
+            response.setStatus(HttpStatus.UNAUTHORIZED.value());
+            response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+            response.setCharacterEncoding("UTF-8");
+            response.getWriter().write(errorJson("Central authentication required", "authentication_error",
+                    "central_auth_failed"));
+            return;
+        }
+        SecurityContextHolder.getContext().setAuthentication(
+                UsernamePasswordAuthenticationToken.authenticated(subject, null,
+                        List.of(new SimpleGrantedAuthority("ROLE_USER"))));
+        UserContext.set(subject, UserContext.ROLE_USER);
+        chain.doFilter(request, response);
     }
 
     private String extractApiKey(HttpServletRequest request) {

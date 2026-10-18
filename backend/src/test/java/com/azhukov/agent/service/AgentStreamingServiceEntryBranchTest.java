@@ -72,6 +72,7 @@ class AgentStreamingServiceEntryBranchTest {
     @Mock private TransactionTemplate transactionTemplate;
     @Mock private IterationBudget iterationBudget;
     @Mock private TurnStateManager turnStateManager;
+    @Mock private com.azhukov.agent.core.ports.SessionStorePort sessionStore;
 
     private AgentProperties properties;
     private AgentStreamingService streamingService;
@@ -148,7 +149,7 @@ class AgentStreamingServiceEntryBranchTest {
             iterationBudget, turnStateManager, sessionMapper, messageMapper,
             new RuntimeConfigService(), new com.azhukov.agent.core.agent.InterruptToken(), new com.azhukov.agent.core.agent.SteerBuffer(),
             new com.azhukov.agent.core.agent.TokenEstimator(), new com.azhukov.agent.core.agent.ToolResultFormatter(),
-            new com.azhukov.agent.core.agent.AgentSessionResolver(mock(com.azhukov.agent.core.ports.SessionStorePort.class), sessionMapper, transactionTemplate, mock(com.azhukov.agent.core.ports.MessageStorePort.class), mock(com.azhukov.agent.core.agent.SessionLineageService.class), org.mockito.Mockito.mock(com.azhukov.agent.core.agent.ProjectContextDetector.class)),
+            new com.azhukov.agent.core.agent.AgentSessionResolver(sessionStore, sessionMapper, transactionTemplate, mock(com.azhukov.agent.core.ports.MessageStorePort.class), mock(com.azhukov.agent.core.agent.SessionLineageService.class), org.mockito.Mockito.mock(com.azhukov.agent.core.agent.ProjectContextDetector.class)),
             lineageService,
             new com.azhukov.agent.core.agent.CliStateApplier(null), null, null, new ModelMetadataService(), null);
     }
@@ -160,6 +161,43 @@ class AgentStreamingServiceEntryBranchTest {
         emitter.awaitDone();
         assertThat(emitter.completed.get()).isTrue();
         assertThat(emitter.error.get()).isNull();
+    }
+
+    @Test
+    void streamedCreationCarriesVerifiedOwnerIntoBackgroundThread() throws Exception {
+        AtomicReference<String> owner = new AtomicReference<>();
+        AtomicReference<String> asyncIdentity = new AtomicReference<>();
+        when(sessionStore.save(any(SessionEntity.class))).thenAnswer(invocation -> {
+            SessionEntity created = invocation.getArgument(0);
+            owner.set(created.getUserId());
+            asyncIdentity.set(com.azhukov.agent.core.security.UserContext.getUserId());
+            throw new IllegalStateException("QA stop before model request");
+        });
+        CollectingEmitter emitter = new CollectingEmitter(30_000L);
+        com.azhukov.agent.core.security.UserContext.set("verified-owner",
+                com.azhukov.agent.core.security.UserContext.ROLE_USER);
+        try {
+            streamingService.streamTurn(ChatRequest.simple(null, "Hello", null, 5_000L), emitter);
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+        }
+        emitter.awaitDone();
+        assertThat(owner.get()).isEqualTo("verified-owner");
+        assertThat(asyncIdentity.get()).isEqualTo("verified-owner");
+    }
+
+    @Test
+    void foreignSessionIsRejectedOnHttpThreadBeforeStreamingStarts() {
+        com.azhukov.agent.core.security.UserContext.set("other-owner",
+                com.azhukov.agent.core.security.UserContext.ROLE_USER);
+        try {
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> streamingService.streamTurn(
+                    ChatRequest.simple(SESSION_ID, "foreign", null, 5_000L)))
+                    .isInstanceOf(SecurityException.class);
+            org.mockito.Mockito.verifyNoInteractions(sessionStore, modelClient);
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+        }
     }
 
     @Test

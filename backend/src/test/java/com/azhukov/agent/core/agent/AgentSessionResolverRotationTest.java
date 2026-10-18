@@ -6,6 +6,7 @@ import com.azhukov.agent.persistence.mapper.SessionEntityMapper;
 import com.azhukov.agent.core.ports.MessageStorePort;
 import com.azhukov.agent.core.ports.SessionStorePort;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mapstruct.factory.Mappers;
@@ -18,6 +19,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
@@ -32,6 +34,38 @@ import static org.mockito.Mockito.when;
  */
 @ExtendWith(MockitoExtension.class)
 class AgentSessionResolverRotationTest {
+
+    @AfterEach
+    void clearIdentity() {
+        com.azhukov.agent.core.security.UserContext.clear();
+    }
+
+    @Test
+    void foreignSessionCannotBeHydratedThroughSharedResolver() {
+        SessionEntity foreign = new SessionEntity();
+        foreign.setId(childId);
+        foreign.setUserId("other-owner");
+        when(sessionRepository.findById(childId)).thenReturn(java.util.Optional.of(foreign));
+        com.azhukov.agent.core.security.UserContext.set("user-1",
+            com.azhukov.agent.core.security.UserContext.ROLE_USER);
+
+        assertThatThrownBy(() -> resolver.loadSession(childId)).isInstanceOf(SecurityException.class);
+    }
+
+    @Test
+    void verifiedOwnerCanStillHydrateOwnSession() {
+        SessionEntity owned = new SessionEntity();
+        owned.setId(childId);
+        owned.setUserId("user-1");
+        owned.setModelProvider("openai-compatible");
+        owned.setModelName("noop");
+        owned.setTitle("Own session");
+        when(sessionRepository.findById(childId)).thenReturn(java.util.Optional.of(owned));
+        com.azhukov.agent.core.security.UserContext.set("user-1",
+            com.azhukov.agent.core.security.UserContext.ROLE_USER);
+
+        assertThat(resolver.loadSession(childId).userId()).isEqualTo("user-1");
+    }
 
     @Mock
     private com.azhukov.agent.core.ports.SessionStorePort sessionRepository;

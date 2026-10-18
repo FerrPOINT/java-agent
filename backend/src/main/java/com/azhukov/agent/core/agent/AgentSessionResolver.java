@@ -188,6 +188,10 @@ public class AgentSessionResolver {
     }
 
     private Session hydrateSession(SessionEntity e) {
+        String scoped = com.azhukov.agent.core.security.UserContext.scopeUserId();
+        if (scoped != null && !scoped.equals(e.getUserId())) {
+            throw new SecurityException("Session does not belong to the current user");
+        }
         // Force-initialize the lazy cliState collection inside the tx
         Map<String, String> cliStateCopy;
         if (Hibernate.isInitialized(e.getCliState())) {
