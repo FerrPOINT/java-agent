@@ -23,10 +23,16 @@ class QualityGradleTests(unittest.TestCase):
         helper.parent.mkdir()
         helper.write_bytes((ROOT / "scripts/quality-gradle.sh").read_bytes().replace(b"\r\n", b"\n"))
         self.helper = helper
-        for directory, version in ((self.root, "9.6.1"), (self.root / "backend", "9.8.0")):
+        adapter = self.root / "scripts/quality-make.sh"
+        adapter.write_bytes((ROOT / "scripts/quality-make.sh").read_bytes().replace(b"\r\n", b"\n"))
+        self.adapter = adapter
+        for directory, version in ((self.root, "9.6.1"), (self.root / "backend", "9.8.1")):
             directory.mkdir(exist_ok=True)
             (directory / "gradlew").write_text(
-                'printf "%s\\n" "EPOCH=$SOURCE_DATE_EPOCH" "DIRECTORY=$PWD" "$@"\n', newline="\n")
+                'printf "%s\\n" "EPOCH=$SOURCE_DATE_EPOCH" "DIRECTORY=$PWD" "$@"\n'
+                'if [ "${FAIL_GRAPH:-}" = backend ] && [ "${PWD##*/}" = backend ]; then exit 51; fi\n'
+                'if [ "${FAIL_GRAPH:-}" = root ] && [ "${PWD##*/}" != backend ]; then exit 52; fi\n',
+                newline="\n")
             wrapper = directory / "gradle/wrapper/gradle-wrapper.properties"
             wrapper.parent.mkdir(parents=True)
             wrapper.write_text("distributionUrl=https\\://services.gradle.org/distributions/gradle-" + version + "-bin.zip\n")
@@ -65,10 +71,11 @@ class QualityGradleTests(unittest.TestCase):
         backend = self.root / 'backend/gradle/wrapper/gradle-wrapper.properties'
         root = self.root / 'gradle/wrapper/gradle-wrapper.properties'
         arguments = ['--backend', ':test', ':bootJar', '--no-daemon', '--max-workers=2']
-        backend.write_text('distributionUrl=https\\://services.gradle.org/distributions/gradle-9.8.1-bin.zip\n')
-        result, lines = self.invoke(*arguments)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(lines[2:], arguments[1:] + ['--configuration-cache', '--configuration-cache-problems=fail'])
+        for version in ("9.8.0", "9.8.1"):
+            backend.write_text(f'distributionUrl=https\\://services.gradle.org/distributions/gradle-{version}-bin.zip\n')
+            result, lines = self.invoke(*arguments)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(lines[2:], arguments[1:] + ['--configuration-cache', '--configuration-cache-problems=fail'])
         backend.write_text('distributionUrl=https\\://services.gradle.org/distributions/gradle-9.8.2-bin.zip\n')
         result, lines = self.invoke(*arguments)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -111,6 +118,133 @@ class QualityGradleTests(unittest.TestCase):
         result, lines = self.invoke("--backend", "test", epoch="not-unix-seconds")
         self.assertEqual(result.returncode, 64)
         self.assertEqual(lines, [])
+
+    def invoke_make_adapter(self, action, module, **overrides):
+        environment = {**os.environ, "SOURCE_DATE_EPOCH": "1792072450", "JAVA_HOME": self.jdk.as_posix(), **overrides}
+        result = subprocess.run([BASH, self.adapter.as_posix(), action, module], env=environment,
+                                capture_output=True, text=True, timeout=10)
+        blocks = result.stdout.split("EPOCH=")[1:]
+        records = []
+        for block in blocks:
+            epoch, directory, *arguments = block.splitlines()
+            records.append({"epoch": epoch, "backend": directory.endswith("/backend"), "arguments": arguments})
+        return result, records
+
+    def test_make_adapter_selects_only_requested_units_and_preserves_strict_helper(self):
+        for module, tasks in (("backend", [":test"]), ("cli", [":cli:test"]),
+                              ("bot", [":telegram-bot:test"]), ("shared", [":shared:test"])):
+            for action in ("build", "test"):
+                with self.subTest(module=module, action=action):
+                    result, records = self.invoke_make_adapter(action, module)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(len(records), 1)
+                    self.assertEqual(records[0]["backend"], module == "backend")
+                    self.assertEqual(records[0]["arguments"], tasks + [
+                        "--no-daemon", "--max-workers=2", "--configuration-cache", "--configuration-cache-problems=fail"])
+
+    def test_make_adapter_all_uses_two_sequential_graphs_without_duplicate_units(self):
+        for action in ("build", "test", "jar"):
+            with self.subTest(action=action):
+                result, records = self.invoke_make_adapter(action, "all")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual([record["backend"] for record in records], [True, False])
+                self.assertEqual({record["epoch"] for record in records}, {"1792072450"})
+                expected_backend = [":bootJar"] if action == "jar" else [":test"]
+                expected_root = ([":telegram-bot:bootJar", ":cli:bootJar", ":shared:test"] if action == "jar"
+                                 else [":telegram-bot:test", ":cli:test", ":shared:test"])
+                options = ["--no-daemon", "--max-workers=2", "--configuration-cache", "--configuration-cache-problems=fail"]
+                self.assertEqual(records[0]["arguments"], expected_backend + options)
+                self.assertEqual(records[1]["arguments"], expected_root + options)
+
+    def test_make_adapter_scoped_jar_keeps_units_on_bootjar_and_shared_library(self):
+        for module, tasks in (("backend", [":bootJar"]), ("cli", [":cli:bootJar"]),
+                              ("bot", [":telegram-bot:bootJar"]), ("shared", [":shared:test", ":shared:jar"])):
+            with self.subTest(module=module):
+                result, records = self.invoke_make_adapter("jar", module)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(len(records), 1)
+                actual_tasks = [argument for argument in records[0]["arguments"] if argument.startswith(":")]
+                self.assertEqual(actual_tasks, tasks)
+
+    def test_make_adapter_manual_coverage_keeps_only_existing_report_consumers(self):
+        for module, expected in (("backend", [(True, ":jacocoTestReport")]),
+                                 ("bot", [(False, ":telegram-bot:jacocoTestReport")]),
+                                 ("all", [(True, ":jacocoTestReport"), (False, ":telegram-bot:jacocoTestReport")])):
+            with self.subTest(module=module):
+                result, records = self.invoke_make_adapter("coverage", module)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual([(record["backend"], record["arguments"][0]) for record in records], expected)
+                for record in records:
+                    self.assertEqual(record["arguments"][1:], ["--no-daemon", "--max-workers=2"])
+
+    def test_make_adapter_invalid_selection_and_failure_never_start_another_graph(self):
+        for action, module in (("test", "typo"), ("typo", "all"), ("coverage", "cli"), ("coverage", "shared")):
+            with self.subTest(action=action, module=module):
+                result, records = self.invoke_make_adapter(action, module)
+                self.assertEqual(result.returncode, 64, result.stderr)
+                self.assertEqual(records, [])
+        result, records = self.invoke_make_adapter("jar", "all", FAIL_GRAPH="backend")
+        self.assertEqual(result.returncode, 51, result.stderr)
+        self.assertEqual([record["backend"] for record in records], [True])
+        result, records = self.invoke_make_adapter("jar", "all", FAIL_GRAPH="root")
+        self.assertEqual(result.returncode, 52, result.stderr)
+        self.assertEqual([record["backend"] for record in records], [True, False])
+        result, records = self.invoke_make_adapter("test", "all", SOURCE_DATE_EPOCH="invalid")
+        self.assertEqual(result.returncode, 64, result.stderr)
+        self.assertEqual(records, [])
+
+    def test_make_adapter_freezes_implicit_epoch_before_the_two_graphs(self):
+        environment = {**os.environ, "GIT_AUTHOR_DATE": "@1792072450 +0000",
+                       "GIT_COMMITTER_DATE": "@1792072450 +0000"}
+        for arguments in (["init", "-q"], ["add", "."],
+                          ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "initial"]):
+            subprocess.run(["git", *arguments], cwd=self.root, env=environment, capture_output=True, check=True)
+        wrapper = self.root / "backend/gradlew"
+        with wrapper.open("a", newline="\n") as stream:
+            stream.write(
+                'GIT_AUTHOR_DATE="@1792072550 +0000" GIT_COMMITTER_DATE="@1792072550 +0000" '
+                'git -C .. -c user.name=Fixture -c user.email=fixture@example.test commit --allow-empty -qm moved\n')
+        result, records = self.invoke_make_adapter("jar", "all", SOURCE_DATE_EPOCH="")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([record["epoch"] for record in records], ["1792072450", "1792072450"])
+        actual_epoch = subprocess.check_output(["git", "show", "-s", "--format=%ct", "HEAD"], cwd=self.root, text=True).strip()
+        self.assertEqual(actual_epoch, "1792072550", "Fixture must move HEAD between graphs")
+
+    @unittest.skipUnless(shutil.which("make"), "GNU Make is required for real Makefile dispatch")
+    def test_real_make_coalesces_requested_targets_and_guards_partial_install(self):
+        (self.root / "Makefile").write_bytes((ROOT / "Makefile").read_bytes())
+        environment = {**os.environ, "SOURCE_DATE_EPOCH": "1792072450", "JAVA_HOME": self.jdk.as_posix()}
+        for goals in (("build", "test"), ("build", "test", "jar"), ("jar",)):
+            with self.subTest(goals=goals):
+                result = subprocess.run([shutil.which("make"), "--no-print-directory", "-j8", *goals,
+                                         "MODULE=cli", "SHELL=" + BASH], cwd=self.root, env=environment,
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.count("EPOCH="), 1, result.stdout)
+                self.assertIn(":cli:bootJar" if "jar" in goals else ":cli:test", result.stdout)
+                self.assertNotIn("/backend", result.stdout)
+        for goal in ("install", "release"):
+            with self.subTest(goal=goal):
+                result = subprocess.run([shutil.which("make"), "--no-print-directory", goal, "MODULE=cli", "SHELL=" + BASH],
+                                        cwd=self.root, env=environment, capture_output=True, text=True, timeout=10)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("require MODULE=all", result.stderr)
+                self.assertNotIn("EPOCH=", result.stdout)
+                self.assertFalse((self.root / ".version").exists())
+
+    def test_make_source_changes_select_fast_tooling_without_application_builds(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("java_quality_selection", ROOT / "scripts/vendor/base_quality_selection.py")
+        selector = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(selector)
+        for path in ("Makefile", "scripts/quality-make.sh", "scripts/tests/test_quality_gradle.py"):
+            with self.subTest(path=path):
+                selected = selector.plan(ROOT, profile="build", changed=[path])
+                self.assertTrue(any(gate["id"] == "tooling:gradle-helper-unit" for gate in selected["gates"]))
+                self.assertTrue(all(gate["component"] == "tooling" for gate in selected["gates"]))
+        production = selector.plan(ROOT, profile="build", changed=["backend/src/main/java/example/Production.java"])
+        self.assertTrue(any(gate["id"] == "backend:build" for gate in production["gates"]))
 
 
 @unittest.skipUnless(BASH and Path(BASH).is_file(), "native Bash is required; WSL is not used")

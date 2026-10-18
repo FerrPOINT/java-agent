@@ -5,6 +5,47 @@
 
 ## Разработка и сборка
 
+### Явный scope Makefile
+
+`make build MODULE=backend`, `make test MODULE=cli` и `make jar MODULE=bot`
+делегируют `scripts/quality-make.sh` → существующий `quality-gradle.sh`.
+Допустимые MODULE: `backend`, `cli`, `bot`, `shared`, `all`; default — `all`.
+Это явный scope, не автоматический changed-path выбор. При изменении Shared
+нужны реальные потребители; `MODULE=shared` проверяет только библиотеку,
+для общего consumer gate выбирать `all` либо штатный selector workspace.
+
+Build/test выполняют reviewed units и их необходимую compilation. Backend
+идёт через standalone wrapper9.8.1, bot/CLI/shared через root9.6.1; `all` запускает
+эти два graphs последовательно. Внутри graph — `--no-daemon --max-workers=2`,
+прежние fork/heap limits и квалифицированные helper defaults сохранены.
+Неизменные dependency caches не очищаются. Epoch фиксируется один раз до обоих
+graphs, явный SOURCE_DATE_EPOCH сохраняется и проверяется штатным helper.
+
+Jar выбирает `:bootJar` нужного приложения с его unit prerequisite, без отдельного
+повторного `test`; `MODULE=shared` выполняет `:shared:test :shared:jar`.
+Совместный `make build test jar MODULE=cli` передаёт один packaging graph;
+`make -j` не распараллеливает wrapper invocations. Installer/release сохраняют
+полный комплект и требуют `MODULE=all` до recipes, не устанавливая частичный
+набор рядом со старыми JAR. Install/deploy здесь не выполнялись.
+
+`make coverage MODULE=backend|bot|all` остаётся ручным полным report graph с
+unit/integration/slow и прежними floors. CLI/shared не объявляют JaCoCo report:
+такой scope отклоняется, а не заменяется unit-only отчётом. Для релизного
+blocking coverage ratchet использовать прежние releaseCheck/verification gates.
+
+Make и adapter не владеют общим host slot. В Windows workspace запускать всю
+heavy операцию через разрешённый Base owner/execution slot по root-инструкции;
+дочерние wrappers не оборачивать повторно. Fast helper tests не стартуют JVM.
+Makefile/adapter changes выбирают tooling checks, без application producer.
+
+Scoped check: `python -B -m unittest scripts.tests.test_quality_gradle -q`.
+Он проверяет реальный Bash adapter и helper с recording Gradle wrapper, error
+propagation, scoped tasks и frozen epoch. Actual GNU Make dispatch проверяется
+отдельным test, когда `make` доступен; отсутствие Make — явный skip. Эти fixtures
+не квалифицируют настоящий Gradle compilation/JAR или скорость приложения.
+
+### Действующая native qualification
+
 PDLC2 сохраняет upstream backend wrapper9.8.1, LangChain4j1.22.0 и JLine4.4.8.
 Source reader controls для9.8.1 проверяют URL/layout/integrity; native tuple
 квалифицируется отдельно. Прежние сертификаты9.8.0 и dependency versions

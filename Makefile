@@ -1,8 +1,8 @@
 # java-agent Makefile — build, test, version, install
 # Usage:
-#   make build       — compile all modules
-#   make test        — run all tests
-#   make jar         — build fat JARs
+#   make build       — compile and run reviewed units (MODULE=all by default)
+#   make test        — run reviewed units (MODULE=backend|cli|bot|shared|all)
+#   make jar         — build selected JARs (MODULE=all by default)
 #   make install     — build + test + jar + install to /opt/java-agent
 #   make version     — show current version
 #   make patch       — bump patch version (0.1.0 → 0.1.1)
@@ -12,10 +12,11 @@
 #   make run         — run backend with dev profile
 #   make cli         — run CLI REPL
 #   make bot         — run telegram bot
-#   make coverage    — generate coverage report
+#   make coverage    — manual full coverage (MODULE=backend|bot|all)
 
 SHELL := /bin/bash
 GRADLE := ./gradlew
+MODULE ?= all
 INSTALL_DIR := /opt/java-agent
 VERSION_FILE := .version
 JAVA := java
@@ -31,12 +32,19 @@ CYAN := \033[0;36m
 NC := \033[0m
 
 .PHONY: build test jar install version patch minor release clean run cli bot coverage help
+# Backend and root wrappers share this host's build budget, including make -j.
+.NOTPARALLEL:
+ifneq ($(filter install release,$(MAKECMDGOALS)),)
+ifneq ($(MODULE),all)
+$(error install/release require MODULE=all)
+endif
+endif
 
 help:
 	@echo "java-agent Makefile — commands:"
-	@echo "  make build       — compile all modules"
-	@echo "  make test        — run all tests"
-	@echo "  make jar         — build fat JARs"
+	@echo "  make build       — compile and run reviewed units (MODULE=all)"
+	@echo "  make test        — reviewed units (MODULE=backend|cli|bot|shared|all)"
+	@echo "  make jar         — build selected JARs (MODULE=all)"
 	@echo "  make install     — build + test + jar + install to $(INSTALL_DIR)"
 	@echo "  make version     — show current version"
 	@echo "  make patch       — bump patch version"
@@ -46,31 +54,33 @@ help:
 	@echo "  make run         — run backend (dev profile)"
 	@echo "  make cli         — run CLI REPL"
 	@echo "  make bot         — run telegram bot"
-	@echo "  make coverage    — generate coverage report"
+	@echo "  make coverage    — manual full coverage (MODULE=backend|bot|all)"
 	@echo "  make parity-dashboard  — show parity status snapshot"
 	@echo "  make skill-update       — refresh dashboard + show block for skill"
 
 version:
 	@echo "$(GREEN)java-agent version: $(VERSION)$(NC)"
 
-build:
-	@echo "$(CYAN)Building java-agent v$(VERSION)...$(NC)"
-	$(GRADLE) compileJava compileTestJava
-	@echo "$(GREEN)Build successful.$(NC)"
+build: test
 
+# bootJar already requires units; combined `make build test jar` owns one graph.
+ifneq ($(filter jar install release,$(MAKECMDGOALS)),)
+test: jar
+else
 test:
 	@echo "$(CYAN)Running tests...$(NC)"
-	$(GRADLE) test
-	@echo "$(GREEN)All tests passed.$(NC)"
+	bash scripts/quality-make.sh test "$(MODULE)"
+	@echo "$(GREEN)Reviewed unit tests passed.$(NC)"
+endif
 
 jar:
 	@echo "$(CYAN)Building JARs...$(NC)"
-	$(GRADLE) test bootJar
+	bash scripts/quality-make.sh jar "$(MODULE)"
 	@echo "$(GREEN)JARs built.$(NC)"
 
 coverage:
-	$(GRADLE) jacocoTestReport
-	@echo "Coverage report: backend/build/reports/jacoco/test/html/index.html"
+	bash scripts/quality-make.sh coverage "$(MODULE)"
+	@echo "Coverage: selected MODULE=$(MODULE) outputs under build/reports/jacoco/test/html/"
 
 clean:
 	$(GRADLE) clean
