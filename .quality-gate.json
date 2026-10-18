@@ -160,7 +160,7 @@
       "inputs": [
         "**"
       ],
-      "cacheable": false,
+      "cacheable": true,
       "platforms": [
         "linux"
       ],
@@ -222,7 +222,7 @@
         "THIRD_PARTY_NOTICES.md",
         "scripts/gradle-context.py"
       ],
-      "cacheable": false,
+      "cacheable": true,
       "platforms": [
         "linux"
       ],

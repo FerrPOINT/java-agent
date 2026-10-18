@@ -338,7 +338,10 @@ class GradleContextTests(unittest.TestCase):
                 self.assertEqual(tool['reuse_pattern'], '"reuse_qualified":true')
                 self.assertIs(tool['recheck'], True)
                 self.assertEqual(tool['cwd'], '.')
-                self.assertIs(gate['cacheable'], False)
+                # Only the exact Base native backend profile may consume this
+                # consent. The portable reader above still emits false, and
+                # manual/root gates remain non-reusable.
+                self.assertIs(gate['cacheable'], gate['id'] in {'backend:unit', 'backend:build'})
                 self.assertEqual(gate['source_date_epoch'], 'git-head')
                 self.assertIn('SOURCE_DATE_EPOCH', gate['environment_inputs'])
                 if gate.get('kind') == 'artifact':

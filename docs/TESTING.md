@@ -1,6 +1,6 @@
 # Тестовые уровни
 
-Обязательная общая политика: [Base TESTING](https://github.com/FerrPOINT/services-base/blob/ad724088e9a63b1e353fb5b28e4308e9ae6f45ae/docs/TESTING.md).
+Обязательная общая политика: [Base TESTING](https://github.com/FerrPOINT/services-base/blob/9d8f01b92eeeb51e9693660365e3edad1a8899b8/docs/TESTING.md).
 Выбор компонентов и native commands: `.quality-gate.json`.
 
 ## Разработка и сборка
@@ -8,7 +8,20 @@
 PDLC2 сохраняет upstream backend wrapper9.8.1, LangChain4j1.22.0 и JLine4.4.8.
 Source reader controls для9.8.1 проверяют URL/layout/integrity; native tuple
 квалифицируется отдельно. Прежние сертификаты9.8.0 и dependency versions
-не являются новым proof9.8.1; cache/receipt reuse остаётся выключенным.
+не являются новым proof9.8.1. Portable reader по-прежнему выдаёт
+`reuse_qualified:false`; его receipts и13 root/manual Gradle gates не включаются.
+Только backend:unit/backend:build дают явный consent native Base profile9d8f01b9:
+Linux/x86_64, Temurin25.0.4.1/Eclipse Adoptium, backend Gradle9.8.1, полные
+JDK/wrapper/distribution identities и проверенная unit dependency closure.
+Первый qualification run выполняется через matching candidate tooling с
+`--no-reuse`, затем проверяются actual warm/invalidation/loss и original proofs.
+До применимых controls exact workspace packet не принимается. Source opt-in
+не является native PASS. Текущая qualification/adoption хранится в Base ledger
+и source inventory; SDK/UI/skills/operator pins этим не меняются.
+
+Ниже сохранены исходные source/native наблюдения. Их прежнее указание
+15 noncacheable gates описывает соответствующий этап; текущий consent ограничен
+двумя backend native gates выше и не расширяет portable/manual eligibility.
 
 
 Backend: `bash scripts/quality-gradle.sh --backend :test`.
