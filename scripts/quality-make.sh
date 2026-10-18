@@ -4,13 +4,19 @@ repository=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 operation=${1:-}
 module=${2:-all}
 usage() {
-    echo 'Usage: quality-make.sh build|test|jar|coverage backend|cli|bot|shared|all' >&2
+    echo 'Usage: quality-make.sh build|test|jar|coverage backend|cli|bot|shared|all [--coverage]' >&2
     exit 64
 }
-[[ $# -ge 1 && $# -le 2 ]] || usage
+[[ $# -ge 1 && $# -le 3 ]] || usage
 case "$operation" in build|test|jar|coverage) ;; *) usage ;; esac
 case "$module" in backend|cli|bot|shared|all) ;; *) usage ;; esac
-if [[ "$operation" == coverage && ( "$module" == cli || "$module" == shared ) ]]; then
+include_coverage=false
+if [[ $# == 3 ]]; then
+    [[ "$3" == --coverage ]] || usage
+    include_coverage=true
+fi
+[[ "$operation" != coverage ]] || include_coverage=true
+if $include_coverage && [[ "$module" == cli || "$module" == shared ]]; then
     echo 'Coverage reports are declared only for backend and bot; select their scope or all.' >&2
     exit 64
 fi
@@ -26,8 +32,12 @@ backend_tasks=()
 root_tasks=()
 if [[ "$module" == backend || "$module" == all ]]; then
     case "$operation" in
-        build|test) backend_tasks=(:test) ;;
-        jar) backend_tasks=(:bootJar) ;; # bootJar already requires reviewed units.
+        build|test)
+            # Reports already require the full tests; no separate wrapper start.
+            if $include_coverage; then backend_tasks=(:jacocoTestReport); else backend_tasks=(:test); fi ;;
+        jar)
+            backend_tasks=(:bootJar) # bootJar already requires reviewed units.
+            if $include_coverage; then backend_tasks+=(:jacocoTestReport); fi ;;
         coverage) backend_tasks=(:jacocoTestReport) ;;
     esac
 fi
@@ -39,7 +49,12 @@ case "$module" in
 esac
 for project in "${projects[@]}"; do
     case "$operation" in
-        build|test) root_tasks+=(":$project:test") ;;
+        build|test)
+            if $include_coverage && [[ "$project" == telegram-bot ]]; then
+                root_tasks+=(:telegram-bot:jacocoTestReport)
+            else
+                root_tasks+=(":$project:test")
+            fi ;;
         jar)
             if [[ "$project" == shared ]]; then
                 root_tasks+=(:shared:test)
@@ -47,6 +62,9 @@ for project in "${projects[@]}"; do
                 [[ "$module" != shared ]] || root_tasks+=(:shared:jar)
             else
                 root_tasks+=(":$project:bootJar")
+                if $include_coverage && [[ "$project" == telegram-bot ]]; then
+                    root_tasks+=(:telegram-bot:jacocoTestReport)
+                fi
             fi ;;
         coverage)
             # CLI/shared do not declare JaCoCo report tasks.
