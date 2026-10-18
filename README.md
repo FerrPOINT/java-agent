@@ -193,23 +193,23 @@ flowchart TD
 ## 🚀 Deployment
 
 ```bash
-# Dev runtime: immutable backend/bot images, остановка старых host-сервисов,
-# изолированный unprivileged container stack на localhost:8090.
-./scripts/deploy-dev-docker.sh
-
-# Host systemd backend + self-hosted SearXNG: start only the search service,
-# then set AGENT_WEB_SEARXNG_URL=http://127.0.0.1:8889 in its EnvironmentFile
-# (or a systemd drop-in) and restart the backend.
-docker compose -f docker-compose.dev.yml up -d searxng
-
-# Local Compose runtime: PostgreSQL, SearXNG, backend, and Telegram bot.
-# Host ports are loopback-only: 1180 (API), 1181 (PostgreSQL),
-# 1182 (Telegram bot), and 1183 (SearXNG).
-docker compose -f docker-compose.local.yml up -d --build
-# Start the optional CLI; it reaches the backend over the internal Compose network.
-docker compose -f docker-compose.local.yml --profile cli run --rm cli
-docker compose -f docker-compose.e2e.yml up --build
+# Bash launcher for the existing initialized SDLC workspace.
+SDLC_WORKSPACE_DIR=/path/to/sdlc2 SDLC_PROJECT=sdlc2 ./scripts/deploy-dev-docker.sh
 ```
+
+Launcher вызывает PowerShell7 `workspace.ps1 Start -Service java-agent-backend`
+в явно выбранном workspace. Он запускает уже принятый образ; Build/Apply нового
+кандидата выполняются отдельно штатным helper. Профиль должен совпадать с
+`SDLC_PROJECT` (`sdlc1`, `sdlc2`, `sdlc3`), иметь `initialized=true` и существующий
+runtime внутри своего workspace. При необходимости путь к Python3 задаётся
+через `SDLC_PYTHON`; тот же interpreter передаётся workspace helper. Docker/systemd команды, chown, создание volumes и fresh init
+этим launcher не выполняются. Launcher и квалифицированный Base helper должны
+быть установлены в выбранном workspace.
+
+Standalone Compose-файлы ниже остаются отдельными шаблонами, не маршрутом запуска
+инициализированного SDLC. Временные локальные QA/build из этих шаблонов оформляются
+через Base ComposeHelper v2 с собственным project и cleanup; постоянный SDLC
+управляется workspace helper.
 
 The CLI image packages `LICENSE`, `NOTICE`, and `THIRD_PARTY_NOTICES.md`
 inside its executable JAR under `META-INF`, alongside the license metadata.
@@ -221,7 +221,8 @@ tests finish; a missing required LINE report fails the gate.
 
 | Compose file | Назначение |
 |---|---|
-| `docker-compose.dev.yml` + `scripts/deploy-dev-docker.sh` | Dev runtime: isolated backend/bot containers на `127.0.0.1:8090`; reuses existing PostgreSQL |
+| `scripts/deploy-dev-docker.sh` | Адресный Start существующего Java backend через helper выбранного workspace |
+| `docker-compose.dev.yml` | Отдельный standalone-шаблон backend/bot; workspace launcher его не использует |
 | `docker-compose.prod.yml` | Production-like stack на порту `8080` с PostgreSQL `5432` |
 | `docker-compose.local.yml` | Local dev fixture на `18090`/`18091` |
 | `docker-compose.e2e.yml` | E2E testing stack |

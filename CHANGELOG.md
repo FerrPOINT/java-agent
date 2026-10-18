@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+- The final backend image includes Git for the agent's repository tools; the runtime no longer depends on an unavailable host Git installation.
+
+- The dev Docker launcher now delegates only the selected initialized workspace's Java backend to its workspace helper. It rejects mismatched projects, missing storage metadata and argument overrides; it no longer guesses volumes, changes ownership or stops host services. This also removes the legacy direct-container launch that blocked qualified workspace Build.
+
 - Explicit Central Auth mode validates the own Auth JWT and active session without falling back to gateway keys. Session identity remains available in streaming workers, owner checks protect resolver loads and model changes, and SSO production deployments do not require an unused legacy global key. Standalone key authentication remains available when Central Auth is disabled.
 
 - API binding errors return safe400; unexpected JSON/SSE errors retain500
