@@ -21,6 +21,9 @@
     "tooling": [
       "Makefile",
       "scripts/quality-make.sh",
+      "scripts/release_verify.py",
+      "scripts/endpoint_coverage_report.py",
+      "scripts/tests/test_release_verify.py",
       "Dockerfile",
       "Dockerfile.slim",
       "telegram-bot/Dockerfile",
@@ -59,6 +62,25 @@
     ]
   },
   "gates": [
+    {
+      "id": "tooling:release-verifier-unit",
+      "component": "tooling",
+      "profiles": ["fast", "unit", "build", "release"],
+      "test_tier": "unit",
+      "argv": ["{python}", "-B", "-m", "unittest", "scripts.tests.test_release_verify", "-q"],
+      "inputs": [".quality-gate.json", "scripts/release_verify.py", "scripts/endpoint_coverage_report.py", "scripts/tests/test_release_verify.py", "scripts/vendor/base_quality_selection.py", ".github/workflows/ci.yml", ".github/workflows/release.yml"],
+      "cacheable": false,
+      "execution_slot": "none"
+    },
+    {
+      "id": "tooling:release-verifier-protocol",
+      "component": "tooling",
+      "profiles": ["integration"],
+      "test_tier": "integration",
+      "argv": ["{python}", "-B", "-m", "unittest", "scripts.tests.test_release_verify.ReleaseVerifyProtocolTest", "-q"],
+      "inputs": ["scripts/release_verify.py", "scripts/quality-gradle.sh", "scripts/tests/test_release_verify.py"],
+      "cacheable": false
+    },
     {
       "id": "tooling:source-sets-native",
       "component": "tooling",

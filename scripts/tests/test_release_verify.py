@@ -83,6 +83,42 @@ class EndpointCoverageReportTest(unittest.TestCase):
 
 
 class ReleaseVerifyTest(unittest.TestCase):
+    def test_module_discovery_excludes_manual_process_protocol(self) -> None:
+        suite = load_tests(unittest.defaultTestLoader, unittest.TestSuite(), None)
+        cases = [case for group in suite for case in group]
+        self.assertTrue(any(isinstance(case, EndpointCoverageReportTest) for case in cases))
+        self.assertTrue(any(isinstance(case, ReleaseVerifyTest) for case in cases))
+        self.assertFalse(any(isinstance(case, ReleaseVerifyProtocolTest) for case in cases))
+        explicit = unittest.defaultTestLoader.loadTestsFromTestCase(ReleaseVerifyProtocolTest)
+        self.assertEqual(1, explicit.countTestCases())
+
+    def test_release_helper_changes_select_pure_tooling_and_keep_manual_protocol_explicit(self) -> None:
+        spec = importlib.util.spec_from_file_location("java_release_selection", SCRIPTS / "vendor/base_quality_selection.py")
+        selector = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(selector)
+        root = SCRIPTS.parent
+        for profile in ("fast", "unit", "build"):
+            for path in ("scripts/release_verify.py", "scripts/tests/test_release_verify.py", "scripts/endpoint_coverage_report.py"):
+                with self.subTest(profile=profile, path=path):
+                    plan = selector.plan(root, profile=profile, changed=[path])
+                    self.assertEqual(["tooling"], plan["components"])
+                    gates = {gate["id"]: gate for gate in plan["gates"]}
+                    self.assertIn("tooling:release-verifier-unit", gates)
+                    self.assertTrue(all(gate["component"] == "tooling" for gate in gates.values()))
+                    gate = gates["tooling:release-verifier-unit"]
+                    self.assertEqual("none", gate["execution_slot"])
+                    self.assertEqual("unit", gate["test_tier"])
+                    self.assertIn("scripts.tests.test_release_verify", gate["argv"])
+                    self.assertNotIn("tooling:release-verifier-protocol", gates)
+        manual = selector.plan(root, profile="integration", components=["tooling"])
+        self.assertTrue(any(gate["id"] == "tooling:release-verifier-protocol"
+                            and gate["test_tier"] == "integration" and not gate["cacheable"]
+                            for gate in manual["gates"]))
+        production = selector.plan(root, profile="build", changed=["backend/src/main/java/example/Production.java"])
+        self.assertTrue(any(gate["id"] == "backend:build" for gate in production["gates"]))
+        unknown = selector.plan(root, profile="build", changed=["unmapped-input.fixture"])
+        self.assertTrue(any(gate["id"] == "backend:build" for gate in unknown["gates"]))
+
     def run_release(self, *arguments: str, fail_backend: bool = False):
         verify = load_module("release_verify_protocol", "release_verify.py")
         commands = []
@@ -130,6 +166,82 @@ class ReleaseVerifyTest(unittest.TestCase):
                 self.assertEqual(not skip_jars, ":cli:bootJar" in root)
                 self.assertTrue(any("scripts/endpoint_coverage_report.py" in command for command in commands))
                 self.assertTrue(any("scripts.tests.test_release_verify" in command for command in commands))
+
+    def test_skip_slow_rejects_full_release_before_any_child_and_stale_metrics(self) -> None:
+        status, report, commands = self.run_release("--skip-slow")
+        self.assertEqual(1, status)
+        self.assertEqual([], commands)
+        self.assertEqual("INCOMPLETE", report["state"])
+        self.assertEqual({}, report["metrics"])
+        self.assertEqual(["FAIL"], [gate["status"] for gate in report["gates"]])
+        self.assertIn("--skip-slow", report["gates"][0]["detail"])
+        self.assertIn("coverage", report["gates"][0]["detail"])
+
+    def test_failed_release_graph_is_not_reported_as_pass(self) -> None:
+        status, report, commands = self.run_release(fail_backend=True)
+        self.assertEqual(1, status)
+        self.assertEqual(2, len([command for command in commands if command[0] == "bash"]))
+        self.assertEqual("FAIL", report["gates"][0]["status"])
+
+    def test_line_coverage_returns_percent(self) -> None:
+        verify = load_module("release_verify", "release_verify.py")
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            report = repo / "backend/build/reports/jacoco/test/jacocoTestReport.xml"
+            report.parent.mkdir(parents=True)
+            report.write_text('<report><counter type="LINE" missed="1" covered="4"/></report>')
+            original_repo = verify.REPO
+            try:
+                verify.REPO = repo
+                coverage = verify.line_coverage("backend")
+            finally:
+                verify.REPO = original_repo
+
+        self.assertEqual({"covered": 4, "missed": 1, "percent": 80.0}, coverage)
+
+    def test_collected_metrics_are_json_serializable(self) -> None:
+        verify = load_module("release_verify_metrics", "release_verify.py")
+        with tempfile.TemporaryDirectory() as directory:
+            verify.REPO = Path(directory)
+            metrics = verify.collect_metrics()
+        self.assertIsInstance(json.dumps(metrics), str)
+
+    def test_run_command_clears_root_dbus_environment(self) -> None:
+        verify = load_module("release_verify_env", "release_verify.py")
+        original_environ = os.environ.copy()
+        try:
+            os.environ["DBUS_SESSION_BUS_ADDRESS"] = "unix:path=/run/user/0/bus"
+            os.environ["XDG_RUNTIME_DIR"] = "/run/user/0"
+            result = verify.run_command(
+                "environment",
+                [
+                    sys.executable,
+                    "-c",
+                    "import os; assert 'DBUS_SESSION_BUS_ADDRESS' not in os.environ; "
+                    "assert 'XDG_RUNTIME_DIR' not in os.environ",
+                ],
+                10,
+            )
+        finally:
+            os.environ.clear()
+            os.environ.update(original_environ)
+
+        self.assertEqual("PASS", result.status)
+
+    def test_write_report_marks_incomplete_run(self) -> None:
+        verify = load_module("release_verify_report", "release_verify.py")
+        with tempfile.TemporaryDirectory() as directory:
+            verify.REPO = Path(directory)
+            report_path = Path(directory) / "evidence.json"
+            verify.write_report(report_path, [], "RUNNING")
+            persisted = json.loads(report_path.read_text())
+
+        self.assertEqual("RUNNING", persisted["state"])
+        self.assertEqual([], persisted["gates"])
+
+
+class ReleaseVerifyProtocolTest(unittest.TestCase):
+    """Manual process protocol; no JVM, package installation or real Gradle."""
 
     @unittest.skipUnless(BASH and Path(BASH).is_file(), "native Bash is required; WSL is not used")
     def test_real_entrypoint_dispatches_helper_to_each_recording_wrapper_once(self) -> None:
@@ -179,74 +291,12 @@ class ReleaseVerifyTest(unittest.TestCase):
             self.assertEqual("COMPLETE", report["state"])
             self.assertEqual(["backend-release", "module-release"], [gate["name"] for gate in report["gates"][:2]])
 
-    def test_skip_slow_rejects_full_release_before_any_child_and_stale_metrics(self) -> None:
-        status, report, commands = self.run_release("--skip-slow")
-        self.assertEqual(1, status)
-        self.assertEqual([], commands)
-        self.assertEqual("INCOMPLETE", report["state"])
-        self.assertEqual({}, report["metrics"])
-        self.assertEqual(["FAIL"], [gate["status"] for gate in report["gates"]])
-        self.assertIn("--skip-slow", report["gates"][0]["detail"])
-        self.assertIn("coverage", report["gates"][0]["detail"])
 
-    def test_failed_release_graph_is_not_reported_as_pass(self) -> None:
-        status, report, commands = self.run_release(fail_backend=True)
-        self.assertEqual(1, status)
-        self.assertEqual(2, len([command for command in commands if command[0] == "bash"]))
-        self.assertEqual("FAIL", report["gates"][0]["status"])
-
-    def test_line_coverage_returns_percent(self) -> None:
-        verify = load_module("release_verify", "release_verify.py")
-        with tempfile.TemporaryDirectory() as directory:
-            repo = Path(directory)
-            report = repo / "backend/build/reports/jacoco/test/jacocoTestReport.xml"
-            report.parent.mkdir(parents=True)
-            report.write_text('<report><counter type="LINE" missed="1" covered="4"/></report>')
-            original_repo = verify.REPO
-            try:
-                verify.REPO = repo
-                coverage = verify.line_coverage("backend")
-            finally:
-                verify.REPO = original_repo
-
-        self.assertEqual({"covered": 4, "missed": 1, "percent": 80.0}, coverage)
-
-    def test_collected_metrics_are_json_serializable(self) -> None:
-        verify = load_module("release_verify_metrics", "release_verify.py")
-        metrics = verify.collect_metrics()
-        self.assertIsInstance(json.dumps(metrics), str)
-
-    def test_run_command_clears_root_dbus_environment(self) -> None:
-        verify = load_module("release_verify_env", "release_verify.py")
-        original_environ = os.environ.copy()
-        try:
-            os.environ["DBUS_SESSION_BUS_ADDRESS"] = "unix:path=/run/user/0/bus"
-            os.environ["XDG_RUNTIME_DIR"] = "/run/user/0"
-            result = verify.run_command(
-                "environment",
-                [
-                    sys.executable,
-                    "-c",
-                    "import os; assert 'DBUS_SESSION_BUS_ADDRESS' not in os.environ; "
-                    "assert 'XDG_RUNTIME_DIR' not in os.environ",
-                ],
-                10,
-            )
-        finally:
-            os.environ.clear()
-            os.environ.update(original_environ)
-
-        self.assertEqual("PASS", result.status)
-
-    def test_write_report_marks_incomplete_run(self) -> None:
-        verify = load_module("release_verify_report", "release_verify.py")
-        with tempfile.TemporaryDirectory() as directory:
-            report_path = Path(directory) / "evidence.json"
-            verify.write_report(report_path, [], "RUNNING")
-            persisted = json.loads(report_path.read_text())
-
-        self.assertEqual("RUNNING", persisted["state"])
-        self.assertEqual([], persisted["gates"])
+def load_tests(loader, tests, pattern):
+    # CI/module discovery runs pure Python checks; the manual class is explicit-only.
+    return unittest.TestSuite(loader.loadTestsFromTestCase(cls) for cls in (
+        EndpointCoverageReportTest, ReleaseVerifyTest,
+    ))
 
 
 if __name__ == "__main__":
