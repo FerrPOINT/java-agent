@@ -170,6 +170,37 @@ class DeployBuildProtocolTest(unittest.TestCase):
         self.assertEqual([":bootJar", *options], records[0]["arguments"])
         self.assertEqual([":telegram-bot:bootJar", *options], records[1]["arguments"])
 
+    def test_systemd_changes_select_only_the_bounded_tooling_owner(self) -> None:
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "systemd_quality_selection", REPO / "scripts/vendor/base_quality_selection.py",
+        )
+        selector = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(selector)
+        paths = ("scripts/deploy-dev-systemd.sh", "scripts/tests/test_deploy_dev_systemd.py")
+        owner = "tooling:systemd-build-protocol"
+        for profile in ("fast", "unit", "build"):
+            for path in paths:
+                with self.subTest(profile=profile, path=path):
+                    selected = selector.plan(REPO, profile=profile, changed=[path])
+                    self.assertEqual(["tooling"], selected["components"])
+                    self.assertTrue(all(gate["component"] == "tooling" for gate in selected["gates"]))
+                    gate = next(gate for gate in selected["gates"] if gate["id"] == owner)
+                    self.assertEqual("none", gate["execution_slot"])
+                    self.assertFalse(gate["cacheable"])
+                    self.assertEqual(["{python}", "-B", "-m", "unittest",
+                                      "scripts.tests.test_deploy_dev_systemd.DeployBuildProtocolTest", "-q"], gate["argv"])
+                    self.assertTrue(set(paths).issubset(gate["inputs"]))
+                    self.assertIn("scripts/vendor/base_quality_selection.py", gate["inputs"])
+        release = selector.plan(REPO, profile="release", components=["tooling"])
+        self.assertFalse(any(gate["id"] == owner for gate in release["gates"]))
+        workflow = (REPO / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        self.assertEqual(1, workflow.count("scripts.tests.test_deploy_dev_systemd"))
+        self.assertNotIn("scripts.tests.test_deploy_dev_systemd.DeployBuildProtocolTest", workflow)
+        production = selector.plan(REPO, profile="build", changed=["backend/src/main/java/example/Production.java"])
+        self.assertTrue(any(gate["id"] == "backend:build" for gate in production["gates"]))
+
     def test_failed_build_stops_before_the_next_graph_or_deployment(self) -> None:
         for graph, status, expected in (("backend", 51, ["backend"]), ("root", 52, ["backend", "source"])):
             with self.subTest(graph=graph):

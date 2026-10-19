@@ -22,8 +22,8 @@ elif [ "$#" -ne 0 ]; then
 fi
 
 if [ "$SKIP_BUILD" = false ]; then
-    # Both wrapper graphs must describe the same candidate, even if HEAD
-    # moves before the second graph. Keep policy in the existing Gradle helper.
+    # Share one reproducibility epoch across wrappers; the existing helper
+    # retains ownership of wrapper selection and build policy.
     if [[ -z "${SOURCE_DATE_EPOCH:-}" ]]; then
         SOURCE_DATE_EPOCH=$(git -C "$ROOT" show -s --format=%ct HEAD)
     fi

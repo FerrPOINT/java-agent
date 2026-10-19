@@ -21,6 +21,8 @@
     "tooling": [
       "Makefile",
       "scripts/quality-make.sh",
+      "scripts/deploy-dev-systemd.sh",
+      "scripts/tests/test_deploy_dev_systemd.py",
       "scripts/release_verify.py",
       "scripts/endpoint_coverage_report.py",
       "scripts/tests/test_release_verify.py",
@@ -62,6 +64,16 @@
     ]
   },
   "gates": [
+    {
+      "id": "tooling:systemd-build-protocol",
+      "component": "tooling",
+      "profiles": ["fast", "unit", "build"],
+      "test_tier": "unit",
+      "argv": ["{python}", "-B", "-m", "unittest", "scripts.tests.test_deploy_dev_systemd.DeployBuildProtocolTest", "-q"],
+      "inputs": [".quality-gate.json", "scripts/deploy-dev-systemd.sh", "scripts/quality-gradle.sh", "scripts/tests/test_deploy_dev_systemd.py", "scripts/vendor/base_quality_selection.py", "gradle/wrapper/gradle-wrapper.properties", "backend/gradle/wrapper/gradle-wrapper.properties", ".github/workflows/release.yml"],
+      "cacheable": false,
+      "execution_slot": "none"
+    },
     {
       "id": "tooling:release-verifier-unit",
       "component": "tooling",
