@@ -1,5 +1,6 @@
 """Exercise the public helper boundary without starting Gradle or a JVM."""
 
+import json
 import os
 import re
 import shutil
@@ -286,6 +287,9 @@ class QualityGradleTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location("java_quality_selection", ROOT / "scripts/vendor/base_quality_selection.py")
         selector = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(selector)
+        descriptor = json.loads((ROOT / ".quality-gate.json").read_text(encoding="utf-8"))
+        gate = next(item for item in descriptor["gates"] if item["id"] == "tooling:gradle-helper-unit")
+        self.assertIn("scripts/vendor/base_quality_selection.py", gate["inputs"])
         for path in ("Makefile", "scripts/quality-make.sh", "scripts/tests/test_quality_gradle.py"):
             with self.subTest(path=path):
                 selected = selector.plan(ROOT, profile="build", changed=[path])

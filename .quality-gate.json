@@ -160,7 +160,7 @@
       "profiles": ["fast", "unit", "build", "release"],
       "test_tier": "unit",
       "argv": ["{python}", "-B", "-m", "unittest", "scripts.tests.test_quality_gradle", "scripts.tests.test_gradle_context", "scripts.tests.test_deploy_dev_docker", "scripts.tests.test_test_lanes", "-q"],
-      "inputs": ["Makefile", "scripts/quality-make.sh", "scripts/quality-gradle.sh", "scripts/tests/test_quality_gradle.py", "scripts/check_test_lanes.py", "scripts/tests/test_test_lanes.py", "scripts/tests/test_deploy_dev_docker.py", "scripts/deploy-dev-docker.sh", "docker-compose.dev.yml", "Dockerfile", "Dockerfile.slim", "telegram-bot/Dockerfile", "cli/Dockerfile", "gradle/wrapper/gradle-wrapper.properties", "backend/gradle/wrapper/gradle-wrapper.properties", "scripts/gradle-context.py", "scripts/tests/test_gradle_context.py"],
+      "inputs": ["scripts/vendor/base_quality_selection.py", "Makefile", "scripts/quality-make.sh", "scripts/quality-gradle.sh", "scripts/tests/test_quality_gradle.py", "scripts/check_test_lanes.py", "scripts/tests/test_test_lanes.py", "scripts/tests/test_deploy_dev_docker.py", "scripts/deploy-dev-docker.sh", "docker-compose.dev.yml", "Dockerfile", "Dockerfile.slim", "telegram-bot/Dockerfile", "cli/Dockerfile", "gradle/wrapper/gradle-wrapper.properties", "backend/gradle/wrapper/gradle-wrapper.properties", "scripts/gradle-context.py", "scripts/tests/test_gradle_context.py"],
       "cacheable": true,
       "execution_slot": "none"
     },
