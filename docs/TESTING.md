@@ -62,8 +62,8 @@ propagation, scoped tasks и frozen epoch. Actual GNU Make dispatch провер
 ### Действующая native qualification
 
 PDLC2 сохраняет upstream backend wrapper9.8.1, LangChain4j1.22.0 и JLine4.4.8.
-Source reader controls для9.8.1 проверяют URL/layout/integrity; native tuple
-квалифицируется отдельно. Прежние сертификаты9.8.0 и dependency versions
+Source reader controls для9.8.1 проверяют URL/layout/integrity и не заменяют
+отдельную native qualification. Прежние сертификаты9.8.0 и dependency versions
 не являются новым proof9.8.1. Portable reader по-прежнему выдаёт
 `reuse_qualified:false`; его receipts и13 root/manual Gradle gates не включаются.
 Только backend:unit/backend:build дают явный consent native Base profile9d8f01b9:
@@ -75,9 +75,17 @@ JDK/wrapper/distribution identities и проверенная unit dependency cl
 не является native PASS. Текущая qualification/adoption хранится в Base ledger
 и source inventory; SDK/UI/skills/operator pins этим не меняются.
 
-Ниже сохранены исходные source/native наблюдения. Их прежнее указание
-15 noncacheable gates описывает соответствующий этап; текущий consent ограничен
-двумя backend native gates выше и не расширяет portable/manual eligibility.
+Native backend9.8.1 квалифицирован на product `38769628da3b9799f86742806a6327d751e29e7b`
+с exact Base `9d8f01b92eeeb51e9693660365e3edad1a8899b8`: unit/JAR handoff,
+warm reuse, content/source invalidation и exact Windows root adoption.
+Доказательство: Base `docs/plans/data/java-native-saved-inspection-20261018.json`
+в source commit `57ba02a3cc2eef3a8fec7ec2826167db8c6f58f7`.
+Текущий `.quality-gate.json` сохраняет `cacheable:true` только для двух backend
+Gradle gates; actual reuse требует совпадения полной identity и готовых proofs.
+Исторический PASS не квалифицирует новый HEAD/epoch или изменённый producer.
+Current Make/systemd JAR tuple, остальные wrappers/manual gates и новые Base
+profiles требуют собственных применимых controls. Ниже source-only наблюдения
+описывают границы своих readers/fixtures и не отменяют этот узкий native scope.
 
 
 Backend: `bash scripts/quality-gradle.sh --backend :test`.
@@ -100,8 +108,9 @@ Backend artifact gate объявляет `covers_units: [backend:unit]`: нов�
 выбирается unit; artifact reuse не подменяет свежий test proof. Shared log
 принадлежит producer. Старый quality packet выполняет прежние два argv до adoption.
 JAR output и test-result directory заданы явно; wrapper/shared Gradle scripts
-входят в inputs. Base receipt reuse настоящего JAR/units остаётся выключенным
-до qualification SOURCE_DATE_EPOCH, toolchain и Gradle home/init configuration.
+входят в inputs. Portable receipt reuse остаётся выключенным; отдельный native
+backend adapter проверяет квалифицированные SOURCE_DATE_EPOCH, toolchain,
+Gradle home/init configuration и original proofs перед reuse.
 Source gates теперь объявляют `source_date_epoch: git-head` с явным
 `environment_inputs: [SOURCE_DATE_EPOCH]`. Новый Base до fingerprint вычисляет
 effective epoch exact candidate, передаёт его producer и указывает в result.
@@ -114,8 +123,8 @@ Build time — реальный JAR input, поэтому новый commit с i
 его даже при прежних application bytes. Нельзя выдавать старое встроенное время
 за новую сборку. При сохранённом explicit epoch одинаковые production inputs
 могут использовать прежний artifact; свежий test proof всё равно относится к
-новому commit. Эта source qualification не включает настоящий JAR receipt reuse
-и не закрывает qualification JDK/Gradle home/init или artifact handoff.
+новому commit. Сама source qualification epoch не включает JAR receipt reuse
+и не заменяет native JDK/Gradle home/init и artifact handoff controls выше.
 
 Новый Base reader использует `scripts/gradle-context.py` из product root:
 реальный `JAVA_HOME/bin/java` (PATH только без JAVA_HOME), content inventory JDK,
@@ -128,10 +137,12 @@ effective flags. Probe не запускает Gradle, install или прило
 `context_argv/context_pattern` сохраняют legacy `java -version` для старого
 reader. Новый reader проверяет context перед/после исполнения и перед reuse;
 `reuse_qualified: false` запрещает receipt даже при ошибочном `cacheable: true`.
-Сейчас false возвращается всегда: Gradle distribution/resolved input closure
-и настоящий JAR handoff ещё не квалифицированы. Все 15 Gradle gates сохраняют
-`cacheable: false`; pins автоматически не обновляются. Полный JDK inventory
-переиспользуется для совместимых unit keys внутри одного checked snapshot,
+Portable reader возвращает false: его собственный ответ не сертифицирует
+Gradle distribution/resolved input closure или настоящий JAR handoff. Отдельный
+native adapter может подтвердить backend reuse в квалифицированном scope выше;
+13 root/manual Gradle gates сохраняют `cacheable:false`. Pins автоматически
+не обновляются. Полный JDK inventory переиспользуется для совместимых unit keys
+внутри одного checked snapshot,
 а свежие boundary checks не пропускаются.
 
 Scoped contract checks: `python -B -m unittest scripts.tests.test_gradle_context`.
@@ -183,10 +194,11 @@ fixtures/приложение, не запускает Test workers и не ус
 Gate `tooling:source-sets-native` относится только к ручному integration profile;
 `tooling:test-lane-inventory` — static при разработке/обычной сборке.
 
-На общей native вехе остаются фактические compiler/Test/JAR consumers, оба
-wrappers (9.6.1/9.8.1), Groovy 6, manual inventory/fixtures, coverage и измерение
-полного необходимого graph. До их квалификации 15 Gradle gates остаются
-noncacheable, JAR receipt reuse не включается; installed pins не меняются.
+Для новых native tuples остаются фактические compiler/Test/JAR consumers,
+wrappers9.6.1/9.8.1, Groovy 6, manual inventory/fixtures, coverage и измерение
+полного необходимого graph. Metadata control не расширяет квалифицированный
+backend scope выше: 13 root/manual Gradle gates остаются noncacheable;
+installed pins не меняются.
 
 Spring Test contexts (`@SpringJUnitConfig`/`@SpringJUnitWebConfig`) и реально
 созданные application contexts относятся к integration. Импорт или mock
@@ -230,9 +242,10 @@ configuration cache сохраняет совместимый task model. Не �
 
 Для artifact key брать production closure нужных модулей; для unit — unit.
 Hash всего combined index либо shared download store не заменяет этот выбор.
-Сам индекс ещё не квалифицирует Gradle distribution/prepared resolution identity,
-не разрешает JAR reuse и не меняет `cacheable: false`. Native JAR/output/unit
-handoff controls и отдельное exact adoption остаются обязательными.
+Сам индекс не квалифицирует Gradle distribution/prepared resolution identity,
+не разрешает JAR reuse и не меняет product cache policy. Native JAR/output/unit
+handoff controls и exact adoption принадлежат отдельному adapter; действующий
+backend scope описан выше, остальные gates не получают reuse от индекса.
 
 ### Read-only inspection подготовленных inputs
 
@@ -272,10 +285,12 @@ dependency bytes либо hash всего index/store. Index budget4MiB/module;
 выбранная общая closure ограничена4096files/2GiB, hashing потоковый.
 
 Этот opt-in snapshot **не является READY или artifact receipt**. Он не доказывает,
-что index получен из текущей configuration: Base source owner описан ниже,
-а native qualification/adoption и JAR proof ещё открыты. Ответ
-сохраняет `reuse_qualified:false`; все15 ordinary/manual Gradle declarations
-по-прежнему используют legacy context arguments и `cacheable:false`.
+что index получен из текущей configuration: Base source owner описан ниже.
+Ответ portable reader сохраняет `reuse_qualified:false`, включая opt-in
+prepared snapshot; Gradle declarations используют прежние context arguments.
+Два backend gates объявляют `cacheable:true`, но reuse сертифицирует отдельный
+native adapter только в квалифицированном scope выше. Остальные 13 root/manual
+Gradle gates сохраняют `cacheable:false`.
 
 ### Base owner подготовки dependency image
 
@@ -310,10 +325,11 @@ host slot: это внутренний child уже admitted image producer/QA, 
 entrypoint с собственным admission. Legacy outer QA по-прежнему требует штатный
 внешний slot owner. `READY` dependency environment не означает test/JAR receipt.
 
-Принятие source path требует native проверки нового image layer, cold/warm,
+Принятие нового source tuple требует native проверки image layer, cold/warm,
 home/cache materialization, actual resolved inputs и invalidation; затем JAR/unit
-handoff и exact caller adoption. До этого нет утверждения об actual speedup,
-измеренном RAM либо готовности Windows root quality adapter.
+handoff и exact caller adoption. Историческая backend qualification выше не
+переносится на изменённые inputs. Source path сам по себе не доказывает actual
+speedup, измеренный RAM либо готовность нового Windows root quality adapter.
 
 ## Ручная релизная проверка
 
@@ -346,8 +362,9 @@ JUnit output. JAR остался byte-identical прежнему6917ff24; contex
 `docs/plans/data/java981-configuration-cache-20261018.json`.
 Полный4796 ordinary suite квалифицирован отдельно; он не повторялся как strict
 suite в этом bounded control. Configuration model reuse внутри одной owned
-среды не включает cross-operation test/JAR receipts. Base15receipts остаются
-выключенными до отдельных context/cache-loss/cancel/retention controls.
+среды само по себе не включает cross-operation test/JAR receipts. Их отдельные
+context/cache-loss/cancel/retention controls не заменяются этим strict-cache
+proof; backend native eligibility и ограничения остальных gates описаны выше.
 
 Full/slim/backend, bot и CLI Docker producers передают `--max-workers=2`,
 как обычные quality commands. Это ограничение Gradle worker leases, не лимит
@@ -391,8 +408,10 @@ JAR с source head/epoch и QA image; после cleanup и source guards пов
 
 Это контракт source path. ZIP fixtures не доказывают actual class loading,
 embedded build epoch, resolved classpaths или native artifact handoff; эти
-controls и native qualification/exact Windows root adoption остаются открыты. Все15 Gradle
-gates по-прежнему noncacheable, prepared context не выдаёт reuse qualification.
+controls и native qualification/exact Windows root adoption нужны для каждого
+нового tuple. Квалифицированный backend scope выше не разрешает reuse других
+участников mixed backend/CLI graph; 13 root/manual Gradle gates остаются
+noncacheable, portable prepared context не выдаёт reuse qualification.
 
 ## Source Windows quality bridge
 
@@ -406,16 +425,18 @@ readiness snapshot выбранного wrapper до и после tasks, без
 После exact tooling adoption root `-Repository java-agent -Component backend,cli
 -Profile Build -NativeDockerContext desktop-linux -PlanOnly` показывает Backend JAR
 и CLI unit. План не обращается к Docker. Старый pinned launcher при новом flag
-даёт явный отказ, а обычные прежние команды сохраняются. До qualification path
-требует clean checkout; он не разрешает JAR/test receipt reuse. Ручные
+даёт явный отказ, а обычные прежние команды сохраняются. Native path требует
+clean checkout; backend JAR/test reuse доступен только при выполнении условий
+квалифицированного adapter выше. Bot/CLI/Shared unit reuse этим не включается. Ручные
 integration/slow/release остаются отдельными Linux fixture gates.
 
 Parent держит один общий host slot через native cleanup/certification/publication,
 не создаёт subprocess reentrance через env. Отчёт содержит каждый selected unit
 proof и producer JAR identity; shared wall учитывается один раз. Missing/changed
 context/source/output либо failing unit не дают зелёный результат. Source tests
-используют protocol fixtures, Git и PowerShell; actual Linux image/JAR/resources,
-dirty context и полный installed root путь ещё требуют native proof.
+используют protocol fixtures, Git и PowerShell; они не заменяют actual Linux
+image/JAR/resources и installed root proof. Исторический backend proof описан
+выше; новые source/tool tuples и mixed graphs требуют отдельной qualification.
 
 ## Измеренный unit budget
 
