@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -9,6 +10,8 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "deploy-dev-systemd.sh"
+BASH = (str(Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Git/bin/bash.exe")
+        if os.name == "nt" else shutil.which("bash"))
 
 
 class DeployDevSystemdTest(unittest.TestCase):
@@ -93,6 +96,112 @@ class DeployDevSystemdTest(unittest.TestCase):
                 ],
                 calls.read_text().splitlines(),
             )
+
+
+@unittest.skipUnless(BASH and Path(BASH).is_file(), "native Bash is required; WSL is not used")
+class DeployBuildProtocolTest(unittest.TestCase):
+    """Recording wrappers stop at the artifact guard, before deployment or JVM work."""
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name) / "source"
+        scripts = self.root / "scripts"
+        scripts.mkdir(parents=True)
+        for filename in ("deploy-dev-systemd.sh", "quality-gradle.sh"):
+            (scripts / filename).write_bytes((REPO / "scripts" / filename).read_bytes().replace(b"\r\n", b"\n"))
+        for directory in (self.root, self.root / "backend"):
+            directory.mkdir(exist_ok=True)
+            wrapper = directory / "gradlew"
+            wrapper.write_text(
+                '#!/usr/bin/env bash\n'
+                'printf "GRAPH=%s EPOCH=%s\\n" "${PWD##*/}" "$SOURCE_DATE_EPOCH"\n'
+                'printf "ARG=%s\\n" "$@"\n'
+                'if [[ "${PWD##*/}" == backend ]]; then\n'
+                '  [[ "${FAIL_GRAPH:-}" != backend ]] || exit 51\n'
+                '  if [[ "${MOVE_HEAD:-}" == true ]]; then\n'
+                '    GIT_AUTHOR_DATE="@1792072550 +0000" GIT_COMMITTER_DATE="@1792072550 +0000" '
+                'git -C .. -c user.name=Fixture -c user.email=fixture@example.test commit --allow-empty -qm moved\n'
+                '  fi\n'
+                'else\n'
+                '  [[ "${FAIL_GRAPH:-}" != root ]] || exit 52\n'
+                'fi\n',
+                encoding="utf-8", newline="\n",
+            )
+            wrapper.chmod(0o755)
+            properties = directory / "gradle/wrapper/gradle-wrapper.properties"
+            properties.parent.mkdir(parents=True)
+            relative = directory.relative_to(self.root)
+            properties.write_bytes((REPO / relative / "gradle/wrapper/gradle-wrapper.properties").read_bytes())
+        self.jdk = self.root / "jdk"
+        self.jdk.mkdir()
+        (self.jdk / "release").write_text(
+            'IMPLEMENTOR="Eclipse Adoptium"\nJAVA_VERSION="25.0.4.1"\nOS_NAME="Linux"\nOS_ARCH="x86_64"\n'
+        )
+
+    def invoke(self, *arguments: str, **overrides: str):
+        environment = {
+            **os.environ, "JAVA_AGENT_ROOT": self.root.as_posix(), "JAVA_HOME": self.jdk.as_posix(),
+            "INSTALL_DIR": (self.root / "never-install").as_posix(),
+            "DEPLOY_RELEASE_ID": "inert-build-protocol", "SOURCE_DATE_EPOCH": "1792072450",
+            "FAIL_GRAPH": "", "MOVE_HEAD": "", **overrides,
+        }
+        result = subprocess.run(
+            [BASH, (self.root / "scripts/deploy-dev-systemd.sh").as_posix(), *arguments],
+            cwd=self.root, env=environment, text=True, capture_output=True, timeout=10, check=False,
+        )
+        records = []
+        for line in result.stdout.splitlines():
+            if line.startswith("GRAPH="):
+                graph, epoch = line[6:].split(" EPOCH=")
+                records.append({"graph": graph, "epoch": epoch, "arguments": []})
+            elif line.startswith("ARG="):
+                records[-1]["arguments"].append(line[4:])
+        self.assertFalse((self.root / "never-install").exists(), "No install stage may run in this fixture")
+        return result, records
+
+    def test_build_routes_backend_and_bot_once_through_the_existing_helper(self) -> None:
+        result, records = self.invoke()
+        self.assertEqual(1, result.returncode, result.stderr)
+        self.assertIn("Missing build artifact:", result.stderr)
+        self.assertEqual(["backend", "source"], [record["graph"] for record in records])
+        self.assertEqual(["1792072450", "1792072450"], [record["epoch"] for record in records])
+        options = ["--no-daemon", "--max-workers=2", "--configuration-cache", "--configuration-cache-problems=fail"]
+        self.assertEqual([":bootJar", *options], records[0]["arguments"])
+        self.assertEqual([":telegram-bot:bootJar", *options], records[1]["arguments"])
+
+    def test_failed_build_stops_before_the_next_graph_or_deployment(self) -> None:
+        for graph, status, expected in (("backend", 51, ["backend"]), ("root", 52, ["backend", "source"])):
+            with self.subTest(graph=graph):
+                result, records = self.invoke(FAIL_GRAPH=graph)
+                self.assertEqual(status, result.returncode, result.stderr)
+                self.assertEqual(expected, [record["graph"] for record in records])
+                self.assertNotIn("Missing build artifact:", result.stderr)
+
+    def test_epoch_is_frozen_before_head_changes_between_wrappers(self) -> None:
+        environment = {**os.environ, "GIT_AUTHOR_DATE": "@1792072450 +0000",
+                       "GIT_COMMITTER_DATE": "@1792072450 +0000"}
+        for arguments in (["init", "-q"], ["add", "."],
+                          ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "initial"]):
+            subprocess.run(["git", *arguments], cwd=self.root, env=environment, capture_output=True, check=True)
+        result, records = self.invoke(SOURCE_DATE_EPOCH="", MOVE_HEAD="true")
+        self.assertEqual(1, result.returncode, result.stderr)
+        self.assertEqual(["1792072450", "1792072450"], [record["epoch"] for record in records])
+        self.assertEqual("1792072550", subprocess.check_output(
+            ["git", "show", "-s", "--format=%ct", "HEAD"], cwd=self.root, text=True,
+        ).strip(), "Fixture must move HEAD between wrappers")
+
+    def test_invalid_epoch_stops_before_any_wrapper(self) -> None:
+        result, records = self.invoke(SOURCE_DATE_EPOCH="invalid")
+        self.assertEqual(64, result.returncode, result.stderr)
+        self.assertIn("SOURCE_DATE_EPOCH must be candidate Unix seconds", result.stderr)
+        self.assertEqual([], records)
+
+    def test_skip_build_keeps_artifact_checks_without_wrappers_or_epoch_validation(self) -> None:
+        result, records = self.invoke("--skip-build", SOURCE_DATE_EPOCH="invalid")
+        self.assertEqual(1, result.returncode, result.stderr)
+        self.assertIn("Missing build artifact:", result.stderr)
+        self.assertEqual([], records)
 
 
 if __name__ == "__main__":

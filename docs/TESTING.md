@@ -44,6 +44,13 @@ heavy операцию через разрешённый Base owner/execution sl
 дочерние wrappers не оборачивать повторно. Fast helper tests не стартуют JVM.
 Makefile/adapter changes выбирают tooling checks, без application producer.
 
+Host systemd helper `scripts/deploy-dev-systemd.sh` собирает только backend и bot:
+сначала standalone backend helper, затем root bot helper, с общим frozen epoch
+и `--max-workers=2`. Ошибка backend не запускает bot; `--skip-build` сохраняет
+проверку наличия JAR без Gradle. Recording-wrapper class `DeployBuildProtocolTest`
+в `scripts/tests/test_deploy_dev_systemd.py` останавливается до install/runtime;
+она не квалифицирует настоящий JAR, повторное artifact reuse или deployment.
+
 Scoped check: `python -B -m unittest scripts.tests.test_quality_gradle -q`.
 Он проверяет реальный Bash adapter и helper с recording Gradle wrapper, error
 propagation, scoped tasks и frozen epoch. Actual GNU Make dispatch проверяется

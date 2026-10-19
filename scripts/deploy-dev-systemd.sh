@@ -22,7 +22,17 @@ elif [ "$#" -ne 0 ]; then
 fi
 
 if [ "$SKIP_BUILD" = false ]; then
-    (cd "$ROOT" && ./gradlew :backend:bootJar :telegram-bot:bootJar --no-daemon)
+    # Both wrapper graphs must describe the same candidate, even if HEAD
+    # moves before the second graph. Keep policy in the existing Gradle helper.
+    if [[ -z "${SOURCE_DATE_EPOCH:-}" ]]; then
+        SOURCE_DATE_EPOCH=$(git -C "$ROOT" show -s --format=%ct HEAD)
+    fi
+    export SOURCE_DATE_EPOCH
+    (
+        cd "$ROOT"
+        bash scripts/quality-gradle.sh --backend :bootJar --no-daemon --max-workers=2
+        bash scripts/quality-gradle.sh :telegram-bot:bootJar --no-daemon --max-workers=2
+    )
 fi
 
 backend_jar="$ROOT/backend/build/libs/backend-0.0.1-SNAPSHOT.jar"
