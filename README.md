@@ -253,7 +253,7 @@ Docker images используют `eclipse-temurin:25-jre-noble`; slim-обра
 
 Это ручной release entrypoint для подготовленного Linux-окружения с нужным
 PostgreSQL fixture, а не обычная проверка разработки. Он вызывает
-`scripts/quality-gradle.sh` по одному разу для backend wrapper 9.8.1
+`scripts/quality-gradle.sh` по одному разу для backend wrapper 9.8.0
 (`backend-release`) и root wrapper 9.6.1 (`module-release`), последовательно с
 `--no-daemon --max-workers=2`. Полные coverage reports владеют unit/integration/slow
 prerequisites; выбранные boot JAR включены в те же graphs. `--skip-boot-jars`
