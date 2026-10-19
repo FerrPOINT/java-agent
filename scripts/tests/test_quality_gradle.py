@@ -276,8 +276,10 @@ class QualityGradleTests(unittest.TestCase):
                                         capture_output=True, text=True, timeout=10)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(result.stdout.count("EPOCH="), 2, result.stdout)
-                self.assertEqual(result.stdout.count(":jacocoTestReport\n"), 1, result.stdout)
-                self.assertEqual(result.stdout.count(":telegram-bot:jacocoTestReport\n"), 1, result.stdout)
+                # The bot task ends with the backend name; count complete lines.
+                lines = result.stdout.splitlines()
+                self.assertEqual(lines.count(":jacocoTestReport"), 1, result.stdout)
+                self.assertEqual(lines.count(":telegram-bot:jacocoTestReport"), 1, result.stdout)
                 self.assertIn(":shared:test\n", result.stdout)
                 self.assertIn(":cli:bootJar\n" if "jar" in goals else ":cli:test\n", result.stdout)
 
