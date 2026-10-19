@@ -47,7 +47,9 @@ Makefile/adapter changes выбирают tooling checks, без application pro
 Host systemd helper `scripts/deploy-dev-systemd.sh` собирает только backend и bot:
 сначала standalone backend helper, затем root bot helper, с общим frozen epoch
 и `--max-workers=2`. Ошибка backend не запускает bot; `--skip-build` сохраняет
-проверку наличия JAR без Gradle. Recording-wrapper class `DeployBuildProtocolTest`
+проверку наличия JAR без Gradle. Backend consumer использует канонический
+`backend/build/libs/java-agent-backend-0.0.1-SNAPSHOT.jar` из `java-artifacts.json`,
+без fallback на legacy filename. Recording-wrapper class `DeployBuildProtocolTest`
 в `scripts/tests/test_deploy_dev_systemd.py` останавливается до install/runtime;
 она не квалифицирует настоящий JAR, повторное artifact reuse или deployment.
 
