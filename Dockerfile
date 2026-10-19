@@ -70,7 +70,7 @@ RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sha
     && /usr/local/bin/npm install --global --ignore-scripts repomix@1.18.1 \
     && ln -s /opt/node-v22.23.2-linux-x64/bin/repomix /usr/local/bin/repomix \
     && /usr/local/bin/repomix --version \
-    && rm -f /tmp/node.tar.xz /tmp/node-shasums.txt \
+    && rm -f /tmp/node-v22.23.2-linux-x64.tar.xz /tmp/node-shasums.txt \
     && python3 -m venv /opt/edge-tts \
     && /opt/edge-tts/bin/pip install --no-cache-dir edge-tts==7.2.7 \
     && rm -rf /var/lib/apt/lists/*
