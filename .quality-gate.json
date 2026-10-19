@@ -70,7 +70,7 @@
       "profiles": ["fast", "unit", "build"],
       "test_tier": "unit",
       "argv": ["{python}", "-B", "-m", "unittest", "scripts.tests.test_deploy_dev_systemd.DeployBuildProtocolTest", "-q"],
-      "inputs": [".quality-gate.json", "scripts/deploy-dev-systemd.sh", "scripts/quality-gradle.sh", "scripts/tests/test_deploy_dev_systemd.py", "scripts/vendor/base_quality_selection.py", "gradle/wrapper/gradle-wrapper.properties", "backend/gradle/wrapper/gradle-wrapper.properties", ".github/workflows/release.yml"],
+      "inputs": [".quality-gate.json", "scripts/deploy-dev-systemd.sh", "scripts/quality-gradle.sh", "scripts/tests/test_deploy_dev_systemd.py", "scripts/vendor/base_quality_selection.py", "gradle/wrapper/gradle-wrapper.properties", "backend/gradle/wrapper/gradle-wrapper.properties", "backend/settings.gradle", "java-artifacts.json", ".github/workflows/release.yml"],
       "cacheable": false,
       "execution_slot": "none"
     },

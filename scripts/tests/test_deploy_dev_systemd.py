@@ -40,7 +40,7 @@ class DeployDevSystemdTest(unittest.TestCase):
             fake_systemctl.chmod(0o755)
             fake_curl.chmod(0o755)
 
-            backend = REPO / "backend/build/libs/backend-0.0.1-SNAPSHOT.jar"
+            backend = REPO / "backend/build/libs/java-agent-backend-0.0.1-SNAPSHOT.jar"
             bot = REPO / "telegram-bot/build/libs/telegram-bot-0.0.1-SNAPSHOT.jar"
             backend.parent.mkdir(parents=True, exist_ok=True)
             bot.parent.mkdir(parents=True, exist_ok=True)
@@ -170,6 +170,72 @@ class DeployBuildProtocolTest(unittest.TestCase):
         self.assertEqual([":bootJar", *options], records[0]["arguments"])
         self.assertEqual([":telegram-bot:bootJar", *options], records[1]["arguments"])
 
+    def declared_artifacts(self):
+        import json
+
+        applications = json.loads((REPO / "java-artifacts.json").read_text(encoding="utf-8"))["applications"]
+        return {name: self.root / applications[name]["module"] / "build/libs" / applications[name]["filename"]
+                for name in ("backend", "bot")}
+
+    def observe_artifact_guard(self):
+        # Execute the actual artifact-consumer prefix, with an inspected stop
+        # before directory creation, copying, symlinks or service commands.
+        source = SCRIPT.read_text(encoding="utf-8")
+        boundary = '\nreleases_dir="$INSTALL_DIR/releases"\n'
+        self.assertEqual(1, source.count(boundary))
+        prefix, suffix = source.split(boundary)
+        self.assertTrue(prefix.rstrip().endswith("done"))
+        self.assertIn('for artifact in "$backend_jar" "$bot_jar"; do', prefix)
+        self.assertTrue(suffix.startswith('release_dir="$releases_dir/$RELEASE_ID"\n'))
+        for forbidden in ('mkdir ', 'cp ', 'ln ', '"$SYSTEMCTL"', '"$CURL"'):
+            self.assertNotIn(forbidden, prefix)
+        (self.root / "scripts/deploy-dev-systemd.sh").write_text(
+            prefix + '\nprintf "BACKEND_ARTIFACT=%s\\n" "$backend_jar"\n', encoding="utf-8", newline="\n",
+        )
+        return self.invoke("--skip-build")
+
+    def test_consumer_paths_match_the_canonical_artifact_contract(self) -> None:
+        import re
+
+        source = SCRIPT.read_text(encoding="utf-8")
+        for name, path in self.declared_artifacts().items():
+            variable = "backend_jar" if name == "backend" else "bot_jar"
+            self.assertIn(f'{variable}="$ROOT/{path.relative_to(self.root).as_posix()}"', source)
+        settings = (REPO / "backend/settings.gradle").read_text(encoding="utf-8")
+        project = re.search(r"^rootProject.name = '([^']+)'", settings, re.MULTILINE).group(1)
+        self.assertTrue(self.declared_artifacts()["backend"].name.startswith(project + "-"))
+
+    def test_canonical_fresh_jar_is_selected_over_a_different_stale_legacy_jar(self) -> None:
+        artifacts = self.declared_artifacts()
+        for path in artifacts.values():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"fresh-canonical-artifact")
+        legacy = self.root / "backend/build/libs/backend-0.0.1-SNAPSHOT.jar"
+        legacy.write_bytes(b"different-stale-legacy-artifact")
+        result, records = self.observe_artifact_guard()
+        self.assertEqual(0, result.returncode, result.stderr)
+        selected = Path(next(line.removeprefix("BACKEND_ARTIFACT=") for line in result.stdout.splitlines()
+                             if line.startswith("BACKEND_ARTIFACT=")))
+        self.assertEqual(artifacts["backend"], selected)
+        self.assertEqual(b"fresh-canonical-artifact", selected.read_bytes())
+        self.assertNotEqual(legacy.read_bytes(), selected.read_bytes())
+        self.assertEqual([], records)
+
+    def test_missing_declared_artifact_rejects_legacy_or_partial_pairs(self) -> None:
+        artifacts = self.declared_artifacts()
+        for missing in ("backend", "bot"):
+            with self.subTest(missing=missing):
+                for path in artifacts.values():
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(b"fresh-canonical-artifact")
+                (self.root / "backend/build/libs/backend-0.0.1-SNAPSHOT.jar").write_bytes(b"stale-legacy-artifact")
+                artifacts[missing].unlink()
+                result, records = self.observe_artifact_guard()
+                self.assertEqual(1, result.returncode, result.stderr)
+                self.assertIn("Missing build artifact: " + artifacts[missing].as_posix(), result.stderr)
+                self.assertNotIn("BACKEND_ARTIFACT=", result.stdout)
+                self.assertEqual([], records)
+
     def test_systemd_changes_select_only_the_bounded_tooling_owner(self) -> None:
         import importlib.util
 
@@ -193,6 +259,7 @@ class DeployBuildProtocolTest(unittest.TestCase):
                                       "scripts.tests.test_deploy_dev_systemd.DeployBuildProtocolTest", "-q"], gate["argv"])
                     self.assertTrue(set(paths).issubset(gate["inputs"]))
                     self.assertIn("scripts/vendor/base_quality_selection.py", gate["inputs"])
+                    self.assertTrue({"java-artifacts.json", "backend/settings.gradle"}.issubset(gate["inputs"]))
         release = selector.plan(REPO, profile="release", components=["tooling"])
         self.assertFalse(any(gate["id"] == owner for gate in release["gates"]))
         workflow = (REPO / ".github/workflows/release.yml").read_text(encoding="utf-8")
