@@ -13,6 +13,8 @@ import org.gradle.work.DisableCachingByDefault
 abstract class QualityDependencyInputs extends DefaultTask {
     @Input abstract Property<String> getModuleIdentity()
     @Input abstract Property<String> getWrapperVersion()
+    @Input abstract Property<String> getConfigurationProfile()
+    @Input abstract ListProperty<String> getConfiguredProjects()
     @InputFiles @PathSensitive(PathSensitivity.NONE)
     abstract ConfigurableFileCollection getProductionFiles()
     @InputFiles @PathSensitive(PathSensitivity.NONE)
@@ -42,8 +44,9 @@ abstract class QualityDependencyInputs extends DefaultTask {
             }
             inventory[name] = [sha256: hash.digest().encodeHex().toString(), bytes: size]
         }
-        def value = [schema: 'java-gradle-dependency-inputs/v1', module: moduleIdentity.get(),
-                     gradle: wrapperVersion.get(), roles: roles, files: inventory]
+        def value = [schema: 'java-gradle-dependency-inputs/v2', module: moduleIdentity.get(),
+                     gradle: wrapperVersion.get(), roles: roles, files: inventory,
+                     configuration_graph: [profile: configurationProfile.get(), projects: configuredProjects.get()]]
         def destination = manifestFile.get().asFile.toPath()
         Files.createDirectories(destination.parent)
         def temporary = Files.createTempFile(destination.parent, '.dependency-inputs-', '.tmp')
@@ -86,6 +89,9 @@ tasks.register('qualityDependencyInputs', QualityDependencyInputs) {
     description = 'Snapshot external production/unit dependency inputs without application compilation'
     moduleIdentity = project.path
     wrapperVersion = gradle.gradleVersion
+    configurationProfile = rootProject.name == 'java-agent-backend' ? 'backend-v1' :
+        (providers.gradleProperty('qualityRootGraph').orNull == 'clients-v1' ? 'clients-v1' : 'full-root-v1')
+    configuredProjects = rootProject.allprojects.collect { it.path }.sort()
     productionFiles.from(production)
     unitFiles.from(production, units)
     manifestFile = layout.buildDirectory.file("quality/gradle-${gradle.gradleVersion}-dependency-inputs.json")

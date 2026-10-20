@@ -27,7 +27,8 @@ class NativeSourceSetTests(unittest.TestCase):
         root = Path(temporary.name).resolve()
         (root / 'settings.gradle').write_text("rootProject.name='lane-fixture'\ninclude 'backend','telegram-bot'\n")
         (root / 'gradle').mkdir()
-        (root / 'gradle/test-lanes.gradle').write_bytes((ROOT / 'gradle/test-lanes.gradle').read_bytes())
+        for name in ('test-lanes.gradle', 'test-topology.gradle', 'test-membership.gradle'):
+            (root / 'gradle' / name).write_bytes((ROOT / 'gradle' / name).read_bytes())
         inventory = {'schema': 'java-test-lanes/v1', 'files': {}, 'support': {}}
         for module in ('backend', 'telegram-bot'):
             source = root / module / 'src/test/java/fixture'

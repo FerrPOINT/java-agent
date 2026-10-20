@@ -171,6 +171,50 @@ def distribution_snapshot(directory, home):
     return version, state
 
 
+def configuration_graph(repository, backend, graph):
+    """Bind the actual configured projects to the product's versioned declaration."""
+    if not isinstance(graph, dict) or set(graph) != {'profile', 'projects'}:
+        raise ValueError('Invalid dependency configuration graph')
+    path = plain(repository / 'gradle/java-preparation.json', repository)
+    with path.open('rb') as stream:
+        payload = stream.read(4 * 1024**2 + 1)
+    if len(payload) > 4 * 1024**2:
+        raise ValueError('Java preparation contract exceeds its byte budget')
+    def unique(pairs):
+        value = {}
+        for name, item in pairs:
+            if name in value:
+                raise ValueError('Duplicate Java preparation contract key')
+            value[name] = item
+        return value
+    try:
+        contract = json.loads(payload, object_pairs_hook=unique)
+    except (UnicodeError, RecursionError, json.JSONDecodeError) as error:
+        raise ValueError('Invalid Java preparation contract JSON') from error
+    graphs = {'root': ['bot', 'cli', 'shared'], 'backend': ['backend', 'shared']}
+    if (not isinstance(contract, dict) or set(contract) != {'schema', 'inputs', 'dependencies', 'configuration_graphs'}
+            or contract.get('schema') != 'base-java-preparation/v2' or contract.get('configuration_graphs') != graphs):
+        raise ValueError('Unsupported Java preparation configuration graph contract')
+    profile = graph['profile']
+    if backend:
+        members = graphs['backend']
+        if profile != 'backend-v1':
+            raise ValueError('Dependency configuration graph differs from selected wrapper')
+    elif profile == 'clients-v1':
+        members = graphs['root']
+    elif profile == 'full-root-v1':
+        members = ['backend', *graphs['root']]
+    else:
+        raise ValueError('Unsupported dependency configuration graph profile')
+    paths = {name: ':' + ('telegram-bot' if name == 'bot' else name) for name in members}
+    if backend:
+        paths.pop('backend')
+    expected = {'profile': profile, 'projects': sorted([':', *paths.values()])}
+    if graph != expected:
+        raise ValueError('Dependency configuration graph differs from declared projects')
+    return expected
+
+
 def dependency_snapshot(repository, home, modules, version, backend, role, *, indices=None):
     """Validate selected external role bytes, sharing reads across module indexes."""
     locations = {'backend': ('backend', ':' if backend else ':backend'),
@@ -181,6 +225,7 @@ def dependency_snapshot(repository, home, modules, version, backend, role, *, in
     if indices is not None and (not isinstance(indices, dict) or set(indices) != set(modules)):
         raise ValueError('Prepared index bundle does not match selected modules')
     records, checked, consumed = {}, set(), 0
+    index_schema, actual_graph = None, None
 
     def unique(pairs):
         value = {}
@@ -206,10 +251,20 @@ def dependency_snapshot(repository, home, modules, version, backend, role, *, in
                 value = json.loads(payload, object_pairs_hook=unique)
             except (UnicodeError, RecursionError, json.JSONDecodeError) as error:
                 raise ValueError('Invalid dependency index JSON') from error
-        if (not isinstance(value, dict) or set(value) != {'schema', 'module', 'gradle', 'roles', 'files'}
-                or value.get('schema') != 'java-gradle-dependency-inputs/v1'
+        schema = value.get('schema') if isinstance(value, dict) else None
+        fields = {'schema', 'module', 'gradle', 'roles', 'files'}
+        if schema == 'java-gradle-dependency-inputs/v2':
+            fields.add('configuration_graph')
+        if (not isinstance(value, dict) or set(value) != fields
+                or schema not in ('java-gradle-dependency-inputs/v1', 'java-gradle-dependency-inputs/v2')
                 or value.get('module') != identity or value.get('gradle') != version):
             raise ValueError('Dependency index does not match module/wrapper')
+        graph = configuration_graph(repository, backend, value['configuration_graph']) if schema.endswith('/v2') else None
+        if graph is not None and identity not in graph['projects']:
+            raise ValueError('Dependency index module is outside the configuration graph')
+        if index_schema is not None and (index_schema != schema or actual_graph != graph):
+            raise ValueError('Dependency indexes have different configuration graphs')
+        index_schema, actual_graph = schema, graph
         roles, files = value.get('roles'), value.get('files')
         if not isinstance(roles, dict) or set(roles) != {'production', 'unit'} or not isinstance(files, dict) or len(files) > 4096:
             raise ValueError('Invalid dependency index roles/inventory')
@@ -253,8 +308,12 @@ def dependency_snapshot(repository, home, modules, version, backend, role, *, in
                 raise ValueError('Dependency integrity differs from preparation')
             records[filename] = row
             consumed += size
-    return {'sha256': digest({'modules': sorted(modules), 'role': role, 'files': records}),
-            'files': len(records), 'bytes': sum(row['bytes'] for row in records.values()), 'role': role}
+    context = {'modules': sorted(modules), 'role': role, 'files': records}
+    if actual_graph is not None:
+        context['configuration_graph'] = actual_graph
+    return {'sha256': digest(context), 'files': len(records),
+            'bytes': sum(row['bytes'] for row in records.values()), 'role': role,
+            **({'configuration_graph': actual_graph} if actual_graph is not None else {})}
 
 
 def snapshot(repository, backend, environment, *, prepared_modules=None, role='unit'):

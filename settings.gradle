@@ -1,6 +1,16 @@
-rootProject.name = 'java-agent'
+import groovy.json.JsonSlurper
 
-include 'shared'
-include 'backend'
-include 'telegram-bot'
-include 'cli'
+rootProject.name = 'java-agent'
+def profile = providers.gradleProperty('qualityRootGraph')
+if (profile.isPresent()) {
+    if (profile.get() != 'clients-v1') throw new GradleException('Unsupported quality root graph')
+    def contract = new JsonSlurper().parse(file('gradle/java-preparation.json'))
+    def graph = contract.configuration_graphs?.root
+    if (contract.schema != 'base-java-preparation/v2' || graph != ['bot', 'cli', 'shared']) {
+        throw new GradleException('Unsupported Java preparation configuration graph')
+    }
+    def directories = [bot: 'telegram-bot', cli: 'cli', shared: 'shared']
+    graph.each { include directories[it] }
+} else {
+    include 'shared', 'backend', 'telegram-bot', 'cli'
+}

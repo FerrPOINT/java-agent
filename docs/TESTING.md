@@ -411,3 +411,38 @@ Inventory: 586 unit, 183 integration, 68 slow, 9 live test files.
 с контролируемым resolver остаются unit. Assertions и production code сохранены.
 Первичная загрузка Mockito/инструментации может занимать несколько секунд;
 это отдельно от искусственных задержек и внешних зависимостей.
+
+## Явный client graph и dependency-only preparation
+
+`bash scripts/quality-gradle.sh --quality-root :cli:test` выбирает configuration
+profile `clients-v1`: Shared, CLI и Telegram bot, без Backend. Без флага обычный
+root graph сохраняет Backend, включая `:backend:bootRun`. В preparation inputs
+входят build scripts всех трёх configured clients, даже при resolution CLI/Shared.
+`gradle/java-preparation.json` v2 владеет configured logical modules и closure;
+нужен совместимый Base v2 preparer без автоматического принятия v1 owners.
+
+Только preparation добавляет `--dependencies-only` после выбора graph:
+`--quality-root --dependencies-only :cli:qualityDependencyInputs
+:shared:qualityDependencyInputs` либо `--backend --dependencies-only
+:qualityDependencyInputs :shared:qualityDependencyInputs`. Допустимы explicit
+snapshot tasks и ограниченные прежние cache/worker options. Compilation, tests,
+JAR, init scripts и property overrides запрещены. Gradle dispatcher проверяет
+requested task names также при прямой передаче property.
+
+`gradle/test-topology.gradle` задаёт общую sourceSet/configuration topology.
+Dispatcher `gradle/test-lanes.gradle` загружает `gradle/test-membership.gradle`
+и `gradle/test-lanes.json` только для ordinary compilation/testing. Полная
+проверка inventory сохраняется перед compilation; dependency-only mode не
+допускает эти tasks. External snapshot сохраняет production/unit dependencies,
+processors и Groovy compiler inputs.
+
+Dependency indexes v2 содержат фактические configured project paths, включая `:`.
+Read-only context reader проверяет profile/projects по product contract и
+включает graph в dependency digest. Legacy v1 читается только как legacy;
+смешанные версии/graphs отклоняются и не становятся v2 preparation provenance.
+Flattened backend recipes копируют topology и membership для ordinary builds.
+
+Source helper/JSON tests не квалифицируют новый Gradle tuple. Actual settings
+и task graphs, dependency-manifest parity, inventory/backend-only layer reuse,
+unknown-source refusal и exact Base caller adoption остаются native gate.
+Этот source change не включает JAR/test receipt reuse.

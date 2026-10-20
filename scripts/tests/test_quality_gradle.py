@@ -48,6 +48,55 @@ class QualityGradleTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(lines[2:], arguments[1:])
 
+    def test_explicit_root_graph_and_dependency_mode_forward_owned_properties(self):
+        cases = [
+            (['--quality-root', ':cli:test'], [':cli:test', '--configuration-cache',
+                '--configuration-cache-problems=fail', '-PqualityRootGraph=clients-v1']),
+            (['--quality-root', '--dependencies-only', ':cli:qualityDependencyInputs',
+              ':shared:qualityDependencyInputs', '--offline', '--configuration-cache'],
+             [':cli:qualityDependencyInputs', ':shared:qualityDependencyInputs', '--offline',
+              '--configuration-cache', '-PqualityRootGraph=clients-v1', '-PqualityDependenciesOnly=true']),
+            (['--backend', '--dependencies-only', ':qualityDependencyInputs', ':shared:qualityDependencyInputs'],
+             [':qualityDependencyInputs', ':shared:qualityDependencyInputs', '-PqualityDependenciesOnly=true']),
+        ]
+        for arguments, expected in cases:
+            with self.subTest(arguments=arguments):
+                result, lines = self.invoke(*arguments)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(lines[2:], expected)
+                self.assertEqual(lines[1].endswith('/backend'), '--backend' in arguments)
+
+    def test_dependency_mode_refuses_compilation_options_overrides_and_other_graphs(self):
+        cases = [[], [':cli:test'], [':cli:bootJar'], ['test'], [':backend:qualityDependencyInputs'],
+                 [':qualityDependencyInputs'], [':cli:qualityDependencyInputs', '-I', 'custom.gradle'],
+                 [':cli:qualityDependencyInputs', '-PqualityDependenciesOnly=false'],
+                 [':cli:qualityDependencyInputs', '-PqualityRootGraph=full-root-v1'],
+                 [':cli:qualityDependencyInputs', '--configuration-cache-problems=warn'],
+                 [':cli:qualityDependencyInputs', ':cli:qualityDependencyInputs'],
+                 [':cli:qualityDependencyInputs', '--quality-root']]
+        for arguments in cases:
+            with self.subTest(arguments=arguments):
+                result, lines = self.invoke('--quality-root', '--dependencies-only', *arguments)
+                self.assertEqual(result.returncode, 64, result.stderr)
+                self.assertEqual(lines, [])
+
+    def test_selected_root_refuses_untracked_options_before_entering_wrapper(self):
+        for arguments in ([], [':backend:bootRun'], [':cli:test', '--init-script', 'custom.gradle'],
+                          [':cli:test', '-PqualityRootGraph=other'], [':cli:test', '-x', ':cli:test']):
+            with self.subTest(arguments=arguments):
+                result, lines = self.invoke('--quality-root', *arguments)
+                self.assertEqual(result.returncode, 64, result.stderr)
+                self.assertEqual(lines, [])
+        for arguments in [('--backend', '--quality-root', ':shared:test'),
+                          ('--quality-root', '--backend', ':shared:test'),
+                          ('--dependencies-only', ':shared:qualityDependencyInputs'),
+                          ('--backend', '--dependencies-only', ':cli:qualityDependencyInputs'),
+                          ('--dependencies-only', '--dependencies-only', ':shared:qualityDependencyInputs')]:
+            with self.subTest(arguments=arguments):
+                result, lines = self.invoke(*arguments)
+                self.assertEqual(result.returncode, 64, result.stderr)
+                self.assertEqual(lines, [])
+
     def invoke(self, *arguments, epoch="1792072450"):
         environment = {**os.environ, "SOURCE_DATE_EPOCH": epoch, "JAVA_HOME": self.jdk.as_posix()}
         # Git Bash translates its standard JAVA_HOME environment to POSIX itself.

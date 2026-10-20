@@ -53,7 +53,7 @@ class DependencyInputContracts(unittest.TestCase):
 
     def test_native_preparation_descriptor_matches_real_shared_project_consumers(self):
         descriptor = json.loads((ROOT / 'gradle/java-preparation.json').read_text(encoding='utf-8'))
-        self.assertEqual(descriptor['schema'], 'base-java-preparation/v1')
+        self.assertEqual(descriptor['schema'], 'base-java-preparation/v2')
         self.assertEqual(set(descriptor['inputs']), {'root', 'backend'})
         for name, directory in (('backend', 'backend'), ('shared', 'shared'), ('cli', 'cli'), ('bot', 'telegram-bot')):
             script = (ROOT / directory / 'build.gradle').read_text(encoding='utf-8')

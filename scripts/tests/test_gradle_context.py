@@ -78,6 +78,75 @@ class GradleContextTests(unittest.TestCase):
         self.write_index()
         return distribution, launcher, jars
 
+    def graph_fixture(self, backend=False, profile=None):
+        self.prepared_fixture(backend=backend)
+        graph = {'profile': profile or ('backend-v1' if backend else 'clients-v1'),
+                 'projects': [':', ':shared'] if backend else [':', ':cli', ':shared', ':telegram-bot']}
+        if profile == 'full-root-v1':
+            graph['projects'] = [':', ':backend', ':cli', ':shared', ':telegram-bot']
+        self.contract = {'schema': 'base-java-preparation/v2', 'inputs': {}, 'dependencies': {},
+                         'configuration_graphs': {'root': ['bot', 'cli', 'shared'], 'backend': ['backend', 'shared']}}
+        self.contract_file = self.root / 'gradle/java-preparation.json'
+        self.contract_file.write_text(json.dumps(self.contract))
+        self.index_data.update(schema='java-gradle-dependency-inputs/v2', configuration_graph=graph)
+        self.write_index()
+        return graph
+
+    def test_v2_indices_bind_actual_configuration_graph_without_gradle(self):
+        self.graph_fixture()
+        for profile, projects in (('clients-v1', [':', ':cli', ':shared', ':telegram-bot']),
+                                   ('full-root-v1', [':', ':backend', ':cli', ':shared', ':telegram-bot'])):
+            graph = {'profile': profile, 'projects': projects}
+            with self.subTest(profile=profile):
+                self.index_data['configuration_graph'] = graph
+                self.write_index()
+                with patch.object(probe.subprocess, 'run', side_effect=AssertionError('No resolver')):
+                    result = probe.dependency_snapshot(self.root, self.home, ['cli'], '9.6.1', False, 'unit')
+                self.assertEqual(result['configuration_graph'], graph)
+
+    def test_v2_backend_graph_keeps_standalone_root_identity(self):
+        graph = self.graph_fixture(backend=True)
+        result = probe.dependency_snapshot(self.root, self.home, ['backend'], '9.8.0', True, 'unit')
+        self.assertEqual(result['configuration_graph'], graph)
+
+    def test_v2_configuration_graph_is_an_input_and_mismatches_fail_closed(self):
+        graph = self.graph_fixture()
+        before = self.snapshot(backend=False, prepared_modules=['cli'])
+        self.index_data['configuration_graph'] = {'profile': 'full-root-v1',
+            'projects': [':', ':backend', ':cli', ':shared', ':telegram-bot']}
+        self.write_index()
+        self.assertNotEqual(before['inputs_sha256'], self.snapshot(backend=False, prepared_modules=['cli'])['inputs_sha256'])
+        bad = [None, {}, {**graph, 'extra': True}, {**graph, 'profile': 'backend-v1'},
+               {**graph, 'projects': [':', ':cli', ':shared']}, {**graph, 'projects': list(reversed(graph['projects']))},
+               {**graph, 'projects': graph['projects'] + [':backend']}, {**graph, 'profile': 'unknown'}]
+        for change in bad:
+            with self.subTest(graph=change):
+                self.index_data['configuration_graph'] = change
+                self.write_index()
+                with self.assertRaisesRegex(ValueError, 'graph'):
+                    self.snapshot(backend=False, prepared_modules=['cli'])
+        self.index_data['configuration_graph'] = graph
+        self.write_index()
+        self.contract['configuration_graphs']['root'].append('backend')
+        self.contract_file.write_text(json.dumps(self.contract))
+        with self.assertRaisesRegex(ValueError, 'contract'):
+            self.snapshot(backend=False, prepared_modules=['cli'])
+
+    def test_mixed_legacy_and_v2_or_different_graph_indexes_are_refused(self):
+        self.graph_fixture()
+        shared = self.root / 'shared/build/quality' / self.index.name
+        shared.parent.mkdir(parents=True)
+        value = {**self.index_data, 'module': ':shared', 'schema': 'java-gradle-dependency-inputs/v1'}
+        value.pop('configuration_graph')
+        shared.write_text(json.dumps(value))
+        with self.assertRaisesRegex(ValueError, 'different configuration graphs'):
+            probe.dependency_snapshot(self.root, self.home, ['cli', 'shared'], '9.6.1', False, 'unit')
+        value.update(schema='java-gradle-dependency-inputs/v2', configuration_graph={'profile': 'full-root-v1',
+                     'projects': [':', ':backend', ':cli', ':shared', ':telegram-bot']})
+        shared.write_text(json.dumps(value))
+        with self.assertRaisesRegex(ValueError, 'different configuration graphs'):
+            probe.dependency_snapshot(self.root, self.home, ['cli', 'shared'], '9.6.1', False, 'unit')
+
     def write_index(self):
         self.index.write_text(json.dumps(self.index_data))
 
