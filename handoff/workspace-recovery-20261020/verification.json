@@ -5,5 +5,6 @@
   "real_pat_findings": 0,
   "actual_private_key_findings": 0,
   "reviewed_negative_test_fixtures_or_key_generator_versions": 0,
-  "runtime_or_merge_qualification": "not asserted"
+  "runtime_or_merge_qualification": "not asserted",
+  "source_checkout_eol": "disabled by scoped -text; core.autocrlf=true filtered checkout matched payload SHA-256"
 }

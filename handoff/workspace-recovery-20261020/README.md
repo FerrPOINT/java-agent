@@ -29,3 +29,6 @@ Generated OpenAPI/client snapshots, screenshots, private QA evidence, caches и 
 и список включённых путей записаны в индексе. Generated schemas, binary assets
 и private evidence из этих коммитов исключены. Это исторические diffs к своим
 родителям: наличие diff не доказывает отсутствие эквивалентного решения в main.
+
+Scoped `.gitattributes` сохраняет точные LF-байты `.source` при checkout,
+включая Windows с `core.autocrlf=true`; SHA-256 verifier переносим между ОС.
