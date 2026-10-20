@@ -11,6 +11,7 @@ qualified_wrappers=(9.6.1)
 backend_graph=false
 quality_root=false
 dependencies_only=false
+base_compile_cache=false
 while (($#)); do
     case "$1" in
         --backend)
@@ -24,9 +25,52 @@ while (($#)); do
         --dependencies-only)
             if $dependencies_only; then echo 'Duplicate dependency preparation mode' >&2; exit 64; fi
             dependencies_only=true ;;
+        --base-compile-cache)
+            if $base_compile_cache; then echo 'Duplicate Base compiler cache mode' >&2; exit 64; fi
+            base_compile_cache=true ;;
         *) break ;;
     esac
     shift
+done
+cache_environment=false
+for cache_variable in BASE_JAVA_COMPILE_CACHE_ACTIVE BASE_JAVA_COMPILE_CACHE_PROFILE \
+    BASE_JAVA_COMPILE_CACHE_NAMESPACE BASE_JAVA_COMPILE_CACHE_POLICY_SHA256 BASE_JAVA_COMPILE_CACHE_POLICY; do
+    if [[ -v "$cache_variable" ]]; then cache_environment=true; fi
+done
+if $base_compile_cache; then
+    if ! $quality_root || $backend_graph || $dependencies_only \
+        || [[ "${BASE_JAVA_COMPILE_CACHE_ACTIVE:-}" != 1 \
+            || "${BASE_JAVA_COMPILE_CACHE_PROFILE:-}" != root-clients-v1 \
+            || ! "${BASE_JAVA_COMPILE_CACHE_NAMESPACE:-}" =~ ^[a-f0-9]{64}$ \
+            || ! "${BASE_JAVA_COMPILE_CACHE_POLICY_SHA256:-}" =~ ^[a-f0-9]{64}$ ]]; then
+        echo 'Base compiler cache requires its explicit supported graph and environment' >&2; exit 64
+    fi
+    for argument in "$@"; do
+        case "$argument" in
+            :cli:test|:shared:test|:cli:bootJar|--offline|--no-daemon|--build-cache|--max-workers=2|--console=plain) ;;
+            *) echo 'Base compiler cache accepts only bounded CLI/Shared tasks and options' >&2; exit 64 ;;
+        esac
+    done
+    cache_policy=${BASE_JAVA_COMPILE_CACHE_POLICY:-}
+    if [[ "$cache_policy" != /* || "${cache_policy##*/}" != java-qa-compile-cache.init.gradle \
+        || "$cache_policy" == *$'\n'* || "$cache_policy" == *$'\r'* \
+        || ! -f "$cache_policy" || -L "$cache_policy" \
+        || "$(readlink -e -- "$cache_policy")" != "$cache_policy" ]]; then
+        echo 'Base compiler cache policy must be an absolute plain file' >&2; exit 64
+    fi
+    cache_policy_size=$(wc -c < "$cache_policy")
+    if ((cache_policy_size > 65536)); then echo 'Base compiler cache policy exceeds its byte budget' >&2; exit 64; fi
+    cache_policy_hash=$(sha256sum -- "$cache_policy") || { echo 'Base compiler cache policy is unavailable' >&2; exit 64; }
+    if [[ "${cache_policy_hash%% *}" != "$BASE_JAVA_COMPILE_CACHE_POLICY_SHA256" ]]; then
+        echo 'Base compiler cache policy bytes changed' >&2; exit 64
+    fi
+elif $cache_environment; then
+    echo 'Base compiler cache environment requires the explicit helper switch' >&2; exit 64
+fi
+for argument in "$@"; do
+    if [[ "$argument" == --base-compile-cache ]]; then
+        echo 'Base compiler cache switch must precede task arguments' >&2; exit 64
+    fi
 done
 if $dependencies_only; then
     if ! $backend_graph && ! $quality_root; then echo 'Dependency preparation needs an explicit graph' >&2; exit 64; fi
@@ -98,4 +142,5 @@ if $qualified_graph && $selected_task && [[ -f "$wrapper" && -f "$jdk_release" ]
 fi
 if $quality_root; then set -- "$@" -PqualityRootGraph=clients-v1; fi
 if $dependencies_only; then set -- "$@" -PqualityDependenciesOnly=true; fi
+if $base_compile_cache; then set -- "$@" --init-script "$cache_policy" --build-cache; fi
 exec bash ./gradlew "$@"

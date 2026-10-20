@@ -43,6 +43,99 @@ class GradleContextTests(unittest.TestCase):
         }):
             return probe.snapshot(self.root, backend, self.environment, **options)
 
+    def compile_cache_environment(self):
+        policy = self.root / 'base policy/java-qa-compile-cache.init.gradle'
+        policy.parent.mkdir(exist_ok=True)
+        policy.write_bytes(b'// owned Base policy\n')
+        return {'BASE_JAVA_COMPILE_CACHE_ACTIVE': '1',
+                'BASE_JAVA_COMPILE_CACHE_PROFILE': 'root-clients-v1',
+                'BASE_JAVA_COMPILE_CACHE_NAMESPACE': 'a' * 64,
+                'BASE_JAVA_COMPILE_CACHE_POLICY_SHA256': probe.content(policy),
+                'BASE_JAVA_COMPILE_CACHE_POLICY': str(policy)}
+
+    def test_optional_compiler_context_preserves_legacy_wire_and_stable_preparation_inputs(self):
+        before = self.snapshot(backend=False)
+        self.assertNotIn('compiler_cache', before)
+        self.assertEqual(before['inputs_sha256'], probe.digest(before['inputs']))
+        self.environment.update(self.compile_cache_environment())
+        active = self.snapshot(backend=False)
+        self.assertEqual(active['inputs'], before['inputs'])
+        self.assertEqual(active['compiler_cache'], {
+            'schema': 'base-java-compiler-cache-context/v1', 'profile': 'root-clients-v1',
+            'namespace': 'a' * 64, 'policy': self.environment['BASE_JAVA_COMPILE_CACHE_POLICY'],
+            'policy_sha256': self.environment['BASE_JAVA_COMPILE_CACHE_POLICY_SHA256']})
+        self.assertEqual(active['inputs_sha256'], probe.digest({
+            'inputs': active['inputs'], 'compiler_cache': active['compiler_cache']}))
+        self.assertFalse(active['reuse_qualified'])
+        self.assertNotIn('BASE_JAVA_COMPILE_CACHE_ACTIVE', probe.ENVIRONMENT)
+
+    def test_compiler_policy_old_timestamp_bytes_namespace_and_path_bind_full_snapshot_only(self):
+        self.environment.update(self.compile_cache_environment())
+        before = self.snapshot(backend=False)
+        policy = Path(self.environment['BASE_JAVA_COMPILE_CACHE_POLICY'])
+        stamp = policy.stat()
+        policy.write_bytes(b'// other Base policy\n')
+        os.utime(policy, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+        with self.assertRaises(ValueError):
+            self.snapshot(backend=False)
+        self.environment['BASE_JAVA_COMPILE_CACHE_POLICY_SHA256'] = probe.content(policy)
+        changed = self.snapshot(backend=False)
+        self.assertNotEqual(before['inputs_sha256'], changed['inputs_sha256'])
+        self.assertEqual(before['inputs'], changed['inputs'])
+        self.environment['BASE_JAVA_COMPILE_CACHE_NAMESPACE'] = 'b' * 64
+        namespaced = self.snapshot(backend=False)
+        self.assertNotEqual(changed['inputs_sha256'], namespaced['inputs_sha256'])
+        self.assertEqual(before['inputs'], namespaced['inputs'])
+        other = self.root / 'other/java-qa-compile-cache.init.gradle'
+        other.parent.mkdir()
+        other.write_bytes(policy.read_bytes())
+        self.environment['BASE_JAVA_COMPILE_CACHE_POLICY'] = str(other)
+        moved = self.snapshot(backend=False)
+        self.assertNotEqual(namespaced['inputs_sha256'], moved['inputs_sha256'])
+        self.assertEqual(before['inputs'], moved['inputs'])
+
+    def test_compiler_cache_malformed_environments_and_backend_are_refused_before_java_probe(self):
+        valid = self.compile_cache_environment()
+        invalid = [{key: value for key, value in valid.items() if key != missing} for missing in valid]
+        invalid += [{**valid, key: value} for key, value in (
+            ('BASE_JAVA_COMPILE_CACHE_ACTIVE', ''), ('BASE_JAVA_COMPILE_CACHE_ACTIVE', '0'),
+            ('BASE_JAVA_COMPILE_CACHE_PROFILE', 'backend-v1'),
+            ('BASE_JAVA_COMPILE_CACHE_NAMESPACE', 'A' * 64),
+            ('BASE_JAVA_COMPILE_CACHE_POLICY_SHA256', 'f' * 64),
+            ('BASE_JAVA_COMPILE_CACHE_POLICY', 'relative/java-qa-compile-cache.init.gradle'),
+            ('BASE_JAVA_COMPILE_CACHE_POLICY', str(self.root)),
+        )]
+        for environment in invalid:
+            with self.subTest(environment=environment), patch.object(probe, 'java_details') as java:
+                with self.assertRaises(ValueError):
+                    probe.snapshot(self.root, False, {**self.environment, **environment})
+                java.assert_not_called()
+        for backend, modules in ((True, None), (False, ['bot']), (False, ['cli', 'bot']), (False, ['backend'])):
+            with self.subTest(backend=backend, modules=modules), patch.object(probe, 'java_details') as java:
+                with self.assertRaises(ValueError):
+                    probe.snapshot(self.root, backend, {**self.environment, **valid}, prepared_modules=modules)
+                java.assert_not_called()
+
+    def test_compiler_policy_byte_budget_is_bounded(self):
+        environment = self.compile_cache_environment()
+        policy = Path(environment['BASE_JAVA_COMPILE_CACHE_POLICY'])
+        policy.write_bytes(b'x' * 65537)
+        environment['BASE_JAVA_COMPILE_CACHE_POLICY_SHA256'] = probe.content(policy)
+        with self.assertRaises(ValueError):
+            probe.compiler_cache_context(environment)
+
+    def test_compiler_policy_linked_parent_is_not_trusted(self):
+        environment = self.compile_cache_environment()
+        policy = Path(environment['BASE_JAVA_COMPILE_CACHE_POLICY'])
+        link = self.root / 'linked-policy'
+        try:
+            link.symlink_to(policy.parent, target_is_directory=True)
+        except OSError:
+            self.skipTest('Host does not permit creating symlinks')
+        environment['BASE_JAVA_COMPILE_CACHE_POLICY'] = str(link / policy.name)
+        with self.assertRaises(ValueError):
+            probe.compiler_cache_context(environment)
+
     def prepared_fixture(self, backend=True, version=None):
         version = version or ('9.8.0' if backend else '9.6.1')
         directory = self.root / 'backend' if backend else self.root

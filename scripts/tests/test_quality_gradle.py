@@ -1,6 +1,7 @@
 """Exercise the public helper boundary without starting Gradle or a JVM."""
 
 import fnmatch
+import hashlib
 import json
 import os
 import re
@@ -98,8 +99,104 @@ class QualityGradleTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 64, result.stderr)
                 self.assertEqual(lines, [])
 
-    def invoke(self, *arguments, epoch="1792072450"):
-        environment = {**os.environ, "SOURCE_DATE_EPOCH": epoch, "JAVA_HOME": self.jdk.as_posix()}
+    def compile_cache_environment(self):
+        policy = self.root / 'base policy/java-qa-compile-cache.init.gradle'
+        policy.parent.mkdir(exist_ok=True)
+        policy.write_bytes(b'// owned Base policy\n')
+        path = policy.as_posix()
+        if os.name == 'nt':
+            path = '/' + path[0].lower() + path[2:]
+        return {'BASE_JAVA_COMPILE_CACHE_ACTIVE': '1',
+                'BASE_JAVA_COMPILE_CACHE_PROFILE': 'root-clients-v1',
+                'BASE_JAVA_COMPILE_CACHE_NAMESPACE': 'a' * 64,
+                'BASE_JAVA_COMPILE_CACHE_POLICY_SHA256': hashlib.sha256(policy.read_bytes()).hexdigest(),
+                'BASE_JAVA_COMPILE_CACHE_POLICY': path}
+
+    def test_explicit_base_cache_keeps_strict_default_and_consumes_only_validated_policy(self):
+        environment = self.compile_cache_environment()
+        for tasks in ((':cli:test',), (':shared:test',), (':cli:bootJar', ':shared:test')):
+            for switches in (('--quality-root', '--base-compile-cache'),
+                             ('--base-compile-cache', '--quality-root')):
+                with self.subTest(tasks=tasks, switches=switches):
+                    result, lines = self.invoke(*switches, *tasks, '--offline', environment=environment)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(lines[2:], [*tasks, '--offline', '--configuration-cache',
+                        '--configuration-cache-problems=fail', '-PqualityRootGraph=clients-v1',
+                        '--init-script', environment['BASE_JAVA_COMPILE_CACHE_POLICY'], '--build-cache'])
+
+    def test_base_cache_refuses_invalid_graphs_flags_and_partial_environment_before_wrapper(self):
+        environment = self.compile_cache_environment()
+        invalid = [(), (':telegram-bot:test',), (':backend:test',), ('test',),
+                   (':cli:test', '--no-build-cache'), (':cli:test', '-I', environment['BASE_JAVA_COMPILE_CACHE_POLICY']),
+                   (':cli:test', '--init-script', environment['BASE_JAVA_COMPILE_CACHE_POLICY']),
+                   (':cli:test', '--tests', 'Fixture'), (':cli:test', '--base-compile-cache'),
+                   ('--base-compile-cache', ':cli:test'), ('--dependencies-only', ':cli:qualityDependencyInputs')]
+        for arguments in invalid:
+            with self.subTest(arguments=arguments):
+                result, lines = self.invoke('--quality-root', '--base-compile-cache', *arguments, environment=environment)
+                self.assertEqual(result.returncode, 64, result.stderr)
+                self.assertEqual(lines, [])
+        for arguments in (('--base-compile-cache', ':cli:test'),
+                          ('--backend', '--base-compile-cache', ':test'), ('--quality-root', ':cli:test')):
+            result, lines = self.invoke(*arguments, environment=environment)
+            self.assertEqual(result.returncode, 64, result.stderr)
+            self.assertEqual(lines, [])
+        for name, value in (('BASE_JAVA_COMPILE_CACHE_ACTIVE', '0'),
+                            ('BASE_JAVA_COMPILE_CACHE_PROFILE', 'other'),
+                            ('BASE_JAVA_COMPILE_CACHE_NAMESPACE', 'G' * 64),
+                            ('BASE_JAVA_COMPILE_CACHE_POLICY_SHA256', '0' * 64),
+                            ('BASE_JAVA_COMPILE_CACHE_POLICY', 'relative/java-qa-compile-cache.init.gradle')):
+            with self.subTest(name=name):
+                result, lines = self.invoke('--quality-root', '--base-compile-cache', ':cli:test',
+                    environment={**environment, name: value})
+                self.assertEqual(result.returncode, 64, result.stderr)
+                self.assertEqual(lines, [])
+        for name in environment:
+            incomplete = {key: value for key, value in environment.items() if key != name}
+            result, lines = self.invoke('--quality-root', '--base-compile-cache', ':cli:test', environment=incomplete)
+            self.assertEqual(result.returncode, 64, result.stderr)
+            self.assertEqual(lines, [])
+
+    def test_base_cache_reads_actual_policy_bytes_and_refuses_aliases(self):
+        environment = self.compile_cache_environment()
+        policy = self.root / 'base policy/java-qa-compile-cache.init.gradle'
+        stamp = policy.stat()
+        policy.write_bytes(b'// other Base policy\n')
+        os.utime(policy, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+        result, lines = self.invoke('--quality-root', '--base-compile-cache', ':cli:test', environment=environment)
+        self.assertEqual(result.returncode, 64, result.stderr)
+        self.assertEqual(lines, [])
+        environment['BASE_JAVA_COMPILE_CACHE_POLICY_SHA256'] = hashlib.sha256(policy.read_bytes()).hexdigest()
+        for path in (environment['BASE_JAVA_COMPILE_CACHE_POLICY'] + '/..',
+                     environment['BASE_JAVA_COMPILE_CACHE_POLICY'].replace('/base policy/', '/base policy/../base policy/')):
+            result, lines = self.invoke('--quality-root', '--base-compile-cache', ':cli:test',
+                environment={**environment, 'BASE_JAVA_COMPILE_CACHE_POLICY': path})
+            self.assertEqual(result.returncode, 64, result.stderr)
+            self.assertEqual(lines, [])
+
+    def test_base_cache_refuses_oversized_missing_and_wrong_named_policy(self):
+        environment = self.compile_cache_environment()
+        policy = self.root / 'base policy/java-qa-compile-cache.init.gradle'
+        policy.write_bytes(b'x' * 65537)
+        environment['BASE_JAVA_COMPILE_CACHE_POLICY_SHA256'] = hashlib.sha256(policy.read_bytes()).hexdigest()
+        result, lines = self.invoke('--quality-root', '--base-compile-cache', ':cli:test', environment=environment)
+        self.assertEqual(result.returncode, 64, result.stderr)
+        self.assertEqual(lines, [])
+        policy.unlink()
+        result, lines = self.invoke('--quality-root', '--base-compile-cache', ':cli:test', environment=environment)
+        self.assertEqual(result.returncode, 64, result.stderr)
+        self.assertEqual(lines, [])
+        other = policy.with_name('arbitrary.init.gradle')
+        other.write_bytes(b'// owned Base policy\n')
+        environment['BASE_JAVA_COMPILE_CACHE_POLICY'] = environment['BASE_JAVA_COMPILE_CACHE_POLICY'].replace(policy.name, other.name)
+        environment['BASE_JAVA_COMPILE_CACHE_POLICY_SHA256'] = hashlib.sha256(other.read_bytes()).hexdigest()
+        result, lines = self.invoke('--quality-root', '--base-compile-cache', ':cli:test', environment=environment)
+        self.assertEqual(result.returncode, 64, result.stderr)
+        self.assertEqual(lines, [])
+
+    def invoke(self, *arguments, epoch="1792072450", environment=None):
+        inherited = {key: value for key, value in os.environ.items() if not key.startswith('BASE_JAVA_COMPILE_CACHE_')}
+        environment = {**inherited, "SOURCE_DATE_EPOCH": epoch, "JAVA_HOME": self.jdk.as_posix(), **(environment or {})}
         # Git Bash translates its standard JAVA_HOME environment to POSIX itself.
         result = subprocess.run([BASH, self.helper.as_posix(), *arguments], env=environment,
                                 check=False, capture_output=True, text=True)

@@ -114,6 +114,35 @@ def plain(path, root, checked=None):
     return path
 
 
+def compiler_cache_context(environment):
+    """Validate Base's explicit late compiler policy without changing preparation."""
+    prefix = 'BASE_JAVA_COMPILE_CACHE_'
+    names = ('ACTIVE', 'PROFILE', 'NAMESPACE', 'POLICY_SHA256', 'POLICY')
+    if not any(prefix + name in environment for name in names):
+        return None
+    values = {name: environment.get(prefix + name) for name in names}
+    if (values['ACTIVE'] != '1' or values['PROFILE'] != 'root-clients-v1'
+            or any(not isinstance(values[name], str) or not re.fullmatch(r'[a-f0-9]{64}', values[name])
+                   for name in ('NAMESPACE', 'POLICY_SHA256'))
+            or not isinstance(values['POLICY'], str) or '\n' in values['POLICY'] or '\r' in values['POLICY']):
+        raise ValueError('Unsupported Base compiler cache environment')
+    path = Path(values['POLICY'])
+    if not path.is_absolute() or path.name != 'java-qa-compile-cache.init.gradle':
+        raise ValueError('Base compiler cache policy must be an absolute plain file')
+    path = plain(path, path.parent)
+    if not path.is_file():
+        raise ValueError('Base compiler cache policy must be a regular file')
+    with path.open('rb') as stream:
+        payload = stream.read(65537)
+    if len(payload) > 65536:
+        raise ValueError('Base compiler cache policy exceeds its byte budget')
+    actual = hashlib.sha256(payload).hexdigest()
+    if actual != values['POLICY_SHA256']:
+        raise ValueError('Base compiler cache policy bytes changed')
+    return {'schema': 'base-java-compiler-cache-context/v1', 'profile': values['PROFILE'],
+            'namespace': values['NAMESPACE'], 'policy': str(path), 'policy_sha256': actual}
+
+
 def distribution_snapshot(directory, home):
     """Recognize only the committed wrapper layouts; no wrapper/bootstrap process."""
     properties = plain(directory / 'gradle/wrapper/gradle-wrapper.properties', directory)
@@ -317,6 +346,10 @@ def dependency_snapshot(repository, home, modules, version, backend, role, *, in
 
 
 def snapshot(repository, backend, environment, *, prepared_modules=None, role='unit'):
+    compiler_cache = compiler_cache_context(environment)
+    if compiler_cache is not None and (backend or prepared_modules is not None
+                                      and set(prepared_modules) - {'cli', 'shared'}):
+        raise ValueError('Base compiler cache is supported only for the root CLI/Shared graph')
     if prepared_modules is not None:
         plain(repository, repository)
     repository = repository.resolve()
@@ -351,7 +384,9 @@ def snapshot(repository, backend, environment, *, prepared_modules=None, role='u
         inputs['prepared'] = {'gradle_version': version, 'distribution': distribution,
                               'dependencies': dependency_snapshot(repository, home, prepared_modules, version, backend, role)}
     return {'schema': 'java-gradle-inputs/v1', 'java_version': selected['java_version'],
-            'inputs_sha256': digest(inputs), 'inputs': inputs,
+            'inputs_sha256': digest(inputs if compiler_cache is None else {
+                'inputs': inputs, 'compiler_cache': compiler_cache}), 'inputs': inputs,
+            **({'compiler_cache': compiler_cache} if compiler_cache is not None else {}),
             'reuse_qualified': False,
             'unqualified_reason': ('PREPARED_CONTEXT_PROVENANCE_AND_NATIVE_JAR_PROOF_PENDING' if prepared_modules is not None
                                    else 'GRADLE_DISTRIBUTION_AND_RESOLVED_INPUT_CLOSURE_PENDING')}

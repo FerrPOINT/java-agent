@@ -21,6 +21,23 @@ Build/test выполняют reviewed units и их необходимую comp
 Неизменные dependency caches не очищаются. Epoch фиксируется один раз до обоих
 graphs, явный SOURCE_DATE_EPOCH сохраняется и проверяется штатным helper.
 
+Опциональный Base compiler cache включается только ведущими switches
+`--quality-root --base-compile-cache` для `:cli:test`, `:shared:test` и
+`:cli:bootJar`. Base передаёт `BASE_JAVA_COMPILE_CACHE_ACTIVE=1`,
+`PROFILE=root-clients-v1`, `NAMESPACE` и `POLICY_SHA256` (по 64 lowercase hex),
+`POLICY` — абсолютный путь к plain `java-qa-compile-cache.init.gradle`;
+последние четыре имени также имеют префикс `BASE_JAVA_COMPILE_CACHE_`.
+Helper проверяет фактические bytes policy (не более 64 KiB), затем добавляет
+только этот init script и `--build-cache`, сохраняя strict configuration-cache
+default. Backend, bot, dependency preparation и произвольные init scripts
+этим hook не разрешены; active environment без switch отклоняется.
+
+Read-only context отражает проверенный contract отдельным `compiler_cache`:
+он меняет полный `inputs_sha256`, сохраняя stable dependency/preparation `inputs`.
+Без opt-in прежний context wire/hash не меняется. Cache volume/integrity принадлежат
+Base; наличие hook не квалифицирует persistent compiler cache, автоматический
+receipt reuse или конкретный native tuple. Для них нужна отдельная qualification.
+
 Jar выбирает `:bootJar` нужного приложения с его unit prerequisite, без отдельного
 повторного `test`; `MODULE=shared` выполняет `:shared:test :shared:jar`.
 Совместный `make build test jar MODULE=cli` передаёт один packaging graph;
