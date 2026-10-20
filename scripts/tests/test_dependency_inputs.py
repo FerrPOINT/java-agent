@@ -28,6 +28,30 @@ def _processor_consumers(root):
 
 
 class DependencyInputContracts(unittest.TestCase):
+    def test_cli_bootstrap_uses_core_starter_and_shared_explicit_client_dependencies(self):
+        cli = (ROOT / 'cli/build.gradle').read_text(encoding='utf-8')
+        shared = (ROOT / 'shared/build.gradle').read_text(encoding='utf-8')
+        starters = re.findall(r"(?m)^\s*implementation 'org\.springframework\.boot:([^']+)'", cli)
+        self.assertEqual(starters, ['spring-boot-starter'])
+        self.assertIn("id 'org.springframework.boot' version '4.1.0'", cli)
+        for dependency in ("implementation project(':shared')",
+                           "implementation 'org.jline:jline:4.4.7'",
+                           "implementation 'com.fasterxml.jackson.core:jackson-databind'",
+                           "implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310'",
+                           "implementation 'org.reactivestreams:reactive-streams'",
+                           "testImplementation 'org.springframework.boot:spring-boot-starter-test'"):
+            self.assertIn(dependency, cli)
+        for dependency in ('org.springframework:spring-web', 'com.fasterxml.jackson.core:jackson-databind',
+                           'com.fasterxml.jackson.datatype:jackson-datatype-jsr310'):
+            self.assertIn("api '" + dependency + "'", shared)
+        configuration = (ROOT / 'cli/src/main/resources/application.yml').read_text(encoding='utf-8')
+        self.assertRegex(configuration, r'(?m)^    web-application-type: none\s*$')
+        main = (ROOT / 'cli/src/main/java/com/azhukov/agent/cli/CliApplication.java').read_text(encoding='utf-8')
+        self.assertIn('SpringApplication.run(CliApplication.class, args)', main)
+        config = (ROOT / 'cli/src/main/java/com/azhukov/agent/cli/CliConfig.java').read_text(encoding='utf-8')
+        self.assertIn('SharedObjectMapper.get()', config)
+        self.assertIn('com.azhukov.agent.shared.http.BackendRestClientFactory.create(', config)
+
     def test_reviewed_test_compilation_does_not_need_lombok_or_mapstruct_processors(self):
         # Include support/manual sources: all three compilations inherit test
         # processor configurations. Main mapper factory/enum calls need API only.
@@ -154,7 +178,10 @@ class DependencyInputContracts(unittest.TestCase):
         self.assertEqual(helper['execution_slot'], 'none')
         self.assertIn('scripts.tests.test_dependency_inputs', gate['argv'])
         for name in ('gradle/quality-inputs.gradle', 'gradle/java-preparation.json', 'java-artifacts.json', 'backend/build.gradle', 'shared/build.gradle',
-                     'cli/build.gradle', 'telegram-bot/build.gradle', 'Dockerfile', 'Dockerfile.slim'):
+                     'cli/build.gradle', 'telegram-bot/build.gradle', 'Dockerfile', 'Dockerfile.slim',
+                     'cli/src/main/resources/application.yml',
+                     'cli/src/main/java/com/azhukov/agent/cli/CliApplication.java',
+                     'cli/src/main/java/com/azhukov/agent/cli/CliConfig.java'):
             self.assertIn(name, gate['inputs'])
 
 

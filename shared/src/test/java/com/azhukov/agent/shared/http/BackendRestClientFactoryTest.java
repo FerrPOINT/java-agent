@@ -5,12 +5,17 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
+import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
+import org.springframework.mock.http.client.MockClientHttpRequest;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
-import org.springframework.web.client.RestTemplate;
+
+import java.time.Instant;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.headerDoesNotExist;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
@@ -21,30 +26,37 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
  */
 class BackendRestClientFactoryTest {
 
-    private static MockRestServiceServer serverFor(RestTemplate template) {
-        return MockRestServiceServer.bindTo(template).build();
+    private static MockRestServiceServer serverFor(RestClient.Builder builder) {
+        return MockRestServiceServer.bindTo(builder).build();
     }
 
     @Test
     @DisplayName("API key is sent as X-API-Key when configured")
     void apiKeyHeaderSent() {
-        // The factory builds RestClient over SimpleClientHttpRequestFactory;
-        // MockRestServiceServer in this Spring version binds to RestTemplate,
-        // so exercise the same wiring through a RestTemplate-backed equivalent:
-        // we assert the produced client's default header via a captured request.
-        RestClient client = BackendRestClientFactory.create("http://localhost:8090", "secret-key");
-
-        // In-process round trip against a tiny HTTP stub is overkill here; the
-        // default-header wiring is verified via the factory contract:
-        // create() adds the header only for non-blank keys (see blankKey test).
-        assertThat(client).isNotNull();
+        RestClient.Builder builder = BackendRestClientFactory.create("https://backend.example.invalid", "secret-key")
+            .mutate();
+        MockRestServiceServer server = serverFor(builder);
+        server.expect(requestTo("https://backend.example.invalid/probe"))
+            .andExpect(method(HttpMethod.GET))
+            .andExpect(header("X-API-Key", "secret-key"))
+            .andRespond(withSuccess("ok", MediaType.TEXT_PLAIN));
+        assertThat(builder.build().get().uri("/probe").retrieve().body(String.class)).isEqualTo("ok");
+        server.verify();
     }
 
     @Test
     @DisplayName("blank/null API key omits the header (no NPE, no empty header)")
     void blankKeyOmitsHeader() {
-        assertThat(BackendRestClientFactory.create("http://x", null)).isNotNull();
-        assertThat(BackendRestClientFactory.create("http://x", "  ")).isNotNull();
+        for (String key : new String[] {null, "  "}) {
+            RestClient.Builder builder = BackendRestClientFactory.create("https://backend.example.invalid", key)
+                .mutate();
+            MockRestServiceServer server = serverFor(builder);
+            server.expect(requestTo("https://backend.example.invalid/probe"))
+                .andExpect(headerDoesNotExist("X-API-Key"))
+                .andRespond(withSuccess("ok", MediaType.TEXT_PLAIN));
+            assertThat(builder.build().get().uri("/probe").retrieve().body(String.class)).isEqualTo("ok");
+            server.verify();
+        }
         assertThat(BackendRestClientFactory.CONNECT_TIMEOUT)
             .isEqualTo(java.time.Duration.ofSeconds(10));
         assertThat(BackendRestClientFactory.READ_TIMEOUT)
@@ -90,5 +102,46 @@ class BackendRestClientFactoryTest {
         com.azhukov.agent.shared.dto.ChatResponseDto dto = SharedObjectMapper.get()
             .readValue(wire, com.azhukov.agent.shared.dto.ChatResponseDto.class);
         assertThat(dto.content()).isNull(); // MessageApiClient keeps its explicit legacy fallback
+    }
+
+    @Test
+    void explicitJacksonConverterUsesTheSharedMapperAndAcceptsOctetStream() {
+        RestClient.Builder builder = BackendRestClientFactory.create("https://backend.example.invalid", null).mutate();
+        builder.messageConverters(converters -> {
+            var jackson = converters.stream()
+                .filter(MappingJackson2HttpMessageConverter.class::isInstance)
+                .map(MappingJackson2HttpMessageConverter.class::cast)
+                .toList();
+            assertThat(jackson).hasSize(1);
+            assertThat(jackson.getFirst().getObjectMapper()).isSameAs(SharedObjectMapper.get());
+            assertThat(jackson.getFirst().getSupportedMediaTypes()).contains(MediaType.APPLICATION_OCTET_STREAM);
+        });
+        builder.build();
+    }
+
+    @Test
+    void realConvertersPreserveJsonDatesAndTolerantTypedResponses() {
+        for (MediaType responseType : new MediaType[] {MediaType.APPLICATION_JSON, MediaType.APPLICATION_OCTET_STREAM}) {
+            RestClient.Builder builder = BackendRestClientFactory.create("https://backend.example.invalid", null)
+                .mutate();
+            MockRestServiceServer server = serverFor(builder);
+            Instant at = Instant.parse("2026-10-20T10:15:30Z");
+            server.expect(requestTo("https://backend.example.invalid/wire"))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(request -> {
+                    assertThat(request.getHeaders().getContentType()).isEqualTo(MediaType.APPLICATION_JSON);
+                    var sent = SharedObjectMapper.get().readTree(((MockClientHttpRequest) request).getBodyAsBytes());
+                    assertThat(sent.path("at").asText()).isEqualTo(at.toString());
+                })
+                .andRespond(withSuccess("{\"at\":\"2026-10-20T10:15:30Z\",\"known\":\"ok\",\"future\":true}",
+                                        responseType));
+            WirePayload response = builder.build().post().uri("/wire").contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("at", at)).retrieve().body(WirePayload.class);
+            assertThat(response).isEqualTo(new WirePayload(at, "ok"));
+            server.verify();
+        }
+    }
+
+    record WirePayload(Instant at, String known) {
     }
 }

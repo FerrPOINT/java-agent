@@ -466,3 +466,35 @@ Source helper/JSON tests не квалифицируют новый Gradle tuple
 и task graphs, dependency-manifest parity, inventory/backend-only layer reuse,
 unknown-source refusal и exact Base caller adoption остаются native gate.
 Этот source change не включает JAR/test receipt reuse.
+
+## CLI без серверного web starter
+
+CLI использует `spring-boot-starter` 4.1.0 для bootstrap, configuration properties,
+logging и YAML. `application.yml` сохраняет `web-application-type: none`.
+HTTP client принадлежит Shared: его `api` dependencies сохраняют `spring-web`,
+Jackson2 databind и JavaTime; CLI сохраняет reactive-streams для multipart,
+JLine и прежние test dependencies. Backend и bot starters не меняются.
+
+Owning POM/Gradle metadata 4.1.0 у прежнего web starter включает Tomcat,
+Web MVC, Boot HTTP converters и Boot Jackson3. CLI создаёт client/converter
+самостоятельно через `BackendRestClientFactory`, а не Boot auto-configured builder.
+Замена starter не является переходом на Jackson3 или разрешением исключать
+необходимые библиотеки по package names. Resolved graph и actual JAR проверяются
+на native вехе; снижение CPU/RAM/размера этим source изменением не измерено.
+
+`BackendRestClientFactoryTest` использует публичный `RestClient.mutate()` и
+`MockRestServiceServer.bindTo(RestClient.Builder)`: проверяет реальные default
+headers, отсутствие пустого API key, shared Jackson2 mapper, JSON/ISO dates и
+octet-stream JSON с unknown fields. `BackendClientTest` дополняет прежние mock
+cases in-memory JSON, SSE и multipart boundary, включая binary bytes, sanitized
+filename и disposition. Production factory и transport ради тестов не меняются;
+mock server не открывает socket и не проверяет настоящие timeout/TLS настройки.
+
+Java checks добавлены, но до coordinated pinned-JVM gate не объявляются PASS.
+На одной согласованной native вехе выполнить CLI/Shared units и один CLI bootJar,
+сравнить resolved classpaths и `BOOT-INF/lib`, сохраняя весь нужный client graph.
+Проверить packaged non-web bootstrap/property binding и обычный выход CLI с
+disposable backend stub, JSON/octet-stream/SSE/multipart, а также неизменность
+backend/bot graph. Тот же JAR и его digest передать дальше без повторной сборки.
+Старые preparation indexes после изменения `cli/build.gradle` не считаются
+совместимыми; toolchain/pins, heaps и noncacheable Gradle receipts сохраняются.

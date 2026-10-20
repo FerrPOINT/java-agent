@@ -20,8 +20,8 @@ repositories {
 dependencies {
     // h10: shared mapper + REST client factory
     implementation project(':shared')
-    // Spring Boot — RestClient for REST calls to backend
-    implementation 'org.springframework.boot:spring-boot-starter-web'
+    // Non-web Boot bootstrap; Shared exports the explicit REST client dependencies.
+    implementation 'org.springframework.boot:spring-boot-starter'
 
     // JLine for REPL
     implementation 'org.jline:jline:4.4.7'
