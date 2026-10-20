@@ -52,7 +52,7 @@ class BackendRestClientFactoryTest {
             server.expect(request -> {
                     assertThat(request.getURI()).hasToString("https://backend.example.invalid/probe");
                     assertThat(request.getMethod()).isEqualTo(HttpMethod.GET);
-                    assertThat(request.getHeaders().containsKey("X-API-Key")).isFalse();
+                    assertThat(request.getHeaders().containsHeader("X-API-Key")).isFalse();
                 })
                 .andRespond(withSuccess("ok", MediaType.TEXT_PLAIN));
             assertThat(builder.build().get().uri("/probe").retrieve().body(String.class)).isEqualTo("ok");
