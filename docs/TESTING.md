@@ -489,6 +489,8 @@ octet-stream JSON с unknown fields. `BackendClientTest` дополняет пр
 cases in-memory JSON, SSE и multipart boundary, включая binary bytes, sanitized
 filename и disposition. Production factory и transport ради тестов не меняются;
 mock server не открывает socket и не проверяет настоящие timeout/TLS настройки.
+Shared использует request assertions через уже подключённый AssertJ, без
+Hamcrest-перегрузок Spring matchers и дополнительной test dependency.
 
 Java checks добавлены, но до coordinated pinned-JVM gate не объявляются PASS.
 На одной согласованной native вехе выполнить CLI/Shared units и один CLI bootJar,

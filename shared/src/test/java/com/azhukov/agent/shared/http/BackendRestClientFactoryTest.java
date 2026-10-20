@@ -14,10 +14,6 @@ import java.time.Instant;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
-import static org.springframework.test.web.client.match.MockRestRequestMatchers.headerDoesNotExist;
-import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
-import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 /**
@@ -36,9 +32,11 @@ class BackendRestClientFactoryTest {
         RestClient.Builder builder = BackendRestClientFactory.create("https://backend.example.invalid", "secret-key")
             .mutate();
         MockRestServiceServer server = serverFor(builder);
-        server.expect(requestTo("https://backend.example.invalid/probe"))
-            .andExpect(method(HttpMethod.GET))
-            .andExpect(header("X-API-Key", "secret-key"))
+        server.expect(request -> {
+                assertThat(request.getURI()).hasToString("https://backend.example.invalid/probe");
+                assertThat(request.getMethod()).isEqualTo(HttpMethod.GET);
+                assertThat(request.getHeaders().getFirst("X-API-Key")).isEqualTo("secret-key");
+            })
             .andRespond(withSuccess("ok", MediaType.TEXT_PLAIN));
         assertThat(builder.build().get().uri("/probe").retrieve().body(String.class)).isEqualTo("ok");
         server.verify();
@@ -51,8 +49,11 @@ class BackendRestClientFactoryTest {
             RestClient.Builder builder = BackendRestClientFactory.create("https://backend.example.invalid", key)
                 .mutate();
             MockRestServiceServer server = serverFor(builder);
-            server.expect(requestTo("https://backend.example.invalid/probe"))
-                .andExpect(headerDoesNotExist("X-API-Key"))
+            server.expect(request -> {
+                    assertThat(request.getURI()).hasToString("https://backend.example.invalid/probe");
+                    assertThat(request.getMethod()).isEqualTo(HttpMethod.GET);
+                    assertThat(request.getHeaders().containsKey("X-API-Key")).isFalse();
+                })
                 .andRespond(withSuccess("ok", MediaType.TEXT_PLAIN));
             assertThat(builder.build().get().uri("/probe").retrieve().body(String.class)).isEqualTo("ok");
             server.verify();
@@ -126,9 +127,9 @@ class BackendRestClientFactoryTest {
                 .mutate();
             MockRestServiceServer server = serverFor(builder);
             Instant at = Instant.parse("2026-10-20T10:15:30Z");
-            server.expect(requestTo("https://backend.example.invalid/wire"))
-                .andExpect(method(HttpMethod.POST))
-                .andExpect(request -> {
+            server.expect(request -> {
+                    assertThat(request.getURI()).hasToString("https://backend.example.invalid/wire");
+                    assertThat(request.getMethod()).isEqualTo(HttpMethod.POST);
                     assertThat(request.getHeaders().getContentType()).isEqualTo(MediaType.APPLICATION_JSON);
                     var sent = SharedObjectMapper.get().readTree(((MockClientHttpRequest) request).getBodyAsBytes());
                     assertThat(sent.path("at").asText()).isEqualTo(at.toString());
