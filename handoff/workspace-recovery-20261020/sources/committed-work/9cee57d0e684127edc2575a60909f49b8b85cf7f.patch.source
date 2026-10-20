@@ -1,0 +1,383 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index ec367f1b..7d8a44d9 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -11,7 +11,7 @@ cd /opt/dev/java-agent
+ ./gradlew check                # 6221 tests, 0 failures
+ ./gradlew compileJava          # compile only
+ ./gradlew bootJar              # build JAR
+-./gradlew slowTest             # @Tag("slow") integration tests
++python3 scripts/run_postgres_tests.py --docker-context desktop-linux --base-directory ../services-base
+ ./gradlew jacocoTestReport     # coverage report
+ ```
+ 
+@@ -97,7 +97,7 @@ SSE streaming для real-time token output. JLine autocomplete.
+ | LangChain4j | 1.18.0 |
+ | MCP Java SDK | 2.0.0 |
+ | Repomix | 1.18.0 (MCP server, npm) |
+-| PostgreSQL | 16 |
++| PostgreSQL | 17.6 (Base workspace и disposable tests; legacy recipes — 16) |
+ | Flyway | 12.4.0 |
+ 
+ ## Architecture Best Practices
+@@ -194,7 +194,7 @@ private final ScheduledExecutorService executor = Executors.newSingleThreadSched
+ `ToolExecutionService` использует `Executors.newVirtualThreadPerTaskExecutor()` для параллельных tool calls.
+ 
+ **Health readiness:**
+-Только `db` — LLM/CDP сбои не блокируют readiness.
++Readiness проверяет БД, совместимость собственных Flyway migrations и схемы с общим бюджетом 4 секунды. LLM/CDP сбои не блокируют readiness.
+ 
+ **Graceful shutdown:**
+ `server.shutdown: immediate` — workaround для Spring Boot 4.1.0 бага.
+@@ -206,7 +206,7 @@ private final ScheduledExecutorService executor = Executors.newSingleThreadSched
+ - Маппер-тесты: `Mappers.getMapper(X.class)`, edge cases (nulls, enums, empty collections).
+ - Service-тесты с `new`: вызывать `init()` после конструирования (для `@PostConstruct`).
+ - `@ExtendWith(MockitoExtension.class)` + `@Mock` для зависимостей; real mappers для mapping.
+-- `@Tag("slow")` для integration tests (Testcontainers, Spring context).
++- `@Tag("slow")` для PostgreSQL/Spring integration tests. Запуск через `scripts/run_postgres_tests.py` с явным Docker context; обязательные `SDLC_TEST_COMPOSE_PROJECT`, `SDLC_TEST_DATABASE_URL`, `SDLC_TEST_DATABASE_USER`, `SDLC_TEST_DATABASE_PASSWORD` передаёт harness. Без них repository suite отказывает; fallback на рабочую или локальную БД запрещён.
+ - `@Tag("live")` — отключены в CI, требуют external services.
+ - E2E: 28 HTTP scenarios + 35 CLI scenarios, run via `e2e/run_e2e.py` / `e2e/run_cli_e2e.py`.
+ 
+@@ -240,7 +240,7 @@ private final ScheduledExecutorService executor = Executors.newSingleThreadSched
+ - Memory limits: `agent.memory.char-limit` and `agent.user.char-limit` in `application.yml` cap memory and user input sizes.
+ - SOUL.md path: `agent.soul-md-path` in `application.yml` — configurable path to the soul/personality file (defaults to `~/.hermes/soul.md`).
+ - Profiles: `dev` (LiteLLM proxy), `noop` (H2 + mock LLM), `cli` (REPL), `prod` (production).
+-- Flyway migrations: `backend/src/main/resources/db/migration/` — 30 migrations (V1–V30).
++- Flyway migrations: `backend/src/main/resources/db/migration/`; состав и версии проверяются по ledger, а не по историческому числу миграций в документации.
+ - Repomix MCP: `agent.mcp.servers[0]` — stdio server `repomix --mcp --sandbox .`, enabled when `AGENT_MCP_ENABLED=true`. Config in `repomix.config.json`.
+ - Coding posture: `agent.core.coding-context` — `auto`/`focus`/`on`/`off`, controls workspace snapshot injection.
+ - Verify-on-stop: `agent.verify-on-stop.enabled` — nudges agent to run tests after code mutations (default false).
+@@ -310,7 +310,7 @@ Remaining 501s are deliberate fail-closed guards: env reveal (ADR-013), shell ho
+ | Bot commands | 61 |
+ | CLI slash commands | 92 |
+ | Backend endpoints | 140 |
+-| Flyway migrations | 30 (V1–V30) |
++| Flyway migrations | `backend/src/main/resources/db/migration/`; exact ledger проверяет readiness |
+ | Gradle modules | 4 (backend, telegram-bot, cli, shared) |
+ | Backend tests | 6834 |
+ | Bot tests | 1752 |
+@@ -363,8 +363,11 @@ cli/src/main/java/com/azhukov/agent/cli/
+ 
+ ## Deployment
+ 
+-- `docker-compose.yml` — production (порт 8080, PostgreSQL 5432)
+-- `docker-compose.local.yml` — local dev (порт 18090, PostgreSQL 18091)
++- Штатный локальный workspace: PowerShell 7, из корня workspace `./start-local.ps1 -Workspace sdlc1`; профиль и snapshot определяют включение Java, порты, образы и mounts. Правила — Base `deploy/LOCAL_GROUPS.md`.
++- Java в Base: отдельные БД и роль `java_agent`, PostgreSQL 17.6 без host-порта; локальный `dev` + `AGENT_MODEL_PROVIDER=noop` сохраняет Flyway и данные. Spring `noop` включает H2 и не используется как storage workspace.
++- `docker-compose.yml` — legacy standalone production reference (порт 8080, PostgreSQL 16/5432); не дополнительная локальная группа.
++- `docker-compose.local.yml` — legacy standalone reference (backend 1180, PostgreSQL 16/1181, bot 1182, SearXNG 1183).
++- E2E: Bash harness `SDLC_DOCKER_CONTEXT=desktop-linux ./scripts/e2e-docker-compose-test.sh`; собственный `sdlc-qa-*`, task/purpose и точный cleanup. Endpoint выбрать явно. Runtime snapshots/volumes/secrets не менять для проверки.
+ - Dockerfile: `eclipse-temurin:25-jre-noble` + Chromium runtime deps
+ - Bot: separate Spring Boot app with shared PostgreSQL (Flyway `flyway_bot_schema_history`)
+ - Deploy ladder: bootJar → cp to `/opt/java-agent/lib/` → ln -sfn latest → systemctl restart → health check :8090/:8091
+diff --git a/CONTRIBUTING.md b/CONTRIBUTING.md
+index 2057b316..cbda35d6 100644
+--- a/CONTRIBUTING.md
++++ b/CONTRIBUTING.md
+@@ -9,8 +9,8 @@
+ # Run all tests (excludes slow/live/e2e)
+ ./gradlew check
+ 
+-# Run slow integration tests (Testcontainers PostgreSQL)
+-./gradlew slowTest
++# Run PostgreSQL integration in an owned disposable Compose project
++python3 scripts/run_postgres_tests.py --docker-context desktop-linux --base-directory ../services-base
+ 
+ # Build JAR
+ ./gradlew bootJar
+@@ -19,6 +19,15 @@
+ ./gradlew jacocoTestReport
+ ```
+ 
++The PostgreSQL harness supplies `SDLC_TEST_COMPOSE_PROJECT`,
++`SDLC_TEST_DATABASE_URL`, `SDLC_TEST_DATABASE_USER`, and
++`SDLC_TEST_DATABASE_PASSWORD`, shares the database between Spring test contexts,
++and cleans only its own Compose resources in `finally`. Override
++`--base-directory` for a clean Base task checkout. For full local evidence use
++`python3 scripts/release_verify.py --docker-context desktop-linux`;
++`--skip-slow` selects JVM-only gates. Select the actual endpoint instead of
++relying on the current Docker context.
++
+ ### Running the backend
+ 
+ ```bash
+@@ -27,7 +36,7 @@ java -jar backend/build/libs/java-agent-backend-0.0.1-SNAPSHOT.jar \
+   --spring.profiles.active=dev
+ ```
+ 
+-For offline development without a real LLM or database:
++For offline JVM development without a real LLM or database (H2, no persistent workspace state):
+ 
+ ```bash
+ ./gradlew :backend:bootRun --args='--spring.profiles.active=noop'
+@@ -55,7 +64,7 @@ For offline development without a real LLM or database:
+ - `@ExtendWith(MockitoExtension.class)` + `@Mock` for service tests.
+ - Real mappers (never mocked) via `Mappers.getMapper(...)`.
+ - Call `init()` after `new` in tests for `@PostConstruct` derived fields.
+-- `@Tag("slow")` for Testcontainers integration tests.
++- `@Tag("slow")` for PostgreSQL/Spring integration tests. Use `scripts/run_postgres_tests.py` with an explicit Docker context; repository tests require all four `SDLC_TEST_*` parameters and never fall back to a local or runtime database.
+ - `@Tag("live")` for tests requiring external services (disabled in CI).
+ - Coverage gate: LINE ≥ 80%.
+ 
+diff --git a/README.md b/README.md
+index 92b63011..70dd3b94 100644
+--- a/README.md
++++ b/README.md
+@@ -16,7 +16,7 @@
+   <img src="https://img.shields.io/badge/Java-25-ED8B00?style=flat-square&logo=openjdk&logoColor=white" alt="Java 25" />
+   <img src="https://img.shields.io/badge/Spring_Boot-4.1-6DB33F?style=flat-square&logo=springboot&logoColor=white" alt="Spring Boot 4.1" />
+   <img src="https://img.shields.io/badge/Gradle-9.6.1-02303A?style=flat-square&logo=gradle&logoColor=white" alt="Gradle 9.6.1" />
+-  <img src="https://img.shields.io/badge/PostgreSQL-16-4169E1?style=flat-square&logo=postgresql&logoColor=white" alt="PostgreSQL 16" />
++  <img src="https://img.shields.io/badge/PostgreSQL-17.6-4169E1?style=flat-square&logo=postgresql&logoColor=white" alt="PostgreSQL 17.6" />
+   <img src="https://img.shields.io/badge/Flyway-12.4-CB0200?style=flat-square" alt="Flyway 12.4" />
+   <img src="https://img.shields.io/badge/LangChain4j-1.18-111827?style=flat-square" alt="LangChain4j 1.18" />
+   <img src="https://img.shields.io/badge/MCP-2.0-7C3AED?style=flat-square" alt="MCP 2.0" />
+@@ -25,7 +25,7 @@
+ 
+ <p align="center">
+   <img src="https://img.shields.io/badge/JUnit-green?style=flat-square" alt="JUnit" />
+-  <img src="https://img.shields.io/badge/Testcontainers-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Testcontainers" />
++  <img src="https://img.shields.io/badge/Compose_integration-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Compose integration" />
+   <img src="https://img.shields.io/badge/Jacoco-80%25%20LINE%20gate-0A9EDC?style=flat-square" alt="Jacoco 80% LINE gate" />
+   <img src="https://img.shields.io/badge/CI-.github%2Fworkflows%2Fci.yml-15803d?style=flat-square" alt="Repository CI" />
+   <img src="https://img.shields.io/badge/source--available-not%20open%20source-7F1D1D?style=flat-square" alt="Not open source" />
+@@ -47,10 +47,10 @@
+ |---|---|
+ | Модули | `backend`, `telegram-bot`, `cli` (+ `shared` DTO) |
+ | Runtime | Java 25 LTS, Spring Boot 4.1, Gradle 9.6.1 |
+-| Data | PostgreSQL 16, JPA/Hibernate, Flyway |
++| Data | PostgreSQL 17.6 в Base workspace и Compose integration tests; JPA/Hibernate, Flyway |
+ | AI/tooling | LangChain4j 1.18, MCP Java SDK 2.0, Repomix MCP, built-in tool registry |
+ | Interfaces | REST/SSE, OpenAI-compatible `/v1/*`, Telegram bot, CLI REPL |
+-| Base workspace | Local Compose: API `1180`, PostgreSQL `1181`, Telegram gateway `1182`, SearXNG `1183` (all loopback-only) |
++| Base workspace | Выбранный профиль и runtime snapshot; Java включается составом профиля. Отдельные БД/роль `java_agent`, PostgreSQL без host-порта |
+ | Тесты | 6221 (backend 4710 + bot 1511), 567 файлов, 0 падений |
+ | License | FerrPOINT Proprietary Source-Available Evaluation License v1.0 |
+ 
+@@ -77,7 +77,7 @@
+ | Layer | Stack |
+ |---|---|
+ | Backend | Java 25, Spring Boot 4.1, Spring Framework 7, Spring Security, WebSocket, Actuator |
+-| Persistence | PostgreSQL 16, JPA/Hibernate, Flyway 12, Testcontainers |
++| Persistence | PostgreSQL 17.6, JPA/Hibernate, Flyway 12, disposable Compose integration tests |
+ | LLM/MCP | LangChain4j 1.18, OpenAI-compatible clients, MCP Java SDK 2.0, Repomix |
+ | CLI | Spring Boot, Picocli, JLine, ANSI Markdown renderer |
+ | Bot | Telegram Bot API client, polling/webhook, streaming/edit-message delivery |
+@@ -182,6 +182,24 @@ flowchart TD
+ 
+ ## 🚀 Deployment
+ 
++Штатный локальный workspace запускается из своего корня через PowerShell 7:
++
++```powershell
++./start-local.ps1 -Workspace sdlc1
++```
++
++Источник состава, портов и образов — выбранный workspace profile и защищённый
++runtime snapshot. Для новой установки и обновления использовать Base
++[NEW_WORKSPACE](../services-base/deploy/NEW_WORKSPACE.md) и
++[LOCAL_GROUPS](../services-base/deploy/LOCAL_GROUPS.md). При включённой Java её
++данные хранятся в собственной БД `java_agent` под одноимённой ролью на PostgreSQL
++17.6. Модель `AGENT_MODEL_PROVIDER=noop` сохраняет PostgreSQL/Flyway; Spring
++профиль `noop` включает H2 и подходит только для offline JVM-разработки.
++
++Ниже — legacy/reference recipes отдельных deployments. Они не являются
++дополнительными локальными стендами и не заменяют Base startup или restore.
++На локальной машине не выполнять их `up`/`run` вне правил группировки Base.
++
+ ```bash
+ # Dev runtime: immutable backend/bot images, остановка старых host-сервисов,
+ # изолированный unprivileged container stack на localhost:8090.
+@@ -205,8 +223,8 @@ docker compose -f docker-compose.e2e.yml up --build
+ |---|---|
+ | `docker-compose.dev.yml` + `scripts/deploy-dev-docker.sh` | Dev runtime: isolated backend/bot containers на `127.0.0.1:8090`; reuses existing PostgreSQL |
+ | `docker-compose.prod.yml` | Production-like stack на порту `8080` с PostgreSQL `5432` |
+-| `docker-compose.local.yml` | Local dev fixture на `18090`/`18091` |
+-| `docker-compose.e2e.yml` | E2E testing stack |
++| `docker-compose.local.yml` | Legacy PostgreSQL 16 fixture: backend `1180`, БД `1181`, bot `1182`, SearXNG `1183`; не Base workspace |
++| `docker-compose.e2e.yml` | Disposable PostgreSQL 17.6 E2E; запуск только harness с явным Docker context и scoped cleanup |
+ 
+ Docker images используют `eclipse-temurin:25-jre-noble`; slim-образы ставят Chromium at runtime.
+ 
+@@ -217,7 +235,7 @@ Docker images используют `eclipse-temurin:25-jre-noble`; slim-обра
+ - Production deployment обязан предоставить реальные model credentials, DB credentials, API keys и настройки secret redaction.
+ - Browser, file, terminal и network tools требуют явной operational policy до exposures за пределами trusted environments.
+ - `server.shutdown: immediate` сохраняется как workaround Spring Boot 4.1.
+-- Actuator readiness проверяет БД; LLM, browser и MCP availability — отдельные operational concerns и readiness не блокируют.
++- Actuator readiness проверяет БД, собственные Flyway migrations и ожидаемую схему; LLM, browser и MCP availability — отдельные operational concerns и readiness не блокируют.
+ - Java/Gradle артефакты упаковываются с proprietary license metadata; сторонние зависимости остаются под своими лицензиями.
+ 
+ <a name="quality"></a>
+@@ -226,17 +244,17 @@ Docker images используют `eclipse-temurin:25-jre-noble`; slim-обра
+ 
+ | Проверка | Команда |
+ |---|---|
+-| Full local evidence | `python3 scripts/release_verify.py` |
++| Full local evidence | `python3 scripts/release_verify.py --docker-context desktop-linux` (выбрать свой endpoint явно) |
+ | Module tests | `./gradlew :backend:test :telegram-bot:test :cli:test --no-daemon` |
+-| Slow PostgreSQL integration | `./gradlew :backend:slowTest --no-daemon` |
++| Slow PostgreSQL integration | `python3 scripts/run_postgres_tests.py --docker-context desktop-linux --base-directory ../services-base` |
+ | Coverage reports | `./gradlew :backend:jacocoTestReport :telegram-bot:jacocoTestReport --no-daemon` |
+ | Docs & test-standard ratchet | `python3 scripts/check_docs_standard.py` (baseline: `docs/standards/coverage-baseline.json`) |
+ | Ratchet + coverage floors | `python3 scripts/check_docs_standard.py --check-coverage` |
+-| Local Docker E2E | `./scripts/e2e-docker-compose-test.sh` |
++| Local Docker E2E | `SDLC_DOCKER_CONTEXT=desktop-linux ./scripts/e2e-docker-compose-test.sh` (Bash harness, собственный временный проект) |
+ | README invariants | `python3 -m unittest scripts.tests.test_verify_readme -v` и `python3 scripts/verify_readme.py` |
+ | Compose bot/backend auth wiring | `python3 scripts/check-compose-backend-auth.py` |
+ 
+-`release_verify.py` фиксирует pass/fail/not-run gates, точные счётчики тестов, JaCoCo-метрики и консервативный endpoint-reference inventory в `build/release-verification.json`. HTTP и CLI E2E опциональны: им нужен живой локальный backend; Docker E2E опционален, потому что поднимает изолированный стек.
++`release_verify.py` требует явный `--docker-context` для slow/Docker gates; без Docker можно выполнить JVM gates с `--skip-slow`. PostgreSQL создаёт `run_postgres_tests.py`, а не Gradle/Testcontainers. Скрипт фиксирует pass/fail/not-run gates, точные счётчики тестов, JaCoCo-метрики и консервативный endpoint-reference inventory в `build/release-verification.json`. HTTP и CLI E2E опциональны: им нужен живой локальный backend; Docker E2E опционален, потому что поднимает изолированный стек.
+ 
+ ### Стандарт документации и тестов
+ 
+@@ -263,7 +281,12 @@ Compression snapshot и immutable watermark хранятся в текущем 
+ CI проверяет обе очередности usage и всех перечисленных transcript writers,
+ порядок блокировок compression/delete и границы title на PostgreSQL командой
+ `./gradlew :backend:slowTest --tests 'com.azhukov.agent.service.*PersistenceConcurrencyTest' --no-daemon`.
+-Для локальной проверки задать `USAGE_PERSISTENCE_TEST_JDBC_URL`,
++Harness `run_postgres_tests.py` автоматически передаёт четыре обязательных
++параметра `SDLC_TEST_COMPOSE_PROJECT`, `SDLC_TEST_DATABASE_URL`,
++`SDLC_TEST_DATABASE_USER`, `SDLC_TEST_DATABASE_PASSWORD` repository slow tests;
++без них эти тесты отказывают до подключения, fallback отсутствует. Он также
++передаёт concurrency suite переменные ниже. Для отдельной JVM-проверки concurrency
++можно задать `USAGE_PERSISTENCE_TEST_JDBC_URL`,
+ `USAGE_PERSISTENCE_TEST_DB_USER`, `USAGE_PERSISTENCE_TEST_DB_PASSWORD`
+ отдельной QA базы; без URL тест использует H2. Тест создаёт и удаляет только
+ собственную уникальную schema. Локальный PostgreSQL запускать через временный
+diff --git a/backend/src/test/java/com/azhukov/agent/persistence/repository/McpOAuthRepositoryTest.java b/backend/src/test/java/com/azhukov/agent/persistence/repository/McpOAuthRepositoryTest.java
+index c05d8aea..4d219fef 100644
+--- a/backend/src/test/java/com/azhukov/agent/persistence/repository/McpOAuthRepositoryTest.java
++++ b/backend/src/test/java/com/azhukov/agent/persistence/repository/McpOAuthRepositoryTest.java
+@@ -46,8 +46,8 @@ class McpOAuthRepositoryTest extends PostgresTestContainer {
+     private McpOAuthRepository mcpOAuthRepository;
+ 
+     @org.junit.jupiter.api.BeforeEach
+-    void cleanSharedContainerTable() {
+-        // The PG Testcontainer is JVM-wide shared across slowTest classes;
++    void cleanSharedDatabaseTable() {
++        // The explicit Compose PostgreSQL is shared across slowTest contexts;
+         // sibling tests (e.g. McpOAuthProfileIsolationTest) leave rows behind.
+         mcpOAuthRepository.deleteAll();
+     }
+diff --git a/scripts/release_verify.py b/scripts/release_verify.py
+index f10ccaf6..98444d40 100644
+--- a/scripts/release_verify.py
++++ b/scripts/release_verify.py
+@@ -1,9 +1,9 @@
+ #!/usr/bin/env python3
+ """Run local release gates and write a machine-readable evidence report.
+ 
+-Default gates are deterministic and local: JVM tests, JaCoCo reports, boot JARs,
+-and static endpoint-to-test-reference inventory. HTTP/CLI/Docker E2E require an
+-explicit flag because they need a running backend or Docker.
++Default gates include PostgreSQL slow tests in an owned disposable Compose
++project. Select its Docker context explicitly. HTTP/CLI/Docker E2E also require
++an explicit flag because they need a running backend or Docker.
+ """
+ from __future__ import annotations
+ 
+@@ -32,9 +32,11 @@ class GateResult:
+     detail: str
+ 
+ 
+-def run_command(name: str, command: list[str], timeout: int) -> GateResult:
++def run_command(name: str, command: list[str], timeout: int,
++                extra_environment: dict[str, str] | None = None) -> GateResult:
+     started = dt.datetime.now(dt.timezone.utc)
+     environment = dict(os.environ)
++    environment.update(extra_environment or {})
+     # Hermes can export a root user-bus path even when that runtime directory is
+     # absent. Gradle's forked workers then fail before running any test.
+     if not Path("/run/user/0/bus").exists():
+@@ -127,11 +129,16 @@ def parse_args() -> argparse.Namespace:
+     parser.add_argument("--report", type=Path, default=DEFAULT_REPORT)
+     parser.add_argument("--timeout", type=int, default=600)
+     parser.add_argument("--skip-slow", action="store_true")
++    parser.add_argument("--docker-context", help="Explicit Docker context for disposable PostgreSQL/E2E")
++    parser.add_argument("--base-directory", type=Path, help="Clean Base checkout providing Compose helpers")
+     parser.add_argument("--skip-boot-jars", action="store_true")
+     parser.add_argument("--run-http-e2e", action="store_true")
+     parser.add_argument("--run-cli-e2e", action="store_true")
+     parser.add_argument("--run-docker-e2e", action="store_true")
+-    return parser.parse_args()
++    args = parser.parse_args()
++    if (not args.skip_slow or args.run_docker_e2e) and not args.docker_context:
++        parser.error("--docker-context is required for PostgreSQL slow tests or Docker E2E; no daemon fallback")
++    return args
+ 
+ 
+ def write_report(report_path: Path, gates: list[GateResult], state: str) -> None:
+@@ -148,7 +155,7 @@ def write_report(report_path: Path, gates: list[GateResult], state: str) -> None
+ 
+ def main() -> int:
+     args = parse_args()
+-    gradle = ["./gradlew", "--no-daemon"]
++    gradle = [str(REPO / ("gradlew.bat" if os.name == "nt" else "gradlew")), "--no-daemon"]
+     gates: list[GateResult] = []
+ 
+     def record(gate: GateResult) -> None:
+@@ -181,7 +188,10 @@ def main() -> int:
+     if args.skip_slow:
+         record(not_run("slow-postgresql-integration", "disabled by --skip-slow"))
+     else:
+-        record(run_command("slow-postgresql-integration", gradle + [":backend:slowTest"], args.timeout))
++        slow = [sys.executable, "scripts/run_postgres_tests.py", "--docker-context", args.docker_context]
++        if args.base_directory:
++            slow += ["--base-directory", str(args.base_directory)]
++        record(run_command("slow-postgresql-integration", slow + ["--", *gradle, ":backend:slowTest"], args.timeout))
+     if args.skip_boot_jars:
+         record(not_run("boot-jars", "disabled by --skip-boot-jars"))
+     else:
+@@ -202,7 +212,8 @@ def main() -> int:
+         ("docker-compose-e2e", args.run_docker_e2e, ["./scripts/e2e-docker-compose-test.sh"], "requires Docker; pass --run-docker-e2e"),
+     )
+     for name, enabled, command, reason in optional_gates:
+-        record(run_command(name, command, args.timeout) if enabled else not_run(name, reason))
++        environment = {"SDLC_DOCKER_CONTEXT": args.docker_context} if name == "docker-compose-e2e" and enabled else None
++        record(run_command(name, command, args.timeout, environment) if enabled else not_run(name, reason))
+ 
+     write_report(args.report, gates, "COMPLETE")
+     for gate in gates:
+diff --git a/scripts/tests/test_release_verify.py b/scripts/tests/test_release_verify.py
+index e74864af..ac0bc338 100644
+--- a/scripts/tests/test_release_verify.py
++++ b/scripts/tests/test_release_verify.py
+@@ -7,6 +7,7 @@ import os
+ import sys
+ import tempfile
+ import unittest
++from unittest.mock import patch
+ from pathlib import Path
+ 
+ SCRIPTS = Path(__file__).resolve().parents[1]
+@@ -76,6 +77,30 @@ class EndpointCoverageReportTest(unittest.TestCase):
+ 
+ 
+ class ReleaseVerifyTest(unittest.TestCase):
++    def test_missing_docker_context_refuses_before_running_gates(self) -> None:
++        verify = load_module("release_verify_context", "release_verify.py")
++        with patch.object(sys, "argv", ["release_verify.py"]):
++            with self.assertRaises(SystemExit) as failure:
++                verify.parse_args()
++        self.assertEqual(2, failure.exception.code)
++
++    def test_no_docker_gates_does_not_require_a_context(self) -> None:
++        verify = load_module("release_verify_local", "release_verify.py")
++        with patch.object(sys, "argv", ["release_verify.py", "--skip-slow"]):
++            self.assertIsNone(verify.parse_args().docker_context)
++        with patch.object(sys, "argv", ["release_verify.py", "--skip-slow", "--run-docker-e2e"]):
++            with self.assertRaises(SystemExit):
++                verify.parse_args()
++
++    def test_run_command_forwards_only_selected_context_without_changing_parent(self) -> None:
++        verify = load_module("release_verify_selected_context", "release_verify.py")
++        previous = os.environ.get("SDLC_DOCKER_CONTEXT")
++        result = verify.run_command("context", [sys.executable, "-c",
++            "import os; assert os.environ['SDLC_DOCKER_CONTEXT'] == 'isolated-fixture'"],
++            10, {"SDLC_DOCKER_CONTEXT": "isolated-fixture"})
++        self.assertEqual("PASS", result.status)
++        self.assertEqual(previous, os.environ.get("SDLC_DOCKER_CONTEXT"))
++
+     def test_line_coverage_returns_percent(self) -> None:
+         verify = load_module("release_verify", "release_verify.py")
+         with tempfile.TemporaryDirectory() as directory:

@@ -1,0 +1,109 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index ec367f1b..5d282672 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -407,3 +407,11 @@ Full conventions doc: `backend/docs/conventions.md`
+ - `python3 scripts/check_docs_standard.py` — ratchet против `docs/standards/coverage-baseline.json` (DOC001/DOC002/DOC003 + LINE coverage per модуль). Нарастание нарушений или падение coverage ниже baseline = красный CI.
+ - Baseline повышается только осознанно: вместе с новыми тестами, `--update-baseline`, коммит "chore: raise docs baseline".
+ - Текущий долг: backend 513×DOC001 / bot 58 / cli 6; LINE backend 79.15% / bot 82.16%. Гасить пакетами из bottom-списка, не разом.
++
++## Local Docker ownership
++
++Every local container uses real Compose. Permanent projects are sdlc1, sdlc2
++and sdlc-common. Temporary sdlc-qa-/sdlc-build- projects require task/purpose,
++explicit endpoint and scoped cleanup in finally. Direct docker run/create,
++fake Compose labels and global prune are forbidden. Runtime data, snapshots,
++keys and shared caches are preserved. Base owns tools and LOCAL_GROUPS rules.
+diff --git a/scripts/deploy-dev-docker.sh b/scripts/deploy-dev-docker.sh
+index ffc6d08f..6e47f2fa 100755
+--- a/scripts/deploy-dev-docker.sh
++++ b/scripts/deploy-dev-docker.sh
+@@ -1,74 +1,16 @@
+ #!/usr/bin/env bash
+-# Build and run the dev agent in containers with no source-tree bind mount.
++# The initialized workspace owns Java Agent and its infrastructure.
+ set -euo pipefail
+-
+-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+-COMPOSE=(docker compose --project-directory "$ROOT" --env-file "$ROOT/.env" -f "$ROOT/docker-compose.dev.yml")
+-NETWORK="java-agent-runtime"
+-DB_CONTAINER="java-agent-pg"
+-
+-require_container() {
+-    if ! docker inspect "$1" >/dev/null 2>&1; then
+-        echo "Required container '$1' does not exist; refusing to create a replacement database." >&2
+-        exit 1
+-    fi
+-}
+-
+-require_container "$DB_CONTAINER"
+-docker network create "$NETWORK" >/dev/null 2>&1 || true
+-docker network connect --alias db "$NETWORK" "$DB_CONTAINER" >/dev/null 2>&1 || true
+-
+-# Ensure named runtime volumes are owned by the unprivileged application user.
+-for volume in java_agent_state java_agent_workspace java_agent_tmp; do
+-    docker run --rm -v "${ROOT##*/}_${volume}:/volume" alpine:3.22 chown -R 10001:10001 /volume
+-done
+-
+-# The host services have unrestricted /opt/dev/java-agent access. Stop them
+-# before the container claims their localhost ports and Telegram polling token.
+-systemctl stop java-agent-bot.service java-agent-backend.service
+-
+-"${COMPOSE[@]}" up -d --build --remove-orphans
+-
+-for _ in $(seq 1 30); do
+-    if curl -fsS --max-time 5 http://127.0.0.1:8090/actuator/health/readiness >/dev/null; then
+-        break
+-    fi
+-    sleep 2
+-done
+-curl -fsS --max-time 30 http://127.0.0.1:8090/actuator/health/readiness >/dev/null
+-
+-backend_id="$("${COMPOSE[@]}" ps -q backend)"
+-bot_id="$("${COMPOSE[@]}" ps -q bot)"
+-for id in "$backend_id" "$bot_id"; do
+-    if [ -z "$id" ]; then
+-        echo "Container failed to start." >&2
+-        "${COMPOSE[@]}" ps
+-        exit 1
+-    fi
+-done
+-
+-for _ in $(seq 1 30); do
+-    [ "$(docker inspect -f '{{.State.Health.Status}}' "$bot_id")" = "healthy" ] && break
+-    sleep 2
+-done
+-if [ "$(docker inspect -f '{{.State.Health.Status}}' "$bot_id")" != "healthy" ]; then
+-    echo "Telegram bot did not become healthy." >&2
+-    "${COMPOSE[@]}" logs --tail=100 bot
+-    exit 1
+-fi
+-curl -fsS --max-time 60 http://127.0.0.1:8090/actuator/health >/dev/null
+-docker exec "$bot_id" curl -fsS http://localhost:8091/bot/health >/dev/null
+-
+-# A base image may contain an empty /root, but the host's agent state and source
+-# tree must never be present or accessible from either runtime container.
+-for id in "$backend_id" "$bot_id"; do
+-    for forbidden in /opt/dev/java-agent /root/.hermes /root/.java-agent; do
+-        if docker exec "$id" test -e "$forbidden"; then
+-            echo "Isolation check failed: $id can access $forbidden" >&2
+-            exit 1
+-        fi
+-    done
+-done
+-
+-echo "Container deployment is healthy and source-isolated."
+-"${COMPOSE[@]}" ps
++: "${SDLC_WORKSPACE_DIR:?Select the initialized workspace root}"
++: "${SDLC_PROJECT:?Set sdlc1 or sdlc2}"
++case "$SDLC_PROJECT" in sdlc1|sdlc2) ;; *) echo 'Unknown workspace project' >&2; exit 2 ;; esac
++test -f "$SDLC_WORKSPACE_DIR/workspace.local.json"
++test -f "$SDLC_WORKSPACE_DIR/workspace.ps1"
++python - "$SDLC_WORKSPACE_DIR/workspace.local.json" "$SDLC_PROJECT" <<'PY'
++import json,sys
++from pathlib import Path
++profile=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8-sig"))
++if profile.get("project") != sys.argv[2]:
++    raise SystemExit("Workspace profile differs from selected project")
++PY
++exec pwsh -NoProfile -File "$SDLC_WORKSPACE_DIR/workspace.ps1" Start -Service java-agent

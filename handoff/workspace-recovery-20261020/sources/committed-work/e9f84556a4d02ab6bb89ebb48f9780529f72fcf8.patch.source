@@ -1,0 +1,13 @@
+diff --git a/cli/build.gradle b/cli/build.gradle
+index 99c3a2a0..a7b5a013 100644
+--- a/cli/build.gradle
++++ b/cli/build.gradle
+@@ -24,7 +24,7 @@ dependencies {
+     implementation 'org.springframework.boot:spring-boot-starter-web'
+ 
+     // JLine for REPL
+-    implementation 'org.jline:jline:4.4.3'
++    implementation 'org.jline:jline:4.4.5'
+ 
+     // Jackson
+     implementation 'com.fasterxml.jackson.core:jackson-databind'

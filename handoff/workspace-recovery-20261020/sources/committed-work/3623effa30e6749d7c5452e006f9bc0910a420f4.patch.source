@@ -1,0 +1,188 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index b037e9cb..feb8cca7 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -6,6 +6,8 @@
+ 
+ ### Fixed
+ 
++- News relevance ignores calendar dates and month names, retains short topics such as AI, and matches short topics as complete words. Semantic technology results remain supported without treating the `ai` inside unrelated words such as `Rail` as an AI topic.
++
+ - Failed Telegram finalization/error sends no longer claim successful delivery or arm background review. The complete error response is retained for the existing fallback send; an empty-token failure does not repeat the model request.
+ 
+ - CI and all four Dockerfiles pin Temurin 25.0.4.1+1; Docker stages use immutable image digests and the committed Gradle wrappers. The bot JAR includes its canonical license and notice files. Backend and workspace wrapper versions are documented separately.
+diff --git a/backend/src/main/java/com/azhukov/agent/tools/web/WebSearchTool.java b/backend/src/main/java/com/azhukov/agent/tools/web/WebSearchTool.java
+index 230dbf01..ae85041e 100644
+--- a/backend/src/main/java/com/azhukov/agent/tools/web/WebSearchTool.java
++++ b/backend/src/main/java/com/azhukov/agent/tools/web/WebSearchTool.java
+@@ -43,11 +43,17 @@ public class WebSearchTool implements ToolHandler {
+     private static final int MAX_LIMIT = 100;
+     private static final Set<String> NEWS_STOP_TERMS = Set.of(
+         "latest", "news", "headline", "headlines", "последние", "последний", "новости", "новость", "новост",
+-        "дайджест", "сегодня", "свежие", "свежий", "октябрь", "октября", "октябре", "today", "recent",
+-        "recently", "october"
++        "дайджест", "сегодня", "свежие", "свежий", "today", "recent", "recently", "last",
++        "the", "and", "for", "from", "with", "about", "in", "on", "of", "to",
++        "по", "об", "про", "из", "за", "на", "для", "новые", "новый", "новая", "самые", "самый",
++        "january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december",
++        "январь", "января", "январе", "февраль", "февраля", "феврале", "март", "марта", "марте",
++        "апрель", "апреля", "апреле", "май", "мая", "мае", "июнь", "июня", "июне",
++        "июль", "июля", "июле", "август", "августа", "августе", "сентябрь", "сентября", "сентябре",
++        "октябрь", "октября", "октябре", "ноябрь", "ноября", "ноябре", "декабрь", "декабря", "декабре"
+     );
+     private static final Pattern TECHNOLOGY_RESULT = Pattern.compile(
+-        "технолог(?:ии|ий|ия|ию|иями|иях)?|(?<!\\p{L})ит(?!\\p{L})|телеком|data|ai|цифров|беспилот|электробатар|программ"
++        "технолог(?:ии|ий|ия|ию|иями|иях)?|(?<!\\p{L})ит(?!\\p{L})|телеком|data|(?<![\\p{L}\\p{N}])ai(?![\\p{L}\\p{N}])|цифров|беспилот|электробатар|программ"
+     );
+ 
+     private final AgentProperties agentProperties;
+@@ -201,7 +207,8 @@ public class WebSearchTool implements ToolHandler {
+     private List<String> queryTopicTerms(String query) {
+         List<String> terms = new ArrayList<>();
+         for (String token : query.toLowerCase(Locale.ROOT).split("[^\\p{L}\\p{N}]+")) {
+-            if (token.length() >= 4 && !NEWS_STOP_TERMS.contains(token) && !token.startsWith("новост")) {
++            if (token.length() >= 2 && token.codePoints().anyMatch(Character::isLetter)
++                && !NEWS_STOP_TERMS.contains(token) && !token.startsWith("новост")) {
+                 terms.add(token.startsWith("технолог") ? "технолог" : token);
+             }
+         }
+@@ -216,7 +223,12 @@ public class WebSearchTool implements ToolHandler {
+ 
+     private boolean matchesTopicTerm(String text, String term) {
+         if (!"технолог".equals(term)) {
+-            return text.contains(term);
++            for (String token : text.split("[^\\p{L}\\p{N}]+")) {
++                if (term.length() >= 4 ? token.startsWith(term) : token.equals(term)) {
++                    return true;
++                }
++            }
++            return false;
+         }
+         // The ticker name "Т-Технологии" is not a technology-news topic.
+         return !text.contains("т-технологии") && TECHNOLOGY_RESULT.matcher(text).find();
+diff --git a/backend/src/test/java/com/azhukov/agent/tools/web/WebSearchToolTest.java b/backend/src/test/java/com/azhukov/agent/tools/web/WebSearchToolTest.java
+index bd676482..a02b80c7 100644
+--- a/backend/src/test/java/com/azhukov/agent/tools/web/WebSearchToolTest.java
++++ b/backend/src/test/java/com/azhukov/agent/tools/web/WebSearchToolTest.java
+@@ -11,6 +11,8 @@ import org.jsoup.Jsoup;
+ import org.jsoup.nodes.Document;
+ import org.junit.jupiter.api.Test;
+ import org.junit.jupiter.api.extension.ExtendWith;
++import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.ValueSource;
+ import org.mockito.Mock;
+ import org.mockito.MockedStatic;
+ import org.mockito.junit.jupiter.MockitoExtension;
+@@ -365,6 +367,112 @@ class WebSearchToolTest {
+         verify(news, org.mockito.Mockito.never()).search(anyString(), anyInt());
+     }
+ 
++    @ParameterizedTest
++    @ValueSource(strings = {
++        "january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december",
++        "январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь",
++        "января", "январе", "ноября", "ноябре", "2026"
++    })
++    void newsMonthCannotAdmitAnUnrelatedTopic(String period) throws Exception {
++        String query = "technology news " + period;
++        AgentProperties properties = properties();
++        properties.getWeb().setSearxngUrl("http://searxng.local");
++        GoogleNewsRssSearchProvider news = mock(GoogleNewsRssSearchProvider.class);
++        when(news.search(org.mockito.ArgumentMatchers.eq(query), anyInt())).thenReturn(List.of(
++            Map.of("title", "Technology research", "url", "https://news.example/tech", "description", "New chips"),
++            Map.of("title", period + " city news", "url", "https://news.example/city", "description", "Local events")));
++        when(urlSafety.isUrlAllowed(anyString())).thenReturn(true);
++        WebSearchTool tool = configuredSearxngTool(properties, news, query);
++
++        ToolResult result = tool.execute(objectMapper.writeValueAsString(Map.of("query", query, "limit", 2)), null, null);
++
++        assertThat(result.success()).isTrue();
++        assertThat(objectMapper.readTree(result.content()).path("data").path("web")).hasSize(1);
++        assertThat(objectMapper.readTree(result.content()).path("data").path("web").get(0).path("title").asText())
++            .isEqualTo("Technology research");
++    }
++
++    @Test
++    void shortNewsTopicDoesNotMatchInsideAnotherWord() throws Exception {
++        String query = "AI news";
++        AgentProperties properties = properties();
++        properties.getWeb().setSearxngUrl("http://searxng.local");
++        GoogleNewsRssSearchProvider news = mock(GoogleNewsRssSearchProvider.class);
++        when(news.search(org.mockito.ArgumentMatchers.eq(query), anyInt())).thenReturn(List.of(
++            Map.of("title", "AI chips", "url", "https://news.example/ai", "description", "Machine learning"),
++            Map.of("title", "Rail services", "url", "https://news.example/rail", "description", "City transport")));
++        when(urlSafety.isUrlAllowed(anyString())).thenReturn(true);
++        WebSearchTool tool = configuredSearxngTool(properties, news, query);
++
++        ToolResult result = tool.execute(objectMapper.writeValueAsString(Map.of("query", query, "limit", 2)), null, null);
++
++        assertThat(result.success()).isTrue();
++        assertThat(objectMapper.readTree(result.content()).path("data").path("web")).hasSize(1);
++        assertThat(objectMapper.readTree(result.content()).path("data").path("web").get(0).path("title").asText())
++            .isEqualTo("AI chips");
++    }
++
++    @Test
++    void unrelatedSearxngNewsUsesTheFilteredFallback() throws Exception {
++        String query = "AI news";
++        AgentProperties properties = properties();
++        properties.getWeb().setSearxngUrl("http://searxng.local");
++        GoogleNewsRssSearchProvider news = mock(GoogleNewsRssSearchProvider.class);
++        when(news.search(org.mockito.ArgumentMatchers.eq(query), anyInt())).thenReturn(List.of(
++            Map.of("title", "AI chips", "url", "https://news.example/ai", "description", "Machine learning")));
++        when(urlSafety.isUrlAllowed(anyString())).thenReturn(true);
++        WebSearchTool tool = configuredSearxngTool(properties, news, query);
++        SearXngSearchProvider searxng = (SearXngSearchProvider) org.springframework.test.util.ReflectionTestUtils
++            .getField(tool, "searXngProvider");
++        when(searxng.search(query, 20)).thenReturn(List.of(
++            Map.of("title", "Rail services", "url", "https://news.example/rail", "description", "City transport")));
++
++        ToolResult result = tool.execute(objectMapper.writeValueAsString(Map.of("query", query, "limit", 2)), null, null);
++
++        assertThat(result.success()).isTrue();
++        assertThat(objectMapper.readTree(result.content()).path("data").path("web")).hasSize(1);
++        assertThat(objectMapper.readTree(result.content()).path("data").path("web").get(0).path("title").asText())
++            .isEqualTo("AI chips");
++        verify(news).search(org.mockito.ArgumentMatchers.eq(query), anyInt());
++    }
++
++    @Test
++    void longNewsTopicStillMatchesWordExtensions() throws Exception {
++        String query = "crypto news";
++        AgentProperties properties = properties();
++        properties.getWeb().setSearxngUrl("http://searxng.local");
++        GoogleNewsRssSearchProvider news = mock(GoogleNewsRssSearchProvider.class);
++        when(news.search(org.mockito.ArgumentMatchers.eq(query), anyInt())).thenReturn(List.of(
++            Map.of("title", "Cryptocurrency research", "url", "https://news.example/crypto", "description", "New tokens")));
++        when(urlSafety.isUrlAllowed(anyString())).thenReturn(true);
++        WebSearchTool tool = configuredSearxngTool(properties, news, query);
++
++        ToolResult result = tool.execute(objectMapper.writeValueAsString(Map.of("query", query, "limit", 2)), null, null);
++
++        assertThat(result.success()).isTrue();
++        assertThat(objectMapper.readTree(result.content()).path("data").path("web")).hasSize(1);
++    }
++
++    @Test
++    void technologySemanticAiDoesNotMatchInsideOtherWords() throws Exception {
++        String query = "новости технологий";
++        AgentProperties properties = properties();
++        properties.getWeb().setSearxngUrl("http://searxng.local");
++        GoogleNewsRssSearchProvider news = mock(GoogleNewsRssSearchProvider.class);
++        when(news.search(query, 20)).thenReturn(List.of(
++            Map.of("title", "AI chips", "url", "https://news.example/ai", "description", "Machine learning"),
++            Map.of("title", "Rail services", "url", "https://news.example/rail", "description", "City transport")));
++        when(urlSafety.isUrlAllowed(anyString())).thenReturn(true);
++        WebSearchTool tool = configuredSearxngTool(properties, news, query);
++
++        ToolResult result = tool.execute(objectMapper.writeValueAsString(Map.of("query", query, "limit", 2)), null, null);
++
++        assertThat(result.success()).isTrue();
++        assertThat(objectMapper.readTree(result.content()).path("data").path("web")).hasSize(1);
++        assertThat(objectMapper.readTree(result.content()).path("data").path("web").get(0).path("title").asText())
++            .isEqualTo("AI chips");
++    }
++
+     private WebSearchTool configuredSearxngTool(AgentProperties properties, GoogleNewsRssSearchProvider news,
+                                                 String query) throws IOException {
+         WebSearchTool tool = new WebSearchTool(properties, objectMapper, urlSafety, redactor, news);

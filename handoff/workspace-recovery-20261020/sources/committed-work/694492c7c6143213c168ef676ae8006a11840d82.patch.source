@@ -1,0 +1,13 @@
+diff --git a/scripts/e2e-docker-compose-test.sh b/scripts/e2e-docker-compose-test.sh
+index e49a8a5f..1751e0b1 100755
+--- a/scripts/e2e-docker-compose-test.sh
++++ b/scripts/e2e-docker-compose-test.sh
+@@ -141,7 +141,7 @@ assert_contains "Test 1d: Readiness group UP" "${HEALTH_BODY}" '"status":"UP"' |
+ # Test 2: Sync chat
+ # ──────────────────────────────────────────────────────────
+ echo -e "${YELLOW}[e2e]${NC} Test 2: Sync chat request..."
+-SESSION_ID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
++SESSION_ID=$(python3 -c 'import uuid; print(uuid.uuid4())')
+ CHAT_RESPONSE=$(curl -H "X-API-Key: ${E2E_API_KEY}" -fsS -X POST "${AGENT_URL}/api/v1/agent/chat" \
+     -H 'Content-Type: application/json' \
+     -d "{\"sessionId\":\"${SESSION_ID}\",\"message\":\"hello docker e2e\"}")

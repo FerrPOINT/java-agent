@@ -1,0 +1,1195 @@
+diff --git a/.gitattributes b/.gitattributes
+new file mode 100644
+index 00000000..d594a335
+--- /dev/null
++++ b/.gitattributes
+@@ -0,0 +1,3 @@
++
++# Portable executable maintenance scripts.
++scripts/*.sh text eol=lf
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index a918c2db..9c5982dd 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -39,20 +39,6 @@ jobs:
+     name: Test
+     runs-on: ubuntu-latest
+     timeout-minutes: 40
+-    services:
+-      postgres:
+-        image: postgres:17.6-alpine
+-        env:
+-          POSTGRES_DB: usage_regression
+-          POSTGRES_USER: qa
+-          POSTGRES_PASSWORD: owned-qa-only
+-        ports:
+-          - 5432:5432
+-        options: >-
+-          --health-cmd "pg_isready -U qa -d usage_regression"
+-          --health-interval 2s
+-          --health-timeout 2s
+-          --health-retries 30
+     steps:
+       - uses: actions/checkout@v7
+ 
+@@ -79,13 +65,23 @@ jobs:
+         working-directory: backend
+         run: ./gradlew test --no-daemon
+ 
+-      - name: Session persistence and transaction boundaries against PostgreSQL
+-        working-directory: backend
+-        run: ./gradlew slowTest --tests 'com.azhukov.agent.service.*PersistenceConcurrencyTest' --no-daemon
+-        env:
+-          USAGE_PERSISTENCE_TEST_JDBC_URL: jdbc:postgresql://127.0.0.1:5432/usage_regression
+-          USAGE_PERSISTENCE_TEST_DB_USER: qa
+-          USAGE_PERSISTENCE_TEST_DB_PASSWORD: owned-qa-only
++      - name: Checkout pinned Base Compose helpers
++        uses: actions/checkout@v7
++        with:
++          repository: FerrPOINT/services-base
++          ref: bff9bfa8b7669ef23bd64dba36e78eb750eb43d4
++          path: .base-tools
++          persist-credentials: false
++
++      - name: Accepted image parents and Docker ownership policy
++        run: |
++          python3 .base-tools/scripts/build_provenance.py --recipe Dockerfile
++          python3 .base-tools/scripts/check_docker_invocations.py --repo .
++
++      - name: PostgreSQL integration tests in owned Compose project
++        run: |
++          docker --context default pull postgres:17.6-alpine
++          python3 scripts/run_postgres_tests.py --docker-context default --base-directory .base-tools -- ./backend/gradlew -p backend slowTest --no-daemon
+ 
+       - name: Coverage report (visibility, non-blocking)
+         working-directory: backend
+diff --git a/Dockerfile b/Dockerfile
+index ec48fa58..60309d97 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -1,5 +1,5 @@
+ # syntax=docker/dockerfile:1
+-FROM eclipse-temurin:25-jdk-noble AS builder
++FROM eclipse-temurin:25.0.4.1_1-jdk-noble@sha256:0d623ea18d7b0fe1e12a2c0a920f7e950cad433387e5a49d3611e1507fa07602 AS builder
+ 
+ WORKDIR /workspace
+ COPY backend/gradle/ gradle/
+@@ -11,7 +11,7 @@ COPY backend/src src
+ COPY shared/ shared/
+ RUN ./gradlew bootJar --no-daemon -x test
+ 
+-FROM eclipse-temurin:25-jre-noble
++FROM eclipse-temurin:25.0.4.1_1-jre-noble@sha256:398f810215757dc1926390014272579fb0e57c41ef1c8aa4f64ae761613a168b
+ 
+ # Chromium runtime dependencies
+ RUN apt-get update \
+diff --git a/backend/build.gradle b/backend/build.gradle
+index 93f85906..8977b424 100644
+--- a/backend/build.gradle
++++ b/backend/build.gradle
+@@ -110,10 +110,6 @@ dependencies {
+     runtimeOnly 'com.h2database:h2'
+     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+ 
+-    // Testcontainers for real PostgreSQL integration tests
+-    testImplementation 'org.testcontainers:testcontainers:1.21.4'
+-    testImplementation 'org.testcontainers:postgresql:1.21.4'
+-    testImplementation 'org.testcontainers:junit-jupiter:1.21.4'
+ }
+ 
+ tasks.named('test') {
+diff --git a/backend/src/main/java/com/azhukov/agent/api/filter/ApiCorsFilter.java b/backend/src/main/java/com/azhukov/agent/api/filter/ApiCorsFilter.java
+index f39ef96d..a7ae41fe 100644
+--- a/backend/src/main/java/com/azhukov/agent/api/filter/ApiCorsFilter.java
++++ b/backend/src/main/java/com/azhukov/agent/api/filter/ApiCorsFilter.java
+@@ -19,13 +19,13 @@ import java.util.List;
+ import java.util.Set;
+ 
+ @Component
+-@Order(Ordered.HIGHEST_PRECEDENCE)
++@Order(Ordered.HIGHEST_PRECEDENCE + 1)
+ @RequiredArgsConstructor
+ public class ApiCorsFilter extends OncePerRequestFilter {
+ 
+     private static final String ALLOW_METHODS = "DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT";
+     private static final String ALLOW_HEADERS = "Authorization, Content-Type, Idempotency-Key, X-API-Key, "
+-        + "X-Hermes-Session-Id, X-Hermes-Session-Key, X-Hermes-Session-Token";
++        + "X-Hermes-Session-Id, X-Hermes-Session-Key, X-Hermes-Session-Token, X-Request-Id";
+     private static final String MAX_AGE_SECONDS = "600";
+     private static final Set<String> LOOPBACK_HOSTS = Set.of("localhost", "127.0.0.1", "::1");
+ 
+@@ -101,6 +101,7 @@ public class ApiCorsFilter extends OncePerRequestFilter {
+                                   boolean wildcard) {
+         response.setHeader("Access-Control-Allow-Origin", wildcard ? "*" : origin);
+         response.setHeader("Access-Control-Allow-Methods", ALLOW_METHODS);
++        response.setHeader("Access-Control-Expose-Headers", "X-Request-Id");
+         String requestedHeaders = request.getHeader("Access-Control-Request-Headers");
+         response.setHeader("Access-Control-Allow-Headers",
+             requestedHeaders != null && !requestedHeaders.isBlank() ? requestedHeaders : ALLOW_HEADERS);
+diff --git a/backend/src/main/java/com/azhukov/agent/api/filter/RequestIdFilter.java b/backend/src/main/java/com/azhukov/agent/api/filter/RequestIdFilter.java
+new file mode 100644
+index 00000000..90e2c2ca
+--- /dev/null
++++ b/backend/src/main/java/com/azhukov/agent/api/filter/RequestIdFilter.java
+@@ -0,0 +1,63 @@
++package com.azhukov.agent.api.filter;
++
++import jakarta.servlet.FilterChain;
++import jakarta.servlet.ServletException;
++import jakarta.servlet.http.HttpServletRequest;
++import jakarta.servlet.http.HttpServletResponse;
++import lombok.extern.slf4j.Slf4j;
++import org.slf4j.MDC;
++import org.springframework.core.Ordered;
++import org.springframework.core.annotation.Order;
++import org.springframework.stereotype.Component;
++import org.springframework.web.filter.OncePerRequestFilter;
++
++import java.io.IOException;
++import java.util.UUID;
++
++@Slf4j
++@Component
++@Order(Ordered.HIGHEST_PRECEDENCE)
++public class RequestIdFilter extends OncePerRequestFilter {
++    public static final String HEADER = "X-Request-Id";
++
++    static String requestId(String supplied) {
++        if (supplied != null && supplied.matches("[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}")) {
++            return supplied;
++        }
++        return UUID.randomUUID().toString();
++    }
++
++    @Override
++    protected boolean shouldNotFilterErrorDispatch() {
++        return false;
++    }
++
++    @Override
++    protected boolean shouldNotFilterAsyncDispatch() {
++        return false;
++    }
++
++    @Override
++    protected void doFilterNestedErrorDispatch(HttpServletRequest request, HttpServletResponse response,
++                                              FilterChain chain) throws ServletException, IOException {
++        doFilterInternal(request, response, chain);
++    }
++
++    @Override
++    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
++                                    FilterChain chain) throws ServletException, IOException {
++        String id = request.getAttribute(HEADER) instanceof String previous ? previous : requestId(request.getHeader(HEADER));
++        request.setAttribute(HEADER, id);
++        response.setHeader(HEADER, id);
++        String previous = MDC.get("request_id");
++        MDC.put("request_id", id);
++        long started = System.nanoTime();
++        try {
++            chain.doFilter(request, response);
++        } finally {
++            log.info("request_id={} method={} path={} status={} elapsed_ms={}", id, request.getMethod(),
++                request.getRequestURI(), response.getStatus(), (System.nanoTime() - started) / 1_000_000);
++            if (previous == null) MDC.remove("request_id"); else MDC.put("request_id", previous);
++        }
++    }
++}
+diff --git a/backend/src/main/java/com/azhukov/agent/api/filter/RequestIdFilterConfiguration.java b/backend/src/main/java/com/azhukov/agent/api/filter/RequestIdFilterConfiguration.java
+new file mode 100644
+index 00000000..551ba6c5
+--- /dev/null
++++ b/backend/src/main/java/com/azhukov/agent/api/filter/RequestIdFilterConfiguration.java
+@@ -0,0 +1,22 @@
++package com.azhukov.agent.api.filter;
++
++import jakarta.servlet.DispatcherType;
++import org.springframework.boot.web.servlet.FilterRegistrationBean;
++import org.springframework.context.annotation.Bean;
++import org.springframework.context.annotation.Configuration;
++import org.springframework.core.Ordered;
++
++import java.util.EnumSet;
++
++/** Preserve correlation when the servlet container dispatches an error or SSE continuation. */
++@Configuration(proxyBeanMethods = false)
++public class RequestIdFilterConfiguration {
++    @Bean
++    FilterRegistrationBean<RequestIdFilter> requestIdFilterRegistration(RequestIdFilter filter) {
++        var registration = new FilterRegistrationBean<>(filter);
++        registration.setOrder(Ordered.HIGHEST_PRECEDENCE);
++        registration.setAsyncSupported(true);
++        registration.setDispatcherTypes(EnumSet.of(DispatcherType.REQUEST, DispatcherType.ASYNC, DispatcherType.ERROR));
++        return registration;
++    }
++}
+diff --git a/backend/src/main/java/com/azhukov/agent/health/StorageReadinessHealthIndicator.java b/backend/src/main/java/com/azhukov/agent/health/StorageReadinessHealthIndicator.java
+new file mode 100644
+index 00000000..13f107cd
+--- /dev/null
++++ b/backend/src/main/java/com/azhukov/agent/health/StorageReadinessHealthIndicator.java
+@@ -0,0 +1,96 @@
++package com.azhukov.agent.health;
++
++import jakarta.annotation.PreDestroy;
++import lombok.RequiredArgsConstructor;
++import lombok.extern.slf4j.Slf4j;
++import org.flywaydb.core.Flyway;
++import org.springframework.beans.factory.ObjectProvider;
++import org.springframework.beans.factory.annotation.Value;
++import org.springframework.boot.health.contributor.Health;
++import org.springframework.boot.health.contributor.HealthIndicator;
++import org.springframework.stereotype.Component;
++
++import javax.sql.DataSource;
++import java.util.concurrent.Executors;
++import java.util.concurrent.Semaphore;
++import java.util.concurrent.TimeUnit;
++import java.util.concurrent.atomic.AtomicInteger;
++
++/** Read-only, bounded connectivity and migration validation for readiness only. */
++@Slf4j
++@Component
++@RequiredArgsConstructor
++public class StorageReadinessHealthIndicator implements HealthIndicator, AutoCloseable {
++    private final DataSource dataSource;
++    private final ObjectProvider<Flyway> flyway;
++    private final Semaphore active = new Semaphore(1);
++    private final java.util.concurrent.ExecutorService executor =
++        Executors.newSingleThreadExecutor(Thread.ofVirtual().name("storage-readiness").factory());
++
++    @Value("${spring.flyway.enabled:true}")
++    private boolean migrationsEnabled = true;
++
++    @Override
++    public Health health() {
++        // A timed-out JDBC operation retains its permit until it actually exits.
++        // Repeated probes cannot queue work or exhaust the business pool.
++        if (!active.tryAcquire()) {
++            return Health.down().withDetail("reason", "probe busy").build();
++        }
++        var state = new AtomicInteger();
++        var result = executor.submit(() -> {
++            if (!state.compareAndSet(0, 1)) {
++                return Health.down().withDetail("reason", "probe cancelled").build();
++            }
++            try {
++                try (var connection = dataSource.getConnection()) {
++                    if (!connection.isValid(2)) {
++                        return Health.down().withDetail("reason", "database unavailable").build();
++                    }
++                    if (migrationsEnabled) {
++                        try (var statement = connection.createStatement()) {
++                            statement.setQueryTimeout(2);
++                            try (var ignored = statement.executeQuery("SELECT user_id FROM bot_sessions LIMIT 0")) {
++                                // Planning verifies required schema without reading user rows.
++                            }
++                        }
++                    }
++                }
++                if (migrationsEnabled) {
++                    var migrations = flyway.getIfAvailable();
++                    if (migrations == null || !migrations.validateWithResult().validationSuccessful) {
++                        return Health.down().withDetail("reason", "schema incompatible").build();
++                    }
++                    for (var migration : migrations.info().all()) {
++                        switch (migration.getState()) {
++                            case SUCCESS, OUT_OF_ORDER, BASELINE, BELOW_BASELINE -> { }
++                            default -> { return Health.down().withDetail("reason", "schema incompatible").build(); }
++                        }
++                    }
++                }
++                return Health.up().build();
++            } catch (Exception error) {
++                log.warn("Storage readiness failed ({})", error.getClass().getSimpleName());
++                return Health.down().withDetail("reason", "storage unavailable").build();
++            } finally {
++                active.release();
++            }
++        });
++        try {
++            return result.get(2, TimeUnit.SECONDS);
++        } catch (Exception error) {
++            result.cancel(true);
++            if (state.compareAndSet(0, 2)) active.release();
++            if (error instanceof InterruptedException) {
++                Thread.currentThread().interrupt();
++            }
++            return Health.down().withDetail("reason", "probe timeout").build();
++        }
++    }
++
++    @PreDestroy
++    @Override
++    public void close() {
++        executor.shutdownNow();
++    }
++}
+diff --git a/backend/src/main/resources/application.yml b/backend/src/main/resources/application.yml
+index c37a8e4b..00952c7a 100644
+--- a/backend/src/main/resources/application.yml
++++ b/backend/src/main/resources/application.yml
+@@ -460,7 +460,7 @@ management:
+         # readiness/liveness stay FAST — browser/chromium checks (30s+ with a
+         # cold browser) and live model checks belong to explicit groups.
+         readiness:
+-          include: db
++          include: storageReadiness
+         liveness:
+           include: livenessState,ping
+         infrastructure:
+diff --git a/backend/src/test/java/com/azhukov/agent/api/filter/ApiCorsFilterTest.java b/backend/src/test/java/com/azhukov/agent/api/filter/ApiCorsFilterTest.java
+index 78173c13..60255947 100644
+--- a/backend/src/test/java/com/azhukov/agent/api/filter/ApiCorsFilterTest.java
++++ b/backend/src/test/java/com/azhukov/agent/api/filter/ApiCorsFilterTest.java
+@@ -89,7 +89,8 @@ class ApiCorsFilterTest {
+         verify(response).setHeader("Access-Control-Allow-Origin", "https://app.example");
+         verify(response).setHeader("Access-Control-Allow-Methods", "DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT");
+         verify(response).setHeader("Access-Control-Allow-Headers",
+-            "Authorization, Content-Type, Idempotency-Key, X-API-Key, X-Hermes-Session-Id, X-Hermes-Session-Key, X-Hermes-Session-Token");
++            "Authorization, Content-Type, Idempotency-Key, X-API-Key, X-Hermes-Session-Id, X-Hermes-Session-Key, X-Hermes-Session-Token, X-Request-Id");
++        verify(response).setHeader("Access-Control-Expose-Headers", "X-Request-Id");
+         verify(response).setHeader("Access-Control-Max-Age", "600");
+         verify(response).setHeader("Vary", "Origin");
+         verify(chain).doFilter(request, response);
+diff --git a/backend/src/test/java/com/azhukov/agent/api/filter/RequestIdFilterTest.java b/backend/src/test/java/com/azhukov/agent/api/filter/RequestIdFilterTest.java
+new file mode 100644
+index 00000000..cf4b92e9
+--- /dev/null
++++ b/backend/src/test/java/com/azhukov/agent/api/filter/RequestIdFilterTest.java
+@@ -0,0 +1,40 @@
++package com.azhukov.agent.api.filter;
++
++import org.junit.jupiter.api.Test;
++import org.slf4j.MDC;
++import org.springframework.mock.web.MockHttpServletRequest;
++import org.springframework.mock.web.MockHttpServletResponse;
++
++import java.util.UUID;
++
++import static org.assertj.core.api.Assertions.assertThat;
++
++class RequestIdFilterTest {
++    @Test
++    void preservesUuidAndCorrelatesRejectedResponse() throws Exception {
++        var request = new MockHttpServletRequest();
++        var response = new MockHttpServletResponse();
++        var id = UUID.randomUUID().toString();
++        request.addHeader(RequestIdFilter.HEADER, id);
++        new RequestIdFilter().doFilter(request, response, (incoming, outgoing) -> {
++            assertThat(MDC.get("request_id")).isEqualTo(id);
++            ((jakarta.servlet.http.HttpServletResponse) outgoing).setStatus(403);
++        });
++        assertThat(response.getStatus()).isEqualTo(403);
++        assertThat(response.getHeader(RequestIdFilter.HEADER)).isEqualTo(id);
++        assertThat(MDC.get("request_id")).isNull();
++    }
++
++    @Test
++    void replacesUntrustedHeaderAndRetainsIdOnException() {
++        var request = new MockHttpServletRequest();
++        var response = new MockHttpServletResponse();
++        request.addHeader(RequestIdFilter.HEADER, "log-injection");
++        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
++            new RequestIdFilter().doFilter(request, response, (incoming, outgoing) -> {
++                throw new jakarta.servlet.ServletException("fixture");
++            })).isInstanceOf(jakarta.servlet.ServletException.class);
++        assertThat(UUID.fromString(response.getHeader(RequestIdFilter.HEADER))).isNotNull();
++        assertThat(MDC.get("request_id")).isNull();
++    }
++}
+diff --git a/backend/src/test/java/com/azhukov/agent/health/StorageReadinessHealthIndicatorTest.java b/backend/src/test/java/com/azhukov/agent/health/StorageReadinessHealthIndicatorTest.java
+new file mode 100644
+index 00000000..a7ada99f
+--- /dev/null
++++ b/backend/src/test/java/com/azhukov/agent/health/StorageReadinessHealthIndicatorTest.java
+@@ -0,0 +1,79 @@
++package com.azhukov.agent.health;
++
++import org.flywaydb.core.Flyway;
++import org.flywaydb.core.api.MigrationInfo;
++import org.flywaydb.core.api.MigrationInfoService;
++import org.flywaydb.core.api.MigrationState;
++import org.flywaydb.core.api.output.ValidateResult;
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.EnumSource;
++import org.springframework.beans.factory.ObjectProvider;
++import org.springframework.boot.health.contributor.Status;
++
++import javax.sql.DataSource;
++import java.sql.Connection;
++import java.util.concurrent.CountDownLatch;
++
++import static org.assertj.core.api.Assertions.assertThat;
++import static org.mockito.Mockito.*;
++
++class StorageReadinessHealthIndicatorTest {
++    @SuppressWarnings("unchecked")
++    @ParameterizedTest
++    @EnumSource(value = MigrationState.class, names = {"PENDING", "FUTURE_SUCCESS", "MISSING_SUCCESS", "FAILED", "IGNORED"})
++    void rejectsIncompatibleMigrationWithoutExecutingMigrate(MigrationState incompatible) throws Exception {
++        var source = mock(DataSource.class);
++        var connection = mock(Connection.class);
++        when(source.getConnection()).thenReturn(connection);
++        when(connection.isValid(2)).thenReturn(true);
++        var statement = mock(java.sql.Statement.class);
++        when(connection.createStatement()).thenReturn(statement);
++        when(statement.executeQuery(anyString())).thenReturn(mock(java.sql.ResultSet.class));
++        var flyway = mock(Flyway.class);
++        var result = new ValidateResult("synthetic", "qa", null, true, 0, java.util.List.of(), java.util.List.of());
++        when(flyway.validateWithResult()).thenReturn(result);
++        var info = mock(MigrationInfoService.class);
++        when(flyway.info()).thenReturn(info);
++        var migration = mock(MigrationInfo.class);
++        when(migration.getState()).thenReturn(incompatible);
++        when(info.all()).thenReturn(new MigrationInfo[]{migration});
++        ObjectProvider<Flyway> provider = mock(ObjectProvider.class);
++        when(provider.getIfAvailable()).thenReturn(flyway);
++        try (var probe = new StorageReadinessHealthIndicator(source, provider)) {
++            assertThat(probe.health().getStatus()).isEqualTo(Status.DOWN);
++            when(migration.getState()).thenReturn(MigrationState.SUCCESS);
++            assertThat(probe.health().getStatus()).isEqualTo(Status.UP);
++            verify(flyway, never()).migrate();
++        }
++    }
++
++    @SuppressWarnings("unchecked")
++    @Test
++    void blockedAcquisitionIsBoundedAndRepeatedProbesDoNotQueue() throws Exception {
++        var source = mock(DataSource.class);
++        var release = new CountDownLatch(1);
++        when(source.getConnection()).thenAnswer(invocation -> {
++            boolean done = false;
++            while (!done) {
++                try { release.await(); done = true; } catch (InterruptedException ignored) { }
++            }
++            throw new java.sql.SQLException("private credential sentinel");
++        });
++        ObjectProvider<Flyway> provider = mock(ObjectProvider.class);
++        var probe = new StorageReadinessHealthIndicator(source, provider);
++        try {
++            long started = System.nanoTime();
++            var health = probe.health();
++            assertThat(health.getStatus()).isEqualTo(Status.DOWN);
++            assertThat((System.nanoTime() - started) / 1_000_000).isLessThan(4000);
++            assertThat(probe.health().getDetails()).containsEntry("reason", "probe busy");
++            verify(source, times(1)).getConnection();
++            assertThat(health.getDetails().toString()).doesNotContain("sentinel");
++        } finally {
++            release.countDown();
++            probe.close();
++        }
++    }
++
++}
+diff --git a/backend/src/test/java/com/azhukov/agent/persistence/PostgresTestContainer.java b/backend/src/test/java/com/azhukov/agent/persistence/PostgresTestContainer.java
+index 58d9257c..a7cd494f 100644
+--- a/backend/src/test/java/com/azhukov/agent/persistence/PostgresTestContainer.java
++++ b/backend/src/test/java/com/azhukov/agent/persistence/PostgresTestContainer.java
+@@ -2,39 +2,40 @@ package com.azhukov.agent.persistence;
+ 
+ import org.springframework.test.context.DynamicPropertyRegistry;
+ import org.springframework.test.context.DynamicPropertySource;
+-import org.testcontainers.containers.PostgreSQLContainer;
+-import org.testcontainers.junit.jupiter.Testcontainers;
+-import org.testcontainers.utility.DockerImageName;
+ 
+ /**
+- * Shared PostgreSQL Testcontainer configuration for integration tests.
+- * Subclass this to get a real PostgreSQL 16 container with Flyway migrations.
++ * Shared external PostgreSQL 17.6 configuration for Compose-owned integration tests.
+  *
+- * The container is a JVM-wide SINGLETON (started once, reused by every test
++ * The database endpoint is a JVM-wide SINGLETON (reused by every test
+  * class). Per-class @Container containers broke Spring's context cache: each
+  * subclass got a fresh container URL, but the cached ApplicationContext kept
+  * the old HikariPool pointed at the previous (stopped) container —
+  * "Connection is not available / connection refused" after the first class.
+- * With one shared container the cached context stays valid across classes.
++ * One explicit Compose endpoint keeps the cached context valid across classes.
+  */
+-@Testcontainers
+ public abstract class PostgresTestContainer {
+ 
+-    private static final PostgreSQLContainer<?> POSTGRES =
+-        new PostgreSQLContainer<>(DockerImageName.parse("postgres:16-alpine"))
+-            .withDatabaseName("test")
+-            .withUsername("test")
+-            .withPassword("test")
+-            .withReuse(true);
++    private static final String PROJECT = required("SDLC_TEST_COMPOSE_PROJECT");
++    private static final String URL = required("SDLC_TEST_DATABASE_URL");
++    private static final String USER = required("SDLC_TEST_DATABASE_USER");
++    private static final String PASSWORD = required("SDLC_TEST_DATABASE_PASSWORD");
+ 
+-    static {
+-        POSTGRES.start(); // singleton — started once per JVM, Ryuk cleans up
++    private static String required(String name) {
++        String value = System.getenv(name);
++        if (value == null || value.isBlank()) {
++            throw new IllegalStateException("Missing " + name + "; use scripts/run_postgres_tests.py with an explicit Docker context");
++        }
++        return value;
+     }
+ 
+     @DynamicPropertySource
+     static void configureProperties(DynamicPropertyRegistry registry) {
+-        registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
+-        registry.add("spring.datasource.username", POSTGRES::getUsername);
+-        registry.add("spring.datasource.password", POSTGRES::getPassword);
++        if (!PROJECT.matches("sdlc-(qa|build)-[a-z0-9-]+")
++                || !URL.matches("jdbc:postgresql://[^/]+/sdlc_qa_[a-z0-9_]+(?:\\?.*)?")) {
++            throw new IllegalStateException("Integration tests require an owned disposable Compose database");
++        }
++        registry.add("spring.datasource.url", () -> URL);
++        registry.add("spring.datasource.username", () -> USER);
++        registry.add("spring.datasource.password", () -> PASSWORD);
+     }
+ }
+diff --git a/docker-compose.dev.yml b/docker-compose.dev.yml
+index f9eb4e27..f3136b58 100644
+--- a/docker-compose.dev.yml
++++ b/docker-compose.dev.yml
+@@ -4,12 +4,18 @@
+ # host home directory. The agent receives an empty /workspace and cannot inspect
+ # or execute the java-agent source tree unless an operator deliberately changes
+ # this deployment contract.
++# Legacy QA-only recipe. Installed workspaces use the Base profile and snapshot.
++x-ownership: &ownership
++  sdlc.task: ${SDLC_TASK:?Explicit QA task required}
++  sdlc.purpose: ${SDLC_PURPOSE:?Explicit QA purpose required}
++
+ services:
+-  backend:
++  java-agent-backend:
++    labels: *ownership
+     build:
+       context: .
+       dockerfile: Dockerfile
+-    image: java-agent-backend:dev
++    image: ${SDLC_COMPOSE_PROJECT:?Explicit QA project required}-java-agent-backend:candidate
+     init: true
+     user: "10001:10001"
+     depends_on:
+@@ -21,7 +27,7 @@ services:
+       DB_HOST: db
+       DB_PORT: "5432"
+       DB_NAME: ${DB_NAME:-java_agent}
+-      DB_USER: ${DB_USER:-project_workflow}
++      DB_USER: ${DB_USER:-java_agent}
+       DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+       AGENT_CORE_WORKING_DIRECTORY: /workspace
+       AGENT_MODEL_PROVIDER: ${AGENT_MODEL_PROVIDER:-openai-compatible}
+@@ -64,7 +70,7 @@ services:
+       - java_agent_workspace:/workspace
+       - java_agent_tmp:/tmp
+     networks:
+-      - runtime
++      {runtime: {aliases: [backend]}}
+     extra_hosts:
+       - "host.docker.internal:host-gateway"
+     read_only: true
+@@ -80,7 +86,7 @@ services:
+       timeout: 10s
+       retries: 8
+       start_period: 45s
+-    restart: unless-stopped
++    restart: "no"
+ 
+   # Free, unlimited, keyless search backend (self-hosted SearXNG, JSON API).
+   # Consumed by the backend's SearXngSearchProvider (agent.web.searxng-url);
+@@ -92,7 +98,12 @@ services:
+     environment:
+       SEARXNG_BASE_URL: http://searxng:8080/
+     volumes:
+-      - ./docker/searxng/settings.yml:/etc/searxng/settings.yml:ro
++      - type: bind
++        source: ./docker/searxng/settings.yml
++        target: /etc/searxng/settings.yml
++        read_only: true
++        bind:
++          create_host_path: false
+     networks:
+       - runtime
+     # The systemd dev backend runs on the host, so publish only to loopback.
+@@ -105,29 +116,30 @@ services:
+       timeout: 10s
+       retries: 5
+       start_period: 20s
+-    restart: unless-stopped
++    restart: "no"
+ 
+   bot:
++    labels: *ownership
+     build:
+       context: .
+       dockerfile: telegram-bot/Dockerfile
+-    image: java-agent-telegram-bot:dev
++    image: ${SDLC_COMPOSE_PROJECT:?Explicit QA project required}-java-agent-telegram-backend:candidate
+     init: true
+     user: "10001:10001"
+     depends_on:
+-      backend:
++      java-agent-backend:
+         condition: service_healthy
+     environment:
+       SPRING_PROFILES_ACTIVE: dev
+       DB_HOST: db
+       DB_PORT: "5432"
+       DB_NAME: ${DB_NAME:-java_agent}
+-      DB_USER: ${DB_USER:-project_workflow}
++      DB_USER: ${DB_USER:-java_agent}
+       DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+       BOT_SERVER_PORT: "8091"
+       BOT_MODE: polling
+       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN is required}
+-      BOT_BACKEND_URL: http://backend:8090
++      BOT_BACKEND_URL: http://java-agent-backend:8090
+       BOT_BACKEND_API_KEY: ${AGENT_SECURITY_API_KEY:-}
+       BOT_AGENT_NAME: ${BOT_AGENT_NAME:-Java Agent}
+       BOT_ALLOWED_USER_IDS: ${BOT_ALLOWED_USER_IDS:-}
+@@ -156,15 +168,19 @@ services:
+       timeout: 10s
+       retries: 8
+       start_period: 30s
+-    restart: unless-stopped
++    restart: "no"
+ 
+ networks:
+   runtime:
+-    name: java-agent-runtime
++    name: ${SDLC_DEV_NETWORK:?Select the owned development network}
+     external: true
+ 
+ volumes:
+   java_agent_state:
++    labels: *ownership
+   java_agent_chromium:
++    labels: *ownership
+   java_agent_workspace:
++    labels: *ownership
+   java_agent_tmp:
++    labels: *ownership
+diff --git a/docker-compose.e2e.yml b/docker-compose.e2e.yml
+index bcfe4c37..60369610 100644
+--- a/docker-compose.e2e.yml
++++ b/docker-compose.e2e.yml
+@@ -1,6 +1,10 @@
++# Disposable Compose E2E recipe; use scripts/e2e-docker-compose-test.sh.
+ services:
+   db:
+-    image: postgres:16-alpine
++    image: postgres:17.6-alpine
++    labels:
++      sdlc.task: ${SDLC_TASK_ID:?set task owner}
++      sdlc.purpose: java-e2e
+     environment:
+       POSTGRES_USER: project_workflow
+       POSTGRES_PASSWORD: project_workflow
+@@ -15,7 +19,10 @@ services:
+       timeout: 5s
+       retries: 5
+ 
+-  agent:
++  java-agent-backend:
++    labels:
++      sdlc.task: ${SDLC_TASK_ID:?set task owner}
++      sdlc.purpose: java-e2e
+     build:
+       context: .
+       dockerfile: Dockerfile
+@@ -42,19 +49,25 @@ services:
+       AGENT_MEMORY_ENABLED: "true"
+       AGENT_SKILLS_ENABLED: "true"
+     healthcheck:
+-      test: ["CMD-SHELL", "curl -fsS http://localhost:18090/actuator/health/readiness >/dev/null || exit 1"]
++      test: ["CMD-SHELL", "curl -fsS --max-time 5 http://localhost:18090/actuator/health/readiness >/dev/null || exit 1"]
+       interval: 5s
+-      timeout: 5s
++      timeout: 6s
+       retries: 10
+       start_period: 30s
+     networks:
+-      - e2e
++      {e2e: {aliases: [agent]}}
+     ports:
+-      - "18090:18090"
++      - "127.0.0.1:0:18090"
+ 
+ networks:
+   e2e:
+     driver: bridge
++    labels:
++      sdlc.task: ${SDLC_TASK_ID:?set task owner}
++      sdlc.purpose: java-e2e
+ 
+ volumes:
+-  java_agent_e2e_pg:
+\ No newline at end of file
++  java_agent_e2e_pg:
++    labels:
++      sdlc.task: ${SDLC_TASK_ID:?set task owner}
++      sdlc.purpose: java-e2e
+diff --git a/docker-compose.local.yml b/docker-compose.local.yml
+index 8e853a5c..a7a60809 100644
+--- a/docker-compose.local.yml
++++ b/docker-compose.local.yml
+@@ -36,7 +36,10 @@ services:
+       retries: 5
+       start_period: 20s
+ 
+-  agent:
++  java-agent-backend:
++    networks:
++      default:
++        aliases: [agent]
+     build:
+       context: .
+       dockerfile: Dockerfile
+@@ -87,7 +90,7 @@ services:
+     depends_on:
+       db:
+         condition: service_healthy
+-      agent:
++      java-agent-backend:
+         condition: service_healthy
+     environment:
+       SPRING_PROFILES_ACTIVE: dev
+@@ -99,7 +102,7 @@ services:
+       BOT_SERVER_PORT: 1182
+       BOT_MODE: polling
+       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+-      BOT_BACKEND_URL: http://agent:1180
++      BOT_BACKEND_URL: http://java-agent-backend:1180
+       BOT_BACKEND_API_KEY: ${AGENT_SECURITY_API_KEY:-}
+       BOT_AGENT_NAME: ${BOT_AGENT_NAME:-Джава агент}
+       BOT_ALLOWED_USER_IDS: ${BOT_ALLOWED_USER_IDS:-}
+@@ -119,10 +122,10 @@ services:
+       context: .
+       dockerfile: cli/Dockerfile
+     depends_on:
+-      agent:
++      java-agent-backend:
+         condition: service_healthy
+     environment:
+-      CLI_BACKEND_URL: http://agent:1180
++      CLI_BACKEND_URL: http://java-agent-backend:1180
+       CLI_API_KEY: ${AGENT_SECURITY_API_KEY:-}
+     profiles: ["cli"]
+     stdin_open: true
+diff --git a/docker-compose.prod.yml b/docker-compose.prod.yml
+index f505b5fa..817f97eb 100644
+--- a/docker-compose.prod.yml
++++ b/docker-compose.prod.yml
+@@ -44,7 +44,7 @@ services:
+     restart: unless-stopped
+ 
+   # ── Backend (Java Agent) ──
+-  agent:
++  java-agent-backend:
+     build:
+       context: .
+       dockerfile: Dockerfile
+@@ -77,8 +77,7 @@ services:
+       - agent_prod_chromium:/home/agent/.azhukov-agent
+       - ${AGENT_WORK_DIR:-./work}:/workspace
+     networks:
+-      - frontend
+-      - backend
++      {frontend - backend: {aliases: [agent]}}
+     deploy:
+       resources:
+         limits:
+@@ -107,7 +106,7 @@ services:
+     depends_on:
+       db:
+         condition: service_healthy
+-      agent:
++      java-agent-backend:
+         condition: service_healthy
+     environment:
+       SPRING_PROFILES_ACTIVE: prod
+@@ -119,7 +118,7 @@ services:
+       BOT_SERVER_PORT: "8091"
+       BOT_MODE: ${BOT_MODE:-polling}
+       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN is required}
+-      BOT_BACKEND_URL: http://agent:8080
++      BOT_BACKEND_URL: http://java-agent-backend:8080
+       BOT_BACKEND_API_KEY: ${AGENT_SECURITY_API_KEY:?AGENT_SECURITY_API_KEY is required}
+       BOT_AGENT_NAME: ${BOT_AGENT_NAME:-Java Agent}
+       BOT_ALLOWED_USER_IDS: ${BOT_ALLOWED_USER_IDS:-}
+diff --git a/docker-compose.yml b/docker-compose.yml
+index b14537d1..f4df632f 100644
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -16,7 +16,10 @@ services:
+       timeout: 5s
+       retries: 5
+ 
+-  agent:
++  java-agent-backend:
++    networks:
++      default:
++        aliases: [agent]
+     build:
+       context: .
+       dockerfile: Dockerfile
+diff --git a/docs/architecture/adr/ADR-010-testcontainers.md b/docs/architecture/adr/ADR-010-testcontainers.md
+index 5da0146f..98162be2 100644
+--- a/docs/architecture/adr/ADR-010-testcontainers.md
++++ b/docs/architecture/adr/ADR-010-testcontainers.md
+@@ -2,13 +2,16 @@
+ 
+ | | |
+ |---|---|
+-| **Status** | Accepted |
++| **Status** | Superseded by [ADR-016](ADR-016-compose-integration-tests.md) |
+ | **Date** | 2025-08-12 |
+ | **Deciders** | Project lead |
+ | **Tags** | testing, integration, postgresql |
+ 
+ ## Context
+ 
++Historical decision. Current PostgreSQL tests use an explicitly owned Compose
++project on PostgreSQL 17.6; Testcontainers dependencies have been removed.
++
+ The default test profile uses H2 in PostgreSQL compatibility mode. This is fast (milliseconds startup) and runs all 5000+ tests quickly. However, H2 does not perfectly replicate PostgreSQL behavior:
+ 
+ - JSONB and array types differ.
+diff --git a/docs/architecture/adr/ADR-016-compose-integration-tests.md b/docs/architecture/adr/ADR-016-compose-integration-tests.md
+new file mode 100644
+index 00000000..d1f7f8c8
+--- /dev/null
++++ b/docs/architecture/adr/ADR-016-compose-integration-tests.md
+@@ -0,0 +1,29 @@
++# ADR-016: Owned Compose PostgreSQL integration tests
++
++Status: Accepted. Date: 2026-10-04. Supersedes ADR-010.
++
++Slow integration tests require PostgreSQL 17.6 in a unique `sdlc-qa-*` project.
++`scripts/run_postgres_tests.py` selects an explicit Docker context, records the
++daemon identity, creates disposable storage and supplies JDBC settings to the
++Gradle process. Spring test contexts share that explicitly selected database;
++tests must clean their own fixtures. The historical `PostgresTestContainer`
++class name remains as a compatibility entry point and launches no containers.
++
++The required environment is `SDLC_TEST_COMPOSE_PROJECT`,
++`SDLC_TEST_DATABASE_URL`, `SDLC_TEST_DATABASE_USER` and
++`SDLC_TEST_DATABASE_PASSWORD`. Missing settings or a non-QA project/database
++fail before connecting. No fallback to an installed workspace is permitted.
++
++Run from the repository root with a checked-out, pinned Base source:
++
++```sh
++python3 scripts/run_postgres_tests.py --docker-context default \
++  --base-directory ../services-base -- ./backend/gradlew -p backend slowTest --no-daemon
++```
++
++The wrapper removes only its own containers and verifies project/task/purpose
++labels before deleting its disposable PostgreSQL volume in `finally`.
++Protected manifests and the cleanup journal remain under ignored `.local`.
++Credentials and test database contents are excluded from published artifacts.
++Ordinary H2 tests remain separate. PostgreSQL-specific regression tests belong
++to `slowTest`; CI runs the complete task through this wrapper.
+diff --git a/docs/plans/2026-10-04-unification-completion.md b/docs/plans/2026-10-04-unification-completion.md
+new file mode 100644
+index 00000000..140ca224
+--- /dev/null
++++ b/docs/plans/2026-10-04-unification-completion.md
+@@ -0,0 +1,7 @@
++# План унификации — 4 октября 2026
++
++Работа выполняется в отдельной task ветке. Закрываем Docker/naming, readiness собственной БД и схемы, request correlation, воспроизводимость сборки и UI contract/acceptance без доменных миграций. Существующие маршруты и wire formats совместимы; данные, secrets, snapshots и работающие контейнеры не меняются.
++
++Проверки: обязательные gates репозитория, PostgreSQL 17.6 в собственном временном Compose проекте, отрицательные HTTP/readiness contracts, выбранные workspace profiles, browser evidence после фиксации исходников. Изменения Base потребляются по exact SHA. Merge/deploy выполняются отдельно. Средства проверки не запускают production agents или внешние dispatch.
++
++Приёмка: окончательные task SHA проверены, результаты отражены в PR и обезличенном отчёте Base. Непроверенные пункты не отмечаются завершёнными.
+diff --git a/scripts/deploy-dev-docker.sh b/scripts/deploy-dev-docker.sh
+index ffc6d08f..e5bfe1d9 100755
+--- a/scripts/deploy-dev-docker.sh
++++ b/scripts/deploy-dev-docker.sh
+@@ -1,31 +1,67 @@
+ #!/usr/bin/env bash
+-# Build and run the dev agent in containers with no source-tree bind mount.
++# Legacy Linux-only isolated dev drill. Installed workspaces use Base startup.
+ set -euo pipefail
+ 
+ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+-COMPOSE=(docker compose --project-directory "$ROOT" --env-file "$ROOT/.env" -f "$ROOT/docker-compose.dev.yml")
+-NETWORK="java-agent-runtime"
+-DB_CONTAINER="java-agent-pg"
++: "${SDLC_DOCKER_CONTEXT:?Select the deployment Docker endpoint}"
++: "${SDLC_COMPOSE_PROJECT:?Select the deployment Compose project}"
++: "${SDLC_QA_ENV_FILE:?Select an explicit synthetic QA environment}"
++case "$SDLC_COMPOSE_PROJECT" in
++  sdlc-qa-*|sdlc-build-*) ;;
++  *) echo "Installed workspaces must use the Base root launcher." >&2; exit 1 ;;
++esac
++export SDLC_COMPOSE_PROJECT
++: "${SDLC_TASK:?Explicit QA owner task required}"
++: "${SDLC_PURPOSE:?Explicit QA purpose required}"
++export SDLC_TASK SDLC_PURPOSE
++BASE_DIR="${SDLC_BASE_DIR:-${ROOT}/../services-base}"
++test -f "$BASE_DIR/scripts/compose_probe.py"
++COMPOSE=(docker --context "$SDLC_DOCKER_CONTEXT" compose -p "$SDLC_COMPOSE_PROJECT" --project-directory "$ROOT" --env-file "$SDLC_QA_ENV_FILE" -f "$ROOT/docker-compose.dev.yml")
++: "${SDLC_DEV_NETWORK:?Select the owned QA network}"
++: "${SDLC_POSTGRES_CONTAINER:?Select the owned QA PostgreSQL container}"
++export SDLC_DEV_NETWORK
++NETWORK="$SDLC_DEV_NETWORK"
++DB_CONTAINER="$SDLC_POSTGRES_CONTAINER"
+ 
+ require_container() {
+-    if ! docker inspect "$1" >/dev/null 2>&1; then
++    if ! docker --context "$SDLC_DOCKER_CONTEXT" inspect "$1" >/dev/null 2>&1; then
+         echo "Required container '$1' does not exist; refusing to create a replacement database." >&2
+         exit 1
+     fi
+ }
+ 
+ require_container "$DB_CONTAINER"
+-docker network create "$NETWORK" >/dev/null 2>&1 || true
+-docker network connect --alias db "$NETWORK" "$DB_CONTAINER" >/dev/null 2>&1 || true
++owner="$(docker --context "$SDLC_DOCKER_CONTEXT" inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$DB_CONTAINER")"
++test "$owner" = "$SDLC_COMPOSE_PROJECT" || { echo "Foreign database refuses QA deployment." >&2; exit 1; }
++network_owner="$(docker --context "$SDLC_DOCKER_CONTEXT" network inspect --format '{{index .Labels "com.docker.compose.project"}}' "$NETWORK")"
++network_task="$(docker --context "$SDLC_DOCKER_CONTEXT" network inspect --format '{{index .Labels "sdlc.task"}}' "$NETWORK")"
++network_purpose="$(docker --context "$SDLC_DOCKER_CONTEXT" network inspect --format '{{index .Labels "sdlc.purpose"}}' "$NETWORK")"
++test "$network_owner" = "$SDLC_COMPOSE_PROJECT" && test "$network_task" = "$SDLC_TASK" && test "$network_purpose" = "$SDLC_PURPOSE" || { echo "Foreign QA network." >&2; exit 1; }
++cleanup() { "${COMPOSE[@]}" down --remove-orphans; }
++# Refuse shared/foreign resources before cleanup or any write.
++for id in $(docker --context "$SDLC_DOCKER_CONTEXT" ps -aq --filter "label=com.docker.compose.project=$SDLC_COMPOSE_PROJECT"); do
++    task="$(docker --context "$SDLC_DOCKER_CONTEXT" inspect --format '{{index .Config.Labels "sdlc.task"}}' "$id")"
++    purpose="$(docker --context "$SDLC_DOCKER_CONTEXT" inspect --format '{{index .Config.Labels "sdlc.purpose"}}' "$id")"
++    test "$task" = "$SDLC_TASK" && test "$purpose" = "$SDLC_PURPOSE" || {
++        echo "Foreign resource blocks disposable deployment." >&2; exit 1;
++    }
++done
++trap cleanup EXIT
+ 
+ # Ensure named runtime volumes are owned by the unprivileged application user.
+-for volume in java_agent_state java_agent_workspace java_agent_tmp; do
+-    docker run --rm -v "${ROOT##*/}_${volume}:/volume" alpine:3.22 chown -R 10001:10001 /volume
++for volume in java_agent_state java_agent_chromium java_agent_workspace java_agent_tmp; do
++    volume_name="$("${COMPOSE[@]}" config --format json | python3 -c 'import json,sys; print(json.load(sys.stdin)["volumes"][sys.argv[1]]["name"])' "$volume")"
++    docker --context "$SDLC_DOCKER_CONTEXT" volume inspect "$volume_name" >/dev/null
++    owner="$(docker --context "$SDLC_DOCKER_CONTEXT" volume inspect --format '{{index .Labels "com.docker.compose.project"}}' "$volume_name")"
++    task="$(docker --context "$SDLC_DOCKER_CONTEXT" volume inspect --format '{{index .Labels "sdlc.task"}}' "$volume_name")"
++    purpose="$(docker --context "$SDLC_DOCKER_CONTEXT" volume inspect --format '{{index .Labels "sdlc.purpose"}}' "$volume_name")"
++    test "$owner" = "$SDLC_COMPOSE_PROJECT" && test "$task" = "$SDLC_TASK" && test "$purpose" = "$SDLC_PURPOSE" || { echo "Foreign QA volume." >&2; exit 1; }
++    python3 "$BASE_DIR/scripts/compose_probe.py" --context "$SDLC_DOCKER_CONTEXT" \
++      --task "$SDLC_TASK" --purpose "$SDLC_PURPOSE" -- \
++      --volume "${volume_name}:/volume" alpine:3.22 chown -R 10001:10001 /volume
+ done
+ 
+-# The host services have unrestricted /opt/dev/java-agent access. Stop them
+-# before the container claims their localhost ports and Telegram polling token.
+-systemctl stop java-agent-bot.service java-agent-backend.service
++# Existing host services are outside this disposable drill and remain untouched.
+ 
+ "${COMPOSE[@]}" up -d --build --remove-orphans
+ 
+@@ -37,7 +73,7 @@ for _ in $(seq 1 30); do
+ done
+ curl -fsS --max-time 30 http://127.0.0.1:8090/actuator/health/readiness >/dev/null
+ 
+-backend_id="$("${COMPOSE[@]}" ps -q backend)"
++backend_id="$("${COMPOSE[@]}" ps -q java-agent-backend)"
+ bot_id="$("${COMPOSE[@]}" ps -q bot)"
+ for id in "$backend_id" "$bot_id"; do
+     if [ -z "$id" ]; then
+@@ -48,22 +84,22 @@ for id in "$backend_id" "$bot_id"; do
+ done
+ 
+ for _ in $(seq 1 30); do
+-    [ "$(docker inspect -f '{{.State.Health.Status}}' "$bot_id")" = "healthy" ] && break
++    [ "$(docker --context "$SDLC_DOCKER_CONTEXT" inspect -f '{{.State.Health.Status}}' "$bot_id")" = "healthy" ] && break
+     sleep 2
+ done
+-if [ "$(docker inspect -f '{{.State.Health.Status}}' "$bot_id")" != "healthy" ]; then
++if [ "$(docker --context "$SDLC_DOCKER_CONTEXT" inspect -f '{{.State.Health.Status}}' "$bot_id")" != "healthy" ]; then
+     echo "Telegram bot did not become healthy." >&2
+     "${COMPOSE[@]}" logs --tail=100 bot
+     exit 1
+ fi
+ curl -fsS --max-time 60 http://127.0.0.1:8090/actuator/health >/dev/null
+-docker exec "$bot_id" curl -fsS http://localhost:8091/bot/health >/dev/null
++docker --context "$SDLC_DOCKER_CONTEXT" exec "$bot_id" curl -fsS http://localhost:8091/bot/health >/dev/null
+ 
+ # A base image may contain an empty /root, but the host's agent state and source
+ # tree must never be present or accessible from either runtime container.
+ for id in "$backend_id" "$bot_id"; do
+     for forbidden in /opt/dev/java-agent /root/.hermes /root/.java-agent; do
+-        if docker exec "$id" test -e "$forbidden"; then
++        if docker --context "$SDLC_DOCKER_CONTEXT" exec "$id" test -e "$forbidden"; then
+             echo "Isolation check failed: $id can access $forbidden" >&2
+             exit 1
+         fi
+diff --git a/scripts/e2e-docker-compose-test.sh b/scripts/e2e-docker-compose-test.sh
+index 4d57553e..8eab5940 100755
+--- a/scripts/e2e-docker-compose-test.sh
++++ b/scripts/e2e-docker-compose-test.sh
+@@ -3,7 +3,16 @@ set -euo pipefail
+ 
+ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ COMPOSE_FILE="${PROJECT_ROOT}/docker-compose.e2e.yml"
+-AGENT_URL="http://localhost:18090"
++: "${SDLC_DOCKER_CONTEXT:?select the Docker context explicitly}"
++export SDLC_TASK_ID="${SDLC_TASK_ID:-java-e2e}"
++PROJECT="sdlc-qa-java-e2e-$(python3 -c 'import uuid; print(uuid.uuid4().hex[:12])')"
++COMPOSE=(docker --context "${SDLC_DOCKER_CONTEXT}" compose -p "${PROJECT}" -f "${COMPOSE_FILE}")
++VOLUME="${PROJECT}_java_agent_e2e_pg"
++if [[ -n "$(docker --context "${SDLC_DOCKER_CONTEXT}" ps -aq --filter "label=com.docker.compose.project=${PROJECT}")" ]] ||
++   docker --context "${SDLC_DOCKER_CONTEXT}" volume inspect "${VOLUME}" >/dev/null 2>&1; then
++    echo "Refusing an existing QA project or volume" >&2
++    exit 1
++fi
+ E2E_API_KEY="e2e-only-api-key-not-a-secret"
+ MAX_WAIT=180
+ PASSED=0
+@@ -17,21 +26,32 @@ NC='\033[0m'
+ 
+ function cleanup() {
+     echo -e "${YELLOW}[e2e]${NC} Cleaning up Docker Compose..."
+-    docker compose -f "${COMPOSE_FILE}" down -v || true
++    "${COMPOSE[@]}" down --remove-orphans || return 1
++    if docker --context "${SDLC_DOCKER_CONTEXT}" volume inspect "${VOLUME}" >/dev/null 2>&1; then
++        local owner task purpose
++        owner="$(docker --context "${SDLC_DOCKER_CONTEXT}" volume inspect "${VOLUME}" --format '{{index .Labels "com.docker.compose.project"}}')"
++        task="$(docker --context "${SDLC_DOCKER_CONTEXT}" volume inspect "${VOLUME}" --format '{{index .Labels "sdlc.task"}}')"
++        purpose="$(docker --context "${SDLC_DOCKER_CONTEXT}" volume inspect "${VOLUME}" --format '{{index .Labels "sdlc.purpose"}}')"
++        if [[ "${owner}" != "${PROJECT}" || "${task}" != "${SDLC_TASK_ID}" || "${purpose}" != "java-e2e" ]]; then
++            echo "Foreign QA volume; cleanup refused" >&2
++            return 1
++        fi
++        docker --context "${SDLC_DOCKER_CONTEXT}" volume rm "${VOLUME}" >/dev/null
++    fi
+ }
+ trap cleanup EXIT
+ 
+ function pass() {
+     local name=$1
+     echo -e "${GREEN}[e2e] PASS${NC}: ${name}"
+-    ((PASSED++))
++    ((PASSED+=1))
+ }
+ 
+ function fail() {
+     local name=$1
+     local reason=$2
+     echo -e "${RED}[e2e] FAIL${NC}: ${name} — ${reason}"
+-    ((FAILED++))
++    ((FAILED+=1))
+ }
+ 
+ function wait_for_readiness() {
+@@ -39,7 +59,7 @@ function wait_for_readiness() {
+     local max=$2
+     echo -e "${YELLOW}[e2e]${NC} Waiting for backend readiness at ${url}/actuator/health/readiness..."
+     for ((i = 0; i < max; i++)); do
+-        if curl -H "X-API-Key: ${E2E_API_KEY}" -fsS "${url}/actuator/health/readiness" >/dev/null 2>&1; then
++        if curl -H "X-API-Key: ${E2E_API_KEY}" --max-time 5 -fsS "${url}/actuator/health/readiness" >/dev/null 2>&1; then
+             echo -e "${YELLOW}[e2e]${NC} Backend is ready after ${i}s"
+             return 0
+         fi
+@@ -78,11 +98,17 @@ function assert_http_status() {
+ # Setup: Build and start services
+ # ──────────────────────────────────────────────────────────
+ echo -e "${YELLOW}[e2e]${NC} Building and starting services..."
+-docker compose -f "${COMPOSE_FILE}" up -d --build
++"${COMPOSE[@]}" up -d --build
++ADDRESS="$("${COMPOSE[@]}" port java-agent-backend 18090)"
++if [[ ! "${ADDRESS}" =~ ^127\.0\.0\.1:[0-9]+$ ]]; then
++    echo "Unexpected QA backend endpoint" >&2
++    exit 1
++fi
++AGENT_URL="http://${ADDRESS}"
+ 
+ if ! wait_for_readiness "${AGENT_URL}" "${MAX_WAIT}"; then
+     echo -e "${RED}[e2e] FAIL${NC}: Backend failed to become ready"
+-    docker compose -f "${COMPOSE_FILE}" logs agent --tail 50
++    "${COMPOSE[@]}" logs java-agent-backend --tail 50
+     exit 1
+ fi
+ 
+@@ -277,4 +303,4 @@ if [[ "${FAILED}" -gt 0 ]]; then
+ fi
+ 
+ echo -e "${GREEN}[e2e] All tests PASSED${NC}"
+-exit 0
+\ No newline at end of file
++exit 0
+diff --git a/scripts/run_postgres_tests.py b/scripts/run_postgres_tests.py
+new file mode 100644
+index 00000000..30b0b5b7
+--- /dev/null
++++ b/scripts/run_postgres_tests.py
+@@ -0,0 +1,68 @@
++#!/usr/bin/env python3
++"""Run slow tests against PostgreSQL owned by a disposable Compose project."""
++import argparse
++import importlib.util
++import os
++from pathlib import Path
++import re
++import secrets
++import subprocess
++import uuid
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument('--docker-context', required=True)
++    parser.add_argument('--base-directory', type=Path)
++    parser.add_argument('command', nargs=argparse.REMAINDER)
++    args = parser.parse_args()
++    root = Path(__file__).resolve().parents[1]
++    base = args.base_directory or root.parent / 'services-base'
++    spec = importlib.util.spec_from_file_location('compose_helpers', base / 'scripts/compose_helpers.py')
++    helpers = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(helpers)
++    project = 'sdlc-qa-java-postgres-' + uuid.uuid4().hex[:12]
++    docker = ['docker', '--context', args.docker_context]
++    labels = {'sdlc.task': 'platform-unification', 'sdlc.purpose': 'java-postgres-integration'}
++    password = secrets.token_hex(24)
++    directory = root / '.local' / project
++    helper = helpers.ComposeHelper(project=project, task=labels['sdlc.task'], purpose=labels['sdlc.purpose'],
++                                   docker=docker, directory=directory)
++    volume = project + '_postgres-data'
++    created = False
++    try:
++        helper.write({'postgres': {'image': 'postgres:17.6-alpine',
++            'environment': {'POSTGRES_DB': 'sdlc_qa_java', 'POSTGRES_USER': 'test', 'POSTGRES_PASSWORD': password},
++            'ports': [{'target': 5432, 'published': '0', 'host_ip': '127.0.0.1'}],
++            'volumes': [{'type': 'volume', 'source': 'postgres-data', 'target': '/var/lib/postgresql/data'}],
++            'healthcheck': {'test': ['CMD', 'pg_isready', '-U', 'test', '-d', 'sdlc_qa_java'],
++                            'interval': '1s', 'timeout': '3s', 'retries': 30}}},
++            volumes={'postgres-data': {'labels': labels}})
++        created = True
++        helpers.checked(helper.command + ['up', '-d', '--wait', '--wait-timeout', '60'])
++        port = helpers.checked(helper.command + ['port', 'postgres', '5432'], text=True).strip()
++        if not re.fullmatch(r'127\.0\.0\.1:[0-9]+', port):
++            raise RuntimeError('Unexpected QA PostgreSQL endpoint')
++        environment = dict(os.environ, SDLC_TEST_COMPOSE_PROJECT=project,
++            SDLC_TEST_DATABASE_URL='jdbc:postgresql://' + port + '/sdlc_qa_java',
++            SDLC_TEST_DATABASE_USER='test', SDLC_TEST_DATABASE_PASSWORD=password)
++        environment.update(USAGE_PERSISTENCE_TEST_JDBC_URL=environment['SDLC_TEST_DATABASE_URL'],
++            USAGE_PERSISTENCE_TEST_DB_USER='test', USAGE_PERSISTENCE_TEST_DB_PASSWORD=password)
++        command = args.command[1:] if args.command[:1] == ['--'] else args.command
++        command = command or [str(root / ('gradlew.bat' if os.name == 'nt' else 'gradlew')), ':backend:slowTest', '--no-daemon']
++        return subprocess.run(command, cwd=root, env=environment).returncode
++    finally:
++        helper.close()
++        if created:
++            import json
++            existing = helpers.checked(docker + ['volume', 'ls', '--format', '{{.Name}}'], text=True).splitlines()
++            if volume in existing:
++                data = json.loads(helpers.checked(docker + ['volume', 'inspect', volume], text=True))[0]
++                found = data.get('Labels') or {}
++                if found.get('com.docker.compose.project') != project or any(found.get(k) != v for k, v in labels.items()):
++                    raise RuntimeError('Foreign volume blocks QA cleanup')
++                helpers.checked(docker + ['volume', 'rm', volume])
++
++
++if __name__ == '__main__':
++    raise SystemExit(main())
