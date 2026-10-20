@@ -418,3 +418,16 @@ Full conventions doc: `backend/docs/conventions.md`
 docs/platform/CHOICE_CONTROLS.md: Select, MultiSelect, SearchableSelect.
 Общие механизмы и оформление принадлежат Base; данные и правила — продукту.
 Текущие Java/CLI/Telegram-модули не получают фиктивную frontend-зависимость.
+
+## Единая дизайн-система Base
+
+Перед созданием UI: pdlc-ui search → show → один example. Button, Input,
+Textarea, Checkbox, RadioGroup/Radio, Switch, меню, Card, Table, Disclosure,
+Dialog и Toaster/toast использовать из публичного @pdlc/ui. Общий дефект
+исправлять в Base; продукт сохраняет данные, права и сохранение. Прямой Sonner,
+копии примитивов и продуктовые определения общих tokens не добавлять.
+Брендинг применяется общим runtime; draft preview изолируется BrandingScope.
+Канонический контракт — Base docs/platform/DESIGN_SYSTEM.md и docs/BRANDING.md.
+UI/SDK/skills pins независимы; source-изменения не означают установку.
+
+Стандарт относится к web UI при его наличии; CLI/Telegram не получают фиктивных frontend-зависимостей.
