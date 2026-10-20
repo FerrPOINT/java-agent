@@ -427,6 +427,12 @@ graph. Make coverage/report requests и standalone `make jar MODULE=shared`
 Ручные release gates остаются на прежнем пути. Это source adoption callers; native graph,
 dependency parity и performance qualification нового tuple проверяются отдельно.
 
+Production Docker recipes CLI/bot также вызывают `--quality-root`, копируют root
+`gradle.properties` и не требуют Backend build script. Сохраняются прежние JAR,
+notices и unit prerequisites. Recording-wrapper checks исполняют shell-команды
+recipes без JVM/Docker; actual configured projects, dependency/JAR parity,
+configuration-cache reuse и backend-only invalidation требуют native qualification.
+
 Только preparation добавляет `--dependencies-only` после выбора graph:
 `--quality-root --dependencies-only :cli:qualityDependencyInputs
 :shared:qualityDependencyInputs` либо `--backend --dependencies-only

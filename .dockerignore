@@ -4,9 +4,13 @@
 !NOTICE
 !THIRD_PARTY_NOTICES.md
 !settings.gradle
+!gradle.properties
 !gradle/
 !gradle/**
 !gradlew
+!scripts/
+scripts/**
+!scripts/quality-gradle.sh
 !backend/
 !backend/**
 !shared/

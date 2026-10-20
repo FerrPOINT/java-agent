@@ -1,5 +1,6 @@
 """Exercise the public helper boundary without starting Gradle or a JVM."""
 
+import fnmatch
 import json
 import os
 import re
@@ -375,12 +376,10 @@ class QualityGradleTests(unittest.TestCase):
 
 @unittest.skipUnless(BASH and Path(BASH).is_file(), "native Bash is required; WSL is not used")
 class ContainerGradleWrapperTests(unittest.TestCase):
-    def test_all_runtime_builders_bound_gradle_workers_and_accept_wrapper_newlines(self):
+    def test_backend_runtime_builders_bound_gradle_workers_and_accept_wrapper_newlines(self):
         payload = b'#!/bin/sh\nprintf \'%s\\n\' "$@" > invoked.txt\n'
         variants = (("Dockerfile", ["bootJar", "--no-daemon", "--build-cache"]),
-                    ("Dockerfile.slim", ["bootJar", "--no-daemon", "--build-cache"]),
-                    ("telegram-bot/Dockerfile", [":telegram-bot:bootJar", "--build-cache", "--no-daemon"]),
-                    ("cli/Dockerfile", [":cli:bootJar", "--build-cache", "--no-daemon"]))
+                    ("Dockerfile.slim", ["bootJar", "--no-daemon", "--build-cache"]))
         for name, arguments in variants:
             recipe = (ROOT / name).read_text(encoding="utf-8")
             commands = [re.sub(r"^RUN(?: --mount=\S+)* ", "", line)
@@ -399,6 +398,81 @@ class ContainerGradleWrapperTests(unittest.TestCase):
                     self.assertEqual(wrapper.read_bytes(), payload)
                     self.assertEqual((directory / "invoked.txt").read_text().splitlines(),
                                      arguments + ["--max-workers=2"])
+
+    def test_client_builders_dispatch_selected_graph_without_backend_context(self):
+        payload = (b'#!/bin/sh\nprintf \'%s\\n\' "$@" > invoked.txt\n'
+                   b'exit "${RECORDING_EXIT:-0}"\n')
+        patterns = [line.strip() for line in (ROOT / ".dockerignore").read_text().splitlines()
+                    if line.strip() and not line.startswith("#")]
+
+        def included(source):
+            # Directory inclusion also admits descendants until a later exclusion.
+            # This fixture covers the recipe's current ordered globs, not a daemon.
+            paths = [source, *(parent.as_posix() for parent in Path(source).parents if parent != Path("."))]
+            allowed = True
+            for pattern in patterns:
+                if any(fnmatch.fnmatchcase(path, pattern.lstrip("!").rstrip("/")) for path in paths):
+                    allowed = pattern.startswith("!")
+            return allowed
+
+        self.assertFalse(included("scripts/private-build-secret.sh"))
+        self.assertFalse(included("scripts/nested/private-build-secret.sh"))
+        self.assertFalse(included("private-build-secret.txt"))
+        for module in ("cli", "telegram-bot"):
+            recipe = (ROOT / module / "Dockerfile").read_text(encoding="utf-8")
+            builder = recipe.split("\nFROM ")[1].split("\nFROM ")[0].splitlines()
+            commands = [re.sub(r"^RUN(?: --mount=\S+)* ", "", line)
+                        for line in builder if line.startswith("RUN ")]
+            for newline, exit_code in ((b"\n", 0), (b"\r\n", 0), (b"\r\n", 19)):
+                with self.subTest(module=module, newline=newline, exit_code=exit_code), \
+                        tempfile.TemporaryDirectory() as temporary:
+                    context = Path(temporary) / "context"
+                    directory = Path(temporary) / "builder"
+                    context.mkdir()
+                    directory.mkdir()
+                    # A closed client context cannot satisfy a backend COPY. Stage the
+                    # actual recipe's inputs before executing its real shell command.
+                    for name in ("LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "settings.gradle",
+                                 "gradle.properties", "scripts/quality-gradle.sh",
+                                 "gradle/wrapper/gradle-wrapper.properties",
+                                 "shared/build.gradle", "cli/build.gradle", "telegram-bot/build.gradle"):
+                        target = context / name
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        target.write_bytes((ROOT / name).read_bytes().replace(b"\r\n", b"\n")
+                                           .replace(b"\n", newline))
+                    (context / "gradlew").write_bytes(payload.replace(b"\n", newline))
+                    for name in ("shared", "cli", "telegram-bot"):
+                        (context / name / "src").mkdir()
+                    for line in builder:
+                        if not line.startswith("COPY "):
+                            continue
+                        _, *sources, destination = line.split()
+                        for source in sources:
+                            self.assertTrue(included(source), f"Build context excludes {source}")
+                            source_path = context / source
+                            target = directory / destination
+                            if source_path.is_dir():
+                                shutil.copytree(source_path, target, dirs_exist_ok=True)
+                            else:
+                                target.parent.mkdir(parents=True, exist_ok=True)
+                                shutil.copy2(source_path, target)
+                    jdk = Path(temporary) / "jdk"
+                    jdk.mkdir()
+                    (jdk / "release").write_text(
+                        'IMPLEMENTOR="Eclipse Adoptium"\nJAVA_VERSION="25.0.4.1"\n'
+                        'OS_NAME="Linux"\nOS_ARCH="x86_64"\n')
+                    environment = {**os.environ, "SOURCE_DATE_EPOCH": "1792072450",
+                                   "JAVA_HOME": jdk.as_posix(), "RECORDING_EXIT": str(exit_code)}
+                    result = subprocess.run([BASH, "-c", "set -e\n" + "\n".join(commands)],
+                                            cwd=directory, env=environment, capture_output=True,
+                                            text=True, check=False)
+                    self.assertEqual(result.returncode, exit_code, result.stderr)
+                    self.assertTrue((directory / "gradle.properties").is_file())
+                    self.assertEqual((directory / "gradlew").read_bytes(), payload)
+                    self.assertEqual((directory / "invoked.txt").read_text().splitlines(),
+                                     [f":{module}:bootJar", "--build-cache", "--no-daemon",
+                                      "--max-workers=2", "--configuration-cache",
+                                      "--configuration-cache-problems=fail", "-PqualityRootGraph=clients-v1"])
 
 
 if __name__ == "__main__":

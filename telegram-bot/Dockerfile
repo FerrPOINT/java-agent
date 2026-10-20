@@ -7,17 +7,17 @@ ENV SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
 WORKDIR /workspace
 COPY LICENSE NOTICE THIRD_PARTY_NOTICES.md ./
 COPY settings.gradle ./
+COPY gradle.properties ./
 COPY gradle ./gradle
 COPY gradlew ./
-# settings.gradle configures every module, so keep their build files available
-# even though this image only builds the bot and shared modules.
+COPY scripts/quality-gradle.sh ./scripts/quality-gradle.sh
+# The selected clients graph still configures CLI and shared alongside the bot.
 COPY cli/build.gradle ./cli/build.gradle
 COPY shared/build.gradle ./shared/build.gradle
 COPY shared/src ./shared/src
-COPY backend/build.gradle ./backend/build.gradle
 COPY telegram-bot/build.gradle ./telegram-bot/build.gradle
 COPY telegram-bot/src ./telegram-bot/src
-RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} --mount=type=cache,id=java-agent-gradle-9.6.1-temurin25.0.4.1-${TARGETARCH},target=/root/.gradle,sharing=locked sed -i 's/\r$//' gradlew && chmod +x gradlew && ./gradlew :telegram-bot:bootJar --build-cache --no-daemon --max-workers=2
+RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} --mount=type=cache,id=java-agent-gradle-9.6.1-temurin25.0.4.1-${TARGETARCH},target=/root/.gradle,sharing=locked sed -i 's/\r$//' gradlew scripts/quality-gradle.sh && chmod +x gradlew && bash scripts/quality-gradle.sh --quality-root :telegram-bot:bootJar --build-cache --no-daemon --max-workers=2
 
 FROM eclipse-temurin:25.0.4.1_1-jre-noble@sha256:398f810215757dc1926390014272579fb0e57c41ef1c8aa4f64ae761613a168b
 ARG PDLC_RUN_SLOT_SHARING=locked
