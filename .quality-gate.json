@@ -161,7 +161,7 @@
         "telegram-bot/build.gradle",
         "Dockerfile",
         "Dockerfile.slim",
-        "scripts/tests/test_dependency_inputs.py", "gradle/test-lanes.gradle", "gradle/test-topology.gradle", "gradle/test-membership.gradle", "settings.gradle"],
+        "scripts/tests/test_dependency_inputs.py", "gradle/test-lanes.gradle", "gradle/test-topology.gradle", "gradle/test-membership.gradle", "settings.gradle", ".quality-gate.json", "scripts/check_test_lanes.py", "gradle/test-lanes.json", "backend/src/test/**", "telegram-bot/src/test/**", "cli/src/test/**", "shared/src/test/**"],
       "cacheable": true,
       "execution_slot": "none"
     },

@@ -3,12 +3,69 @@ import json
 from pathlib import Path
 import re
 import shlex
+import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def _processor_consumers(root):
+    from scripts.check_test_lanes import compilation_layout, without_comments
+
+    consumers = []
+    for lanes in compilation_layout(root).values():
+        for names in lanes.values():
+            for name in names:
+                source = without_comments((root / name).read_text(encoding='utf-8'))
+                direct = re.search(r'(?m)^\s*import\s+(?:static\s+)?(?:lombok\.|'
+                                   r'org\.mapstruct\.(?:Mapper|MapperConfig)\b)'
+                                   r'|@lombok\.|@org\.mapstruct\.(?:Mapper|MapperConfig)\b', source)
+                wildcard = (re.search(r'(?m)^\s*import\s+org\.mapstruct\.\*', source)
+                            and re.search(r'@(?:Mapper|MapperConfig)\b', source))
+                if direct or wildcard:
+                    consumers.append(name)
+    return consumers
+
+
 class DependencyInputContracts(unittest.TestCase):
+    def test_reviewed_test_compilation_does_not_need_lombok_or_mapstruct_processors(self):
+        # Include support/manual sources: all three compilations inherit test
+        # processor configurations. Main mapper factory/enum calls need API only.
+        self.assertEqual(_processor_consumers(ROOT), [],
+                         'Review the annotation-processing dependency before adding these sources')
+
+    def test_processor_guard_accepts_api_neighbors_and_rejects_generation_in_every_lane(self):
+        cases = [
+            ('import org.mapstruct.factory.Mappers;\nclass Fixture {}', False),
+            ('import org.mapstruct.ReportingPolicy;\nclass Fixture { Object value = ReportingPolicy.ERROR; }', False),
+            ('import org.mapstruct.MappingConstants;\nclass Fixture { Object value = MappingConstants.ComponentModel.SPRING; }', False),
+            ('import org.mapstruct.*;\nclass Fixture { Object value = ReportingPolicy.ERROR; }', False),
+            ('import lombok.Getter;\n@Getter class Fixture {}', True),
+            ('@lombok.Getter class Fixture {}', True),
+            ('import org.mapstruct.Mapper;\n@Mapper interface Fixture {}', True),
+            ('import org.mapstruct.MapperConfig;\n@MapperConfig interface Fixture {}', True),
+            ('@org.mapstruct.Mapper interface Fixture {}', True),
+            ('@org.mapstruct.MapperConfig interface Fixture {}', True),
+            ('import org.mapstruct.*;\n@Mapper interface Fixture {}', True),
+            ('import org.mapstruct.*;\n@MapperConfig interface Fixture {}', True),
+        ]
+        name = 'backend/src/test/java/Fixture.java'
+        for lane in ('unit', 'manual', 'shared'):
+            for source, required in cases:
+                with self.subTest(lane=lane, source=source), tempfile.TemporaryDirectory() as temporary:
+                    root = Path(temporary)
+                    target = root / name
+                    target.parent.mkdir(parents=True)
+                    target.write_text(source, encoding='utf-8')
+                    inventory = {'files': {}, 'support': {}}
+                    if lane == 'shared':
+                        inventory['support'][name] = 'shared'
+                    else:
+                        inventory['files'][name] = 'unit' if lane == 'unit' else 'integration'
+                    (root / 'gradle').mkdir()
+                    (root / 'gradle/test-lanes.json').write_text(json.dumps(inventory), encoding='utf-8')
+                    self.assertEqual(_processor_consumers(root), [name] if required else [])
+
     def test_windows_native_adapter_declares_only_ordinary_unit_and_backend_jar_gates(self):
         manifest = json.loads((ROOT / '.quality-gate.json').read_text(encoding='utf-8'))
         native = manifest['native_execution']

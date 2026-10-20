@@ -448,6 +448,14 @@ Dispatcher `gradle/test-lanes.gradle` загружает `gradle/test-membership
 допускает эти tasks. External snapshot сохраняет production/unit dependencies,
 processors и Groovy compiler inputs.
 
+Backend, CLI и bot не подключают test Lombok/MapStruct processors или их
+дублирующие testCompileOnly dependencies: полный reviewed inventory, включая
+support/manual sources, не объявляет таких annotations. Main processors и
+MapStruct API сохранены; тесты получают готовые main mappers. Общая topology
+не передаёт лишние test processors в testSupport/manualTest. Source guard
+проверяет все lanes, но native compilation этих source sets и прежняя test/JAR
+parity после изменения dependency graph ещё требуют отдельной qualification.
+
 Dependency indexes v2 содержат фактические configured project paths, включая `:`.
 Read-only context reader проверяет profile/projects по product contract и
 включает graph в dependency digest. Legacy v1 читается только как legacy;

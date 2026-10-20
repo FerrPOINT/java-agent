@@ -59,14 +59,10 @@ dependencies {
     // Lombok
     compileOnly 'org.projectlombok:lombok:1.18.48'
     annotationProcessor 'org.projectlombok:lombok:1.18.48'
-    testCompileOnly 'org.projectlombok:lombok:1.18.48'
-    testAnnotationProcessor 'org.projectlombok:lombok:1.18.48'
 
     // MapStruct
     implementation 'org.mapstruct:mapstruct:1.6.3'
     annotationProcessor 'org.mapstruct:mapstruct-processor:1.6.3'
-    testCompileOnly 'org.mapstruct:mapstruct:1.6.3'
-    testAnnotationProcessor 'org.mapstruct:mapstruct-processor:1.6.3'
 
     // h10: shared DTOs/mapper/REST client factory instead of the phantom backend dependency
     implementation project(':shared')
