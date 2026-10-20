@@ -1,0 +1,25 @@
+# SDLC2: точный context hint DeepSeek V4.1 Flash
+
+Публичный OpenRouter catalog 2026-10-03 содержит exact model ID
+`deepseek/deepseek-v4.1-flash`, advertised context 1 048 576 tokens.
+Текущий Java longest-substring matcher не знает `v4.1` и выбирает общий
+`deepseek` hint 128 000. Добавить отдельный hint и regression для bare ID,
+provider-qualified ID и OpenRouter prefix; неизвестные версии не переименовывать
+и не присваивать им этот предел.
+
+Это legacy metadata hint, не подтверждённый model limit и не изменение context
+budget. Публичный каталог не доказывает доступ, framing или capability. Подключение
+Java к frozen опубликованному AI-профилю, отказ при unknown physical limit,
+reservation/mandatory overflow и применение 256000 budget остаются отдельным
+следующим объёмом. Noop и существующие пользовательские настройки сохраняются.
+
+Проверки: native Windows JDK 25.0.4 / Gradle 9.6.1 из собственного dev-env,
+16 metadata tests прошли. В отдельной frozen QA-копии только metadata source
+заменён прежней версией из собственного индекса: новый regression закономерно
+упал (1 test / 1 failure, 128000 вместо 1048576). Рабочие файлы не откатывались,
+индекс сохранён. Штатный docs-standard checker прошёл без обновления baseline.
+Provider calls отсутствуют; рабочие volumes и соседний стенд не используются.
+4 октября: рабочий Java image пересобран и применён вместе с central auth
+(sha256:48b8f7802b81aa8720f173affbbb96372e61013a44911a963dc90a12d944ce21).
+Published budget в Java этим исправлением не реализован.
+Источник: https://openrouter.ai/api/v1/models (advertisement, access_verified=false).

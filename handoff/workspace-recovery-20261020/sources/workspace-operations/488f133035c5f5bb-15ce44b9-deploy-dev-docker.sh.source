@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# The initialized workspace owns Java Agent and its infrastructure.
+set -euo pipefail
+: "${SDLC_WORKSPACE_DIR:?Select the initialized workspace root}"
+: "${SDLC_PROJECT:?Set sdlc1 or sdlc2}"
+case "$SDLC_PROJECT" in sdlc1|sdlc2) ;; *) echo 'Unknown workspace project' >&2; exit 2 ;; esac
+test -f "$SDLC_WORKSPACE_DIR/workspace.local.json"
+test -f "$SDLC_WORKSPACE_DIR/workspace.ps1"
+python - "$SDLC_WORKSPACE_DIR/workspace.local.json" "$SDLC_PROJECT" <<'PY'
+import json,sys
+from pathlib import Path
+profile=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8-sig"))
+if profile.get("project") != sys.argv[2]:
+    raise SystemExit("Workspace profile differs from selected project")
+PY
+exec pwsh -NoProfile -File "$SDLC_WORKSPACE_DIR/workspace.ps1" Start -Service java-agent

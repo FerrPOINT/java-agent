@@ -1,0 +1,29 @@
+# SDLC2: Linux toolchain Java и полные профильные проверки
+
+Native Windows QA текущих исходников: 7181 backend tests, 44 failures,
+6 skipped; bootJar собран. Ошибки Windows/POSIX/shell/path и Python kernel
+не считать успешной приёмкой. Отдельный metadata regression red/green прошёл.
+
+Первый Linux QA использует BuildKit overlay filesystem и собственные исходники,
+Gradle cache/user.home без provider credentials. Git review fixtures выявили
+отсутствующий executable. Read-only проверка работающего собственного Java
+контейнера тоже подтвердила отсутствие git; Python/node/repomix присутствуют.
+
+Добавить git в runtime Dockerfile, не менять собственные данные, PostgreSQL/Flyway,
+noop, integrations и пользовательские настройки. В Linux QA установить git и
+python3: kernel tests без доступного Python могут вернуться до реального сценария.
+Повторить полный backend unit set и bootJar с exported JUnit receipts; отдельно
+проверить actual kernel tests. Live/slow/e2e не запускать случайно: slow использует
+Testcontainers и должен быть перенесён на собственный scoped Compose QA.
+
+После успешной проверки адресный Build/Apply только java-agent SDLC2; подтвердить
+git/version, PG/noop health и сохранность пользовательской session/transcript.
+SDLC1 и его runtime не менять. Windows portability остаётся отдельной непрошедшей
+проверкой; Linux PASS не переименовывает её в успешную.
+
+4 октября: повторный Linux gate после central auth изменений — 7217 tests,
+0 failures/errors, 1 skipped; bootJar собран. Адресный Build/Apply SDLC2
+завершён, live git 2.43.0 подтверждён. Существующий QA-dialog и новый noop
+transcript сохранены после image/config rollout и отдельного Java restart.
+Остальные 37 permanent containers не изменились в наблюдаемом интервале.
+Native Windows gate с прежними 44 failures остаётся непрошедшим.

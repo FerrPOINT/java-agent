@@ -1,0 +1,477 @@
+{
+  "schema": "pdlc/workspace-source-recovery/v1",
+  "repository": "java-agent",
+  "status": "inert source recovery; not installed; not merge qualification",
+  "base": "14fd3815497e4874073ca63669a98bc7856bd3ec",
+  "normalization": "CRLF to LF, otherwise exact original bytes",
+  "versions": [
+    {
+      "original_path": "AGENTS.md",
+      "sha256": "34237594557b7b1818992b44e0b67c7556c97026f0d29be516647a4bce075268",
+      "payload": "sources/source-recovery/34237594557b7b18-a54ff182-AGENTS.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        },
+        {
+          "worktree": "sdlc/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "Dockerfile",
+      "sha256": "3f7c82999b038bc4f7fec93ffea45e86576f49d366e8f1fa933c6b55471bdc25",
+      "payload": "sources/source-recovery/3f7c82999b038bc4-dd2c0eb6-Dockerfile.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/build.gradle",
+      "sha256": "71813c11ba3bb7c64e83813030a1ccd065a07c5e15c921803ed1dcd16f549426",
+      "payload": "sources/source-recovery/71813c11ba3bb7c6-cd279e89-build.gradle.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/gradle/wrapper/gradle-wrapper.properties",
+      "sha256": "c7220dc6c3fa610ecbd1f836baeb7f2edd71fa23e855ed76c3e30715f0079818",
+      "payload": "sources/source-recovery/c7220dc6c3fa610e-c2c45fab-gradle-wrapper.properties.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/skills/.bundled-manifest",
+      "sha256": "14148513f84300a1e46b2bd4746ee495155382b9ed3e0dcd1a133a94e4fe092f",
+      "payload": "sources/source-recovery/14148513f84300a1-2d62010b-.bundled-manifest.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        },
+        {
+          "worktree": "sdlc2/_java-agent-pr-review",
+          "head": "cafe808ec41d4e29e73aabcecd4c59ea25f7803e"
+        },
+        {
+          "worktree": "sdlc/_java-agent-pr-review",
+          "head": "cafe808ec41d4e29e73aabcecd4c59ea25f7803e"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/main/java/com/azhukov/agent/api/SessionCrudController.java",
+      "sha256": "ab90e5cbf90a12d4400935de620b3b4fc9b0cdf0a508b6c3e3d6ade64ee4da6c",
+      "payload": "sources/source-recovery/ab90e5cbf90a12d4-96c54307-SessionCrudController.java.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/main/java/com/azhukov/agent/api/filter/ApiKeyAuthFilter.java",
+      "sha256": "3b93817ba056708d3df4dfd6b730f7d23b1b75bada062b775d2cf3882a25fe3e",
+      "payload": "sources/source-recovery/3b93817ba056708d-e58e2931-ApiKeyAuthFilter.java.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/main/java/com/azhukov/agent/core/metadata/ModelMetadataService.java",
+      "sha256": "733fd89e44af49a4dbc874dea3e63e520b98fde18f6e7454f4cd6c1f36e7a4b9",
+      "payload": "sources/source-recovery/733fd89e44af49a4-b26475fc-ModelMetadataService.java.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/main/java/com/azhukov/agent/service/AgentRuntimeService.java",
+      "sha256": "9fa57a59faf5c5c497ee7a69d76aa6260a8dca9384435bff7e73c120becb1b56",
+      "payload": "sources/source-recovery/9fa57a59faf5c5c4-928e1533-AgentRuntimeService.java.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/main/java/com/azhukov/agent/service/AgentStreamingService.java",
+      "sha256": "1bdc4da3b1bed68484117d4f28ccf702e46a68ede2fb62ae87d42d3c4f03a3d7",
+      "payload": "sources/source-recovery/1bdc4da3b1bed684-1c37faea-AgentStreamingService.java.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/main/java/com/azhukov/agent/service/SessionPruneService.java",
+      "sha256": "cfbcba357c860a4c8bde53bc68a79751981ca29a83e656a0398399622a9c0b52",
+      "payload": "sources/source-recovery/cfbcba357c860a4c-13d6317e-SessionPruneService.java.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/main/java/com/azhukov/agent/service/SessionQueryService.java",
+      "sha256": "5740cdcc7401bfba2a5b3676cd02c5719b4ed7086d6c422c0dd61ee1bd73c3ab",
+      "payload": "sources/source-recovery/5740cdcc7401bfba-3f861647-SessionQueryService.java.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/test/java/com/azhukov/agent/core/metadata/ModelMetadataServiceTest.java",
+      "sha256": "e0f4d4af582a4d026683f72e0f07bf3f306b21936272c56d33e6ac97c2388631",
+      "payload": "sources/source-recovery/e0f4d4af582a4d02-5517c226-ModelMetadataServiceTest.java.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/test/java/com/azhukov/agent/service/AgentStreamingServiceEntryBranchTest.java",
+      "sha256": "9689bdac095e0b17b5fc43b006747c8c70695b8455b637125bc8c5d813c47968",
+      "payload": "sources/source-recovery/9689bdac095e0b17-09d6c4d4-AgentStreamingServiceEntryBranchTest.java.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/test/java/com/azhukov/agent/service/SessionPruneServiceTest.java",
+      "sha256": "8aeabe0249ba87e8e2ac813b9656f07630537614a81c2c3fc99dce95b1d40ccc",
+      "payload": "sources/source-recovery/8aeabe0249ba87e8-19f06364-SessionPruneServiceTest.java.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/test/java/com/azhukov/agent/tools/file/PatchToolBranchTest.java",
+      "sha256": "dfecef325f70472a9c6ece8754f6e16dcf160daafeee9f083ed5a71420acef61",
+      "payload": "sources/source-recovery/dfecef325f70472a-b4e6565a-PatchToolBranchTest.java.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "scripts/deploy-dev-docker.sh",
+      "sha256": "488f133035c5f5bbc2d30c12aefcf44fc677af0b7cb89486f8c031187592ac95",
+      "payload": "sources/workspace-operations/488f133035c5f5bb-15ce44b9-deploy-dev-docker.sh.source",
+      "group": "workspace-operations",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        },
+        {
+          "worktree": "sdlc/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/main/java/com/azhukov/agent/core/security/CentralJwtVerifier.java",
+      "sha256": "f6992bd38a6ea0e0809e922ab2d72eb76e02daf9965d4fd36abd8d58807be24d",
+      "payload": "sources/source-recovery/f6992bd38a6ea0e0-727596ed-CentralJwtVerifier.java.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/test/java/com/azhukov/agent/api/filter/CentralJwtFilterTest.java",
+      "sha256": "85a6d39a9c070017a5be7f85a8c8ec09cf0b04b666ffeabe58b037c06ba57e2a",
+      "payload": "sources/source-recovery/85a6d39a9c070017-4605892e-CentralJwtFilterTest.java.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/test/java/com/azhukov/agent/service/SessionQueryIdentityTest.java",
+      "sha256": "297f8e1503837ec07cd18f62de1f48b9963b12b481bf80ad3a4230fa98319e37",
+      "payload": "sources/source-recovery/297f8e1503837ec0-3528ec7e-SessionQueryIdentityTest.java.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/plans/2026-10-03-sdlc2-central-auth.md",
+      "sha256": "f63d49b516a4784af534c154c5ea6d4a8e65aa152016f55032904c98352c39ba",
+      "payload": "sources/source-recovery/f63d49b516a4784a-9549c621-2026-10-03-sdlc2-central-auth.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/plans/2026-10-03-sdlc2-deepseek-context-hint.md",
+      "sha256": "5263cf42f0e3f510dcbbdb012f404c108035fddf70ac56dfda5bf5e89a72e7e4",
+      "payload": "sources/source-recovery/5263cf42f0e3f510-868b0ee4-2026-10-03-sdlc2-deepseek-context-hint.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/plans/2026-10-03-sdlc2-java-linux-toolchain.md",
+      "sha256": "9b11bf32bcdc20f65886cdbf7bbbd2cf3215dc41aee687fb84063af36b8bd21c",
+      "payload": "sources/source-recovery/9b11bf32bcdc20f6-481a5c94-2026-10-03-sdlc2-java-linux-toolchain.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/plans/2026-10-04-safe-api-errors.md",
+      "sha256": "647b483fd4b2e691961083b87c8cf2e07f0ef36a17ebd79fb7bb39ca272b6642",
+      "payload": "sources/source-recovery/647b483fd4b2e691-8ac17dd8-2026-10-04-safe-api-errors.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/test/java/com/azhukov/agent/core/context/CodingWorkspaceSnapshotTest.java",
+      "sha256": "c11422c695349ad5883380c43e1194568d26ac2aabc2b09156ab909786c92711",
+      "payload": "sources/source-recovery/c11422c695349ad5-c432a3f3-CodingWorkspaceSnapshotTest.java.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/test/java/com/azhukov/agent/service/McpOAuthFlowServiceTest.java",
+      "sha256": "8faf70bc73076dc6180ee39438dc3880e33336546fd0671262e56ed83056a28f",
+      "payload": "sources/source-recovery/8faf70bc73076dc6-b8e622a5-McpOAuthFlowServiceTest.java.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "cli/build.gradle",
+      "sha256": "5e926e6eec7de0e67b2fe62ed9c512f9f40fba874fe73356a1e35a07186ec136",
+      "payload": "sources/source-recovery/5e926e6eec7de0e6-de8fe44d-build.gradle.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/_java-agent-pr-review",
+          "head": "cafe808ec41d4e29e73aabcecd4c59ea25f7803e"
+        },
+        {
+          "worktree": "sdlc/_java-agent-pr-review",
+          "head": "cafe808ec41d4e29e73aabcecd4c59ea25f7803e"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/main/java/com/azhukov/agent/tools/web/WebSearchTool.java",
+      "sha256": "9d9dc61d638accd927f78ddd690046b9c585099694ded2a516172412c6544964",
+      "payload": "sources/source-recovery/9d9dc61d638accd9-9d7190a2-WebSearchTool.java.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc/.local/pr-review-root-20261003-a817e6/cyclic-review-20261009/candidate91-search-review",
+          "head": "3ec8e29adabd636fce9ef7b596cf0a17faa2820a"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/test/java/com/azhukov/agent/tools/web/WebSearchToolTest.java",
+      "sha256": "f1ec2f05efe29e88d8961a27ee9ae6ae0be77fd0ba5746fd1117982ceb4c4367",
+      "payload": "sources/source-recovery/f1ec2f05efe29e88-9b5169c3-WebSearchToolTest.java.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc/.local/pr-review-root-20261003-a817e6/cyclic-review-20261009/candidate91-search-review",
+          "head": "3ec8e29adabd636fce9ef7b596cf0a17faa2820a"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/main/java/com/azhukov/agent/tools/web/WebSearchTool.java",
+      "sha256": "6139bc1de178778a6508590dc092f872427e38ee080d7ded63eace748c4c57fe",
+      "payload": "sources/source-recovery/6139bc1de178778a-9d7190a2-WebSearchTool.java.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc/.local/pr-review-root-20261003-a817e6/cyclic-review-20261009/candidate92-search-review",
+          "head": "2ff8f75a99f43b363d7b9a824c205bf30474d39d"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/test/java/com/azhukov/agent/tools/web/WebSearchToolTest.java",
+      "sha256": "81bb2c5c0438f0a361823c15967e3fae7a7f5ac706ef9090b256960334648609",
+      "payload": "sources/source-recovery/81bb2c5c0438f0a3-9b5169c3-WebSearchToolTest.java.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc/.local/pr-review-root-20261003-a817e6/cyclic-review-20261009/candidate92-search-review",
+          "head": "2ff8f75a99f43b363d7b9a824c205bf30474d39d"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/test/java/com/azhukov/agent/tools/web/WebSearchToolTest.java",
+      "sha256": "b051c79d97b6bd992a88a62531daccd6e09a36334f3dd387e634c82086da5e9c",
+      "payload": "sources/source-recovery/b051c79d97b6bd99-9b5169c3-WebSearchToolTest.java.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc/.local/pr-review-root-20261003-a817e6/cyclic-review-20261009/candidate93-search-review",
+          "head": "7e22d208449f7a4865d25e1a6cfb51e92031eb0e"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    }
+  ]
+}
