@@ -8,11 +8,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 
 /**
- * Provides model metadata: context length detection from model name,
- * provider prefix stripping, and per-model token estimation.
- * <p>
- * Mirrors the original project's agent/model_metadata.py — detects context length from
- * model name patterns, strips provider prefixes, and caches metadata.
+ * Known-family hints support legacy clients and metadata display.
+ * These hints are not verified physical limits or permission to increase an
+ * explicitly configured execution budget.
  */
 @Slf4j
 @Component
@@ -88,6 +86,7 @@ public class ModelMetadataService {
  Map.entry("gemma-3", 131_072),
  Map.entry("gemma", 8_192),
  // DeepSeek
+ Map.entry("deepseek-v4.1-flash", 1_048_576),
  Map.entry("deepseek-v4-pro", 1_000_000),
  Map.entry("deepseek-v4-flash", 1_000_000),
  Map.entry("deepseek-chat", 1_000_000),

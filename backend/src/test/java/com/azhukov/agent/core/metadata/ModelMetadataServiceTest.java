@@ -42,6 +42,15 @@ class ModelMetadataServiceTest {
     }
 
     @Test
+    void detectContextLength_v41FlashUsesItsOwnHintWithoutUpgradingUnknownVersions() {
+        for (String model : new String[]{"deepseek-v4.1-flash", "deepseek/deepseek-v4.1-flash",
+                "openrouter:deepseek/deepseek-v4.1-flash"}) {
+            assertThat(service.detectContextLength(model)).isEqualTo(1_048_576);
+        }
+        assertThat(service.detectContextLength("deepseek/deepseek-v4.9-flash")).isEqualTo(128_000);
+    }
+
+    @Test
     void detectContextLength_stripsProviderPrefix() {
         int direct = service.detectContextLength("claude-opus-4-8");
         int prefixed = service.detectContextLength("anthropic:claude-opus-4-8");
