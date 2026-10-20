@@ -190,7 +190,8 @@ class QualityGradleTests(unittest.TestCase):
                     self.assertEqual(len(records), 1)
                     self.assertEqual(records[0]["backend"], module == "backend")
                     self.assertEqual(records[0]["arguments"], tasks + [
-                        "--no-daemon", "--max-workers=2", "--configuration-cache", "--configuration-cache-problems=fail"])
+                        "--no-daemon", "--max-workers=2", "--configuration-cache", "--configuration-cache-problems=fail"]
+                        + ([] if module == "backend" else ["-PqualityRootGraph=clients-v1"]))
 
     def test_make_adapter_all_uses_two_sequential_graphs_without_duplicate_units(self):
         for action in ("build", "test", "jar"):
@@ -204,7 +205,7 @@ class QualityGradleTests(unittest.TestCase):
                                  else [":telegram-bot:test", ":cli:test", ":shared:test"])
                 options = ["--no-daemon", "--max-workers=2", "--configuration-cache", "--configuration-cache-problems=fail"]
                 self.assertEqual(records[0]["arguments"], expected_backend + options)
-                self.assertEqual(records[1]["arguments"], expected_root + options)
+                self.assertEqual(records[1]["arguments"], expected_root + options + ["-PqualityRootGraph=clients-v1"])
 
     def test_make_adapter_scoped_jar_keeps_units_on_bootjar_and_shared_library(self):
         for module, tasks in (("backend", [":bootJar"]), ("cli", [":cli:bootJar"]),
@@ -215,6 +216,27 @@ class QualityGradleTests(unittest.TestCase):
                 self.assertEqual(len(records), 1)
                 actual_tasks = [argument for argument in records[0]["arguments"] if argument.startswith(":")]
                 self.assertEqual(actual_tasks, tasks)
+                self.assertEqual("-PqualityRootGraph=clients-v1" in records[0]["arguments"],
+                                 module in ("cli", "bot"))
+
+    def test_ci_selected_units_use_the_clients_graph_without_entering_backend(self):
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        step = workflow.split("      - name: Run selected root-module units in one Gradle invocation\n", 1)[1]
+        script = step.split("        run: |\n", 1)[1].split("      - ", 1)[0]
+        script = "\n".join(line.removeprefix("          ") for line in script.splitlines())
+        for tasks in (":cli:test", ":telegram-bot:test", ":shared:test",
+                      ":telegram-bot:test :cli:test :shared:test"):
+            with self.subTest(tasks=tasks):
+                environment = {**os.environ, "SOURCE_DATE_EPOCH": "1792072450",
+                               "JAVA_HOME": self.jdk.as_posix(), "ROOT_UNIT_TASKS": tasks}
+                result = subprocess.run([BASH, "-c", script], cwd=self.root, env=environment,
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                lines = result.stdout.splitlines()
+                self.assertEqual(lines[0], "EPOCH=1792072450")
+                self.assertFalse(lines[1].endswith("/backend"))
+                self.assertEqual(lines[2:], tasks.split() + ["--no-daemon", "--max-workers=2",
+                    "--configuration-cache", "--configuration-cache-problems=fail", "-PqualityRootGraph=clients-v1"])
 
     def test_make_adapter_manual_coverage_keeps_only_existing_report_consumers(self):
         for module, expected in (("backend", [(True, ":jacocoTestReport")]),
@@ -341,6 +363,7 @@ class QualityGradleTests(unittest.TestCase):
         descriptor = json.loads((ROOT / ".quality-gate.json").read_text(encoding="utf-8"))
         gate = next(item for item in descriptor["gates"] if item["id"] == "tooling:gradle-helper-unit")
         self.assertIn("scripts/vendor/base_quality_selection.py", gate["inputs"])
+        self.assertIn(".github/workflows/ci.yml", gate["inputs"])
         for path in ("Makefile", "scripts/quality-make.sh", "scripts/tests/test_quality_gradle.py"):
             with self.subTest(path=path):
                 selected = selector.plan(ROOT, profile="build", changed=[path])

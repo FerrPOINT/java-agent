@@ -132,7 +132,7 @@ jobs:
         run: |
           read -r -a tasks <<< "$ROOT_UNIT_TASKS"
           test "${#tasks[@]}" -gt 0
-          bash scripts/quality-gradle.sh "${tasks[@]}" --no-daemon --max-workers=2
+          bash scripts/quality-gradle.sh --quality-root "${tasks[@]}" --no-daemon --max-workers=2
       - name: Identify tested application artifact
         if: needs.changes.outputs.backend_build == 'true'
         working-directory: backend/build/libs

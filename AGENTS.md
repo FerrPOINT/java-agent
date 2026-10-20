@@ -14,7 +14,7 @@ bot/CLI and **9.8.0** from `backend/` for the standalone backend gates.
 cd /opt/dev/java-agent
 # Ordinary build: reviewed isolated units and the candidate JAR.
 bash scripts/quality-gradle.sh --backend :test :bootJar --no-daemon --max-workers=2
-bash scripts/quality-gradle.sh :telegram-bot:test :cli:test --no-daemon --max-workers=2
+bash scripts/quality-gradle.sh --quality-root :telegram-bot:test :cli:test --no-daemon --max-workers=2
 # Manual release only: integration, slow checks and full coverage in one graph.
 bash scripts/quality-gradle.sh --backend releaseCheck bootJar --no-daemon --max-workers=2
 bash scripts/quality-gradle.sh :telegram-bot:jacocoTestReport :cli:test --no-daemon --max-workers=2

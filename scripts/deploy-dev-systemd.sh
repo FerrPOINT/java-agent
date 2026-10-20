@@ -31,7 +31,7 @@ if [ "$SKIP_BUILD" = false ]; then
     (
         cd "$ROOT"
         bash scripts/quality-gradle.sh --backend :bootJar --no-daemon --max-workers=2
-        bash scripts/quality-gradle.sh :telegram-bot:bootJar --no-daemon --max-workers=2
+        bash scripts/quality-gradle.sh --quality-root :telegram-bot:bootJar --no-daemon --max-workers=2
     )
 fi
 

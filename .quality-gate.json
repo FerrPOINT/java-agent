@@ -70,7 +70,7 @@
       "profiles": ["fast", "unit", "build"],
       "test_tier": "unit",
       "argv": ["{python}", "-B", "-m", "unittest", "scripts.tests.test_deploy_dev_systemd.DeployBuildProtocolTest", "-q"],
-      "inputs": [".quality-gate.json", "scripts/deploy-dev-systemd.sh", "scripts/quality-gradle.sh", "scripts/tests/test_deploy_dev_systemd.py", "scripts/vendor/base_quality_selection.py", "gradle/wrapper/gradle-wrapper.properties", "backend/gradle/wrapper/gradle-wrapper.properties", "backend/settings.gradle", "java-artifacts.json", ".github/workflows/release.yml"],
+      "inputs": [".quality-gate.json", "scripts/deploy-dev-systemd.sh", "scripts/quality-gradle.sh", "scripts/tests/test_deploy_dev_systemd.py", "scripts/vendor/base_quality_selection.py", "gradle/wrapper/gradle-wrapper.properties", "backend/gradle/wrapper/gradle-wrapper.properties", "backend/settings.gradle", "settings.gradle", "gradle/java-preparation.json", "java-artifacts.json", ".github/workflows/release.yml"],
       "cacheable": false,
       "execution_slot": "none"
     },
@@ -171,7 +171,7 @@
       "profiles": ["fast", "unit", "build", "release"],
       "test_tier": "unit",
       "argv": ["{python}", "-B", "-m", "unittest", "scripts.tests.test_quality_gradle", "scripts.tests.test_gradle_context", "scripts.tests.test_deploy_dev_docker", "scripts.tests.test_test_lanes", "-q"],
-      "inputs": ["scripts/vendor/base_quality_selection.py", "Makefile", "scripts/quality-make.sh", "scripts/quality-gradle.sh", "scripts/tests/test_quality_gradle.py", "scripts/check_test_lanes.py", "scripts/tests/test_test_lanes.py", "scripts/tests/test_deploy_dev_docker.py", "scripts/deploy-dev-docker.sh", "docker-compose.dev.yml", "Dockerfile", "Dockerfile.slim", "telegram-bot/Dockerfile", "cli/Dockerfile", "gradle/wrapper/gradle-wrapper.properties", "backend/gradle/wrapper/gradle-wrapper.properties", "scripts/gradle-context.py", "scripts/tests/test_gradle_context.py", "gradle/test-lanes.gradle", "gradle/test-topology.gradle", "gradle/test-membership.gradle", "settings.gradle", "gradle/java-preparation.json"],
+      "inputs": ["scripts/vendor/base_quality_selection.py", "Makefile", "scripts/quality-make.sh", "scripts/quality-gradle.sh", "scripts/tests/test_quality_gradle.py", ".github/workflows/ci.yml", "scripts/check_test_lanes.py", "scripts/tests/test_test_lanes.py", "scripts/tests/test_deploy_dev_docker.py", "scripts/deploy-dev-docker.sh", "docker-compose.dev.yml", "Dockerfile", "Dockerfile.slim", "telegram-bot/Dockerfile", "cli/Dockerfile", "gradle/wrapper/gradle-wrapper.properties", "backend/gradle/wrapper/gradle-wrapper.properties", "scripts/gradle-context.py", "scripts/tests/test_gradle_context.py", "gradle/test-lanes.gradle", "gradle/test-topology.gradle", "gradle/test-membership.gradle", "settings.gradle", "gradle/java-preparation.json"],
       "cacheable": true,
       "execution_slot": "none"
     },

@@ -75,5 +75,10 @@ if [[ ${#backend_tasks[@]} -gt 0 ]]; then
     bash "$repository/scripts/quality-gradle.sh" --backend "${backend_tasks[@]}" "${options[@]}"
 fi
 if [[ ${#root_tasks[@]} -gt 0 ]]; then
-    exec bash "$repository/scripts/quality-gradle.sh" "${root_tasks[@]}" "${options[@]}"
+    root_graph=()
+    # Reports/manual lanes and standalone Shared packaging keep their full graph.
+    if ! $include_coverage && [[ "$operation" != jar || "$module" != shared ]]; then
+        root_graph=(--quality-root)
+    fi
+    exec bash "$repository/scripts/quality-gradle.sh" "${root_graph[@]}" "${root_tasks[@]}" "${options[@]}"
 fi

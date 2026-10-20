@@ -168,7 +168,7 @@ class DeployBuildProtocolTest(unittest.TestCase):
         self.assertEqual(["1792072450", "1792072450"], [record["epoch"] for record in records])
         options = ["--no-daemon", "--max-workers=2", "--configuration-cache", "--configuration-cache-problems=fail"]
         self.assertEqual([":bootJar", *options], records[0]["arguments"])
-        self.assertEqual([":telegram-bot:bootJar", *options], records[1]["arguments"])
+        self.assertEqual([":telegram-bot:bootJar", *options, "-PqualityRootGraph=clients-v1"], records[1]["arguments"])
 
     def declared_artifacts(self):
         import json
@@ -259,7 +259,8 @@ class DeployBuildProtocolTest(unittest.TestCase):
                                       "scripts.tests.test_deploy_dev_systemd.DeployBuildProtocolTest", "-q"], gate["argv"])
                     self.assertTrue(set(paths).issubset(gate["inputs"]))
                     self.assertIn("scripts/vendor/base_quality_selection.py", gate["inputs"])
-                    self.assertTrue({"java-artifacts.json", "backend/settings.gradle"}.issubset(gate["inputs"]))
+                    self.assertTrue({"java-artifacts.json", "backend/settings.gradle", "settings.gradle",
+                                     "gradle/java-preparation.json"}.issubset(gate["inputs"]))
         release = selector.plan(REPO, profile="release", components=["tooling"])
         self.assertFalse(any(gate["id"] == owner for gate in release["gates"]))
         workflow = (REPO / ".github/workflows/release.yml").read_text(encoding="utf-8")

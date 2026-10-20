@@ -64,7 +64,7 @@ PDLC1 сохраняет backend wrapper9.8.0, root9.6.1, LangChain4j1.21.0 и J
 backend unit/build receipts остаются отключены до отдельной qualification.
 
 Backend: `bash scripts/quality-gradle.sh --backend :test`.
-Bot/CLI/shared: `bash scripts/quality-gradle.sh :telegram-bot:test :cli:test :shared:test`.
+Bot/CLI/shared: `bash scripts/quality-gradle.sh --quality-root :telegram-bot:test :cli:test :shared:test`.
 В новом Base selector эти три gates явно объединены через `gradle_unit_group`:
 один native invocation содержит только выбранные module tasks и сохраняет
 `member_gates` в plan/result. Одна CLI правка не добавляет bot/shared tests.
@@ -420,6 +420,12 @@ root graph сохраняет Backend, включая `:backend:bootRun`. В pre
 входят build scripts всех трёх configured clients, даже при resolution CLI/Shared.
 `gradle/java-preparation.json` v2 владеет configured logical modules и closure;
 нужен совместимый Base v2 preparer без автоматического принятия v1 owners.
+
+Ordinary Make units/JAR, CI root units и systemd bot JAR используют этот client
+graph. Make coverage/report requests и standalone `make jar MODULE=shared`
+сохраняют прежний full root graph: их tasks не входят в ordinary allowlist.
+Ручные release gates остаются на прежнем пути. Это source adoption callers; native graph,
+dependency parity и performance qualification нового tuple проверяются отдельно.
 
 Только preparation добавляет `--dependencies-only` после выбора graph:
 `--quality-root --dependencies-only :cli:qualityDependencyInputs
