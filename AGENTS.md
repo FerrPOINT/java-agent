@@ -1,5 +1,15 @@
 # AGENTS.md — Java Agent Development Guide
 
+## Docker и Kubernetes
+
+Поддерживаются обычный Docker/Compose без Kubernetes и Kubernetes. Общие API,
+данные, настройки и правила исполнения сохраняют одинаковый смысл в обоих
+режимах; особенности оркестратора принадлежат deployment-адаптерам.
+Перед изменением runtime/config/storage/runner читать [стандарт Base](https://github.com/FerrPOINT/services-base/blob/29a709834fba54a823873b82050731333d7e3d97/docs/REPO_STANDARDS.md#поддержка-docker-и-kubernetes).
+Затронутый сценарий проверять отдельно в обоих режимах на точном кандидате;
+непроверенный режим оставлять открытым gate. Docs-only правки не требуют deploy
+или пересборки. Ссылка фиксирует решение Base, не меняя SDK/UI/skills pins.
+
 ## Project Overview
 
 Java-агент: Spring Boot 4.1 + Java 25 + Telegram bot + MCP. Gradle multi-project: `backend` (REST API, LLM, tools) + `telegram-bot` (61 команда, streaming, polling) + `cli` (92+ slash commands, REPL). Production (dev): 0.1.239; main накопил WP-3…WP-12 + upstream sync — ждёт релиза 0.1.239.
