@@ -485,9 +485,11 @@ Web MVC, Boot HTTP converters и Boot Jackson3. CLI создаёт client/conver
 `BackendRestClientFactoryTest` использует публичный `RestClient.mutate()` и
 `MockRestServiceServer.bindTo(RestClient.Builder)`: проверяет реальные default
 headers, отсутствие пустого API key, shared Jackson2 mapper, JSON/ISO dates и
-octet-stream JSON с unknown fields. `BackendClientTest` дополняет прежние mock
-cases in-memory JSON, SSE и multipart boundary, включая binary bytes, sanitized
-filename и disposition. Production factory и transport ради тестов не меняются;
+octet-stream JSON с unknown fields. `BackendClientWireTest` содержит три быстрых
+unit cases: JSON, SSE и multipart boundary, включая binary bytes, sanitized
+filename и disposition. `BackendClientTest` сохраняет прежние integration cases
+и ручной lane; три wire cases перенесены без изменения bodies. Production factory
+и transport ради тестов не меняются;
 mock server не открывает socket и не проверяет настоящие timeout/TLS настройки.
 Shared использует request assertions через уже подключённый AssertJ, без
 Hamcrest-перегрузок Spring matchers и дополнительной test dependency.

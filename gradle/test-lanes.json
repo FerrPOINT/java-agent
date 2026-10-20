@@ -850,6 +850,7 @@
     "telegram-bot/src/test/java/com/azhukov/agent/bot/webhook/WebhookSecretValidatorTest.java": "unit",
     "cli/src/test/java/com/azhukov/agent/cli/AttachCommandsTest.java": "integration",
     "cli/src/test/java/com/azhukov/agent/cli/BackendClientTest.java": "integration",
+    "cli/src/test/java/com/azhukov/agent/cli/BackendClientWireTest.java": "unit",
     "cli/src/test/java/com/azhukov/agent/cli/BackendResponseFormatterTest.java": "unit",
     "cli/src/test/java/com/azhukov/agent/cli/CliFixesTest.java": "unit",
     "cli/src/test/java/com/azhukov/agent/cli/CommandGroupTest.java": "unit",
