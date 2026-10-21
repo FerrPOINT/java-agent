@@ -431,6 +431,12 @@ docs/platform/CHOICE_CONTROLS.md: Select, MultiSelect, SearchableSelect.
 
 ## Разработка UI со справочником Base
 
+Открытая страница справочника может быть новее зависимости продукта: сверять
+контракт по принятому UI pin. Если поиск пуст, уточнить запрос/фильтры и
+проверить рецепты; отсутствие API проверить отдельно в актуальном Base.
+Общий контракт добавлять в Base вместе с metadata и примером, затем явно
+обновлять UI pin потребителя. Локальная копия не заменяет эту интеграцию.
+
 При работе над web UI читать [маршрут разработки со справочником Base](https://github.com/FerrPOINT/services-base/blob/ae2b41291eee5af752daff89f760fba5aff41783/base-modules/ui/reference/guides/agent.md).
 CLI можно читать из выбранного Base checkout на Node 22 без установки пакетов:
 из корня Base `node base-modules/ui/tools/ui-reference/cli.mjs check`, затем
