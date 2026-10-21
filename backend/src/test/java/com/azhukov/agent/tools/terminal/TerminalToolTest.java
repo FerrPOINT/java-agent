@@ -12,7 +12,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
@@ -133,19 +132,6 @@ class TerminalToolTest {
             .doesNotContainKeys("GITHUB_TOKEN", "BASH_ENV");
     }
 
-    @Test
-    void terminalResultListsExistingArchiveReferencedByCommand(@TempDir java.nio.file.Path tempDir) throws Exception {
-        AgentProperties p = properties();
-        p.getCore().setWorkingDirectory(tempDir.toString());
-        TerminalTool tool = newTool(p);
-        java.nio.file.Path archive = tempDir.resolve("bundle.zip");
-        java.nio.file.Files.writeString(archive, "archive");
-
-        ToolResult result = tool.execute("{\"command\":\"test -f " + archive + "\"}", null, session());
-
-        assertThat(result.success()).isTrue();
-        assertThat(result.content()).contains("__JAVA_AGENT_OUTPUT_FILES__:" + archive);
-    }
 
 
 

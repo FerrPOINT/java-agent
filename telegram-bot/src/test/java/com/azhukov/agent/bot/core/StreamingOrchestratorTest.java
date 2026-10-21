@@ -450,7 +450,7 @@ class StreamingOrchestratorTest {
         try {
             Files.writeString(archive, "archive");
             stubChatStream(ctx -> {
-                ctx.toolResultConsumer.accept("terminal", "ok\n__JAVA_AGENT_OUTPUT_FILES__:" + archive);
+                ctx.toolResultConsumer.accept("terminal", "archive created");
                 ctx.tokenConsumer.accept("completed\nMEDIA:" + archive);
                 ctx.onComplete.accept(new AgentBackendClient.ChatResult("completed", "model", 1, 10, true));
                 ctx.returnResult = new AgentBackendClient.ChatResult("completed", "model", 1, 10, true, false, null);

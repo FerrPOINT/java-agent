@@ -1,7 +1,5 @@
 package com.azhukov.agent.bot.media;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -121,8 +119,6 @@ public class MediaDeliveryService {
     // Directive patterns
     private static final String AUDIO_AS_VOICE = "[[audio_as_voice]]";
     private static final String AS_DOCUMENT = "[[as_document]]";
-    private static final ObjectMapper JSON = new ObjectMapper();
-    private static final String TERMINAL_OUTPUT_FILES_MARKER = "__JAVA_AGENT_OUTPUT_FILES__:";
 
     // ─── Media Descriptor ────────────────────────────────────────
 
@@ -279,75 +275,6 @@ public class MediaDeliveryService {
         }
 
         return new ExtractionResult(descriptors, cleaned);
-    }
-
-    /**
-     * Extract a file path from a successful file-mutating tool result. The
-     * backend emits this preview over SSE before the model writes its final
-     * response, so a verified output cannot be lost when the model forgets to
-     * repeat its MEDIA directive.
-     */
-    public List<MediaDescriptor> extractVerifiedToolOutput(String toolName, String toolResult) {
-        if (!"write_file".equals(toolName) && !"patch".equals(toolName)) {
-            return List.of();
-        }
-        if (toolResult == null || toolResult.isBlank()) {
-            return List.of();
-        }
-        try {
-            JsonNode payload = JSON.readTree(toolResult);
-            // WriteFileTool returns its successful result as a raw JSON object;
-            // only failures carry a success=false envelope. Do not require a
-            // success field here or every valid write is silently discarded.
-            if (payload.path("success").isBoolean() && !payload.path("success").asBoolean()) {
-                return List.of();
-            }
-            if (!payload.path("verified").asBoolean(false)) {
-                return List.of();
-            }
-            String path = payload.path("resolved_path").asText("");
-            if (path.isBlank() || !hasDeliverableExtension(path)) {
-                return List.of();
-            }
-            File file = new File(path);
-            if (!file.isFile()) {
-                return List.of();
-            }
-            return List.of(new MediaDescriptor(path, getExtension(path), false, true));
-        } catch (Exception e) {
-            return List.of();
-        }
-    }
-
-    /**
-     * Extract output files reported by a successful terminal command. The
-     * marker is backend-generated after existence checks, so only its listed
-     * file paths can trigger automatic native delivery.
-     */
-    public List<MediaDescriptor> extractTerminalOutputFiles(String toolName, String toolResult) {
-        if (!"terminal".equals(toolName) || toolResult == null || toolResult.isBlank()) {
-            return List.of();
-        }
-        int marker = toolResult.lastIndexOf(TERMINAL_OUTPUT_FILES_MARKER);
-        if (marker < 0) {
-            return List.of();
-        }
-        String paths = toolResult.substring(marker + TERMINAL_OUTPUT_FILES_MARKER.length()).trim();
-        if (paths.isEmpty()) {
-            return List.of();
-        }
-        List<MediaDescriptor> descriptors = new ArrayList<>();
-        for (String path : paths.split(",")) {
-            String normalized = path.trim();
-            if (normalized.isEmpty() || !hasDeliverableExtension(normalized)) {
-                continue;
-            }
-            File file = new File(normalized);
-            if (file.isFile()) {
-                descriptors.add(new MediaDescriptor(normalized, getExtension(normalized), false, true));
-            }
-        }
-        return descriptors;
     }
 
     private static boolean hasDeliverableExtension(String path) {

@@ -92,47 +92,6 @@ class MediaDeliveryServiceTest {
     }
 
     @Test
-    void extractVerifiedToolOutputReturnsDeliverableDocument(@TempDir Path tempDir) throws Exception {
-        Path document = tempDir.resolve("report.pdf");
-        Files.write(document, new byte[] {1, 2, 3});
-        String result = "{\"verified\":true,\"resolved_path\":\""
-            + document.toString().replace("\\", "\\\\") + "\"}";
-
-        List<MediaDeliveryService.MediaDescriptor> media =
-            service.extractVerifiedToolOutput("write_file", result);
-
-        assertEquals(1, media.size());
-        assertEquals(document.toString(), media.get(0).path());
-        assertEquals(".pdf", media.get(0).extension());
-        assertTrue(media.get(0).asDocument());
-    }
-
-    @Test
-    void extractVerifiedToolOutputRejectsUnverifiedOrMissingFiles(@TempDir Path tempDir) {
-        Path missing = tempDir.resolve("missing.pdf");
-        String unverified = "{\"verified\":false,\"resolved_path\":\"" + missing + "\"}";
-        String failed = "{\"success\":false,\"verified\":true,\"resolved_path\":\"" + missing + "\"}";
-        String missingFile = "{\"verified\":true,\"resolved_path\":\"" + missing + "\"}";
-
-        assertTrue(service.extractVerifiedToolOutput("write_file", unverified).isEmpty());
-        assertTrue(service.extractVerifiedToolOutput("write_file", failed).isEmpty());
-        assertTrue(service.extractVerifiedToolOutput("write_file", missingFile).isEmpty());
-        assertTrue(service.extractVerifiedToolOutput("read_file", missingFile).isEmpty());
-    }
-    @Test
-    void extractTerminalOutputFilesReturnsExistingArchive(@TempDir Path tempDir) throws Exception {
-        Path archive = tempDir.resolve("bundle.zip");
-        Files.writeString(archive, "archive");
-
-        List<MediaDeliveryService.MediaDescriptor> media = service.extractTerminalOutputFiles(
-            "terminal", "completed\n__JAVA_AGENT_OUTPUT_FILES__:" + archive);
-
-        assertEquals(1, media.size());
-        assertEquals(archive.toString(), media.get(0).path());
-        assertEquals(".zip", media.get(0).extension());
-        assertTrue(media.get(0).asDocument());
-    }
-    @Test
     void extractMediaTags_unknownExtensionNotExtracted() {
         String text = "MEDIA:/tmp/file.xyz";
         MediaDeliveryService.ExtractionResult result = service.extractMediaTags(text);

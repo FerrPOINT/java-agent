@@ -112,10 +112,6 @@ class StreamingEventHelper {
 
     // ── Result preview ─────────────────────────────────────────────────────
 
-    String formatResultForTransport(ToolResult result) {
-        return toolResultFormatter.formatResult(result);
-    }
-
     /**
      * Format a tool result for the {@code "tool_result"} SSE event, truncated
      * to 500 characters.
