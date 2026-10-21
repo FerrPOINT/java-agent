@@ -97,7 +97,7 @@ public final class TurnExecutorUtils {
             if (sm.toolCallId() != null || sm.role() == com.azhukov.agent.core.model.Role.TOOL) {
                 String enhanced = (sm.content() != null ? sm.content() : "") + "\n\n" + steerMarker;
                 context.set(si, Message.toolResult(sm.toolCallId(), enhanced, sm.turnIndex()));
-                log.info("Pre-API steer drain: injected into tool msg at index {} (session {})", si, sessionId);
+                log.info("steer_injected_before_model_call session={} toolMessageIndex={}", sessionId, si);
                 return true;
             }
         }

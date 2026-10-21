@@ -53,6 +53,7 @@ class SteerCommandTest {
 
         assertThat(result).contains("injected");
         assertThat(result).contains("focus on auth");
+        verify(backendClient).steer(eq(session.getBackendSessionId().toString()), eq("focus on auth"));
     }
 
     @Test

@@ -161,6 +161,55 @@ class AgentRuntimeServiceBranchTest {
     }
 
     @Test
+    void steerActionAndTurnReleaseAreAtomic() throws Exception {
+        UUID id = UUID.randomUUID();
+        SessionTurnLockManager manager = new SessionTurnLockManager();
+        java.util.concurrent.CountDownLatch turnLocked = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch steerEntered = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch allowTurnRelease = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch allowSteerExit = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch turnReleased = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicBoolean steerAccepted = new java.util.concurrent.atomic.AtomicBoolean();
+
+        Thread turn = new Thread(() -> {
+            assertThat(manager.tryAcquire(id, 0)).isTrue();
+            turnLocked.countDown();
+            try {
+                assertThat(allowTurnRelease.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            } finally {
+                manager.release(id);
+                turnReleased.countDown();
+            }
+        });
+        Thread steer = new Thread(() -> steerAccepted.set(manager.runIfLocked(id, () -> {
+            steerEntered.countDown();
+            try {
+                return allowSteerExit.await(5, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        })));
+
+        turn.start();
+        assertThat(turnLocked.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        steer.start();
+        assertThat(steerEntered.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+
+        allowTurnRelease.countDown();
+        assertThat(turnReleased.await(100, java.util.concurrent.TimeUnit.MILLISECONDS)).isFalse();
+
+        allowSteerExit.countDown();
+        turn.join(5_000);
+        steer.join(5_000);
+        assertThat(steerAccepted.get()).isTrue();
+        assertThat(turnReleased.getCount()).isZero();
+        assertThat(manager.runIfLocked(id, () -> true)).isFalse();
+    }
+
+    @Test
     void getContextAggregatesWithoutTranscript() {
         UUID id = UUID.randomUUID();
         SessionEntity entity = persistedSession();

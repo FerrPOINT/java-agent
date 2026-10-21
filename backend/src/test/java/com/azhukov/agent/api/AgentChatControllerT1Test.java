@@ -105,11 +105,13 @@ class AgentChatControllerT1Test {
     @Mock private AgentProperties.BackgroundReviewProperties backgroundReviewProperties;
     @Mock private AgentMetrics agentMetrics;
     @Mock private com.azhukov.agent.core.security.CommandApprovalManager commandApprovalManager;
+    private com.azhukov.agent.core.agent.SessionTurnLockManager sessionTurnLockManager;
 
     @BeforeEach
     void setUp() {
         steerBuffer = new SteerBuffer();
         interruptToken = new InterruptToken();
+        sessionTurnLockManager = new com.azhukov.agent.core.agent.SessionTurnLockManager();
         approvalQueue = new ApprovalQueue();
         lenient().when(properties.getModel()).thenReturn(modelProperties);
         lenient().when(properties.getCore()).thenReturn(coreProperties);
@@ -146,6 +148,9 @@ class AgentChatControllerT1Test {
             var field = AgentChatController.class.getDeclaredField("commandApprovalManager");
             field.setAccessible(true);
             field.set(controller, commandApprovalManager);
+            var lockField = AgentChatController.class.getDeclaredField("sessionTurnLockManager");
+            lockField.setAccessible(true);
+            lockField.set(controller, sessionTurnLockManager);
         } catch (Exception e) {
             // field injection is optional — ignore if missing
         }
@@ -260,13 +265,32 @@ class AgentChatControllerT1Test {
 
     @Test
     void steer_success() throws Exception {
+        assertThat(sessionTurnLockManager.tryAcquire(SESSION_ID, 1)).isTrue();
+        try {
+            String body = objectMapper.writeValueAsString(new SteerRequest(SESSION_ID, "direction"));
+            mockMvc.perform(post("/api/v1/agent/steer")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.accepted").value(true))
+                .andExpect(jsonPath("$.sessionId").value(SESSION_ID.toString()));
+        } finally {
+            sessionTurnLockManager.release(SESSION_ID);
+        }
+    }
+
+    @Test
+    void steer_inactiveTurn_returnsNotAcceptedAndDoesNotBufferText() throws Exception {
         String body = objectMapper.writeValueAsString(new SteerRequest(SESSION_ID, "direction"));
+
         mockMvc.perform(post("/api/v1/agent/steer")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.accepted").value(true))
-            .andExpect(jsonPath("$.sessionId").value(SESSION_ID.toString()));
+            .andExpect(jsonPath("$.accepted").value(false))
+            .andExpect(jsonPath("$.reason").value("no active turn"));
+
+        assertThat(steerBuffer.hasPending(SESSION_ID)).isFalse();
     }
 
     @Test

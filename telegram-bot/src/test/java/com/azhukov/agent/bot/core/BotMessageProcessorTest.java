@@ -468,6 +468,37 @@ class BotMessageProcessorTest {
 
 
     @Test
+    void steerCommandReachesActiveTurnWithoutWaitingForChatLock() throws Exception {
+        CommandHandler steerHandler = mock(CommandHandler.class);
+        when(commandRegistry.get("steer")).thenReturn(steerHandler);
+        when(steerHandler.handle(any(), any())).thenReturn("Steer note injected");
+
+        java.util.concurrent.CountDownLatch streamStarted = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch releaseStream = new java.util.concurrent.CountDownLatch(1);
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+            .thenAnswer(invocation -> {
+                streamStarted.countDown();
+                releaseStream.await(5, java.util.concurrent.TimeUnit.SECONDS);
+                return new AgentBackendClient.ChatResult("response", "test-model", 100, 1000, true, false);
+            });
+
+        java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newSingleThreadExecutor();
+        try {
+            java.util.concurrent.Future<?> runningTurn = executor.submit(() -> processor.accept(textEvent(1, 100L, "long task")));
+            assertThat(streamStarted.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+
+            processor.accept(commandEvent(2, 100L, "steer", "focus on tests"));
+
+            verify(steerHandler, timeout(500)).handle(any(), any());
+            releaseStream.countDown();
+            runningTurn.get(5, java.util.concurrent.TimeUnit.SECONDS);
+        } finally {
+            releaseStream.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
     void textMessageProcessingCallsBackend() {
         stubStreamingResult("Hello back", true);
         processor.accept(textEvent(1, 100L, "Hello"));

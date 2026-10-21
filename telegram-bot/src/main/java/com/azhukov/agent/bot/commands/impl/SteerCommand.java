@@ -12,9 +12,11 @@ import org.springframework.stereotype.Component;
  * after the next tool call, without interrupting the current turn.
  */
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 @Component
 @RequiredArgsConstructor
+@Slf4j
 public class SteerCommand implements CommandHandler {
 
     private final AgentBackendClient backendClient;
@@ -45,9 +47,11 @@ public class SteerCommand implements CommandHandler {
         if (sid == null) return "No backend session yet — send a message first.";
         boolean accepted = backendClient.steer(sid, args.trim());
         if (accepted) {
+            log.info("steer_command_accepted chat={} backendSession={}", event.chatId(), sid);
             return "Steer note injected: \"" + args.trim() + "\"\n"
                 + "It will be delivered after the next tool call completes.";
         }
+        log.info("steer_command_rejected chat={} backendSession={}", event.chatId(), sid);
         return "Failed to inject steer note. No active turn or backend error.";
     }
 }

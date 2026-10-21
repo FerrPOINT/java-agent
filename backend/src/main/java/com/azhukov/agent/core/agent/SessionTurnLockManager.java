@@ -5,6 +5,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.BooleanSupplier;
 
 import org.springframework.stereotype.Component;
 
@@ -47,32 +48,49 @@ public class SessionTurnLockManager {
         }
     }
 
+    /**
+     * Execute an action only while this session's active turn still owns its
+     * lock. The monitor makes the check and enqueue atomic with release, so a
+     * steer cannot be accepted after that turn has stopped owning the lock.
+     */
+    public boolean runIfLocked(UUID sessionId, BooleanSupplier action) {
+        ReentrantLock lock = locks.get(sessionId);
+        if (lock == null) {
+            return false;
+        }
+        synchronized (lock) {
+            return lock.isLocked() && action.getAsBoolean();
+        }
+    }
+
     /** Release the turn lock and remove the map entry when uncontended. */
     public void release(UUID sessionId) {
         ReentrantLock lock = locks.get(sessionId);
         if (lock == null) {
             return;
         }
-        try {
-            lock.unlock();
-        } catch (IllegalMonitorStateException e) {
-            // Not held by this thread — nothing to release.
-            return;
-        }
-        // Remove the lock from the map to prevent unbounded growth. Only remove
-        // when no other thread is waiting (tryLock succeeds immediately after
-        // unlock, meaning no contention). Safe: a new turn on the same session
-        // computeIfAbsent's a fresh lock if needed.
-        try {
-            if (lock.tryLock()) {
-                try {
-                    locks.remove(sessionId, lock);
-                } finally {
-                    lock.unlock();
-                }
+        synchronized (lock) {
+            try {
+                lock.unlock();
+            } catch (IllegalMonitorStateException e) {
+                // Not held by this thread — nothing to release.
+                return;
             }
-        } catch (IllegalMonitorStateException ignored) {
-            // raced with a waiter — leave the entry in place
+            // Remove the lock from the map to prevent unbounded growth. Only remove
+            // when no other thread is waiting (tryLock succeeds immediately after
+            // unlock, meaning no contention). Safe: a new turn on the same session
+            // computeIfAbsent's a fresh lock if needed.
+            try {
+                if (lock.tryLock()) {
+                    try {
+                        locks.remove(sessionId, lock);
+                    } finally {
+                        lock.unlock();
+                    }
+                }
+            } catch (IllegalMonitorStateException ignored) {
+                // raced with a waiter — leave the entry in place
+            }
         }
     }
 }

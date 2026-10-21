@@ -915,7 +915,7 @@ class AgentControllerBranchCoverageTest {
     }
 
     @Test
-    void steerValidReturnsAccepted() throws Exception {
+    void steerWithoutActiveTurnReturnsNotAccepted() throws Exception {
         mockMvc = chatMockMvc();
         mockMvc.perform(post("/api/v1/agent/steer")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -926,7 +926,8 @@ class AgentControllerBranchCoverageTest {
                     }
                     """))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.accepted").value(true));
+            .andExpect(jsonPath("$.accepted").value(false))
+            .andExpect(jsonPath("$.reason").value("no active turn"));
     }
 
     // ── Curator run/pause/resume ──

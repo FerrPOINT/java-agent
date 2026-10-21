@@ -1038,7 +1038,7 @@ public class TurnExecutor {
             + DefaultPromptBuilder.STEER_MARKER_CLOSE;
         toolResults.set(toolResults.size() - 1,
             Message.toolResult(lastToolResult.toolCallId(), enhancedContent, currentTurnIndex));
-        log.info("Injected steer note for session {}", sessionId);
+        log.info("steer_injected_at_tool_boundary session={}", sessionId);
     }
 
     private static boolean isBrowserTool(String toolName) {
