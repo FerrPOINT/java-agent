@@ -161,9 +161,7 @@ public class ProcessTool implements ToolHandler {
                 pb.directory(resolved);
             }
         }
-        if (envVars != null && !envVars.isEmpty()) {
-            pb.environment().putAll(envVars);
-        }
+        ChildProcessEnvironment.prepare(pb.environment(), envVars);
         pb.redirectErrorStream(true);
         Process process = pb.start();
 

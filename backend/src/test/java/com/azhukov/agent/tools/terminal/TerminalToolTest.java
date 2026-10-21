@@ -116,6 +116,22 @@ class TerminalToolTest {
         assertThat(result.content()).contains("hello");
     }
 
+    @Test
+    void sessionEnvironmentCannotPersistSecretsOrShellControlVariables() throws Exception {
+        AgentProperties p = properties();
+        TerminalTool tool = newTool(p);
+        Session currentSession = session();
+
+        ToolResult result = tool.execute(
+            "{\"command\":\"export BUILD_MODE=test GITHUB_TOKEN=secret BASH_ENV=/tmp/profile; echo ready\"}",
+            null, currentSession);
+
+        assertThat(result.success()).isTrue();
+        assertThat(TerminalTool.trackedEnv(currentSession.id()))
+            .containsEntry("BUILD_MODE", "test")
+            .doesNotContainKeys("GITHUB_TOKEN", "BASH_ENV");
+    }
+
     // ── 2. Timeout — command exceeds timeout → fail ───────────────────────
 
     @Test
