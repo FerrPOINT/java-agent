@@ -1,0 +1,59 @@
+# SDLC2: central bearer identity и session ownership Java
+
+Read-only live regression: собственная QA-сессия читается без токена (HTTP 200).
+Новая установка не задала security API key, и legacy dev filter принимает все
+запросы как admin. Basic noop scenario не доказывает аутентификацию/изоляцию.
+
+Добавить явный deployment central-auth mode через стандартный Spring Security
+Nimbus JwtDecoder: только ES256, own issuer/JWKS, audience sdlc, timestamp и
+непустой UUID subject. Реальный SDLC2 token имеет issuer http://localhost:8701,
+audience sdlc, sub совпадает с Auth user UUID; JWKS /oidc/jwks.
+В этом режиме нет fallback на legacy API key/dev principal. Human JWT устанавливает
+существующий owner-scoped user context, не предоставляет global gateway admin.
+Систему человеческих ролей Admin это не меняет. Standalone/test legacy режим
+сохраняется, но deployment SDLC2 обязан явно включить central mode.
+
+Session list/create берут subject из authenticated context. Проверить owner
+перед sync/stream dispatch на HTTP thread, а не надеяться на ThreadLocal после
+перехода в async worker. Read/messages/update/delete уже имеют requireOwnership;
+проверить реальные их ответы и отсутствие private transcript у другого subject.
+Machine project/task/execution authorization и AI consumer будут отдельным объёмом.
+
+Bearer должен иметь canonical nonzero UUID sid. После signature/issuer/audience/
+timestamps/subject проверяется own `/auth/me`: exact id и active status.
+Revoked/disabled => 401, Auth недоступен либо нарушен протокол => 503; нет cache
+решения о действующей сессии и fallback. HTTP redirects запрещены; body ≤64 KiB,
+общий deadline 5s с отменой exchange. Используется штатный JDK25
+[BodyHandlers.limiting](https://docs.oracle.com/en/java/javase/25/docs/api/java.net.http/java/net/http/HttpResponse.BodyHandlers.html).
+Image capability `sdlc.java.central-auth-contract=v2`; v1 signature-only image
+не допускается к конфигурационной миграции.
+
+Добавить явную конфигурационную миграцию helper для собственного Java image,
+с CAS/fingerprint, common/local locks и сохранённым журналом; чужие ресурсы,
+secrets и initialized storage не менять. Migrate проверяет image capability;
+Apply не выдавать за авторизацию новой конфигурации. Actual anonymous/foreign/
+expired/wrong audience/issuer tests и JWT+session restart persistence обязательны.
+
+Проверки: реальные signed fixture tokens/JWKS и filter/service invariants, Linux
+backend tests/bootJar, own build/rollout и live QA без paid calls. UI не меняется.
+Использовать [стандартный JWT decoder](https://docs.spring.io/spring-security/reference/7.1-SNAPSHOT/servlet/oauth2/resource-server/jwt.html),
+не создавать свою реализацию signature verification.
+
+## Фактическая проверка 4 октября
+
+Linux backend gate: 7217 tests, 0 failures, 0 errors, 1 skipped; bootJar собран.
+Build `c3f492419e2f4ee2bd293c520702380d`, image
+`sha256:48b8f7802b81aa8720f173affbbb96372e61013a44911a963dc90a12d944ce21`.
+Адресные Apply и `Migrate -Feature java-auth` завершены; PG/Flyway/noop сохранены.
+
+Live QA двух пользователей: anonymous/malformed/legacy key → 401; claimed
+userId не меняет владельца; list возвращает собственные записи. Foreign
+read/messages/update/delete/sync/stream/fork/model → 403. Own noop turn и
+transcript, старый QA-dialog, Auth refresh работают. После собственного Java
+restart новый dialogue/transcript сохранён; git 2.43.0 доступен. 37 остальных
+permanent containers не изменили IDs/images/start times/state в этом интервале.
+Это не доказывает содержимое чужих БД или двусторонний lifecycle isolation.
+
+Платные вызовы не выполнялись. Project/task/machine authorization, published AI
+consumer и остальные глобальные control/telemetry API ещё требуют реализации
+и отдельной проверки; session ownership не объявляет весь Java API изолированным.

@@ -1,0 +1,260 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '4.1.1'
+    id 'io.spring.dependency-management' version '1.1.7'
+    id 'jacoco'
+}
+
+group = 'com.azhukov'
+version = '0.0.1-SNAPSHOT'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_25
+    targetCompatibility = JavaVersion.VERSION_25
+}
+
+configurations {
+    compileOnly {
+        extendsFrom annotationProcessor
+    }
+}
+
+// MapStruct defaults; Lombok and MapStruct processors are resolved via annotationProcessor configuration.
+tasks.withType(JavaCompile).configureEach {
+    options.compilerArgs += [
+        '-Amapstruct.defaultComponentModel=spring',
+        '-Amapstruct.unmappedTargetPolicy=ERROR',
+        '-Amapstruct.suppressGeneratorTimestamp=true'
+    ]
+}
+
+repositories {
+    mavenCentral()
+    maven { url = 'https://repo.spring.io/milestone' }
+}
+
+dependencies {
+    // shared DTOs + mapper + REST factory (h10)
+    implementation project(':shared')
+    // Spring Boot
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-security'
+    implementation 'org.springframework.security:spring-security-oauth2-jose'
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+    implementation 'org.springframework.boot:spring-boot-health'
+    implementation 'io.micrometer:micrometer-registry-prometheus'
+
+    // LLM (latest stable, not in Spring Boot BOM)
+    implementation 'dev.langchain4j:langchain4j:1.20.0'
+    implementation 'dev.langchain4j:langchain4j-open-ai:1.20.0'
+    implementation 'dev.langchain4j:langchain4j-http-client-jdk:1.20.0'
+
+    // MCP (GA 2.0, not in Spring Boot BOM)
+    implementation 'io.modelcontextprotocol.sdk:mcp:2.0.0'
+
+    // DB / migrations — versions managed by Spring Boot 4.1 BOM
+    implementation 'org.flywaydb:flyway-core'
+    runtimeOnly 'org.postgresql:postgresql'
+    implementation 'org.flywaydb:flyway-database-postgresql'
+
+    // (Pebble templating removed — was unused)
+
+    implementation 'io.github.resilience4j:resilience4j-retry:2.4.0'
+    implementation 'io.github.resilience4j:resilience4j-timelimiter:2.4.0'
+
+    // Spring Retry for @Retryable annotations
+    implementation 'org.springframework.retry:spring-retry:2.0.13'
+
+    // Lombok
+    compileOnly 'org.projectlombok:lombok:1.18.48'
+    annotationProcessor 'org.projectlombok:lombok:1.18.48'
+    testCompileOnly 'org.projectlombok:lombok:1.18.48'
+    testAnnotationProcessor 'org.projectlombok:lombok:1.18.48'
+
+    // MapStruct
+    implementation 'org.mapstruct:mapstruct:1.6.3'
+    annotationProcessor 'org.mapstruct:mapstruct-processor:1.6.3'
+    testCompileOnly 'org.mapstruct:mapstruct:1.6.3'
+    testAnnotationProcessor 'org.mapstruct:mapstruct-processor:1.6.3'
+
+    // OpenAPI / Swagger UI
+    implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:3.1.1'
+
+    // WebSocket client for CDP
+    implementation 'org.java-websocket:Java-WebSocket:1.6.0'
+    // PR #3 parity deps: websocket event bus + profile tar.gz import/export
+    implementation 'org.springframework.boot:spring-boot-starter-websocket'
+    implementation 'org.apache.commons:commons-compress:1.28.0'
+    implementation 'org.tomlj:tomlj:1.3.0'
+    implementation 'org.apache.pdfbox:pdfbox:3.0.8'
+
+    // HTML / markdown parsing
+    implementation 'org.jsoup:jsoup:1.23.2'
+    implementation 'com.vladsch.flexmark:flexmark:0.64.8'
+    implementation 'com.vladsch.flexmark:flexmark-html2md-converter:0.64.8'
+
+    // Commons utilities
+    implementation 'com.cronutils:cron-utils:9.2.1'
+    implementation 'com.bucket4j:bucket4j-core:8.10.1'
+
+    // (commons-imaging removed — was unused)
+
+    // Logging
+    implementation 'org.slf4j:slf4j-api:2.0.20'
+    implementation 'net.logstash.logback:logstash-logback-encoder:8.0'
+
+    // Test / local in-memory DB
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.springframework.boot:spring-boot-webmvc-test'
+    runtimeOnly 'com.h2database:h2'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+
+    // Testcontainers for real PostgreSQL integration tests
+    testImplementation 'org.testcontainers:testcontainers:1.21.4'
+    testImplementation 'org.testcontainers:postgresql:1.21.4'
+    testImplementation 'org.testcontainers:junit-jupiter:1.21.4'
+}
+
+tasks.named('test') {
+    useJUnitPlatform {
+        excludeTags 'live', 'slow', 'e2e'
+    }
+    jvmArgs '-XX:+EnableDynamicAgentLoading'
+    // Env-mutation tests (HERMES_HOME artifact-path resolution) need reflective
+    // access to the unmodifiable env map backing System.getenv().
+    jvmArgs '--add-opens=java.base/java.util=ALL-UNNAMED', '--add-opens=java.base/java.lang=ALL-UNNAMED'
+    maxHeapSize = '4g'
+    // DEBT-3: strict-stubs flakes (OpenAiRunsControllerTest) under parallel forks —
+    // async run tests race Mockito verification. Serialized forks + periodic
+    // fork recycling (audit 2026-09-01 stabilization, ported from 0b348696).
+    maxParallelForks = 1
+    forkEvery = 750
+    // Workaround for Gradle 9.x EOFException in test result serialization
+    reports {
+        junitXml.required = true
+        html.required = false
+    }
+    finalizedBy jacocoTestReport
+}
+
+
+tasks.register('slowTest', Test) {
+    description = 'Runs slow integration tests'
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform {
+        includeTags 'slow'
+        excludeTags 'live'
+    }
+    jvmArgs '-XX:+EnableDynamicAgentLoading'
+    maxHeapSize = '4g'
+}
+
+tasks.register('liveTest', Test) {
+    description = 'Runs live integration tests requiring external services'
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform {
+        includeTags 'live'
+    }
+    jvmArgs '-XX:+EnableDynamicAgentLoading'
+    maxHeapSize = '4g'
+    finalizedBy jacocoTestReport
+}
+
+tasks.register('e2eTest', Test) {
+    description = 'Runs E2E tests against a running java-agent instance (docker compose up first)'
+    group = 'verification'
+    useJUnitPlatform {
+        includeTags 'e2e'
+    }
+    jvmArgs '-XX:+EnableDynamicAgentLoading'
+    maxHeapSize = '2g'
+    systemProperty 'e2e.baseUrl', System.getProperty('e2e.baseUrl', 'http://localhost:18090')
+    systemProperty 'e2e.agentName', System.getProperty('e2e.agentName', 'Джава агент')
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+}
+
+tasks.named('jacocoTestReport') {
+    dependsOn test
+    reports {
+        xml.required = true
+        html.required = true
+    }
+}
+
+// L6: Disable plain jar — only bootJar is needed for deployment
+tasks.named('jar') {
+    enabled = false
+}
+
+tasks.named('jacocoTestCoverageVerification', JacocoCoverageVerification) {
+    dependsOn jacocoTestReport
+    violationRules {
+        rule {
+            limit {
+                counter = 'LINE'
+                // Aligned with docs/standards/coverage-baseline.json (the CI
+                // ratchet, scripts/check_docs_standard.py --check-coverage).
+                // Both mechanisms must require the same floor; raise this
+                // together with the baseline when new tests land.
+                minimum = 0.7938
+            }
+        }
+    }
+}
+
+check.dependsOn jacocoTestCoverageVerification
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 25
+}
+
+springBoot {
+    buildInfo()
+}
+
+def ferrpointNoticeFiles = [
+    rootProject.file('LICENSE'),
+    rootProject.file('NOTICE'),
+    rootProject.file('THIRD_PARTY_NOTICES.md')
+]
+
+tasks.withType(Jar).configureEach {
+    ferrpointNoticeFiles.each { noticeFile ->
+        from(noticeFile) {
+            into 'META-INF'
+        }
+    }
+    manifest {
+        attributes(
+            'Implementation-Vendor': 'FerrPOINT',
+            'Implementation-Vendor-Id': 'FerrPOINT',
+            'License': 'LicenseRef-FerrPOINT-Proprietary',
+            'License-Name': 'FerrPOINT Proprietary Source-Available Evaluation License v1.0',
+            'License-File': 'META-INF/LICENSE'
+        )
+    }
+}
+
+// Allow JLine native terminal access without warning on Java 25.
+// maxHeapSize prevents OOM/SIGKILL when real LLM calls buffer large payloads
+// inside the Gradle daemon JVM (daemon overhead + app heap > available RAM).
+// For production-like runs with real LLM load prefer `java -jar` (no daemon overhead).
+tasks.named('bootRun') {
+    jvmArgs '--enable-native-access=ALL-UNNAMED'
+    maxHeapSize = '2g'
+}
+tasks.named('bootJar') {
+    manifest {
+        attributes 'Start-Class': 'com.azhukov.agent.JavaAgentApplication'
+    }
+}
+
+// For plain java -jar runs, add this option via environment or wrapper script.
+// Example: JAVA_TOOL_OPTIONS='--enable-native-access=ALL-UNNAMED' java -jar ...

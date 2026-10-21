@@ -1,0 +1,2008 @@
+{
+  "schema": "pdlc/workspace-source-recovery/v1",
+  "repository": "java-agent",
+  "status": "inert source recovery; not installed; not merge qualification",
+  "base": "14fd3815497e4874073ca63669a98bc7856bd3ec",
+  "normalization": "CRLF to LF, otherwise exact original bytes",
+  "versions": [
+    {
+      "original_path": "AGENTS.md",
+      "sha256": "34237594557b7b1818992b44e0b67c7556c97026f0d29be516647a4bce075268",
+      "payload": "sources/source-recovery/34237594557b7b18-a54ff182-AGENTS.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        },
+        {
+          "worktree": "sdlc/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "Dockerfile",
+      "sha256": "3f7c82999b038bc4f7fec93ffea45e86576f49d366e8f1fa933c6b55471bdc25",
+      "payload": "sources/source-recovery/3f7c82999b038bc4-dd2c0eb6-Dockerfile.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/build.gradle",
+      "sha256": "71813c11ba3bb7c64e83813030a1ccd065a07c5e15c921803ed1dcd16f549426",
+      "payload": "sources/source-recovery/71813c11ba3bb7c6-cd279e89-build.gradle.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/gradle/wrapper/gradle-wrapper.properties",
+      "sha256": "c7220dc6c3fa610ecbd1f836baeb7f2edd71fa23e855ed76c3e30715f0079818",
+      "payload": "sources/source-recovery/c7220dc6c3fa610e-c2c45fab-gradle-wrapper.properties.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/skills/.bundled-manifest",
+      "sha256": "14148513f84300a1e46b2bd4746ee495155382b9ed3e0dcd1a133a94e4fe092f",
+      "payload": "sources/source-recovery/14148513f84300a1-2d62010b-.bundled-manifest.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        },
+        {
+          "worktree": "sdlc2/_java-agent-pr-review",
+          "head": "cafe808ec41d4e29e73aabcecd4c59ea25f7803e"
+        },
+        {
+          "worktree": "sdlc/_java-agent-pr-review",
+          "head": "cafe808ec41d4e29e73aabcecd4c59ea25f7803e"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/main/java/com/azhukov/agent/api/SessionCrudController.java",
+      "sha256": "ab90e5cbf90a12d4400935de620b3b4fc9b0cdf0a508b6c3e3d6ade64ee4da6c",
+      "payload": "sources/source-recovery/ab90e5cbf90a12d4-96c54307-SessionCrudController.java.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/main/java/com/azhukov/agent/api/filter/ApiKeyAuthFilter.java",
+      "sha256": "3b93817ba056708d3df4dfd6b730f7d23b1b75bada062b775d2cf3882a25fe3e",
+      "payload": "sources/source-recovery/3b93817ba056708d-e58e2931-ApiKeyAuthFilter.java.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/main/java/com/azhukov/agent/core/metadata/ModelMetadataService.java",
+      "sha256": "733fd89e44af49a4dbc874dea3e63e520b98fde18f6e7454f4cd6c1f36e7a4b9",
+      "payload": "sources/source-recovery/733fd89e44af49a4-b26475fc-ModelMetadataService.java.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/main/java/com/azhukov/agent/service/AgentRuntimeService.java",
+      "sha256": "9fa57a59faf5c5c497ee7a69d76aa6260a8dca9384435bff7e73c120becb1b56",
+      "payload": "sources/source-recovery/9fa57a59faf5c5c4-928e1533-AgentRuntimeService.java.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/main/java/com/azhukov/agent/service/AgentStreamingService.java",
+      "sha256": "1bdc4da3b1bed68484117d4f28ccf702e46a68ede2fb62ae87d42d3c4f03a3d7",
+      "payload": "sources/source-recovery/1bdc4da3b1bed684-1c37faea-AgentStreamingService.java.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/main/java/com/azhukov/agent/service/SessionPruneService.java",
+      "sha256": "cfbcba357c860a4c8bde53bc68a79751981ca29a83e656a0398399622a9c0b52",
+      "payload": "sources/source-recovery/cfbcba357c860a4c-13d6317e-SessionPruneService.java.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/main/java/com/azhukov/agent/service/SessionQueryService.java",
+      "sha256": "5740cdcc7401bfba2a5b3676cd02c5719b4ed7086d6c422c0dd61ee1bd73c3ab",
+      "payload": "sources/source-recovery/5740cdcc7401bfba-3f861647-SessionQueryService.java.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/test/java/com/azhukov/agent/core/metadata/ModelMetadataServiceTest.java",
+      "sha256": "e0f4d4af582a4d026683f72e0f07bf3f306b21936272c56d33e6ac97c2388631",
+      "payload": "sources/source-recovery/e0f4d4af582a4d02-5517c226-ModelMetadataServiceTest.java.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/test/java/com/azhukov/agent/service/AgentStreamingServiceEntryBranchTest.java",
+      "sha256": "9689bdac095e0b17b5fc43b006747c8c70695b8455b637125bc8c5d813c47968",
+      "payload": "sources/source-recovery/9689bdac095e0b17-09d6c4d4-AgentStreamingServiceEntryBranchTest.java.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/test/java/com/azhukov/agent/service/SessionPruneServiceTest.java",
+      "sha256": "8aeabe0249ba87e8e2ac813b9656f07630537614a81c2c3fc99dce95b1d40ccc",
+      "payload": "sources/source-recovery/8aeabe0249ba87e8-19f06364-SessionPruneServiceTest.java.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/test/java/com/azhukov/agent/tools/file/PatchToolBranchTest.java",
+      "sha256": "dfecef325f70472a9c6ece8754f6e16dcf160daafeee9f083ed5a71420acef61",
+      "payload": "sources/source-recovery/dfecef325f70472a-b4e6565a-PatchToolBranchTest.java.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "scripts/deploy-dev-docker.sh",
+      "sha256": "488f133035c5f5bbc2d30c12aefcf44fc677af0b7cb89486f8c031187592ac95",
+      "payload": "sources/workspace-operations/488f133035c5f5bb-15ce44b9-deploy-dev-docker.sh.source",
+      "group": "workspace-operations",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        },
+        {
+          "worktree": "sdlc/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/main/java/com/azhukov/agent/core/security/CentralJwtVerifier.java",
+      "sha256": "f6992bd38a6ea0e0809e922ab2d72eb76e02daf9965d4fd36abd8d58807be24d",
+      "payload": "sources/source-recovery/f6992bd38a6ea0e0-727596ed-CentralJwtVerifier.java.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/test/java/com/azhukov/agent/api/filter/CentralJwtFilterTest.java",
+      "sha256": "85a6d39a9c070017a5be7f85a8c8ec09cf0b04b666ffeabe58b037c06ba57e2a",
+      "payload": "sources/source-recovery/85a6d39a9c070017-4605892e-CentralJwtFilterTest.java.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/test/java/com/azhukov/agent/service/SessionQueryIdentityTest.java",
+      "sha256": "297f8e1503837ec07cd18f62de1f48b9963b12b481bf80ad3a4230fa98319e37",
+      "payload": "sources/source-recovery/297f8e1503837ec0-3528ec7e-SessionQueryIdentityTest.java.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/plans/2026-10-03-sdlc2-central-auth.md",
+      "sha256": "f63d49b516a4784af534c154c5ea6d4a8e65aa152016f55032904c98352c39ba",
+      "payload": "sources/source-recovery/f63d49b516a4784a-9549c621-2026-10-03-sdlc2-central-auth.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/plans/2026-10-03-sdlc2-deepseek-context-hint.md",
+      "sha256": "5263cf42f0e3f510dcbbdb012f404c108035fddf70ac56dfda5bf5e89a72e7e4",
+      "payload": "sources/source-recovery/5263cf42f0e3f510-868b0ee4-2026-10-03-sdlc2-deepseek-context-hint.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/plans/2026-10-03-sdlc2-java-linux-toolchain.md",
+      "sha256": "9b11bf32bcdc20f65886cdbf7bbbd2cf3215dc41aee687fb84063af36b8bd21c",
+      "payload": "sources/source-recovery/9b11bf32bcdc20f6-481a5c94-2026-10-03-sdlc2-java-linux-toolchain.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/plans/2026-10-04-safe-api-errors.md",
+      "sha256": "647b483fd4b2e691961083b87c8cf2e07f0ef36a17ebd79fb7bb39ca272b6642",
+      "payload": "sources/source-recovery/647b483fd4b2e691-8ac17dd8-2026-10-04-safe-api-errors.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/test/java/com/azhukov/agent/core/context/CodingWorkspaceSnapshotTest.java",
+      "sha256": "c11422c695349ad5883380c43e1194568d26ac2aabc2b09156ab909786c92711",
+      "payload": "sources/source-recovery/c11422c695349ad5-c432a3f3-CodingWorkspaceSnapshotTest.java.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/test/java/com/azhukov/agent/service/McpOAuthFlowServiceTest.java",
+      "sha256": "8faf70bc73076dc6180ee39438dc3880e33336546fd0671262e56ed83056a28f",
+      "payload": "sources/source-recovery/8faf70bc73076dc6-b8e622a5-McpOAuthFlowServiceTest.java.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc/java-agent",
+          "head": "af9e366032e1818138d9c667f72e547f1fdfb78f"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "cli/build.gradle",
+      "sha256": "5e926e6eec7de0e67b2fe62ed9c512f9f40fba874fe73356a1e35a07186ec136",
+      "payload": "sources/source-recovery/5e926e6eec7de0e6-de8fe44d-build.gradle.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/_java-agent-pr-review",
+          "head": "cafe808ec41d4e29e73aabcecd4c59ea25f7803e"
+        },
+        {
+          "worktree": "sdlc/_java-agent-pr-review",
+          "head": "cafe808ec41d4e29e73aabcecd4c59ea25f7803e"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/main/java/com/azhukov/agent/tools/web/WebSearchTool.java",
+      "sha256": "9d9dc61d638accd927f78ddd690046b9c585099694ded2a516172412c6544964",
+      "payload": "sources/source-recovery/9d9dc61d638accd9-9d7190a2-WebSearchTool.java.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc/.local/pr-review-root-20261003-a817e6/cyclic-review-20261009/candidate91-search-review",
+          "head": "3ec8e29adabd636fce9ef7b596cf0a17faa2820a"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/test/java/com/azhukov/agent/tools/web/WebSearchToolTest.java",
+      "sha256": "f1ec2f05efe29e88d8961a27ee9ae6ae0be77fd0ba5746fd1117982ceb4c4367",
+      "payload": "sources/source-recovery/f1ec2f05efe29e88-9b5169c3-WebSearchToolTest.java.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc/.local/pr-review-root-20261003-a817e6/cyclic-review-20261009/candidate91-search-review",
+          "head": "3ec8e29adabd636fce9ef7b596cf0a17faa2820a"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "reviewed_synthetic_api_key_fixture": true
+    },
+    {
+      "original_path": "backend/src/main/java/com/azhukov/agent/tools/web/WebSearchTool.java",
+      "sha256": "6139bc1de178778a6508590dc092f872427e38ee080d7ded63eace748c4c57fe",
+      "payload": "sources/source-recovery/6139bc1de178778a-9d7190a2-WebSearchTool.java.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc/.local/pr-review-root-20261003-a817e6/cyclic-review-20261009/candidate92-search-review",
+          "head": "2ff8f75a99f43b363d7b9a824c205bf30474d39d"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/test/java/com/azhukov/agent/tools/web/WebSearchToolTest.java",
+      "sha256": "81bb2c5c0438f0a361823c15967e3fae7a7f5ac706ef9090b256960334648609",
+      "payload": "sources/source-recovery/81bb2c5c0438f0a3-9b5169c3-WebSearchToolTest.java.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc/.local/pr-review-root-20261003-a817e6/cyclic-review-20261009/candidate92-search-review",
+          "head": "2ff8f75a99f43b363d7b9a824c205bf30474d39d"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "reviewed_synthetic_api_key_fixture": true
+    },
+    {
+      "original_path": "backend/src/test/java/com/azhukov/agent/tools/web/WebSearchToolTest.java",
+      "sha256": "b051c79d97b6bd992a88a62531daccd6e09a36334f3dd387e634c82086da5e9c",
+      "payload": "sources/source-recovery/b051c79d97b6bd99-9b5169c3-WebSearchToolTest.java.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc/.local/pr-review-root-20261003-a817e6/cyclic-review-20261009/candidate93-search-review",
+          "head": "7e22d208449f7a4865d25e1a6cfb51e92031eb0e"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "reviewed_synthetic_api_key_fixture": true
+    },
+    {
+      "original_path": "commit/3623effa30e6749d7c5452e006f9bc0910a420f4",
+      "sha256": "2f222d1931852ffda3b1296bb959a2ed648e2459560457f63ba9b8deee9fc0b1",
+      "payload": "sources/committed-work/3623effa30e6749d7c5452e006f9bc0910a420f4.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "3623effa30e6749d7c5452e006f9bc0910a420f4",
+          "worktree": "candidate-main-news-fix"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "CHANGELOG.md",
+        "backend/src/main/java/com/azhukov/agent/tools/web/WebSearchTool.java",
+        "backend/src/test/java/com/azhukov/agent/tools/web/WebSearchToolTest.java"
+      ],
+      "commit_subject": "fix(web-search): preserve news topic boundaries",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/0a16a7fe58e68503b93df67c8f7308142c68d190",
+      "sha256": "62f29b0789eee426071ee8565bbf95c630132ab9ec2bff9adbfec0ffafc23e96",
+      "payload": "sources/committed-work/0a16a7fe58e68503b93df67c8f7308142c68d190.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "0a16a7fe58e68503b93df67c8f7308142c68d190",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin form retry compatibility fix",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/71334fc4dc2d51f4a9277728f516114abbb1c65f",
+      "sha256": "c04090e18573244badccce94185e8660a3b81995d913d5586c5b27df82751aab",
+      "payload": "sources/committed-work/71334fc4dc2d51f4a9277728f516114abbb1c65f.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "71334fc4dc2d51f4a9277728f516114abbb1c65f",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin archive and Auth acceptance fixes",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/c882fbcba9311e973966e2d0b2ef8be58aca83b1",
+      "sha256": "d4c93d304b4c3d2121be9df66a2b8786923f116c3d3fef81c886c04632e5ca8f",
+      "payload": "sources/committed-work/c882fbcba9311e973966e2d0b2ef8be58aca83b1.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "c882fbcba9311e973966e2d0b2ef8be58aca83b1",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin named SSR regions and canonical build guidance",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/322a6e2aa790356ce9249a1abf0599d167889149",
+      "sha256": "6b452a5e30589597b475a4403a3455fccc71c6d2e820b6094c2eec814dbe08c2",
+      "payload": "sources/committed-work/322a6e2aa790356ce9249a1abf0599d167889149.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "322a6e2aa790356ce9249a1abf0599d167889149",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/faabb84457d48d3983e6e6c27333bbc327f42e13",
+      "sha256": "6d1e7f2b9493e1b9fa4727a6f789008f960b6aaa735ce1ba8283e8d34a2c1078",
+      "payload": "sources/committed-work/faabb84457d48d3983e6e6c27333bbc327f42e13.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "faabb84457d48d3983e6e6c27333bbc327f42e13",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/ff2903ca78487ba96fef80ba3493e202aafef38c",
+      "sha256": "4a4f5d6bb68e793290b951926da4912f91c817c49e83ff75b0dce8a2113dbe21",
+      "payload": "sources/committed-work/ff2903ca78487ba96fef80ba3493e202aafef38c.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "ff2903ca78487ba96fef80ba3493e202aafef38c",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "AGENTS.md"
+      ],
+      "commit_subject": "docs(java): describe current module toolchains",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/6c3dbca9afcf268987f74b7e1ac7488dd90b69c8",
+      "sha256": "17fcdc896f5d11d92af3064d0e40f879aee007bb88b9b02ad9b9096e0e8dbcf0",
+      "payload": "sources/committed-work/6c3dbca9afcf268987f74b7e1ac7488dd90b69c8.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "6c3dbca9afcf268987f74b7e1ac7488dd90b69c8",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/6e71553af59920a4ffcc7c9f692e617dc0abba33",
+      "sha256": "881b645e3016b9f7f89bfd3e17498ab9b9ea9b62b3cdf1e429e5e00cae2de32e",
+      "payload": "sources/committed-work/6e71553af59920a4ffcc7c9f692e617dc0abba33.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "6e71553af59920a4ffcc7c9f692e617dc0abba33",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/df4bd9ec592571ec0778bde07881b5c007181866",
+      "sha256": "26aa53a2acd6c1115fbfb8489341b0f974e2cf86a03f9d962765033919523ded",
+      "payload": "sources/committed-work/df4bd9ec592571ec0778bde07881b5c007181866.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "df4bd9ec592571ec0778bde07881b5c007181866",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/9919288df34474259130357f3d563c3d9ca6fa2c",
+      "sha256": "7381e1973caf27d55d109b3b199acc4581f2231d80772976e6a1ec5a436bae1e",
+      "payload": "sources/committed-work/9919288df34474259130357f3d563c3d9ca6fa2c.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "9919288df34474259130357f3d563c3d9ca6fa2c",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/1c1c758a5bab8f9f088fec64723d209c8a5000fb",
+      "sha256": "ad3ff3c12b1871120d57d8bb34b9be2a187ef2eb77601d97306246d5ce0ad46f",
+      "payload": "sources/committed-work/1c1c758a5bab8f9f088fec64723d209c8a5000fb.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "1c1c758a5bab8f9f088fec64723d209c8a5000fb",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/a84bbffe78a132ad6bd75cbdb7a0200c0306cd2c",
+      "sha256": "a5249959dd230095d157e5154a6d22b7b865a408ae3d2a76c7b38b27c2cfbc6c",
+      "payload": "sources/committed-work/a84bbffe78a132ad6bd75cbdb7a0200c0306cd2c.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "a84bbffe78a132ad6bd75cbdb7a0200c0306cd2c",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/98a2b81ed8dcbb37689e732957b53b2d3c34f400",
+      "sha256": "1ad7784c780fdbb0131ee131352e93f84a536c22fd18594cb51a0ee8a817bf16",
+      "payload": "sources/committed-work/98a2b81ed8dcbb37689e732957b53b2d3c34f400.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "98a2b81ed8dcbb37689e732957b53b2d3c34f400",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/d9b8fd79992338e4b06710c811276ab3b243f2ee",
+      "sha256": "cc60c95403002ea17da99c499f2d65873fca8ed968943dc600e93ba1785fd4be",
+      "payload": "sources/committed-work/d9b8fd79992338e4b06710c811276ab3b243f2ee.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "d9b8fd79992338e4b06710c811276ab3b243f2ee",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/45e651d7a9bafdaa3bfb646a73ef693e55971cc4",
+      "sha256": "fbaf11237dd58d597b90395850444c704382820efa5e6795bd25d2e563d9d1f5",
+      "payload": "sources/committed-work/45e651d7a9bafdaa3bfb646a73ef693e55971cc4.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "45e651d7a9bafdaa3bfb646a73ef693e55971cc4",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/c572aabd77bc0a7658efb8100d89029d044760a3",
+      "sha256": "275022ad71b728f0814e09d8b615aab2b37a5f933e19ca5d52cda8ce25ebaf6f",
+      "payload": "sources/committed-work/c572aabd77bc0a7658efb8100d89029d044760a3.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "c572aabd77bc0a7658efb8100d89029d044760a3",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/dbced70c64bbde330466988141f88d68e1b26f72",
+      "sha256": "3572488e2fbf8296ee4c1650e2a59b1787c16a5a137428d064ce2041098238a7",
+      "payload": "sources/committed-work/dbced70c64bbde330466988141f88d68e1b26f72.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "dbced70c64bbde330466988141f88d68e1b26f72",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/31d8af19fc122bcbb2680b13ac5b9cfa1f77bd5a",
+      "sha256": "bb5aefab270163c7ca00e535e46b781a75b287d2f285e4a64111c148232b7a27",
+      "payload": "sources/committed-work/31d8af19fc122bcbb2680b13ac5b9cfa1f77bd5a.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "31d8af19fc122bcbb2680b13ac5b9cfa1f77bd5a",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/76cd570e6a6abaef5b50cc525030d218bde1745b",
+      "sha256": "fef16f7f983d22b3e0980b7a2e252fd93b72dabb61f859ec67d359a4ec4b7087",
+      "payload": "sources/committed-work/76cd570e6a6abaef5b50cc525030d218bde1745b.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "76cd570e6a6abaef5b50cc525030d218bde1745b",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/cd416e4975d54507c8c539754edef5410d34e0f0",
+      "sha256": "da888a7a1840ccd149cfc73afc989fcb4927bc5f276ef6b382de78620c8dd104",
+      "payload": "sources/committed-work/cd416e4975d54507c8c539754edef5410d34e0f0.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "cd416e4975d54507c8c539754edef5410d34e0f0",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "scripts/e2e-docker-compose-test.sh"
+      ],
+      "commit_subject": "fix(qa): use portable UUIDs for the streaming E2E session",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/9c9b4596c51c1e721370cb21b7cc5cef271bdbc9",
+      "sha256": "3f34dd7ea8e1833a31529e75f78b14d0689af44e6aaec38fe90c061fb0d8b67d",
+      "payload": "sources/committed-work/9c9b4596c51c1e721370cb21b7cc5cef271bdbc9.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "9c9b4596c51c1e721370cb21b7cc5cef271bdbc9",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "scripts/e2e-docker-compose-test.sh"
+      ],
+      "commit_subject": "fix(qa): generate E2E session IDs portably with the harness Python",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/cf6f3fdd9a3191b5db7d9099a5d24a4d70cc32be",
+      "sha256": "a73b3b693392c7f3c018ebce9208495c069ca399bf4c1a074cd401fb3b4d338f",
+      "payload": "sources/committed-work/cf6f3fdd9a3191b5db7d9099a5d24a4d70cc32be.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "cf6f3fdd9a3191b5db7d9099a5d24a4d70cc32be",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "scripts/compose_e2e_guard.py",
+        "scripts/e2e-docker-compose-test.sh",
+        "scripts/tests/test_compose_e2e_guard.py"
+      ],
+      "commit_subject": "fix(qa): verify daemon and every resource owner before E2E cleanup",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/f32d77c24c17764baeabc408d23b6f68164122ba",
+      "sha256": "fa0df78886e7f0b25bd75d36e53430acd233460b44783439c2e29e0b28124943",
+      "payload": "sources/committed-work/f32d77c24c17764baeabc408d23b6f68164122ba.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "f32d77c24c17764baeabc408d23b6f68164122ba",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/70124fc87daa754051e0504d7c2bc5b628ad29fd",
+      "sha256": "2342e71ec654991d152831351c91476dcd49bfe64d474b09dfcdb6c3967248a4",
+      "payload": "sources/committed-work/70124fc87daa754051e0504d7c2bc5b628ad29fd.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "70124fc87daa754051e0504d7c2bc5b628ad29fd",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "AGENTS.md",
+        "CONTRIBUTING.md",
+        "README.md",
+        "backend/src/test/java/com/azhukov/agent/persistence/repository/McpOAuthRepositoryTest.java",
+        "scripts/release_verify.py",
+        "scripts/tests/test_release_verify.py"
+      ],
+      "commit_subject": "fix(qa): route release slow tests through owned Compose and refresh guides",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/de81f11795c02c0f7f6e6e33a578887dc48e6922",
+      "sha256": "22667824d4c8ab21c15a803649eac5ad42e15cfb1727e0fa362f0e83ea33b674",
+      "payload": "sources/committed-work/de81f11795c02c0f7f6e6e33a578887dc48e6922.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "de81f11795c02c0f7f6e6e33a578887dc48e6922",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/ac8ab79a523b01546cebd8d68604180caf7312d5",
+      "sha256": "665d1327766fc506f5215b4454b6871b72951da75f8308e30702a41b86a1f9eb",
+      "payload": "sources/committed-work/ac8ab79a523b01546cebd8d68604180caf7312d5.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "ac8ab79a523b01546cebd8d68604180caf7312d5",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/6d0c0329edfc07318cedb00638c41c15876a1c1e",
+      "sha256": "f742463cf129fbb2d92c3289b78aaa524390a400f69a74e674c3dc8b599b6484",
+      "payload": "sources/committed-work/6d0c0329edfc07318cedb00638c41c15876a1c1e.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "6d0c0329edfc07318cedb00638c41c15876a1c1e",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/85a3c357d29b87b26e4c6c3dbcd28afa6d8df881",
+      "sha256": "9899c20af38fc29463bb24321c38c710cee8d106dfacb9e0066a1357e6ecaabd",
+      "payload": "sources/committed-work/85a3c357d29b87b26e4c6c3dbcd28afa6d8df881.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "85a3c357d29b87b26e4c6c3dbcd28afa6d8df881",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(ci): pin verified Base QA candidate",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/3d287f927b685dc42aa7505952611a80879c433e",
+      "sha256": "db0a66bed59ebf73e1e2e7617eea40e520f84eb169d15b50e71bffb8e8e29c8c",
+      "payload": "sources/committed-work/3d287f927b685dc42aa7505952611a80879c433e.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "3d287f927b685dc42aa7505952611a80879c433e",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "refactor(platform): unify service contracts, naming and Base UI shell",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/0a24e1457cf4b12d6574138ce4d07a12886ccd07",
+      "sha256": "3d8411facd019847ddc50e5d84e7145fef7eb94082af7275a4f287847de6b829",
+      "payload": "sources/committed-work/0a24e1457cf4b12d6574138ce4d07a12886ccd07.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "0a24e1457cf4b12d6574138ce4d07a12886ccd07",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml",
+        "docker-compose.prod.yml"
+      ],
+      "commit_subject": "refactor(platform): unify service contracts, naming and Base UI shell",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/9e05cf3e9551366784de22baaeee23a05a3456a2",
+      "sha256": "6dfdfdfb28ec0566430b17b2e1e033df8cafdf714431028bc761ce92ad8e72e9",
+      "payload": "sources/committed-work/9e05cf3e9551366784de22baaeee23a05a3456a2.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "9e05cf3e9551366784de22baaeee23a05a3456a2",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "refactor(platform): unify service contracts, naming and Base UI shell",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/572a54566df987836c2482556e57417e453c0d75",
+      "sha256": "0bd4cd4bcf473bcbf11ef4f07d3f99810247c9d143662f996a1fa8e26e960ff1",
+      "payload": "sources/committed-work/572a54566df987836c2482556e57417e453c0d75.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "572a54566df987836c2482556e57417e453c0d75",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(platform): pin PostgreSQL credential acceptance fix",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/f1e42abb6c664a20dc06f85384946b505fe6173b",
+      "sha256": "5a58f1827a3885a0dc7d91948ad0673a81fc72d572b6bbf7ccb7eec9067e1cb5",
+      "payload": "sources/committed-work/f1e42abb6c664a20dc06f85384946b505fe6173b.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "f1e42abb6c664a20dc06f85384946b505fe6173b",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(platform): pin verified Base acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/defaaffb58184baa46b62800414df76b2ccad276",
+      "sha256": "b6efe16e94a8aecbf20ca2edcfe52c4b346e392189665cff43c0c41a45182082",
+      "payload": "sources/committed-work/defaaffb58184baa46b62800414df76b2ccad276.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "defaaffb58184baa46b62800414df76b2ccad276",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".gitattributes",
+        ".github/workflows/ci.yml",
+        "Dockerfile",
+        "backend/build.gradle",
+        "backend/src/main/java/com/azhukov/agent/api/filter/ApiCorsFilter.java",
+        "backend/src/main/java/com/azhukov/agent/api/filter/RequestIdFilter.java",
+        "backend/src/main/java/com/azhukov/agent/api/filter/RequestIdFilterConfiguration.java",
+        "backend/src/main/java/com/azhukov/agent/health/StorageReadinessHealthIndicator.java",
+        "backend/src/main/resources/application.yml",
+        "backend/src/test/java/com/azhukov/agent/api/filter/ApiCorsFilterTest.java",
+        "backend/src/test/java/com/azhukov/agent/api/filter/RequestIdFilterTest.java",
+        "backend/src/test/java/com/azhukov/agent/health/StorageReadinessHealthIndicatorTest.java",
+        "backend/src/test/java/com/azhukov/agent/persistence/PostgresTestContainer.java",
+        "docker-compose.dev.yml",
+        "docker-compose.e2e.yml",
+        "docker-compose.local.yml",
+        "docker-compose.prod.yml",
+        "docker-compose.yml",
+        "docs/architecture/adr/ADR-010-testcontainers.md",
+        "docs/architecture/adr/ADR-016-compose-integration-tests.md",
+        "docs/plans/2026-10-04-unification-completion.md",
+        "scripts/deploy-dev-docker.sh",
+        "scripts/e2e-docker-compose-test.sh",
+        "scripts/run_postgres_tests.py"
+      ],
+      "commit_subject": "refactor(platform): isolate PostgreSQL tests and standardize readiness correlation",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/771af3541c16984a0db1bd2a3b89598459fe1eca",
+      "sha256": "2ee091b14f9fef09b27308c64755add4d9cf5a5fdc7a9b1394b29448ec9b3e26",
+      "payload": "sources/committed-work/771af3541c16984a0db1bd2a3b89598459fe1eca.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "771af3541c16984a0db1bd2a3b89598459fe1eca",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin main-integrated delivery contracts",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/6550fb7cf272e81555c11f48c2e9fc377491ccc6",
+      "sha256": "fee368655c062144f6ec94e40b1defe80474abbf4c1ea2660b3d98b94774f1fa",
+      "payload": "sources/committed-work/6550fb7cf272e81555c11f48c2e9fc377491ccc6.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "6550fb7cf272e81555c11f48c2e9fc377491ccc6",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin verified delivery contracts and rules",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/a81592d90d6ab515e60044820ca54776e036c88d",
+      "sha256": "0e2dd6dc9ba53ba6d2e0891851dc0a8cf49fc48f955dc49a1e1d852c7daa0034",
+      "payload": "sources/committed-work/a81592d90d6ab515e60044820ca54776e036c88d.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "a81592d90d6ab515e60044820ca54776e036c88d",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin verified delivery contracts and rules",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/800ab8b67eebf60438864ed78857b5b61c1de170",
+      "sha256": "6fd6992b7d90b8f7da3d40ded32bd91ee2d5f09397560a5e3149d904c8562352",
+      "payload": "sources/committed-work/800ab8b67eebf60438864ed78857b5b61c1de170.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "800ab8b67eebf60438864ed78857b5b61c1de170",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin verified delivery contracts and rules",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/f2bd218df852b77dc117830ab672c0981915f18f",
+      "sha256": "084685b9ae365f84c1a5c44ef908b7e6825aad8e24580d159893a97040c49e68",
+      "payload": "sources/committed-work/f2bd218df852b77dc117830ab672c0981915f18f.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "f2bd218df852b77dc117830ab672c0981915f18f",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin delivery contracts after main integration",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/ca1ce50c741ce29181030426daeccb74033b49b4",
+      "sha256": "62f29b0789eee426071ee8565bbf95c630132ab9ec2bff9adbfec0ffafc23e96",
+      "payload": "sources/committed-work/ca1ce50c741ce29181030426daeccb74033b49b4.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "ca1ce50c741ce29181030426daeccb74033b49b4",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin form retry compatibility fix",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/7f557ee9bc8b676c8480aa3756066485c12c2df5",
+      "sha256": "c04090e18573244badccce94185e8660a3b81995d913d5586c5b27df82751aab",
+      "payload": "sources/committed-work/7f557ee9bc8b676c8480aa3756066485c12c2df5.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "7f557ee9bc8b676c8480aa3756066485c12c2df5",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin archive and Auth acceptance fixes",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/481e123539db14ff5c31b7993e35edee0487c9e3",
+      "sha256": "d4c93d304b4c3d2121be9df66a2b8786923f116c3d3fef81c886c04632e5ca8f",
+      "payload": "sources/committed-work/481e123539db14ff5c31b7993e35edee0487c9e3.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "481e123539db14ff5c31b7993e35edee0487c9e3",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin named SSR regions and canonical build guidance",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/a6c81bcebe3262ac4ff7649265bbe94d161c9287",
+      "sha256": "6b452a5e30589597b475a4403a3455fccc71c6d2e820b6094c2eec814dbe08c2",
+      "payload": "sources/committed-work/a6c81bcebe3262ac4ff7649265bbe94d161c9287.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "a6c81bcebe3262ac4ff7649265bbe94d161c9287",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/341a3d98fe2727a079b94f595e5ec6b6afce50b9",
+      "sha256": "6d1e7f2b9493e1b9fa4727a6f789008f960b6aaa735ce1ba8283e8d34a2c1078",
+      "payload": "sources/committed-work/341a3d98fe2727a079b94f595e5ec6b6afce50b9.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "341a3d98fe2727a079b94f595e5ec6b6afce50b9",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/19d653dd81af77f822f301b3c2280f8a9fef9c9e",
+      "sha256": "4a4f5d6bb68e793290b951926da4912f91c817c49e83ff75b0dce8a2113dbe21",
+      "payload": "sources/committed-work/19d653dd81af77f822f301b3c2280f8a9fef9c9e.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "19d653dd81af77f822f301b3c2280f8a9fef9c9e",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "AGENTS.md"
+      ],
+      "commit_subject": "docs(java): describe current module toolchains",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/be07a584ddb8057a070279f76745f68920353839",
+      "sha256": "17fcdc896f5d11d92af3064d0e40f879aee007bb88b9b02ad9b9096e0e8dbcf0",
+      "payload": "sources/committed-work/be07a584ddb8057a070279f76745f68920353839.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "be07a584ddb8057a070279f76745f68920353839",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/6f9897b0b555db04bd273dbf721705b72f83ba6b",
+      "sha256": "881b645e3016b9f7f89bfd3e17498ab9b9ea9b62b3cdf1e429e5e00cae2de32e",
+      "payload": "sources/committed-work/6f9897b0b555db04bd273dbf721705b72f83ba6b.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "6f9897b0b555db04bd273dbf721705b72f83ba6b",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/bbac352fad942b7dc03334f2f30d030405c128ff",
+      "sha256": "26aa53a2acd6c1115fbfb8489341b0f974e2cf86a03f9d962765033919523ded",
+      "payload": "sources/committed-work/bbac352fad942b7dc03334f2f30d030405c128ff.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "bbac352fad942b7dc03334f2f30d030405c128ff",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/ff933ba1f306e9f3e1de9b3dcf9531ac0380b740",
+      "sha256": "7381e1973caf27d55d109b3b199acc4581f2231d80772976e6a1ec5a436bae1e",
+      "payload": "sources/committed-work/ff933ba1f306e9f3e1de9b3dcf9531ac0380b740.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "ff933ba1f306e9f3e1de9b3dcf9531ac0380b740",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/72fa2735c15ac0cbb2e4adfbbf0d286390422498",
+      "sha256": "ad3ff3c12b1871120d57d8bb34b9be2a187ef2eb77601d97306246d5ce0ad46f",
+      "payload": "sources/committed-work/72fa2735c15ac0cbb2e4adfbbf0d286390422498.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "72fa2735c15ac0cbb2e4adfbbf0d286390422498",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/2f8d3865f007130e65ae257e71610f020893eae7",
+      "sha256": "a5249959dd230095d157e5154a6d22b7b865a408ae3d2a76c7b38b27c2cfbc6c",
+      "payload": "sources/committed-work/2f8d3865f007130e65ae257e71610f020893eae7.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "2f8d3865f007130e65ae257e71610f020893eae7",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/a2a859849985d11982071db202a907e18a6d9e7e",
+      "sha256": "1ad7784c780fdbb0131ee131352e93f84a536c22fd18594cb51a0ee8a817bf16",
+      "payload": "sources/committed-work/a2a859849985d11982071db202a907e18a6d9e7e.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "a2a859849985d11982071db202a907e18a6d9e7e",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/f570d7a19a2215e13289de0cf0a614f1812f659f",
+      "sha256": "cc60c95403002ea17da99c499f2d65873fca8ed968943dc600e93ba1785fd4be",
+      "payload": "sources/committed-work/f570d7a19a2215e13289de0cf0a614f1812f659f.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "f570d7a19a2215e13289de0cf0a614f1812f659f",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/3d7e1d7ff291e5242bf6d04c931cdace8ba0e51d",
+      "sha256": "fbaf11237dd58d597b90395850444c704382820efa5e6795bd25d2e563d9d1f5",
+      "payload": "sources/committed-work/3d7e1d7ff291e5242bf6d04c931cdace8ba0e51d.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "3d7e1d7ff291e5242bf6d04c931cdace8ba0e51d",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/cd2cb6d18c1100dcf5cbea574a00ac8ee1a9b925",
+      "sha256": "275022ad71b728f0814e09d8b615aab2b37a5f933e19ca5d52cda8ce25ebaf6f",
+      "payload": "sources/committed-work/cd2cb6d18c1100dcf5cbea574a00ac8ee1a9b925.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "cd2cb6d18c1100dcf5cbea574a00ac8ee1a9b925",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/cfb0c4e439ca1dea01e6388fa80fd03f1b4f5288",
+      "sha256": "3572488e2fbf8296ee4c1650e2a59b1787c16a5a137428d064ce2041098238a7",
+      "payload": "sources/committed-work/cfb0c4e439ca1dea01e6388fa80fd03f1b4f5288.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "cfb0c4e439ca1dea01e6388fa80fd03f1b4f5288",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/df47b4b2b40e5f1f44fda99df9fe8d6756d11a26",
+      "sha256": "bb5aefab270163c7ca00e535e46b781a75b287d2f285e4a64111c148232b7a27",
+      "payload": "sources/committed-work/df47b4b2b40e5f1f44fda99df9fe8d6756d11a26.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "df47b4b2b40e5f1f44fda99df9fe8d6756d11a26",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/df4ce9e4dc21605e57860d6a037388e1df0d2de6",
+      "sha256": "fef16f7f983d22b3e0980b7a2e252fd93b72dabb61f859ec67d359a4ec4b7087",
+      "payload": "sources/committed-work/df4ce9e4dc21605e57860d6a037388e1df0d2de6.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "df4ce9e4dc21605e57860d6a037388e1df0d2de6",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/b33858b91ed1eec6fb199b603491378e35363c1b",
+      "sha256": "da888a7a1840ccd149cfc73afc989fcb4927bc5f276ef6b382de78620c8dd104",
+      "payload": "sources/committed-work/b33858b91ed1eec6fb199b603491378e35363c1b.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "b33858b91ed1eec6fb199b603491378e35363c1b",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "scripts/e2e-docker-compose-test.sh"
+      ],
+      "commit_subject": "fix(qa): use portable UUIDs for the streaming E2E session",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/694492c7c6143213c168ef676ae8006a11840d82",
+      "sha256": "3f34dd7ea8e1833a31529e75f78b14d0689af44e6aaec38fe90c061fb0d8b67d",
+      "payload": "sources/committed-work/694492c7c6143213c168ef676ae8006a11840d82.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "694492c7c6143213c168ef676ae8006a11840d82",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "scripts/e2e-docker-compose-test.sh"
+      ],
+      "commit_subject": "fix(qa): generate E2E session IDs portably with the harness Python",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/84ddc650271323fb3d6069e0f1b87b280d7cd2d3",
+      "sha256": "a73b3b693392c7f3c018ebce9208495c069ca399bf4c1a074cd401fb3b4d338f",
+      "payload": "sources/committed-work/84ddc650271323fb3d6069e0f1b87b280d7cd2d3.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "84ddc650271323fb3d6069e0f1b87b280d7cd2d3",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "scripts/compose_e2e_guard.py",
+        "scripts/e2e-docker-compose-test.sh",
+        "scripts/tests/test_compose_e2e_guard.py"
+      ],
+      "commit_subject": "fix(qa): verify daemon and every resource owner before E2E cleanup",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/5d6ac273d2bf0e3f97ad45d22a850645f2210418",
+      "sha256": "fa0df78886e7f0b25bd75d36e53430acd233460b44783439c2e29e0b28124943",
+      "payload": "sources/committed-work/5d6ac273d2bf0e3f97ad45d22a850645f2210418.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "5d6ac273d2bf0e3f97ad45d22a850645f2210418",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/9cee57d0e684127edc2575a60909f49b8b85cf7f",
+      "sha256": "2342e71ec654991d152831351c91476dcd49bfe64d474b09dfcdb6c3967248a4",
+      "payload": "sources/committed-work/9cee57d0e684127edc2575a60909f49b8b85cf7f.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "9cee57d0e684127edc2575a60909f49b8b85cf7f",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "AGENTS.md",
+        "CONTRIBUTING.md",
+        "README.md",
+        "backend/src/test/java/com/azhukov/agent/persistence/repository/McpOAuthRepositoryTest.java",
+        "scripts/release_verify.py",
+        "scripts/tests/test_release_verify.py"
+      ],
+      "commit_subject": "fix(qa): route release slow tests through owned Compose and refresh guides",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/eb914bad7ca8eff50db54bf2771929b9a3b0497e",
+      "sha256": "22667824d4c8ab21c15a803649eac5ad42e15cfb1727e0fa362f0e83ea33b674",
+      "payload": "sources/committed-work/eb914bad7ca8eff50db54bf2771929b9a3b0497e.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "eb914bad7ca8eff50db54bf2771929b9a3b0497e",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/1da0cfb61bb49d8ff0d7dca8bfb7243a0528800b",
+      "sha256": "665d1327766fc506f5215b4454b6871b72951da75f8308e30702a41b86a1f9eb",
+      "payload": "sources/committed-work/1da0cfb61bb49d8ff0d7dca8bfb7243a0528800b.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "1da0cfb61bb49d8ff0d7dca8bfb7243a0528800b",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/c987043d19c5f07e161d6b38a1fc228ffe2e22a0",
+      "sha256": "f742463cf129fbb2d92c3289b78aaa524390a400f69a74e674c3dc8b599b6484",
+      "payload": "sources/committed-work/c987043d19c5f07e161d6b38a1fc228ffe2e22a0.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "c987043d19c5f07e161d6b38a1fc228ffe2e22a0",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/4e28f97ec606b9f4c7a1b8803cbfe6e456a69812",
+      "sha256": "9899c20af38fc29463bb24321c38c710cee8d106dfacb9e0066a1357e6ecaabd",
+      "payload": "sources/committed-work/4e28f97ec606b9f4c7a1b8803cbfe6e456a69812.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "4e28f97ec606b9f4c7a1b8803cbfe6e456a69812",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(ci): pin verified Base QA candidate",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/5fed8f26357488f1c99fce44b759bfe5a8b6ff21",
+      "sha256": "db0a66bed59ebf73e1e2e7617eea40e520f84eb169d15b50e71bffb8e8e29c8c",
+      "payload": "sources/committed-work/5fed8f26357488f1c99fce44b759bfe5a8b6ff21.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "5fed8f26357488f1c99fce44b759bfe5a8b6ff21",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "refactor(platform): unify service contracts, naming and Base UI shell",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/7dae3c704d7e62165e57263c93e3ed49aa88e247",
+      "sha256": "3d8411facd019847ddc50e5d84e7145fef7eb94082af7275a4f287847de6b829",
+      "payload": "sources/committed-work/7dae3c704d7e62165e57263c93e3ed49aa88e247.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "7dae3c704d7e62165e57263c93e3ed49aa88e247",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml",
+        "docker-compose.prod.yml"
+      ],
+      "commit_subject": "refactor(platform): unify service contracts, naming and Base UI shell",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/6962ea34078b3d2d24d59d5be334d26022350799",
+      "sha256": "6dfdfdfb28ec0566430b17b2e1e033df8cafdf714431028bc761ce92ad8e72e9",
+      "payload": "sources/committed-work/6962ea34078b3d2d24d59d5be334d26022350799.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "6962ea34078b3d2d24d59d5be334d26022350799",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "refactor(platform): unify service contracts, naming and Base UI shell",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/58558ce850b715fdc033420eddce7ff01424c053",
+      "sha256": "0bd4cd4bcf473bcbf11ef4f07d3f99810247c9d143662f996a1fa8e26e960ff1",
+      "payload": "sources/committed-work/58558ce850b715fdc033420eddce7ff01424c053.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "58558ce850b715fdc033420eddce7ff01424c053",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(platform): pin PostgreSQL credential acceptance fix",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/f2fbbe76347e02e295f5f57d44d8f14be40eb1de",
+      "sha256": "5a58f1827a3885a0dc7d91948ad0673a81fc72d572b6bbf7ccb7eec9067e1cb5",
+      "payload": "sources/committed-work/f2fbbe76347e02e295f5f57d44d8f14be40eb1de.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "f2fbbe76347e02e295f5f57d44d8f14be40eb1de",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(platform): pin verified Base acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/1364af0e44cf89c2058628d2c938ce3e91ca18e3",
+      "sha256": "b6efe16e94a8aecbf20ca2edcfe52c4b346e392189665cff43c0c41a45182082",
+      "payload": "sources/committed-work/1364af0e44cf89c2058628d2c938ce3e91ca18e3.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "1364af0e44cf89c2058628d2c938ce3e91ca18e3",
+          "worktree": "java-agent"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".gitattributes",
+        ".github/workflows/ci.yml",
+        "Dockerfile",
+        "backend/build.gradle",
+        "backend/src/main/java/com/azhukov/agent/api/filter/ApiCorsFilter.java",
+        "backend/src/main/java/com/azhukov/agent/api/filter/RequestIdFilter.java",
+        "backend/src/main/java/com/azhukov/agent/api/filter/RequestIdFilterConfiguration.java",
+        "backend/src/main/java/com/azhukov/agent/health/StorageReadinessHealthIndicator.java",
+        "backend/src/main/resources/application.yml",
+        "backend/src/test/java/com/azhukov/agent/api/filter/ApiCorsFilterTest.java",
+        "backend/src/test/java/com/azhukov/agent/api/filter/RequestIdFilterTest.java",
+        "backend/src/test/java/com/azhukov/agent/health/StorageReadinessHealthIndicatorTest.java",
+        "backend/src/test/java/com/azhukov/agent/persistence/PostgresTestContainer.java",
+        "docker-compose.dev.yml",
+        "docker-compose.e2e.yml",
+        "docker-compose.local.yml",
+        "docker-compose.prod.yml",
+        "docker-compose.yml",
+        "docs/architecture/adr/ADR-010-testcontainers.md",
+        "docs/architecture/adr/ADR-016-compose-integration-tests.md",
+        "docs/plans/2026-10-04-unification-completion.md",
+        "scripts/deploy-dev-docker.sh",
+        "scripts/e2e-docker-compose-test.sh",
+        "scripts/run_postgres_tests.py"
+      ],
+      "commit_subject": "refactor(platform): isolate PostgreSQL tests and standardize readiness correlation",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/39881a42e475bb63ac5f7bad080802088e7cfa06",
+      "sha256": "346f1b55af259cf7ab4d98131603112250f31dae8674ec71dd42845008c36b82",
+      "payload": "sources/committed-work/39881a42e475bb63ac5f7bad080802088e7cfa06.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "39881a42e475bb63ac5f7bad080802088e7cfa06",
+          "worktree": "docker-order-20261004-task"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "AGENTS.md",
+        "scripts/deploy-dev-docker.sh"
+      ],
+      "commit_subject": "fix(docker): launch Java Agent through the selected workspace",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/e9f84556a4d02ab6bb89ebb48f9780529f72fcf8",
+      "sha256": "8d35a400e6a66b19248a8ffbf68e2880a89f26a16f549de83b0756b9915879a7",
+      "payload": "sources/committed-work/e9f84556a4d02ab6bb89ebb48f9780529f72fcf8.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "e9f84556a4d02ab6bb89ebb48f9780529f72fcf8",
+          "worktree": "_java-agent-pr37"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "cli/build.gradle"
+      ],
+      "commit_subject": "chore(deps): bump JLine to 4.4.5",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/d4ab85876580f183c80490b01ab890415929aff4",
+      "sha256": "69f0d9017049e91198bc26affc7866b96070d3a13d26f8940388d2425a635446",
+      "payload": "sources/committed-work/d4ab85876580f183c80490b01ab890415929aff4.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "d4ab85876580f183c80490b01ab890415929aff4",
+          "worktree": "_java-agent-pr37"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "cli/build.gradle"
+      ],
+      "commit_subject": "chore(deps): bump org.jline:jline from 4.3.1 to 4.4.3 in /cli",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    }
+  ]
+}

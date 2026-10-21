@@ -1,0 +1,13 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 6f6fadf5..1e69afe7 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -69,7 +69,7 @@ jobs:
+         uses: actions/checkout@v7
+         with:
+           repository: FerrPOINT/services-base
+-          ref: b6fa2c6745f270d0abf086db9224d0e60bf0fad5
++          ref: 2e51e7d697de99366025fecc03664cfe258abedb
+           path: .base-tools
+           persist-credentials: false
+ 

@@ -1,0 +1,13 @@
+diff --git a/scripts/e2e-docker-compose-test.sh b/scripts/e2e-docker-compose-test.sh
+index 1751e0b1..f0766e96 100755
+--- a/scripts/e2e-docker-compose-test.sh
++++ b/scripts/e2e-docker-compose-test.sh
+@@ -169,7 +169,7 @@ assert_contains "Test 3a: Context has messageCount" "${CONTEXT}" 'messageCount'
+ # Test 4: Streaming chat
+ # ──────────────────────────────────────────────────────────
+ echo -e "${YELLOW}[e2e]${NC} Test 4: Streaming chat..."
+-STREAM_SESSION=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
++STREAM_SESSION=$(python3 -c 'import uuid; print(uuid.uuid4())')
+ STREAM_OUTPUT=$(curl -H "X-API-Key: ${E2E_API_KEY}" -fsS -N -X POST "${AGENT_URL}/api/v1/agent/chat/stream" \
+     -H 'Content-Type: application/json' \
+     -d "{\"sessionId\":\"${STREAM_SESSION}\",\"message\":\"stream test\"}" \

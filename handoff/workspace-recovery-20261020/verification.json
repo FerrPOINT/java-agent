@@ -1,0 +1,11 @@
+{
+  "scope": "inert source payload preservation only",
+  "payloads": 109,
+  "sha256_and_index_integrity": "passed",
+  "real_pat_findings": 0,
+  "actual_private_key_findings": 0,
+  "reviewed_negative_test_fixtures_or_key_generator_versions": 0,
+  "runtime_or_merge_qualification": "not asserted",
+  "source_checkout_eol": "disabled by scoped -text; core.autocrlf=true filtered checkout matched payload SHA-256",
+  "reviewed_synthetic_api_key_fixture_versions": 3
+}

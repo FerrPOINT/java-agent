@@ -1,0 +1,96 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '4.1.0'
+    id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'com.azhukov'
+version = '0.0.1-SNAPSHOT'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_25
+    targetCompatibility = JavaVersion.VERSION_25
+}
+
+repositories {
+    mavenCentral()
+    maven { url = 'https://repo.spring.io/milestone' }
+}
+
+dependencies {
+    // h10: shared mapper + REST client factory
+    implementation project(':shared')
+    // Spring Boot — RestClient for REST calls to backend
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+
+    // JLine for REPL
+    implementation 'org.jline:jline:4.4.3'
+
+    // Jackson
+    implementation 'com.fasterxml.jackson.core:jackson-databind'
+    // spring-web's MultipartBodyBuilder references reactive-streams types in
+    // its API surface (CLI attachment uploads need multipart).
+    implementation 'org.reactivestreams:reactive-streams'
+    implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310'
+
+    // Lombok
+    compileOnly 'org.projectlombok:lombok:1.18.48'
+    annotationProcessor 'org.projectlombok:lombok:1.18.48'
+    testCompileOnly 'org.projectlombok:lombok:1.18.48'
+    testAnnotationProcessor 'org.projectlombok:lombok:1.18.48'
+
+    // Test
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testImplementation 'org.mockito:mockito-core'
+    testImplementation 'org.mockito:mockito-junit-jupiter'
+    testImplementation 'org.assertj:assertj-core'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+    jvmArgs '-XX:+EnableDynamicAgentLoading'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 25
+    options.compilerArgs += ['-parameters']
+}
+
+def ferrpointNoticeFiles = [
+    rootProject.file('LICENSE'),
+    rootProject.file('NOTICE'),
+    rootProject.file('THIRD_PARTY_NOTICES.md')
+]
+
+tasks.withType(Jar).configureEach {
+    ferrpointNoticeFiles.each { noticeFile ->
+        from(noticeFile) {
+            into 'META-INF'
+        }
+    }
+    manifest {
+        attributes(
+            'Implementation-Vendor': 'FerrPOINT',
+            'Implementation-Vendor-Id': 'FerrPOINT',
+            'License': 'LicenseRef-FerrPOINT-Proprietary',
+            'License-Name': 'FerrPOINT Proprietary Source-Available Evaluation License v1.0',
+            'License-File': 'META-INF/LICENSE'
+        )
+    }
+}
+
+bootJar {
+    manifest {
+        attributes 'Start-Class': 'com.azhukov.agent.cli.CliApplication'
+    }
+}
+
+springBoot {
+    buildInfo()
+}
+
+bootRun {
+    maxHeapSize = '512m'
+}

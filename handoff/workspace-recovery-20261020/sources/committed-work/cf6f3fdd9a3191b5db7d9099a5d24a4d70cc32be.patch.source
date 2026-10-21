@@ -1,0 +1,190 @@
+diff --git a/scripts/compose_e2e_guard.py b/scripts/compose_e2e_guard.py
+new file mode 100644
+index 00000000..f0b85f87
+--- /dev/null
++++ b/scripts/compose_e2e_guard.py
+@@ -0,0 +1,61 @@
++"""Read-only owner check before the Java disposable Compose E2E cleanup."""
++from __future__ import annotations
++import argparse
++import hashlib
++import json
++from pathlib import Path
++import re
++import subprocess
++
++
++def check_project(context: str, project: str, task: str, manifest: Path,
++                  daemon: str, fingerprint: str) -> None:
++    if not context or not task or not re.fullmatch(r"sdlc-qa-java-e2e-[a-f0-9]{12}", project):
++        raise ValueError("Explicit endpoint, task and own Java QA project required")
++    if not manifest.is_file() or manifest.is_symlink() or hashlib.sha256(manifest.read_bytes()).hexdigest() != fingerprint:
++        raise ValueError("E2E manifest changed; cleanup refused")
++    docker = ["docker", "--context", context]
++    def command(*args):
++        return subprocess.check_output([*docker, *args], text=True, stderr=subprocess.DEVNULL, timeout=30).strip()
++    if command("info", "--format", "{{.ID}}") != daemon:
++        raise ValueError("E2E daemon changed; cleanup refused")
++    for kind, listing, inspecting in (
++        ("container", ["ps", "-aq"], ["inspect"]),
++        ("network", ["network", "ls", "-q"], ["network", "inspect"]),
++        ("volume", ["volume", "ls", "-q"], ["volume", "inspect"]),
++    ):
++        ids = command(*listing, "--filter", "label=com.docker.compose.project=" + project).split()
++        if not ids:
++            continue
++        for item in json.loads(command(*inspecting, *ids)):
++            labels = (item.get("Config", {}) if kind == "container" else item).get("Labels") or {}
++            if any(labels.get(key) != expected for key, expected in {
++                "com.docker.compose.project": project, "sdlc.task": task, "sdlc.purpose": "java-e2e"}.items()):
++                raise ValueError("Foreign E2E resource; cleanup refused")
++            if kind == "container":
++                if labels.get("com.docker.compose.service") not in ("db", "java-agent-backend"):
++                    raise ValueError("Foreign E2E service; cleanup refused")
++                files = labels.get("com.docker.compose.project.config_files", "").split(",")
++                if len(files) != 1 or Path(files[0]).resolve() != manifest.resolve():
++                    raise ValueError("Foreign E2E configuration; cleanup refused")
++            elif kind == "network" and labels.get("com.docker.compose.network") != "e2e":
++                raise ValueError("Foreign E2E network; cleanup refused")
++            elif kind == "volume" and labels.get("com.docker.compose.volume") != "java_agent_e2e_pg":
++                raise ValueError("Foreign E2E volume; cleanup refused")
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--docker-context", required=True)
++    parser.add_argument("--project", required=True)
++    parser.add_argument("--task", required=True)
++    parser.add_argument("--manifest", required=True, type=Path)
++    parser.add_argument("--daemon-id", required=True)
++    parser.add_argument("--manifest-sha256", required=True)
++    args = parser.parse_args()
++    check_project(args.docker_context, args.project, args.task, args.manifest,
++                  args.daemon_id, args.manifest_sha256)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/scripts/e2e-docker-compose-test.sh b/scripts/e2e-docker-compose-test.sh
+index 8eab5940..e49a8a5f 100755
+--- a/scripts/e2e-docker-compose-test.sh
++++ b/scripts/e2e-docker-compose-test.sh
+@@ -8,6 +8,8 @@ export SDLC_TASK_ID="${SDLC_TASK_ID:-java-e2e}"
+ PROJECT="sdlc-qa-java-e2e-$(python3 -c 'import uuid; print(uuid.uuid4().hex[:12])')"
+ COMPOSE=(docker --context "${SDLC_DOCKER_CONTEXT}" compose -p "${PROJECT}" -f "${COMPOSE_FILE}")
+ VOLUME="${PROJECT}_java_agent_e2e_pg"
++DAEMON_ID="$(docker --context "${SDLC_DOCKER_CONTEXT}" info --format '{{.ID}}')"
++MANIFEST_SHA256="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "${COMPOSE_FILE}")"
+ if [[ -n "$(docker --context "${SDLC_DOCKER_CONTEXT}" ps -aq --filter "label=com.docker.compose.project=${PROJECT}")" ]] ||
+    docker --context "${SDLC_DOCKER_CONTEXT}" volume inspect "${VOLUME}" >/dev/null 2>&1; then
+     echo "Refusing an existing QA project or volume" >&2
+@@ -26,6 +28,10 @@ NC='\033[0m'
+ 
+ function cleanup() {
+     echo -e "${YELLOW}[e2e]${NC} Cleaning up Docker Compose..."
++    python3 "${PROJECT_ROOT}/scripts/compose_e2e_guard.py" \
++        --docker-context "${SDLC_DOCKER_CONTEXT}" --project "${PROJECT}" --task "${SDLC_TASK_ID}" \
++        --manifest "${COMPOSE_FILE}" --daemon-id "${DAEMON_ID}" \
++        --manifest-sha256 "${MANIFEST_SHA256}" || return 1
+     "${COMPOSE[@]}" down --remove-orphans || return 1
+     if docker --context "${SDLC_DOCKER_CONTEXT}" volume inspect "${VOLUME}" >/dev/null 2>&1; then
+         local owner task purpose
+diff --git a/scripts/tests/test_compose_e2e_guard.py b/scripts/tests/test_compose_e2e_guard.py
+new file mode 100644
+index 00000000..7096a563
+--- /dev/null
++++ b/scripts/tests/test_compose_e2e_guard.py
+@@ -0,0 +1,93 @@
++"""Owner checks preserve foreign resources before any cleanup is possible."""
++import copy
++import hashlib
++import importlib.util
++import json
++from pathlib import Path
++import tempfile
++import unittest
++from unittest.mock import patch
++
++SCRIPT = Path(__file__).resolve().parents[1] / "compose_e2e_guard.py"
++spec = importlib.util.spec_from_file_location("compose_e2e_guard", SCRIPT)
++guard = importlib.util.module_from_spec(spec)
++spec.loader.exec_module(guard)
++
++
++class ComposeE2EGuardTest(unittest.TestCase):
++    def setUp(self):
++        self.temp = tempfile.TemporaryDirectory()
++        self.addCleanup(self.temp.cleanup)
++        self.manifest = Path(self.temp.name) / "compose.yml"
++        self.manifest.write_text("services: {}\n", encoding="utf-8")
++        self.fingerprint = hashlib.sha256(self.manifest.read_bytes()).hexdigest()
++        self.project = "sdlc-qa-java-e2e-012345abcdef"
++        common = {"com.docker.compose.project": self.project,
++                  "sdlc.task": "fixture", "sdlc.purpose": "java-e2e"}
++        self.resources = {
++            "container": {"Config": {"Labels": {**common,
++                "com.docker.compose.service": "db",
++                "com.docker.compose.project.config_files": str(self.manifest)}}},
++            "network": {"Labels": {**common, "com.docker.compose.network": "e2e"}},
++            "volume": {"Labels": {**common, "com.docker.compose.volume": "java_agent_e2e_pg"}},
++        }
++        self.commands = []
++
++    def command(self, argv, **kwargs):
++        self.commands.append(argv)
++        self.assertEqual(["docker", "--context", "isolated-fixture"], argv[:3])
++        args = argv[3:]
++        if args[0] == "info":
++            return "fixture-daemon"
++        kind = args[0] if args[0] in ("network", "volume") else "container"
++        if "--filter" in args:
++            return kind + "-id"
++        if "inspect" in args:
++            return json.dumps([self.resources[kind]])
++        self.fail("Unexpected Docker operation: " + repr(args))
++
++    def verify(self, daemon="fixture-daemon"):
++        with patch.object(guard.subprocess, "check_output", self.command):
++            guard.check_project("isolated-fixture", self.project, "fixture", self.manifest, daemon, self.fingerprint)
++
++    def test_exact_owned_resources_pass_read_only(self):
++        self.verify()
++        self.assertTrue(self.commands)
++        self.assertFalse(any(any(x in command for x in ("rm", "down", "stop", "kill")) for command in self.commands))
++
++    def test_wrong_daemon_refuses_before_resource_inspection(self):
++        with self.assertRaisesRegex(ValueError, "daemon changed"):
++            self.verify("different-daemon")
++        self.assertEqual(1, len(self.commands))
++
++    def test_changed_manifest_refuses_before_docker(self):
++        self.manifest.write_text("services: {foreign: {}}\n")
++        with self.assertRaisesRegex(ValueError, "manifest changed"):
++            self.verify()
++        self.assertEqual([], self.commands)
++
++    def test_foreign_owner_service_manifest_network_or_volume_blocks_cleanup(self):
++        original = copy.deepcopy(self.resources)
++        cases = [("container", "sdlc.task", "another-task"),
++                 ("container", "com.docker.compose.service", "foreign"),
++                 ("container", "com.docker.compose.project.config_files", str(self.manifest) + ",other.yml"),
++                 ("network", "sdlc.purpose", "foreign"),
++                 ("network", "com.docker.compose.network", "foreign"),
++                 ("volume", "com.docker.compose.volume", "shared-cache")]
++        for kind, key, value in cases:
++            with self.subTest(kind=kind, key=key):
++                self.resources = copy.deepcopy(original)
++                labels = self.resources[kind]["Config"]["Labels"] if kind == "container" else self.resources[kind]["Labels"]
++                labels[key] = value
++                with self.assertRaisesRegex(ValueError, "cleanup refused"):
++                    self.verify()
++
++    def test_permanent_project_refuses_before_docker(self):
++        self.project = "sdlc1"
++        with self.assertRaisesRegex(ValueError, "own Java QA"):
++            self.verify()
++        self.assertEqual([], self.commands)
++
++
++if __name__ == "__main__":
++    unittest.main()
