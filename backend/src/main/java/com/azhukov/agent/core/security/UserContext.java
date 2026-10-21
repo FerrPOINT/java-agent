@@ -12,6 +12,7 @@ public final class UserContext {
 
     private static final ThreadLocal<String> CURRENT_USER_ID = new ThreadLocal<>();
     private static final ThreadLocal<String> CURRENT_ROLE = new ThreadLocal<>();
+    private static final ThreadLocal<com.pdlc.auth.HumanApplicationAccess> CENTRAL_ACCESS = new ThreadLocal<>();
 
     public static final String ROLE_ADMIN = "admin";
     public static final String ROLE_USER = "user";
@@ -20,23 +21,47 @@ public final class UserContext {
 
     /** Set the current user's ID and role for this thread. */
     public static void set(String userId, String role) {
+        CENTRAL_ACCESS.remove();
         CURRENT_USER_ID.set(userId);
         CURRENT_ROLE.set(role != null ? role : ROLE_USER);
     }
 
+    /** Binds the live Auth decision to this request without retaining the bearer. */
+    public static void setCentral(com.pdlc.auth.HumanApplicationAccess access) {
+        set(access.subject(), access.role());
+        CENTRAL_ACCESS.set(access);
+    }
+
+    /** Exposes the same original deadline for explicit asynchronous propagation. */
+    public static com.pdlc.auth.HumanApplicationAccess centralAccess() {
+        return CENTRAL_ACCESS.get();
+    }
+
+    /** An expired decision cannot become a standalone role through asynchronous propagation. */
+    public static void requireCurrentAccess() {
+        var access = CENTRAL_ACCESS.get();
+        if (access != null && !access.permits(java.util.Set.of("java-agent"), false)) {
+            throw new org.springframework.security.access.AccessDeniedException("Current application access required");
+        }
+    }
+
     /** Get the current user's ID, or null if not set. */
     public static String getUserId() {
+        requireCurrentAccess();
         return CURRENT_USER_ID.get();
     }
 
     /** Get the current user's role, or null if not set. */
     public static String getRole() {
+        requireCurrentAccess();
         return CURRENT_ROLE.get();
     }
 
     /** Whether the current user has admin role. */
     public static boolean isAdmin() {
-        return ROLE_ADMIN.equals(CURRENT_ROLE.get());
+        var access = CENTRAL_ACCESS.get();
+        return ROLE_ADMIN.equals(CURRENT_ROLE.get()) && (access == null
+                || access.permits(java.util.Set.of("java-agent"), true));
     }
 
     /**
@@ -55,12 +80,14 @@ public final class UserContext {
      * so Telegram can propagate the actual sender identity.
      */
     public static String effectiveUserId(String requestedUserId) {
+        if (CENTRAL_ACCESS.get() != null) return getUserId();
         if (isAdmin()) return requestedUserId != null ? requestedUserId : getUserId();
         return getUserId() != null ? getUserId() : requestedUserId;
     }
 
     /** Clear the context for this thread. */
     public static void clear() {
+        CENTRAL_ACCESS.remove();
         CURRENT_USER_ID.remove();
         CURRENT_ROLE.remove();
     }

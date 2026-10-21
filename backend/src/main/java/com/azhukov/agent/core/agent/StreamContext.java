@@ -8,6 +8,19 @@ package com.azhukov.agent.core.agent;
  * streams no longer interfere with each other's disconnect state.
  */
 public class StreamContext {
+    private final com.pdlc.auth.HumanApplicationAccess centralAccess;
+
+    public StreamContext() { this(null); }
+
+    /** Callback threads share the original proof, not a copied role or a refreshed deadline. */
+    public StreamContext(com.pdlc.auth.HumanApplicationAccess centralAccess) {
+        this.centralAccess = centralAccess;
+    }
+
+    public boolean hasCurrentAccess() {
+        return centralAccess == null || centralAccess.permits(java.util.Set.of("java-agent"), false);
+    }
+
 
     /**
      * Volatile flag shared between the streaming thread and SseEmitter lifecycle

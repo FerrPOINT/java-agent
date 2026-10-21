@@ -11,6 +11,8 @@ This is the complete shipped-default reference for the Java agent runtime. It co
 | `agent.central-auth.jwks-uri` | empty | Required own Auth JWKS endpoint when enabled |
 | `agent.central-auth.audience` | empty | Required expected audience when enabled |
 | `agent.central-auth.session-uri` | empty | Required own Auth active-session endpoint when enabled |
+| `agent.central-auth.personal-token-uri` | empty | Own Auth PAT introspection endpoint; PAT is unavailable without it |
+| `agent.central-auth.application-access-required` | false | Require an enforced current human role/application proof after compatible rollout |
 
 See [Central Auth](central-auth.md). Empty values fail startup when enabled;
 they never select a legacy credential fallback.
