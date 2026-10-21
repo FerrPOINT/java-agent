@@ -28,6 +28,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -253,6 +254,81 @@ class WebSearchToolTest {
             assertThat(result.success()).isFalse();
             assertThat(errorPayload(result).get("error").toString()).contains("Web search failed").contains("timeout");
         }
+    }
+
+    @Test
+    void officialWebsiteQueryPrependsVerifiedWebsiteWhenSearxngIsIrrelevant() throws Exception {
+        AgentProperties properties = properties();
+        properties.getWeb().setSearxngUrl("http://searxng.local");
+        GoogleNewsRssSearchProvider news = mock(GoogleNewsRssSearchProvider.class);
+        OfficialWebsiteResolver officialWebsiteResolver = mock(OfficialWebsiteResolver.class);
+        when(officialWebsiteResolver.resolve("OpenAI")).thenReturn("https://openai.com/");
+        when(urlSafety.isUrlAllowed(anyString())).thenReturn(true);
+        WebSearchTool tool = new WebSearchTool(properties, objectMapper, urlSafety, redactor, news, officialWebsiteResolver);
+        tool.init();
+        SearXngSearchProvider searxng = mock(SearXngSearchProvider.class);
+        when(searxng.isAvailable()).thenReturn(true);
+        when(searxng.search("OpenAI official website", 3)).thenReturn(List.of(
+            Map.of("title", "Website security", "url", "https://developer.mozilla.org/security", "description", "MDN"),
+            Map.of("title", "Unrelated", "url", "https://example.com", "description", "Other result")
+        ));
+        org.springframework.test.util.ReflectionTestUtils.setField(tool, "searXngProvider", searxng);
+
+        ToolResult result = tool.execute("{\"query\":\"OpenAI official website\",\"limit\":3}", null, null);
+
+        assertThat(result.success()).isTrue();
+        var web = objectMapper.readTree(result.content()).path("data").path("web");
+        assertThat(web.get(0).path("url").asText()).isEqualTo("https://openai.com/");
+        assertThat(web.get(0).path("description").asText()).contains("verified from Wikidata");
+        assertThat(web.get(1).path("url").asText()).isEqualTo("https://developer.mozilla.org/security");
+    }
+
+    @Test
+    void normalSearchDoesNotUseOfficialWebsiteResolver() throws Exception {
+        AgentProperties properties = properties();
+        properties.getWeb().setSearxngUrl("http://searxng.local");
+        GoogleNewsRssSearchProvider news = mock(GoogleNewsRssSearchProvider.class);
+        OfficialWebsiteResolver officialWebsiteResolver = mock(OfficialWebsiteResolver.class);
+        when(urlSafety.isUrlAllowed(anyString())).thenReturn(true);
+        WebSearchTool tool = new WebSearchTool(properties, objectMapper, urlSafety, redactor, news, officialWebsiteResolver);
+        tool.init();
+        SearXngSearchProvider searxng = mock(SearXngSearchProvider.class);
+        when(searxng.isAvailable()).thenReturn(true);
+        when(searxng.search("OpenAI documentation", 1)).thenReturn(List.of(
+            Map.of("title", "OpenAI API", "url", "https://platform.openai.com/docs", "description", "Docs")
+        ));
+        org.springframework.test.util.ReflectionTestUtils.setField(tool, "searXngProvider", searxng);
+
+        ToolResult result = tool.execute("{\"query\":\"OpenAI documentation\",\"limit\":1}", null, null);
+
+        assertThat(result.success()).isTrue();
+        assertThat(objectMapper.readTree(result.content()).path("data").path("web").get(0).path("url").asText())
+            .isEqualTo("https://platform.openai.com/docs");
+        verify(officialWebsiteResolver, never()).resolve(anyString());
+    }
+
+    @Test
+    void officialWebsiteLookupFailurePreservesSearchResults() throws Exception {
+        AgentProperties properties = properties();
+        properties.getWeb().setSearxngUrl("http://searxng.local");
+        GoogleNewsRssSearchProvider news = mock(GoogleNewsRssSearchProvider.class);
+        OfficialWebsiteResolver officialWebsiteResolver = mock(OfficialWebsiteResolver.class);
+        when(officialWebsiteResolver.resolve("OpenAI")).thenThrow(new IOException("Wikidata unavailable"));
+        when(urlSafety.isUrlAllowed(anyString())).thenReturn(true);
+        WebSearchTool tool = new WebSearchTool(properties, objectMapper, urlSafety, redactor, news, officialWebsiteResolver);
+        tool.init();
+        SearXngSearchProvider searxng = mock(SearXngSearchProvider.class);
+        when(searxng.isAvailable()).thenReturn(true);
+        when(searxng.search("OpenAI official website", 1)).thenReturn(List.of(
+            Map.of("title", "Existing", "url", "https://existing.example", "description", "Result")
+        ));
+        org.springframework.test.util.ReflectionTestUtils.setField(tool, "searXngProvider", searxng);
+
+        ToolResult result = tool.execute("{\"query\":\"OpenAI official website\",\"limit\":1}", null, null);
+
+        assertThat(result.success()).isTrue();
+        assertThat(objectMapper.readTree(result.content()).path("data").path("web").get(0).path("url").asText())
+            .isEqualTo("https://existing.example");
     }
 
     @Test
