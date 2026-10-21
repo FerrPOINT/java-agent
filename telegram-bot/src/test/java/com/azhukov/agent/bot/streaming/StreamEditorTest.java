@@ -250,6 +250,45 @@ class StreamEditorTest {
     }
 
     @Test
+    void finalizingLongStreamKeepsPreviewWhenFreshFinalIsDisabled() {
+        BotProperties props = new BotProperties();
+        props.setParseMode("MarkdownV2");
+        props.setFreshFinalTimeoutMs(0L);
+        StreamEditor stableEditor = new StreamEditor(client, props, new MediaDeliveryService(), new RichMessageSupport(client));
+        stableEditor.init();
+        StreamSession streamSession = stableEditor.sessionFor(123L);
+        streamSession.streamStartTime = System.currentTimeMillis() - 120_000L;
+        streamSession.currentMessageId.set(42L);
+        when(client.editMessageText(123L, 42L, "Final text", "MarkdownV2", false)).thenReturn(true);
+
+        boolean result = stableEditor.finalizeStream(123L, 42L, "Final text");
+
+        assertThat(result).isTrue();
+        verify(client).editMessageText(123L, 42L, "Final text", "MarkdownV2", false);
+        verify(client, never()).deleteMessage(123L, 42L);
+        verify(client, never()).sendMessage(eq(123L), eq("Final text"), any(), any(), any(), anyBoolean());
+    }
+
+    @Test
+    void richMessagesDisabledByDefaultKeepsPreviewWhenFinalizing() {
+        BotProperties props = new BotProperties();
+        props.setParseMode("MarkdownV2");
+        props.getRichMessages().setEnabled(false);
+        StreamEditor stableEditor = new StreamEditor(client, props, new MediaDeliveryService(), new RichMessageSupport(client));
+        stableEditor.init();
+        StreamSession streamSession = stableEditor.sessionFor(123L);
+        streamSession.currentMessageId.set(42L);
+        when(client.editMessageText(eq(123L), eq(42L), anyString(), eq("MarkdownV2"), eq(false))).thenReturn(true);
+
+        boolean result = stableEditor.finalizeStream(123L, 42L, "# Final");
+
+        assertThat(result).isTrue();
+        verify(client).editMessageText(eq(123L), eq(42L), anyString(), eq("MarkdownV2"), eq(false));
+        verify(client, never()).callApi(eq("sendRichMessage"), any());
+        verify(client, never()).deleteMessage(123L, 42L);
+    }
+
+    @Test
     void freshFinal_preservesDraftWhenReplacementFails() {
         BotProperties props = new BotProperties();
         props.setParseMode("MarkdownV2");

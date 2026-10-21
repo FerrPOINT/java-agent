@@ -400,6 +400,8 @@ Authoritative source: `telegram-bot/src/main/resources/application.yml`. The val
 | `bot.initial-stream-text` | `` |
 | `bot.streaming-max-chars` | `32768` |
 | `bot.streaming-transport` | `${AGENT_STREAMING_TRANSPORT:edit}` |
+| `bot.fresh-final-timeout-ms` | `${BOT_FRESH_FINAL_TIMEOUT_MS:0}` |
+| `bot.rich-messages.enabled` | `${BOT_RICH_MESSAGES_ENABLED:false}` |
 | `bot.busy-mode` | `queue` |
 | `bot.busy-input-mode` | `${BOT_BUSY_INPUT_MODE:interrupt}` |
 | `bot.busy-ack-enabled` | `${BOT_BUSY_ACK_ENABLED:true}` |
@@ -783,10 +785,11 @@ Authoritative source: `telegram-bot/src/main/java/com/azhukov/agent/bot/config/B
 | `BotProperties.streamingSilent` | `true` |
 | `BotProperties.streamCursor` | `" ▉"` |
 | `BotProperties.heartbeatIntervalSeconds` | `180` |
-| `BotProperties.freshFinalTimeoutMs` | `60000` |
+| `BotProperties.freshFinalTimeoutMs` | `0` |
 | `BotProperties.initialStreamText` | `""` |
 | `BotProperties.streamingMaxChars` | `4096` |
 | `BotProperties.streamingTransport` | `"edit"` |
+| `BotProperties.RichMessages.enabled` | `false` |
 | `BotProperties.cronDeliveryEnabled` | `true` |
 | `BotProperties.GoalAutoContinue.enabled` | `false` |
 | `BotProperties.GoalAutoContinue.maxTurns` | `3` |

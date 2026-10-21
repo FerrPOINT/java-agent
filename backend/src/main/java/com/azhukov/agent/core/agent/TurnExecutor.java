@@ -782,8 +782,13 @@ public class TurnExecutor {
                 // child's approval request queued on a session no user ever
                 // sees blocked the child 5 minutes per dangerous call before
                 // the fail-closed timeout denied it.
+                // Calculate this once before the subagent policy check. Only
+                // approval-gated calls are dangerous: a child must still be able
+                // to use ordinary read-only tools to finish its delegated work.
+                boolean flagRequiresApproval = !skipApproval && toolGuardrails != null
+                    && toolGuardrails.requiresApproval(call);
                 boolean isSubagentChild = !skipApproval && session.getMetadata("delegation_parent_session") != null;
-                if (isSubagentChild) {
+                if (isSubagentChild && flagRequiresApproval) {
                     log.warn("Subagent session {} auto-denied dangerous tool {} (delegation.subagent_auto-approve=false)", session.id(), call.name());
                     ToolResult deniedResult = ToolResult.fail(
                         "Tool execution denied by subagent policy: dangerous command '"
@@ -800,8 +805,6 @@ public class TurnExecutor {
                 // doesn't exist, so the post-wait re-validation denies. The old
                 // `requestApproval(...) != null` conjunct EXECUTED the call when
                 // creation failed (fail-open).
-                boolean flagRequiresApproval = !skipApproval && toolGuardrails != null
-                    && toolGuardrails.requiresApproval(call);
                 if (flagRequiresApproval && approvalQueue != null
                         && approvalQueue.getPending(session.id()) == null) {
                     requestApproval(session.id(), call);

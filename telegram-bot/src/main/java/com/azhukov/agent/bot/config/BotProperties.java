@@ -70,8 +70,9 @@ public class BotProperties {
     private String streamCursor = " ▉";
     // Heartbeat interval: seconds between heartbeat checks during streaming.
     private int heartbeatIntervalSeconds = 180;
-    // Fresh-final timeout: if streaming exceeds this (ms), delete old msg and send a new one.
-    private long freshFinalTimeoutMs = 60000;
+    // Disabled by default: a streamed preview is the answer, so replacing it
+    // at completion causes visible content to disappear and reappear.
+    private long freshFinalTimeoutMs = 0;
     // Initial streaming text shown before the first token arrives.
     // Hermes shows nothing until >=4 chars accumulated.
     private String initialStreamText = "";
@@ -224,7 +225,7 @@ public class BotProperties {
     @Getter
     @Setter
     public static class RichMessages {
-        private boolean enabled = true;
+        private boolean enabled = false;
     }
 
     @Getter

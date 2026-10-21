@@ -48,6 +48,11 @@ bot:
   # Match Hermes Telegram UX: progressive message edits rather than native
   # drafts, so partial text remains visible and tool/segment boundaries work.
   streaming-transport: ${AGENT_STREAMING_TRANSPORT:edit}
+  # Keep the visible stream message as the final answer. A positive value opts
+  # into replacing a long-lived preview with a new final message.
+  fresh-final-timeout-ms: ${BOT_FRESH_FINAL_TIMEOUT_MS:0}
+  rich-messages:
+    enabled: ${BOT_RICH_MESSAGES_ENABLED:false}
   busy-mode: queue
   busy-input-mode: ${BOT_BUSY_INPUT_MODE:interrupt}
   busy-ack-enabled: ${BOT_BUSY_ACK_ENABLED:true}
