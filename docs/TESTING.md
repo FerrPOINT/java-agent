@@ -31,6 +31,21 @@ Root workspace: `./check-workspace.ps1 -Profile Unit -Repository java-agent`.
 Docs не выбирают JVM; test-only не выбирает production JAR. Shared main выбирает
 реальных consumers, Shared test — только Shared. Неизвестный input расширяет scope.
 
+Windows ordinary native route подключён через `java-compose-v1` для selected
+backend/CLI/Bot units/JAR и Shared unit. Явно передавать `-NativeDockerContext`;
+без него execution отказывается до подготовки. Например из workspace root:
+
+```powershell
+./check-workspace.ps1 -Profile Build -Repository java-agent -Component cli -NativeDockerContext desktop-linux -PlanOnly -DetailedPlan
+```
+
+Selected CLI/Bot graph сохраняет `--quality-root`; existing native owner выполняет
+нужные units и JAR в согласованной операции. Root9.6.1 и backend9.8.0 остаются
+разными wrappers. Standalone selector и Root quality packet —exact Base4a7a92bb.
+Подключение маршрута не является application qualification: все Gradle gates
+сохраняют `cacheable=false`, compiler-cache switch отвергается, manual lanes
+не входят в automatic native declaration.
+
 ## Ручная полная проверка
 
 ```bash

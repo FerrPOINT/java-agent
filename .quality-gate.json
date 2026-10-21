@@ -1,6 +1,19 @@
 {
   "schema": "base-quality-product/v1",
   "product": "java-agent",
+  "native_execution": {
+    "adapter": "java-compose-v1",
+    "host_platforms": ["win32"],
+    "gates": {
+      "backend:unit": {"component": "backend", "role": "unit"},
+      "backend:build": {"component": "backend", "role": "build"},
+      "bot:unit": {"component": "bot", "role": "unit"},
+      "bot:build": {"component": "bot", "role": "build"},
+      "cli:unit": {"component": "cli", "role": "unit"},
+      "cli:build": {"component": "cli", "role": "build"},
+      "shared:unit": {"component": "shared", "role": "unit"}
+    }
+  },
   "components": {
     "docs": [
       "docs/**",
@@ -973,9 +986,9 @@
         "bash",
         "scripts/quality-gradle.sh",
         "--quality-root",
-        ":cli:bootJar",
         "--no-daemon",
-        "--max-workers=2"
+        "--max-workers=2",
+        ":cli:bootJar"
       ],
       "cwd": ".",
       "inputs": [
@@ -1035,9 +1048,9 @@
         "bash",
         "scripts/quality-gradle.sh",
         "--quality-root",
-        ":telegram-bot:bootJar",
         "--no-daemon",
-        "--max-workers=2"
+        "--max-workers=2",
+        ":telegram-bot:bootJar"
       ],
       "cwd": ".",
       "inputs": [

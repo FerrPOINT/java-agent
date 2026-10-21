@@ -340,7 +340,12 @@ def validate_native_execution(manifest):
         expected = (['bash', 'scripts/quality-gradle.sh', '--backend', ':' + task, *flags]
                     if component == 'backend' else
                     ['bash', 'scripts/quality-gradle.sh', *flags, ':' + JAVA_NATIVE_MODULES[component] + ':' + task])
-        if (gate is None or gate.get('component') != component or gate['argv'] != expected
+        commands = [expected]
+        if component != 'backend':
+            # The explicit clients graph excludes backend configuration. Keep
+            # its literal placement closed; this grants no cache qualification.
+            commands.append([*expected[:2], '--quality-root', *expected[2:]])
+        if (gate is None or gate.get('component') != component or gate['argv'] not in commands
                 or set(gate['profiles']) - {'fast', 'unit', 'build'}
                 or gate.get('platforms') != ['linux'] or gate.get('cwd', '.') != '.'
                 or gate.get('execution_slot') not in (None, 'host') or type(gate.get('cacheable')) is not bool
@@ -670,6 +675,13 @@ def order_unit_coverage(gates):
         visited.add(gate["id"])
         ordered.append(gate)
 
+    # An explicit producer may own its unit prerequisite (for example bootJar),
+    # but independent checks must finish before any producer can spend work or
+    # publish a candidate. Product manifest insertion order is not this policy.
+    for gate in gates:
+        if (gate['id'] not in owners and gate.get('kind') != 'artifact'
+                and gate.get('test_tier') != 'artifact'):
+            visit(gate)
     for gate in gates:
         visit(gate)
     return ordered

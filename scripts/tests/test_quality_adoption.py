@@ -25,6 +25,25 @@ class QualityAdoptionTests(unittest.TestCase):
             selected = ci.tasks_for_plan(self.plan(*paths))
             self.assertEqual(selected, {'backend': [], 'clients': []})
 
+    def test_windows_clients_native_plan_uses_one_existing_owner_and_only_selected_jar(self):
+        for component in ('cli', 'bot'):
+            with self.subTest(component=component), patch.object(selector, 'git', return_value='a' * 40):
+                planned = selector.plan(ROOT, profile='build', components=[component],
+                    execution_platform='win32', native_docker_context='fixture')
+                native = planned['native_execution']
+                self.assertEqual(native['adapter'], 'java-compose-v1')
+                self.assertEqual(native['components'], [component])
+                self.assertEqual(native['artifact_components'], [component])
+                self.assertEqual(set(native['gates']), {component + ':unit', component + ':build'})
+                self.assertTrue(all(gate['argv'][2] == '--quality-root' for gate in planned['gates']))
+                self.assertTrue(all(gate['cacheable'] is False for gate in planned['gates']))
+
+    def test_manual_java_lanes_do_not_dispatch_automatic_native_owner(self):
+        for profile in ('integration', 'slow', 'release'):
+            with self.subTest(profile=profile), patch.object(selector, 'git', return_value='a' * 40):
+                planned = selector.plan(ROOT, profile=profile, components=['cli'], execution_platform='win32')
+                self.assertNotIn('native_execution', planned)
+
     def test_reviewed_tooling_is_scoped_and_unknown_scripts_expand_the_product(self):
         selected=self.plan('scripts/check_default_settings_reference.py')
         self.assertEqual(selected['components'],['tooling'])
@@ -80,7 +99,7 @@ class QualityAdoptionTests(unittest.TestCase):
     def test_exact_canonical_selector_packet(self):
         receipt=json.loads((ROOT/'scripts/vendor/base-quality-tooling.json').read_text(encoding='utf-8'))
         pin=(ROOT/'.quality-tooling-revision').read_text(encoding='utf-8').strip()
-        self.assertEqual(pin,'81467ded7038631691566182c6cfc1106fcd7e84')
+        self.assertEqual(pin,'4a7a92bb3e24b1be95d7becedf65bc9807bdb0ce')
         self.assertEqual(receipt['revision'],pin)
         self.assertEqual(receipt['sha256'],hashlib.sha256((ROOT/'scripts/vendor/base_quality_selection.py').read_bytes()).hexdigest())
         self.assertEqual(set(receipt),{'schema','repository','revision','source','sha256'})
@@ -144,7 +163,10 @@ class QualityAdoptionTests(unittest.TestCase):
 
     def test_no_implicit_native_cache_eligibility(self):
         manifest=selector.load(ROOT)
-        self.assertNotIn('native_execution',manifest)
+        self.assertEqual(manifest['native_execution']['adapter'],'java-compose-v1')
+        self.assertEqual(set(manifest['native_execution']['gates']),
+                         {'backend:unit','backend:build','cli:unit','cli:build',
+                          'bot:unit','bot:build','shared:unit'})
         for gate in manifest['gates']:
             if 'scripts/quality-gradle.sh' in gate['argv']:
                 self.assertIs(gate['cacheable'],False)

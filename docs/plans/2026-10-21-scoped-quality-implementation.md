@@ -34,9 +34,10 @@ application/hosted qualification OPEN.
 
 ## Граница внедрения
 
-Standalone selector — exact81467ded через Base packager без optional helpers.
-После отдельного compatible adoption Root quality —6b56ce48; standalone selector
-не менялся. Native artifact cacheable=false; автоматический
+Standalone selector и Root quality —exact4a7a92bb после18plan compatibility
+checks и отдельного quality-only CAS;6b56ce48 сохранён для rollback.
+Native declaration подключает existing owner к selected units/JAR, включая
+explicit clients graph. Native artifact cacheable=false; автоматический
 configuration-cache default и compiler-cache opt-in peer не квалифицированы.
 Источник current wrapper/JDK и dependency closure учитывается существующим
 gradle-context helper; он возвращает reuse_qualified=false.
