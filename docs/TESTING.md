@@ -117,8 +117,14 @@ Actual CLI unit/JAR qualification после изменения starter и test 
 Прежний183-unit CLI baseline относится к source281a5a10 и не квалифицирует
 изменённые inputs. Host memory guard и compiler-cache opt-out сохраняются.
 
-Dependency caches и штатная Gradle incremental работа сохраняются. Artifact
-receipts, automatic configuration cache default и compiler-cache opt-in этого
-peer tuple пока выключены до native qualification. Остальные SDK/UI/skills/
+Dependency caches и штатная Gradle incremental работа сохраняются. CLI unit/JAR
+явно разрешают native receipt eligibility с exact Base5acb6750 selector/caller;
+это требует свежего opt-in native proof и readiness controls. Прежний99ac proof
+с opt-out не повышается задним числом. Linux grouped units остаются одним
+`cacheable:false` invocation; остальные native modules, automatic configuration
+cache default и compiler-cache opt-in остаются выключены. Qualification и её
+границы фиксируются в каноническом Base плане, а не выводятся из одного flag.
+Clean/full-source contract сохраняется; dirty-context narrowing проверяется
+отдельно. Остальные SDK/UI/skills/
 operator/global quality pins не меняются. Source counts не равны числу JUnit
 methods и не являются результатом native execution. См. [coverage strategy](11-test-coverage-plan.md).

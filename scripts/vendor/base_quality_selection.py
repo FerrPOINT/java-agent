@@ -580,13 +580,19 @@ def load(root):
                     and (tier in ("integration", "slow") or gate.get("external_state"))):
                 raise ValueError("Automatic build profiles cannot run boundary or slow tests")
     validate_affected_checks(manifest)
-    gradle_unit_groups(manifest["gates"])
-    covered_unit_owners(manifest["gates"])
     validate_native_execution(manifest)
+    gradle_unit_groups(manifest["gates"], native_gates=native_gradle_gate_ids(manifest))
+    covered_unit_owners(manifest["gates"])
     return manifest
 
 
-def gradle_unit_groups(gates):
+def native_gradle_gate_ids(manifest):
+    """Only closed Java declarations may consent to individual native reuse."""
+    value = manifest.get('native_execution')
+    return frozenset(value['gates']) if isinstance(value, dict) and value.get('adapter') == 'java-compose-v1' else frozenset()
+
+
+def gradle_unit_groups(gates, *, native_gates=()):
     """Join selected trailing Gradle tasks, preserving the complete unit contract."""
     identifiers = {gate["id"] for gate in gates}
     groups = {}
@@ -597,7 +603,8 @@ def gradle_unit_groups(gates):
         if (not isinstance(group, str) or not re.fullmatch(r"[a-zA-Z0-9:_-]+", group)
                 or group in identifiers
                 or gate.get("test_tier") != "unit" or gate.get("kind") == "artifact"
-                or gate.get("cacheable") or gate.get("external_state") or gate.get("requires_env")
+                or (gate.get("cacheable") and gate["id"] not in native_gates)
+                or gate.get("external_state") or gate.get("requires_env")
                 or gate.get("outputs") or gate.get("artifact_outputs") or gate.get("prepare_frontend")
                 or gate.get("execution_slot") == "command"
                 or len(gate["argv"]) < 2
@@ -608,12 +615,15 @@ def gradle_unit_groups(gates):
     merged = {}
     for group, members in groups.items():
         first = members[0]
-        contract = {key: value for key, value in first.items() if key not in ("id", "component", "argv")}
-        if any({key: value for key, value in member.items() if key not in ("id", "component", "argv")} != contract
+        # Individual native consent is not consent to reuse a portable grouped
+        # receipt. All command, input, environment and tool contracts stay equal.
+        ignored = ("id", "component", "argv", "cacheable")
+        contract = {key: value for key, value in first.items() if key not in ignored}
+        if any({key: value for key, value in member.items() if key not in ignored} != contract
                or member["argv"][:-1] != first["argv"][:-1] for member in members[1:]):
             raise ValueError("Gradle unit group has incompatible commands or execution contracts: " + group)
         merged[group] = {
-            **first, "id": group if len(members) > 1 else first["id"],
+            **first, "id": group if len(members) > 1 else first["id"], "cacheable": False,
             "argv": first["argv"][:-1] + list(dict.fromkeys(member["argv"][-1] for member in members)),
             "member_gates": [member["id"] for member in members],
         }
@@ -842,7 +852,8 @@ def plan(
                                    native_admin_inputs=native_admin_inputs)
     if native:
         # Native adapters retain the ordinary gate identities for certification.
-        ordinary = gradle_unit_groups([gate for gate in gates if gate['id'] not in native['gates']])
+        ordinary = gradle_unit_groups([gate for gate in gates if gate['id'] not in native['gates']],
+                                      native_gates=native_gradle_gate_ids(manifest))
         replacements = {name: gate for gate in ordinary for name in gate.get('member_gates', [gate['id']])}
         projected, seen = [], set()
         for gate in gates:
@@ -852,7 +863,7 @@ def plan(
                 seen.add(replacement['id'])
         ordered = order_unit_coverage(projected)
     else:
-        ordered = order_unit_coverage(gradle_unit_groups(gates))
+        ordered = order_unit_coverage(gradle_unit_groups(gates, native_gates=native_gradle_gate_ids(manifest)))
     result = {
         "schema": "base-quality-plan/v1",
         "product": manifest["product"],

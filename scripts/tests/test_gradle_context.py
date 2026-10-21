@@ -482,7 +482,7 @@ class GradleContextTests(unittest.TestCase):
         self.assertFalse(result['complete'])
         self.assertEqual(result['files'], 0)
 
-    def test_gradle_gates_select_wrapper_context_and_keep_unqualified_reuse_disabled(self):
+    def test_gradle_gates_select_wrapper_context_and_only_cli_allows_native_receipts(self):
         repository = SCRIPT.parents[1]
         manifest = json.loads((repository / '.quality-gate.json').read_text(encoding='utf-8'))
         gates = [gate for gate in manifest['gates'] if 'scripts/quality-gradle.sh' in gate['argv']]
@@ -500,7 +500,7 @@ class GradleContextTests(unittest.TestCase):
                 self.assertEqual(tool['reuse_pattern'], '"reuse_qualified":true')
                 self.assertIs(tool['recheck'], True)
                 self.assertEqual(tool['cwd'], '.')
-                self.assertIs(gate['cacheable'], False)
+                self.assertIs(gate['cacheable'], gate['id'] in ('cli:unit', 'cli:build'))
                 self.assertEqual(gate['source_date_epoch'], 'git-head')
                 self.assertIn('SOURCE_DATE_EPOCH', gate['environment_inputs'])
                 if gate.get('kind') == 'artifact':

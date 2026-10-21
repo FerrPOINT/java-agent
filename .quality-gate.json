@@ -407,7 +407,7 @@
       "inputs": [
         "**"
       ],
-      "cacheable": false,
+      "cacheable": true,
       "platforms": [
         "linux"
       ],
@@ -1008,7 +1008,7 @@
         "NOTICE",
         "THIRD_PARTY_NOTICES.md"
       ],
-      "cacheable": false,
+      "cacheable": true,
       "platforms": [
         "linux"
       ],
