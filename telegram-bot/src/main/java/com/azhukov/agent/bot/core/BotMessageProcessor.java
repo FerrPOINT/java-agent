@@ -817,7 +817,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         for (MediaDeliveryService.MediaDescriptor desc : media) {
             // Security: validate path against allowed base directories
             if (!isMediaPathAllowed(desc.path())) {
-                log.warn("MEDIA path outside allowed directories, skipping: {}", desc.path());
+                log.warn("media_delivery_rejected reason=outside_allowed_root file={}", mediaFileName(desc));
                 continue;
             }
             // WP-11: skip artifacts that were already delivered — a retry after
@@ -1205,7 +1205,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         try {
             File file = new File(desc.path());
             if (!file.exists() || !file.isFile()) {
-                log.warn("Media file not found: {}", desc.path());
+                log.warn("media_delivery_rejected reason=file_missing file={}", mediaFileName(desc));
                 // M2: Notify user that the referenced file doesn't exist
                 telegramClient.sendMessage(chatId, "⚠️ Media file not found: " + desc.path());
                 return;
@@ -1217,21 +1217,42 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
             String artifactId = artifactIdForPath(desc.path());
             if (desc.isVideo()) {
                 java.util.Optional<Long> sent = telegramClient.sendVideo(chatId, data, fileName, null, null);
+                logMediaDelivery("video", desc, data.length, sent);
                 markArtifactDelivered(artifactId, sent);
-                log.debug("Sent video {} to chat {}", desc.path(), chatId);
             } else if (desc.isAudio() && desc.asVoice()) {
                 java.util.Optional<Long> sent = telegramClient.sendAudioAsVoice(chatId, data, fileName, null);
+                logMediaDelivery("voice", desc, data.length, sent);
                 markArtifactDelivered(artifactId, sent);
-                log.debug("Sent voice {} to chat {}", desc.path(), chatId);
             } else {
                 // Document (covers as_document images, audio without voice, PDFs, etc.)
                 java.util.Optional<Long> sent = telegramClient.sendDocument(chatId, data, fileName, null, null);
+                logMediaDelivery("document", desc, data.length, sent);
                 markArtifactDelivered(artifactId, sent);
-                log.debug("Sent document {} to chat {}", desc.path(), chatId);
             }
         } catch (Exception e) {
-            log.error("Failed to send media {} to chat {}: {}", desc.path(), chatId, e.getMessage());
+            log.error("media_delivery_failed type={} file={} error={}", mediaType(desc), mediaFileName(desc),
+                e.getClass().getSimpleName());
         }
+    }
+
+    private void logMediaDelivery(String type, MediaDeliveryService.MediaDescriptor desc, int bytes,
+                                  java.util.Optional<Long> platformMessageId) {
+        if (platformMessageId != null && platformMessageId.isPresent()) {
+            log.info("media_delivery_sent type={} file={} bytes={} receipt=true", type, mediaFileName(desc), bytes);
+        } else {
+            log.warn("media_delivery_failed type={} file={} bytes={} reason=telegram_no_receipt",
+                type, mediaFileName(desc), bytes);
+        }
+    }
+
+    private static String mediaType(MediaDeliveryService.MediaDescriptor desc) {
+        if (desc.isVideo()) return "video";
+        if (desc.isAudio() && desc.asVoice()) return "voice";
+        return "document";
+    }
+
+    private static String mediaFileName(MediaDeliveryService.MediaDescriptor desc) {
+        return Path.of(desc.path()).getFileName().toString();
     }
 
     /** WP-11: record the outbound receipt (platform message id) after a successful send. */
