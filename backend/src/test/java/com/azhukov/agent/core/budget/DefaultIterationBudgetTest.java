@@ -104,6 +104,12 @@ class DefaultIterationBudgetTest {
     }
 
     @Test
+    void defaultTokenBudgetIsTwoMillionSoTokenAccountingDoesNotCutOffTheHundredIterationBudget() {
+        AgentProperties.BudgetProperties defaultBudget = new AgentProperties.BudgetProperties();
+        assertThat(defaultBudget.getMaxTokensPerTurn()).isEqualTo(2_000_000);
+    }
+
+    @Test
     void defaultMemoryNudgeIntervalIs10() {
         // Hermes default: memory.nudge_interval = 10 (review every 10 user turns)
         AgentProperties.MemoryProperties defaultMemory = new AgentProperties.MemoryProperties();

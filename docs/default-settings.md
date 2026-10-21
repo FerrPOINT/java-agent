@@ -246,7 +246,7 @@ Authoritative source: `backend/src/main/resources/application.yml`. The value is
 | `agent.budget.enabled` | `${AGENT_BUDGET_ENABLED:true}` |
 | `agent.budget.max-model-calls-per-turn` | `${AGENT_BUDGET_MAX_MODEL_CALLS_PER_TURN:100}` |
 | `agent.budget.max-tool-executions-per-turn` | `${AGENT_BUDGET_MAX_TOOL_EXECUTIONS_PER_TURN:100}` |
-| `agent.budget.max-tokens-per-turn` | `${AGENT_BUDGET_MAX_TOKENS_PER_TURN:200000}` |
+| `agent.budget.max-tokens-per-turn` | `${AGENT_BUDGET_MAX_TOKENS_PER_TURN:2000000}` |
 | `agent.budget.max-tool-duration-ms-per-turn` | `${AGENT_BUDGET_MAX_TOOL_DURATION_MS_PER_TURN:600000}` |
 | `agent.budget.run-budget-seconds` | `${AGENT_BUDGET_RUN_BUDGET_SECONDS:0}` |
 | `agent.prompt-caching.enabled` | `${AGENT_PROMPT_CACHING_ENABLED:true}` |
@@ -692,7 +692,7 @@ Authoritative source: `backend/src/main/java/com/azhukov/agent/config/AgentPrope
 | `AgentProperties.CoreProperties.emptyBackoffCapMs` | `60_000L` |
 | `AgentProperties.BudgetProperties.maxModelCallsPerTurn` | `100` |
 | `AgentProperties.BudgetProperties.maxToolExecutionsPerTurn` | `100` |
-| `AgentProperties.BudgetProperties.maxTokensPerTurn` | `200000` |
+| `AgentProperties.BudgetProperties.maxTokensPerTurn` | `2000000` |
 | `AgentProperties.BudgetProperties.maxToolDurationMsPerTurn` | `600000` |
 | `AgentProperties.BudgetProperties.enabled` | `true` |
 | `AgentProperties.BudgetProperties.runBudgetSeconds` | `0` |

@@ -353,7 +353,7 @@ agent:
     enabled: ${AGENT_BUDGET_ENABLED:true}
     max-model-calls-per-turn: ${AGENT_BUDGET_MAX_MODEL_CALLS_PER_TURN:100}
     max-tool-executions-per-turn: ${AGENT_BUDGET_MAX_TOOL_EXECUTIONS_PER_TURN:100}
-    max-tokens-per-turn: ${AGENT_BUDGET_MAX_TOKENS_PER_TURN:200000}
+    max-tokens-per-turn: ${AGENT_BUDGET_MAX_TOKENS_PER_TURN:2000000}
     max-tool-duration-ms-per-turn: ${AGENT_BUDGET_MAX_TOOL_DURATION_MS_PER_TURN:600000}
     run-budget-seconds: ${AGENT_BUDGET_RUN_BUDGET_SECONDS:0}
   

@@ -43,7 +43,7 @@ class TurnExecutorHelpersTest {
         assertThat(executor.formatBudgetExhaustionMessage(budget, "max tokens reached"))
             .isEqualTo("Iteration budget exhausted: reason=max tokens reached; "
                 + "model_calls=7/100; tool_executions=12/100; "
-                + "estimated_tokens=200000/200000; tool_duration_ms=45000/600000.");
+                + "estimated_tokens=200000/2000000; tool_duration_ms=45000/600000.");
     }
 
     @Test
