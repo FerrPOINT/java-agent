@@ -153,6 +153,13 @@ class StreamingEventHelperTest {
         assertThat(helper.formatResultForTransport(ToolResult.ok(payload))).isEqualTo(payload);
     }
     @Test
+    void formatResultForTransportDoesNotTruncateTerminalArtifactMarker() {
+        String payload = "command output " + "x".repeat(600)
+            + "\n__JAVA_AGENT_OUTPUT_FILES__:/workspace/report.zip";
+
+        assertThat(helper.formatResultForTransport(ToolResult.ok(payload))).isEqualTo(payload);
+    }
+    @Test
     void formatResultPreviewReturnsShortContentAsIs() {
         ToolResult result = ToolResult.ok("short result");
         assertThat(helper.formatResultPreview(result)).isEqualTo("short result");

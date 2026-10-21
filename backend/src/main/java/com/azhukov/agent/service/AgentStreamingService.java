@@ -1531,11 +1531,9 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
 
                     @Override
                     public void onToolResult(ToolCall call, ToolResult result, String formatted) {
-                        // Preserve the full structured result for file-mutating
-                        // tools: the bot needs resolved_path after a long write.
-                        String resultPreview = isFileMutationTool(call.name())
-                            ? eventHelper().formatResultForTransport(result)
-                            : eventHelper().formatResultPreview(result);
+                        // File-delivery intent comes only from the model's final
+                        // response; ordinary tool results retain the normal preview.
+                        String resultPreview = eventHelper().formatResultPreview(result);
                         eventHelper().send(emitter, new StreamEvent("tool_result", null, null, null,
                             null, null, null, call.name(), resultPreview), streamCtx);
                     }
@@ -1651,9 +1649,6 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
     }
 
 
-    private static boolean isFileMutationTool(String toolName) {
-        return "write_file".equals(toolName) || "patch".equals(toolName);
-    }
 
     private List<ToolDefinition> selectTools(ChatRequest request) {
         Set<String> defaultToolsets = new HashSet<>(properties.getSkills().getDefaultToolsets());

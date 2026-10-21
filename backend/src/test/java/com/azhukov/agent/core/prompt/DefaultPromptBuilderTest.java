@@ -93,7 +93,7 @@ class DefaultPromptBuilderTest {
         Message prompt = new DefaultPromptBuilder(properties, registry, new DefaultAgentConstants())
             .buildSystemMessage(telegram);
 
-        assertThat(prompt.content()).contains("The Telegram adapter automatically attaches each verified file result.")
+        assertThat(prompt.content()).contains("The Telegram adapter attaches those verified final references.")
             .contains("Do not claim that attachment delivery is unavailable");
     }
 

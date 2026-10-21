@@ -1327,14 +1327,14 @@ public class DefaultPromptBuilder implements PromptBuilder {
         if (stablePlatform != null && "telegram".equalsIgnoreCase(stablePlatform)) {
             stable.append("\n\n").append(TELEGRAM_PLATFORM_HINT);
         }
-        // The platform adapter owns native delivery from verified write results.
-        // State this explicitly so the model neither invents missing-tool errors
-        // nor needs to add a fragile MEDIA directive after writing a file.
+        // The platform adapter delivers only file references from the final
+        // response, so intermediate files remain internal to a multi-step task.
         if (stablePlatform != null && "telegram".equalsIgnoreCase(stablePlatform)) {
-            stable.append("\n\nWhen a user asks you to create and send a file, write the file with write_file. "
-                + "The Telegram adapter automatically attaches each verified file result. "
-                + "Do not claim that attachment delivery is unavailable, and do not add MEDIA: for files "
-                + "already created by write_file.");
+            stable.append("\n\nWhen a user asks you to create and send files, create them with the appropriate tools. "
+                + "In your final response, identify every intended deliverable with its absolute path or MEDIA:/absolute/path/to/file. "
+                + "Only identify files the user asked to receive; intermediate files are not deliverables. "
+                + "The Telegram adapter attaches those verified final references. "
+                + "Do not claim that attachment delivery is unavailable.");
         }
 
         // Tool-use enforcement — only for model families that need it (GLM, GPT, etc.)

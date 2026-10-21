@@ -385,23 +385,7 @@ public class StreamingOrchestrator {
                 // because currentMessageId was reset to -1 by the previous segment break).
                 // Calling onSegmentBreak here with stale messageId would edit the wrong
                 // (already-finalized) message. Hermes does not break on tool_result either.
-                (toolName, toolResultPreview) -> {
-                    // A verified write result is authoritative evidence that a file
-                    // exists. Deliver it now rather than depending on the model to
-                    // remember a MEDIA directive in its final prose.
-                    List<MediaDeliveryService.MediaDescriptor> outputs = new java.util.ArrayList<>(
-                        mediaDeliveryService.extractVerifiedToolOutput(toolName, toolResultPreview));
-                    outputs.addAll(mediaDeliveryService.extractTerminalOutputFiles(toolName, toolResultPreview));
-                    if (!outputs.isEmpty()) {
-                        List<MediaDeliveryService.MediaDescriptor> newOutputs = outputs.stream()
-                            .filter(output -> deliveredToolOutputPaths.add(output.path()))
-                            .toList();
-                        if (!newOutputs.isEmpty()) {
-                            Integer mediaThreadId = messageThreadId > 0 ? (int) messageThreadId : null;
-                            hooks.deliverMedia(chatId, newOutputs, mediaThreadId);
-                        }
-                    }
-                },
+                (toolName, toolResultPreview) -> { },
                 // retryConsumer — called when backend emits retry/continuation events.
                 // TRANSIENT status only (Hermes parity: gateway shows retry status, it never
                 // becomes part of the answer): the display text is shown on the streaming
@@ -502,6 +486,7 @@ public class StreamingOrchestrator {
                         // so the displayed text doesn't contain raw MEDIA: tags
                         if (properties.isMediaDeliveryEnabled()) {
                             MediaDeliveryService.ExtractionResult extraction = mediaDeliveryService.extractMediaTags(finalText);
+                            List<MediaDeliveryService.MediaDescriptor> explicitReferences = extraction.media();
                             finalText = extraction.cleanedText();
                             // Finalize the stream with cleaned text
                             boolean delivered;
@@ -521,7 +506,7 @@ public class StreamingOrchestrator {
                             // Deliver extracted media files only after text finalization succeeds.
                             if (delivered && !extraction.media().isEmpty()) {
                                 Integer mediaThreadId = messageThreadId > 0 ? (int) messageThreadId : null;
-                                List<MediaDeliveryService.MediaDescriptor> newMedia = extraction.media().stream()
+                                List<MediaDeliveryService.MediaDescriptor> newMedia = explicitReferences.stream()
                                     .filter(media -> deliveredToolOutputPaths.add(media.path()))
                                     .toList();
                                 if (!newMedia.isEmpty()) {
@@ -637,6 +622,7 @@ public class StreamingOrchestrator {
             }
         }
     }
+
 
     private AgentBackendClient.ChatResult fallbackSyncWithMetadata(String messageText, String sessionId,
                                                                     BotSessionEntity session,

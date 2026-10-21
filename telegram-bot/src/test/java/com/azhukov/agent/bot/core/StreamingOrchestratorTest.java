@@ -370,7 +370,7 @@ class StreamingOrchestratorTest {
     }
 
     @Test
-    void streamChat_deliversVerifiedWriteOutputWithoutMediaDirective() throws Exception {
+    void streamChat_doesNotDeliverToolOutputsWithoutFinalMediaReference() throws Exception {
         Path output = Files.createTempFile("stream-output-", ".txt");
         try {
             Files.writeString(output, "report");
@@ -385,20 +385,21 @@ class StreamingOrchestratorTest {
 
             orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
 
-            verify(hooks).deliverMedia(eq(100L), argThat(media -> media.size() == 1
-                && output.toString().equals(media.get(0).path()) && media.get(0).asDocument()), isNull());
+            verify(hooks, never()).deliverMedia(anyLong(), anyList(), isNull());
         } finally {
             Files.deleteIfExists(output);
         }
     }
     @Test
-    void streamChat_deliversBackendReportedTerminalArchive() throws Exception {
-        Path archive = Files.createTempFile("stream-archive-", ".zip");
+    void streamChat_deliversVerifiedWriteOutputWhenFinalMediaReferenceNamesIt() throws Exception {
+        Path output = Files.createTempFile("stream-output-", ".txt");
         try {
-            Files.writeString(archive, "archive");
+            Files.writeString(output, "report");
+            String toolResult = "{\"success\":true,\"verified\":true,\"resolved_path\":\""
+                + output.toString().replace("\\", "\\\\") + "\"}";
             stubChatStream(ctx -> {
-                ctx.toolResultConsumer.accept("terminal", "ok\n__JAVA_AGENT_OUTPUT_FILES__:" + archive);
-                ctx.tokenConsumer.accept("completed");
+                ctx.toolResultConsumer.accept("write_file", toolResult);
+                ctx.tokenConsumer.accept("completed\nMEDIA:" + output);
                 ctx.onComplete.accept(new AgentBackendClient.ChatResult("completed", "model", 1, 10, true));
                 ctx.returnResult = new AgentBackendClient.ChatResult("completed", "model", 1, 10, true, false, null);
             });
@@ -406,7 +407,59 @@ class StreamingOrchestratorTest {
             orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
 
             verify(hooks).deliverMedia(eq(100L), argThat(media -> media.size() == 1
-                && archive.toString().equals(media.get(0).path()) && media.get(0).asDocument()), isNull());
+                && output.toString().equals(media.get(0).path())), isNull());
+        } finally {
+            Files.deleteIfExists(output);
+        }
+    }
+    @Test
+    void streamChat_deliversArchiveButNotIntermediateWritesWhenFinalResponseReferencesArchive() throws Exception {
+        Path intermediateOne = Files.createTempFile("source-one-", ".txt");
+        Path intermediateTwo = Files.createTempFile("source-two-", ".txt");
+        Path archive = Files.createTempFile("final-archive-", ".zip");
+        try {
+            Files.writeString(intermediateOne, "one");
+            Files.writeString(intermediateTwo, "two");
+            Files.writeString(archive, "archive");
+            String resultOne = "{\"success\":true,\"verified\":true,\"resolved_path\":\""
+                + intermediateOne.toString().replace("\\", "\\\\") + "\"}";
+            String resultTwo = "{\"success\":true,\"verified\":true,\"resolved_path\":\""
+                + intermediateTwo.toString().replace("\\", "\\\\") + "\"}";
+            stubChatStream(ctx -> {
+                ctx.toolResultConsumer.accept("write_file", resultOne);
+                ctx.toolResultConsumer.accept("write_file", resultTwo);
+                ctx.toolResultConsumer.accept("terminal", "created " + archive);
+                ctx.tokenConsumer.accept("Archive ready\nMEDIA:" + archive);
+                ctx.onComplete.accept(new AgentBackendClient.ChatResult("Archive ready", "model", 1, 10, true));
+                ctx.returnResult = new AgentBackendClient.ChatResult("Archive ready", "model", 1, 10, true, false, null);
+            });
+
+            orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
+
+            verify(hooks).deliverMedia(eq(100L), argThat(media -> media.size() == 1
+                && archive.toString().equals(media.get(0).path())), isNull());
+        } finally {
+            Files.deleteIfExists(intermediateOne);
+            Files.deleteIfExists(intermediateTwo);
+            Files.deleteIfExists(archive);
+        }
+    }
+    @Test
+    void streamChat_deliversTerminalArchiveWhenFinalMediaReferenceNamesIt() throws Exception {
+        Path archive = Files.createTempFile("stream-archive-", ".zip");
+        try {
+            Files.writeString(archive, "archive");
+            stubChatStream(ctx -> {
+                ctx.toolResultConsumer.accept("terminal", "ok\n__JAVA_AGENT_OUTPUT_FILES__:" + archive);
+                ctx.tokenConsumer.accept("completed\nMEDIA:" + archive);
+                ctx.onComplete.accept(new AgentBackendClient.ChatResult("completed", "model", 1, 10, true));
+                ctx.returnResult = new AgentBackendClient.ChatResult("completed", "model", 1, 10, true, false, null);
+            });
+
+            orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
+
+            verify(hooks).deliverMedia(eq(100L), argThat(media -> media.size() == 1
+                && archive.toString().equals(media.get(0).path())), isNull());
         } finally {
             Files.deleteIfExists(archive);
         }
