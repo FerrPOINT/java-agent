@@ -42,10 +42,12 @@ services:
       # Workspace and artifacts are named volumes so data survives a recreate.
       AGENT_CORE_WORKING_DIRECTORY: /workspace
       AGENT_ATTACHMENTS_CACHE_ROOT: /artifacts
+      HERMES_HOME: /home/agent/.java-agent
     working_dir: /workspace
     ports:
       - "8080:8080"
     volumes:
+      - agent_state:/home/agent/.java-agent
       - agent_chromium:/home/agent/.azhukov-agent
       - agent_workspace:/workspace
       - agent_artifacts:/artifacts
@@ -65,6 +67,7 @@ services:
 
 volumes:
   java_agent_pg:
+  agent_state:
   agent_chromium:
   agent_workspace:
   agent_artifacts:

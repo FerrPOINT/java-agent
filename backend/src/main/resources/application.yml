@@ -65,6 +65,10 @@ agent:
   # Deployment identity. Default stays generic; set AGENT_NAME=Wartz Java Agent for Wartz.
   name: ${AGENT_NAME:Джава агент}
 
+  attachments:
+    # Container deployments bind this directory to durable storage.
+    cache-root: ${AGENT_ATTACHMENTS_CACHE_ROOT:}
+
   central-auth:
     enabled: ${AGENT_CENTRAL_AUTH_ENABLED:false}
     issuer: ${AGENT_CENTRAL_AUTH_ISSUER:}

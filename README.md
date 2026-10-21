@@ -211,6 +211,9 @@ Standalone Compose-файлы ниже остаются отдельными ш�
 через Base ComposeHelper v2 с собственным project и cleanup; постоянный SDLC
 управляется workspace helper.
 
+Пути состояния, права, перенос старого writable layer, rollback и TTL описаны
+в [контракте хранения](docs/architecture/storage.md).
+
 The CLI image packages `LICENSE`, `NOTICE`, and `THIRD_PARTY_NOTICES.md`
 inside its executable JAR under `META-INF`, alongside the license metadata.
 Profile regression tests load the shipped `application.yml` and verify that

@@ -66,6 +66,7 @@ services:
       AGENT_MODEL_NAME: ${AGENT_MODEL_NAME:-kimi-k2.6}
       AGENT_CORE_WORKING_DIRECTORY: /workspace
       AGENT_ATTACHMENTS_CACHE_ROOT: /artifacts
+      HERMES_HOME: /home/agent/.java-agent
       AGENT_CHROMIUM_AUTO_START: "true"
       AGENT_CHROMIUM_AUTO_INSTALL: "true"
       AGENT_BROWSER_CDP_URL: "http://localhost:9222"
@@ -76,6 +77,7 @@ services:
     ports:
       - "${AGENT_PORT:-8080}:8080"
     volumes:
+      - agent_prod_state:/home/agent/.java-agent
       - agent_prod_chromium:/home/agent/.azhukov-agent
       - agent_prod_workspace:/workspace
       - agent_prod_artifacts:/artifacts
@@ -130,11 +132,13 @@ services:
       BOT_ALLOW_BY_DEFAULT: ${BOT_ALLOW_BY_DEFAULT:-false}
       BOT_WORKING_DIRECTORY: /workspace
       AGENT_ATTACHMENTS_CACHE_ROOT: /artifacts
+      HERMES_HOME: /home/agent/.java-agent
     networks:
       - backend
     volumes:
       - agent_prod_workspace:/workspace
       - agent_prod_artifacts:/artifacts
+      - agent_prod_state:/home/agent/.java-agent
     deploy:
       resources:
         limits:
@@ -166,6 +170,7 @@ networks:
 
 volumes:
   java_agent_prod_pg:
+  agent_prod_state:
   agent_prod_chromium:
   agent_prod_workspace:
   agent_prod_artifacts:
