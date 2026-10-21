@@ -429,10 +429,16 @@ docs/platform/CHOICE_CONTROLS.md: Select, MultiSelect, SearchableSelect.
 Общие механизмы и оформление принадлежат Base; данные и правила — продукту.
 Текущие Java/CLI/Telegram-модули не получают фиктивную frontend-зависимость.
 
-## Единая дизайн-система Base
+## Разработка UI со справочником Base
 
-Перед созданием UI: pdlc-ui search → show → один example. Button, Input,
-Textarea, Checkbox, RadioGroup/Radio, Switch, меню, Card, Table, Disclosure,
+При работе над web UI читать [маршрут разработки со справочником Base](https://github.com/FerrPOINT/services-base/blob/ae2b41291eee5af752daff89f760fba5aff41783/base-modules/ui/reference/guides/agent.md).
+CLI можно читать из выбранного Base checkout на Node 22 без установки пакетов:
+из корня Base `node base-modules/ui/tools/ui-reference/cli.mjs check`, затем
+`search "задача"`, адресный `show` и один `example`. Явно фиксировать исследуемый
+Base SHA; отсутствие UI pin не означает adoption нового UI. Java/CLI/Telegram
+не получают фиктивных frontend-зависимостей. Полный каталог в контекст не загружать.
+
+Button, Input, Textarea, Checkbox, RadioGroup/Radio, Switch, меню, Card, Table, Disclosure,
 Dialog и Toaster/toast использовать из публичного @pdlc/ui. Общий дефект
 исправлять в Base; продукт сохраняет данные, права и сохранение. Прямой Sonner,
 копии примитивов и продуктовые определения общих tokens не добавлять.
