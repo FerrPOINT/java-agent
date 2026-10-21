@@ -295,7 +295,13 @@ public class MediaDeliveryService {
         }
         try {
             JsonNode payload = JSON.readTree(toolResult);
-            if (!payload.path("success").asBoolean(false) || !payload.path("verified").asBoolean(false)) {
+            // WriteFileTool returns its successful result as a raw JSON object;
+            // only failures carry a success=false envelope. Do not require a
+            // success field here or every valid write is silently discarded.
+            if (payload.path("success").isBoolean() && !payload.path("success").asBoolean()) {
+                return List.of();
+            }
+            if (!payload.path("verified").asBoolean(false)) {
                 return List.of();
             }
             String path = payload.path("resolved_path").asText("");

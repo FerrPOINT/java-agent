@@ -95,7 +95,7 @@ class MediaDeliveryServiceTest {
     void extractVerifiedToolOutputReturnsDeliverableDocument(@TempDir Path tempDir) throws Exception {
         Path document = tempDir.resolve("report.pdf");
         Files.write(document, new byte[] {1, 2, 3});
-        String result = "{\"success\":true,\"verified\":true,\"resolved_path\":\""
+        String result = "{\"verified\":true,\"resolved_path\":\""
             + document.toString().replace("\\", "\\\\") + "\"}";
 
         List<MediaDeliveryService.MediaDescriptor> media =
@@ -110,10 +110,12 @@ class MediaDeliveryServiceTest {
     @Test
     void extractVerifiedToolOutputRejectsUnverifiedOrMissingFiles(@TempDir Path tempDir) {
         Path missing = tempDir.resolve("missing.pdf");
-        String unverified = "{\"success\":true,\"verified\":false,\"resolved_path\":\"" + missing + "\"}";
-        String missingFile = "{\"success\":true,\"verified\":true,\"resolved_path\":\"" + missing + "\"}";
+        String unverified = "{\"verified\":false,\"resolved_path\":\"" + missing + "\"}";
+        String failed = "{\"success\":false,\"verified\":true,\"resolved_path\":\"" + missing + "\"}";
+        String missingFile = "{\"verified\":true,\"resolved_path\":\"" + missing + "\"}";
 
         assertTrue(service.extractVerifiedToolOutput("write_file", unverified).isEmpty());
+        assertTrue(service.extractVerifiedToolOutput("write_file", failed).isEmpty());
         assertTrue(service.extractVerifiedToolOutput("write_file", missingFile).isEmpty());
         assertTrue(service.extractVerifiedToolOutput("read_file", missingFile).isEmpty());
     }
