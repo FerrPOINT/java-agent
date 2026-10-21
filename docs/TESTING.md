@@ -11,7 +11,8 @@ workspace inventory. Продукт владеет Gradle tasks, source membersh
 компилирует manual sources; общая fixture находится в `testSupport`.
 Аннотации, Groovy, processors и `processTestResources` сохраняются. Быстрые
 проверки выполняются в подготовленном pinned environment; native heavy команды
-используют общий Base host slot. Windows raw JVM route здесь ещё не квалифицирован.
+используют общий Base host slot. Windows application JVM route здесь ещё не
+квалифицирован; Gradle API fixture имеет отдельную ограниченную qualification.
 
 ```bash
 python3 scripts/check_test_lanes.py
@@ -52,6 +53,13 @@ Live/E2E, migrations/security/data/compatibility и необходимая runti
 остаются отдельными ручными gates. Для Gradle API source-set fixture используется
 `scripts.tests.test_source_sets_native` с explicit pinned JAVA_HOME и
 PDLC_GRADLE_HOME через host slot. Зелёный Python/unit-набор не доказывает эти gates.
+
+21 октября на source `cc2ef3dc` native Gradle API fixture прошёл с JDK25.0.4.1
+и root9.6.1: Java/Groovy unit/manual/shared membership, classpaths/resources,
+configuration-cache reuse, task graphs и refusal unknown source. Application
+sources не компилировались; integration/slow были только dry-run. Canonical
+evidence находится в source Base: `docs/plans/java3-native-sourcesets-20261021.md`.
+Это не backend9.8.0, native JAR/coverage proof или разрешение artifact/cache opt-in.
 
 ## Кэши и доказательства
 

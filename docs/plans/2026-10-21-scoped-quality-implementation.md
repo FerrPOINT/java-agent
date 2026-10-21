@@ -1,6 +1,7 @@
 # Java3: source partition и штатные scoped entrypoints
 
-Дата: 2026-10-21. Статус: source implementation; native/hosted qualification OPEN.
+Дата: 2026-10-21. Статус: source implementation; native Gradle API fixture PASS;
+application/hosted qualification OPEN.
 Основание: [prerequisites](2026-10-21-scoped-quality-prerequisites.md).
 Операционные команды и manual gates — [TESTING](../TESTING.md).
 
@@ -34,13 +35,23 @@
 ## Граница внедрения
 
 Standalone selector — exact81467ded через Base packager без optional helpers.
-Root quality остаётся a36cd64f. Native artifact cacheable=false; автоматический
+После отдельного compatible adoption Root quality —6b56ce48; standalone selector
+не менялся. Native artifact cacheable=false; автоматический
 configuration-cache default и compiler-cache opt-in peer не квалифицированы.
 Источник current wrapper/JDK и dependency closure учитывается существующим
 gradle-context helper; он возвращает reuse_qualified=false.
 
-Сейчас проверяются source/selection, pure Python contracts, Bash syntax и YAML
-objects. Actual Gradle/JVM/JAR, Docker/hosted/resource consumption и live не
-доказываются этими checks. На интегрированной вехе нужны actual source-set API
-fixture, pinned native unit/JAR/classpath и invalidation checks. Общая цель Base
+Source/selection, pure Python contracts, Bash syntax и YAML objects не
+доказывают actual product Gradle/JVM/JAR или live. Native source-set API fixture
+пройден отдельно ниже; pinned product unit/JAR/classpath, processors и
+invalidation checks остаются на интегрированной вехе. Общая цель Base
 и исходные manual release/live/soak gates остаются открытыми.
+
+На source `cc2ef3dc` выполнен существующий native Gradle API fixture: JDK25.0.4.1,
+root9.6.1, общий host slot и fresh census, offline без новой установки tools.
+Пять Gradle calls подтвердили Java/Groovy memberships, dependency/resource
+classpath, configuration-cache reuse, unit/manual graphs и отказ unknown source.
+Unittest PASS33,252с. Application/fixture classes не компилировались; backend9.8.0,
+actual processors/unit/JAR и full tool-distribution identity остаются OPEN.
+Canonical original evidence —source Base `docs/plans/java3-native-sourcesets-20261021.md`;
+переносить результат в cache eligibility или другой peer нельзя.
