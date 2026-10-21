@@ -3,6 +3,12 @@
 Обязательная общая политика: [Base TESTING](https://github.com/FerrPOINT/services-base/blob/ad724088e9a63b1e353fb5b28e4308e9ae6f45ae/docs/TESTING.md).
 Выбор компонентов и native commands: `.quality-gate.json`.
 
+Полная ручная приёмка: `python3 scripts/release_verify.py` выполняет по одному
+graph на pinned wrapper, включая manual CLI/Shared classes и blocking coverage
+ratchet. Обычный `:test` и генерация coverage report не заменяют этот набор.
+Live/E2E остаются отдельными gates; эта source-поправка не является новым native
+release proof.
+
 ## Разработка и сборка
 
 ### Явный scope Makefile

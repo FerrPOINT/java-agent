@@ -167,7 +167,8 @@ def main() -> int:
     # Each report owns its unit/integration/slow prerequisites in one graph.
     # Backend and root use different pinned wrappers and cannot share a graph.
     backend_tasks = [":jacocoTestReport"]
-    root_tasks = [":telegram-bot:jacocoTestReport", ":cli:test"]
+    root_tasks = [":telegram-bot:jacocoTestReport", ":cli:test", ":cli:integrationTest", ":cli:slowTest",
+                  ":shared:test", ":shared:integrationTest", ":shared:slowTest"]
     if not args.skip_boot_jars:
         backend_tasks.append(":bootJar")
         root_tasks.extend([":telegram-bot:bootJar", ":cli:bootJar"])
@@ -175,6 +176,11 @@ def main() -> int:
     write_report(args.report, gates, "RUNNING")
     record(run_command("backend-release", gradle + ["--backend"] + backend_tasks + options, args.timeout))
     record(run_command("module-release", gradle + root_tasks + options, args.timeout))
+    record(run_command(
+        "coverage-ratchet",
+        [sys.executable, "scripts/check_docs_standard.py", "--check-coverage"],
+        args.timeout,
+    ))
     record(run_command(
         "endpoint-coverage-inventory",
         [sys.executable, "scripts/endpoint_coverage_report.py"],

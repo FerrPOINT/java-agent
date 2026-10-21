@@ -152,11 +152,16 @@ class ReleaseVerifyTest(unittest.TestCase):
                 self.assertIn(":jacocoTestReport", backend)
                 self.assertIn(":telegram-bot:jacocoTestReport", root)
                 self.assertIn(":cli:test", root)
+                self.assertEqual(1, sum("scripts/check_docs_standard.py" in command
+                                        and "--check-coverage" in command for command in commands))
                 for graph in graphs:
                     self.assertIn("--no-daemon", graph)
                     self.assertIn("--max-workers=2", graph)
                     self.assertNotIn("-x", graph)
-                    self.assertFalse(any("slowTest" in task for task in graph), graph)
+                self.assertNotIn(":slowTest", backend)
+                for project in ("cli", "shared"):
+                    for task in ("test", "integrationTest", "slowTest"):
+                        self.assertEqual(1, root.count(":" + project + ":" + task))
                 self.assertFalse(any("./gradlew" in command for command in commands))
                 self.assertEqual(1, backend.count(":jacocoTestReport"))
                 self.assertEqual(1, root.count(":telegram-bot:jacocoTestReport"))
@@ -283,7 +288,8 @@ class ReleaseVerifyProtocolTest(unittest.TestCase):
                 (repo / "backend/invocation.txt").read_text().splitlines(),
             )
             self.assertEqual(
-                [":telegram-bot:jacocoTestReport", ":cli:test", ":telegram-bot:bootJar", ":cli:bootJar",
+                [":telegram-bot:jacocoTestReport", ":cli:test", ":cli:integrationTest", ":cli:slowTest",
+                 ":shared:test", ":shared:integrationTest", ":shared:slowTest", ":telegram-bot:bootJar", ":cli:bootJar",
                  "--no-daemon", "--max-workers=2"],
                 (repo / "invocation.txt").read_text().splitlines(),
             )
