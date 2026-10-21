@@ -331,3 +331,57 @@ class ContainerGradleWrapperTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StandalonePrerequisiteTests(unittest.TestCase):
+    def test_linux_clients_keep_one_wrapper_and_backend_unit_owner(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "java_grouping_selection", ROOT / "scripts/vendor/base_quality_selection.py")
+        selection = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(selection)
+        candidate = selection.plan(ROOT, "build", changed=[
+            "shared/src/main/java/example/Production.java"], execution_platform="linux")
+        gates = {gate["id"]: gate for gate in candidate["gates"]}
+        grouped = gates["root:unit"]
+        self.assertEqual(grouped["member_gates"], ["bot:unit", "cli:unit", "shared:unit"])
+        self.assertEqual(grouped["argv"][-3:], [":telegram-bot:test", ":cli:test", ":shared:test"])
+        self.assertNotIn("--backend", grouped["argv"])
+        self.assertFalse(grouped["cacheable"])
+        self.assertEqual(gates["backend:build"]["covers_units"], ["backend:unit"])
+        order = list(gates)
+        self.assertLess(order.index("root:unit"), order.index("backend:build"))
+        self.assertLess(order.index("backend:build"), order.index("backend:unit"))
+
+    def test_independent_units_and_static_precede_artifact(self):
+        import importlib.util
+        from unittest.mock import patch
+
+        spec = importlib.util.spec_from_file_location(
+            "java_prerequisite_selection", ROOT / "scripts/vendor/base_quality_selection.py")
+        selection = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(selection)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+
+            def gate(identifier, component, tier):
+                return {
+                    "id": identifier, "component": component, "test_tier": tier,
+                    "profiles": ["build"], "argv": ["fixture-never-executed"], "cwd": ".",
+                    "inputs": ["source.txt"], "cacheable": False,
+                    **({"kind": "artifact", "outputs": [".local/ready"]} if tier == "artifact" else {}),
+                }
+
+            manifest = {
+                "schema": "base-quality-product/v1", "product": "fixture",
+                "components": {"app": ["source.txt"], "docs": ["docs/**"]},
+                "gates": [gate("bundle:build", "app", "artifact"),
+                          gate("source:unit", "app", "unit"), gate("docs:static", "docs", "static")],
+            }
+            (root / ".quality-gate.json").write_text(json.dumps(manifest), encoding="utf-8")
+            (root / "source.txt").write_text("never compiled\n", encoding="utf-8")
+            with patch.object(selection, "git", return_value="a" * 40):
+                candidate = selection.plan(root, "build", components=["app", "docs"])
+            self.assertEqual([gate["id"] for gate in candidate["gates"]],
+                             ["source:unit", "docs:static", "bundle:build"])
