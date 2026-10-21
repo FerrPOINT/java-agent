@@ -416,13 +416,8 @@ public class TerminalTool implements ToolHandler {
             }
             pb.redirectErrorStream(true);
 
-            // Hermes parity: apply previously exported env vars to this process.
-            if (sessionId != null) {
-                java.util.Map<String, String> savedEnv = SESSION_ENV.get(sessionId);
-                if (savedEnv != null && !savedEnv.isEmpty()) {
-                    pb.environment().putAll(savedEnv);
-                }
-            }
+            // Child commands must not inherit service credentials or root-only config.
+            ChildProcessEnvironment.prepare(pb.environment(), sessionId == null ? null : SESSION_ENV.get(sessionId));
 
             process = pb.start();
 
@@ -600,9 +595,8 @@ public class TerminalTool implements ToolHandler {
             if (eqIdx > 0) {
                 String key = entry.substring(0, eqIdx);
                 String value = entry.substring(eqIdx + 1);
-                // Skip internal/system vars that shouldn't be persisted
-                if (!key.startsWith("_") && !key.equals("PWD")
-                    && !key.equals("SHLVL") && !key.equals("_")) {
+                // Preserve only safe exports for subsequent commands.
+                if (ChildProcessEnvironment.isSafeSessionVariable(key)) {
                     envMap.put(key, value);
                 }
             }
@@ -619,7 +613,7 @@ public class TerminalTool implements ToolHandler {
         StringBuilder prologue = new StringBuilder();
         for (java.util.Map.Entry<String, String> entry : env.entrySet()) {
             String key = entry.getKey();
-            if (key == null || !key.matches("[A-Za-z_][A-Za-z0-9_]*")) {
+            if (!ChildProcessEnvironment.isSafeSessionVariable(key)) {
                 continue;
             }
             prologue.append("export ")
