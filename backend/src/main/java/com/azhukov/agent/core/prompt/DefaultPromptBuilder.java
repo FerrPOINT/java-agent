@@ -1319,6 +1319,15 @@ public class DefaultPromptBuilder implements PromptBuilder {
         if (stablePlatform != null && "telegram".equalsIgnoreCase(stablePlatform)) {
             stable.append("\n\n").append(TELEGRAM_PLATFORM_HINT);
         }
+        // The platform adapter owns native delivery from verified write results.
+        // State this explicitly so the model neither invents missing-tool errors
+        // nor needs to add a fragile MEDIA directive after writing a file.
+        if (stablePlatform != null && "telegram".equalsIgnoreCase(stablePlatform)) {
+            stable.append("\n\nWhen a user asks you to create and send a file, write the file with write_file. "
+                + "The Telegram adapter automatically attaches each verified file result. "
+                + "Do not claim that attachment delivery is unavailable, and do not add MEDIA: for files "
+                + "already created by write_file.");
+        }
 
         // Tool-use enforcement — only for model families that need it (GLM, GPT, etc.)
         String modelName = properties.getModel().getModelName();

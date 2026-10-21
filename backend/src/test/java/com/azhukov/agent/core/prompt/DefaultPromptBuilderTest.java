@@ -68,6 +68,21 @@ class DefaultPromptBuilderTest {
     // ── Out-of-band steer guidance tests (P1-8) ──────────────────────────
 
     @Test
+    void telegramPromptExplainsAutomaticVerifiedFileDelivery() {
+        AgentProperties properties = new AgentProperties();
+        ToolRegistry registry = mock(ToolRegistry.class);
+        when(registry.getToolsets()).thenReturn(Set.of());
+        when(registry.getDefinitions()).thenReturn(List.of());
+        Session telegram = Session.create("u", "p", "m").withMetadata("platform", "telegram");
+
+        Message prompt = new DefaultPromptBuilder(properties, registry, new DefaultAgentConstants())
+            .buildSystemMessage(telegram);
+
+        assertThat(prompt.content()).contains("The Telegram adapter automatically attaches each verified file result.")
+            .contains("Do not claim that attachment delivery is unavailable");
+    }
+
+    @Test
     void steerChannelNoteIsPresentInSystemPrompt() {
         AgentProperties properties = new AgentProperties();
         properties.setName("Agent");
