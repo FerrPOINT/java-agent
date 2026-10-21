@@ -478,6 +478,14 @@ public class DefaultPromptBuilder implements PromptBuilder {
      */
     public Message buildSystemMessage(Session session, String systemMessageOverride) {
         String sessionId = session != null && session.id() != null ? String.valueOf(session.id()) : "default";
+        // The stable platform-delivery contract is process-wide and must take
+        // effect for existing sessions immediately after a deployment. Caching
+        // it per session kept stale prompts alive until compression.
+        boolean telegramSession = session != null
+            && "telegram".equalsIgnoreCase(session.getMetadata("platform"));
+        if (telegramSession) {
+            sessionId += ":telegram-delivery-v1";
+        }
         // P-04: disabledTools changes the API tool surface; cache separately so
         // its prompt can never advertise a tool from a prior wider request.
         String effectiveToolNames = session != null ? session.getMetadata("effectiveToolNames") : null;

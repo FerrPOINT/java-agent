@@ -392,6 +392,26 @@ class StreamingOrchestratorTest {
         }
     }
     @Test
+    void streamChat_deliversBackendReportedTerminalArchive() throws Exception {
+        Path archive = Files.createTempFile("stream-archive-", ".zip");
+        try {
+            Files.writeString(archive, "archive");
+            stubChatStream(ctx -> {
+                ctx.toolResultConsumer.accept("terminal", "ok\n__JAVA_AGENT_OUTPUT_FILES__:" + archive);
+                ctx.tokenConsumer.accept("completed");
+                ctx.onComplete.accept(new AgentBackendClient.ChatResult("completed", "model", 1, 10, true));
+                ctx.returnResult = new AgentBackendClient.ChatResult("completed", "model", 1, 10, true, false, null);
+            });
+
+            orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
+
+            verify(hooks).deliverMedia(eq(100L), argThat(media -> media.size() == 1
+                && archive.toString().equals(media.get(0).path()) && media.get(0).asDocument()), isNull());
+        } finally {
+            Files.deleteIfExists(archive);
+        }
+    }
+    @Test
     void streamChat_finalizesTextBeforeDeliveringExtractedMedia() {
         String response = "Here is the report\nMEDIA:/tmp/report.pdf";
         stubChatStream(ctx -> {

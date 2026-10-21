@@ -122,6 +122,7 @@ public class MediaDeliveryService {
     private static final String AUDIO_AS_VOICE = "[[audio_as_voice]]";
     private static final String AS_DOCUMENT = "[[as_document]]";
     private static final ObjectMapper JSON = new ObjectMapper();
+    private static final String TERMINAL_OUTPUT_FILES_MARKER = "__JAVA_AGENT_OUTPUT_FILES__:";
 
     // ─── Media Descriptor ────────────────────────────────────────
 
@@ -318,6 +319,37 @@ public class MediaDeliveryService {
         }
     }
 
+    /**
+     * Extract output files reported by a successful terminal command. The
+     * marker is backend-generated after existence checks, so only its listed
+     * file paths can trigger automatic native delivery.
+     */
+    public List<MediaDescriptor> extractTerminalOutputFiles(String toolName, String toolResult) {
+        if (!"terminal".equals(toolName) || toolResult == null || toolResult.isBlank()) {
+            return List.of();
+        }
+        int marker = toolResult.lastIndexOf(TERMINAL_OUTPUT_FILES_MARKER);
+        if (marker < 0) {
+            return List.of();
+        }
+        String paths = toolResult.substring(marker + TERMINAL_OUTPUT_FILES_MARKER.length()).trim();
+        if (paths.isEmpty()) {
+            return List.of();
+        }
+        List<MediaDescriptor> descriptors = new ArrayList<>();
+        for (String path : paths.split(",")) {
+            String normalized = path.trim();
+            if (normalized.isEmpty() || !hasDeliverableExtension(normalized)) {
+                continue;
+            }
+            File file = new File(normalized);
+            if (file.isFile()) {
+                descriptors.add(new MediaDescriptor(normalized, getExtension(normalized), false, true));
+            }
+        }
+        return descriptors;
+    }
+
     private static boolean hasDeliverableExtension(String path) {
         return EXTENSION_ALLOWLIST.contains(getExtension(path));
     }
@@ -448,9 +480,9 @@ public class MediaDeliveryService {
     }
 
     /**
-     * Mask fenced code blocks and inline code for bare-path detection.
-     * Simpler than {@link #maskProtectedSpans} — no blockquote masking needed
-     * for bare paths.
+     * Mask fenced code blocks for bare-path detection. Inline code remains
+     * eligible because agents conventionally format a generated file path in
+     * backticks; existence and allowed-root checks still gate delivery.
      */
     private static String maskCodeBlocks(String content) {
         char[] chars = content.toCharArray();
@@ -463,10 +495,8 @@ public class MediaDeliveryService {
             spans.add(new int[]{fenced.start(), fenced.end()});
         }
 
-        Matcher inline = INLINE_CODE_RE.matcher(content);
-        while (inline.find()) {
-            spans.add(new int[]{inline.start(), inline.end()});
-        }
+        // Inline code is intentionally not masked: generated paths are often
+        // formatted as `archive.zip` and must still be detected for delivery.
 
         for (int[] span : spans) {
             for (int i = span[0]; i < span[1] && i < n; i++) {

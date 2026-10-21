@@ -51,6 +51,12 @@ public class TerminalTool implements ToolHandler {
     /** Hermes parity: FOREGROUND_MAX_TIMEOUT = 600s. Foreground timeout above this is rejected. */
     private static final int FOREGROUND_MAX_TIMEOUT = 600;
     private static final ObjectMapper JSON = SharedObjectMapper.get();
+    private static final String OUTPUT_FILES_MARKER = "__JAVA_AGENT_OUTPUT_FILES__:";
+    private static final java.util.regex.Pattern OUTPUT_FILE_RE = java.util.regex.Pattern.compile(
+        "(?<![/:\\w.])(?:~/|/|[A-Za-z]:[/\\\\])(?:[\\w.\\-]+[/\\\\])*[\\w.\\-]+\\.(?:"
+            + "png|jpg|jpeg|webp|gif|mp4|webm|mp3|ogg|wav|pdf|doc|docx|xls|xlsx|ppt|pptx|"
+            + "zip|tar|gz|bz2|7z|txt|csv|json|yaml|yml|md)(?=\\s|$)",
+        java.util.regex.Pattern.CASE_INSENSITIVE);
     private static final Pattern SHELL_LEVEL_BACKGROUND_RE = Pattern.compile(
         "(?:^|[;&|]\\s*|&&\\s*|\\|\\|\\s*|\\$\\(\\s*)(?:nohup|disown|setsid)\\b",
         Pattern.CASE_INSENSITIVE | Pattern.MULTILINE);
@@ -533,6 +539,10 @@ public class TerminalTool implements ToolHandler {
             }
 
             String redactedOutput = redact(output);
+            String outputFiles = extractExistingOutputFiles(command + "\n" + redactedOutput);
+            if (!outputFiles.isEmpty()) {
+                redactedOutput += "\n" + OUTPUT_FILES_MARKER + outputFiles;
+            }
 
             // Finding 1.3: Call notifyPostExecution after process completes
             guard.notifyPostExecution(command, exitCode, redactedOutput);
@@ -566,6 +576,25 @@ public class TerminalTool implements ToolHandler {
             }
             return jsonFail("Failed to execute command: " + e.getMessage());
         }
+    }
+
+    private static String extractExistingOutputFiles(String output) {
+        if (output == null || output.isBlank()) {
+            return "";
+        }
+        java.util.LinkedHashSet<String> files = new java.util.LinkedHashSet<>();
+        java.util.regex.Matcher matcher = OUTPUT_FILE_RE.matcher(output);
+        while (matcher.find()) {
+            String path = matcher.group();
+            try {
+                if (java.nio.file.Files.isRegularFile(java.nio.file.Path.of(path))) {
+                    files.add(path);
+                }
+            } catch (java.nio.file.InvalidPathException ignored) {
+                // Ignore malformed terminal output; it is not a deliverable file.
+            }
+        }
+        return String.join(",", files);
     }
 
     private static ToolResult jsonFail(String error) {

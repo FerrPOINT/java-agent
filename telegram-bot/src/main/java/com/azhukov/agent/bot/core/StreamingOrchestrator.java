@@ -389,8 +389,9 @@ public class StreamingOrchestrator {
                     // A verified write result is authoritative evidence that a file
                     // exists. Deliver it now rather than depending on the model to
                     // remember a MEDIA directive in its final prose.
-                    List<MediaDeliveryService.MediaDescriptor> outputs =
-                        mediaDeliveryService.extractVerifiedToolOutput(toolName, toolResultPreview);
+                    List<MediaDeliveryService.MediaDescriptor> outputs = new java.util.ArrayList<>(
+                        mediaDeliveryService.extractVerifiedToolOutput(toolName, toolResultPreview));
+                    outputs.addAll(mediaDeliveryService.extractTerminalOutputFiles(toolName, toolResultPreview));
                     if (!outputs.isEmpty()) {
                         List<MediaDeliveryService.MediaDescriptor> newOutputs = outputs.stream()
                             .filter(output -> deliveredToolOutputPaths.add(output.path()))

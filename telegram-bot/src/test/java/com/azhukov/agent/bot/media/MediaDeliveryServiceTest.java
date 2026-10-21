@@ -120,6 +120,19 @@ class MediaDeliveryServiceTest {
         assertTrue(service.extractVerifiedToolOutput("read_file", missingFile).isEmpty());
     }
     @Test
+    void extractTerminalOutputFilesReturnsExistingArchive(@TempDir Path tempDir) throws Exception {
+        Path archive = tempDir.resolve("bundle.zip");
+        Files.writeString(archive, "archive");
+
+        List<MediaDeliveryService.MediaDescriptor> media = service.extractTerminalOutputFiles(
+            "terminal", "completed\n__JAVA_AGENT_OUTPUT_FILES__:" + archive);
+
+        assertEquals(1, media.size());
+        assertEquals(archive.toString(), media.get(0).path());
+        assertEquals(".zip", media.get(0).extension());
+        assertTrue(media.get(0).asDocument());
+    }
+    @Test
     void extractMediaTags_unknownExtensionNotExtracted() {
         String text = "MEDIA:/tmp/file.xyz";
         MediaDeliveryService.ExtractionResult result = service.extractMediaTags(text);
@@ -164,6 +177,16 @@ class MediaDeliveryServiceTest {
         assertFalse(result.cleanedText().contains(imgFile.toString()));
     }
 
+    @Test
+    void extractMediaTags_inlineBareFilePath(@TempDir Path tempDir) throws Exception {
+        Path archive = tempDir.resolve("bundle.zip");
+        Files.writeString(archive, "archive");
+
+        MediaDeliveryService.ExtractionResult result = service.extractMediaTags("Archive: `" + archive + "`");
+
+        assertEquals(1, result.media().size());
+        assertEquals(archive.toString(), result.media().get(0).path());
+    }
     @Test
     void extractMediaTags_bareFilePathNonExistentNotExtracted() {
         String text = "See /tmp/nonexistent_file_12345.png for details";

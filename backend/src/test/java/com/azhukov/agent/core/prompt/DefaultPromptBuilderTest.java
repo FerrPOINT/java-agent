@@ -68,6 +68,21 @@ class DefaultPromptBuilderTest {
     // ── Out-of-band steer guidance tests (P1-8) ──────────────────────────
 
     @Test
+    void telegramPromptUsesVersionedCacheEntryForDeliveryContract() {
+        AgentProperties properties = new AgentProperties();
+        PromptCacheTracker tracker = new PromptCacheTracker(properties);
+        ToolRegistry registry = mock(ToolRegistry.class);
+        when(registry.getToolsets()).thenReturn(Set.of());
+        when(registry.getDefinitions()).thenReturn(List.of());
+        Session telegram = Session.create("u", "p", "m").withMetadata("platform", "telegram");
+
+        new DefaultPromptBuilder(properties, registry, new DefaultAgentConstants(), tracker)
+            .buildSystemMessage(telegram);
+
+        assertThat(tracker.getCacheStats().get("cachedSessions")).isEqualTo(1);
+    }
+
+    @Test
     void telegramPromptExplainsAutomaticVerifiedFileDelivery() {
         AgentProperties properties = new AgentProperties();
         ToolRegistry registry = mock(ToolRegistry.class);
