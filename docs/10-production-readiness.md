@@ -9,7 +9,9 @@ docker compose up --build
 - PostgreSQL 16 на порту 5432.
 - Backend на порту 8080 (prod) / 8090 (dev).
 - Chromium автоустанавливается при первом старте, если `agent.chromium.auto-install: true`.
-- Рабочая директория монтируется из `${AGENT_WORK_DIR:-./work}`.
+- Рабочая директория `/workspace` и артефакты `/artifacts` — named volumes; они переживают пересоздание контейнеров. Удаление с `docker compose down -v` намеренно удаляет эти данные.
+- Образы backend и bot создают эти каталоги с UID/GID `10001:10001`, поэтому новые volumes доступны обоим приложениям без root. Это не меняет владельца уже существующих volumes. Перед обновлением установки данные прежнего bind mount (`AGENT_WORK_DIR` или `./work`) и прежнего attachment cache нужно отдельно скопировать в нужные volumes и проверить доступ от UID `10001`, сохранив исходные bind/named данные до проверки и возможности отката; автоматического переноса и runtime `chown` нет. Публикация исходников сама по себе не обновляет действующую установку.
+- Эти четыре Compose-профиля используют `Dockerfile` и `telegram-bot/Dockerfile`; альтернативный `Dockerfile.slim` не входит в эту проверку.
 
 ## Systemd
 
@@ -63,7 +65,7 @@ Actuator endpoints (Spring Boot 4.1 health API):
 | `AGENT_GATEWAY_TELEGRAM_ALLOWED_USERNAMES` | — | Разрешённые Telegram usernames |
 | `AGENT_GATEWAY_TELEGRAM_ALLOW_BY_DEFAULT` | false | Разрешить всем |
 | `AGENT_SERVER_PORT` | 8090 | HTTP port |
-| `AGENT_WORK_DIR` | ./work | Workspace для файловых операций |
+| `AGENT_WORK_DIR` | — | Deprecated: Compose uses persistent named volume `/workspace`; migrate data explicitly when changing deployment. |
 
 ## Telegram gateway
 

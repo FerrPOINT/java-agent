@@ -23,7 +23,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && useradd --uid 10001 --gid agent --create-home agent
 WORKDIR /app
 COPY --from=builder /workspace/telegram-bot/build/libs/*.jar app.jar
-RUN chown -R agent:agent /app
+RUN mkdir -p /workspace /artifacts /home/agent/.java-agent \
+    && chown -R agent:agent /app /workspace /artifacts /home/agent/.java-agent
 USER agent
 ENV HOME=/home/agent
 EXPOSE 8091

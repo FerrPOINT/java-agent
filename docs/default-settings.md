@@ -241,6 +241,7 @@ Authoritative source: `backend/src/main/resources/application.yml`. The value is
 | `agent.core.http-client-timeout-seconds` | `${AGENT_CORE_HTTP_CLIENT_TIMEOUT_SECONDS:30}` |
 | `agent.core.max-reference-file-bytes` | `${AGENT_CORE_MAX_REFERENCE_FILE_BYTES:100000}` |
 | `agent.core.working-directory` | `${AGENT_CORE_WORKING_DIRECTORY:/workspace}` |
+| `agent.attachments.cache-root` | `${AGENT_ATTACHMENTS_CACHE_ROOT:}`; empty uses `${java.io.tmpdir}/agent-attachments` |
 | `agent.core.coding-context` | `${AGENT_CORE_CODING_CONTEXT:off}` |
 | `agent.core.http-user-agent` | `${AGENT_CORE_HTTP_USER_AGENT:AzhukovAgent/1.0}` |
 | `agent.budget.enabled` | `${AGENT_BUDGET_ENABLED:true}` |
