@@ -36,6 +36,7 @@
       "scripts/tests/test_quality_adoption.py",
       "scripts/tests/test_test_lanes.py",
       "scripts/tests/test_gradle_context.py",
+      "scripts/tests/test_quality_root_graph.py",
       "scripts/tests/test_release_verify.py",
       "scripts/tests/test_source_sets_native.py",
       "scripts/tests/test_check_default_settings_reference.py"
@@ -180,6 +181,7 @@
         "unittest",
         "scripts.tests.test_test_lanes",
         "scripts.tests.test_gradle_context",
+        "scripts.tests.test_quality_root_graph",
         "scripts.tests.test_quality_adoption",
         "scripts.tests.test_check_default_settings_reference",
         "-q"

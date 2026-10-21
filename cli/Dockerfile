@@ -11,7 +11,7 @@ COPY cli/build.gradle ./cli/build.gradle
 COPY cli/src ./cli/src
 ARG SOURCE_DATE_EPOCH=0
 ENV SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH
-RUN sed -i 's/\r$//' gradlew && chmod +x gradlew && ./gradlew -PqualityRootGraph=clients-v1 :cli:bootJar --no-daemon --max-workers=2
+RUN sed -i 's/\r$//' gradlew && chmod +x gradlew && ./gradlew -PqualityRootGraph=clients-selected-v1 -PqualityRootComponents=cli :cli:bootJar --no-daemon --max-workers=2
 
 FROM eclipse-temurin:25.0.4.1_1-jre-noble@sha256:398f810215757dc1926390014272579fb0e57c41ef1c8aa4f64ae761613a168b
 RUN groupadd --gid 10001 agent \

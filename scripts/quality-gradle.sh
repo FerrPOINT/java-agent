@@ -141,7 +141,24 @@ if $qualified_graph && $selected_task && [[ -f "$wrapper" && -f "$jdk_release" ]
     && [[ "$(property_value "$jdk_release" OS_ARCH)" == '"x86_64"' ]]; then
     set -- "$@" --configuration-cache --configuration-cache-problems=fail
 fi
-if $quality_root; then set -- "$@" -PqualityRootGraph=clients-v1; fi
+if $quality_root; then
+    # Task selection and Settings share the product dependency closure. Do not
+    # configure sibling clients merely to execute one selected application.
+    root_cli=false; root_bot=false; root_shared=false
+    for argument in "$@"; do
+        case "$argument" in
+            :cli:test|:cli:bootJar|:cli:qualityDependencyInputs) root_cli=true ;;
+            :telegram-bot:test|:telegram-bot:bootJar|:telegram-bot:qualityDependencyInputs) root_bot=true ;;
+            :shared:test|:shared:qualityDependencyInputs) root_shared=true ;;
+        esac
+    done
+    root_components=''
+    if $root_bot; then root_components=bot; fi
+    if $root_cli; then root_components+=${root_components:+,}cli; fi
+    if $root_shared; then root_components+=${root_components:+,}shared; fi
+    [[ -n "$root_components" ]] || { echo 'Choose selected root components' >&2; exit 64; }
+    set -- "$@" -PqualityRootGraph=clients-selected-v1 "-PqualityRootComponents=$root_components"
+fi
 if $dependencies_only; then set -- "$@" -PqualityDependenciesOnly=true; fi
 if $base_compile_cache; then set -- "$@" --init-script "$cache_policy" --build-cache; fi
 exec bash ./gradlew "$@"

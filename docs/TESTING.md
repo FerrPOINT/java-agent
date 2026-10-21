@@ -128,3 +128,22 @@ Clean/full-source contract сохраняется; dirty-context narrowing пр�
 отдельно. Остальные SDK/UI/skills/
 operator/global quality pins не меняются. Source counts не равны числу JUnit
 methods и не являются результатом native execution. См. [coverage strategy](11-test-coverage-plan.md).
+
+## Выбор configured projects для обычных client tasks
+
+`gradle/java-preparation.json` v3 сохраняет доступные root modules и их зависимости,
+но `--quality-root` конфигурирует только выбранную dependency closure. Для CLI это
+root/CLI/Shared; Bot получает root/Bot/Shared; совместный запрос включает оба клиента.
+Настройка `clients-selected-v1` и actual configured projects входят в dependency
+index и seal. Reader отвергает index полного прежнего `clients-v1`, недостающую
+Shared и посторонние projects. V3 требует совместимый exact Base quality packet;
+старый reader отказывает до подготовки, автоматически pins не обновляются.
+
+Штатный `scripts/quality-gradle.sh --quality-root ...` выводит selection только из
+закрытого списка задач. CLI/Bot Docker builders передают явный собственный компонент.
+Raw `./gradlew` без quality profile сохраняет полный graph для ручных checks.
+Shell boundary проверяется `scripts.tests.test_quality_root_graph` в unit/CI без
+запуска Gradle/JVM; фактический Gradle graph, units/JAR и resource effect требуют
+новой native qualification. Исторический FFE receipt не переносится на новый source.
+Полный source/config input guard пока сохранён: docs/test-only reuse и отсутствие
+Docker invalidation при изменении sibling files этим изменением не квалифицированы.

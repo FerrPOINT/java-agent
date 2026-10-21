@@ -202,7 +202,9 @@ class QualityAdoptionTests(unittest.TestCase):
                 self.assertIn('gradle/test-lanes.json',builder)
                 self.assertIn('COPY LICENSE NOTICE THIRD_PARTY_NOTICES.md',builder)
             else:
-                self.assertIn('-PqualityRootGraph=clients-v1',builder)
+                component='cli' if name.startswith('cli/') else 'bot'
+                self.assertIn('-PqualityRootGraph=clients-selected-v1',builder)
+                self.assertIn('-PqualityRootComponents='+component,builder)
                 self.assertNotIn('COPY backend/src',builder)
         self.assertIn('.local/**',(ROOT/'.dockerignore').read_text(encoding='utf-8'))
 
