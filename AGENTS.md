@@ -16,8 +16,7 @@ cd /opt/dev/java-agent
 bash scripts/quality-gradle.sh --backend :test :bootJar --no-daemon --max-workers=2
 bash scripts/quality-gradle.sh :telegram-bot:test :cli:test --no-daemon --max-workers=2
 # Manual release only: integration, slow checks and full coverage in one graph.
-bash scripts/quality-gradle.sh --backend releaseCheck bootJar --no-daemon --max-workers=2
-bash scripts/quality-gradle.sh :telegram-bot:jacocoTestReport :cli:test --no-daemon --max-workers=2
+python3 scripts/release_verify.py
 # During implementation: one affected test class, without packaging.
 bash scripts/quality-gradle.sh --backend :test --tests 'com.azhukov.agent.gateway.GatewayLifecycleServiceTest' --no-daemon --max-workers=2
 ```
