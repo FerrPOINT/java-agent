@@ -191,6 +191,20 @@ class QualityAdoptionTests(unittest.TestCase):
         self.assertIn("include 'shared', 'backend', 'telegram-bot', 'cli'",(ROOT/'settings.gradle').read_text(encoding='utf-8'))
         self.assertIn('qualityRootGraph',(ROOT/'settings.gradle').read_text(encoding='utf-8'))
 
+    def test_dependency_preparation_guard_accepts_the_declared_settings_profiles(self):
+        settings=(ROOT/'settings.gradle').read_text(encoding='utf-8')
+        declared=set(re.findall(r"profile\.get\(\) == '([^']+)' && contract\.schema == 'base-java-preparation/v[23]'",settings))
+        self.assertEqual(declared,{'clients-v1','clients-selected-v1'})
+        guard=(ROOT/'gradle/test-lanes.gradle').read_text(encoding='utf-8').split('def allowed =',1)[0]
+        old=re.search(r"clients != '([^']+)'",guard)
+        if old:
+            supported={old[1]}
+        else:
+            choices=re.search(r'clients in (\[[^\]]+\])',guard)
+            self.assertIsNotNone(choices,'Dependency-only guard requires an explicit closed profile list')
+            supported=set(ast.literal_eval(choices[1]))
+        self.assertEqual(supported,declared,'Settings and dependency-only source partition must agree')
+
     def test_docker_keeps_runtime_payload_and_requires_reviewed_units(self):
         for name in ('Dockerfile','Dockerfile.slim','cli/Dockerfile','telegram-bot/Dockerfile'):
             body=(ROOT/name).read_text(encoding='utf-8')
