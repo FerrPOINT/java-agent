@@ -146,6 +146,13 @@ class StreamingEventHelperTest {
     // ── formatResultPreview() ───────────────────────────────────────────────
 
     @Test
+    void formatResultForTransportDoesNotTruncateVerifiedFileMetadata() {
+        String payload = "{\"success\":true,\"verified\":true,\"resolved_path\":\"/workspace/report.txt\",\"padding\":\""
+            + "x".repeat(600) + "\"}";
+
+        assertThat(helper.formatResultForTransport(ToolResult.ok(payload))).isEqualTo(payload);
+    }
+    @Test
     void formatResultPreviewReturnsShortContentAsIs() {
         ToolResult result = ToolResult.ok("short result");
         assertThat(helper.formatResultPreview(result)).isEqualTo("short result");
