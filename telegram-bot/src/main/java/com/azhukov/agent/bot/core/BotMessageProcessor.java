@@ -150,11 +150,11 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
 
     @Override
     public void handleCommand(UpdateEvent event) {
-        // /stop is control-plane input: it must not wait behind the very turn
-        // it cancels. All other commands remain serialized with the active
-        // chat turn below.
-        if ("stop".equals(event.commandName())) {
-            handleStopCommandImmediately(event);
+        // /stop and /steer are control-plane input: they must not wait behind
+        // the active turn. Waiting makes /steer arrive only after the turn it
+        // was meant to influence has already completed.
+        if ("stop".equals(event.commandName()) || "steer".equals(event.commandName())) {
+            handleControlCommandImmediately(event);
             return;
         }
         // M26 fix: commands mutate session state (/new, /model, /checkpoint …) —
@@ -181,23 +181,24 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         }
     }
 
-    private void handleStopCommandImmediately(UpdateEvent event) {
-        if (!slashAccessPolicy.canRun(event.userId(), "stop")) {
-            telegramClient.sendMessage(event.chatId(), "⛔ You don't have access to /stop");
+    private void handleControlCommandImmediately(UpdateEvent event) {
+        String commandName = event.commandName();
+        if (!slashAccessPolicy.canRun(event.userId(), commandName)) {
+            telegramClient.sendMessage(event.chatId(), "⛔ You don't have access to /" + commandName);
             return;
         }
-        CommandHandler stopHandler = commandRegistry.get("stop");
-        if (stopHandler == null) {
-            sendError(event.chatId(), "Stop command is unavailable.");
+        CommandHandler handler = commandRegistry.get(commandName);
+        if (handler == null) {
+            sendError(event.chatId(), "Command /" + commandName + " is unavailable.");
             return;
         }
         try {
-            String response = stopHandler.handle(event, resolveSession(event));
+            String response = handler.handle(event, resolveSession(event));
             if (response != null && !response.isBlank()) {
                 sendFormatted(event.chatId(), response);
             }
         } catch (Exception e) {
-            log.error("Command /stop failed: {}", e.getMessage(), e);
+            log.error("Command /{} failed: {}", commandName, e.getMessage(), e);
             sendError(event.chatId(), "Error executing command: " + e.getMessage());
         }
     }

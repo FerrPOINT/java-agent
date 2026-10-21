@@ -12,6 +12,11 @@
 
 ### Fixed
 
+- Telegram `/steer` reaches the active turn without waiting behind its chat lock.
+  Backend admission rejects inactive turns and retains the same session lock
+  through nested holds, queued acquisitions, timeouts and interrupted waiters.
+  Control-flow logs include correlation IDs without message or prompt payloads.
+
 - Недопустимый резерв ответа больше не отменяется молча при расчёте сжатия: он отклоняется до смены модели и порогов. Preflight и compressor сохраняют одинаковый настроенный резерв, включая повторный пересчёт после overflow. Telegram объясняет необходимость уменьшить лимит ответа вместо предложения повторить запрос.
 
 - News relevance ignores calendar dates and month names, retains short topics such as AI, and matches short topics as complete words. Semantic technology results remain supported without treating the `ai` inside unrelated words such as `Rail` as an AI topic.

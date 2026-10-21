@@ -191,7 +191,7 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
                     new MessageEvent(java.util.UUID.randomUUID().toString(), source,
                         event.type(), lateSteer, List.of(), java.util.Map.of("steer_handoff", "true"),
                         java.time.Instant.now()));
-                log.info("Queued late steer handoff for session {}", session.id());
+                log.info("steer_handoff_queued_after_turn session={}", session.id());
             }
 
             if (response == null || response.isBlank()) {

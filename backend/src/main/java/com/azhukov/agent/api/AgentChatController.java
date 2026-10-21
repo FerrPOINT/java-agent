@@ -76,6 +76,13 @@ public class AgentChatController {
     private final AgentProperties properties;
     private final AgentMetrics agentMetrics;
     private final ToolRegistry toolRegistry;
+    private com.azhukov.agent.core.agent.SessionTurnLockManager sessionTurnLockManager;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setSessionTurnLockManager(
+            com.azhukov.agent.core.agent.SessionTurnLockManager sessionTurnLockManager) {
+        this.sessionTurnLockManager = sessionTurnLockManager;
+    }
 
     @Operation(summary = "Send a chat message and get a synchronous response")
     @PostMapping("/agent/chat")
@@ -164,8 +171,15 @@ public class AgentChatController {
             return Map.of("accepted", false, "reason", "sessionId and text are required");
         }
         requireSessionOwnership(request.sessionId());
-        boolean accepted = steerBuffer.steer(request.sessionId(), request.text());
-        return Map.of("accepted", accepted, "sessionId", request.sessionId().toString());
+        boolean accepted = sessionTurnLockManager != null
+            && sessionTurnLockManager.runIfLocked(request.sessionId(),
+                () -> steerBuffer.steer(request.sessionId(), request.text()));
+        if (!accepted) {
+            log.info("steer_rejected session={} reason=no_active_turn", request.sessionId());
+            return Map.of("accepted", false, "reason", "no active turn");
+        }
+        log.info("steer_accepted session={}", request.sessionId());
+        return Map.of("accepted", true, "sessionId", request.sessionId().toString());
     }
 
     /**

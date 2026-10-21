@@ -518,6 +518,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
         // Preserve a late steer as a first-class handoff to the caller. The
         // gateway turns this into the next queued user event after this turn exits.
         if (result != null && pendingSteer != null && !pendingSteer.isBlank()) {
+            log.info("steer_handed_off_after_turn session={}", sessionIdUuid);
             return new TurnResult(result.messages(), result.completed(), result.error(), pendingSteer);
         }
         return result;

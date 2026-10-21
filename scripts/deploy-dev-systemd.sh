@@ -64,6 +64,9 @@ cp "$backend_jar" "$staging_dir/backend.jar"
 cp "$bot_jar" "$staging_dir/telegram-bot.jar"
 printf '%s\n' "$RELEASE_ID" > "$staging_dir/VERSION"
 mv "$staging_dir" "$release_dir"
+# Runtime services use the dedicated unprivileged account, so it must traverse
+# immutable release directories while artifacts themselves remain read-only.
+chmod 0755 "$release_dir"
 trap - EXIT
 
 # Publish all artifacts before either unit restarts, so both services use one release.
