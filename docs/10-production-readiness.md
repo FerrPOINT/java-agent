@@ -9,7 +9,7 @@ docker compose up --build
 - PostgreSQL 16 на порту 5432.
 - Backend на порту 8080 (prod) / 8090 (dev).
 - Chromium автоустанавливается при первом старте, если `agent.chromium.auto-install: true`.
-- Рабочая директория монтируется из `${AGENT_WORK_DIR:-./work}`.
+- Рабочая директория `/workspace` и артефакты `/artifacts` — named volumes; они переживают пересоздание контейнеров. Удаление с `docker compose down -v` намеренно удаляет эти данные.
 
 ## Systemd
 
@@ -63,7 +63,7 @@ Actuator endpoints (Spring Boot 4.1 health API):
 | `AGENT_GATEWAY_TELEGRAM_ALLOWED_USERNAMES` | — | Разрешённые Telegram usernames |
 | `AGENT_GATEWAY_TELEGRAM_ALLOW_BY_DEFAULT` | false | Разрешить всем |
 | `AGENT_SERVER_PORT` | 8090 | HTTP port |
-| `AGENT_WORK_DIR` | ./work | Workspace для файловых операций |
+| `AGENT_WORK_DIR` | — | Deprecated: Compose uses persistent named volume `/workspace`; migrate data explicitly when changing deployment. |
 
 ## Telegram gateway
 

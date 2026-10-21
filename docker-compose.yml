@@ -39,14 +39,16 @@ services:
       AGENT_CHROMIUM_AUTO_START: "true"
       AGENT_CHROMIUM_AUTO_INSTALL: "true"
       AGENT_BROWSER_CDP_URL: "http://localhost:9222"
-      # Writable default cwd for agent terminal commands (volume, not RO /app).
+      # Workspace and artifacts are named volumes so data survives a recreate.
       AGENT_CORE_WORKING_DIRECTORY: /workspace
+      AGENT_ATTACHMENTS_CACHE_ROOT: /artifacts
     working_dir: /workspace
     ports:
       - "8080:8080"
     volumes:
       - agent_chromium:/home/agent/.azhukov-agent
-      - ${AGENT_WORK_DIR:-./work}:/workspace
+      - agent_workspace:/workspace
+      - agent_artifacts:/artifacts
     deploy:
       resources:
         limits:
@@ -64,3 +66,5 @@ services:
 volumes:
   java_agent_pg:
   agent_chromium:
+  agent_workspace:
+  agent_artifacts:
