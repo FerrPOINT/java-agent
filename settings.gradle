@@ -5,13 +5,13 @@ def profile = providers.gradleProperty('qualityRootGraph')
 if (profile.isPresent()) {
     def contract = new JsonSlurper().parse(file('gradle/java-preparation.json'))
     def graph = contract.configuration_graphs?.root
-    if (!(contract.schema in ['base-java-preparation/v2', 'base-java-preparation/v3']) || graph != ['bot', 'cli', 'shared']) {
+    if (!(contract.schema in ['base-java-preparation/v2', 'base-java-preparation/v3', 'base-java-preparation/v4']) || graph != ['bot', 'cli', 'shared']) {
         throw new GradleException('Unsupported Java preparation configuration graph')
     }
     def directories = [bot: 'telegram-bot', cli: 'cli', shared: 'shared']
     if (profile.get() == 'clients-v1' && contract.schema == 'base-java-preparation/v2') {
         graph.each { include directories[it] }
-    } else if (profile.get() == 'clients-selected-v1' && contract.schema == 'base-java-preparation/v3') {
+    } else if (profile.get() == 'clients-selected-v1' && contract.schema in ['base-java-preparation/v3', 'base-java-preparation/v4']) {
         def requested = providers.gradleProperty('qualityRootComponents').orNull
         def components = requested == null ? [] : requested.split(',', -1).toList()
         if (!components || components.toSet().size() != components.size() || !graph.containsAll(components)) {

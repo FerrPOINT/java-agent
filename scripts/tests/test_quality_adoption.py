@@ -193,7 +193,7 @@ class QualityAdoptionTests(unittest.TestCase):
 
     def test_dependency_preparation_guard_accepts_the_declared_settings_profiles(self):
         settings=(ROOT/'settings.gradle').read_text(encoding='utf-8')
-        declared=set(re.findall(r"profile\.get\(\) == '([^']+)' && contract\.schema == 'base-java-preparation/v[23]'",settings))
+        declared=set(re.findall(r"profile\.get\(\) == '([^']+)'",settings))
         self.assertEqual(declared,{'clients-v1','clients-selected-v1'})
         guard=(ROOT/'gradle/test-lanes.gradle').read_text(encoding='utf-8').split('def allowed =',1)[0]
         old=re.search(r"clients != '([^']+)'",guard)

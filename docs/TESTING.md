@@ -44,12 +44,20 @@ backend/CLI/Bot units/JAR и Shared unit. Root launcher сохраняет пр�
 
 Selected CLI/Bot graph сохраняет `--quality-root`; existing native owner выполняет
 нужные units и JAR в согласованной операции. Root9.6.1 и backend9.8.0 остаются
-разными wrappers. Standalone selector —exact Base4a7a92bb; Root quality pin
-независим и берётся из workspace inventory (PDLC3 квалифицировал CLI baseline
-наbb4999d2). Совместимость selector bytes проверяется при exact adoption.
-Подключение маршрута не является application qualification: все Gradle gates
-сохраняют `cacheable=false`, compiler-cache switch отвергается, manual lanes
-не входят в automatic native declaration.
+разными wrappers. Standalone selector —exact Base5acb6750; Root quality pin
+независим и берётся из workspace inventory. Historical sourcea53060fa/qualityA3
+прошёл186CLIunits/JAR и три ordinary Build REUSED (медиана6,594с); это отдельный
+exact tuple, а не proof будущих изменений. CLI unit/build имеют явный native reuse
+consent; остальные Gradle gates сохраняют `cacheable=false`. Compiler-cache switch
+отвергается, manual lanes не входят в automatic native declaration.
+
+Preparation v4 сохраняет selected root graph v3 и разрешает Base передавать только
+module src/skills trees выбранной dependency closure. Вся configuration, unknown
+paths и общий source/content/clean guard сохраняются; ordinary command использует
+одну view для export, producer binding, проверки и cleanup. V2/v3 products сохраняют
+полный context. V4 требует совместимого exact quality packet; старыйA3 его отвергает.
+Изменившиеся physical context/QA recipe требуют нового native proof; historical
+A3 receipt не переносится. Docs/sibling dirty reuse этим срезом не квалифицируется.
 
 ## Runtime closure CLI
 

@@ -222,7 +222,7 @@ def configuration_graph(repository, backend, graph, modules=None):
         raise ValueError('Invalid Java preparation contract JSON') from error
     graphs = {'root': ['bot', 'cli', 'shared'], 'backend': ['backend', 'shared']}
     if (not isinstance(contract, dict) or set(contract) != {'schema', 'inputs', 'dependencies', 'configuration_graphs'}
-            or contract.get('schema') not in ('base-java-preparation/v2', 'base-java-preparation/v3')
+            or contract.get('schema') not in ('base-java-preparation/v2', 'base-java-preparation/v3', 'base-java-preparation/v4')
             or contract.get('configuration_graphs') != graphs):
         raise ValueError('Unsupported Java preparation configuration graph contract')
     profile = graph['profile']
@@ -234,7 +234,7 @@ def configuration_graph(repository, backend, graph, modules=None):
         if contract['schema'] != 'base-java-preparation/v2':
             raise ValueError('Dependency configuration graph differs from selected policy')
         members = graphs['root']
-    elif profile == 'clients-selected-v1' and contract['schema'] == 'base-java-preparation/v3':
+    elif profile == 'clients-selected-v1' and contract['schema'] in ('base-java-preparation/v3', 'base-java-preparation/v4'):
         if not modules or len(modules) != len(set(modules)) or not set(modules) <= set(graphs['root']):
             raise ValueError('Selected configuration requires explicit unique root modules')
         dependencies = contract.get('dependencies')

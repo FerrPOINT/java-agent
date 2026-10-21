@@ -1,5 +1,5 @@
 {
-  "schema": "base-java-preparation/v3",
+  "schema": "base-java-preparation/v4",
   "inputs": {
     "root": [
       "build.gradle",

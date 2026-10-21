@@ -225,20 +225,22 @@ class GradleContextTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'dependency closure'):
             probe.configuration_graph(self.root, False, graph, ['cli', 'shared'])
 
-    def test_v3_actual_dependency_reader_binds_both_cli_and_shared_indexes(self):
+    def test_v3_v4_actual_dependency_reader_binds_both_cli_and_shared_indexes(self):
         self.graph_fixture()
-        self.contract.update(schema='base-java-preparation/v3',
-            dependencies={'backend': ['shared'], 'shared': [], 'cli': ['shared'], 'bot': ['shared']})
-        self.contract_file.write_text(json.dumps(self.contract))
-        graph = {'profile': 'clients-selected-v1', 'projects': [':', ':cli', ':shared']}
-        indices = {'cli': dict(self.index_data, configuration_graph=graph),
-                   'shared': dict(self.index_data, module=':shared', configuration_graph=graph)}
-        with patch.object(probe.subprocess, 'run', side_effect=AssertionError('No resolver')):
-            result = probe.dependency_snapshot(self.root, self.home, ['cli', 'shared'], '9.6.1', False, 'unit', indices=indices)
-        self.assertEqual(result['configuration_graph'], graph)
-        indices['shared']['configuration_graph'] = dict(graph, projects=graph['projects'] + [':telegram-bot'])
-        with self.assertRaisesRegex(ValueError, 'declared projects'):
-            probe.dependency_snapshot(self.root, self.home, ['cli', 'shared'], '9.6.1', False, 'unit', indices=indices)
+        for schema in ('base-java-preparation/v3', 'base-java-preparation/v4'):
+            with self.subTest(schema=schema):
+                self.contract.update(schema=schema,
+                    dependencies={'backend': ['shared'], 'shared': [], 'cli': ['shared'], 'bot': ['shared']})
+                self.contract_file.write_text(json.dumps(self.contract))
+                graph = {'profile': 'clients-selected-v1', 'projects': [':', ':cli', ':shared']}
+                indices = {'cli': dict(self.index_data, configuration_graph=graph),
+                           'shared': dict(self.index_data, module=':shared', configuration_graph=graph)}
+                with patch.object(probe.subprocess, 'run', side_effect=AssertionError('No resolver')):
+                    result = probe.dependency_snapshot(self.root, self.home, ['cli', 'shared'], '9.6.1', False, 'unit', indices=indices)
+                self.assertEqual(result['configuration_graph'], graph)
+                indices['shared']['configuration_graph'] = dict(graph, projects=graph['projects'] + [':telegram-bot'])
+                with self.assertRaisesRegex(ValueError, 'declared projects'):
+                    probe.dependency_snapshot(self.root, self.home, ['cli', 'shared'], '9.6.1', False, 'unit', indices=indices)
 
     def test_v2_configuration_graph_is_an_input_and_mismatches_fail_closed(self):
         graph = self.graph_fixture()
