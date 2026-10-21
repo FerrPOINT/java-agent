@@ -130,6 +130,14 @@ Authoritative source: `backend/src/main/resources/application.yml`. The value is
 | `agent.web.extract-cache-dir` | `${AGENT_WEB_EXTRACT_CACHE_DIR:}` |
 | `agent.web.search-provider` | `${AGENT_WEB_SEARCH_PROVIDER:ddg}` |
 | `agent.web.searxng-url` | `${AGENT_WEB_SEARXNG_URL:}` |
+| `agent.web.search-provider-order` | `${AGENT_WEB_SEARCH_PROVIDER_ORDER:searxng,tavily,parallel,exa}` |
+| `agent.web.keyless-fallback-enabled` | `${AGENT_WEB_KEYLESS_FALLBACK_ENABLED:true}` |
+| `agent.web.parallel-keyless-enabled` | `${AGENT_WEB_PARALLEL_KEYLESS_ENABLED:true}` |
+| `agent.web.exa-keyless-enabled` | `${AGENT_WEB_EXA_KEYLESS_ENABLED:true}` |
+| `agent.web.search-timeout-seconds` | `${AGENT_WEB_SEARCH_TIMEOUT_SECONDS:20}` |
+| `agent.web.search-provider-cooldown-seconds` | `${AGENT_WEB_SEARCH_PROVIDER_COOLDOWN_SECONDS:60}` |
+| `agent.web.tavily-url` | `${AGENT_WEB_TAVILY_URL:https://api.tavily.com/search}` |
+| `agent.web.tavily-api-key` | `${TAVILY_API_KEY:}` |
 | `agent.web.allowed-domains` | `${AGENT_WEB_ALLOWED_DOMAINS:}` |
 | `agent.web.blocked-domains` | `${AGENT_WEB_BLOCKED_DOMAINS:}` |
 | `agent.terminal.default-timeout-seconds` | `${AGENT_TERMINAL_DEFAULT_TIMEOUT_SECONDS:300}` |
@@ -546,6 +554,14 @@ Authoritative source: `backend/src/main/java/com/azhukov/agent/config/AgentPrope
 | `AgentProperties.WebProperties.extractCacheDir` | `""` |
 | `AgentProperties.WebProperties.searchProvider` | `"ddg"` |
 | `AgentProperties.WebProperties.searxngUrl` | `""` |
+| `AgentProperties.WebProperties.searchProviderOrder` | `["searxng", "tavily", "parallel", "exa"]` |
+| `AgentProperties.WebProperties.keylessFallbackEnabled` | `true` |
+| `AgentProperties.WebProperties.parallelKeylessEnabled` | `true` |
+| `AgentProperties.WebProperties.exaKeylessEnabled` | `true` |
+| `AgentProperties.WebProperties.searchTimeoutSeconds` | `20` |
+| `AgentProperties.WebProperties.searchProviderCooldownSeconds` | `60` |
+| `AgentProperties.WebProperties.tavilyUrl` | `"https://api.tavily.com/search"` |
+| `AgentProperties.WebProperties.tavilyApiKey` | `""` |
 | `AgentProperties.TerminalProperties.defaultTimeoutSeconds` | `300` |
 | `AgentProperties.TerminalProperties.maxTimeoutSeconds` | `1800` |
 | `AgentProperties.TerminalProperties.dockerEnabled` | `false` |

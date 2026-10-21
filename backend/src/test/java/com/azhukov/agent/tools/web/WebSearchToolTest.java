@@ -46,6 +46,8 @@ class WebSearchToolTest {
     private AgentProperties properties() {
         AgentProperties p = new AgentProperties();
         p.getWeb().setSearchResults(5);
+        // Existing unit tests exercise the legacy primary path; fallback behavior is covered explicitly below.
+        p.getWeb().setKeylessFallbackEnabled(false);
         return p;
     }
 

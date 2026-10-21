@@ -101,7 +101,15 @@ public class RuntimeSettingsController {
         boolean searxngConfigured = searxngUrl != null && !searxngUrl.isBlank();
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("provider", searxngConfigured ? "searxng" : "ddg");
+        result.put("providers", properties.getWeb().getSearchProviderOrder());
         result.put("searxngConfigured", searxngConfigured);
+        result.put("keylessFallbackEnabled", properties.getWeb().isKeylessFallbackEnabled());
+        result.put("keylessFallbackProvider", "tavily");
+        result.put("parallelKeylessEnabled", properties.getWeb().isParallelKeylessEnabled());
+        result.put("exaKeylessEnabled", properties.getWeb().isExaKeylessEnabled());
+        result.put("tavilyKeyConfigured", properties.getWeb().getTavilyApiKey() != null
+            && !properties.getWeb().getTavilyApiKey().isBlank());
+        result.put("providerCooldownSeconds", properties.getWeb().getSearchProviderCooldownSeconds());
         result.put("newsFallback", "google-news-rss");
         result.put("newsFallbackScope", "explicit-news-queries-only");
         result.put("resultLimit", properties.getWeb().getSearchResults());

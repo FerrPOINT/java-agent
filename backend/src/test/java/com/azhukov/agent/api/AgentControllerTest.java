@@ -553,6 +553,12 @@ class AgentControllerTest {
         when(budgetProperties.getMaxModelCallsPerTurn()).thenReturn(100);
         when(agentProperties.getWeb()).thenReturn(webProperties);
         when(webProperties.getSearxngUrl()).thenReturn("");
+        when(webProperties.getSearchProviderOrder()).thenReturn(java.util.List.of("searxng", "tavily", "parallel", "exa"));
+        when(webProperties.isKeylessFallbackEnabled()).thenReturn(true);
+        when(webProperties.isParallelKeylessEnabled()).thenReturn(true);
+        when(webProperties.isExaKeylessEnabled()).thenReturn(true);
+        when(webProperties.getTavilyApiKey()).thenReturn("");
+        when(webProperties.getSearchProviderCooldownSeconds()).thenReturn(60);
         when(webProperties.getSearchResults()).thenReturn(5);
 
         mockMvc.perform(get("/api/v1/agent/config"))
@@ -562,7 +568,10 @@ class AgentControllerTest {
             .andExpect(jsonPath("$.provider").value("test-provider"))
             .andExpect(jsonPath("$.baseUrl").value("http://localhost:9999"))
             .andExpect(jsonPath("$.maxTurns").value(100))
-            .andExpect(jsonPath("$.maxModelCallsPerTurn").value(100));
+            .andExpect(jsonPath("$.maxModelCallsPerTurn").value(100))
+            .andExpect(jsonPath("$.webSearch.keylessFallbackEnabled").value(true))
+            .andExpect(jsonPath("$.webSearch.keylessFallbackProvider").value("tavily"))
+            .andExpect(jsonPath("$.webSearch.tavilyKeyConfigured").value(false));
     }
 
     @Test
