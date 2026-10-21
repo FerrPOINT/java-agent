@@ -269,7 +269,18 @@ public class DefaultPromptBuilder implements PromptBuilder {
     static final String PARALLEL_TOOL_CALL_GUIDANCE = """
         # Parallel tool calls
         When you need several pieces of information that don't depend on each other, request them together in a single response instead of one tool call per turn. Independent reads, searches, web fetches, and read-only commands should be batched into the same assistant turn — the runtime executes independent calls concurrently, and batching avoids resending the whole conversation on every extra round-trip.
-        Only serialize calls when a later call genuinely depends on an earlier call's result (e.g. you must read a file before you can patch it). When in doubt and the calls are independent, batch them.""";
+        Only serialize calls when a later call genuinely depends on an earlier call (e.g. you must read a file before you can patch it). When in doubt and the calls are independent, batch them.""";
+
+    static String buildIterationBudgetGuidance(AgentProperties properties) {
+        int maxTurns = properties.getCore().getMaxTurns();
+        int maxModelCalls = properties.getBudget().getMaxModelCallsPerTurn();
+        int maxToolExecutions = properties.getBudget().getMaxToolExecutionsPerTurn();
+        return "# Iteration budget\n"
+            + "You may use up to " + maxTurns + " agent iterations, " + maxModelCalls
+            + " model calls, and " + maxToolExecutions + " tool executions in this turn. "
+            + "Do not stop early to conserve iterations: continue until the task is complete or a real blocker remains. "
+            + "Use parallel independent calls and persist durable progress during long tasks.";
+    }
 
     // ── Platform-specific hints (mirrors Hermes PLATFORM_HINTS) ──
 
@@ -1299,6 +1310,7 @@ public class DefaultPromptBuilder implements PromptBuilder {
         // Task completion + parallel tool calls — applied to ALL models
         stable.append("\n\n").append(TASK_COMPLETION_GUIDANCE);
         stable.append("\n\n").append(PARALLEL_TOOL_CALL_GUIDANCE);
+        stable.append("\n\n").append(buildIterationBudgetGuidance(properties));
 
         // ── Platform-specific hints (mirrors Hermes PLATFORM_HINTS) ──
         // Injected in stable tier so the model knows about markdown conversion,

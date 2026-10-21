@@ -325,10 +325,10 @@ agent:
 
   # ─── Core ───
   core:
-    # Agentic loop iterations per user turn. Default 100 (parity with the model
-    # budget max-model-calls-per-turn=100 and Hermes max_iterations=500): a lower
-    # yml default silently cut long tool chains to a quarter of the budget.
-    max-turns: ${AGENT_CORE_MAX_TURNS:100}
+    # The main loop and all per-turn guardrails share this 1000-call budget.
+    # Independent token, tool-duration, and tool-count limits remain safety
+    # backstops rather than a second, lower iteration cap.
+    max-turns: ${AGENT_CORE_MAX_TURNS:1000}
     tool-use-enforcement: ${AGENT_CORE_TOOL_USE_ENFORCEMENT:auto}
     task-completion-guidance: ${AGENT_CORE_TASK_COMPLETION_GUIDANCE:true}
     parallel-tool-call-guidance: ${AGENT_CORE_PARALLEL_TOOL_CALL_GUIDANCE:true}
@@ -351,10 +351,10 @@ agent:
   # ─── Budget ───
   budget:
     enabled: ${AGENT_BUDGET_ENABLED:true}
-    max-model-calls-per-turn: ${AGENT_BUDGET_MAX_MODEL_CALLS_PER_TURN:100}
-    max-tool-executions-per-turn: ${AGENT_BUDGET_MAX_TOOL_EXECUTIONS_PER_TURN:100}
-    max-tokens-per-turn: ${AGENT_BUDGET_MAX_TOKENS_PER_TURN:200000}
-    max-tool-duration-ms-per-turn: ${AGENT_BUDGET_MAX_TOOL_DURATION_MS_PER_TURN:600000}
+    max-model-calls-per-turn: ${AGENT_BUDGET_MAX_MODEL_CALLS_PER_TURN:1000}
+    max-tool-executions-per-turn: ${AGENT_BUDGET_MAX_TOOL_EXECUTIONS_PER_TURN:1000}
+    max-tokens-per-turn: ${AGENT_BUDGET_MAX_TOKENS_PER_TURN:0}
+    max-tool-duration-ms-per-turn: ${AGENT_BUDGET_MAX_TOOL_DURATION_MS_PER_TURN:0}
     run-budget-seconds: ${AGENT_BUDGET_RUN_BUDGET_SECONDS:0}
   
   # ─── Prompt caching ───

@@ -117,15 +117,23 @@ public class DefaultIterationBudget implements IterationBudget {
         }
         return snapshot.modelCalls() >= config.getMaxModelCallsPerTurn()
             || snapshot.toolExecutions() >= config.getMaxToolExecutionsPerTurn()
-            || (snapshot.totalInputTokens() + snapshot.totalOutputTokens()) >= config.getMaxTokensPerTurn()
-            || snapshot.totalToolDurationMs() >= config.getMaxToolDurationMsPerTurn();
+            || (config.getMaxTokensPerTurn() > 0
+                && snapshot.totalInputTokens() + snapshot.totalOutputTokens() >= config.getMaxTokensPerTurn())
+            || (config.getMaxToolDurationMsPerTurn() > 0
+                && snapshot.totalToolDurationMs() >= config.getMaxToolDurationMsPerTurn());
     }
 
     private static String exhaustionReason(TurnSnapshot snapshot, AgentProperties.BudgetProperties config) {
         if (snapshot.modelCalls() >= config.getMaxModelCallsPerTurn()) return "max model calls reached";
         if (snapshot.toolExecutions() >= config.getMaxToolExecutionsPerTurn()) return "max tool executions reached";
-        if (snapshot.totalInputTokens() + snapshot.totalOutputTokens() >= config.getMaxTokensPerTurn()) return "max tokens reached";
-        if (snapshot.totalToolDurationMs() >= config.getMaxToolDurationMsPerTurn()) return "max tool duration reached";
+        if (config.getMaxTokensPerTurn() > 0
+            && snapshot.totalInputTokens() + snapshot.totalOutputTokens() >= config.getMaxTokensPerTurn()) {
+            return "max tokens reached";
+        }
+        if (config.getMaxToolDurationMsPerTurn() > 0
+            && snapshot.totalToolDurationMs() >= config.getMaxToolDurationMsPerTurn()) {
+            return "max tool duration reached";
+        }
         return "iteration budget exhausted";
     }
 
@@ -135,20 +143,32 @@ public class DefaultIterationBudget implements IterationBudget {
         if (snapshot.exhausted()) {
             int remainingModelCalls = Math.max(0, config.getMaxModelCallsPerTurn() - snapshot.modelCalls());
             int remainingToolExecutions = Math.max(0, config.getMaxToolExecutionsPerTurn() - snapshot.toolExecutions());
-            int remainingTokens = Math.max(0, config.getMaxTokensPerTurn() - snapshot.totalInputTokens() - snapshot.totalOutputTokens());
-            long remainingToolDurationMs = Math.max(0L, config.getMaxToolDurationMsPerTurn() - snapshot.totalToolDurationMs());
+            int tokenLimit = config.getMaxTokensPerTurn();
+            int remainingTokens = tokenLimit > 0
+                ? Math.max(0, tokenLimit - snapshot.totalInputTokens() - snapshot.totalOutputTokens())
+                : Integer.MAX_VALUE;
+            long toolDurationLimit = config.getMaxToolDurationMsPerTurn();
+            long remainingToolDurationMs = toolDurationLimit > 0
+                ? Math.max(0L, toolDurationLimit - snapshot.totalToolDurationMs())
+                : Long.MAX_VALUE;
             return new BudgetStatus(false, remainingModelCalls, remainingToolExecutions, remainingTokens,
                 remainingToolDurationMs, snapshot.reason());
         }
         int remainingModelCalls = Math.max(0, config.getMaxModelCallsPerTurn() - snapshot.modelCalls());
         int remainingToolExecutions = Math.max(0, config.getMaxToolExecutionsPerTurn() - snapshot.toolExecutions());
-        int remainingTokens = Math.max(0, config.getMaxTokensPerTurn() - snapshot.totalInputTokens() - snapshot.totalOutputTokens());
-        long remainingToolDurationMs = Math.max(0L, config.getMaxToolDurationMsPerTurn() - snapshot.totalToolDurationMs());
+        int tokenLimit = config.getMaxTokensPerTurn();
+        int remainingTokens = tokenLimit > 0
+            ? Math.max(0, tokenLimit - snapshot.totalInputTokens() - snapshot.totalOutputTokens())
+            : Integer.MAX_VALUE;
+        long toolDurationLimit = config.getMaxToolDurationMsPerTurn();
+        long remainingToolDurationMs = toolDurationLimit > 0
+            ? Math.max(0L, toolDurationLimit - snapshot.totalToolDurationMs())
+            : Long.MAX_VALUE;
         String reason = null;
         if (remainingModelCalls == 0) reason = "max model calls reached";
         else if (remainingToolExecutions == 0) reason = "max tool executions reached";
-        else if (remainingTokens == 0) reason = "max tokens reached";
-        else if (remainingToolDurationMs == 0) reason = "max tool duration reached";
+        else if (tokenLimit > 0 && remainingTokens == 0) reason = "max tokens reached";
+        else if (toolDurationLimit > 0 && remainingToolDurationMs == 0) reason = "max tool duration reached";
         return new BudgetStatus(reason == null, remainingModelCalls, remainingToolExecutions, remainingTokens,
             remainingToolDurationMs, reason);
     }

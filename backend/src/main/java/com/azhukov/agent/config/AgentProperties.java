@@ -587,7 +587,7 @@ public class AgentProperties {
 
     @Getter @Setter
     public static class CoreProperties {
-        private int maxTurns = 100;
+        private int maxTurns = 1_000;
         private String toolUseEnforcement = "auto";
         private boolean taskCompletionGuidance = true;
         private boolean parallelToolCallGuidance = true;
@@ -617,10 +617,10 @@ public class AgentProperties {
 
     @Getter @Setter
     public static class BudgetProperties {
-        private int maxModelCallsPerTurn = 100;
-        private int maxToolExecutionsPerTurn = 100;
-        private int maxTokensPerTurn = 200000;
-        private int maxToolDurationMsPerTurn = 600000;
+        private int maxModelCallsPerTurn = 1_000;
+        private int maxToolExecutionsPerTurn = 1_000;
+        private int maxTokensPerTurn = 0;
+        private int maxToolDurationMsPerTurn = 0;
         private boolean enabled = true;
         /** Hermes parity (agent.run_budget_seconds / --run-budget):
          *  wall-clock budget in seconds for the entire agent turn. At 80%

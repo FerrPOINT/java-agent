@@ -33,11 +33,10 @@ class IterationBudgetRefundTest {
 
     @Test
     void refundClearsExhaustedFlag() {
-        // fill the tool budget exactly (40 via yml default is irrelevant here;
-        // AgentProperties default = 200), then refund restores capacity
+        // Fill the tool budget exactly, then refund restores capacity.
         DefaultIterationBudget b = budget();
         var snap = b.startTurn(UUID.randomUUID());
-        for (int i = 0; i < 200; i++) {
+        for (int i = 0; i < 1_000; i++) {
             snap = b.recordToolExecution(snap, "execute_code", 1);
         }
         assertThat(b.isExhausted(snap)).isTrue();
