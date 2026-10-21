@@ -844,6 +844,7 @@
     "cli/src/test/java/com/azhukov/agent/cli/BackendClientTest.java": "integration",
     "cli/src/test/java/com/azhukov/agent/cli/BackendResponseFormatterTest.java": "unit",
     "cli/src/test/java/com/azhukov/agent/cli/CliFixesTest.java": "unit",
+    "cli/src/test/java/com/azhukov/agent/cli/CliTransportClasspathTest.java": "unit",
     "cli/src/test/java/com/azhukov/agent/cli/CommandGroupTest.java": "unit",
     "cli/src/test/java/com/azhukov/agent/cli/HeartbeatLoopCommandsTest.java": "unit",
     "cli/src/test/java/com/azhukov/agent/cli/ImageStatusbarCommandsTest.java": "integration",

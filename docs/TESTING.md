@@ -11,8 +11,10 @@ workspace inventory. Продукт владеет Gradle tasks, source membersh
 компилирует manual sources; общая fixture находится в `testSupport`.
 Аннотации, Groovy, processors и `processTestResources` сохраняются. Быстрые
 проверки выполняются в подготовленном pinned environment; native heavy команды
-используют общий Base host slot. Windows application JVM route здесь ещё не
-квалифицирован; Gradle API fixture имеет отдельную ограниченную qualification.
+используют общий Base host slot. Windows CLI baseline на source281a5a10/
+qualitybb4999d2 прошёл183units/JAR; факты и ограничения — в Base
+`docs/plans/java-native-explicit-clients-20261021.md`. Новый source/classpath
+graph и остальные module controls требуют собственного native proof.
 
 ```bash
 python3 scripts/check_test_lanes.py
@@ -42,10 +44,28 @@ backend/CLI/Bot units/JAR и Shared unit. Root launcher сохраняет пр�
 
 Selected CLI/Bot graph сохраняет `--quality-root`; existing native owner выполняет
 нужные units и JAR в согласованной операции. Root9.6.1 и backend9.8.0 остаются
-разными wrappers. Standalone selector и Root quality packet —exact Base4a7a92bb.
+разными wrappers. Standalone selector —exact Base4a7a92bb; Root quality pin
+независим и берётся из workspace inventory (PDLC3 квалифицировал CLI baseline
+наbb4999d2). Совместимость selector bytes проверяется при exact adoption.
 Подключение маршрута не является application qualification: все Gradle gates
 сохраняют `cacheable=false`, compiler-cache switch отвергается, manual lanes
 не входят в automatic native declaration.
+
+## Runtime closure CLI
+
+CLI — non-web REPL, использует core Boot starter для lifecycle/logging/YAML.
+Spring HTTP client и Jackson2 предоставляет публичный Shared API; reactive-streams
+остаётся явной зависимостью multipart. Embedded servlet server/MVC не являются
+CLI runtime contract. Backend/Bot сохраняют собственные server dependencies.
+
+`CliTransportClasspathTest` проверяет Boot type deduction без старта context,
+настоящую конфигурацию клиента через mock transport: HTTPS URI/API-key,
+JSON/JavaTime request, tolerant octet-stream DTO response и multipart resource/
+origin/disposition. Реальный socket, TLS/proxy handshake и backend не запускаются;
+не считать такой unit заменой ручной transport/live acceptance.
+Проверять также фактический `BOOT-INF/lib` собранного JAR: один source declaration
+не доказывает удаления транзитивного server graph. Native proof и измерения
+изменённого graph фиксируются в каноническом Base ledger.
 
 ## Ручная полная проверка
 
