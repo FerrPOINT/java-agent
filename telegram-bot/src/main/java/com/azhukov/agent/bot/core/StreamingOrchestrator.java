@@ -427,9 +427,27 @@ public class StreamingOrchestrator {
                     // heartbeat and remove the draft session. Sending directly here leaked
                     // the StreamSession indefinitely after a successful response.
                     if (messageId[0] < 0 && accumulated.length() > 0) {
-                        boolean delivered = streamEditor.finalizeStream(chatId, -1L, accumulated.toString());
+                        // `startStream` may defer the first Telegram message until a token
+                        // arrives, so its return value is not authoritative here. Always
+                        // extract the explicit final media contract before finalization.
+                        String finalText = accumulated.toString();
+                        List<MediaDeliveryService.MediaDescriptor> explicitReferences = List.of();
+                        if (properties.isMediaDeliveryEnabled()) {
+                            MediaDeliveryService.ExtractionResult extraction = mediaDeliveryService.extractMediaTags(finalText);
+                            explicitReferences = extraction.media();
+                            finalText = extraction.cleanedText();
+                        }
+                        boolean delivered = streamEditor.finalizeStream(chatId, -1L, finalText);
                         if (!delivered) {
-                            streamEditor.recordFinalDeliveryFailure(chatId, accumulated.toString());
+                            streamEditor.recordFinalDeliveryFailure(chatId, finalText);
+                        } else if (!explicitReferences.isEmpty()) {
+                            Integer mediaThreadId = messageThreadId > 0 ? (int) messageThreadId : null;
+                            List<MediaDeliveryService.MediaDescriptor> newMedia = explicitReferences.stream()
+                                .filter(media -> deliveredToolOutputPaths.add(media.path()))
+                                .toList();
+                            if (!newMedia.isEmpty()) {
+                                hooks.deliverMedia(chatId, newMedia, mediaThreadId);
+                            }
                         }
                         finalized[0] = delivered;
                     }

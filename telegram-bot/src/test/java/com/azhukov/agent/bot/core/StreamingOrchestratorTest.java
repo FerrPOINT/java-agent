@@ -500,6 +500,26 @@ class StreamingOrchestratorTest {
     }
 
     @Test
+    void streamChat_delayedStartDeliversMediaReferencedByFinalResponse() {
+        when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong()))
+            .thenReturn(Optional.empty());
+        String response = "Archive ready\nMEDIA:/tmp/final.zip";
+        stubChatStream(ctx -> {
+            ctx.tokenConsumer.accept(response);
+            ctx.onComplete.accept(new AgentBackendClient.ChatResult(response, "model", 1, 10, true));
+            ctx.returnResult = new AgentBackendClient.ChatResult(response, "model", 1, 10, true, false, null);
+        });
+
+        orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
+
+        InOrder order = inOrder(streamEditor, hooks);
+        order.verify(streamEditor).finalizeStream(eq(100L), eq(-1L),
+            argThat(text -> text.contains("Archive ready") && !text.contains("MEDIA:")));
+        order.verify(hooks).deliverMedia(eq(100L), argThat(media -> media.size() == 1
+            && "/tmp/final.zip".equals(media.get(0).path())), isNull());
+    }
+
+    @Test
     void streamChat_draftFinalDeliveryFailureDoesNotClaimFinalization() {
         when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong()))
             .thenReturn(Optional.empty());
