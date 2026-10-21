@@ -53,3 +53,20 @@ class QualityRootGraphTests(unittest.TestCase):
                 result = self.run_helper(arguments)
                 self.assertEqual(result.returncode, 64)
                 self.assertEqual(result.stdout, '')
+
+    def test_measured_three_workers_is_only_a_single_pure_cli_override(self):
+        result = self.run_helper([':cli:test', ':cli:bootJar', '--offline', '--no-daemon', '--max-workers=3'])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines().count('--max-workers=3'), 1)
+        self.assertIn('-PqualityRootComponents=cli', result.stdout.splitlines())
+        for arguments in ([':shared:test', '--max-workers=3'],
+                          [':telegram-bot:test', '--max-workers=3'],
+                          [':cli:test', ':shared:test', '--max-workers=3'],
+                          [':cli:test', '--max-workers=3', '--max-workers=3'],
+                          [':cli:test', '--max-workers=2', '--max-workers=3'],
+                          [':cli:test', '--max-workers=2', '--max-workers=2'],
+                          [':cli:test', '--max-workers=4']):
+            with self.subTest(arguments=arguments):
+                result = self.run_helper(arguments)
+                self.assertEqual(result.returncode, 64, result.stderr)
+                self.assertEqual(result.stdout, '')

@@ -99,6 +99,8 @@ cd -- "$directory"
 # release/DB tasks, filtered tests and explicit operator options pass through.
 qualified_graph=true
 selected_task=false
+worker_profile3=false
+worker_flags=0
 for argument in "$@"; do
     case "$argument" in
         :shared:test) selected_task=true ;;
@@ -106,10 +108,23 @@ for argument in "$@"; do
             if $backend_graph; then selected_task=true; else qualified_graph=false; fi ;;
         :cli:test|:cli:bootJar|:telegram-bot:test|:telegram-bot:bootJar)
             if $backend_graph; then qualified_graph=false; else selected_task=true; fi ;;
-        --offline|--no-daemon|--build-cache|--no-build-cache|--max-workers=2|--console=plain) ;;
+        --max-workers=2) worker_flags=$((worker_flags + 1)) ;;
+        --max-workers=3) worker_flags=$((worker_flags + 1)); worker_profile3=true ;;
+        --offline|--no-daemon|--build-cache|--no-build-cache|--console=plain) ;;
         *) qualified_graph=false ;;
     esac
 done
+if $quality_root && ! $dependencies_only; then
+    ((worker_flags <= 1)) || qualified_graph=false
+    if $worker_profile3; then
+        for argument in "$@"; do
+            case "$argument" in
+                :cli:test|:cli:bootJar|--offline|--no-daemon|--build-cache|--no-build-cache|--max-workers=3|--console=plain) ;;
+                *) qualified_graph=false ;;
+            esac
+        done
+    fi
+fi
 if $quality_root && ! $dependencies_only && { ! $qualified_graph || ! $selected_task; }; then
     echo 'Selected quality root accepts only bounded ordinary tasks and options' >&2
     exit 64

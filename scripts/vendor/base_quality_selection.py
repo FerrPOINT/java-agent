@@ -320,11 +320,14 @@ def validate_native_execution(manifest):
                 raise ValueError('Native Admin runtime requires an explicit download owner and resource limits')
             validate_resource_limits(runtime['limits'])
         return
-    if (not isinstance(value, dict) or set(value) != {'adapter', 'host_platforms', 'gates'}
+    if (not isinstance(value, dict) or set(value) not in (
+            {'adapter', 'host_platforms', 'gates'}, {'adapter', 'host_platforms', 'gates', 'cli_max_workers'})
             or manifest.get('product') != 'java-agent'
             or value['adapter'] != 'java-compose-v1' or value['host_platforms'] != ['win32']
             or not isinstance(value['gates'], dict) or not value['gates']):
         raise ValueError('Unsupported native execution declaration')
+    if 'cli_max_workers' in value and (type(value['cli_max_workers']) is not int or value['cli_max_workers'] != 3):
+        raise ValueError('Native Java CLI workers require the explicit measured profile3')
     gates = {gate['id']: gate for gate in manifest['gates']}
     for identifier, request in value['gates'].items():
         if not isinstance(request, dict) or set(request) != {'component', 'role'}:
@@ -432,7 +435,8 @@ def native_execution_plan(manifest, gates, execution_platform, docker_context=No
     return {'adapter': value['adapter'], 'host_platform': execution_platform,
             'docker_context': docker_context, 'profile': 'build' if artifacts else 'unit',
             'components': components, 'artifact_components': artifacts,
-            'gates': requests}
+            'gates': requests,
+            **({'cli_max_workers': 3} if components == ['cli'] and value.get('cli_max_workers') == 3 else {})}
 
 
 def inside(root, relative):

@@ -44,7 +44,7 @@ backend/CLI/Bot units/JAR и Shared unit. Root launcher сохраняет пр�
 
 Selected CLI/Bot graph сохраняет `--quality-root`; existing native owner выполняет
 нужные units и JAR в согласованной операции. Root9.6.1 и backend9.8.0 остаются
-разными wrappers. Standalone selector —exact Base5acb6750; Root quality pin
+разными wrappers. Standalone selector —exact Base194f8c14; Root quality pin
 независим и берётся из workspace inventory. Historical sourcea53060fa/qualityA3
 прошёл186CLIunits/JAR и три ordinary Build REUSED (медиана6,594с); это отдельный
 exact tuple, а не proof будущих изменений. CLI unit/build имеют явный native reuse
@@ -155,3 +155,19 @@ Shell boundary проверяется `scripts.tests.test_quality_root_graph` в
 новой native qualification. Исторический FFE receipt не переносится на новый source.
 Полный source/config input guard пока сохранён: docs/test-only reuse и отсутствие
 Docker invalidation при изменении sibling files этим изменением не квалифицированы.
+
+## Измеренный native CLI worker profile
+
+`native_execution.cli_max_workers=3` выбирает три workers только для Windows
+native selected CLI. Его Base packet/selector194f8c14 содержит согласованные
+producer argv и pre/post readiness guards. Linux CI, portable gate argv,
+Backend/Bot/Shared и mixed/full requests сохраняют два workers. Heap/forks и
+compiler cache не меняются. Произвольные или повторные workers overrides
+отвергаются bounded helper до Gradle.
+
+Команда пользователя прежняя: `check-workspace.ps1 -Profile Build -Repository
+java-agent -Component cli -NativeDockerContext desktop-linux`; `-PlanOnly`
+показывает явный native profile. Измерения девяти CLI samples и условия adoption
+хранятся в Base `docs/plans/java3-cli-worker-profiles-20261022.md` принятого packet.
+Raw benchmark не создаёт reusable receipts; новый exact source/caller tuple
+требует своей native qualification. Прежний workers2 proof сохраняется отдельно.

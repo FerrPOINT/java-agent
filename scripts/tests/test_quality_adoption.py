@@ -32,6 +32,10 @@ class QualityAdoptionTests(unittest.TestCase):
                     execution_platform='win32', native_docker_context='fixture')
                 native = planned['native_execution']
                 self.assertEqual(native['adapter'], 'java-compose-v1')
+                if component == 'cli':
+                    self.assertEqual(native['cli_max_workers'], 3)
+                else:
+                    self.assertNotIn('cli_max_workers', native)
                 self.assertEqual(native['components'], [component])
                 self.assertEqual(native['artifact_components'], [component])
                 self.assertEqual(set(native['gates']), {component + ':unit', component + ':build'})
@@ -109,7 +113,7 @@ class QualityAdoptionTests(unittest.TestCase):
     def test_exact_canonical_selector_packet(self):
         receipt=json.loads((ROOT/'scripts/vendor/base-quality-tooling.json').read_text(encoding='utf-8'))
         pin=(ROOT/'.quality-tooling-revision').read_text(encoding='utf-8').strip()
-        self.assertEqual(pin,'5acb67507558261fe35c99a94534696897639e9c')
+        self.assertEqual(pin,'194f8c145e1c7f38f07062112a1b1b43f607e767')
         self.assertEqual(receipt['revision'],pin)
         self.assertEqual(receipt['sha256'],hashlib.sha256((ROOT/'scripts/vendor/base_quality_selection.py').read_bytes()).hexdigest())
         self.assertEqual(set(receipt),{'schema','repository','revision','source','sha256'})

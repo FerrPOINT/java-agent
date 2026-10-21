@@ -4,6 +4,7 @@
   "native_execution": {
     "adapter": "java-compose-v1",
     "host_platforms": ["win32"],
+    "cli_max_workers": 3,
     "gates": {
       "backend:unit": {"component": "backend", "role": "unit"},
       "backend:build": {"component": "backend", "role": "build"},
