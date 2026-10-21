@@ -32,8 +32,9 @@ Docs не выбирают JVM; test-only не выбирает production JAR. 
 реальных consumers, Shared test — только Shared. Неизвестный input расширяет scope.
 
 Windows ordinary native route подключён через `java-compose-v1` для selected
-backend/CLI/Bot units/JAR и Shared unit. Явно передавать `-NativeDockerContext`;
-без него execution отказывается до подготовки. Например из workspace root:
+backend/CLI/Bot units/JAR и Shared unit. Root launcher сохраняет прежний default
+`desktop-linux`; для выбора endpoint передавать `-NativeDockerContext` явно.
+Явно пустой context даёт отказ до admission/preparation. Например из workspace root:
 
 ```powershell
 ./check-workspace.ps1 -Profile Build -Repository java-agent -Component cli -NativeDockerContext desktop-linux -PlanOnly -DetailedPlan
