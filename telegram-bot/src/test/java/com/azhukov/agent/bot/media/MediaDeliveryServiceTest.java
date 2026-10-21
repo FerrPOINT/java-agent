@@ -92,6 +92,32 @@ class MediaDeliveryServiceTest {
     }
 
     @Test
+    void extractVerifiedToolOutputReturnsDeliverableDocument(@TempDir Path tempDir) throws Exception {
+        Path document = tempDir.resolve("report.pdf");
+        Files.write(document, new byte[] {1, 2, 3});
+        String result = "{\"success\":true,\"verified\":true,\"resolved_path\":\""
+            + document.toString().replace("\\", "\\\\") + "\"}";
+
+        List<MediaDeliveryService.MediaDescriptor> media =
+            service.extractVerifiedToolOutput("write_file", result);
+
+        assertEquals(1, media.size());
+        assertEquals(document.toString(), media.get(0).path());
+        assertEquals(".pdf", media.get(0).extension());
+        assertTrue(media.get(0).asDocument());
+    }
+
+    @Test
+    void extractVerifiedToolOutputRejectsUnverifiedOrMissingFiles(@TempDir Path tempDir) {
+        Path missing = tempDir.resolve("missing.pdf");
+        String unverified = "{\"success\":true,\"verified\":false,\"resolved_path\":\"" + missing + "\"}";
+        String missingFile = "{\"success\":true,\"verified\":true,\"resolved_path\":\"" + missing + "\"}";
+
+        assertTrue(service.extractVerifiedToolOutput("write_file", unverified).isEmpty());
+        assertTrue(service.extractVerifiedToolOutput("write_file", missingFile).isEmpty());
+        assertTrue(service.extractVerifiedToolOutput("read_file", missingFile).isEmpty());
+    }
+    @Test
     void extractMediaTags_unknownExtensionNotExtracted() {
         String text = "MEDIA:/tmp/file.xyz";
         MediaDeliveryService.ExtractionResult result = service.extractMediaTags(text);

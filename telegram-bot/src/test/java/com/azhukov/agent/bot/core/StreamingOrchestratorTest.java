@@ -14,6 +14,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Map;
 import java.util.Optional;
@@ -367,6 +369,28 @@ class StreamingOrchestratorTest {
         verify(streamEditor).finalizeStream(eq(100L), eq(1L), argThat(t -> t.endsWith("[footer]")));
     }
 
+    @Test
+    void streamChat_deliversVerifiedWriteOutputWithoutMediaDirective() throws Exception {
+        Path output = Files.createTempFile("stream-output-", ".txt");
+        try {
+            Files.writeString(output, "report");
+            String toolResult = "{\"success\":true,\"verified\":true,\"resolved_path\":\""
+                + output.toString().replace("\\", "\\\\") + "\"}";
+            stubChatStream(ctx -> {
+                ctx.toolResultConsumer.accept("write_file", toolResult);
+                ctx.tokenConsumer.accept("completed");
+                ctx.onComplete.accept(new AgentBackendClient.ChatResult("completed", "model", 1, 10, true));
+                ctx.returnResult = new AgentBackendClient.ChatResult("completed", "model", 1, 10, true, false, null);
+            });
+
+            orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
+
+            verify(hooks).deliverMedia(eq(100L), argThat(media -> media.size() == 1
+                && output.toString().equals(media.get(0).path()) && media.get(0).asDocument()), isNull());
+        } finally {
+            Files.deleteIfExists(output);
+        }
+    }
     @Test
     void streamChat_finalizesTextBeforeDeliveringExtractedMedia() {
         String response = "Here is the report\nMEDIA:/tmp/report.pdf";
