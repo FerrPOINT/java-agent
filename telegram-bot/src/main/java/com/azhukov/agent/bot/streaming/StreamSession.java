@@ -83,8 +83,13 @@ public class StreamSession {
     /** Current streaming message id; may differ from the caller's messageId after a split. */
     public final AtomicLong currentMessageId = new AtomicLong(-1L);
 
-    /** Complete final response retained when the last Telegram delivery attempt fails. */
+    /**
+     * Full final response retained after a failed live Telegram delivery.
+     * It is consumed by {@code BotMessageProcessor}'s durable recovery lane,
+     * rather than attempting another immediate send during a FloodWait.
+     */
     public volatile String pendingFinalText = null;
+    public volatile int pendingFinalRetryAfterSeconds = -1;
 
     // ─── S5: Native draft streaming state ────────────────────────
     /** True when draft streaming is active for this chat (else edit-based). */
@@ -115,6 +120,7 @@ public class StreamSession {
         currentToolName = null;
         currentMessageId.set(-1L);
         pendingFinalText = null;
+        pendingFinalRetryAfterSeconds = -1;
         heartbeatMessageId.set(-1L);
         replyToMessageId = 0L;
         useDraftStreaming = false;

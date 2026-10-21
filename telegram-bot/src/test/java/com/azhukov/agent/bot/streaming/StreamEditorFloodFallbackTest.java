@@ -166,6 +166,33 @@ class StreamEditorFloodFallbackTest {
     }
 
     @Test
+    void floodFallback_recordsServerFloodWaitForDeferredFinalDelivery() throws InterruptedException {
+        when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
+            .thenReturn(Optional.of(42L));
+        editor.startStream(123L, "visible draft");
+        Thread.sleep(110);
+        when(client.getLastApiErrorCode()).thenReturn(429);
+        when(client.editMessageText(anyLong(), anyLong(), anyString(), any(), anyBoolean()))
+            .thenReturn(false);
+        editor.editStream(123L, 42L, "one");
+        Thread.sleep(110);
+        editor.editStream(123L, 42L, "two");
+        Thread.sleep(500);
+        editor.editStream(123L, 42L, "three");
+        Thread.sleep(1_000);
+        when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
+            .thenReturn(Optional.empty());
+        when(client.takeLastRetryAfterSeconds()).thenReturn(270);
+
+        assertThat(editor.finalizeStream(123L, 42L, "final content")).isFalse();
+        editor.recordFinalDeliveryFailure(123L, "final content");
+
+        assertThat(editor.takePendingFinalText(123L)).isEqualTo("final content");
+        assertThat(editor.takePendingFinalRetryAfterSeconds(123L)).isEqualTo(270);
+        verify(client, never()).deleteMessage(123L, 42L);
+    }
+
+    @Test
     void floodFallback_resetsStrikesOnSuccess() throws InterruptedException {
         when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(42L));

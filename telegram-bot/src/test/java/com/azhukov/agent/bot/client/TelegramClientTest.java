@@ -16,6 +16,7 @@ import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.MediaType;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientResponseException;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -433,6 +434,21 @@ class TelegramClientTest {
                     assertThat(tae.isRateLimit()).isTrue();
                     assertThat(tae.getRetryAfter()).isEqualTo(1);
                 });
+        }
+
+        @Test
+        @DisplayName("HTTP 429 response preserves retry_after for the caller")
+        void http429ResponsePreservesRetryAfter() {
+            stubPostChain(null);
+            String body = "{\"ok\":false,\"error_code\":429,\"description\":\"Too Many Requests\",\"parameters\":{\"retry_after\":270}}";
+            when(responseSpec.body(TelegramResponse.class)).thenThrow(new RestClientResponseException(
+                "429", 429, "Too Many Requests", null, body.getBytes(java.nio.charset.StandardCharsets.UTF_8), null));
+
+            Optional<Long> result = client.sendMessage(1L, "text");
+
+            assertThat(result).isEmpty();
+            assertThat(client.takeLastRetryAfterSeconds()).isEqualTo(270);
+            assertThat(client.takeLastRetryAfterSeconds()).isEqualTo(-1);
         }
 
         @Test

@@ -522,6 +522,18 @@ class BotMessageProcessorTest {
     }
 
     @Test
+    void textMessageDefersFallbackUntilTelegramFloodWaitExpires() {
+        stubStreamingResult("Response text", false);
+        when(streamEditor.takePendingFinalText(100L)).thenReturn("Response text");
+        when(streamEditor.takePendingFinalRetryAfterSeconds(100L)).thenReturn(270);
+
+        processor.accept(textEvent(1, 100L, "Hello"));
+
+        verify(telegramClient, never()).sendMessage(eq(100L), contains("Response text"), anyString(), any(), any());
+        verify(typingManager).flushTyping(100L);
+    }
+
+    @Test
     void textMessageWithFooterAppendsFooter() {
         stubStreamingResult("Response", false);
         when(runtimeFooter.format(anyString(), anyInt(), anyInt(), anyString())).thenReturn("\n\nfooter");

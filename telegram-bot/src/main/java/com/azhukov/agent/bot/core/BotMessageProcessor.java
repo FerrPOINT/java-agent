@@ -39,6 +39,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
@@ -107,6 +109,12 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
      * Keyed by chatId. Used in {@link #handleTextOrMedia} to serialize work per chat.
      */
     private final ConcurrentHashMap<Long, ReentrantLock> locks = new ConcurrentHashMap<>();
+    private final ScheduledExecutorService deferredFinalDeliveryExecutor =
+        Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "telegram-final-delivery");
+            t.setDaemon(true);
+            return t;
+        });
 
     /**
      * B1.3: Called by TextBatchDebouncer when a batch is ready to dispatch.
@@ -120,6 +128,11 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
      */
     private void dispatchPhotoBatch(UpdateEvent mergedEvent) {
         handleTextOrMedia(mergedEvent);
+    }
+
+    @jakarta.annotation.PreDestroy
+    void stopDeferredFinalDeliveryExecutor() {
+        deferredFinalDeliveryExecutor.shutdownNow();
     }
 
     @Override
@@ -299,6 +312,13 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         } catch (Exception e) {
             log.error("Failed to send error message to chat {}: {}", chatId, e.getMessage());
         }
+    }
+
+    private void scheduleFinalDelivery(long chatId, String response, long userMessageId,
+                                       long messageThreadId, long delaySeconds) {
+        deferredFinalDeliveryExecutor.schedule(
+            () -> sendFormatted(chatId, response, userMessageId, messageThreadId),
+            delaySeconds, TimeUnit.SECONDS);
     }
 
     // ─── Text / Media ──────────────────────────────────────────────
@@ -499,6 +519,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                     session == null || session.isFooterEnabled()
                 );
                 String backendResponse = streamEditor.takePendingFinalText(chatId);
+                int retryAfterSeconds = streamEditor.takePendingFinalRetryAfterSeconds(chatId);
                 if (backendResponse == null || backendResponse.isBlank()) {
                     backendResponse = result.content();
                 }
@@ -507,7 +528,14 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                 }
 
                 typingManager.flushTyping(chatId);
-                sendFormatted(chatId, backendResponse, event.messageId(), threadId);
+                if (retryAfterSeconds > 0) {
+                    String deferredResponse = backendResponse;
+                    long delaySeconds = (long) retryAfterSeconds + 1L;
+                    log.warn("Deferring final Telegram delivery for chat {} by {}s after FloodWait", chatId, delaySeconds);
+                    scheduleFinalDelivery(chatId, deferredResponse, event.messageId(), threadId, delaySeconds);
+                } else {
+                    sendFormatted(chatId, backendResponse, event.messageId(), threadId);
+                }
             }
 
             // Voice mode: synthesize TTS and send as voice message
