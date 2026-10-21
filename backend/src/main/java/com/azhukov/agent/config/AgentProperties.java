@@ -620,7 +620,7 @@ public class AgentProperties {
         private int maxModelCallsPerTurn = 1_000;
         private int maxToolExecutionsPerTurn = 1_000;
         private int maxTokensPerTurn = 0;
-        private long maxToolDurationMsPerTurn = 0;
+        private int maxToolDurationMsPerTurn = 0;
         private boolean enabled = true;
         /** Hermes parity (agent.run_budget_seconds / --run-budget):
          *  wall-clock budget in seconds for the entire agent turn. At 80%

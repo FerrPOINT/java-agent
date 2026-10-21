@@ -632,10 +632,10 @@ class AgentStreamingServiceBranchTest {
             .orElseThrow();
         StreamEvent finalToken = deserialize(finalTokenEvent.data, StreamEvent.class);
         assertThat(finalToken.token()).contains("reason=max model calls reached")
-            .contains("model_calls=0/100")
-            .contains("tool_executions=0/100")
-            .contains("estimated_tokens=0/200000")
-            .contains("tool_duration_ms=0/600000");
+            .contains("model_calls=0/1000")
+            .contains("tool_executions=0/1000")
+            .contains("estimated_tokens=0/unlimited")
+            .contains("tool_duration_ms=0/unlimited");
         assertThat(emitter.completed.get()).isTrue();
     }
 
