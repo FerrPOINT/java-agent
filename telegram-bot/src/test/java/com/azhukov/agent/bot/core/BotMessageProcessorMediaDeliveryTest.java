@@ -133,6 +133,12 @@ class BotMessageProcessorMediaDeliveryTest {
         doNothing().when(streamEditor).clearStream(anyLong());
         when(responseFilter.shouldFilter(anyString())).thenReturn(false);
         when(slashAccessPolicy.canRun(anyLong(), anyString())).thenReturn(true);
+        when(telegramClient.sendDocument(anyLong(), any(byte[].class), anyString(), nullable(String.class), nullable(String.class)))
+            .thenReturn(Optional.of(1L));
+        when(telegramClient.sendVideo(anyLong(), any(byte[].class), anyString(), nullable(String.class), nullable(String.class)))
+            .thenReturn(Optional.of(1L));
+        when(telegramClient.sendAudioAsVoice(anyLong(), any(byte[].class), anyString(), nullable(String.class)))
+            .thenReturn(Optional.of(1L));
         when(editCaptureService.getCapture(anyLong())).thenReturn(null);
 
         BotSessionEntity session = new BotSessionEntity();
