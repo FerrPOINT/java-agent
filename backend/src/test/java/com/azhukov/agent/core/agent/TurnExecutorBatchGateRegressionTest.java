@@ -169,6 +169,32 @@ class TurnExecutorBatchGateRegressionTest {
     }
 
     @Test
+    @DisplayName("subagent child executes a tool that does not require approval")
+    void subagentChildExecutesUngatedTool() {
+        AgentProperties props = properties();
+        ApprovalQueue queue = mock(ApprovalQueue.class);
+        ToolGuardrails guardrails = mock(ToolGuardrails.class);
+        when(guardrails.requiresApproval(any(ToolCall.class))).thenReturn(false);
+        ToolExecutionService svc = mock(ToolExecutionService.class);
+        AtomicInteger executions = new AtomicInteger();
+        when(svc.execute(anyString(), anyString(), anyString(), any(), any(), any()))
+            .thenAnswer(inv -> { executions.incrementAndGet(); return ToolResult.ok("done"); });
+        when(svc.enforceToolResultBudget(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        TurnExecutor executor = executor(props, guardrails, queue, svc);
+        Session child = Session.create("user", "noop", "noop")
+            .withMetadata("delegation_parent_session", "11111111-1111-1111-1111-111111111111");
+
+        var result = executor.executeToolBatch(
+            List.of(new ToolCall("c1", "web_search", "{\"query\":\"agent tools\"}")),
+            Set.of("web_search"), child, mock(TurnState.class), 1, false, null);
+
+        assertThat(executions.get()).isEqualTo(1);
+        assertThat(result.toolResults()).singleElement();
+        assertThat(result.toolResults().get(0).content()).contains("done");
+    }
+
+    @Test
     @DisplayName("execute_code-only batch records refund flags for budget accounting")
     void executeCodeRefundRecorded() {
         AgentProperties props = properties();
