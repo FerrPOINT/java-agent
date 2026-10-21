@@ -35,6 +35,20 @@ import static org.mockito.Mockito.when;
 class DefaultPromptBuilderTest {
 
     @Test
+    void exposesTheConfiguredIterationBudgetToTheModel() {
+        AgentProperties properties = new AgentProperties();
+        properties.getCore().setMaxTurns(1_000);
+        properties.getBudget().setMaxModelCallsPerTurn(1_000);
+        properties.getBudget().setMaxToolExecutionsPerTurn(1_000);
+        String guidance = DefaultPromptBuilder.buildIterationBudgetGuidance(properties);
+
+        assertThat(guidance).contains("1000 agent iterations")
+            .contains("1000 model calls")
+            .contains("1000 tool executions")
+            .contains("Do not stop early to conserve iterations");
+    }
+
+    @Test
     void usesConfiguredSystemPrompt() {
         AgentProperties properties = new AgentProperties();
         properties.getCore().setDefaultSystemPrompt("Hello ${agent.name}");

@@ -10,8 +10,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Pins the shipped application.yml iteration defaults: the agentic loop
- * (agent.core.max-turns) must default to 100, matching the model-call budget
- * (agent.budget.max-model-calls-per-turn=100).
+ * (agent.core.max-turns) must default to 1000, matching the model-call and
+ * tool-execution budgets (agent.budget.*-per-turn=1000).
  * <p>
  * The yml used to ship ${AGENT_CORE_MAX_TURNS:25}, silently cutting long tool
  * chains to a quarter of the model budget while the AgentProperties Java
@@ -85,21 +85,29 @@ class ApplicationYmlIterationDefaultsTest {
     }
 
     @Test
-    void agenticLoopDefaultIs100AndMatchesModelBudget() {
+    void agenticLoopDefaultIs1000AndDisablesIndependentTokenAndTimeBudgets() {
         int turns = placeholderDefault("agent.core.max-turns");
         int modelCalls = placeholderDefault("agent.budget.max-model-calls-per-turn");
         int toolExecutions = placeholderDefault("agent.budget.max-tool-executions-per-turn");
+        int tokenBudget = placeholderDefault("agent.budget.max-tokens-per-turn");
+        int toolDurationBudget = placeholderDefault("agent.budget.max-tool-duration-ms-per-turn");
         int runBudgetSeconds = placeholderDefault("agent.budget.run-budget-seconds");
 
         assertThat(turns)
-            .as("agent.core.max-turns yml default must be 100 (user directive 2026-09-20)")
-            .isEqualTo(100);
+            .as("agent.core.max-turns yml default must be 1000")
+            .isEqualTo(1_000);
         assertThat(modelCalls)
-            .as("agent.budget.max-model-calls-per-turn yml default must be 100")
-            .isEqualTo(100);
+            .as("agent.budget.max-model-calls-per-turn must match core.max-turns")
+            .isEqualTo(turns);
         assertThat(toolExecutions)
-            .as("agent.budget.max-tool-executions-per-turn yml default must be 100")
-            .isEqualTo(100);
+            .as("agent.budget.max-tool-executions-per-turn must match core.max-turns")
+            .isEqualTo(turns);
+        assertThat(tokenBudget)
+            .as("agent.budget.max-tokens-per-turn must be disabled by default")
+            .isZero();
+        assertThat(toolDurationBudget)
+            .as("agent.budget.max-tool-duration-ms-per-turn must be disabled by default")
+            .isZero();
         assertThat(runBudgetSeconds)
             .as("agent.budget.run-budget-seconds must default to disabled")
             .isZero();
@@ -119,6 +127,12 @@ class ApplicationYmlIterationDefaultsTest {
         assertThat(properties.getBudget().getMaxToolExecutionsPerTurn())
             .as("AgentProperties.budget.maxToolExecutionsPerTurn must equal the yml default")
             .isEqualTo(placeholderDefault("agent.budget.max-tool-executions-per-turn"));
+        assertThat(properties.getBudget().getMaxTokensPerTurn())
+            .as("AgentProperties.budget.maxTokensPerTurn must equal the yml default")
+            .isEqualTo(placeholderDefault("agent.budget.max-tokens-per-turn"));
+        assertThat(properties.getBudget().getMaxToolDurationMsPerTurn())
+            .as("AgentProperties.budget.maxToolDurationMsPerTurn must equal the yml default")
+            .isEqualTo(placeholderDefault("agent.budget.max-tool-duration-ms-per-turn"));
         assertThat(properties.getBudget().getRunBudgetSeconds())
             .as("AgentProperties.budget.runBudgetSeconds must equal the yml default")
             .isEqualTo(placeholderDefault("agent.budget.run-budget-seconds"));

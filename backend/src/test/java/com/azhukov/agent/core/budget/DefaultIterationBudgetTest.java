@@ -91,22 +91,60 @@ class DefaultIterationBudgetTest {
     }
 
     @Test
-    void defaultMaxModelCallsIs100MatchingUserPreference() {
-        // User wants 100 model calls per turn (100×100 default)
+    void defaultMaxModelCallsIs1000() {
         AgentProperties.BudgetProperties defaultBudget = new AgentProperties.BudgetProperties();
-        assertThat(defaultBudget.getMaxModelCallsPerTurn()).isEqualTo(100);
+        assertThat(defaultBudget.getMaxModelCallsPerTurn()).isEqualTo(1_000);
     }
 
     @Test
-    void defaultMaxToolExecutionsMatches100CallTurnBudget() {
+    void defaultMaxToolExecutionsIs1000() {
         AgentProperties.BudgetProperties defaultBudget = new AgentProperties.BudgetProperties();
-        assertThat(defaultBudget.getMaxToolExecutionsPerTurn()).isEqualTo(100);
+        assertThat(defaultBudget.getMaxToolExecutionsPerTurn()).isEqualTo(1_000);
     }
 
     @Test
-    void defaultTokenBudgetIsTwoMillionSoTokenAccountingDoesNotCutOffTheHundredIterationBudget() {
+    void defaultModelCallsAndToolExecutionsMatch1000TurnBudget() {
         AgentProperties.BudgetProperties defaultBudget = new AgentProperties.BudgetProperties();
-        assertThat(defaultBudget.getMaxTokensPerTurn()).isEqualTo(2_000_000);
+        assertThat(defaultBudget.getMaxModelCallsPerTurn()).isEqualTo(1_000);
+        assertThat(defaultBudget.getMaxToolExecutionsPerTurn()).isEqualTo(1_000);
+    }
+
+    @Test
+    void defaultTokenBudgetIsDisabledSoItCannotPreemptTheIterationBudget() {
+        AgentProperties.BudgetProperties defaultBudget = new AgentProperties.BudgetProperties();
+        assertThat(defaultBudget.getMaxTokensPerTurn()).isZero();
+    }
+
+    @Test
+    void disabledTokenBudgetNeverExhaustsOrReportsAZeroTokenBudget() {
+        AgentProperties properties = new AgentProperties();
+        properties.getBudget().setMaxTokensPerTurn(0);
+        DefaultIterationBudget unlimitedTokensBudget = new DefaultIterationBudget(properties);
+        var snapshot = unlimitedTokensBudget.recordModelCall(
+            unlimitedTokensBudget.startTurn(UUID.randomUUID()), 2_000_000, 2_000_000);
+
+        assertFalse(snapshot.exhausted());
+        assertThat(unlimitedTokensBudget.status(snapshot).remainingTokens()).isEqualTo(Integer.MAX_VALUE);
+        assertThat(unlimitedTokensBudget.status(snapshot).reason()).isNull();
+    }
+
+    @Test
+    void defaultTimeBudgetIsDisabledSoItCannotPreemptTheIterationBudget() {
+        AgentProperties.BudgetProperties defaultBudget = new AgentProperties.BudgetProperties();
+        assertThat(defaultBudget.getMaxToolDurationMsPerTurn()).isZero();
+    }
+
+    @Test
+    void disabledTimeBudgetNeverExhaustsOrReportsAZeroTimeBudget() {
+        AgentProperties properties = new AgentProperties();
+        properties.getBudget().setMaxToolDurationMsPerTurn(0);
+        DefaultIterationBudget unlimitedTimeBudget = new DefaultIterationBudget(properties);
+        var snapshot = unlimitedTimeBudget.recordToolExecution(
+            unlimitedTimeBudget.startTurn(UUID.randomUUID()), "slow", 2_000_000);
+
+        assertFalse(snapshot.exhausted());
+        assertThat(unlimitedTimeBudget.status(snapshot).remainingToolDurationMs()).isEqualTo(Long.MAX_VALUE);
+        assertThat(unlimitedTimeBudget.status(snapshot).reason()).isNull();
     }
 
     @Test

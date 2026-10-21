@@ -19,9 +19,10 @@ class AgentPropertiesTest {
 
             assertThat(properties.getName()).isEqualTo("Джава агент");
             assertThat(properties.getModel().getProvider()).isEqualTo("openai-compatible");
-            assertThat(properties.getCore().getMaxTurns()).isEqualTo(100);
-            assertThat(properties.getBudget().getMaxModelCallsPerTurn()).isEqualTo(100);
-            assertThat(properties.getBudget().getMaxToolExecutionsPerTurn()).isEqualTo(100);
+            assertThat(properties.getCore().getMaxTurns()).isEqualTo(1_000);
+            assertThat(properties.getBudget().getMaxModelCallsPerTurn()).isEqualTo(1_000);
+            assertThat(properties.getBudget().getMaxToolExecutionsPerTurn()).isEqualTo(1_000);
+            assertThat(properties.getBudget().getMaxTokensPerTurn()).isZero();
             assertThat(properties.getBudget().getRunBudgetSeconds()).isZero();
             assertThat(properties.getCore().getCodingContext()).isEqualTo("off");
             assertThat(properties.getSkills().getDefaultToolsets())

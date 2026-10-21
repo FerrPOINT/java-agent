@@ -195,13 +195,17 @@ public class TurnExecutor {
      */
     public String formatBudgetExhaustionMessage(TurnSnapshot budget, String reason) {
         var configured = properties.getBudget();
+        String tokenLimit = configured.getMaxTokensPerTurn() > 0
+            ? String.valueOf(configured.getMaxTokensPerTurn()) : "unlimited";
+        String toolDurationLimit = configured.getMaxToolDurationMsPerTurn() > 0
+            ? String.valueOf(configured.getMaxToolDurationMsPerTurn()) : "unlimited";
         return "Iteration budget exhausted: reason=" + reason
             + "; model_calls=" + budget.modelCalls() + "/" + configured.getMaxModelCallsPerTurn()
             + "; tool_executions=" + budget.toolExecutions() + "/" + configured.getMaxToolExecutionsPerTurn()
             + "; estimated_tokens=" + (budget.totalInputTokens() + budget.totalOutputTokens())
-                + "/" + configured.getMaxTokensPerTurn()
+                + "/" + tokenLimit
             + "; tool_duration_ms=" + budget.totalToolDurationMs()
-                + "/" + configured.getMaxToolDurationMsPerTurn() + ".";
+                + "/" + toolDurationLimit + ".";
     }
 
     // ──────────────────────────────────────────────────────────────────
