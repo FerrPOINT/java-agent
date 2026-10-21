@@ -42,6 +42,11 @@ public class WebSearchTool implements ToolHandler {
     private static final int DEFAULT_LIMIT = 5;
     private static final int MAX_LIMIT = 100;
     private static final Set<String> SHORT_NEWS_TOPIC_TERMS = Set.of("ai");
+    private static final Pattern OFFICIAL_SITE_QUERY = Pattern.compile(
+        "(?:official|официальн(?:ый|ая|ое|ые|ого|ому|ым|ом|ых|ыми)?|офиц)\\s+"
+            + "(?:site|website|web\\s*site|сайт|сайта|сайте|сайты)",
+        Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE
+    );
     private static final Set<String> NEWS_STOP_TERMS = Set.of(
         "latest", "news", "headline", "headlines", "последние", "последний", "новости", "новость", "новост",
         "дайджест", "сегодня", "свежие", "свежий", "today", "recent", "recently", "last",
@@ -66,30 +71,40 @@ public class WebSearchTool implements ToolHandler {
     private final Redactor redactor;
     private final WebsitePolicy websitePolicy;
     private final GoogleNewsRssSearchProvider googleNewsRssSearchProvider;
+    private final OfficialWebsiteResolver officialWebsiteResolver;
     private SearXngSearchProvider searXngProvider;
 
     @Autowired
     public WebSearchTool(AgentProperties agentProperties, ObjectMapper objectMapper, UrlSafety urlSafety,
                          Redactor redactor, WebsitePolicy websitePolicy,
-                         GoogleNewsRssSearchProvider googleNewsRssSearchProvider) {
+                         GoogleNewsRssSearchProvider googleNewsRssSearchProvider,
+                         OfficialWebsiteResolver officialWebsiteResolver) {
         this.agentProperties = agentProperties;
         this.objectMapper = objectMapper;
         this.urlSafety = urlSafety;
         this.redactor = redactor;
         this.websitePolicy = websitePolicy;
         this.googleNewsRssSearchProvider = googleNewsRssSearchProvider;
+        this.officialWebsiteResolver = officialWebsiteResolver;
     }
 
     WebSearchTool(AgentProperties agentProperties, ObjectMapper objectMapper, UrlSafety urlSafety,
                   Redactor redactor, GoogleNewsRssSearchProvider googleNewsRssSearchProvider) {
         this(agentProperties, objectMapper, urlSafety, redactor, new WebsitePolicy(agentProperties),
-            googleNewsRssSearchProvider);
+            googleNewsRssSearchProvider, new OfficialWebsiteResolver(objectMapper));
+    }
+
+    WebSearchTool(AgentProperties agentProperties, ObjectMapper objectMapper, UrlSafety urlSafety,
+                  Redactor redactor, GoogleNewsRssSearchProvider googleNewsRssSearchProvider,
+                  OfficialWebsiteResolver officialWebsiteResolver) {
+        this(agentProperties, objectMapper, urlSafety, redactor, new WebsitePolicy(agentProperties),
+            googleNewsRssSearchProvider, officialWebsiteResolver);
     }
 
     WebSearchTool(AgentProperties agentProperties, ObjectMapper objectMapper, UrlSafety urlSafety,
                   Redactor redactor) {
         this(agentProperties, objectMapper, urlSafety, redactor, new WebsitePolicy(agentProperties),
-            new GoogleNewsRssSearchProvider());
+            new GoogleNewsRssSearchProvider(), new OfficialWebsiteResolver(objectMapper));
     }
 
     @PostConstruct
@@ -129,6 +144,7 @@ public class WebSearchTool implements ToolHandler {
             if (isNewsQuery(query)) {
                 results = filterQueryRelevance(query, results);
             }
+            results = preferVerifiedOfficialSite(query, results);
 
             // Hermes parity: return {"data":{"web":[{title,url,description,position}]}}
             // instead of a flat array. Add position field for result ordering.
@@ -151,6 +167,42 @@ public class WebSearchTool implements ToolHandler {
         } catch (Exception e) {
             return jsonFailureResponse("Web search failed: " + failureDetail(e));
         }
+    }
+
+    private List<Map<String, String>> preferVerifiedOfficialSite(String query, List<Map<String, String>> results) {
+        if (!OFFICIAL_SITE_QUERY.matcher(query).find()) {
+            return results;
+        }
+        String entityName = officialSiteEntityName(query);
+        if (entityName.isBlank()) {
+            return results;
+        }
+        try {
+            String officialUrl = resolveOfficialWebsite(entityName);
+            if (officialUrl == null || !urlSafety.isUrlAllowed(officialUrl) || websitePolicy.checkAccess(officialUrl) != null) {
+                return results;
+            }
+            List<Map<String, String>> ranked = new ArrayList<>();
+            ranked.add(Map.of(
+                "title", entityName + " - Official website",
+                "url", officialUrl,
+                "description", "Official website, verified from Wikidata."
+            ));
+            results.stream().filter(result -> !officialUrl.equals(result.get("url"))).forEach(ranked::add);
+            return ranked;
+        } catch (IOException | RuntimeException ignored) {
+            // An enrichment outage must not hide usable metasearch results.
+            return results;
+        }
+    }
+
+    private String officialSiteEntityName(String query) {
+        String entity = OFFICIAL_SITE_QUERY.matcher(query).replaceFirst(" ").strip();
+        return entity.replaceAll("\\s+", " ");
+    }
+
+    private String resolveOfficialWebsite(String entityName) throws IOException {
+        return officialWebsiteResolver.resolve(entityName);
     }
 
     private int expandedProviderLimit(String query, int requestedLimit) {
