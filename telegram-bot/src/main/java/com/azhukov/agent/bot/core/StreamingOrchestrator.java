@@ -8,6 +8,7 @@ import com.azhukov.agent.bot.session.BusySessionHandler;
 import com.azhukov.agent.bot.session.ReviewDeliveryReceiptEntity;
 import com.azhukov.agent.bot.session.ReviewDeliveryReceiptRepository;
 import com.azhukov.agent.bot.streaming.StreamEditor;
+import com.azhukov.agent.bot.client.TelegramApiException;
 import com.azhukov.agent.bot.streaming.ToolEmojiMap;
 import com.azhukov.agent.bot.streaming.ToolProgressBubble;
 import lombok.extern.slf4j.Slf4j;
@@ -488,7 +489,15 @@ public class StreamingOrchestrator {
                             MediaDeliveryService.ExtractionResult extraction = mediaDeliveryService.extractMediaTags(finalText);
                             finalText = extraction.cleanedText();
                             // Finalize the stream with cleaned text
-                            boolean delivered = streamEditor.finalizeStream(chatId, messageId[0], finalText);
+                            boolean delivered;
+                            try {
+                                delivered = streamEditor.finalizeStream(chatId, messageId[0], finalText);
+                            } catch (TelegramApiException e) {
+                                streamEditor.recordFinalDeliveryFailure(chatId, finalText, e.getRetryAfter());
+                                failedFinalDelivery[0] = true;
+                                finalized[0] = false;
+                                return;
+                            }
                             if (!delivered) {
                                 streamEditor.recordFinalDeliveryFailure(chatId, finalText);
                                 failedFinalDelivery[0] = true;
@@ -500,7 +509,15 @@ public class StreamingOrchestrator {
                                 hooks.deliverMedia(chatId, extraction.media(), mediaThreadId);
                             }
                         } else {
-                            boolean delivered = streamEditor.finalizeStream(chatId, messageId[0], finalText);
+                            boolean delivered;
+                            try {
+                                delivered = streamEditor.finalizeStream(chatId, messageId[0], finalText);
+                            } catch (TelegramApiException e) {
+                                streamEditor.recordFinalDeliveryFailure(chatId, finalText, e.getRetryAfter());
+                                failedFinalDelivery[0] = true;
+                                finalized[0] = false;
+                                return;
+                            }
                             if (!delivered) {
                                 streamEditor.recordFinalDeliveryFailure(chatId, finalText);
                                 failedFinalDelivery[0] = true;

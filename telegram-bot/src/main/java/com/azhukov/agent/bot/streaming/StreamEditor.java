@@ -695,6 +695,12 @@ public class StreamEditor {
                 log.debug("Flood fallback sent for chat {}, new messageId={}", chatId, newMsgId.get());
                 return true;
             }
+            int retryAfter = telegramClient.takeLastRetryAfterSeconds();
+            if (retryAfter > 0) {
+                // The next generic fallback must wait for Telegram's explicit
+                // cooldown instead of sending the same completed answer again.
+                session.pendingFinalRetryAfterSeconds = retryAfter;
+            }
             // Preserve the stream session and original draft. A later completion
             // retry / user retry can still recover it; never erase visible output
             // merely because the replacement was rate-limited.
@@ -817,9 +823,20 @@ public class StreamEditor {
      */
     public void recordFinalDeliveryFailure(long chatId, String finalText) {
         StreamSession session = sessionFor(chatId);
+        recordFinalDeliveryFailure(chatId, finalText, session.pendingFinalRetryAfterSeconds);
+    }
+
+    /**
+     * Retain the complete final response plus a server-provided FloodWait, if
+     * Telegram rejected the terminal send. Callers must defer recovery rather
+     * than sending the same payload again inside that cooldown.
+     */
+    public void recordFinalDeliveryFailure(long chatId, String finalText, int retryAfterSeconds) {
+        StreamSession session = sessionFor(chatId);
         session.pendingFinalText = finalText;
-        log.warn("final_delivery_pending chat={} chars={}", chatId,
-            finalText == null ? 0 : finalText.length());
+        session.pendingFinalRetryAfterSeconds = retryAfterSeconds;
+        log.warn("final_delivery_pending chat={} chars={} retryAfterSeconds={}", chatId,
+            finalText == null ? 0 : finalText.length(), retryAfterSeconds);
     }
 
     /** Consume the full response retained after a terminal stream-delivery failure. */
@@ -831,6 +848,17 @@ public class StreamEditor {
         String pending = session.pendingFinalText;
         session.pendingFinalText = null;
         return pending;
+    }
+
+    /** Return and clear the FloodWait paired with the pending final response. */
+    public int takePendingFinalRetryAfterSeconds(long chatId) {
+        StreamSession session = sessions.get(chatId);
+        if (session == null) {
+            return -1;
+        }
+        int retryAfter = session.pendingFinalRetryAfterSeconds;
+        session.pendingFinalRetryAfterSeconds = -1;
+        return retryAfter;
     }
 
     // ─── S5: Native draft streaming ───────────────────────────────

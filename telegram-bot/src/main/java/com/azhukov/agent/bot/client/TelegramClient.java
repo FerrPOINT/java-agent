@@ -5,6 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientResponseException;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -39,6 +40,9 @@ public class TelegramClient {
     private final int rateLimitPerSecond;
     private final ScheduledExecutorService rateLimitScheduler;
     private final java.util.concurrent.atomic.AtomicLong floodBlockedUntilMs = new java.util.concurrent.atomic.AtomicLong();
+    // Scoped to the outbound caller: terminal delivery can retain a Telegram
+    // FloodWait without racing other chats' API requests.
+    private final ThreadLocal<Integer> lastRetryAfterSeconds = ThreadLocal.withInitial(() -> -1);
     private final TelegramMediaClient mediaClient;
     /** Long FloodWaits belong to durable delivery retry, never a live stream thread. */
     static final int MAX_INLINE_RATE_LIMIT_RETRY_SECONDS = 5;
@@ -132,6 +136,13 @@ public class TelegramClient {
         return lastApiErrorCode;
     }
 
+    /** Return and clear the FloodWait observed by this calling thread. */
+    public int takeLastRetryAfterSeconds() {
+        int retryAfter = lastRetryAfterSeconds.get();
+        lastRetryAfterSeconds.remove();
+        return retryAfter;
+    }
+
     /** Mask token for logging — show first 4 and last 4 chars only. */
     static String maskToken(String token) {
         if (token == null || token.length() <= 8) return "***";
@@ -188,6 +199,7 @@ public class TelegramClient {
     public Optional<Long> sendMessage(long chatId, String text, String parseMode,
                                        Long replyToMessageId, Integer messageThreadId,
                                        String replyMarkup, boolean disableNotification) {
+        lastRetryAfterSeconds.remove();
         Map<String, Object> params = new LinkedHashMap<>();
         params.put("chat_id", chatId);
         params.put("text", text);
@@ -205,6 +217,7 @@ public class TelegramClient {
             return response.flatMap(r -> Optional.ofNullable(r.resultMessageIdAsLong()));
         } catch (TelegramApiException e) {
             if (e.isRateLimit()) {
+                lastRetryAfterSeconds.set(e.getRetryAfter());
                 // A long Telegram FloodWait must not pin the stream/debouncer
                 // thread. Preserve the visible draft and let the durable
                 // delivery/retry path own recovery instead.
@@ -886,6 +899,13 @@ public class TelegramClient {
             return Optional.of(response);
         } catch (TelegramApiException e) {
             throw e; // Re-throw typed exceptions
+        } catch (RestClientResponseException e) {
+            TelegramApiException telegram = telegramApiExceptionFromHttp(e);
+            lastApiErrorCode = telegram.getErrorCode();
+            if (telegram.isRateLimit()) {
+                applyFloodCooldown(telegram.getRetryAfter());
+            }
+            throw telegram;
         } catch (Exception e) {
             // Check for HTTP 409 conflict from RestClient (comes as HttpStatusCodeException)
             String msg = e.getMessage();
@@ -901,6 +921,31 @@ public class TelegramClient {
         } finally {
             releaseRateLimit();
         }
+    }
+
+    private TelegramApiException telegramApiExceptionFromHttp(RestClientResponseException e) {
+        int status = e.getStatusCode().value();
+        String body = e.getResponseBodyAsString();
+        String description = e.getStatusText();
+        int retryAfter = -1;
+        try {
+            TelegramResponse response = objectMapper.readValue(body, TelegramResponse.class);
+            if (response.errorCode() != null) {
+                status = response.errorCode();
+            }
+            if (response.description() != null && !response.description().isBlank()) {
+                description = response.description();
+            }
+            if (response.parameters() != null && response.parameters().containsKey("retry_after")) {
+                retryAfter = response.parameters().get("retry_after").asInt(-1);
+            }
+        } catch (Exception parseFailure) {
+            if (body != null && !body.isBlank()) {
+                description = body;
+            }
+        }
+        log.warn("Telegram HTTP {} response: {}", status, description);
+        return new TelegramApiException(status, description, retryAfter);
     }
 
     private void applyFloodCooldown(int retryAfterSeconds) {
