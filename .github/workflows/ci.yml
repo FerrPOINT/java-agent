@@ -1,3 +1,4 @@
+# Scoped units/artifacts; complete DB/coverage acceptance is manual release.yml.
 name: CI
 
 on:
@@ -11,18 +12,71 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      backend_tasks: ${{ steps.classify.outputs.backend_tasks }}
+      clients_tasks: ${{ steps.classify.outputs.clients_tasks }}
+      has_backend: ${{ steps.classify.outputs.has_backend }}
+      has_clients: ${{ steps.classify.outputs.has_clients }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: java-agent
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Fetch exact comparison commits
+        working-directory: java-agent
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          case "$HEAD_SHA" in *[!0-9a-f]*|"") echo "Invalid exact head" >&2; exit 1;; esac
+          [ "${#HEAD_SHA}" -eq 40 ] || exit 1
+          [ "$(git rev-parse HEAD)" = "$HEAD_SHA" ] || { echo "Checkout differs from head" >&2; exit 1; }
+          if [ "$EVENT_NAME" = push ] && [ "$BASE_SHA" = 0000000000000000000000000000000000000000 ]; then
+            : # Initial push intentionally selects all components.
+          else
+            case "$BASE_SHA" in *[!0-9a-f]*|"") echo "Invalid exact base" >&2; exit 1;; esac
+            [ "${#BASE_SHA}" -eq 40 ] || exit 1
+            git fetch --no-tags --depth=1 origin "$BASE_SHA" "$HEAD_SHA"
+            git cat-file -e "$BASE_SHA^{commit}"
+            git cat-file -e "$HEAD_SHA^{commit}"
+          fi
+      - name: Verify packaged Base selector
+        run: |
+          python3 - <<'PY'
+          import hashlib,json,re
+          from pathlib import Path
+          root=Path('java-agent')
+          pin=(root/'.quality-tooling-revision').read_text().strip()
+          receipt=json.loads((root/'scripts/vendor/base-quality-tooling.json').read_text())
+          if not re.fullmatch(r'[0-9a-f]{40}',pin) or receipt['schema']!='base-quality-tooling/v1' or receipt['revision']!=pin:
+              raise SystemExit('Packaged Base revision mismatch')
+          if hashlib.sha256((root/'scripts/vendor/base_quality_selection.py').read_bytes()).hexdigest()!=receipt['sha256']:
+              raise SystemExit('Packaged Base selector checksum mismatch')
+          PY
+      - id: classify
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        working-directory: java-agent
+        run: python3 -m scripts.ci_quality_plan
   docs:
     name: Docs standard ratchet
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Docs & test-standard ratchet (baseline in docs/standards/coverage-baseline.json)
         run: python3 scripts/check_docs_standard.py
       - name: Verify shipped-default documentation coverage
         run: python3 scripts/check_default_settings_reference.py
       - name: Documentation and release-script unit tests
-        run: python3 -m unittest scripts.tests.test_check_docs_standard scripts.tests.test_check_default_settings_reference scripts.tests.test_release_verify scripts.tests.test_deploy_dev_systemd scripts.tests.test_parity_dashboard
+        run: python3 -m unittest scripts.tests.test_check_docs_standard scripts.tests.test_check_default_settings_reference scripts.tests.test_release_verify scripts.tests.test_deploy_dev_systemd scripts.tests.test_parity_dashboard scripts.tests.test_test_lanes scripts.tests.test_gradle_context scripts.tests.test_quality_adoption
 
   readme:
     name: README evidence
@@ -30,106 +84,12 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: README validator tests
         run: python3 -m unittest scripts.tests.test_verify_readme
       - name: README structural validation
         run: python3 scripts/verify_readme.py
-
-  test:
-    name: Test
-    runs-on: ubuntu-latest
-    timeout-minutes: 40
-    services:
-      postgres:
-        image: postgres:17.6-alpine
-        env:
-          POSTGRES_DB: usage_regression
-          POSTGRES_USER: qa
-          POSTGRES_PASSWORD: owned-qa-only
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U qa -d usage_regression"
-          --health-interval 2s
-          --health-timeout 2s
-          --health-retries 30
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Set up JDK 25
-        uses: actions/setup-java@v6
-        with:
-          distribution: 'temurin'
-          java-version: '25.0.4+101.0.LTS'
-      - name: Verify exact Temurin runtime
-        run: java -XshowSettings:properties -version 2>&1 | grep -F 'java.runtime.version = 25.0.4.1+1-LTS'
-
-      - name: Cache Gradle
-        uses: actions/cache@v6
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('backend/**/gradle-wrapper.properties', 'backend/**/*.gradle', 'backend/**/gradle.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
-
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew backend/gradlew
-
-      - name: Run backend tests
-        working-directory: backend
-        run: ./gradlew test --no-daemon
-
-      - name: Session persistence and transaction boundaries against PostgreSQL
-        working-directory: backend
-        run: ./gradlew slowTest --tests 'com.azhukov.agent.service.*PersistenceConcurrencyTest' --no-daemon
-        env:
-          USAGE_PERSISTENCE_TEST_JDBC_URL: jdbc:postgresql://127.0.0.1:5432/usage_regression
-          USAGE_PERSISTENCE_TEST_DB_USER: qa
-          USAGE_PERSISTENCE_TEST_DB_PASSWORD: owned-qa-only
-
-      - name: Coverage report (visibility, non-blocking)
-        working-directory: backend
-        run: |
-          ./gradlew jacocoTestReport --no-daemon -x test
-          # The XML is a JaCoCo-generated local artifact, not untrusted input; stdlib parse is safe here.
-          python3 - <<'EOF'
-          import os, xml.etree.ElementTree as ET
-          root = ET.parse('build/reports/jacoco/test/jacocoTestReport.xml').getroot()
-          line = next(x for x in root.findall('counter') if x.get('type') == 'LINE')
-          c, m = int(line.get('covered')), int(line.get('missed'))
-          pct = 100 * c / (c + m)
-          print(f'backend LINE coverage: {pct:.2f}% (gate: 80.00%)')
-          with open(os.environ.get('GITHUB_STEP_SUMMARY', '/dev/null'), 'a') as summary:
-              summary.write(f'## Backend LINE coverage: {pct:.2f}% (gate 80.00%, deficit {int((c+m)*0.80)-c} lines)\n')
-          EOF
-
-      - name: Run telegram-bot and cli tests
-        run: ./gradlew :telegram-bot:test :cli:test --no-daemon
-
-      - name: Coverage ratchet (blocking, baseline in docs/standards/coverage-baseline.json)
-        run: |
-          ./gradlew :telegram-bot:jacocoTestReport --no-daemon -x test
-          python3 scripts/check_docs_standard.py --check-coverage
-
-  build:
-    name: Build bootJar
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    needs: test
-    steps:
-      - uses: actions/checkout@v7
-      - name: Set up JDK 25
-        uses: actions/setup-java@v6
-        with:
-          distribution: 'temurin'
-          java-version: '25.0.4+101.0.LTS'
-      - name: Verify exact Temurin runtime
-        run: java -XshowSettings:properties -version 2>&1 | grep -F 'java.runtime.version = 25.0.4.1+1-LTS'
-      - name: Build bootJar
-        working-directory: backend
-        run: ./gradlew bootJar --no-daemon -x test
 
   lint:
     name: Markdown / YAML lint
@@ -137,6 +97,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Verify bot/backend auth Compose wiring
         run: python3 scripts/check-compose-backend-auth.py
       - uses: articulate/actions-markdownlint@v1
@@ -144,3 +106,79 @@ jobs:
           config: .markdownlint.json
           files: 'docs/**/*.md, *.md'
         continue-on-error: false
+
+  backend:
+    needs: changes
+    if: needs.changes.outputs.has_backend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-java@v6
+        with:
+          distribution: 'temurin'
+          java-version: '25.0.4+101.0.LTS'
+      - name: Verify exact Temurin runtime
+        run: java -XshowSettings:properties -version 2>&1 | grep -F 'java.runtime.version = 25.0.4.1+1-LTS'
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-backend-${{ hashFiles('**/gradle-wrapper.properties', '**/*.gradle', '**/gradle.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-backend-
+      - name: Validate test ownership
+        run: python3 scripts/check_test_lanes.py
+      - name: Run selected tasks once in the compatible wrapper
+        env:
+          SELECTED_TASKS: ${{ needs.changes.outputs.backend_tasks }}
+        run: |
+          python3 - <<'PY'
+          import json,os,subprocess
+          from scripts.ci_quality_plan import BACKEND_TASKS as ALLOWED
+          tasks=json.loads(os.environ['SELECTED_TASKS'])
+          if not isinstance(tasks,list) or not tasks or any(not isinstance(task,str) or task not in ALLOWED for task in tasks) or len(tasks)!=len(set(tasks)):
+              raise SystemExit('Invalid selected Gradle tasks')
+          subprocess.run(['bash','scripts/quality-gradle.sh','--backend',*tasks,'--no-daemon','--max-workers=2'],check=True)
+          PY
+
+  clients:
+    needs: changes
+    if: needs.changes.outputs.has_clients == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-java@v6
+        with:
+          distribution: 'temurin'
+          java-version: '25.0.4+101.0.LTS'
+      - name: Verify exact Temurin runtime
+        run: java -XshowSettings:properties -version 2>&1 | grep -F 'java.runtime.version = 25.0.4.1+1-LTS'
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-clients-${{ hashFiles('**/gradle-wrapper.properties', '**/*.gradle', '**/gradle.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-clients-
+      - name: Validate test ownership
+        run: python3 scripts/check_test_lanes.py
+      - name: Run selected tasks once in the compatible wrapper
+        env:
+          SELECTED_TASKS: ${{ needs.changes.outputs.clients_tasks }}
+        run: |
+          python3 - <<'PY'
+          import json,os,subprocess
+          from scripts.ci_quality_plan import CLIENT_TASKS as ALLOWED
+          tasks=json.loads(os.environ['SELECTED_TASKS'])
+          if not isinstance(tasks,list) or not tasks or any(not isinstance(task,str) or task not in ALLOWED for task in tasks) or len(tasks)!=len(set(tasks)):
+              raise SystemExit('Invalid selected Gradle tasks')
+          subprocess.run(['bash','scripts/quality-gradle.sh','--quality-root',*tasks,'--no-daemon','--max-workers=2'],check=True)
+          PY

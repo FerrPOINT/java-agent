@@ -58,28 +58,7 @@ tasks.withType(JavaCompile).configureEach {
     options.compilerArgs += ['-parameters']
 }
 
-def ferrpointNoticeFiles = [
-    rootProject.file('LICENSE'),
-    rootProject.file('NOTICE'),
-    rootProject.file('THIRD_PARTY_NOTICES.md')
-]
-
-tasks.withType(Jar).configureEach {
-    ferrpointNoticeFiles.each { noticeFile ->
-        from(noticeFile) {
-            into 'META-INF'
-        }
-    }
-    manifest {
-        attributes(
-            'Implementation-Vendor': 'FerrPOINT',
-            'Implementation-Vendor-Id': 'FerrPOINT',
-            'License': 'LicenseRef-FerrPOINT-Proprietary',
-            'License-Name': 'FerrPOINT Proprietary Source-Available Evaluation License v1.0',
-            'License-File': 'META-INF/LICENSE'
-        )
-    }
-}
+apply from: file('../gradle/ferrpoint-notices.gradle').exists() ? file('../gradle/ferrpoint-notices.gradle') : file('gradle/ferrpoint-notices.gradle')
 
 bootJar {
     manifest {
@@ -87,10 +66,12 @@ bootJar {
     }
 }
 
-springBoot {
-    buildInfo()
-}
+apply from: file('../gradle/build-info.gradle').exists() ? file('../gradle/build-info.gradle') : file('gradle/build-info.gradle')
 
 bootRun {
     maxHeapSize = '512m'
 }
+
+// Keep unit/manual compilation separate; preserve existing dependency configurations.
+apply from: file('../gradle/test-lanes.gradle').exists() ? file('../gradle/test-lanes.gradle') : file('gradle/test-lanes.gradle')
+apply from: file('../gradle/quality-inputs.gradle').exists() ? file('../gradle/quality-inputs.gradle') : file('gradle/quality-inputs.gradle')

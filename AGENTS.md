@@ -22,6 +22,12 @@ Java-агент: Spring Boot 4.1 + Java 25 + Telegram bot + MCP. Gradle multi-pr
 
 ## Build & Test
 
+Для выбора Unit/Integration/Slow/Release и source partition читать
+[docs/TESTING.md](docs/TESTING.md). `make test MODULE=...` — быстрый unit route;
+полный release verifier и coverage запускаются вручную. Raw Docker builders
+проверяют units; native/cache qualification конкретного peer остаётся отдельной
+вехой. Не принимать source counts за пройденные JVM tests.
+
 CI and Docker use Temurin **25.0.4.1+1-LTS**; all Docker stages pin image
 digests. Use committed wrappers: **9.6.1** at the repository root for
 bot/CLI and **9.8.0** from `backend/` for the standalone backend gates.

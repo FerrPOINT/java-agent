@@ -58,3 +58,5 @@ __pycache__/
 /backend/.env
 repomix-output.*
 repomix-output.xml
+# Owned quality reports/environments are not source inputs.
+/.local/

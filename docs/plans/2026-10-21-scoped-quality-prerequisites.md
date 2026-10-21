@@ -2,6 +2,10 @@
 
 Status: source research complete; native adoption remains open. Date: 2026-10-21.
 
+Последующая [source implementation](2026-10-21-scoped-quality-implementation.md)
+подключила partition и entrypoints. Исходные состояния и сравнение ниже относятся
+к942ebafe/e5835de8; они сохраняются как baseline, а не current adoption status.
+
 ## Decision and boundary
 
 Do not add a docs-only product descriptor that can report a green Unit profile

@@ -1,0 +1,13 @@
+// SOURCE_DATE_EPOCH is an artifact input. Bare Gradle builds are explicitly
+// unversioned (epoch zero); the candidate helper supplies the real commit epoch.
+def buildEpoch = providers.environmentVariable('SOURCE_DATE_EPOCH').orElse('0')
+if (!(buildEpoch.get() ==~ /[0-9]+/)) {
+    throw new GradleException('SOURCE_DATE_EPOCH must be Unix seconds')
+}
+springBoot {
+    buildInfo {
+        properties {
+            time = java.time.Instant.ofEpochSecond(buildEpoch.get().toLong()).toString()
+        }
+    }
+}

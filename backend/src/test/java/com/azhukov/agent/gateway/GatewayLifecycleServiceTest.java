@@ -6,11 +6,11 @@ import org.junit.jupiter.api.Test;
 import java.time.Duration;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.doAnswer;
 
 class GatewayLifecycleServiceTest {
 
@@ -29,24 +29,40 @@ class GatewayLifecycleServiceTest {
 
     @Test
     void drainRejectsNewInboundImmediatelyAndWaitsBounded() throws Exception {
-        GatewayLifecycleService lifecycle = new GatewayLifecycleService(null);
+        CountDownLatch draining = new CountDownLatch(1);
+        ProfileRuntimeRegistry runtimeRegistry = mock(ProfileRuntimeRegistry.class);
+        doAnswer(invocation -> {
+            draining.countDown();
+            return null;
+        }).when(runtimeRegistry).updateWorkerState("default", "draining");
+        GatewayLifecycleService lifecycle = new GatewayLifecycleService(null, runtimeRegistry);
         lifecycle.start();
         assertThat(lifecycle.beginInbound()).isTrue(); // one in-flight
 
         CountDownLatch drained = new CountDownLatch(1);
-        AtomicBoolean rejectedNew = new AtomicBoolean(false);
-        Thread drainer = Thread.ofVirtual().start(() -> {
+        Thread.ofVirtual().start(() -> {
             lifecycle.drain(Duration.ofMillis(200));
             drained.countDown();
         });
         // While draining: new inbound must be rejected.
-        Thread.sleep(50);
-        rejectedNew.set(!lifecycle.beginInbound());
+        assertThat(draining.await(2, TimeUnit.SECONDS)).isTrue();
+        assertThat(lifecycle.beginInbound()).isFalse();
         lifecycle.endInbound(); // in-flight completes
 
         assertThat(drained.await(2, TimeUnit.SECONDS)).isTrue();
-        assertThat(rejectedNew.get()).isTrue();
+        assertThat(lifecycle.activeInboundCount()).isZero();
         assertThat(lifecycle.currentState()).isEqualTo(GatewayLifecycleService.State.STOPPED);
+    }
+
+    @Test
+    void zeroDrainBoundReportsStillActiveInbound() {
+        GatewayLifecycleService lifecycle = new GatewayLifecycleService(null);
+        lifecycle.start();
+        assertThat(lifecycle.beginInbound()).isTrue();
+        GatewayLifecycleService.Status status = lifecycle.drain(Duration.ZERO);
+        assertThat(status.state()).isEqualTo(GatewayLifecycleService.State.STOPPED);
+        assertThat(status.activeInbound()).isEqualTo(1);
+        assertThat(lifecycle.beginInbound()).isFalse();
     }
 
     @Test

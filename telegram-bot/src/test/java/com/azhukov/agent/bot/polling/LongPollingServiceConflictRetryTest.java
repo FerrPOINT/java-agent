@@ -9,8 +9,6 @@ import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Field;
 import java.util.Optional;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -63,29 +61,19 @@ class LongPollingServiceConflictRetryTest {
 
     @Test
     void conflictRetryCountIncrementsAtomically() throws Exception {
-        // Simulate 409 conflict: empty result + isLastCallConflict=true
-        CountDownLatch getUpdatesCalled = new CountDownLatch(1);
+        // Exercise the real 409 handler without starting the lock/poll lifecycle
+        // or entering its 15-second retry delay. The first conflict exceeds zero retries.
+        properties.getPolling().setConflictMaxRetries(0);
         when(telegramClient.getUpdates(anyLong(), anyInt(), anyInt()))
-            .thenAnswer(inv -> {
-                getUpdatesCalled.countDown();
-                return Optional.empty();
-            });
-        when(telegramClient.isLastCallConflict()).thenReturn(true);
+            .thenThrow(new TelegramApiException(409, "Conflict", -1));
+        service = new LongPollingService(telegramClient, properties, event -> {}, reconnectWatcher);
+        Field field = LongPollingService.class.getDeclaredField("conflictRetryCount");
+        field.setAccessible(true);
+        AtomicInteger counter = (AtomicInteger) field.get(service);
 
-        service = new LongPollingService(
-            telegramClient, properties,
-            event -> {},
-            reconnectWatcher
-        );
-
-        service.start();
-
-        // Wait for getUpdates to be called (conflict processed)
-        assertThat(getUpdatesCalled.await(5, TimeUnit.SECONDS)).isTrue();
-        service.stop();
-
-        // Verify the conflict was handled (getUpdates was called)
-        verify(telegramClient, atLeast(1)).getUpdates(anyLong(), anyInt(), anyInt());
+        assertThat(service.fetchUpdates()).isNull();
+        assertThat(counter.get()).isEqualTo(1);
+        verify(telegramClient).getUpdates(anyLong(), anyInt(), anyInt());
     }
 
     @Test

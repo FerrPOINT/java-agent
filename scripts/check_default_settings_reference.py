@@ -37,7 +37,7 @@ def yaml_leaf_paths(path: Path) -> set[str]:
     """Extract scalar YAML paths without a YAML parser dependency in CI."""
     result: set[str] = set()
     stack: list[tuple[int, str]] = []
-    for raw_line in path.read_text().splitlines():
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
         if not raw_line or raw_line.lstrip().startswith(("#", "---", "...", "- ")):
             continue
         match = KEY.match(raw_line)
@@ -65,7 +65,7 @@ def java_fallback_fields(path: Path, root_class: str) -> set[str]:
     stack: list[tuple[int, str]] = []
     depth = 0
     active = False
-    for line in path.read_text().splitlines():
+    for line in path.read_text(encoding="utf-8").splitlines():
         class_match = CLASS.search(line)
         opens, closes = line.count("{"), line.count("}")
         if class_match:
@@ -93,7 +93,7 @@ def value_fallback_properties() -> set[str]:
     result: set[str] = set()
     for directory in VALUE_SOURCE_DIRS:
         for path in directory.rglob("*.java"):
-            result.update(VALUE.findall(path.read_text()))
+            result.update(VALUE.findall(path.read_text(encoding="utf-8")))
     return result
 
 
@@ -106,7 +106,7 @@ def expected_settings() -> set[str]:
 
 
 def documented_properties() -> set[str]:
-    return set(DOCUMENTED_PROPERTY.findall(REFERENCE.read_text()))
+    return set(DOCUMENTED_PROPERTY.findall(REFERENCE.read_text(encoding="utf-8")))
 
 
 def verify() -> list[str]:

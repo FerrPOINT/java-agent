@@ -9,11 +9,11 @@ COPY gradlew ./
 COPY cli/build.gradle ./cli/build.gradle
 COPY shared/build.gradle ./shared/build.gradle
 COPY shared/src ./shared/src
-COPY backend/build.gradle ./backend/build.gradle
-COPY backend/src ./backend/src
 COPY telegram-bot/build.gradle ./telegram-bot/build.gradle
 COPY telegram-bot/src ./telegram-bot/src
-RUN chmod +x gradlew && ./gradlew :telegram-bot:bootJar -x test
+ARG SOURCE_DATE_EPOCH=0
+ENV SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH
+RUN sed -i 's/\r$//' gradlew && chmod +x gradlew && ./gradlew -PqualityRootGraph=clients-v1 :telegram-bot:bootJar --no-daemon --max-workers=2
 
 FROM eclipse-temurin:25.0.4.1_1-jre-noble@sha256:398f810215757dc1926390014272579fb0e57c41ef1c8aa4f64ae761613a168b
 RUN apt-get update && apt-get install -y --no-install-recommends \

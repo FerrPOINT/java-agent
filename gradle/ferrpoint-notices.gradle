@@ -1,0 +1,23 @@
+// The repository owns notices. Standalone backend and flattened Docker roots
+// must use the same files as the normal multi-project build.
+def noticeRoot = file('../gradle/ferrpoint-notices.gradle').isFile() ? file('..') : projectDir
+def noticeFiles = ['LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md'].collect { name ->
+    def notice = new File(noticeRoot, name)
+    if (!notice.isFile()) {
+        throw new GradleException("Missing required JAR notice input: ${name}")
+    }
+    notice
+}
+
+tasks.withType(Jar).configureEach {
+    from(noticeFiles) { into 'META-INF' }
+    manifest {
+        attributes(
+            'Implementation-Vendor': 'FerrPOINT',
+            'Implementation-Vendor-Id': 'FerrPOINT',
+            'License': 'LicenseRef-FerrPOINT-Proprietary',
+            'License-Name': 'FerrPOINT Proprietary Source-Available Evaluation License v1.0',
+            'License-File': 'META-INF/LICENSE'
+        )
+    }
+}
