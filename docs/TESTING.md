@@ -99,6 +99,24 @@ evidence находится в source Base: `docs/plans/java3-native-sourcesets-
 
 ## Кэши и доказательства
 
+Backend, CLI и bot не подключают Lombok/MapStruct к `testAnnotationProcessor`:
+полный reviewed physical inventory, включая unit/shared/manual support,
+не требует генерации этими processors. Удалены также дублирующие testCompileOnly
+dependencies; main processors, MapStruct API и готовые main mappers сохранены.
+`testSupport`/`manualTest` наследуют тот же облегчённый test processor classpath.
+Source guard в `scripts.tests.test_test_lanes` проверяет весь inventory и
+отличает `Mappers.getMapper`/API constants от generation annotations. Новая
+generation annotation требует review graph/dependencies; ручной набор из
+inventory не удаляется. Existing partition-source gate учитывает все test inputs.
+Это согласованный перенос решения из PDLC1 без замены topology/toolchain/pins.
+
+32Python selector/adoption tests PASS7,033с; source inventory584unit/
+183integration/68slow/9live сохранился. Это не результат нового JVM запуска.
+Actual CLI unit/JAR qualification после изменения starter и test processors,
+а также Backend9.8.0/Bot и ручные source-set/coverage gates остаются отдельными.
+Прежний183-unit CLI baseline относится к source281a5a10 и не квалифицирует
+изменённые inputs. Host memory guard и compiler-cache opt-out сохраняются.
+
 Dependency caches и штатная Gradle incremental работа сохраняются. Artifact
 receipts, automatic configuration cache default и compiler-cache opt-in этого
 peer tuple пока выключены до native qualification. Остальные SDK/UI/skills/

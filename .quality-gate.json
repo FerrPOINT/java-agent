@@ -190,6 +190,7 @@
         ".quality-gate.json",
         ".github/**",
         "*/build.gradle",
+        "*/src/test/**",
         "settings.gradle",
         "Makefile",
         "Dockerfile*",

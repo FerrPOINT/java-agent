@@ -1,11 +1,29 @@
 """Test classification through the inventory validator, without a JVM or service."""
 
 import json
-from pathlib import Path
+import re
 import tempfile
 import unittest
+from pathlib import Path
 
-from scripts.check_test_lanes import validate, compilation_layout
+from scripts.check_test_lanes import compilation_layout, validate, without_comments
+
+
+def processor_consumers(root):
+    """Read the complete physical test graph, including shared/manual helpers."""
+    consumers = []
+    for lanes in compilation_layout(root).values():
+        for names in lanes.values():
+            for name in names:
+                source = without_comments((root / name).read_text(encoding='utf-8'))
+                direct = re.search(r'(?m)^\s*import\s+(?:static\s+)?(?:lombok\.|'
+                                   r'org\.mapstruct\.(?:Mapper|MapperConfig)\b)'
+                                   r'|@lombok\.|@org\.mapstruct\.(?:Mapper|MapperConfig)\b', source)
+                wildcard = (re.search(r'(?m)^\s*import\s+org\.mapstruct\.\*', source)
+                            and re.search(r'@(?:Mapper|MapperConfig)\b', source))
+                if direct or wildcard:
+                    consumers.append(name)
+    return consumers
 
 
 class TestLaneTests(unittest.TestCase):
@@ -139,6 +157,43 @@ class TestLaneTests(unittest.TestCase):
             validate(self.root)
         self.support('class Fixture {}', 'shared')
         self.assertEqual(validate(self.root)['integration'], 1)
+
+    def test_all_reviewed_test_compilations_need_no_lombok_or_mapstruct_generation(self):
+        root = Path(__file__).resolve().parents[2]
+        self.assertEqual(processor_consumers(root), [],
+                         'Review test processor dependencies before adding generated test classes')
+
+    def test_processor_review_distinguishes_generation_from_existing_mapper_api(self):
+        cases = [
+            ('import org.mapstruct.factory.Mappers;\nclass Fixture {}', False),
+            ('import org.mapstruct.ReportingPolicy;\nclass Fixture { Object value = ReportingPolicy.ERROR; }', False),
+            ('import org.mapstruct.*;\nclass Fixture { Object value = ReportingPolicy.ERROR; }', False),
+            ('// import lombok.Getter;\n/* @org.mapstruct.Mapper */ class Fixture {}', False),
+            ('import lombok.Getter;\n@Getter class Fixture {}', True),
+            ('@lombok.Getter class Fixture {}', True),
+            ('import org.mapstruct.Mapper;\n@Mapper interface Fixture {}', True),
+            ('import org.mapstruct.MapperConfig;\n@MapperConfig interface Fixture {}', True),
+            ('@org.mapstruct.Mapper interface Fixture {}', True),
+            ('@org.mapstruct.MapperConfig interface Fixture {}', True),
+            ('import org.mapstruct.*;\n@Mapper interface Fixture {}', True),
+            ('import org.mapstruct.*;\n@MapperConfig interface Fixture {}', True),
+        ]
+        name = 'backend/src/test/java/Fixture.java'
+        for lane in ('unit', 'manual', 'shared'):
+            for source, required in cases:
+                with self.subTest(lane=lane, source=source), tempfile.TemporaryDirectory() as temporary:
+                    root = Path(temporary)
+                    target = root / name
+                    target.parent.mkdir(parents=True)
+                    target.write_text(source, encoding='utf-8')
+                    inventory = {'files': {}, 'support': {}}
+                    if lane == 'shared':
+                        inventory['support'][name] = 'shared'
+                    else:
+                        inventory['files'][name] = 'unit' if lane == 'unit' else 'integration'
+                    (root / 'gradle').mkdir()
+                    (root / 'gradle/test-lanes.json').write_text(json.dumps(inventory), encoding='utf-8')
+                    self.assertEqual(processor_consumers(root), [name] if required else [])
 
 
 if __name__ == "__main__":
