@@ -141,8 +141,16 @@ agent:
     extract-max-chars: ${AGENT_WEB_EXTRACT_MAX_CHARS:100000}
     extract-cache-dir: ${AGENT_WEB_EXTRACT_CACHE_DIR:}
     search-provider: ${AGENT_WEB_SEARCH_PROVIDER:ddg}
-    # Feature 1: SearXNG instance URL — if set, web_search uses SearXNG instead of DuckDuckGo
+    # SearXNG remains the free primary. Keyless fallbacks run only after an empty or irrelevant general-web response.
     searxng-url: ${AGENT_WEB_SEARXNG_URL:}
+    search-provider-order: ${AGENT_WEB_SEARCH_PROVIDER_ORDER:searxng,tavily,parallel,exa}
+    keyless-fallback-enabled: ${AGENT_WEB_KEYLESS_FALLBACK_ENABLED:true}
+    parallel-keyless-enabled: ${AGENT_WEB_PARALLEL_KEYLESS_ENABLED:true}
+    exa-keyless-enabled: ${AGENT_WEB_EXA_KEYLESS_ENABLED:true}
+    search-timeout-seconds: ${AGENT_WEB_SEARCH_TIMEOUT_SECONDS:20}
+    search-provider-cooldown-seconds: ${AGENT_WEB_SEARCH_PROVIDER_COOLDOWN_SECONDS:60}
+    tavily-url: ${AGENT_WEB_TAVILY_URL:https://api.tavily.com/search}
+    tavily-api-key: ${TAVILY_API_KEY:}
     allowed-domains: ${AGENT_WEB_ALLOWED_DOMAINS:}
     blocked-domains: ${AGENT_WEB_BLOCKED_DOMAINS:}
   

@@ -133,6 +133,7 @@ Telegram gateway:
 10. Read `10-production-readiness.md` for Docker/systemd/health/telegram.
 11. Read `UI_SHELL_STANDARD.md` before designing a first-party web console.
 12. Read `default-settings.md` before changing configuration defaults or selecting environment overrides.
+13. Read `web-search-resilience.md` for provider fallback policy, keyless limits, and operational controls.
 
 ## Source
 

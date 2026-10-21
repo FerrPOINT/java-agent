@@ -176,6 +176,15 @@ public class AgentProperties {
         private String searchProvider = "ddg";
         /** Feature 1: SearXNG instance URL. If set, web_search uses SearXNG instead of DuckDuckGo. */
         private String searxngUrl = "";
+        /** Ordered general-web providers. The default keeps SearXNG primary and Tavily keyless fallback. */
+        private final List<String> searchProviderOrder = new ArrayList<>(List.of("searxng", "tavily", "parallel", "exa"));
+        private boolean keylessFallbackEnabled = true;
+        private boolean parallelKeylessEnabled = true;
+        private boolean exaKeylessEnabled = true;
+        private int searchTimeoutSeconds = 20;
+        private int searchProviderCooldownSeconds = 60;
+        private String tavilyUrl = "https://api.tavily.com/search";
+        private String tavilyApiKey = "";
         private final List<String> allowedDomains = new ArrayList<>();
         private final List<String> blockedDomains = new ArrayList<>();
     }

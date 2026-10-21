@@ -26,7 +26,7 @@ import java.util.Map;
  * Results sorted by score descending, capped to limit.
  */
 @Slf4j
-public class SearXngSearchProvider {
+public class SearXngSearchProvider implements WebSearchProvider {
 
     private final String baseUrl;
     private final UrlSafety resultUrlSafety;
@@ -48,6 +48,12 @@ public class SearXngSearchProvider {
             .build());
     }
 
+    @Override
+    public String name() {
+        return "searxng";
+    }
+
+    @Override
     public boolean isAvailable() {
         return baseUrl != null && !baseUrl.isBlank();
     }
@@ -59,6 +65,7 @@ public class SearXngSearchProvider {
      * @param limit maximum number of results
      * @return list of result maps with keys: title, url, description
      */
+    @Override
     public List<Map<String, String>> search(String query, int limit) throws IOException {
         if (!isAvailable()) {
             throw new IOException("SearXNG URL is not set");
