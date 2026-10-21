@@ -210,6 +210,19 @@ class BotMessageProcessorMediaDeliveryTest {
     // ═══════════════════════════════════════════════════════════════════
 
     @Test
+    void invalidMediaPathsDoNotPreventDeliveryOfLaterValidFiles() throws Exception {
+        Path document = createTempFile("valid.pdf");
+        processor.deliverMedia(100L, List.of(
+            new MediaDeliveryService.MediaDescriptor("invalid\u0000.pdf", "pdf", false, false),
+            new MediaDeliveryService.MediaDescriptor(null, "pdf", false, false),
+            new MediaDeliveryService.MediaDescriptor(document.toString(), "pdf", false, false)
+        ), null);
+
+        verify(telegramClient).sendDocument(eq(100L), any(byte[].class), eq("valid.pdf"), isNull(), isNull());
+        verify(telegramClient, never()).sendVideo(anyLong(), any(), anyString(), any(), any());
+    }
+
+    @Test
     @DisplayName("1. Single image → sendPhoto is called")
     void singleImageRoutesToSendPhoto() throws Exception {
         Path imageFile = createTempFile("test-image.png");

@@ -1252,7 +1252,13 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
     }
 
     private static String mediaFileName(MediaDeliveryService.MediaDescriptor desc) {
-        return Path.of(desc.path()).getFileName().toString();
+        if (desc.path() == null) return "<invalid>";
+        try {
+            Path name = Path.of(desc.path()).getFileName();
+            return name == null ? "<invalid>" : name.toString();
+        } catch (java.nio.file.InvalidPathException e) {
+            return "<invalid>";
+        }
     }
 
     /** WP-11: record the outbound receipt (platform message id) after a successful send. */
