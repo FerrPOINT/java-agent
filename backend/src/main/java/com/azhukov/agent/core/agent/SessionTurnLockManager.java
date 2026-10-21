@@ -23,15 +23,20 @@ import lombok.extern.slf4j.Slf4j;
  * "CONCURRENT_A\nCONCURRENT_B"). A sync turn and a streaming turn on the same
  * session could also interleave for the same reason.
  *
- * <p>Lock entries are removed after release when uncontended (same pattern as
- * the original AgentRuntimeService implementation) so the map does not grow
- * unboundedly.
+ * <p>Each acquisition attempt retains the entry until it fails or its acquired
+ * hold is released. Waiting and nested turns therefore cannot lose the lock
+ * identity used for steer admission; idle entries are still removed.
  */
 @Component
 @Slf4j
 public class SessionTurnLockManager {
 
-    private final Map<UUID, ReentrantLock> locks = new ConcurrentHashMap<>();
+    private final Map<UUID, TurnLock> locks = new ConcurrentHashMap<>();
+
+    private static final class TurnLock {
+        private final ReentrantLock lock = new ReentrantLock();
+        private int references;
+    }
 
     /**
      * Acquire the turn lock for a session, waiting up to {@code timeoutSeconds}.
@@ -39,12 +44,20 @@ public class SessionTurnLockManager {
      * @return true if acquired, false on timeout (session busy)
      */
     public boolean tryAcquire(UUID sessionId, long timeoutSeconds) {
-        ReentrantLock lock = locks.computeIfAbsent(sessionId, k -> new ReentrantLock());
+        TurnLock entry = locks.compute(sessionId, (id, current) -> {
+            TurnLock retained = current != null ? current : new TurnLock();
+            retained.references++;
+            return retained;
+        });
+        boolean acquired = false;
         try {
-            return lock.tryLock(timeoutSeconds, TimeUnit.SECONDS);
+            acquired = entry.lock.tryLock(timeoutSeconds, TimeUnit.SECONDS);
+            return acquired;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return false;
+        } finally {
+            if (!acquired) releaseReference(sessionId, entry);
         }
     }
 
@@ -54,43 +67,33 @@ public class SessionTurnLockManager {
      * steer cannot be accepted after that turn has stopped owning the lock.
      */
     public boolean runIfLocked(UUID sessionId, BooleanSupplier action) {
-        ReentrantLock lock = locks.get(sessionId);
-        if (lock == null) {
+        TurnLock entry = locks.get(sessionId);
+        if (entry == null) {
             return false;
         }
-        synchronized (lock) {
-            return lock.isLocked() && action.getAsBoolean();
+        synchronized (entry.lock) {
+            return entry.lock.isLocked() && action.getAsBoolean();
         }
     }
 
-    /** Release the turn lock and remove the map entry when uncontended. */
+    /** Release one owned hold, retaining the identity for any other hold or waiter. */
     public void release(UUID sessionId) {
-        ReentrantLock lock = locks.get(sessionId);
-        if (lock == null) {
+        TurnLock entry = locks.get(sessionId);
+        if (entry == null) {
             return;
         }
-        synchronized (lock) {
-            try {
-                lock.unlock();
-            } catch (IllegalMonitorStateException e) {
-                // Not held by this thread — nothing to release.
-                return;
-            }
-            // Remove the lock from the map to prevent unbounded growth. Only remove
-            // when no other thread is waiting (tryLock succeeds immediately after
-            // unlock, meaning no contention). Safe: a new turn on the same session
-            // computeIfAbsent's a fresh lock if needed.
-            try {
-                if (lock.tryLock()) {
-                    try {
-                        locks.remove(sessionId, lock);
-                    } finally {
-                        lock.unlock();
-                    }
-                }
-            } catch (IllegalMonitorStateException ignored) {
-                // raced with a waiter — leave the entry in place
-            }
+        synchronized (entry.lock) {
+            if (!entry.lock.isHeldByCurrentThread()) return;
+            entry.lock.unlock();
+            releaseReference(sessionId, entry);
         }
+    }
+
+    private void releaseReference(UUID sessionId, TurnLock expected) {
+        locks.computeIfPresent(sessionId, (id, current) -> {
+            if (current != expected) return current;
+            current.references--;
+            return current.references == 0 ? null : current;
+        });
     }
 }
