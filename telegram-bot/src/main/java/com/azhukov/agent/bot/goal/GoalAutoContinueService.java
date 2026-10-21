@@ -3,6 +3,7 @@ package com.azhukov.agent.bot.goal;
 import com.azhukov.agent.bot.commands.impl.GoalCommand;
 import com.azhukov.agent.bot.config.BotProperties;
 import com.azhukov.agent.bot.core.AgentBackendClient;
+import com.azhukov.agent.bot.session.BackendSessionResolver;
 import com.azhukov.agent.bot.session.BotSessionEntity;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -86,7 +87,11 @@ public class GoalAutoContinueService {
             return continuationMessages;
         }
 
-        String sessionId = session.getId() != null ? session.getId().toString() : null;
+        String sessionId = BackendSessionResolver.resolveString(session);
+        if (sessionId == null) {
+            log.warn("Goal auto-continue: missing backend session id; no continuation can resume history");
+            return continuationMessages;
+        }
         String currentResponse = lastResponse != null ? lastResponse : "";
         List<String> subgoals = GoalCommand.getSubgoals(session);
 

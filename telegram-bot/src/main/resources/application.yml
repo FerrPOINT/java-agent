@@ -60,6 +60,7 @@ bot:
   register-commands: true
   rate-limit-per-second: 25
   working-directory: ${BOT_WORKING_DIRECTORY:${user.dir}}
+  attachment-artifact-root: ${AGENT_ATTACHMENTS_CACHE_ROOT:${AGENT_ATTACHMENT_STORAGE_ROOT:}}
   default-model: ${BOT_DEFAULT_MODEL:${AGENT_MODEL_NAME:}}
   available-models: ${BOT_AVAILABLE_MODELS:}
   reply-to-mode: ${BOT_REPLY_TO_MODE:first}

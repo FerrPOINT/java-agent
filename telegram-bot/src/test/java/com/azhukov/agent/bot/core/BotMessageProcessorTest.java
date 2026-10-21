@@ -1266,11 +1266,24 @@ class BotMessageProcessorTest {
         org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
             .thenReturn(session);
 
-        stubStreamingWithTokensAndFinalize("First response", "test-model", false);
+        UUID backendSessionId = UUID.randomUUID();
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+            .thenAnswer(inv -> {
+                Consumer<String> tokenConsumer = inv.getArgument(4);
+                tokenConsumer.accept("First response");
+                Consumer<AgentBackendClient.ChatResult> onComplete = inv.getArgument(10);
+                AgentBackendClient.ChatResult result = new AgentBackendClient.ChatResult(
+                    "First response", "test-model", 100, 1000, true, false, backendSessionId, null);
+                onComplete.accept(result);
+                return result;
+            });
         when(goalAutoContinueService.runAutoContinue(any(), anyString(), any()))
             .thenReturn(List.of("Continuation 1", "Continuation 2"));
 
         processor.accept(textEvent(1, 100L, "hello"));
+
+        assertThat(session.getBackendSessionId()).isEqualTo(backendSessionId);
+        verify(sessionStore).updateBackendSessionId(session.getId(), backendSessionId);
         verify(telegramClient).sendMessage(eq(100L), contains("Continuation 1"), anyString(), any(), any());
         verify(telegramClient).sendMessage(eq(100L), contains("Continuation 2"), anyString(), any(), any());
     }
@@ -2097,6 +2110,20 @@ class BotMessageProcessorTest {
         verify(telegramClient).sendPhoto(eq(100L), any(byte[].class), any(), any());
     }
 
+    @Test
+    void mediaPathWithinConfiguredArtifactDirectorySendsDocument(@TempDir Path tempDir) throws Exception {
+        Path artifactRoot = tempDir.resolve("artifacts");
+        Files.createDirectories(artifactRoot);
+        Path document = artifactRoot.resolve("report.pdf");
+        Files.write(document, new byte[]{1, 2, 3});
+        properties.setWorkingDirectory(tempDir.resolve("workspace").toString());
+        properties.setAttachmentArtifactRoot(artifactRoot.toString());
+
+        stubStreamingResult("MEDIA:" + document, false);
+        processor.accept(textEvent(1, 100L, "send report"));
+
+        verify(telegramClient).sendDocument(eq(100L), any(byte[].class), eq("report.pdf"), isNull(), isNull());
+    }
     @Test
     void mediaPathWithinAgentMediaDirSendsFile() throws Exception {
         // The agent media temp directory is always allowed

@@ -505,6 +505,9 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
             // Persist the backend-assigned session ID for conversation history continuity
             if (result.backendSessionId() != null) {
                 sessionStore.updateBackendSessionId(session.getId(), result.backendSessionId());
+                // The auto-continue loop runs in this turn, so it must resume
+                // the backend conversation just created by the initial stream.
+                session.setBackendSessionId(result.backendSessionId());
             }
 
             // If streaming produced content and finalized a message, don't send duplicate
@@ -1146,10 +1149,22 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
             Path resolved = Paths.get(path).toAbsolutePath().normalize();
             Path workingDir = Paths.get(properties.getWorkingDirectory()).toAbsolutePath().normalize();
             Path mediaDir = AgentMediaPaths.mediaDir();
-            return resolved.startsWith(workingDir) || resolved.startsWith(mediaDir);
+            Path artifactDir = resolveArtifactDir();
+            return resolved.startsWith(workingDir)
+                || resolved.startsWith(mediaDir)
+                || (artifactDir != null && resolved.startsWith(artifactDir));
         } catch (Exception e) {
             return false;
         }
+    }
+
+    /** Shared persistent artifact root configured for backend and Telegram bot. */
+    private Path resolveArtifactDir() {
+        String configured = properties.getAttachmentArtifactRoot();
+        if (configured == null || configured.isBlank()) {
+            return null;
+        }
+        return Paths.get(configured).toAbsolutePath().normalize();
     }
 
     /**

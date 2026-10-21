@@ -24,6 +24,7 @@ class GoalAutoContinueServiceTest {
     private BotSessionEntity sessionWithGoal(String goal) {
         BotSessionEntity session = new BotSessionEntity();
         session.setId(UUID.randomUUID());
+        session.setBackendSessionId(UUID.randomUUID());
         session.setMetadata("_standingGoal", goal);
         return session;
     }
@@ -258,6 +259,40 @@ class GoalAutoContinueServiceTest {
     }
 
     @Test
+    void usesBackendSessionIdRatherThanBotLocalId() {
+        AgentBackendClient client = mock(AgentBackendClient.class);
+        BotProperties properties = new BotProperties();
+        properties.getGoalAutoContinue().setEnabled(true);
+        properties.getGoalAutoContinue().setMaxTurns(1);
+        GoalAutoContinueService service = serviceWith(client, properties);
+        BotSessionEntity session = sessionWithGoal("finish the task");
+
+        when(client.chat(eq("[Goal judge]"), anyString(), isNull()))
+            .thenReturn(new AgentBackendClient.ChatResult("CONTINUE: continue", null, 0, 0, false, false));
+        when(client.chat(eq("[Goal continuation]"), anyString(), isNull()))
+            .thenReturn(new AgentBackendClient.ChatResult("continued work", null, 0, 0, false, false));
+
+        service.runAutoContinue(session, "initial work");
+
+        verify(client).chat(contains("goal completion evaluator"), isNull(), isNull());
+        verify(client).chat(contains("Continue autonomously"), eq(session.getBackendSessionId().toString()), eq(session));
+        verify(client, never()).chat(contains("Continue autonomously"), eq(session.getId().toString()), eq(session));
+    }
+
+    @Test
+    void missingBackendSessionSkipsContinuation() {
+        AgentBackendClient client = mock(AgentBackendClient.class);
+        BotProperties properties = new BotProperties();
+        properties.getGoalAutoContinue().setEnabled(true);
+        GoalAutoContinueService service = serviceWith(client, properties);
+        BotSessionEntity session = new BotSessionEntity();
+        session.setId(UUID.randomUUID());
+        session.setMetadata("_standingGoal", "finish the task");
+
+        assertThat(service.runAutoContinue(session, "initial work")).isEmpty();
+        verifyNoInteractions(client);
+    }
+    @Test
     void pausedGoalReturnsEmpty() {
         AgentBackendClient client = mock(AgentBackendClient.class);
         BotProperties properties = new BotProperties();
@@ -265,9 +300,7 @@ class GoalAutoContinueServiceTest {
         properties.getGoalAutoContinue().setMaxTurns(3);
         GoalAutoContinueService service = serviceWith(client, properties);
 
-        BotSessionEntity session = new BotSessionEntity();
-        session.setId(UUID.randomUUID());
-        session.setMetadata("_standingGoal", "deploy app");
+        BotSessionEntity session = sessionWithGoal("deploy app");
         session.setMetadata("_goalPaused", "true");
 
         List<String> result = service.runAutoContinue(session, "working");

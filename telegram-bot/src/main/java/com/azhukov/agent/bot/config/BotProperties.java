@@ -50,6 +50,8 @@ public class BotProperties {
     @Min(1)
     private int rateLimitPerSecond = 25;
     private String workingDirectory = System.getProperty("user.dir");
+    /** Shared backend artifact cache root approved for native Telegram delivery. */
+    private String attachmentArtifactRoot = "";
     private String defaultModel = "";
     private final List<String> availableModels = new ArrayList<>();
     private String replyToMode = "first"; // off | all | first
