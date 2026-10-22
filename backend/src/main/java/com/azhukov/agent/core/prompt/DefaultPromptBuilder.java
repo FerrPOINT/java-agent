@@ -484,7 +484,7 @@ public class DefaultPromptBuilder implements PromptBuilder {
         boolean telegramSession = session != null
             && "telegram".equalsIgnoreCase(session.getMetadata("platform"));
         if (telegramSession) {
-            sessionId += ":telegram-delivery-v1";
+            sessionId += ":telegram-delivery-v2";
         }
         // P-04: disabledTools changes the API tool surface; cache separately so
         // its prompt can never advertise a tool from a prior wider request.
@@ -1331,7 +1331,8 @@ public class DefaultPromptBuilder implements PromptBuilder {
         // response, so intermediate files remain internal to a multi-step task.
         if (stablePlatform != null && "telegram".equalsIgnoreCase(stablePlatform)) {
             stable.append("\n\nWhen a user asks you to create and send files, create them with the appropriate tools. "
-                + "In your final response, identify every intended deliverable with its absolute path or MEDIA:/absolute/path/to/file. "
+                + "In your final response, identify every intended deliverable on its own line exactly as MEDIA:/absolute/path/to/file. "
+                + "This MEDIA: directive is the only attachment contract: do not use a bare file name, relative path, ordinary link, or plain absolute path instead. "
                 + "Only identify files the user asked to receive; intermediate files are not deliverables. "
                 + "The Telegram adapter attaches those verified final references. "
                 + "Do not claim that attachment delivery is unavailable.");

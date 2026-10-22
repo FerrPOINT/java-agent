@@ -94,6 +94,9 @@ class DefaultPromptBuilderTest {
             .buildSystemMessage(telegram);
 
         assertThat(prompt.content()).contains("The Telegram adapter attaches those verified final references.")
+            .contains("MEDIA:/absolute/path/to/file")
+            .contains("do not use a bare file name, relative path, ordinary link, or plain absolute path")
+            .doesNotContain("absolute path or MEDIA:")
             .contains("Do not claim that attachment delivery is unavailable");
     }
 
