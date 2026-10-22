@@ -193,6 +193,7 @@ public final class CentralJwtVerifier {
         }
     }
 
+    /** Separates a valid identity with denied app access from an invalid bearer token. */
     public static final class CentralAccessDeniedException extends JwtException {
         private static final long serialVersionUID = 1L;
         public CentralAccessDeniedException() { super("Current application access required"); }

@@ -104,6 +104,18 @@ class ClassJavadocTests(PatchedRoot):
         self.assertEqual(counts["DOC001"], 0)
 
 
+    def test_nested_type_modifiers_preserve_javadoc_and_still_report_missing_docs(self) -> None:
+        src = make_module(self.root, "backend")
+        for declaration in ("private record Snapshot(int value)", "public static final class Denied"):
+            with self.subTest(declaration=declaration):
+                (src / "Outer.java").write_text(
+                    "/** Request authority owner. */\npublic class Outer {\n" + BIG_BODY
+                    + "\n/** Keeps the original request deadline. */\n" + declaration + " {}\n"
+                    + "private record Undocumented(int value) {}\n}\n"
+                )
+                self.assertEqual(mod.check_module("backend")["DOC001"], 1)
+
+
 class BannedPhraseTests(PatchedRoot):
     def test_filler_phrase_in_javadoc_is_doc002(self) -> None:
         src = make_module(self.root, "backend")

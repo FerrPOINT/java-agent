@@ -113,6 +113,7 @@ public final class UserContext {
                 java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(nanos))));
     }
 
+    /** Carries the original authority deadline across an explicit asynchronous handoff. */
     private record Snapshot(String user, String role, com.pdlc.auth.HumanApplicationAccess access) {
         static Snapshot capture() { return new Snapshot(CURRENT_USER_ID.get(), CURRENT_ROLE.get(), CENTRAL_ACCESS.get()); }
         void install() {
