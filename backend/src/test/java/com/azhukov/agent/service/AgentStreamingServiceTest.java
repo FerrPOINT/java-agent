@@ -219,8 +219,10 @@ class AgentStreamingServiceTest {
             }
             return null;
         }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+        AtomicReference<Session> toolSession = new AtomicReference<>();
         when(toolExecutionService.execute(eq("write_file"), any(String.class), any(String.class),
             any(), any(Session.class), any())).thenAnswer(invocation -> {
+                toolSession.set(invocation.getArgument(4));
                 tracker.recordMutation("write_file", invocation.getArgument(2),
                     "{\"resolved_path\":\"result.txt\"}", true);
                 return ToolResult.ok("written");
@@ -231,6 +233,7 @@ class AgentStreamingServiceTest {
         emitter.awaitDone();
 
         assertThat(modelCalls.get()).isEqualTo(3);
+        assertThat(toolSession.get().getMetadata("platform")).isEqualTo("telegram");
     }
 
     @Test
