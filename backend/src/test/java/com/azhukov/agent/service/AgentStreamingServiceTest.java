@@ -193,6 +193,47 @@ class AgentStreamingServiceTest {
 
 
     @Test
+    void streamingTelegramTurnWithFileMutationRepromptsBeforeFinalizing() throws Exception {
+        ChatRequest request = new ChatRequest(
+            SESSION_ID, USER_MESSAGE, null, 10_000L,
+            null, null, null, null, null, null, null, null, null, null,
+            null, null, null, null, null, null, null, null, null, null,
+            "private", null, null, null, null, "754334329", null, null);
+        when(toolRegistry.getDefinitions(any(Set.class))).thenAnswer(inv -> List.of(
+            new ToolDefinition("write_file", "Write a file", Map.of()),
+            new ToolDefinition("terminal", "Run a command", Map.of())));
+        com.azhukov.agent.core.tool.FileMutationTracker tracker = new com.azhukov.agent.core.tool.FileMutationTracker();
+        when(toolExecutionService.getFileMutationTracker()).thenReturn(tracker);
+        AtomicInteger modelCalls = new AtomicInteger();
+        doAnswer(invocation -> {
+            StreamingResponseHandler handler = invocation.getArgument(3);
+            if (modelCalls.incrementAndGet() == 1) {
+                handler.onToolCalls(List.of(new ToolCall("write-1", "write_file", "{\"path\":\"result.txt\",\"content\":\"ok\"}")));
+                handler.onComplete("tool_calls", null, null);
+            } else if (modelCalls.get() == 2) {
+                handler.onToken("Created result.txt");
+                handler.onComplete("stop", null, null);
+            } else {
+                handler.onToken("Could not locate an absolute deliverable path");
+                handler.onComplete("stop", null, null);
+            }
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+        when(toolExecutionService.execute(eq("write_file"), any(String.class), any(String.class),
+            any(), any(Session.class), any())).thenAnswer(invocation -> {
+                tracker.recordMutation("write_file", invocation.getArgument(2),
+                    "{\"resolved_path\":\"result.txt\"}", true);
+                return ToolResult.ok("written");
+            });
+
+        CollectingEmitter emitter = new CollectingEmitter(30_000L);
+        streamingService.streamTurn(request, emitter);
+        emitter.awaitDone();
+
+        assertThat(modelCalls.get()).isEqualTo(3);
+    }
+
+    @Test
     void streamingTurnWithMemoryToolArmsBackgroundReviewCounter() throws Exception {
         properties.getMemory().setNudgeInterval(1);
         when(toolRegistry.getDefinitions(any(Set.class))).thenReturn(List.of(

@@ -453,7 +453,7 @@ public class AgentStreamingService {
             requestedUserId,
             properties.getModel().getModelName(), sessionSource);
         boolean isNew = resolved.isNew();
-        Session session = resolved.session();
+        Session session = resolved.session().withMetadata("platform", sessionSource);
         // A foreground streaming turn has the same priority as the sync path:
         // cancel its session's stale review before the first model/tool call.
         if (backgroundReviewService != null) {
