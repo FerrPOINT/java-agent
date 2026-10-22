@@ -22,6 +22,7 @@ public class FileMutationTracker {
 
     private final Set<String> turnMutationPaths = ConcurrentHashMap.newKeySet();
     private int verificationStopNudges = 0;
+    private int finalFileDeliveryNudges = 0;
 
     /**
      * Reset per-turn state. Called at the top of every agent turn (sync + streaming).
@@ -29,6 +30,7 @@ public class FileMutationTracker {
     public void resetForTurn() {
         turnMutationPaths.clear();
         verificationStopNudges = 0;
+        finalFileDeliveryNudges = 0;
     }
 
     /**
@@ -70,6 +72,15 @@ public class FileMutationTracker {
 
     public int getVerificationStopNudges() {
         return verificationStopNudges;
+    }
+
+    /** Reserve the one final-response correction pass after a file mutation. */
+    public boolean reserveFinalFileDeliveryNudge() {
+        if (turnMutationPaths.isEmpty() || finalFileDeliveryNudges > 0) {
+            return false;
+        }
+        finalFileDeliveryNudges++;
+        return true;
     }
 
     // ── Path extraction (Hermes tool_dispatch_helpers.py:409-500 parity) ──

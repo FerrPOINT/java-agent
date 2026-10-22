@@ -22,6 +22,7 @@ import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.agent.CliStateApplier;
+import com.azhukov.agent.core.agent.FinalFileDeliveryGuard;
 import com.azhukov.agent.core.agent.InterruptToken;
 import com.azhukov.agent.core.agent.AgentSessionResolver;
 import com.azhukov.agent.core.agent.SessionLineageService;
@@ -1353,6 +1354,17 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
 
             // No tool calls → turn is complete
             if (!response.hasToolCalls()) {
+                var finalDeliveryTracker = toolExecutionService.getFileMutationTracker();
+                if (FinalFileDeliveryGuard.shouldNudge(session, response.content(), finalDeliveryTracker)) {
+                    log.info("Final file delivery nudge issued for Telegram session {}", session.id());
+                    turnMessages.add(Message.assistant(response.content(), turnIndex, response.reasoning()));
+                    turnMessages.add(Message.user(FinalFileDeliveryGuard.NUDGE));
+                    if (midTurnPersistenceCallback != null
+                        && midTurnPersistenceCallback.persistNewMessages(session.id(), turnMessages, persistedUpTo)) {
+                        persistedUpTo = turnMessages.size();
+                    }
+                    continue;
+                }
                 // ── Verify-on-stop guard (Hermes parity: verification_stop.py) ──
                 // When the model finishes (STOP) after editing code without fresh
                 // verification evidence, inject a nudge requesting tests/build.

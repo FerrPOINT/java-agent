@@ -951,6 +951,13 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     }
                 }
                 log.debug("Turn {} completed without tool calls", i);
+                if (toolExecutionService != null && toolExecutionService.getFileMutationTracker() != null
+                    && FinalFileDeliveryGuard.shouldNudge(session, visibleContent,
+                        toolExecutionService.getFileMutationTracker())) {
+                    log.info("Final file delivery nudge issued for Telegram session {}", session.id());
+                    turnMessages.add(Message.user(FinalFileDeliveryGuard.NUDGE));
+                    continue;
+                }
                 // Nudge-gated background review — only fire when counters hit thresholds.
                 // Mirrors Hermes: memory review every N user turns, skill review every M tool iterations.
                 boolean interrupted = interruptToken != null && interruptToken.isCancelled(session.id());

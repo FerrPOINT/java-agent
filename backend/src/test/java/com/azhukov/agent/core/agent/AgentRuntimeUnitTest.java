@@ -134,6 +134,7 @@ class AgentRuntimeUnitTest {
         FileMutationTracker tracker = new FileMutationTracker();
         ToolExecutionService toolExecutionService = mock(ToolExecutionService.class);
         when(toolExecutionService.getFileMutationTracker()).thenReturn(tracker);
+        org.mockito.Mockito.doNothing().when(toolExecutionService).resetLoopGuardrailForTurn();
         when(toolExecutionService.execute(eq("write_file"), eq("call-1"),
             eq("{\"path\":\"src/Main.java\",\"content\":\"class Main {}\"}"), any(), any(), any()))
             .thenAnswer(inv -> {
