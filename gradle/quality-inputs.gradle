@@ -67,7 +67,7 @@ tasks.register('qualityDependencyInputs', QualityDependencyInputs) {
     def production = ['compileClasspath', 'runtimeClasspath', 'annotationProcessor']
             .collect { configurations.findByName(it) }.findAll { it != null && it.canBeResolved }
             .collect(externalFiles)
-    production.add(externalFiles(buildscript.configurations.classpath))
+    production.add(externalFiles(project.buildscript.configurations.classpath))
     def units = ['testCompileClasspath', 'testRuntimeClasspath', 'testAnnotationProcessor', 'jacocoAgent']
             .collect { configurations.findByName(it) }.findAll { it != null && it.canBeResolved }
             .collect(externalFiles)
