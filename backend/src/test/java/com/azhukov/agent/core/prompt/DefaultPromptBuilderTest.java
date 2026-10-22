@@ -93,10 +93,11 @@ class DefaultPromptBuilderTest {
         Message prompt = new DefaultPromptBuilder(properties, registry, new DefaultAgentConstants())
             .buildSystemMessage(telegram);
 
-        assertThat(prompt.content()).contains("The Telegram adapter attaches those verified final references.")
+        assertThat(prompt.content()).contains("The Telegram adapter attaches verified final references.")
             .contains("MEDIA:/absolute/path/to/file")
-            .contains("do not use a bare file name, relative path, ordinary link, or plain absolute path")
-            .doesNotContain("absolute path or MEDIA:")
+            .contains("also recognizes an existing absolute or ~/ local path")
+            .contains("never a bare filename, relative path, URL, code example, missing path, or tool output")
+            .doesNotContain("only attachment contract")
             .contains("Do not claim that attachment delivery is unavailable");
     }
 

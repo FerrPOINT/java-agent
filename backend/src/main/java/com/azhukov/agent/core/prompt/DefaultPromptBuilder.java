@@ -284,16 +284,17 @@ public class DefaultPromptBuilder implements PromptBuilder {
 
     // ── Platform-specific hints (mirrors Hermes PLATFORM_HINTS) ──
 
-    /** Telegram platform hint — tells the model about markdown conversion and MEDIA: file delivery. */
+    /** Telegram platform hint — tells the model about markdown conversion and native file delivery. */
     static final String TELEGRAM_PLATFORM_HINT =
         "You are on a text messaging communication platform, Telegram. "
         + "Standard Markdown is automatically converted to Telegram formatting. "
         + "Supported: **bold**, *italic*, ~~strikethrough~~, ||spoiler||, "
         + "`inline code`, ```code blocks```, [links](url), and ## headers. "
         + "Prefer bullet lists and labeled key:value pairs for structured data. "
-        + "You can send media files natively: to deliver a file to the user, "
-        + "include MEDIA:/absolute/path/to/file in your response. Images "
-        + "(.png, .jpg, .webp) appear as photos, audio (.ogg) sends as voice "
+        + "You can send local files natively: use MEDIA:/absolute/path/to/file in the final response. "
+        + "An existing absolute or ~/ path in ordinary final-response prose is also delivered, "
+        + "but a filename, relative path, URL, code example, missing path, or tool output is not. "
+        + "Images (.png, .jpg, .webp) appear as photos, audio (.ogg) sends as voice "
         + "bubbles, and videos (.mp4) play inline. You can also include image "
         + "URLs in markdown format ![alt](url) and they will be sent as native photos.";
 
@@ -484,7 +485,7 @@ public class DefaultPromptBuilder implements PromptBuilder {
         boolean telegramSession = session != null
             && "telegram".equalsIgnoreCase(session.getMetadata("platform"));
         if (telegramSession) {
-            sessionId += ":telegram-delivery-v2";
+            sessionId += ":telegram-delivery-v3";
         }
         // P-04: disabledTools changes the API tool surface; cache separately so
         // its prompt can never advertise a tool from a prior wider request.
@@ -1327,14 +1328,16 @@ public class DefaultPromptBuilder implements PromptBuilder {
         if (stablePlatform != null && "telegram".equalsIgnoreCase(stablePlatform)) {
             stable.append("\n\n").append(TELEGRAM_PLATFORM_HINT);
         }
-        // The platform adapter delivers only file references from the final
-        // response, so intermediate files remain internal to a multi-step task.
+        // The platform adapter considers only final-response references. It follows
+        // Hermes' explicit-then-bare extraction order; final files must therefore be
+        // named with MEDIA: whenever possible, while ordinary existing absolute/home
+        // paths remain compatible with the final delivery pipeline.
         if (stablePlatform != null && "telegram".equalsIgnoreCase(stablePlatform)) {
             stable.append("\n\nWhen a user asks you to create and send files, create them with the appropriate tools. "
-                + "In your final response, identify every intended deliverable on its own line exactly as MEDIA:/absolute/path/to/file. "
-                + "This MEDIA: directive is the only attachment contract: do not use a bare file name, relative path, ordinary link, or plain absolute path instead. "
+                + "In your final response, put every intended deliverable on its own line as MEDIA:/absolute/path/to/file. "
+                + "The adapter also recognizes an existing absolute or ~/ local path in ordinary final prose, but never a bare filename, relative path, URL, code example, missing path, or tool output. "
                 + "Only identify files the user asked to receive; intermediate files are not deliverables. "
-                + "The Telegram adapter attaches those verified final references. "
+                + "The Telegram adapter attaches verified final references. "
                 + "Do not claim that attachment delivery is unavailable.");
         }
 
