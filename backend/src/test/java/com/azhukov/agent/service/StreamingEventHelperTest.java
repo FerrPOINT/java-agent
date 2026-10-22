@@ -77,6 +77,17 @@ class StreamingEventHelperTest {
     }
 
     @Test
+    void callbackWithExpiredOriginalProofClosesWithoutLeakingAnotherEvent() {
+        var proof = new com.pdlc.auth.HumanApplicationAccess("fixture", "admin", Set.of("java-agent"),
+                1, true, java.time.Instant.now().plusSeconds(60), System.nanoTime() - 1);
+        CollectingEmitter emitter = new CollectingEmitter(30_000L);
+        StreamContext ctx = new StreamContext(proof);
+        helper.send(emitter, new StreamEvent("token", "protected", null, null), ctx);
+        assertThat(emitter.events).isEmpty();
+        assertThat(ctx.isClientDisconnected()).isTrue();
+    }
+
+    @Test
     void sendSkipsWhenClientDisconnected() {
         CollectingEmitter emitter = new CollectingEmitter(30_000L);
         StreamContext ctx = new StreamContext();

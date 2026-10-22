@@ -350,8 +350,9 @@ public class AgentStreamingService {
         ChatRequest scopedRequest = request.withUserId(UserContext.effectiveUserId(request.userId()));
         String requestUser = UserContext.getUserId();
         String requestRole = UserContext.getRole();
+        var requestAccess = UserContext.centralAccess();
         // Create per-stream context (replaces the old singleton volatile boolean)
-        StreamContext streamCtx = new StreamContext();
+        StreamContext streamCtx = new StreamContext(requestAccess);
 
         // Register SseEmitter lifecycle callbacks for cleanup and interrupt
         UUID callbackSessionId = scopedRequest.sessionId();
@@ -393,7 +394,10 @@ public class AgentStreamingService {
                 }
             }
             try {
-                if (requestUser != null) {
+                if (requestAccess != null) {
+                    UserContext.setCentral(requestAccess);
+                    UserContext.requireCurrentAccess();
+                } else if (requestUser != null) {
                     UserContext.set(requestUser, requestRole);
                 }
                 long __turnStart = System.currentTimeMillis();
@@ -693,6 +697,7 @@ public class AgentStreamingService {
             ChatResponse response;
             final UUID sessionId = session.id();
             while (true) {
+                UserContext.requireCurrentAccess();
                 final StringBuilder contentBuilder = new StringBuilder();
                 final List<ToolCall> collectedToolCalls = new ArrayList<>();
                 final AtomicReference<Throwable> capturedError = new AtomicReference<>();

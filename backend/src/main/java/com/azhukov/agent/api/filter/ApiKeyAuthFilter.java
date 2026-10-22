@@ -162,9 +162,18 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
             chain.doFilter(request, response);
             return;
         }
-        final String subject;
+        final com.pdlc.auth.HumanApplicationAccess access;
         try {
-            subject = centralJwtVerifier.verifySubject(extractBearerToken(request.getHeader("Authorization")));
+            access = centralJwtVerifier.verifyAccess(extractBearerToken(request.getHeader("Authorization")),
+                    request.getMethod());
+        } catch (CentralJwtVerifier.CentralAccessDeniedException denied) {
+            response.setStatus(HttpStatus.FORBIDDEN.value());
+            response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+            response.setCharacterEncoding("UTF-8");
+            response.setHeader("Cache-Control", "no-store");
+            response.getWriter().write(errorJson("Нет доступа к приложению", "authorization_error",
+                    "application_access_denied"));
+            return;
         } catch (CentralJwtVerifier.CentralAuthUnavailableException unavailable) {
             response.setStatus(HttpStatus.SERVICE_UNAVAILABLE.value());
             response.setContentType(MediaType.APPLICATION_JSON_VALUE);
@@ -181,9 +190,10 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
             return;
         }
         SecurityContextHolder.getContext().setAuthentication(
-                UsernamePasswordAuthenticationToken.authenticated(subject, null,
-                        List.of(new SimpleGrantedAuthority("ROLE_USER"))));
-        UserContext.set(subject, UserContext.ROLE_USER);
+                UsernamePasswordAuthenticationToken.authenticated(access.subject(), null,
+                        List.of(new SimpleGrantedAuthority("admin".equals(access.role()) ? "ROLE_ADMIN" : "ROLE_USER"))));
+        UserContext.setCentral(access);
+        response.setHeader("Cache-Control", "no-store");
         chain.doFilter(request, response);
     }
 

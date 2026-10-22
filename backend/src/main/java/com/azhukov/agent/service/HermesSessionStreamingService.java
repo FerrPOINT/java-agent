@@ -1,6 +1,7 @@
 package com.azhukov.agent.service;
 
 import com.azhukov.agent.api.dto.ChatRequest;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.api.dto.ChatResponseDto;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PreDestroy;
@@ -61,7 +62,7 @@ public class HermesSessionStreamingService {
             SseEmitter emitter,
             Runnable onComplete) {
         try {
-            executor.submit(() -> run(request, requestedSessionId, runtime, emitter, onComplete));
+            executor.submit(UserContext.wrap(() -> run(request, requestedSessionId, runtime, emitter, onComplete)));
         } catch (RuntimeException e) {
             completeCallback(onComplete);
             throw e;
@@ -82,6 +83,7 @@ public class HermesSessionStreamingService {
             ? new LinkedHashMap<>(runtime)
             : new LinkedHashMap<>();
         try {
+            UserContext.requireCurrentAccess();
             events.emit("run.started", Map.of(
                 "user_message", Map.of(
                     "role", "user",
@@ -220,6 +222,10 @@ public class HermesSessionStreamingService {
         }
 
         private void emit(String name, Map<String, Object> fields) {
+            if (UserContext.centralAccess() != null && !UserContext.centralAccess().permits(java.util.Set.of("java-agent"), false)) {
+                emitter.complete();
+                return;
+            }
             Map<String, Object> payload = new LinkedHashMap<>();
             if (fields != null) {
                 payload.putAll(fields);
