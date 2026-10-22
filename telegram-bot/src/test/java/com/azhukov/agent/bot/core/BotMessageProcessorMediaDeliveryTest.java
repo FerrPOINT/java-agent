@@ -271,6 +271,23 @@ class BotMessageProcessorMediaDeliveryTest {
     }
 
     @Test
+    void symlinkInsideAllowedRootDoesNotDeliverOutsideFile() throws Exception {
+        Path outside = tempDir.getParent().resolve("outside-report.pdf");
+        Files.writeString(outside, "private");
+        Path link = tempDir.resolve("workspace-link.pdf");
+        try {
+            Files.createSymbolicLink(link, outside);
+        } catch (UnsupportedOperationException e) {
+            org.junit.jupiter.api.Assumptions.abort("symbolic links are unavailable");
+        }
+        stubStreamingResult("MEDIA:" + link, true);
+
+        processor.accept(textEvent(1, 100L, "create a report"));
+
+        verify(telegramClient, never()).sendDocument(anyLong(), any(byte[].class), anyString(), any(), any());
+    }
+
+    @Test
     @DisplayName("4. Document file (PDF) → sendDocument is called")
     void documentFileRoutesToSendDocument() throws Exception {
         Path pdfFile = createTempFile("report.pdf");
@@ -296,16 +313,14 @@ class BotMessageProcessorMediaDeliveryTest {
     }
 
     @Test
-    @DisplayName("6. File not found → warning message sent via sendMessage")
-    void fileNotFoundSendsWarningMessage() {
-        // Reference a file that does not exist, but is within the allowed working directory
+    @DisplayName("6. Missing MEDIA file is rejected without a native send")
+    void missingFileDoesNotSendNativeMedia() {
         String nonExistentPath = tempDir.resolve("nonexistent-file.png").toString();
-        String mediaTag = "MEDIA:" + nonExistentPath;
-        stubStreamingResult("Here is the image\n" + mediaTag, true);
+        stubStreamingResult("Here is the image\nMEDIA:" + nonExistentPath, true);
 
         processor.accept(textEvent(1, 100L, "show me the image"));
 
-        // A warning message should be sent via sendMessage containing "not found"
-        verify(telegramClient).sendMessage(eq(100L), contains("not found"));
+        verify(telegramClient, never()).sendPhoto(anyLong(), any(byte[].class), any(), any());
+        verify(telegramClient, never()).sendDocument(anyLong(), any(byte[].class), anyString(), any(), any());
     }
 }

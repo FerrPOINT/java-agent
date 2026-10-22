@@ -145,6 +145,29 @@ class MediaDeliveryServiceTest {
     }
 
     @Test
+    void extractBareLocalFiles_existingBarePath(@TempDir Path tempDir) throws Exception {
+        Path file = tempDir.resolve("generated.pdf");
+        Files.writeString(file, "document");
+
+        MediaDeliveryService.ExtractionResult result = service.extractBareLocalFiles("Result: " + file);
+
+        assertEquals(1, result.media().size());
+        assertEquals(file.toString(), result.media().get(0).path());
+        assertFalse(result.cleanedText().contains(file.toString()));
+    }
+
+    @Test
+    void extractBareLocalFiles_codeExampleIsNotExtracted(@TempDir Path tempDir) throws Exception {
+        Path file = tempDir.resolve("generated.pdf");
+        Files.writeString(file, "document");
+
+        MediaDeliveryService.ExtractionResult result = service.extractBareLocalFiles("Example: `" + file + "`");
+
+        assertTrue(result.media().isEmpty());
+        assertTrue(result.cleanedText().contains(file.toString()));
+    }
+
+    @Test
     void extractMediaTags_relativePathIsNotAnAttachment() {
         MediaDeliveryService.ExtractionResult result = service.extractMediaTags("Result: output/generated.pdf");
 

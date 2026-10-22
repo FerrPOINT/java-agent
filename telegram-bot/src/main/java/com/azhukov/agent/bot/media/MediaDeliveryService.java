@@ -3,6 +3,7 @@ package com.azhukov.agent.bot.media;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -88,6 +89,11 @@ public class MediaDeliveryService {
         Pattern.CASE_INSENSITIVE
     );
 
+    private static final Pattern BARE_PATH_RE = Pattern.compile(
+        "(?<![/:\\w.])(?:~/|/|[A-Za-z]:[/\\\\])(?:[\\w.\\-]+[/\\\\])*[\\w.\\-]+\\.(?:" + EXT_ALTERNATION + ")\\b",
+        Pattern.CASE_INSENSITIVE
+    );
+
     // Code-block masking patterns
     private static final Pattern FENCED_CODE_BLOCK_RE = Pattern.compile("```[^\\n]*\\n.*?```", Pattern.DOTALL);
     private static final Pattern INLINE_CODE_RE = Pattern.compile("`[^`\\n]+`");
@@ -149,7 +155,9 @@ public class MediaDeliveryService {
     // The stripMediaTagsForDisplay method below handles the streaming case.
 
     /**
-     * Extract explicit MEDIA: directives from response text.
+     * Extract explicit MEDIA: directives from response text. Final response
+     * attachments require MEDIA:, while bare local paths are intentionally kept
+     * separate for platform-specific handling.
      *
      * <p>Plain file names, relative paths, ordinary links, and absolute paths
      * are display text, not attachment declarations.
@@ -228,6 +236,45 @@ public class MediaDeliveryService {
 
         log.info("media_delivery_extraction explicit_candidates={}", descriptors.size());
         return new ExtractionResult(descriptors, cleaned);
+    }
+
+    /**
+     * Extract existing absolute/home-relative files mentioned in ordinary prose.
+     * This helper mirrors Hermes' separate bare-path extractor but is deliberately
+     * not part of Telegram final-response attachment dispatch.
+     */
+    public ExtractionResult extractBareLocalFiles(String content) {
+        if (content == null || content.isEmpty()) {
+            return new ExtractionResult(List.of(), "");
+        }
+        String scanContent = maskProtectedSpans(content);
+        Matcher matcher = BARE_PATH_RE.matcher(scanContent);
+        List<int[]> spans = new ArrayList<>();
+        List<String> paths = new ArrayList<>();
+        while (matcher.find()) {
+            String path = expandUserHome(matcher.group());
+            File file = new File(path);
+            if (file.isFile()) {
+                paths.add(path);
+                spans.add(new int[]{matcher.start(), matcher.end()});
+            }
+        }
+        if (spans.isEmpty()) {
+            return new ExtractionResult(List.of(), content);
+        }
+        StringBuilder cleaned = new StringBuilder(content);
+        spans.sort((a, b) -> Integer.compare(b[0], a[0]));
+        for (int[] span : spans) {
+            cleaned.delete(span[0], span[1]);
+        }
+        Set<String> seen = new LinkedHashSet<>();
+        List<MediaDescriptor> media = new ArrayList<>();
+        for (String path : paths) {
+            if (seen.add(path)) {
+                media.add(new MediaDescriptor(path, getExtension(path), false, false));
+            }
+        }
+        return new ExtractionResult(media, collapseBlankLines(cleaned.toString()));
     }
 
     /**

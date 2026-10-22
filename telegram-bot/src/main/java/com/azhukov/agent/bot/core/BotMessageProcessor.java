@@ -1138,24 +1138,43 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
     }
 
     /**
-     * S-2: Validate that a media file path is within allowed base directories.
-     * Security check to prevent path-traversal attacks.
+     * Final-response attachment declarations must point at an existing regular
+     * file under a configured root. Resolving real paths before comparing roots
+     * blocks symlink escapes from an otherwise allowed workspace.
      *
      * @param path the file path to validate
-     * @return true if the path is within an allowed directory
+     * @return true if the file is within an allowed directory
      */
     private boolean isMediaPathAllowed(String path) {
+        if (path == null || path.isBlank()) {
+            return false;
+        }
         try {
-            Path resolved = Paths.get(path).toAbsolutePath().normalize();
-            Path workingDir = Paths.get(properties.getWorkingDirectory()).toAbsolutePath().normalize();
-            Path mediaDir = AgentMediaPaths.mediaDir();
-            Path artifactDir = resolveArtifactDir();
-            return resolved.startsWith(workingDir)
-                || resolved.startsWith(mediaDir)
-                || (artifactDir != null && resolved.startsWith(artifactDir));
+            Path resolved = Paths.get(path).toRealPath();
+            if (!Files.isRegularFile(resolved)) {
+                return false;
+            }
+            return isWithinConfiguredRoot(resolved, Paths.get(properties.getWorkingDirectory()))
+                || isWithinConfiguredRoot(resolved, AgentMediaPaths.mediaDir())
+                || isWithinConfiguredRoot(resolved, resolveArtifactDir());
         } catch (Exception e) {
             return false;
         }
+    }
+
+    private static boolean isWithinConfiguredRoot(Path candidate, Path configuredRoot) {
+        if (configuredRoot == null) {
+            return false;
+        }
+        try {
+            return isWithin(candidate, configuredRoot.toRealPath());
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private static boolean isWithin(Path candidate, Path root) {
+        return candidate.equals(root) || candidate.startsWith(root);
     }
 
     /** Shared persistent artifact root configured for backend and Telegram bot. */
