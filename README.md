@@ -46,7 +46,7 @@
 | Поле | Значение |
 |---|---|
 | Модули | `backend`, `telegram-bot`, `cli` (+ `shared` DTO) |
-| Runtime | Temurin 25.0.4.1+1 LTS, Spring Boot 4.1; workspace Gradle 9.6.1, standalone backend 9.8.0 |
+| Runtime | Temurin 25.0.4.1+1 LTS, Spring Boot 4.1; workspace Gradle 9.6.1, standalone backend 9.8.1 |
 | Data | PostgreSQL 16, JPA/Hibernate, Flyway |
 | AI/tooling | LangChain4j 1.18, MCP Java SDK 2.0, Repomix MCP, built-in tool registry |
 | Interfaces | REST/SSE, OpenAI-compatible `/v1/*`, Telegram bot, CLI REPL |

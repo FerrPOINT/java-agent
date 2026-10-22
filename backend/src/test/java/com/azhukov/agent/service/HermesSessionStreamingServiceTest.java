@@ -52,6 +52,31 @@ class HermesSessionStreamingServiceTest {
     }
 
     @Test
+    void nativeStreamRunsWithTheCapturedHumanProofOnItsWorker() throws Exception {
+        var proof = new com.pdlc.auth.HumanApplicationAccess("central-owner", "user", Set.of("java-agent"), 1, true,
+                java.time.Instant.now().plusSeconds(60), System.nanoTime()+60_000_000_000L);
+        var seen = new java.util.concurrent.CountDownLatch(1);
+        var actual = new AtomicReference<String>();
+        var failure = new AtomicReference<Throwable>();
+        when(agentRuntimeService.runTurn(any(ChatRequest.class))).thenAnswer(invocation -> {
+            try {
+                actual.set(com.azhukov.agent.core.security.UserContext.getUserId());
+                assertThat(com.azhukov.agent.core.security.UserContext.centralAccess()).isSameAs(proof);
+                assertThat(com.azhukov.agent.core.security.UserContext.isAdmin()).isFalse();
+            } catch (Throwable error) { failure.set(error); }
+            finally { seen.countDown(); }
+            throw new IllegalStateException("fixture terminal");
+        });
+        com.azhukov.agent.core.security.UserContext.setCentral(proof);
+        try { service.streamTurn(ChatRequest.simple(SESSION_ID, "owned", null, 10000L), SESSION_ID, Map.of()); }
+        finally { com.azhukov.agent.core.security.UserContext.clear(); }
+        assertThat(seen.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(failure.get()).isNull();
+        assertThat(actual.get()).isEqualTo("central-owner");
+        assertThat(com.azhukov.agent.core.security.UserContext.getUserId()).isNull();
+    }
+
+    @Test
     void streamTurnEmitsHermesLifecycleEvents() throws Exception {
         when(agentRuntimeService.runTurn(any(ChatRequest.class)))
             .thenReturn(new ChatResponseDto(

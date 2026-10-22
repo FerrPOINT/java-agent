@@ -71,6 +71,8 @@ agent:
     jwks-uri: ${AGENT_CENTRAL_AUTH_JWKS_URI:}
     audience: ${AGENT_CENTRAL_AUTH_AUDIENCE:}
     session-uri: ${AGENT_CENTRAL_AUTH_SESSION_URI:}
+    personal-token-uri: ${AGENT_CENTRAL_AUTH_PERSONAL_TOKEN_URI:}
+    application-access-required: ${AGENT_CENTRAL_AUTH_APPLICATION_ACCESS_REQUIRED:false}
   
   # ─── Model ───
   model:

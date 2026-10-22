@@ -58,6 +58,11 @@ class StreamingEventHelper {
      */
     void send(SseEmitter emitter, StreamEvent event, StreamContext streamCtx) {
         if (streamCtx.isClientDisconnected()) return;
+        if (!streamCtx.hasCurrentAccess()) {
+            streamCtx.markDisconnected();
+            safeComplete(emitter);
+            return;
+        }
         try {
             emitter.send(SseEmitter.event()
                 .id(UUID.randomUUID().toString())

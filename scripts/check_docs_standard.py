@@ -24,7 +24,7 @@ BASELINE = ROOT / "docs" / "standards" / "coverage-baseline.json"
 
 CLASS_DECL_RE = re.compile(
     r"(?P<javadoc>(?:/\*\*.*?\*/\s*))?(?P<annos>(?:@[\w.]+(?:\([^)]*\))?\s*)*)"
-    r"(?P<decl>(?:public\s+|final\s+|abstract\s+|sealed\s+|non-sealed\s+)*"
+    r"(?P<decl>(?:(?:public|protected|private|static|final|abstract|sealed|non-sealed)\s+)*"
     r"(?:class|interface|record|enum)\s+\w+)",
     re.S,
 )

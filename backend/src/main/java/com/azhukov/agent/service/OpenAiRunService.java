@@ -8,6 +8,7 @@ import com.azhukov.agent.core.client.ModelRequestOptions;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.security.ApiErrorTextRedactor;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.security.ApprovalQueue;
 import com.azhukov.agent.core.security.Redactor;
 import com.azhukov.agent.service.OpenAiSessionService.OpenAiSessionContext;
@@ -109,7 +110,7 @@ public class OpenAiRunService {
         }
         Session effectiveSession = runSession;
         try {
-            executor.submit(() -> run(record, effectiveSession, userMessage, options, reservation));
+            executor.submit(UserContext.wrap(() -> run(record, effectiveSession, userMessage, options, reservation)));
             executor.submit(() -> monitorApprovals(record));
             return record;
         } catch (RuntimeException e) {
@@ -253,7 +254,7 @@ public class OpenAiRunService {
             return null;
         }
         SseEmitter emitter = new SseEmitter(RUN_EVENT_STREAM_TIMEOUT_MS);
-        executor.submit(() -> drainEvents(record, emitter));
+        executor.submit(UserContext.wrap(() -> drainEvents(record, emitter)));
         return emitter;
     }
 
@@ -265,6 +266,7 @@ public class OpenAiRunService {
         record.setStatus("running", Map.of("last_event", "run.started"));
         record.emit("run.started", Map.of());
         try {
+            UserContext.requireCurrentAccess();
             if (record.stopRequested.get() || interruptToken.isCancelled(record.controlSessionId())) {
                 record.setStatus("cancelled", Map.of("last_event", "run.cancelled"));
                 record.emit("run.cancelled", Map.of());
@@ -371,7 +373,8 @@ public class OpenAiRunService {
     private void drainEvents(RunRecord record, SseEmitter emitter) {
         try {
             while (true) {
-                QueuedEvent event = record.events.poll(30, TimeUnit.SECONDS);
+                QueuedEvent event = record.events.poll(UserContext.accessWaitMillis(30_000), TimeUnit.MILLISECONDS);
+                UserContext.requireCurrentAccess();
                 if (event == null) {
                     emitter.send(SseEmitter.event().comment("keepalive"));
                     continue;
