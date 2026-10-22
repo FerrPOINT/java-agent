@@ -433,7 +433,7 @@ public class StreamingOrchestrator {
                         String finalText = accumulated.toString();
                         List<MediaDeliveryService.MediaDescriptor> explicitReferences = List.of();
                         if (properties.isMediaDeliveryEnabled()) {
-                            MediaDeliveryService.ExtractionResult extraction = mediaDeliveryService.extractMediaTags(finalText);
+                            MediaDeliveryService.ExtractionResult extraction = mediaDeliveryService.extractFinalDeliveryMedia(finalText);
                             explicitReferences = extraction.media();
                             finalText = extraction.cleanedText();
                         }
@@ -503,7 +503,7 @@ public class StreamingOrchestrator {
                         // S-2: Extract MEDIA: tags before finalizing the stream message
                         // so the displayed text doesn't contain raw MEDIA: tags
                         if (properties.isMediaDeliveryEnabled()) {
-                            MediaDeliveryService.ExtractionResult extraction = mediaDeliveryService.extractMediaTags(finalText);
+                            MediaDeliveryService.ExtractionResult extraction = mediaDeliveryService.extractFinalDeliveryMedia(finalText);
                             List<MediaDeliveryService.MediaDescriptor> explicitReferences = extraction.media();
                             finalText = extraction.cleanedText();
                             // Finalize the stream with cleaned text

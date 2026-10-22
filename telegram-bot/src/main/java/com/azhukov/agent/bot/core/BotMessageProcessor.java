@@ -1012,7 +1012,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         Integer threadId = messageThreadId > 0 ? (int) messageThreadId : null;
         String textForDisplay = text;
         if (properties.isMediaDeliveryEnabled()) {
-            MediaDeliveryService.ExtractionResult extraction = mediaDeliveryService.extractMediaTags(text);
+            MediaDeliveryService.ExtractionResult extraction = mediaDeliveryService.extractFinalDeliveryMedia(text);
             textForDisplay = extraction.cleanedText();
             if (!extraction.media().isEmpty()) {
                 deliverMedia(chatId, extraction.media(), threadId);
@@ -1084,7 +1084,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         // S-2: Extract MEDIA: tags and bare file paths using MediaDeliveryService
         String textForDisplay = text;
         if (properties.isMediaDeliveryEnabled()) {
-            MediaDeliveryService.ExtractionResult extraction = mediaDeliveryService.extractMediaTags(text);
+            MediaDeliveryService.ExtractionResult extraction = mediaDeliveryService.extractFinalDeliveryMedia(text);
             textForDisplay = extraction.cleanedText();
             // Deliver extracted media files as native Telegram attachments
             if (!extraction.media().isEmpty()) {

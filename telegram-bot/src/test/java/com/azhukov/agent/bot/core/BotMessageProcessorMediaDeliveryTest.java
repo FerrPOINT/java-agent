@@ -260,14 +260,25 @@ class BotMessageProcessorMediaDeliveryTest {
     }
 
     @Test
-    void plainFilePathDoesNotDeliverWithoutExplicitMediaDirective() throws Exception {
-        Path document = createTempFile("report.pdf");
+    void nonexistentPlainFilePathDoesNotDeliver() {
+        Path document = tempDir.resolve("missing-report.pdf");
         stubStreamingResult("Report is ready: " + document, true);
 
         processor.accept(textEvent(1, 100L, "create a report"));
 
         verify(telegramClient, never()).sendDocument(anyLong(), any(byte[].class), anyString(), any(), any());
         verify(streamEditor).finalizeStream(eq(100L), eq(1L), contains(document.toString()));
+    }
+
+    @Test
+    void plainExistingFilePathDeliversAsHermesBarePath() throws Exception {
+        Path document = createTempFile("report.pdf");
+        stubStreamingResult("Report is ready: " + document, true);
+
+        processor.accept(textEvent(1, 100L, "create a report"));
+
+        verify(telegramClient).sendDocument(eq(100L), any(byte[].class), eq("report.pdf"), isNull(), isNull());
+        verify(streamEditor).finalizeStream(eq(100L), eq(1L), argThat(text -> !text.contains(document.toString())));
     }
 
     @Test

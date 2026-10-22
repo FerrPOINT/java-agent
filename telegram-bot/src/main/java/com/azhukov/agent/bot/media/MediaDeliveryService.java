@@ -239,9 +239,34 @@ public class MediaDeliveryService {
     }
 
     /**
+     * Extract final-response attachments with Hermes-compatible ordering: explicit
+     * MEDIA: directives first, then existing bare local paths in the remaining
+     * prose. Both sources remain subject to downstream allowed-root validation.
+     */
+    public ExtractionResult extractFinalDeliveryMedia(String content) {
+        ExtractionResult explicit = extractMediaTags(content);
+        ExtractionResult bare = extractBareLocalFiles(explicit.cleanedText());
+        Set<String> seen = new LinkedHashSet<>();
+        List<MediaDescriptor> media = new ArrayList<>();
+        for (MediaDescriptor descriptor : explicit.media()) {
+            if (seen.add(descriptor.path())) {
+                media.add(descriptor);
+            }
+        }
+        for (MediaDescriptor descriptor : bare.media()) {
+            if (seen.add(descriptor.path())) {
+                media.add(descriptor);
+            }
+        }
+        log.info("media_delivery_final_candidates explicit={} bare={} total={}",
+            explicit.media().size(), bare.media().size(), media.size());
+        return new ExtractionResult(media, bare.cleanedText());
+    }
+
+    /**
      * Extract existing absolute/home-relative files mentioned in ordinary prose.
-     * This helper mirrors Hermes' separate bare-path extractor but is deliberately
-     * not part of Telegram final-response attachment dispatch.
+     * This helper mirrors Hermes' separate bare-path extractor and is composed
+     * with explicit MEDIA: directives by {@link #extractFinalDeliveryMedia(String)}.
      */
     public ExtractionResult extractBareLocalFiles(String content) {
         if (content == null || content.isEmpty()) {

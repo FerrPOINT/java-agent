@@ -145,6 +145,30 @@ class MediaDeliveryServiceTest {
     }
 
     @Test
+    void plainExistingFilePathDeliversAsHermesBarePath(@TempDir Path tempDir) throws Exception {
+        Path file = tempDir.resolve("generated.pdf");
+        Files.writeString(file, "document");
+
+        MediaDeliveryService.ExtractionResult result = service.extractFinalDeliveryMedia("Result: " + file);
+
+        assertEquals(1, result.media().size());
+        assertEquals(file.toString(), result.media().get(0).path());
+        assertFalse(result.cleanedText().contains(file.toString()));
+    }
+
+    @Test
+    void finalDeliveryDeduplicatesExplicitAndBarePath(@TempDir Path tempDir) throws Exception {
+        Path file = tempDir.resolve("generated.pdf");
+        Files.writeString(file, "document");
+
+        MediaDeliveryService.ExtractionResult result = service.extractFinalDeliveryMedia(
+            "MEDIA:" + file + "\nResult: " + file);
+
+        assertEquals(1, result.media().size());
+        assertEquals(file.toString(), result.media().get(0).path());
+    }
+
+    @Test
     void extractBareLocalFiles_existingBarePath(@TempDir Path tempDir) throws Exception {
         Path file = tempDir.resolve("generated.pdf");
         Files.writeString(file, "document");

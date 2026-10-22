@@ -520,7 +520,32 @@ class StreamingOrchestratorTest {
     }
 
     @Test
-    void streamChat_delayedStartDoesNotDeliverPlainFilePath() {
+    void streamChat_delayedStartDeliversBareExistingFilePath() throws Exception {
+        when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong()))
+            .thenReturn(Optional.empty());
+        Path archive = Files.createTempFile("stream-final-", ".zip");
+        try {
+            String response = "Archive ready " + archive;
+            stubChatStream(ctx -> {
+                ctx.tokenConsumer.accept(response);
+                ctx.onComplete.accept(new AgentBackendClient.ChatResult(response, "model", 1, 10, true));
+                ctx.returnResult = new AgentBackendClient.ChatResult(response, "model", 1, 10, true, false, null);
+            });
+
+            orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
+
+            InOrder order = inOrder(streamEditor, hooks);
+            order.verify(streamEditor).finalizeStream(eq(100L), eq(-1L),
+                argThat(text -> text.contains("Archive ready") && !text.contains(archive.toString())));
+            order.verify(hooks).deliverMedia(eq(100L), argThat(media -> media.size() == 1
+                && archive.toString().equals(media.get(0).path())), isNull());
+        } finally {
+            Files.deleteIfExists(archive);
+        }
+    }
+
+    @Test
+    void streamChat_delayedStartDoesNotDeliverNonexistentPlainFilePath() {
         when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong()))
             .thenReturn(Optional.empty());
         String response = "Archive ready /tmp/final.zip";
