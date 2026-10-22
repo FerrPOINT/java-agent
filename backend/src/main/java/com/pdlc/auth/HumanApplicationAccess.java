@@ -25,7 +25,7 @@ public record HumanApplicationAccess(String subject, String role, Set<String> ap
 
     public boolean permits(Set<String> required, boolean administration) {
         return isCurrent() && (!administration || "admin".equals(role))
-                && (!enforced || applications.containsAll(required));
+                && ("admin".equals(role) || !enforced || applications.containsAll(required));
     }
 
     /** Uses the original request start and expiry; a receiving cache cannot add another minute. */
