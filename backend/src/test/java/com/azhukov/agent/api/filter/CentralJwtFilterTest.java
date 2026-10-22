@@ -121,6 +121,7 @@ class CentralJwtFilterTest {
                 .withProperty("agent.central-auth.jwks-uri", jwks)
                 .withProperty("agent.central-auth.audience", "sdlc")
                 .withProperty("agent.central-auth.session-uri", sessionUrl);
+        environment.withProperty("agent.central-auth.personal-token-uri", sessionUrl);
         var verifier = new CentralJwtVerifier(environment);
         verifier.init();
         return verifier;
@@ -142,6 +143,59 @@ class CentralJwtFilterTest {
         });
         assertThat(calls.get()).isEqualTo(1);
         assertThat(UserContext.getUserId()).isNull();
+    }
+
+    private String admission(String role, String applications) {
+        Instant now = Instant.now();
+        return "{\"id\":\"" + SUBJECT + "\",\"status\":\"active\",\"role\":\"admin\","
+                + "\"application_access\":{\"schema_version\":1,\"issuer\":\"" + ISSUER
+                + "\",\"subject\":\"" + SUBJECT + "\",\"role\":\"" + role + "\","
+                + "\"applications\":" + applications + ",\"revision\":2,\"enforced\":true,"
+                + "\"observed_at\":\"" + now + "\",\"expires_at\":\"" + now.plusSeconds(60) + "\"}}";
+    }
+
+    @Test
+    void sameSessionUsesCurrentRoleAndApplicationWithoutAllowingHumanImpersonation() throws Exception {
+        String encoded = token(builder -> builder.claim("role", "admin"), key);
+        var filter = filter();
+        for (String role : new String[]{"user", "admin", "user"}) {
+            sessionReply.set(admission(role, "[\"java-agent\"]"));
+            var request = new MockHttpServletRequest("GET", "/api/v2/sessions");
+            request.addHeader("Authorization", "Bearer " + encoded);
+            var response = new MockHttpServletResponse();
+            filter.doFilter(request, response, (incoming, outgoing) -> {
+                assertThat(UserContext.isAdmin()).isEqualTo("admin".equals(role));
+                assertThat(UserContext.effectiveUserId("foreign-author")).isEqualTo(SUBJECT);
+                assertThat(UserContext.centralAccess()).isNotNull();
+            });
+            assertThat(response.getStatus()).isEqualTo(200);
+            assertThat(UserContext.centralAccess()).isNull();
+        }
+        sessionReply.set(admission("user", "[]"));
+        var request = new MockHttpServletRequest("GET", "/api/v2/sessions");
+        request.addHeader("Authorization", "Bearer " + encoded);
+        var response = new MockHttpServletResponse();
+        filter.doFilter(request, response, (incoming, outgoing) -> fail("Revoked application admitted"));
+        assertThat(response.getStatus()).isEqualTo(403);
+    }
+
+    @Test
+    void personalTokenNeedsBothCurrentApplicationAndMethodScope() throws Exception {
+        for (String prefix : new String[]{"sdlc_pat_", "pdlc_pat_"}) {
+            for (String method : new String[]{"GET", "POST"}) {
+                String proof = admission("admin", "[\"java-agent\"]");
+                sessionReply.set(proof.replace("\"id\":", "\"sub\":")
+                        .replace("{\"sub\":", "{\"scopes\":[\"java-agent:read\"],\"expires_at\":\""
+                                + Instant.now().plusSeconds(120) + "\",\"sub\":"));
+                var request = new MockHttpServletRequest(method, "/api/v2/sessions");
+                request.addHeader("Authorization", "Bearer " + prefix + "fixture-only");
+                var response = new MockHttpServletResponse();
+                AtomicInteger calls = new AtomicInteger();
+                filter().doFilter(request, response, (incoming, outgoing) -> calls.incrementAndGet());
+                assertThat(response.getStatus()).isEqualTo(method.equals("GET") ? 200 : 403);
+                assertThat(calls.get()).isEqualTo(method.equals("GET") ? 1 : 0);
+            }
+        }
     }
 
     @ParameterizedTest

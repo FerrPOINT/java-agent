@@ -98,6 +98,42 @@ class ToolExecutionServiceTest {
     }
 
     @Test
+    void expiredHumanAuthorityCannotStartAToolOrCreateACheckpoint() {
+        var proof = new com.pdlc.auth.HumanApplicationAccess("fixture", "admin", java.util.Set.of("java-agent"),
+                1, true, java.time.Instant.now().plusSeconds(60), System.nanoTime() - 1);
+        com.azhukov.agent.core.security.UserContext.setCentral(proof);
+        try {
+            org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                    service.execute("read_file", "expired", "{}", LAST_MSG, SESSION))
+                    .isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
+            org.mockito.Mockito.verifyNoInteractions(toolRegistry, guardrail);
+        } finally { com.azhukov.agent.core.security.UserContext.clear(); }
+    }
+
+    @Test
+    void virtualToolWorkerReceivesSameHumanProofInsteadOfStandaloneAuthority() {
+        var proof = new com.pdlc.auth.HumanApplicationAccess("fixture", "user", java.util.Set.of("java-agent"),
+                1, true, java.time.Instant.now().plusSeconds(60), System.nanoTime() + 60_000_000_000L);
+        when(guardrail.beforeCall("read_file", "{}")).thenReturn(GuardrailDecision.allow("read_file"));
+        when(toolRegistry.execute("read_file", "proof", "{}", LAST_MSG, SESSION)).thenAnswer(inv -> {
+            assertThat(com.azhukov.agent.core.security.UserContext.centralAccess()).isSameAs(proof);
+            assertThat(com.azhukov.agent.core.security.UserContext.getUserId()).isEqualTo("fixture");
+            assertThat(com.azhukov.agent.core.security.UserContext.isAdmin()).isFalse();
+            return ToolResult.ok("verified");
+        });
+        when(redactor.redact("verified")).thenReturn("verified");
+        when(guardrail.afterCall(eq("read_file"), eq("{}"), any(ToolResult.class), anyBoolean()))
+                .thenReturn(GuardrailDecision.allow("read_file"));
+        when(toolResultClassifier.classify(any(ToolResult.class))).thenReturn(ToolResultClassifier.ResultType.SUCCESS);
+        when(toolOutputLimiter.truncate(any(ToolResult.class), anyString())).thenAnswer(inv -> inv.getArgument(0));
+        com.azhukov.agent.core.security.UserContext.setCentral(proof);
+        try {
+            assertThat(service.execute("read_file", "proof", "{}", LAST_MSG, SESSION).success()).isTrue();
+            assertThat(com.azhukov.agent.core.security.UserContext.centralAccess()).isSameAs(proof);
+        } finally { com.azhukov.agent.core.security.UserContext.clear(); }
+    }
+
+    @Test
     @DisplayName("Should return fail when guardrail blocks before call")
     void shouldFailWhenGuardrailBlocksBeforeCall() {
         String toolName = "bash";
