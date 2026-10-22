@@ -123,36 +123,33 @@ class MediaDeliveryServiceTest {
     }
 
     @Test
-    void extractMediaTags_bareFilePath(@TempDir Path tempDir) throws Exception {
-        // Create a real file
-        Path imgFile = tempDir.resolve("test.png");
-        Files.writeString(imgFile, "fake png data");
+    void extractMediaTags_bareExistingPathIsNotAnAttachment(@TempDir Path tempDir) throws Exception {
+        Path file = tempDir.resolve("generated.pdf");
+        Files.writeString(file, "document");
 
-        String text = "Here is the file: " + imgFile.toString();
-        MediaDeliveryService.ExtractionResult result = service.extractMediaTags(text);
+        MediaDeliveryService.ExtractionResult result = service.extractMediaTags("Result: " + file);
 
-        assertEquals(1, result.media().size());
-        assertEquals(imgFile.toString(), result.media().get(0).path());
-        assertFalse(result.cleanedText().contains(imgFile.toString()));
+        assertTrue(result.media().isEmpty());
+        assertTrue(result.cleanedText().contains(file.toString()));
     }
 
     @Test
-    void extractMediaTags_inlineBareFilePath(@TempDir Path tempDir) throws Exception {
+    void extractMediaTags_inlineBareExistingPathIsNotAnAttachment(@TempDir Path tempDir) throws Exception {
         Path archive = tempDir.resolve("bundle.zip");
         Files.writeString(archive, "archive");
 
         MediaDeliveryService.ExtractionResult result = service.extractMediaTags("Archive: `" + archive + "`");
 
-        assertEquals(1, result.media().size());
-        assertEquals(archive.toString(), result.media().get(0).path());
+        assertTrue(result.media().isEmpty());
+        assertTrue(result.cleanedText().contains(archive.toString()));
     }
-    @Test
-    void extractMediaTags_bareFilePathNonExistentNotExtracted() {
-        String text = "See /tmp/nonexistent_file_12345.png for details";
-        MediaDeliveryService.ExtractionResult result = service.extractMediaTags(text);
 
-        // Non-existent file should not be extracted
-        assertEquals(0, result.media().size());
+    @Test
+    void extractMediaTags_relativePathIsNotAnAttachment() {
+        MediaDeliveryService.ExtractionResult result = service.extractMediaTags("Result: output/generated.pdf");
+
+        assertTrue(result.media().isEmpty());
+        assertEquals("Result: output/generated.pdf", result.cleanedText());
     }
 
     @Test

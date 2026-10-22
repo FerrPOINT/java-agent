@@ -3,9 +3,7 @@ package com.azhukov.agent.bot.media;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.io.File;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -13,14 +11,12 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Extracts {@code MEDIA:/path/to/file} tags and bare file paths from agent
- * response text, returning the list of media descriptors and the cleaned
- * text with all media references removed.
+ * Extracts explicit {@code MEDIA:/path/to/file} directives from agent response
+ * text, returning media descriptors and cleaned display text.
  *
  * <p>Ported from Hermes {@code gateway/platforms/base.py}:
  * <ul>
  *   <li>{@code extract_media()} — MEDIA: tag extraction with code-block/JSON masking</li>
- *   <li>{@code extract_local_files()} — bare file path detection with existence check</li>
  *   <li>{@code _mask_protected_spans()} — masks code blocks and blockquotes</li>
  *   <li>{@code _mask_json_string_media()} — masks MEDIA: inside JSON string values</li>
  * </ul>
@@ -39,7 +35,7 @@ public class MediaDeliveryService {
 
     /**
      * Extensions eligible for media delivery. Matches the task spec allowlist.
-     * Used for both MEDIA: tag path validation and bare-path detection.
+     * Used for explicit MEDIA: tag path validation.
      */
     public static final Set<String> EXTENSION_ALLOWLIST = Set.of(
         ".png", ".jpg", ".jpeg", ".webp", ".gif",
@@ -86,24 +82,9 @@ public class MediaDeliveryService {
         Pattern.CASE_INSENSITIVE
     );
 
-    /**
-     * Bare file path pattern for detecting local files without MEDIA: prefix.
-     * Anchors: ~/ (home), / (absolute), X:\ or X:/ (Windows).
-     * Excludes paths inside URLs (negative lookbehind for /, :, word chars, dot).
-     */
-    /**
-     * M3 (WP-11 tail): does the text starting at a MEDIA: marker look like a
-     * COMPLETE tag (path terminated by a deliverable extension)? Used by the
-     * streaming display path to hold back partial tags still arriving across
-     * chunk boundaries.
-     */
+    // Code-block masking patterns
     private static final Pattern MEDIA_TAG_COMPLETE_RE = Pattern.compile(
         "\\S+\\.(?:" + EXT_ALTERNATION + ")(?=[\\s`\"',;:)}\\]]|$)",
-        Pattern.CASE_INSENSITIVE
-    );
-
-    private static final Pattern BARE_PATH_RE = Pattern.compile(
-        "(?<![/:\\w.])(?:~/|/|[A-Za-z]:[/\\\\])(?:[\\w.\\-]+[/\\\\])*[\\w.\\-]+\\.(?:" + EXT_ALTERNATION + ")\\b",
         Pattern.CASE_INSENSITIVE
     );
 
@@ -152,7 +133,7 @@ public class MediaDeliveryService {
      * Result of media extraction.
      *
      * @param media      list of media descriptors to deliver
-     * @param cleanedText response text with all MEDIA: tags and bare paths removed
+     * @param cleanedText response text with explicit MEDIA: directives removed
      */
     public record ExtractionResult(List<MediaDescriptor> media, String cleanedText) {}
 
@@ -168,16 +149,17 @@ public class MediaDeliveryService {
     // The stripMediaTagsForDisplay method below handles the streaming case.
 
     /**
-     * Extract MEDIA: tags and bare file paths from response text.
+     * Extract explicit MEDIA: directives from response text.
+     *
+     * <p>Plain file names, relative paths, ordinary links, and absolute paths
+     * are display text, not attachment declarations.
      *
      * <p>Process:
      * <ol>
      *   <li>Strip {@code [[audio_as_voice]]} and {@code [[as_document]]} directives</li>
      *   <li>Mask code blocks, inline code, blockquotes, and JSON string values</li>
-     *   <li>Extract MEDIA:/path tags from the masked text</li>
-     *   <li>Remove matched MEDIA: tags from the cleaned text</li>
-     *   <li>Detect bare file paths (with File.exists() validation)</li>
-     *   <li>Remove bare paths from the cleaned text</li>
+     *   <li>Extract explicit MEDIA:/path directives from the masked text</li>
+     *   <li>Remove only matched directives from the cleaned text</li>
      * </ol>
      *
      * @param content the raw agent response text
@@ -191,6 +173,9 @@ public class MediaDeliveryService {
         // Check directives before stripping
         boolean hasVoiceDirective = content.contains(AUDIO_AS_VOICE);
         boolean forceDocument = content.contains(AS_DOCUMENT);
+
+        log.info("media_delivery_final_scan chars={} explicit_directives={} voice={} document={}",
+            content.length(), content.contains("MEDIA:"), hasVoiceDirective, forceDocument);
 
         // Strip directives from text
         String cleaned = content.replace(AUDIO_AS_VOICE, "");
@@ -227,58 +212,22 @@ public class MediaDeliveryService {
             cleaned = sb.toString();
         }
 
-        // ── Extract bare file paths ──
-        // Mask code blocks for bare-path detection too
-        String bareScanContent = maskCodeBlocks(cleaned);
-        Matcher bareMatcher = BARE_PATH_RE.matcher(bareScanContent);
-        List<String> barePaths = new ArrayList<>();
-        List<int[]> bareSpans = new ArrayList<>();
-        while (bareMatcher.find()) {
-            String raw = bareMatcher.group();
-            String expanded = expandUserHome(raw);
-            File f = new File(expanded);
-            if (f.exists() && f.isFile()) {
-                barePaths.add(expanded);
-                bareSpans.add(new int[]{bareMatcher.start(), bareMatcher.end()});
-            }
-        }
-
-        // Remove bare path spans from cleaned text
-        if (!bareSpans.isEmpty()) {
-            StringBuilder sb = new StringBuilder(cleaned);
-            bareSpans.sort((a, b) -> Integer.compare(b[0], a[0]));
-            for (int[] span : bareSpans) {
-                sb.delete(span[0], span[1]);
-            }
-            cleaned = sb.toString();
-        }
-
         // Collapse excessive blank lines
         cleaned = collapseBlankLines(cleaned);
 
-        // ── Build media descriptors ──
-        // Deduplicate by path, preserving discovery order
+        // Build descriptors from explicit directives only; delivery is never
+        // inferred from plain response prose or tool output.
         Set<String> seen = new LinkedHashSet<>();
         List<MediaDescriptor> descriptors = new ArrayList<>();
-
         for (String path : mediaPaths) {
             if (seen.add(path)) {
                 String ext = getExtension(path);
                 descriptors.add(new MediaDescriptor(path, ext, hasVoiceDirective, forceDocument));
             }
         }
-        for (String path : barePaths) {
-            if (seen.add(path)) {
-                String ext = getExtension(path);
-                descriptors.add(new MediaDescriptor(path, ext, hasVoiceDirective, forceDocument));
-            }
-        }
 
+        log.info("media_delivery_extraction explicit_candidates={}", descriptors.size());
         return new ExtractionResult(descriptors, cleaned);
-    }
-
-    private static boolean hasDeliverableExtension(String path) {
-        return EXTENSION_ALLOWLIST.contains(getExtension(path));
     }
 
     /**
@@ -403,36 +352,6 @@ public class MediaDeliveryService {
                 }
             }
         }
-        return new String(chars);
-    }
-
-    /**
-     * Mask fenced code blocks for bare-path detection. Inline code remains
-     * eligible because agents conventionally format a generated file path in
-     * backticks; existence and allowed-root checks still gate delivery.
-     */
-    private static String maskCodeBlocks(String content) {
-        char[] chars = content.toCharArray();
-        int n = chars.length;
-
-        List<int[]> spans = new ArrayList<>();
-
-        Matcher fenced = FENCED_CODE_BLOCK_RE.matcher(content);
-        while (fenced.find()) {
-            spans.add(new int[]{fenced.start(), fenced.end()});
-        }
-
-        // Inline code is intentionally not masked: generated paths are often
-        // formatted as `archive.zip` and must still be detected for delivery.
-
-        for (int[] span : spans) {
-            for (int i = span[0]; i < span[1] && i < n; i++) {
-                if (chars[i] != '\n') {
-                    chars[i] = ' ';
-                }
-            }
-        }
-
         return new String(chars);
     }
 

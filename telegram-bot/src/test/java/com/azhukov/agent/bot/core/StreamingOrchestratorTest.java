@@ -520,6 +520,23 @@ class StreamingOrchestratorTest {
     }
 
     @Test
+    void streamChat_delayedStartDoesNotDeliverPlainFilePath() {
+        when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong()))
+            .thenReturn(Optional.empty());
+        String response = "Archive ready /tmp/final.zip";
+        stubChatStream(ctx -> {
+            ctx.tokenConsumer.accept(response);
+            ctx.onComplete.accept(new AgentBackendClient.ChatResult(response, "model", 1, 10, true));
+            ctx.returnResult = new AgentBackendClient.ChatResult(response, "model", 1, 10, true, false, null);
+        });
+
+        orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
+
+        verify(streamEditor).finalizeStream(100L, -1L, response);
+        verify(hooks, never()).deliverMedia(anyLong(), anyList(), any());
+    }
+
+    @Test
     void streamChat_draftFinalDeliveryFailureDoesNotClaimFinalization() {
         when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong()))
             .thenReturn(Optional.empty());

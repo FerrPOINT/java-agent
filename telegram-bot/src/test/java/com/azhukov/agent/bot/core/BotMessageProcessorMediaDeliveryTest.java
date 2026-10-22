@@ -260,6 +260,17 @@ class BotMessageProcessorMediaDeliveryTest {
     }
 
     @Test
+    void plainFilePathDoesNotDeliverWithoutExplicitMediaDirective() throws Exception {
+        Path document = createTempFile("report.pdf");
+        stubStreamingResult("Report is ready: " + document, true);
+
+        processor.accept(textEvent(1, 100L, "create a report"));
+
+        verify(telegramClient, never()).sendDocument(anyLong(), any(byte[].class), anyString(), any(), any());
+        verify(streamEditor).finalizeStream(eq(100L), eq(1L), contains(document.toString()));
+    }
+
+    @Test
     @DisplayName("4. Document file (PDF) → sendDocument is called")
     void documentFileRoutesToSendDocument() throws Exception {
         Path pdfFile = createTempFile("report.pdf");
