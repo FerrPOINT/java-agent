@@ -85,6 +85,49 @@ public final class UserContext {
         return getUserId() != null ? getUserId() : requestedUserId;
     }
 
+    /** A queued task retains the exact proof and never captures a refreshed role/TTL. */
+    public static Runnable wrap(Runnable work) {
+        var captured = Snapshot.capture();
+        return () -> captured.run(work);
+    }
+
+    public static <T> java.util.function.Supplier<T> wrapSupplier(java.util.function.Supplier<T> work) {
+        var captured = Snapshot.capture();
+        return () -> {
+            var previous = Snapshot.capture();
+            captured.install();
+            try { return work.get(); }
+            finally { previous.install(); }
+        };
+    }
+
+    /** Bound a blocking stream wait to the same original proof; no TTL is created. */
+    public static long accessWaitMillis(long maximum) {
+        if (maximum <= 0) throw new IllegalArgumentException("Positive wait required");
+        requireCurrentAccess();
+        var access = CENTRAL_ACCESS.get();
+        if (access == null) return maximum;
+        long nanos = access.deadlineNanos() - System.nanoTime();
+        long wallMillis = java.time.Duration.between(java.time.Instant.now(), access.expiresAt()).toMillis();
+        return Math.max(1, Math.min(maximum, Math.min(wallMillis,
+                java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(nanos))));
+    }
+
+    private record Snapshot(String user, String role, com.pdlc.auth.HumanApplicationAccess access) {
+        static Snapshot capture() { return new Snapshot(CURRENT_USER_ID.get(), CURRENT_ROLE.get(), CENTRAL_ACCESS.get()); }
+        void install() {
+            clear();
+            if (access != null) setCentral(access);
+            else if (user != null || role != null) set(user, role);
+        }
+        void run(Runnable work) {
+            var previous = capture();
+            install();
+            try { work.run(); }
+            finally { previous.install(); }
+        }
+    }
+
     /** Clear the context for this thread. */
     public static void clear() {
         CENTRAL_ACCESS.remove();

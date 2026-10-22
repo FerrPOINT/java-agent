@@ -40,4 +40,38 @@ class UserContextTest {
         assertThat(UserContext.centralAccess()).isNull();
         assertThat(new StreamContext().hasCurrentAccess()).isTrue();
     }
+
+    @Test
+    void queuedAndParallelTasksKeepOriginalProofAndRestoreWorkerIdentity() throws Exception {
+        var proof = access("user", false);
+        UserContext.setCentral(proof);
+        var result = UserContext.wrapSupplier(() -> {
+            assertThat(UserContext.centralAccess()).isSameAs(proof);
+            assertThat(UserContext.getUserId()).isEqualTo("human-fixture");
+            assertThat(UserContext.isAdmin()).isFalse();
+            assertThat(UserContext.accessWaitMillis(120_000)).isLessThanOrEqualTo(60_000);
+            return "owned";
+        });
+        UserContext.set("worker-owner", "admin");
+        assertThat(result.get()).isEqualTo("owned");
+        assertThat(UserContext.getUserId()).isEqualTo("worker-owner");
+        assertThat(UserContext.isAdmin()).isTrue();
+        try (var executor = java.util.concurrent.Executors.newSingleThreadExecutor()) {
+            assertThat(executor.submit(result::get).get()).isEqualTo("owned");
+            assertThat(executor.submit(UserContext::getUserId).get()).isNull();
+        }
+    }
+
+    @Test
+    void expiredQueuedProofCannotBecomeWorkerAdminOrRenewItsWindow() {
+        var proof = access("admin", true);
+        UserContext.setCentral(proof);
+        var result = UserContext.wrapSupplier(UserContext::getUserId);
+        var wait = UserContext.wrap(() -> UserContext.accessWaitMillis(30_000));
+        UserContext.set("worker-owner", "admin");
+        assertThatThrownBy(result::get).isInstanceOf(AccessDeniedException.class);
+        assertThatThrownBy(wait::run).isInstanceOf(AccessDeniedException.class);
+        assertThat(UserContext.getUserId()).isEqualTo("worker-owner");
+        assertThat(UserContext.isAdmin()).isTrue();
+    }
 }
