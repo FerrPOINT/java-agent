@@ -19,6 +19,13 @@
       "LICENSE"
     ],
     "tooling": [
+      ".github/workflows/ci.yml",
+      "scripts/tests/test_check_docs_standard.py",
+      "scripts/tests/test_verify_readme.py",
+      "scripts/tests/test_check_default_settings_reference.py",
+      "scripts/tests/test_parity_dashboard.py",
+      "scripts/tests/test_select_java_modules.py",
+      "scripts/tests/test_tooling_ownership.py",
       "Makefile",
       "scripts/quality-make.sh",
       "scripts/deploy-dev-systemd.sh",
@@ -64,6 +71,111 @@
     ]
   },
   "gates": [
+    {
+      "id": "tooling:docs-unit",
+      "component": "tooling",
+      "profiles": [
+        "fast",
+        "unit",
+        "build",
+        "integrated",
+        "release"
+      ],
+      "argv": [
+        "{python}",
+        "-B",
+        "-m",
+        "unittest",
+        "scripts.tests.test_check_docs_standard",
+        "scripts.tests.test_verify_readme",
+        "-q"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "scripts/tests/test_check_docs_standard.py",
+        "scripts/tests/test_verify_readme.py",
+        "scripts/check_docs_standard.py",
+        "scripts/verify_readme.py",
+        "scripts/vendor/base_quality_selection.py",
+        ".quality-gate.json",
+        ".github/workflows/ci.yml"
+      ],
+      "cacheable": true,
+      "execution_slot": "none",
+      "test_tier": "unit"
+    },
+    {
+      "id": "tooling:defaults-unit",
+      "component": "tooling",
+      "profiles": [
+        "fast",
+        "unit",
+        "build",
+        "integrated",
+        "release"
+      ],
+      "argv": [
+        "{python}",
+        "-B",
+        "-m",
+        "unittest",
+        "scripts.tests.test_check_default_settings_reference",
+        "-q"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "scripts/tests/test_check_default_settings_reference.py",
+        "scripts/check_default_settings_reference.py",
+        "docs/default-settings.md",
+        "backend/src/main/resources/application.yml",
+        "telegram-bot/src/main/resources/application.yml",
+        "cli/src/main/resources/application.yml",
+        "backend/src/main/java/**",
+        "telegram-bot/src/main/java/**",
+        "cli/src/main/java/**",
+        "scripts/vendor/base_quality_selection.py",
+        ".quality-gate.json",
+        ".github/workflows/ci.yml"
+      ],
+      "cacheable": true,
+      "execution_slot": "none",
+      "test_tier": "unit"
+    },
+    {
+      "id": "tooling:selection-unit",
+      "component": "tooling",
+      "profiles": [
+        "fast",
+        "unit",
+        "build",
+        "integrated",
+        "release"
+      ],
+      "argv": [
+        "{python}",
+        "-B",
+        "-m",
+        "unittest",
+        "scripts.tests.test_parity_dashboard",
+        "scripts.tests.test_select_java_modules",
+        "scripts.tests.test_tooling_ownership",
+        "-q"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "scripts/tests/test_parity_dashboard.py",
+        "scripts/tests/test_select_java_modules.py",
+        "scripts/tests/test_tooling_ownership.py",
+        "scripts/parity-dashboard.py",
+        "scripts/select_java_modules.py",
+        "scripts/vendor/base_quality_selection.py",
+        ".quality-gate.json",
+        ".github/workflows/ci.yml"
+      ],
+      "cacheable": true,
+      "execution_slot": "none",
+      "test_tier": "unit"
+    },
     {
       "id": "tooling:systemd-build-protocol",
       "component": "tooling",
@@ -927,6 +1039,37 @@
       "external_state": true
     }
   ],
+  "affected_checks": {
+    "tooling": [
+      {
+        "paths": [
+          "scripts/tests/test_check_docs_standard.py",
+          "scripts/tests/test_verify_readme.py"
+        ],
+        "gates": [
+          "tooling:docs-unit"
+        ]
+      },
+      {
+        "paths": [
+          "scripts/tests/test_check_default_settings_reference.py"
+        ],
+        "gates": [
+          "tooling:defaults-unit"
+        ]
+      },
+      {
+        "paths": [
+          "scripts/tests/test_parity_dashboard.py",
+          "scripts/tests/test_select_java_modules.py",
+          "scripts/tests/test_tooling_ownership.py"
+        ],
+        "gates": [
+          "tooling:selection-unit"
+        ]
+      }
+    ]
+  },
   "additional_acceptance": "Existing product CI/CONTRIBUTING: MSRV/features, ignored DB, OpenAPI/packed consumer/themes, security and live acceptance remain separate mandatory gates where applicable.",
   "backend_unit_inputs": [
     "backend/src/test/**",

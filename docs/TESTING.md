@@ -1,5 +1,24 @@
 # Тестовые уровни
 
+## Python helper unit
+
+Fast/Unit/Build используют точное владение известными test paths:
+
+| Test module | Gate |
+| --- | --- |
+| `test_check_docs_standard`, `test_verify_readme` | `tooling:docs-unit` |
+| `test_check_default_settings_reference` | `tooling:defaults-unit` |
+| `test_parity_dashboard`, `test_select_java_modules`, `test_tooling_ownership` | `tooling:selection-unit` |
+
+Defaults gate читает shipped YAML, Java properties/@Value и reference: это source
+проверка, без JVM/Gradle. Её полный input closure не добавляется другим helper
+gates. CI сохраняет actual docs/defaults/README validators и выполняет каждый
+unit module один раз. Artifact/native/manual gates и Gradle receipt policy
+сохраняются. Root preview:
+`check-workspace.ps1 -Profile Unit -Repository java-agent -Component tooling -PlanOnly`.
+Для одного module: `python -B -m unittest scripts.tests.test_select_java_modules -q`.
+Подробности — [source план](plans/python-tooling-test-selection-20261024.md).
+
 Обязательная общая политика: [Base TESTING](https://github.com/FerrPOINT/services-base/blob/ad724088e9a63b1e353fb5b28e4308e9ae6f45ae/docs/TESTING.md).
 Выбор компонентов и native commands: `.quality-gate.json`.
 

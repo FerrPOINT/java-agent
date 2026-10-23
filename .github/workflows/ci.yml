@@ -70,15 +70,13 @@ jobs:
       - name: Verify shipped-default documentation coverage
         run: python3 scripts/check_default_settings_reference.py
       - name: Documentation and release-script unit tests
-        run: python3 -m unittest scripts.tests.test_check_docs_standard scripts.tests.test_check_default_settings_reference scripts.tests.test_release_verify scripts.tests.test_parity_dashboard scripts.tests.test_select_java_modules scripts.tests.test_quality_gradle scripts.tests.test_gradle_context scripts.tests.test_dependency_inputs scripts.tests.test_test_lanes
+        run: python3 -m unittest scripts.tests.test_check_docs_standard scripts.tests.test_check_default_settings_reference scripts.tests.test_release_verify scripts.tests.test_parity_dashboard scripts.tests.test_select_java_modules scripts.tests.test_quality_gradle scripts.tests.test_gradle_context scripts.tests.test_dependency_inputs scripts.tests.test_test_lanes scripts.tests.test_verify_readme scripts.tests.test_tooling_ownership
   readme:
     name: README evidence
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
-      - name: README validator tests
-        run: python3 -m unittest scripts.tests.test_verify_readme
       - name: README structural validation
         run: python3 scripts/verify_readme.py
   lint:
