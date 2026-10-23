@@ -458,3 +458,17 @@ UI/SDK/skills pins независимы; source-изменения не озна
 В web UI одно значение из видимых вариантов использует RadioGroup, режимы — appearance="segmented",
 вкладки с панелями — Tabs; закрытые списки — Select/MultiSelect. Сверять UI pin.
 Стандарт относится к web UI при его наличии; CLI/Telegram не получают фиктивных frontend-зависимостей.
+
+## Подписи и карточки вариантов выбора
+
+После проверки API в принятом UI pin используйте label или children Checkbox/Radio
+для обычной подписи, appearance="card" — для варианта с рамкой и описанием.
+Не копируйте label с border/rounded/padding и не оборачивайте такой выбор в
+Card asChild. Base владеет hit target, focus, checked/disabled и нативной формой;
+продукт — данными, правами и обработчиком. Внешняя grid/flex-компоновка допустима.
+SSR использует checkbox_control/radio_control с appearance='card'; отдельный
+click-handler или повторное input/change для оформления не нужен.
+Контракт и пример: Base docs/platform/CHOICE_CONTROLS.md, pdlc-ui example Checkbox --case cards.
+
+Правило применяется к веб-интерфейсу, когда он разрабатывается. CLI/Telegram
+не получают React-зависимость или фиктивные общие компоненты.
