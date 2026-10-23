@@ -1,17 +1,25 @@
 package com.azhukov.agent.service;
 
+import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.persistence.entity.CronJobEntity;
+import com.azhukov.agent.persistence.entity.CronSuggestionEntity;
+import com.azhukov.agent.persistence.repository.CronSuggestionRepository;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 /**
@@ -21,11 +29,60 @@ import static org.mockito.Mockito.*;
 class CronSuggestionServiceTest {
 
     @Mock private CronJobService cronJobService;
+    @Mock private CronSuggestionRepository cronSuggestionRepository;
     private CronSuggestionService service;
+    private final List<CronSuggestionEntity> stored = new ArrayList<>();
 
     @BeforeEach
     void setUp() {
-        service = new CronSuggestionService(cronJobService);
+        UserContext.clear();
+        lenient().when(cronSuggestionRepository.findByUserIdAndDedupKey(anyString(), anyString()))
+            .thenAnswer(invocation -> stored.stream()
+                .filter(entity -> entity.getUserId().equals(invocation.getArgument(0))
+                    && entity.getDedupKey().equals(invocation.getArgument(1)))
+                .findFirst());
+        lenient().when(cronSuggestionRepository.countByUserIdAndStatus(anyString(), anyString()))
+            .thenAnswer(invocation -> stored.stream()
+                .filter(entity -> entity.getUserId().equals(invocation.getArgument(0))
+                    && entity.getStatus().equals(invocation.getArgument(1)))
+                .count());
+        lenient().when(cronSuggestionRepository.findByUserIdAndStatusOrderByCreatedAtAsc(anyString(), anyString()))
+            .thenAnswer(invocation -> stored.stream()
+                .filter(entity -> entity.getUserId().equals(invocation.getArgument(0))
+                    && entity.getStatus().equals(invocation.getArgument(1)))
+                .toList());
+        lenient().when(cronSuggestionRepository.findByUserIdOrderByCreatedAtAsc(anyString()))
+            .thenAnswer(invocation -> stored.stream()
+                .filter(entity -> entity.getUserId().equals(invocation.getArgument(0)))
+                .toList());
+        lenient().when(cronSuggestionRepository.findByIdAndUserId(any(), anyString()))
+            .thenAnswer(invocation -> stored.stream()
+                .filter(entity -> entity.getId().equals(invocation.getArgument(0))
+                    && entity.getUserId().equals(invocation.getArgument(1)))
+                .findFirst());
+        lenient().when(cronSuggestionRepository.findByIdAndUserIdForUpdate(any(), anyString()))
+            .thenAnswer(invocation -> stored.stream()
+                .filter(entity -> entity.getId().equals(invocation.getArgument(0))
+                    && entity.getUserId().equals(invocation.getArgument(1)))
+                .findFirst());
+        lenient().when(cronSuggestionRepository.save(any())).thenAnswer(invocation -> {
+            CronSuggestionEntity entity = invocation.getArgument(0);
+            if (entity.getId() == null) {
+                entity.setId(UUID.randomUUID());
+                stored.add(entity);
+            }
+            return entity;
+        });
+        lenient().doAnswer(invocation -> {
+            stored.removeAll(invocation.getArgument(0));
+            return null;
+        }).when(cronSuggestionRepository).deleteAll(any());
+        service = new CronSuggestionService(cronJobService, cronSuggestionRepository);
+    }
+
+    @AfterEach
+    void tearDown() {
+        UserContext.clear();
     }
 
     @Test
@@ -46,6 +103,31 @@ class CronSuggestionServiceTest {
         service.addSuggestion("Daily Report", "desc", "catalog", spec, "dup-key");
         var second = service.addSuggestion("Daily Report 2", "desc", "catalog", spec, "dup-key");
         assertThat(second).isNull();
+    }
+
+    @Test
+    void suggestionsAreIsolatedByOwnerAndAcceptanceCreatesAnOwnedJob() {
+        var spec = new CronSuggestionService.JobSpec("daily-report", "0 9 * * *", "Generate report", null, null);
+        UserContext.set("user-a", UserContext.ROLE_USER);
+        var userARecord = service.addSuggestion("Daily Report", "desc", "catalog", spec, "same-key");
+        assertThat(userARecord).isNotNull();
+
+        UserContext.set("user-b", UserContext.ROLE_USER);
+        assertThat(service.listPending()).isEmpty();
+        var userBRecord = service.addSuggestion("Daily Report", "desc", "catalog", spec, "same-key");
+        assertThat(userBRecord).isNotNull();
+        assertThat(userBRecord.id()).isNotEqualTo(userARecord.id());
+
+        CronJobEntity entity = new CronJobEntity();
+        entity.setId(UUID.randomUUID());
+        when(cronJobService.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any()))
+            .thenReturn(entity);
+        assertThat(service.acceptSuggestion(userARecord.id())).isNull();
+        verify(cronJobService, never()).create(any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any());
+
+        assertThat(service.acceptSuggestion(userBRecord.id())).isSameAs(entity);
+        verify(cronJobService).create("user-b", "daily-report", "0 9 * * *", "Generate report", null, null,
+            null, null, null, false, null, null, null, null, null);
     }
 
     @Test
@@ -132,13 +214,14 @@ class CronSuggestionServiceTest {
         CronJobEntity entity = new CronJobEntity();
         entity.setId(UUID.randomUUID());
         entity.setName("daily-report");
-        when(cronJobService.create(any(), any(), any(), any(), any())).thenReturn(entity);
+        when(cronJobService.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any())).thenReturn(entity);
 
         var created = service.acceptSuggestion(record.id());
 
         assertThat(created).isNotNull();
         assertThat(created.getName()).isEqualTo("daily-report");
-        verify(cronJobService).create("daily-report", "0 9 * * *", "Generate report", "telegram", null);
+        verify(cronJobService).create(AgentProperties.DEFAULT_USER_ID, "daily-report", "0 9 * * *", "Generate report", "telegram", null,
+            null, null, null, false, null, null, null, null, null);
 
         // Suggestion should now be accepted
         var all = service.listAll();
@@ -153,7 +236,7 @@ class CronSuggestionServiceTest {
 
         var result = service.acceptSuggestion(record.id());
         assertThat(result).isNull();
-        verify(cronJobService, never()).create(any(), any(), any(), any(), any());
+        verify(cronJobService, never()).create(any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -189,7 +272,7 @@ class CronSuggestionServiceTest {
 
         CronJobEntity entity = new CronJobEntity();
         entity.setId(UUID.randomUUID());
-        when(cronJobService.create(any(), any(), any(), any(), any())).thenReturn(entity);
+        when(cronJobService.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any())).thenReturn(entity);
         service.acceptSuggestion(r1.id());
 
         int removed = service.clearAccepted();
@@ -238,7 +321,7 @@ class CronSuggestionServiceTest {
     void acceptRemovesFromPendingAndLatches() {
         service.seedCatalogSuggestions();
         var rec = service.listPending().get(0);
-        when(cronJobService.create(any(), any(), any(), any(), any())).thenReturn(new CronJobEntity());
+        when(cronJobService.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any())).thenReturn(new CronJobEntity());
         service.acceptSuggestion(rec.id());
         // Only the accepted one leaves pending; the rest stay
         assertThat(service.listPending()).hasSize(3);
