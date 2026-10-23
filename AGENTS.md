@@ -452,4 +452,6 @@ Dialog и Toaster/toast использовать из публичного @pdlc
 Канонический контракт — Base docs/platform/DESIGN_SYSTEM.md и docs/BRANDING.md.
 UI/SDK/skills pins независимы; source-изменения не означают установку.
 
+В web UI одно значение из видимых вариантов использует RadioGroup, режимы — appearance="segmented",
+вкладки с панелями — Tabs; закрытые списки — Select/MultiSelect. Сверять UI pin.
 Стандарт относится к web UI при его наличии; CLI/Telegram не получают фиктивных frontend-зависимостей.
