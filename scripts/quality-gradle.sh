@@ -12,6 +12,7 @@ backend_graph=false
 quality_root=false
 dependencies_only=false
 base_compile_cache=false
+cache_qualification=false
 while (($#)); do
     case "$1" in
         --backend)
@@ -28,17 +29,29 @@ while (($#)); do
         --base-compile-cache)
             if $base_compile_cache; then echo 'Duplicate Base compiler cache mode' >&2; exit 64; fi
             base_compile_cache=true ;;
+        --base-compile-cache-qualification)
+            if $cache_qualification; then echo 'Duplicate compiler cache qualification mode' >&2; exit 64; fi
+            cache_qualification=true ;;
         *) break ;;
     esac
     shift
 done
+if $cache_qualification; then
+    if ! $base_compile_cache || [[ "${JAVA_QA_COMPILE_CACHE_QUALIFICATION:-}" != 1 ]]; then
+        echo 'Compiler cache qualification requires the explicit Base candidate invocation' >&2; exit 64
+    fi
+elif [[ -v JAVA_QA_COMPILE_CACHE_QUALIFICATION ]]; then
+    echo 'Compiler cache qualification environment requires its explicit helper switch' >&2; exit 64
+fi
 cache_environment=false
 for cache_variable in BASE_JAVA_COMPILE_CACHE_ACTIVE BASE_JAVA_COMPILE_CACHE_PROFILE \
     BASE_JAVA_COMPILE_CACHE_NAMESPACE BASE_JAVA_COMPILE_CACHE_POLICY_SHA256 BASE_JAVA_COMPILE_CACHE_POLICY; do
     if [[ -v "$cache_variable" ]]; then cache_environment=true; fi
 done
 if $base_compile_cache; then
-    echo 'Java3 compiler cache requires native peer qualification' >&2; exit 64
+    if ! $cache_qualification; then
+        echo 'Java3 compiler cache requires native peer qualification' >&2; exit 64
+    fi
     if ! $quality_root || $backend_graph || $dependencies_only \
         || [[ "${BASE_JAVA_COMPILE_CACHE_ACTIVE:-}" != 1 \
             || "${BASE_JAVA_COMPILE_CACHE_PROFILE:-}" != root-clients-v1 \
@@ -46,12 +59,19 @@ if $base_compile_cache; then
             || ! "${BASE_JAVA_COMPILE_CACHE_POLICY_SHA256:-}" =~ ^[a-f0-9]{64}$ ]]; then
         echo 'Base compiler cache requires its explicit supported graph and environment' >&2; exit 64
     fi
+    cache_workers=0; cache_offline=0; cache_daemon=0
     for argument in "$@"; do
         case "$argument" in
-            :cli:test|:shared:test|:cli:bootJar|--offline|--no-daemon|--build-cache|--max-workers=2|--console=plain) ;;
+            --max-workers=2) cache_workers=$((cache_workers + 1)) ;;
+            --offline) cache_offline=$((cache_offline + 1)) ;;
+            --no-daemon) cache_daemon=$((cache_daemon + 1)) ;;
+            :cli:test|:shared:test|:cli:bootJar|--build-cache|--console=plain) ;;
             *) echo 'Base compiler cache accepts only bounded CLI/Shared tasks and options' >&2; exit 64 ;;
         esac
     done
+    if ((cache_workers != 1 || cache_offline != 1 || cache_daemon != 1)); then
+        echo 'Base compiler cache requires one offline, no-daemon, workers2 profile' >&2; exit 64
+    fi
     cache_policy=${BASE_JAVA_COMPILE_CACHE_POLICY:-}
     if [[ "$cache_policy" != /* || "${cache_policy##*/}" != java-qa-compile-cache.init.gradle \
         || "$cache_policy" == *$'\n'* || "$cache_policy" == *$'\r'* \
@@ -69,7 +89,7 @@ elif $cache_environment; then
     echo 'Base compiler cache environment requires the explicit helper switch' >&2; exit 64
 fi
 for argument in "$@"; do
-    if [[ "$argument" == --base-compile-cache ]]; then
+    if [[ "$argument" == --base-compile-cache || "$argument" == --base-compile-cache-qualification ]]; then
         echo 'Base compiler cache switch must precede task arguments' >&2; exit 64
     fi
 done

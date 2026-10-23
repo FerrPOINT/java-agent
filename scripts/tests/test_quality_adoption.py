@@ -5,6 +5,9 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
+import subprocess
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -229,6 +232,87 @@ class QualityAdoptionTests(unittest.TestCase):
     def test_all_changed_python_sources_parse(self):
         for name in ('ci_quality_plan.py','check_test_lanes.py','gradle-context.py','release_verify.py'):
             ast.parse((ROOT/'scripts'/name).read_text(encoding='utf-8'),filename=name)
+
+
+class CompilerCacheQualificationProtocolTests(unittest.TestCase):
+    """Execute the public Bash helper against a recording wrapper, without a JVM."""
+
+    def setUp(self):
+        self.bash = (str(Path(os.environ.get('ProgramFiles', 'C:/Program Files')) / 'Git/bin/bash.exe')
+                     if os.name == 'nt' else shutil.which('bash'))
+        if not self.bash or not Path(self.bash).is_file():
+            self.skipTest('Native Bash is required; WSL is not used')
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.repo = Path(temporary.name)
+        (self.repo/'scripts').mkdir()
+        (self.repo/'scripts/quality-gradle.sh').write_bytes(
+            (ROOT/'scripts/quality-gradle.sh').read_bytes().replace(b'\r\n', b'\n'))
+        (self.repo/'gradlew').write_bytes(b'#!/usr/bin/env bash\nprintf "%s\\n" "$@" > recorded.txt\n')
+        policy = self.repo/'java-qa-compile-cache.init.gradle'
+        policy.write_bytes(b'// inert recording fixture; never evaluated\n')
+        unix_policy = subprocess.check_output([self.bash, '-c',
+            'if command -v cygpath >/dev/null; then cygpath -u -- "$1"; else printf "%s" "$1"; fi',
+            'policy-path', policy.as_posix()], text=True).strip()
+        self.environment = {k:v for k,v in os.environ.items() if not k.startswith(
+            ('BASE_JAVA_COMPILE_CACHE_', 'JAVA_QA_COMPILE_CACHE_'))}
+        self.environment.update(SOURCE_DATE_EPOCH='1792092604',
+            BASE_JAVA_COMPILE_CACHE_ACTIVE='1', BASE_JAVA_COMPILE_CACHE_PROFILE='root-clients-v1',
+            BASE_JAVA_COMPILE_CACHE_NAMESPACE='a'*64,
+            BASE_JAVA_COMPILE_CACHE_POLICY_SHA256=hashlib.sha256(policy.read_bytes()).hexdigest(),
+            BASE_JAVA_COMPILE_CACHE_POLICY=unix_policy,
+            JAVA_QA_COMPILE_CACHE_QUALIFICATION='1')
+        self.record = self.repo/'recorded.txt'
+
+    def invoke(self, *args, environment=None):
+        return subprocess.run([self.bash, 'scripts/quality-gradle.sh', *args], cwd=self.repo,
+            env=self.environment if environment is None else environment,
+            capture_output=True, text=True, check=False)
+
+    def test_explicit_candidate_reaches_one_wrapper_with_the_pinned_policy(self):
+        result = self.invoke('--quality-root', '--base-compile-cache', '--base-compile-cache-qualification',
+            ':cli:test', ':cli:bootJar', '--offline', '--no-daemon', '--max-workers=2', '--console=plain')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        args = self.record.read_text().splitlines()
+        self.assertEqual(args[:2], [':cli:test', ':cli:bootJar'])
+        self.assertEqual(args[-3:], ['--init-script', self.environment['BASE_JAVA_COMPILE_CACHE_POLICY'], '--build-cache'])
+        self.assertIn('-PqualityRootComponents=cli', args)
+        self.assertNotIn('--base-compile-cache-qualification', args)
+
+    def test_qualification_requires_both_explicit_switch_and_complete_environment(self):
+        base = ['--quality-root', '--base-compile-cache']
+        candidate = base + ['--base-compile-cache-qualification']
+        tasks = [':cli:test', '--offline', '--no-daemon', '--max-workers=2']
+        cases = [(base+tasks, self.environment),
+                 (['--quality-root', '--base-compile-cache-qualification', *tasks], self.environment)]
+        for key,value in (('JAVA_QA_COMPILE_CACHE_QUALIFICATION', None),
+                          ('JAVA_QA_COMPILE_CACHE_QUALIFICATION', '0'),
+                          ('BASE_JAVA_COMPILE_CACHE_ACTIVE', '0'),
+                          ('BASE_JAVA_COMPILE_CACHE_POLICY_SHA256', 'b'*64)):
+            env = dict(self.environment)
+            if value is None: env.pop(key)
+            else: env[key] = value
+            cases.append((candidate+tasks, env))
+        for args,env in cases:
+            with self.subTest(args=args, environment_keys=sorted(env)):
+                result = self.invoke(*args, environment=env)
+                self.assertEqual(result.returncode, 64, result.stderr)
+                self.assertFalse(self.record.exists())
+
+    def test_candidate_preserves_bounded_graph_and_ordinary_cli_remains_independent(self):
+        prefix = ['--quality-root', '--base-compile-cache', '--base-compile-cache-qualification']
+        for tasks in ([':cli:test', '--max-workers=3'], [':telegram-bot:test'],
+                      [':cli:test'], [':cli:test', '--max-workers=2', '--no-daemon'],
+                      [':cli:test', '--init-script', '/untrusted'],
+                      [':cli:slowTest'], [':cli:test', '--base-compile-cache-qualification']):
+            with self.subTest(tasks=tasks):
+                self.assertEqual(self.invoke(*prefix, *tasks).returncode, 64)
+                self.assertFalse(self.record.exists())
+        env = {k:v for k,v in self.environment.items() if not k.startswith(
+            ('BASE_JAVA_COMPILE_CACHE_', 'JAVA_QA_COMPILE_CACHE_'))}
+        result = self.invoke('--quality-root', ':cli:test', '--max-workers=3', environment=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('--init-script', self.record.read_text().splitlines())
 
 
 if __name__=='__main__':

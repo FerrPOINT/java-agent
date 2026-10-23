@@ -137,6 +137,14 @@ Clean/full-source contract сохраняется; dirty-context narrowing пр�
 operator/global quality pins не меняются. Source counts не равны числу JUnit
 methods и не являются результатом native execution. См. [coverage strategy](11-test-coverage-plan.md).
 
+Кандидатная compiler-cache qualification имеет отдельный явный маршрут:
+Base передаёт `JAVA_QA_COMPILE_CACHE_QUALIFICATION=1` в declared Compose invocation,
+runner вызывает `--base-compile-cache --base-compile-cache-qualification` до tasks.
+Требуются полная pinned cache environment/policy и bounded CLI/Shared graph с
+workers2. Partial/ambient flags, другие tasks и workers3 отклоняются до Gradle.
+Этот режим служит native проверке кандидата и не включает cache в обычных сборках.
+До полного qualification и measured benefit обычный peer guard остаётся активным.
+
 ## Выбор configured projects для обычных client tasks
 
 `gradle/java-preparation.json` v3 сохраняет доступные root modules и их зависимости,
