@@ -45,7 +45,6 @@
 прежний общий порог 79,38% сохранён в ручном `fullCheck`. Порог bot остаётся
 82,47%. Отчёты разделены: быстрый coverage не читает старый `slowTest.exec`.
 
-
 ## 🎯 Позиционирование
 
 **Java Agent** — Java/Spring Boot agent-платформа для FerrPOINT: LLM runtime, OpenAI-compatible API, built-in tools, MCP client/server, Telegram gateway и standalone CLI REPL.
