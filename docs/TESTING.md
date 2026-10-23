@@ -143,7 +143,23 @@ runner вызывает `--base-compile-cache --base-compile-cache-qualification
 Требуются полная pinned cache environment/policy и bounded CLI/Shared graph с
 workers2. Partial/ambient flags, другие tasks и workers3 отклоняются до Gradle.
 Этот режим служит native проверке кандидата и не включает cache в обычных сборках.
-До полного qualification и measured benefit обычный peer guard остаётся активным.
+Обычный cache producer разрешается только через Base, который проверяет qualified
+owner, exact report/policy и общий allocation до подготовки и повторно после slot.
+Shell сохраняет pinned policy, полный environment, offline CLI/Shared и workers2;
+статус owner принадлежит Base. Candidate не получает обычный допуск. Фактическая
+активация cache, formal qualification и совместимый exact packet ещё отдельны.
+
+Совместимый Base CLI поддерживает явный запрос без подготовки:
+
+```text
+python -B <exact-base>/scripts/java_compose_qa.py --workspace <workspace-root> --docker-context desktop-linux --component cli --profile build --cli-max-workers 2 --compiler-cache-id <id> --compiler-cache-owner-sha256 <owner-sha256> --compiler-cache-allocation-sha256 <allocation-sha256> --plan-only
+```
+
+Это нижний producer entrypoint после проверки готового артефакта; обычный root
+quality caller остаётся первым маршрутом разработки. PlanOnly не проверяет
+qualified readiness и не выдаёт artifact receipt. Root native CLI3 не понижается
+до CLI2: cache profile выбирается явно, source поддержку не считать внедрением.
+Новый CLI сам владеет Base host slot, отдельный execution-slot wrapper не нужен.
 
 ## Выбор configured projects для обычных client tasks
 

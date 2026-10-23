@@ -49,9 +49,8 @@ for cache_variable in BASE_JAVA_COMPILE_CACHE_ACTIVE BASE_JAVA_COMPILE_CACHE_PRO
     if [[ -v "$cache_variable" ]]; then cache_environment=true; fi
 done
 if $base_compile_cache; then
-    if ! $cache_qualification; then
-        echo 'Java3 compiler cache requires native peer qualification' >&2; exit 64
-    fi
+    # Base validates the pinned qualified owner before an ordinary writer runs.
+    # Candidate permission still requires the separate explicit qualification mode.
     if ! $quality_root || $backend_graph || $dependencies_only \
         || [[ "${BASE_JAVA_COMPILE_CACHE_ACTIVE:-}" != 1 \
             || "${BASE_JAVA_COMPILE_CACHE_PROFILE:-}" != root-clients-v1 \

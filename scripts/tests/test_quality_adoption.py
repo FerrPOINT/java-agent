@@ -178,7 +178,7 @@ class QualityAdoptionTests(unittest.TestCase):
             self.assertIn('executionData(test, integrationTest, slowTest)',body)
         self.assertNotIn('check.dependsOn jacocoTestCoverageVerification',(ROOT/'backend/build.gradle').read_text(encoding='utf-8'))
 
-    def test_only_cli_has_explicit_native_consent_and_compiler_cache_stays_disabled(self):
+    def test_only_cli_has_explicit_native_receipt_consent(self):
         manifest=selector.load(ROOT)
         self.assertEqual(manifest['native_execution']['adapter'],'java-compose-v1')
         self.assertEqual(set(manifest['native_execution']['gates']),
@@ -189,7 +189,6 @@ class QualityAdoptionTests(unittest.TestCase):
                 self.assertIs(gate['cacheable'], gate['id'] in ('cli:unit', 'cli:build'))
         helper=(ROOT/'scripts/quality-gradle.sh').read_text(encoding='utf-8')
         self.assertEqual(helper.count('qualified_wrappers=()'),2)
-        self.assertIn('Java3 compiler cache requires native peer qualification',helper)
 
     def test_both_pinned_wrappers_and_default_full_graph_remain(self):
         for path,version in (('gradle/wrapper/gradle-wrapper.properties','9.6.1'),
@@ -278,6 +277,42 @@ class CompilerCacheQualificationProtocolTests(unittest.TestCase):
         self.assertEqual(args[-3:], ['--init-script', self.environment['BASE_JAVA_COMPILE_CACHE_POLICY'], '--build-cache'])
         self.assertIn('-PqualityRootComponents=cli', args)
         self.assertNotIn('--base-compile-cache-qualification', args)
+
+    def test_host_qualified_ordinary_mode_preserves_the_bounded_compiler_command(self):
+        environment = dict(self.environment)
+        environment.pop('JAVA_QA_COMPILE_CACHE_QUALIFICATION')
+        result = self.invoke('--quality-root', '--base-compile-cache', ':cli:test', ':cli:bootJar',
+                             '--offline', '--no-daemon', '--max-workers=2', '--console=plain',
+                             environment=environment)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        args = self.record.read_text().splitlines()
+        self.assertEqual(args[:2], [':cli:test', ':cli:bootJar'])
+        self.assertEqual(args[-3:], ['--init-script', environment['BASE_JAVA_COMPILE_CACHE_POLICY'],
+                                    '--build-cache'])
+        self.assertIn('--max-workers=2', args)
+        self.assertNotIn('--max-workers=3', args)
+        self.assertNotIn('--base-compile-cache', args)
+
+    def test_ordinary_cache_keeps_graph_policy_environment_and_worker_guards(self):
+        environment = dict(self.environment)
+        environment.pop('JAVA_QA_COMPILE_CACHE_QUALIFICATION')
+        prefix = ['--quality-root', '--base-compile-cache']
+        tasks = [':cli:test', '--offline', '--no-daemon', '--max-workers=2']
+        cases = [(prefix + [':cli:test', '--offline', '--no-daemon', '--max-workers=3'], environment),
+                 (prefix + [':cli:slowTest', *tasks[1:]], environment),
+                 (prefix + [':telegram-bot:test', *tasks[1:]], environment),
+                 (prefix + tasks + ['--init-script', '/untrusted'], environment),
+                 (['--backend', '--base-compile-cache', *tasks], environment)]
+        for key, value in (('BASE_JAVA_COMPILE_CACHE_ACTIVE', '0'),
+                           ('BASE_JAVA_COMPILE_CACHE_NAMESPACE', '../wrong'),
+                           ('BASE_JAVA_COMPILE_CACHE_POLICY_SHA256', 'b' * 64),
+                           ('BASE_JAVA_COMPILE_CACHE_POLICY', '/missing/java-qa-compile-cache.init.gradle')):
+            cases.append((prefix + tasks, {**environment, key: value}))
+        for args, env in cases:
+            with self.subTest(args=args, changed_environment=env != environment):
+                result = self.invoke(*args, environment=env)
+                self.assertEqual(result.returncode, 64, result.stderr)
+                self.assertFalse(self.record.exists())
 
     def test_qualification_requires_both_explicit_switch_and_complete_environment(self):
         base = ['--quality-root', '--base-compile-cache']
