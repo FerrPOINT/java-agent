@@ -4,6 +4,7 @@ import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.model.ChatResponse;
 import com.azhukov.agent.core.model.Message;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 import org.mockito.Mockito;
 
 import java.util.List;
@@ -67,6 +68,7 @@ class DefaultContextCompressorFailureTest {
     }
 
     @Test
+    @Tag("slow") // Exercises real retry/backoff or timeout waits; run manually.
     void compress_preservesMessagesOnQuotaExhaustionAfterAllRetries() {
         var model = mock(com.azhukov.agent.core.client.ModelClient.class);
         // Always throw quota error
@@ -116,6 +118,7 @@ class DefaultContextCompressorFailureTest {
     }
 
     @Test
+    @Tag("slow") // Exercises real retry/backoff or timeout waits; run manually.
     void compress_quotaErrorWithInsufficientQuotaMessage() {
         var model = mock(com.azhukov.agent.core.client.ModelClient.class);
         Mockito.when(model.complete(Mockito.any(), Mockito.any()))
@@ -139,6 +142,7 @@ class DefaultContextCompressorFailureTest {
     }
 
     @Test
+    @Tag("slow") // Exercises real retry/backoff or timeout waits; run manually.
     void compress_resourceExhaustedError() {
         var model = mock(com.azhukov.agent.core.client.ModelClient.class);
         Mockito.when(model.complete(Mockito.any(), Mockito.any()))

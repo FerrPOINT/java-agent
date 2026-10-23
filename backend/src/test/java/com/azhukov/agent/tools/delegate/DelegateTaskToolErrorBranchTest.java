@@ -11,6 +11,7 @@ import com.azhukov.agent.core.model.ToolResult;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -84,6 +85,7 @@ class DelegateTaskToolErrorBranchTest {
     }
 
     @Test
+    @Tag("slow") // Exercises real retry/backoff or timeout waits; run manually.
     void singleTaskTimeoutReturnsTimeoutResult() throws Exception {
         AgentProperties p = properties();
         mockRuntimeHangs();

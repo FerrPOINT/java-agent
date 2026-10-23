@@ -26,6 +26,7 @@ import com.azhukov.agent.core.tool.ToolExecutionService;
 import com.azhukov.agent.core.tool.ToolRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -354,6 +355,7 @@ class AgentRuntimeFullScenariosTest {
     }
 
     @Test
+    @Tag("slow") // Exercises real retry/backoff or timeout waits; run manually.
     void runTurnModelFailureReturnsErrorTurnResult() {
         stubRunTurnMocks();
         IterationBudget.TurnSnapshot budget = freshBudget();

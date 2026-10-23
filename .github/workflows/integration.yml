@@ -1,0 +1,64 @@
+name: Manual slow integration
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: manual-integration-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  slow:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: java_agent_test_ci
+          POSTGRES_USER: qa
+          POSTGRES_PASSWORD: owned-qa-only
+        ports:
+          - 5432:5432
+        options: >-
+          --cpus 1 --memory 512m --memory-swap 512m
+          --health-cmd "pg_isready -U qa -d java_agent_test_ci"
+          --health-interval 2s --health-timeout 2s --health-retries 30
+    env:
+      JAVA_AGENT_TEST_JDBC_URL: jdbc:postgresql://127.0.0.1:5432/java_agent_test_ci
+      JAVA_AGENT_TEST_DB_USER: qa
+      JAVA_AGENT_TEST_DB_PASSWORD: owned-qa-only
+      USAGE_PERSISTENCE_TEST_JDBC_URL: jdbc:postgresql://127.0.0.1:5432/java_agent_test_ci
+      USAGE_PERSISTENCE_TEST_DB_USER: qa
+      USAGE_PERSISTENCE_TEST_DB_PASSWORD: owned-qa-only
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: 4
+      SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: 0
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25.0.4+101.0.LTS'
+      - name: Verify exact Temurin runtime
+        run: java -XshowSettings:properties -version 2>&1 | grep -F 'java.runtime.version = 25.0.4.1+1-LTS'
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('backend/**/gradle-wrapper.properties', 'backend/**/*.gradle', 'backend/**/gradle.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+      - name: Explicit slow PostgreSQL and real-wait tests
+        working-directory: backend
+        run: ./gradlew fullCheck --no-daemon --max-workers=1
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: slow-integration-results
+          path: |
+            backend/build/test-results/slowTest
+            backend/build/reports/jacoco/full

@@ -2,8 +2,8 @@
 """Run local release gates and write a machine-readable evidence report.
 
 Default gates are deterministic and local: JVM tests, JaCoCo reports, boot JARs,
-and static endpoint-to-test-reference inventory. HTTP/CLI/Docker E2E require an
-explicit flag because they need a running backend or Docker.
+and static endpoint-to-test-reference inventory. Slow integration tests and
+HTTP/CLI/Docker E2E require an explicit flag because they need a running backend or Docker.
 """
 from __future__ import annotations
 
@@ -125,7 +125,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--report", type=Path, default=DEFAULT_REPORT)
     parser.add_argument("--timeout", type=int, default=600)
-    parser.add_argument("--skip-slow", action="store_true")
+    slow = parser.add_mutually_exclusive_group()
+    slow.add_argument("--run-slow", action="store_true", help="run the manual PostgreSQL/real-wait lane and combined coverage gate")
+    slow.add_argument("--skip-slow", action="store_true", help="compatibility alias for the default manual-only policy")
     parser.add_argument("--skip-boot-jars", action="store_true")
     parser.add_argument("--run-http-e2e", action="store_true")
     parser.add_argument("--run-cli-e2e", action="store_true")
@@ -177,10 +179,10 @@ def main() -> int:
         [sys.executable, "scripts/endpoint_coverage_report.py"],
         args.timeout,
     ))
-    if args.skip_slow:
-        record(not_run("slow-postgresql-integration", "disabled by --skip-slow"))
+    if args.run_slow:
+        record(run_command("slow-postgresql-integration", gradle + [":backend:fullCheck"], args.timeout))
     else:
-        record(run_command("slow-postgresql-integration", gradle + [":backend:slowTest"], args.timeout))
+        record(not_run("slow-postgresql-integration", "manual only; pass --run-slow"))
     if args.skip_boot_jars:
         record(not_run("boot-jars", "disabled by --skip-boot-jars"))
     else:
