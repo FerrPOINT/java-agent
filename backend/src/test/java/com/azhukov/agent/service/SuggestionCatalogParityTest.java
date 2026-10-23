@@ -1,5 +1,7 @@
 package com.azhukov.agent.service;
 
+import com.azhukov.agent.persistence.entity.CronSuggestionEntity;
+import com.azhukov.agent.persistence.repository.CronSuggestionRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeAll;
@@ -8,8 +10,13 @@ import org.junit.jupiter.api.Test;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.when;
 
 /**
  * REGRESSION GUARD: the curated starter catalog must match the Hermes
@@ -31,7 +38,28 @@ class SuggestionCatalogParityTest {
     @Test
     @DisplayName("catalog seeds exactly the 4 Hermes entries with byte-exact fields")
     void catalogParity() {
-        CronSuggestionService service = new CronSuggestionService(null);
+        CronSuggestionRepository repository = org.mockito.Mockito.mock(CronSuggestionRepository.class);
+        List<CronSuggestionEntity> stored = new ArrayList<>();
+        when(repository.findByUserIdAndDedupKey(anyString(), anyString()))
+            .thenAnswer(invocation -> stored.stream()
+                .filter(entity -> entity.getUserId().equals(invocation.getArgument(0))
+                    && entity.getDedupKey().equals(invocation.getArgument(1)))
+                .findFirst());
+        when(repository.countByUserIdAndStatus(anyString(), anyString()))
+            .thenAnswer(invocation -> stored.stream()
+                .filter(entity -> entity.getUserId().equals(invocation.getArgument(0))
+                    && entity.getStatus().equals(invocation.getArgument(1))).count());
+        when(repository.findByUserIdAndStatusOrderByCreatedAtAsc(anyString(), anyString()))
+            .thenAnswer(invocation -> stored.stream()
+                .filter(entity -> entity.getUserId().equals(invocation.getArgument(0))
+                    && entity.getStatus().equals(invocation.getArgument(1))).toList());
+        when(repository.save(any())).thenAnswer(invocation -> {
+            CronSuggestionEntity entity = invocation.getArgument(0);
+            entity.setId(java.util.UUID.randomUUID());
+            stored.add(entity);
+            return entity;
+        });
+        CronSuggestionService service = new CronSuggestionService(null, repository);
         int seeded = service.seedCatalogSuggestions();
         assertThat(seeded).isEqualTo(4);
 

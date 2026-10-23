@@ -22,8 +22,10 @@ import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -36,6 +38,7 @@ class CronJobControllerTest {
     private ObjectMapper objectMapper;
 
     @Mock private CronJobService cronJobService;
+    @Mock private CronSuggestionService cronSuggestionService;
     @Mock private CronExecutionLogRepository cronExecutionLogRepository;
     @Mock private com.azhukov.agent.persistence.repository.SessionRepository sessionRepository;
     @Mock private HeartbeatService heartbeatService;
@@ -45,7 +48,7 @@ class CronJobControllerTest {
         objectMapper = new ObjectMapper();
         CronJobController controller = new CronJobController(
             cronJobService,
-            new CronSuggestionService(null),
+            cronSuggestionService,
             heartbeatService,
             cronExecutionLogRepository,
             sessionRepository,
@@ -97,6 +100,40 @@ class CronJobControllerTest {
         verify(cronJobService).create(isNull(), eq("chained"), eq("0 * * * *"), eq("p"), isNull(), isNull(),
             eq("11111111-1111-1111-1111-111111111111"),
             isNull(), isNull(), eq(false), eq("web"), eq("/tmp"), isNull(), isNull(), isNull());
+    }
+
+    @Test
+    void acceptSuggestionReturnsNotFoundWithoutCreatingJobForForeignSuggestion() throws Exception {
+        UserContext.set("user-b", UserContext.ROLE_USER);
+        try {
+            when(cronSuggestionService.acceptSuggestion(anyString())).thenReturn(null);
+
+            mockMvc.perform(post("/api/v1/agent/cron/suggestions/{id}/accept", UUID.randomUUID()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.accepted").value(false));
+
+            verify(cronSuggestionService).acceptSuggestion(anyString());
+            verify(cronJobService, never()).create(
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any());
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
+    void dismissSuggestionReturnsFalseForForeignSuggestion() throws Exception {
+        UserContext.set("user-b", UserContext.ROLE_USER);
+        try {
+            when(cronSuggestionService.dismissSuggestion(anyString())).thenReturn(false);
+
+            mockMvc.perform(post("/api/v1/agent/cron/suggestions/{id}/dismiss", UUID.randomUUID()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.dismissed").value(false));
+
+            verify(cronSuggestionService).dismissSuggestion(anyString());
+        } finally {
+            UserContext.clear();
+        }
     }
 
     @Test

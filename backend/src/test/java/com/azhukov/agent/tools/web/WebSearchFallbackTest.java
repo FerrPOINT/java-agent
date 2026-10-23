@@ -80,6 +80,8 @@ class WebSearchFallbackTest {
     @Test
     void nonNewsFallbackFailureReturnsHonestEmptyResult() throws Exception {
         AgentProperties properties = properties();
+        properties.getWeb().setParallelKeylessEnabled(false);
+        properties.getWeb().setExaKeylessEnabled(false);
         UrlSafety urlSafety = mock(UrlSafety.class);
         when(urlSafety.isUrlAllowed(anyString())).thenReturn(true);
         WebSearchTool tool = new WebSearchTool(properties, objectMapper, urlSafety, mock(Redactor.class));
@@ -105,6 +107,7 @@ class WebSearchFallbackTest {
     @Test
     void fallsThroughToAnotherUniversalProviderWhenEarlierFallbackIsEmpty() throws Exception {
         AgentProperties properties = properties();
+        properties.getWeb().setParallelKeylessEnabled(true);
         UrlSafety urlSafety = mock(UrlSafety.class);
         when(urlSafety.isUrlAllowed(anyString())).thenReturn(true);
         WebSearchTool tool = new WebSearchTool(properties, objectMapper, urlSafety, mock(Redactor.class));
