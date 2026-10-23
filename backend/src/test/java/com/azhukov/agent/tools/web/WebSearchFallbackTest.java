@@ -93,13 +93,26 @@ class WebSearchFallbackTest {
         when(fallback.name()).thenReturn("tavily");
         when(fallback.isAvailable()).thenReturn(true);
         when(fallback.search("rareterm", 5)).thenThrow(new IOException("Tavily returned HTTP 429"));
+        ParallelSearchProvider parallel = mock(ParallelSearchProvider.class);
+        when(parallel.name()).thenReturn("parallel");
+        when(parallel.isAvailable()).thenReturn(true);
+        when(parallel.search("rareterm", 5)).thenThrow(new IOException("Parallel returned HTTP 503"));
+        ExaSearchProvider exa = mock(ExaSearchProvider.class);
+        when(exa.name()).thenReturn("exa");
+        when(exa.isAvailable()).thenReturn(true);
+        when(exa.search("rareterm", 5)).thenThrow(new IOException("Exa returned HTTP 429"));
         org.springframework.test.util.ReflectionTestUtils.setField(tool, "searXngProvider", primary);
         org.springframework.test.util.ReflectionTestUtils.setField(tool, "tavilyProvider", fallback);
+        org.springframework.test.util.ReflectionTestUtils.setField(tool, "parallelProvider", parallel);
+        org.springframework.test.util.ReflectionTestUtils.setField(tool, "exaProvider", exa);
 
         var result = tool.execute("{\"query\":\"rareterm\",\"limit\":5}", null, null);
 
         assertThat(result.success()).isTrue();
         assertThat(objectMapper.readTree(result.content()).at("/data/web")).isEmpty();
+        verify(fallback).search("rareterm", 5);
+        verify(parallel).search("rareterm", 5);
+        verify(exa).search("rareterm", 5);
     }
 
     @Test

@@ -187,8 +187,8 @@ tasks.register('e2eTest', Test) {
 }
 
 tasks.named('jacocoTestReport') {
-    dependsOn test, slowTest
-    executionData(test, slowTest)
+    dependsOn test
+    executionData(test)
     reports {
         xml.required = true
         html.required = true
@@ -200,23 +200,58 @@ tasks.named('jar') {
     enabled = false
 }
 
+def coverageFloors = new groovy.json.JsonSlurper().parse(file('../docs/standards/coverage-baseline.json'))
+
 tasks.named('jacocoTestCoverageVerification', JacocoCoverageVerification) {
     dependsOn jacocoTestReport
     violationRules {
         rule {
             limit {
                 counter = 'LINE'
-                // Aligned with docs/standards/coverage-baseline.json (the CI
-                // ratchet, scripts/check_docs_standard.py --check-coverage).
-                // Both mechanisms must require the same floor; raise this
-                // together with the baseline when new tests land.
-                minimum = 0.7938
+                // The measured fast lane has its own ratchet; the former
+                // combined floor remains enforced by the explicit fullCheck.
+                minimum = coverageFloors.line_coverage.backend / 100
             }
         }
     }
 }
 
 check.dependsOn jacocoTestCoverageVerification
+
+// Manual only: no build/check/default coverage dependency points at this lane.
+tasks.register('jacocoFullTestReport', JacocoReport) {
+    group = 'verification'
+    description = 'Reports combined fast and manually requested slow coverage'
+    dependsOn test, slowTest
+    executionData(test, slowTest)
+    sourceSets sourceSets.main
+    reports {
+        xml.required = true
+        xml.outputLocation = layout.buildDirectory.file('reports/jacoco/full/jacocoFullTestReport.xml')
+        html.required = true
+        html.outputLocation = layout.buildDirectory.dir('reports/jacoco/full/html')
+    }
+}
+
+tasks.register('jacocoFullTestCoverageVerification', JacocoCoverageVerification) {
+    dependsOn jacocoFullTestReport
+    executionData(test, slowTest)
+    sourceSets sourceSets.main
+    violationRules {
+        rule {
+            limit {
+                counter = 'LINE'
+                minimum = coverageFloors.manual_line_coverage.backend / 100
+            }
+        }
+    }
+}
+
+tasks.register('fullCheck') {
+    group = 'verification'
+    description = 'Manually runs fast and slow tests with the combined coverage ratchet'
+    dependsOn jacocoFullTestCoverageVerification
+}
 
 tasks.withType(JavaCompile).configureEach {
     options.release = 25

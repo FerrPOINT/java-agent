@@ -61,6 +61,19 @@ class CoverageGateTests(PatchedRoot):
                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             return mod.main()
 
+    def test_updating_fast_baseline_preserves_the_manual_combined_floor(self) -> None:
+        payload = json.loads(mod.BASELINE.read_text())
+        payload["manual_line_coverage"] = {"backend": 79.38}
+        mod.BASELINE.write_text(json.dumps(payload))
+        self.report("backend", covered=7905, missed=2095)
+        self.report("telegram-bot")
+        with mock.patch("sys.argv", [str(SCRIPT), "--update-baseline"]), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(mod.main(), 0)
+        updated = json.loads(mod.BASELINE.read_text())
+        self.assertEqual(updated["line_coverage"]["backend"], 79.05)
+        self.assertEqual(updated["manual_line_coverage"]["backend"], 79.38)
+
     def test_missing_required_reports_fail(self) -> None:
         self.assertEqual(self.run_gate(), 1)
 

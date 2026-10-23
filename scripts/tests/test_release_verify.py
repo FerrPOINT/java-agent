@@ -7,6 +7,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parents[1]
@@ -76,6 +77,33 @@ class EndpointCoverageReportTest(unittest.TestCase):
 
 
 class ReleaseVerifyTest(unittest.TestCase):
+    def run_release_cli(self, *flags):
+        verify = load_module("release_verify_lanes", "release_verify.py")
+        commands = []
+
+        def completed(name, command, timeout):
+            commands.append(command)
+            return verify.GateResult(name, "PASS", command, 0.0, "test fixture")
+
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "evidence.json"
+            argv = ["release_verify.py", "--report", str(target), "--skip-boot-jars", *flags]
+            with patch.object(sys, "argv", argv), patch.object(verify, "run_command", side_effect=completed):
+                self.assertEqual(verify.main(), 0)
+            report = json.loads(target.read_text())
+        return commands, report
+
+    def test_default_release_cli_leaves_slow_lane_unexecuted(self):
+        commands, report = self.run_release_cli()
+        self.assertFalse(any(":backend:slowTest" in command or ":backend:fullCheck" in command for command in commands))
+        gate = next(item for item in report["gates"] if item["name"] == "slow-postgresql-integration")
+        self.assertEqual(gate["status"], "NOT_RUN")
+        self.assertIn("--run-slow", gate["detail"])
+
+    def test_slow_lane_requires_explicit_cli_opt_in(self):
+        commands, _ = self.run_release_cli("--run-slow")
+        self.assertEqual(sum(":backend:fullCheck" in command for command in commands), 1)
+
     def test_line_coverage_returns_percent(self) -> None:
         verify = load_module("release_verify", "release_verify.py")
         with tempfile.TemporaryDirectory() as directory:

@@ -70,6 +70,7 @@ services:
       AGENT_GATEWAY_TELEGRAM_ALLOW_BY_DEFAULT: ${AGENT_GATEWAY_TELEGRAM_ALLOW_BY_DEFAULT:-true}
       AGENT_CORE_WORKING_DIRECTORY: /workspace
       AGENT_ATTACHMENTS_CACHE_ROOT: /artifacts
+      HERMES_HOME: /home/agent/.java-agent
     ports:
       - "127.0.0.1:1180:1180"
     healthcheck:
@@ -79,6 +80,7 @@ services:
       retries: 10
       start_period: 45s
     volumes:
+      - agent_local_state:/home/agent/.java-agent
       - agent_local_chromium:/home/agent/.azhukov-agent
       - agent_local_workspace:/workspace
       - agent_local_artifacts:/artifacts
@@ -110,6 +112,7 @@ services:
       BOT_ALLOW_BY_DEFAULT: ${BOT_ALLOW_BY_DEFAULT:-true}
       BOT_WORKING_DIRECTORY: /workspace
       AGENT_ATTACHMENTS_CACHE_ROOT: /artifacts
+      HERMES_HOME: /home/agent/.java-agent
     ports:
       - "127.0.0.1:1182:1182"
     healthcheck:
@@ -121,6 +124,7 @@ services:
     volumes:
       - agent_local_workspace:/workspace
       - agent_local_artifacts:/artifacts
+      - agent_local_state:/home/agent/.java-agent
 
   cli:
     build:
@@ -138,6 +142,7 @@ services:
 
 volumes:
   java_agent_local_pg:
+  agent_local_state:
   agent_local_chromium:
   agent_local_workspace:
   agent_local_artifacts:

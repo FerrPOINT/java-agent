@@ -26,6 +26,7 @@ import com.azhukov.agent.core.security.UserInputSanitizer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Tag;
 
 import java.util.HashSet;
 import java.util.List;
@@ -126,6 +127,7 @@ class DefaultAgentRuntimeRetryTest {
 
     @Test
     @DisplayName("When modelClient.complete() throws transient error (timeout), turn ends with error after retries exhausted")
+    @Tag("slow") // Exercises real retry/backoff or timeout waits; run manually.
     void transientTimeoutIsRetriedThenFails() {
         when(modelClient.complete(any(List.class), any(List.class), any()))
             .thenThrow(new RuntimeException("read timed out"));
@@ -141,6 +143,7 @@ class DefaultAgentRuntimeRetryTest {
 
     @Test
     @DisplayName("When modelClient.complete() throws rate limit error, turn ends with error after retries exhausted")
+    @Tag("slow") // Exercises real retry/backoff or timeout waits; run manually.
     void rateLimitErrorIsRetriedThenFails() {
         when(modelClient.complete(any(List.class), any(List.class), any()))
             .thenThrow(new RuntimeException("rate limit exceeded (429)"));
@@ -156,6 +159,7 @@ class DefaultAgentRuntimeRetryTest {
 
     @Test
     @DisplayName("When modelClient.complete() throws connection reset, turn ends with error after retries exhausted")
+    @Tag("slow") // Exercises real retry/backoff or timeout waits; run manually.
     void connectionResetIsRetriedThenFails() {
         when(modelClient.complete(any(List.class), any(List.class), any()))
             .thenThrow(new RuntimeException("connection reset by peer"));
@@ -238,6 +242,7 @@ class DefaultAgentRuntimeRetryTest {
 
     @Test
     @DisplayName("When modelClient.complete() throws, TurnFinalizer is called with success=false")
+    @Tag("slow") // Exercises real retry/backoff or timeout waits; run manually.
     void modelCallExceptionCallsFinalizerWithFailure() {
         when(modelClient.complete(any(List.class), any(List.class), any()))
             .thenThrow(new RuntimeException("connection refused"));

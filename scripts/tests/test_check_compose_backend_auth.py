@@ -15,14 +15,17 @@ SPEC.loader.exec_module(GUARD)
 
 def fixture() -> dict:
     backend = {
-        "environment": {"AGENT_CORE_WORKING_DIRECTORY": "/workspace", "AGENT_ATTACHMENTS_CACHE_ROOT": "/artifacts"},
+        "environment": {"AGENT_CORE_WORKING_DIRECTORY": "/workspace", "AGENT_ATTACHMENTS_CACHE_ROOT": "/artifacts",
+                        "HERMES_HOME": "/home/agent/.java-agent"},
         "volumes": [{"type": "volume", "source": "work", "target": "/workspace"},
-                    {"type": "volume", "source": "artifacts", "target": "/artifacts"}],
+                    {"type": "volume", "source": "artifacts", "target": "/artifacts"},
+                    {"type": "volume", "source": "state", "target": "/home/agent/.java-agent"}],
     }
     bot = copy.deepcopy(backend)
     bot["environment"] = {"BOT_WORKING_DIRECTORY": "/workspace", "AGENT_ATTACHMENTS_CACHE_ROOT": "/artifacts",
+                          "HERMES_HOME": "/home/agent/.java-agent",
                           "BOT_BACKEND_URL": "http://backend:8090", "BOT_BACKEND_API_KEY": "${TEST_KEY:-}"}
-    return {"services": {"backend": backend, "bot": bot}, "volumes": {"work": {}, "artifacts": {}, "other": {}}}
+    return {"services": {"backend": backend, "bot": bot}, "volumes": {"work": {}, "artifacts": {}, "state": {}, "other": {}}}
 
 
 class ComposeBackendAuthTest(unittest.TestCase):
@@ -39,7 +42,7 @@ class ComposeBackendAuthTest(unittest.TestCase):
 
     def test_missing_mount_is_rejected_with_environment_still_present(self):
         for name in ("backend", "bot"):
-            for index in (0, 1):
+            for index in (0, 1, 2):
                 with self.subTest(service=name, index=index):
                     model = fixture()
                     del model["services"][name]["volumes"][index]
@@ -51,7 +54,7 @@ class ComposeBackendAuthTest(unittest.TestCase):
                    {"source": "undeclared"}, {"read_only": True}, {"volume": {"nocopy": True}},
                    {"volume": {"subpath": "different-tree"}})
         for name in ("backend", "bot"):
-            for index in (0, 1):
+            for index in (0, 1, 2):
                 for change in changes:
                     with self.subTest(service=name, index=index, change=change):
                         model = fixture()
@@ -60,7 +63,7 @@ class ComposeBackendAuthTest(unittest.TestCase):
                             self.validate(model)
 
     def test_different_shared_source_is_rejected(self):
-        for index in (0, 1):
+        for index in (0, 1, 2):
             model = fixture()
             model["services"]["bot"]["volumes"][index]["source"] = "other"
             with self.assertRaisesRegex(AssertionError, "must share"):

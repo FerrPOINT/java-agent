@@ -33,6 +33,18 @@
 
 ---
 
+## Проверки без неявного долгого прогона
+
+Обычные `test`, `check` и coverage используют быстрый набор. Долгие интеграционные
+проверки и реальные ожидания retry/timeout сохраняются в `slowTest` и запускаются
+только вручную: `cd backend && ./gradlew slowTest` либо через GitHub Actions
+`Manual slow integration`. В release verifier для этого нужен явный `--run-slow`;
+по умолчанию этап отмечается `NOT_RUN`. Live/E2E также требуют явного запуска.
+
+Для быстрого backend-набора зафиксирован измеренный coverage baseline 79,05%;
+прежний общий порог 79,38% сохранён в ручном `fullCheck`. Порог bot остаётся
+82,47%. Отчёты разделены: быстрый coverage не читает старый `slowTest.exec`.
+
 ## 🎯 Позиционирование
 
 **Java Agent** — Java/Spring Boot agent-платформа для FerrPOINT: LLM runtime, OpenAI-compatible API, built-in tools, MCP client/server, Telegram gateway и standalone CLI REPL.
@@ -210,6 +222,9 @@ Standalone Compose-файлы ниже остаются отдельными ш�
 инициализированного SDLC. Временные локальные QA/build из этих шаблонов оформляются
 через Base ComposeHelper v2 с собственным project и cleanup; постоянный SDLC
 управляется workspace helper.
+
+Пути состояния, права, перенос старого writable layer, rollback и TTL описаны
+в [контракте хранения](docs/architecture/storage.md).
 
 The CLI image packages `LICENSE`, `NOTICE`, and `THIRD_PARTY_NOTICES.md`
 inside its executable JAR under `META-INF`, alongside the license metadata.

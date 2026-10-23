@@ -40,11 +40,12 @@ def persistent_paths(model: dict, block: dict, label: str, source: Path) -> dict
         raise AssertionError(f"{source.name}: {label} must retain the image's agent identity")
     environment = block.get("environment", {})
     working_key = "AGENT_CORE_WORKING_DIRECTORY" if label == "backend" else "BOT_WORKING_DIRECTORY"
-    for key, value in ((working_key, "/workspace"), ("AGENT_ATTACHMENTS_CACHE_ROOT", "/artifacts")):
+    for key, value in ((working_key, "/workspace"), ("AGENT_ATTACHMENTS_CACHE_ROOT", "/artifacts"),
+                       ("HERMES_HOME", "/home/agent/.java-agent")):
         if environment.get(key) != value:
             raise AssertionError(f"{source.name}: {label} must set {key} to {value}")
     paths = {}
-    for target in ("/workspace", "/artifacts"):
+    for target in ("/workspace", "/artifacts", "/home/agent/.java-agent"):
         mounts = [mount for mount in block.get("volumes", []) if mount.get("target") == target]
         if len(mounts) != 1:
             raise AssertionError(f"{source.name}: {label} must mount {target} exactly once")

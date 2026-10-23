@@ -26,22 +26,44 @@ Options considered:
 
 ## Decision
 
-Add Testcontainers dependencies (`testcontainers`, `postgresql`, `junit-jupiter`). Integration tests tagged `@Tag("slow")` use Testcontainers PostgreSQL containers. A `@Testcontainers` annotation on the test class spins up a PostgreSQL 16 container, and `@Container` provides a `PostgreSQLContainer` instance.
+Integration tests tagged `@Tag("slow")` use real PostgreSQL with Flyway migrations.
+`PostgresTestContainer` keeps a JVM-wide singleton so Spring's cached contexts
+retain a valid connection. By default, the fixture starts PostgreSQL 16 through
+Testcontainers; the Docker environment owns its lifecycle.
 
-Default tests (the `test` task) still use H2 for speed. The `slowTest` Gradle task runs only `@Tag("slow")` tests with Testcontainers.
+For an explicitly prepared disposable Compose database, set
+`JAVA_AGENT_TEST_JDBC_URL`, `JAVA_AGENT_TEST_DB_USER` and
+`JAVA_AGENT_TEST_DB_PASSWORD`. The URL must name a database with the
+`java_agent_test_` prefix. This mode does not create nested Docker containers;
+the caller owns creation, isolation, resource caps and cleanup. A failed explicit
+connection does not fall back to another database. Existing application data or
+an installed runtime database must never be supplied to this migration fixture.
+
+Default tests (the `test` task) still use H2 for speed. The `slowTest` Gradle task runs only `@Tag("slow")` tests, including real
+retry/backoff/timeout waits and the PostgreSQL fixture. It is manual only:
+`cd backend && ./gradlew slowTest`, the `Manual slow integration` workflow, or
+`python3 scripts/release_verify.py --run-slow`. Ordinary PR/push CI,
+`build`/`check`, default release verification and `jacocoTestReport` do not invoke it.
+The default coverage report reads only the fast `test` execution data, even if
+an earlier manual run left `slowTest.exec` on disk.
 
 ## Consequences
 
 **Positive:**
 
 - Real PostgreSQL behavior — catches dialect-specific bugs.
-- Fully isolated — each test class gets a fresh database.
+- Isolated per qualification run; the shared JVM fixture preserves Spring context caching.
 - No local PostgreSQL installation required (just Docker).
 - Flyway migrations run against real PostgreSQL, catching migration issues.
 
 **Negative:**
 
-- Requires Docker in CI (Docker-in-Docker or Docker socket).
-- Slower startup (~5–10s per container).
+- The default fixture requires Docker; an explicitly managed disposable Compose database avoids a nested Docker socket.
+- PostgreSQL and Flyway startup add integration-test cost.
 - Must be tagged `@Tag("slow")` — not run in the default `test` task.
 - Docker resource usage in CI (CPU, memory, disk).
+
+Coverage uses separate reports for the two test sets: the measured fast backend
+floor is 79.05%, while the previous combined floor of 79.38% is retained by the
+manual `cd backend && ./gradlew fullCheck`. The bot floor stays 82.47%.
+Fast coverage never reads an old `slowTest.exec`; the full report has its own path.

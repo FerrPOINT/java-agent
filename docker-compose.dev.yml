@@ -138,6 +138,7 @@ services:
       BOT_AVAILABLE_MODELS: ${BOT_AVAILABLE_MODELS:-}
       BOT_WORKING_DIRECTORY: /workspace
       AGENT_ATTACHMENTS_CACHE_ROOT: /artifacts
+      HERMES_HOME: /home/agent/.java-agent
       HOME: /home/agent
     ports:
       - "127.0.0.1:8091:8091"

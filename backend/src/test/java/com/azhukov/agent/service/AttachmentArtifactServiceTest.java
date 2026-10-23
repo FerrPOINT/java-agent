@@ -82,6 +82,8 @@ class AttachmentArtifactServiceTest {
             .formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(data)));
         existing.setDisposition("photo");
         existing.setCachePath("u1/att_existing.png");
+        Files.createDirectories(tempDir.resolve("u1"));
+        Files.write(tempDir.resolve("u1/att_existing.png"), data);
         when(repository.findFirstByOwnerIdAndContentHashAndDisposition(
             org.mockito.ArgumentMatchers.eq("u1"), any(), org.mockito.ArgumentMatchers.eq("photo")))
             .thenReturn(Optional.of(existing));
@@ -228,4 +230,94 @@ class AttachmentArtifactServiceTest {
 
         verify(repository, never()).deleteAllById(any());
     }
+    @Test
+    void configuredCacheSurvivesServiceRecreation() throws Exception {
+        byte[] data = "persist across process configuration".getBytes();
+        var stored = service().register("u1", "default", null, null,
+            "cli", "document", "text/plain", "durable.txt", data);
+        var entity = new AttachmentArtifactEntity();
+        entity.setId(stored.id());
+        entity.setOwnerId("u1");
+        entity.setCachePath(stored.cachePath());
+        when(repository.findById(stored.id())).thenReturn(Optional.of(entity));
+
+        assertThat(Files.readAllBytes(service().contentPath(stored.id(), "u1").orElseThrow()))
+            .isEqualTo(data);
+        assertThat(service().contentPath(stored.id(), "other-owner")).isEmpty();
+    }
+
+    @Test
+    void parentSymlinkCannotWriteOutsideCache() throws Exception {
+        Path outside = Files.createTempDirectory("attachment-outside-");
+        try {
+            Files.createSymbolicLink(tempDir.resolve("u1"), outside);
+            var result = service().register("u1", "default", null, null,
+                "cli", "document", "text/plain", "safe.txt", "bytes".getBytes());
+            assertThat(result.rejection()).isNotNull();
+            try (var files = Files.list(outside)) {
+                assertThat(files).isEmpty();
+            }
+            verify(repository, never()).save(any());
+        } finally {
+            Files.delete(outside);
+        }
+    }
+
+    @Test
+    void missingDuplicateBlobCannotReportSuccessfulRegistration() {
+        var entity = new AttachmentArtifactEntity();
+        entity.setId("att_missing");
+        entity.setCachePath("u1/missing.txt");
+        when(repository.findFirstByOwnerIdAndContentHashAndDisposition(any(), any(), any()))
+            .thenReturn(Optional.of(entity));
+        var result = service().register("u1", "default", null, null,
+            "cli", "document", "text/plain", "safe.txt", "bytes".getBytes());
+        assertThat(result.rejection()).contains("missing or inconsistent");
+        assertThat(result.id()).isNull();
+        verify(repository, never()).save(any());
+    }
+
+    @Test
+    void legitimateNestedOwnerAndDotsRemainUsableWithPrivateFiles() throws Exception {
+        var result = service().register("team/a..b", "default", null, null,
+            "cli", "document", "text/plain", "safe.txt", "bytes".getBytes());
+        assertThat(result.rejection()).isNull();
+        Path file = tempDir.resolve(result.cachePath());
+        assertThat(Files.readString(file)).isEqualTo("bytes");
+        if (Files.getFileStore(file).supportsFileAttributeView("posix")) {
+            assertThat(Files.getPosixFilePermissions(file))
+                .isEqualTo(java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"));
+            assertThat(Files.getPosixFilePermissions(file.getParent()))
+                .isEqualTo(java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));
+        }
+    }
+
+    @Test
+    void explicitConfiguredRootMayUseALegitimateFilesystemAlias() throws Exception {
+        Path actual = tempDir.resolve("actual");
+        Files.createDirectory(actual);
+        Path alias = tempDir.resolve("alias");
+        Files.createSymbolicLink(alias, actual);
+        var service = service();
+        ReflectionTestUtils.setField(service, "cacheRootConfig", alias.resolve("attachments").toString());
+        var result = service.register("u1", "default", null, null,
+            "cli", "document", "text/plain", "safe.txt", "bytes".getBytes());
+        assertThat(result.rejection()).isNull();
+        assertThat(actual.resolve("attachments").resolve(result.cachePath())).hasContent("bytes");
+        verify(repository).save(any());
+    }
+
+    @Test
+    void unavailableConfiguredRootDoesNotFallBackToTemporaryStorage() throws Exception {
+        Path blocked = tempDir.resolve("not-a-directory");
+        Files.writeString(blocked, "occupied");
+        var service = service();
+        ReflectionTestUtils.setField(service, "cacheRootConfig", blocked.toString());
+        var result = service.register("u1", "default", null, null,
+            "cli", "document", "text/plain", "safe.txt", "bytes".getBytes());
+        assertThat(result.rejection()).contains("cache write failed");
+        verify(repository, never()).save(any());
+        assertThat(Files.readString(blocked)).isEqualTo("occupied");
+    }
+
 }
