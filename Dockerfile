@@ -75,7 +75,8 @@ RUN groupadd --gid 10001 agent && useradd --uid 10001 --gid agent --create-home 
 WORKDIR /app
 COPY --from=builder /workspace/build/libs/*.jar app.jar
 RUN mkdir -p /workspace /artifacts /home/agent/.java-agent \
-    && chown -R agent:agent /app /workspace /artifacts /home/agent/.java-agent
+    && chown -R agent:agent /app /workspace /artifacts /home/agent/.java-agent \
+    && chmod 0700 /home/agent/.java-agent
 
 # Cache dir for Chromium auto-install
 RUN mkdir -p /home/agent/.azhukov-agent && chown -R agent:agent /home/agent/.azhukov-agent

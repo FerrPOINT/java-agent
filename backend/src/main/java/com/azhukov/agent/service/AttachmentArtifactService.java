@@ -48,9 +48,18 @@ public class AttachmentArtifactService {
 
     private Path cacheRoot() {
         if (cacheRoot == null) {
-            cacheRoot = (cacheRootConfig == null || cacheRootConfig.isBlank())
+            Path configured = (cacheRootConfig == null || cacheRootConfig.isBlank())
                 ? Path.of(System.getProperty("java.io.tmpdir"), "agent-attachments")
                 : Path.of(cacheRootConfig);
+            configured = configured.toAbsolutePath().normalize();
+            try {
+                Files.createDirectories(configured, privateAttributes(configured, true));
+                // The explicitly configured root may itself be a legitimate filesystem alias.
+                // Pin its real directory; untrusted relative artifact paths cannot redirect it.
+                cacheRoot = configured.toRealPath();
+            } catch (IOException e) {
+                throw new IllegalArgumentException("configured attachment cache is unavailable", e);
+            }
         }
         return cacheRoot;
     }
@@ -86,15 +95,39 @@ public class AttachmentArtifactService {
         Optional<AttachmentArtifactEntity> existing = repository
             .findFirstByOwnerIdAndContentHashAndDisposition(ownerId, hash, disposition);
         if (existing.isPresent()) {
-            return new ArtifactRegistration(existing.get().getId(), hash,
-                existing.get().getCachePath(), true, null);
+            try {
+                Path cached = safeCachePath(existing.get().getCachePath());
+                if (!Files.isRegularFile(cached, java.nio.file.LinkOption.NOFOLLOW_LINKS)
+                    || Files.size(cached) != data.length
+                    || !sha256(Files.readAllBytes(cached)).equals(hash)) {
+                    return new ArtifactRegistration(null, hash, null, false,
+                        "cached attachment content is missing or inconsistent");
+                }
+                return new ArtifactRegistration(existing.get().getId(), hash,
+                    existing.get().getCachePath(), true, null);
+            } catch (IOException | IllegalArgumentException e) {
+                return new ArtifactRegistration(null, hash, null, false,
+                    "cached attachment content is unavailable");
+            }
         }
         String id = "att_" + UUID.randomUUID().toString().replace("-", "");
         String relative = ownerId + "/" + id + extensionOf(fileName, mimeType);
         try {
             Path target = safeCachePath(relative);
-            Files.createDirectories(target.getParent());
-            Files.write(target, data);
+            Files.createDirectories(target.getParent(), privateAttributes(target.getParent(), true));
+            // Recheck newly created parents before creating a unique artifact file.
+            target = safeCachePath(relative);
+            try (var channel = Files.newByteChannel(target, java.util.Set.of(
+                java.nio.file.StandardOpenOption.CREATE_NEW, java.nio.file.StandardOpenOption.WRITE,
+                java.nio.file.LinkOption.NOFOLLOW_LINKS), privateAttributes(target, false))) {
+                var buffer = java.nio.ByteBuffer.wrap(data);
+                while (buffer.hasRemaining()) {
+                    channel.write(buffer);
+                }
+                if (channel instanceof java.nio.channels.FileChannel file) {
+                    file.force(true);
+                }
+            }
             AttachmentArtifactEntity entity = new AttachmentArtifactEntity();
             entity.setId(id);
             entity.setOwnerId(ownerId == null || ownerId.isBlank() ? "system" : ownerId);
@@ -111,7 +144,7 @@ public class AttachmentArtifactService {
             entity.setState("received");
             repository.save(entity);
             return new ArtifactRegistration(id, hash, relative, false, null);
-        } catch (IOException e) {
+        } catch (IOException | IllegalArgumentException e) {
             log.warn("Attachment cache write failed: {}", e.getMessage());
             return new ArtifactRegistration(null, hash, null, false,
                 "cache write failed: " + e.getMessage());
@@ -305,19 +338,52 @@ public class AttachmentArtifactService {
 
     /** Resolve a relative cache path INSIDE the cache root; reject escapes. */
     private Path safeCachePath(String relative) {
-        if (relative == null || relative.isBlank() || relative.startsWith("/")
-            || relative.contains("..")) {
+        if (relative == null || relative.isBlank()) {
             throw new IllegalArgumentException("unsafe cache path");
         }
+        Path suffix = Path.of(relative);
+        if (suffix.isAbsolute()) {
+            throw new IllegalArgumentException("absolute cache path");
+        }
+        for (Path part : suffix) {
+            if (part.toString().equals("..")) {
+                throw new IllegalArgumentException("parent cache path");
+            }
+        }
         Path root = cacheRoot().toAbsolutePath().normalize();
-        Path resolved = root.resolve(relative).normalize();
-        if (!resolved.startsWith(root)) {
+        Path resolved = root.resolve(suffix).normalize();
+        if (!resolved.startsWith(root) || resolved.equals(root)) {
             throw new IllegalArgumentException("cache path escapes root");
         }
-        if (Files.exists(resolved) && Files.isSymbolicLink(resolved)) {
-            throw new IllegalArgumentException("cache path is a symlink");
+        Path current = root.getRoot();
+        for (Path part : root) {
+            current = current.resolve(part);
+            if (Files.isSymbolicLink(current)) {
+                throw new IllegalArgumentException("cache root contains a symlink");
+            }
+        }
+        for (Path part : root.relativize(resolved)) {
+            current = current.resolve(part);
+            if (Files.isSymbolicLink(current)) {
+                throw new IllegalArgumentException("cache path contains a symlink");
+            }
         }
         return resolved;
+    }
+
+    private static java.nio.file.attribute.FileAttribute<?>[] privateAttributes(Path path, boolean directory)
+        throws IOException {
+        Path existing = path;
+        while (!Files.exists(existing, java.nio.file.LinkOption.NOFOLLOW_LINKS) && existing.getParent() != null) {
+            existing = existing.getParent();
+        }
+        if (Files.getFileStore(existing).supportsFileAttributeView("posix")) {
+            return new java.nio.file.attribute.FileAttribute<?>[] {
+                java.nio.file.attribute.PosixFilePermissions.asFileAttribute(
+                    java.nio.file.attribute.PosixFilePermissions.fromString(directory ? "rwx------" : "rw-------"))
+            };
+        }
+        return new java.nio.file.attribute.FileAttribute<?>[0];
     }
 
     private static String extensionOf(String fileName, String mimeType) {

@@ -39,20 +39,6 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     timeout-minutes: 40
-    services:
-      postgres:
-        image: postgres:17.6-alpine
-        env:
-          POSTGRES_DB: usage_regression
-          POSTGRES_USER: qa
-          POSTGRES_PASSWORD: owned-qa-only
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U qa -d usage_regression"
-          --health-interval 2s
-          --health-timeout 2s
-          --health-retries 30
     steps:
       - uses: actions/checkout@v7
 
@@ -81,28 +67,21 @@ jobs:
         working-directory: backend
         run: ./gradlew test --no-daemon
 
-      - name: Run slow backend integration tests
-        working-directory: backend
-        run: ./gradlew slowTest --no-daemon
-        env:
-          USAGE_PERSISTENCE_TEST_JDBC_URL: jdbc:postgresql://127.0.0.1:5432/usage_regression
-          USAGE_PERSISTENCE_TEST_DB_USER: qa
-          USAGE_PERSISTENCE_TEST_DB_PASSWORD: owned-qa-only
-
       - name: Coverage report (visibility, non-blocking)
         working-directory: backend
         run: |
-          ./gradlew jacocoTestReport --no-daemon -x test -x slowTest
+          ./gradlew jacocoTestReport --no-daemon -x test
           # The XML is a JaCoCo-generated local artifact, not untrusted input; stdlib parse is safe here.
           python3 - <<'EOF'
-          import os, xml.etree.ElementTree as ET
+          import json, os, xml.etree.ElementTree as ET
           root = ET.parse('build/reports/jacoco/test/jacocoTestReport.xml').getroot()
           line = next(x for x in root.findall('counter') if x.get('type') == 'LINE')
           c, m = int(line.get('covered')), int(line.get('missed'))
           pct = 100 * c / (c + m)
-          print(f'backend LINE coverage: {pct:.2f}% (gate: 80.00%)')
+          floor = json.load(open('../docs/standards/coverage-baseline.json'))['line_coverage']['backend']
+          print(f'fast backend LINE coverage: {pct:.2f}% (floor: {floor:.2f}%)')
           with open(os.environ.get('GITHUB_STEP_SUMMARY', '/dev/null'), 'a') as summary:
-              summary.write(f'## Backend LINE coverage: {pct:.2f}% (gate 80.00%, deficit {int((c+m)*0.80)-c} lines)\n')
+              summary.write(f'## Fast backend LINE coverage: {pct:.2f}% (floor {floor:.2f}%)\n')
           EOF
 
       - name: Run telegram-bot and cli tests

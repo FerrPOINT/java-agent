@@ -6,12 +6,12 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.TestPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 /**
  * Shared PostgreSQL Testcontainer configuration for integration tests.
- * Subclass this to get a real PostgreSQL 16 container with Flyway migrations.
+ * Subclass this to get real PostgreSQL with Flyway migrations.
+ * An explicitly supplied disposable Compose database avoids nested Docker.
  *
  * The container is a JVM-wide SINGLETON (started once, reused by every test
  * class). Per-class @Container containers broke Spring's context cache: each
@@ -20,7 +20,6 @@ import org.testcontainers.utility.DockerImageName;
  * "Connection is not available / connection refused" after the first class.
  * With one shared container the cached context stays valid across classes.
  */
-@Testcontainers
 @AutoConfigureMockMvc
 @TestPropertySource(properties = {
     "spring.datasource.driver-class-name=org.postgresql.Driver",
@@ -38,21 +37,30 @@ import org.testcontainers.utility.DockerImageName;
 })
 public abstract class PostgresTestContainer extends BackendIntegrationTestBase {
 
-    private static final PostgreSQLContainer<?> POSTGRES =
-        new PostgreSQLContainer<>(DockerImageName.parse("postgres:16-alpine"))
-            .withDatabaseName("test")
-            .withUsername("test")
-            .withPassword("test")
-            .withReuse(true);
+    private static final String EXTERNAL_URL = System.getenv("JAVA_AGENT_TEST_JDBC_URL");
+    private static final PostgreSQLContainer<?> POSTGRES = startDatabase();
 
-    static {
-        POSTGRES.start(); // singleton — started once per JVM, Ryuk cleans up
+    private static PostgreSQLContainer<?> startDatabase() {
+        if (EXTERNAL_URL != null && !EXTERNAL_URL.isBlank()) {
+            if (!EXTERNAL_URL.matches("jdbc:postgresql://[^/?#]+/java_agent_test_[a-z0-9_]+")
+                || System.getenv("JAVA_AGENT_TEST_DB_USER") == null
+                || System.getenv("JAVA_AGENT_TEST_DB_PASSWORD") == null) {
+                throw new IllegalArgumentException("explicit disposable java_agent_test_ database is required");
+            }
+            return null;
+        }
+        PostgreSQLContainer<?> database = new PostgreSQLContainer<>(DockerImageName.parse("postgres:16-alpine"))
+            .withDatabaseName("test").withUsername("test").withPassword("test").withReuse(true);
+        database.start(); // JVM singleton; Ryuk owns only this Testcontainers path.
+        return database;
     }
 
     @DynamicPropertySource
     static void configureProperties(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
-        registry.add("spring.datasource.username", POSTGRES::getUsername);
-        registry.add("spring.datasource.password", POSTGRES::getPassword);
+        registry.add("spring.datasource.url", () -> POSTGRES == null ? EXTERNAL_URL : POSTGRES.getJdbcUrl());
+        registry.add("spring.datasource.username", () -> POSTGRES == null
+            ? System.getenv("JAVA_AGENT_TEST_DB_USER") : POSTGRES.getUsername());
+        registry.add("spring.datasource.password", () -> POSTGRES == null
+            ? System.getenv("JAVA_AGENT_TEST_DB_PASSWORD") : POSTGRES.getPassword());
     }
 }

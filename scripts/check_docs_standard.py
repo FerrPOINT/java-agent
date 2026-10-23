@@ -148,7 +148,8 @@ def main() -> int:
         )
 
     if args.update_baseline:
-        payload: dict[str, object] = {"doc_violations": current}
+        payload: dict[str, object] = json.loads(BASELINE.read_text())
+        payload["doc_violations"] = current
         cov = {m: v for m in MODULES if (v := line_coverage(m)) is not None}
         if cov:
             payload["line_coverage"] = cov

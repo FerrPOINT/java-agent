@@ -215,8 +215,11 @@ private final ScheduledExecutorService executor = Executors.newSingleThreadSched
 
 ### 5. Testing
 
+- `slowTest`, real retry/backoff/timeout waits, live and E2E suites run only by explicit manual request. Do not attach them to `build`, `check`, ordinary PR/push CI, default coverage, or the default release verifier. Preserve the tests in the manual lane; do not weaken their assertions or production timeouts to make a build fast.
+- Ordinary `test`/coverage keep the fast lane. Invoke `./gradlew slowTest` from `backend/`, the manual integration workflow, or `python3 scripts/release_verify.py --run-slow` when that qualification is requested.
+
 - Точное число тестов берётся из XML текущего прогона; исторические totals не подтверждают новый commit.
-- Blocking LINE floors: backend 79.38%, bot 82.47%, source `docs/standards/coverage-baseline.json`. Tests precede the coverage ratchet; missing configured reports fail. The separate 80% backend summary is informational.
+- Blocking LINE floors: fast backend 79.05%, manual combined backend 79.38%, bot 82.47%, source `docs/standards/coverage-baseline.json`. Tests precede the coverage ratchet; missing configured reports fail. The separate 80% backend summary is informational.
 - Маппер-тесты: `Mappers.getMapper(X.class)`, edge cases (nulls, enums, empty collections).
 - Service-тесты с `new`: вызывать `init()` после конструирования (для `@PostConstruct`).
 - `@ExtendWith(MockitoExtension.class)` + `@Mock` для зависимостей; real mappers для mapping.
