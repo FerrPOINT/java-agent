@@ -61,8 +61,16 @@ public class HermesSessionStreamingService {
             Map<String, Object> runtime,
             SseEmitter emitter,
             Runnable onComplete) {
+        var nativeOrigin=com.azhukov.agent.core.security.NativeIdentityOrigin.current();
         try {
-            executor.submit(UserContext.wrap(() -> run(request, requestedSessionId, runtime, emitter, onComplete)));
+            executor.submit(UserContext.wrap(() -> {
+                try {
+                    com.azhukov.agent.core.security.NativeIdentityOrigin.bind(nativeOrigin);
+                    run(request, requestedSessionId, runtime, emitter, onComplete);
+                } finally {
+                    com.azhukov.agent.core.security.NativeIdentityOrigin.clear();
+                }
+            }));
         } catch (RuntimeException e) {
             completeCallback(onComplete);
             throw e;
