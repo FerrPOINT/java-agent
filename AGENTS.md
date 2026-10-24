@@ -427,6 +427,10 @@ Full conventions doc: `backend/docs/conventions.md`
 
 ## Общий UI платформы
 
+Для будущего web UI свободная строка с подсказками использует AutocompleteInput Base, закрытый
+выбор — Select, удалённый каталог — SearchableSelect. Это правило не добавляет
+frontend-зависимость Java CLI или Telegram.
+
 При разработке web-интерфейса использовать публичные компоненты Base и стандарт
 docs/platform/CHOICE_CONTROLS.md: Select, MultiSelect, SearchableSelect.
 Общие механизмы и оформление принадлежат Base; данные и правила — продукту.
