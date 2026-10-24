@@ -100,10 +100,17 @@ class IdentityDeletionOwnerPostgresTest {
         assertThat(owner.check(request(),window()).referenceCount()).isZero();
     });}
     @Test void populated_legacy_is_preserved_and_ambiguous_provenance_is_closed()throws Exception{isolated(true,db->{
+        assertThat(scalar(db,"SELECT max(version::numeric) FROM flyway_schema_history WHERE success AND type='SQL'")).isEqualTo(71);
+        for(String removed:List.of("context_references","approvals","session_model_usage")) {
+            assertThat(scalar(db,"SELECT CASE WHEN to_regclass('"+removed+"') IS NULL THEN 1 ELSE 0 END")).as("released V23 removed %s",removed).isEqualTo(1);
+        }
         UUID session=UUID.randomUUID();session(db,session,"legacy-ambiguous-storage-key");
         UUID nativeSession=UUID.randomUUID();session(db,nativeSession,"123456");
         sql(db,"UPDATE sessions SET source='telegram',origin_platform='telegram',origin_user_id='123456' WHERE id='"+nativeSession+"'");
         Flyway.configure().dataSource(db).locations("classpath:db/migration","classpath:db/postgresql").outOfOrder(true).load().migrate();
+        assertThat(scalar(db,"SELECT count(*) FROM flyway_schema_history WHERE success AND version='72'")).isEqualTo(1);
+        assertThat(scalar(db,"SELECT count(*) FROM java_identity_reference_sources WHERE source IN ('context_references','approvals','session_model_usage')")).isZero();
+        assertThat(scalar(db,"SELECT count(*) FROM java_identity_reference_sources WHERE source='memory' AND required")).isEqualTo(1);
         assertThat(scalar(db,"SELECT count(*) FROM sessions WHERE id='"+session+"' AND user_id='legacy-ambiguous-storage-key'")).isEqualTo(1);
         assertThat(scalar(db,"SELECT count(*) FROM java_identity_aliases WHERE storage_key='123456' AND kind='native' AND origin='native_telegram_gateway'")).isEqualTo(1);
         var owner=store(db);assertThatThrownBy(()->owner.check(request(),window())).isInstanceOfSatisfying(Failure.class,e->assertThat(e.status()).isEqualTo(503));
@@ -112,8 +119,31 @@ class IdentityDeletionOwnerPostgresTest {
         assertThat(owner.check(request(),window()).referenceCount()).isZero();
         assertThatThrownBy(()->sql(db,"UPDATE java_identity_aliases SET kind='central',issuer='"+ISSUER+"',subject='"+UUID.randomUUID()+"' WHERE storage_key='legacy-ambiguous-storage-key'")).isInstanceOf(SQLException.class).hasMessageContaining("identity_provenance_immutable");
     });}
-    @Test void missing_epoch_or_guard_and_original_expiry_never_persist_a_fence()throws Exception{isolated(false,db->{
+    @Test void missing_epoch_or_guard_and_original_expiry_never_persist_a_fence()throws Exception{
+        isolated(true,db->{
+            assertThat(scalar(db,"SELECT max(version::numeric) FROM flyway_schema_history WHERE success AND type='SQL'")).isEqualTo(71);
+            sql(db,"DROP TABLE memory");
+            Throwable failure=catchThrowable(()->Flyway.configure().dataSource(db).locations("classpath:db/migration","classpath:db/postgresql").outOfOrder(true).load().migrate());
+            assertThat(failure).isInstanceOf(org.flywaydb.core.api.FlywayException.class);
+            while(failure.getCause()!=null)failure=failure.getCause();
+            assertThat(failure).isInstanceOfSatisfying(SQLException.class,error->{
+                assertThat(error.getSQLState()).isEqualTo("P0001");
+                assertThat(error.getMessage()).contains("identity_source_missing");
+            });
+            assertThat(scalar(db,"SELECT count(*) FROM flyway_schema_history WHERE success AND version='72'")).isZero();
+            assertThat(scalar(db,"SELECT CASE WHEN to_regclass('java_identity_reference_sources') IS NULL THEN 1 ELSE 0 END")).isEqualTo(1);
+        });
+        isolated(false,db->{
         var owner=store(db);Request r=request();
+        sql(db,"ALTER TABLE memory RENAME TO qa_missing_memory");
+        assertThatThrownBy(()->owner.check(r,window())).isInstanceOfSatisfying(Failure.class,error->assertThat(error.status()).isEqualTo(503));
+        assertThatThrownBy(()->sql(db,"SELECT java_identity_install_guards()"))
+            .isInstanceOfSatisfying(SQLException.class,error->{
+                assertThat(error.getSQLState()).isEqualTo("P0001");
+                assertThat(error.getMessage()).contains("identity_source_missing");
+            });
+        sql(db,"ALTER TABLE qa_missing_memory RENAME TO memory");
+        assertThat(owner.check(r,window()).referenceCount()).isZero();
         assertThatThrownBy(()->owner.freeze(r,new Window(System.nanoTime()-1,Instant.now().plusSeconds(60)))).isInstanceOf(Failure.class);
         assertThat(scalar(db,"SELECT count(*) FROM java_identity_deletion_operations")).isZero();
         sql(db,"DROP TRIGGER z_identity_reference_guard ON messages");assertThatThrownBy(()->owner.check(r,window())).isInstanceOf(Failure.class);
@@ -187,10 +217,7 @@ class IdentityDeletionOwnerPostgresTest {
             new Writer("attachment_artifacts","INSERT INTO attachment_artifacts(id,owner_id,content_hash,origin,disposition) VALUES('synthetic-artifact','"+user+"','synthetic','internal','file')"),
             new Writer("messages","INSERT INTO messages(session_id,role,content) VALUES('"+sid+"','user','synthetic')"),
             new Writer("session_cli_state","INSERT INTO session_cli_state(session_id,state_key,state_value) VALUES('"+sid+"','synthetic','synthetic')"),
-            new Writer("context_references","INSERT INTO context_references(session_id,type,reference) VALUES('"+sid+"','synthetic','synthetic')"),
             new Writer("compression_locks","INSERT INTO compression_locks(session_id) VALUES('"+sid+"')"),
-            new Writer("approvals","INSERT INTO approvals(session_id,tool_name,request) VALUES('"+sid+"','synthetic','{}')"),
-            new Writer("session_model_usage","INSERT INTO session_model_usage(session_id,provider,model) VALUES('"+sid+"','noop','synthetic')"),
             new Writer("background_jobs","INSERT INTO background_jobs(id,session_id) VALUES(gen_random_uuid(),'"+sid+"')"),
             new Writer("openai_responses","INSERT INTO openai_responses(response_id,response_json,conversation_history_json,session_id) VALUES('synthetic-response','{}','[]','"+sid+"')"),
             new Writer("delegated_task_runs","INSERT INTO delegated_task_runs(id,parent_session_id,goal) VALUES(gen_random_uuid(),'"+sid+"','synthetic')"),
@@ -204,13 +231,13 @@ class IdentityDeletionOwnerPostgresTest {
             new Writer("java_identity_aliases","INSERT INTO java_identity_aliases(storage_key,kind,issuer,subject,origin) VALUES('actual-retained-alias','central','"+ISSUER+"','"+user+"','operator_proven')"),
             new Writer("java_identity_session_aliases","INSERT INTO java_identity_session_aliases(session_id,storage_key) VALUES(gen_random_uuid(),'"+user+"')")
         );
-        assertThat(writers).hasSize(37);
+        assertThat(writers).hasSize(34);
         for(Writer writer:writers) {
             sql(db,writer.insert());
             assertThat(scalar(db,"SELECT count(*) FROM "+writer.source()+" t CROSS JOIN LATERAL java_identity_row_refs('"+writer.source()+"',to_jsonb(t)) r WHERE r.issuer='"+ISSUER+"' AND r.subject='"+user+"'"))
                 .as("actual reference row: %s",writer.source()).isPositive();
         }
-        long count=owner.check(r,window()).referenceCount();assertThat(count).isGreaterThanOrEqualTo(37);
+        long count=owner.check(r,window()).referenceCount();assertThat(count).isGreaterThanOrEqualTo(34);
         owner.freeze(r,window());
         for(Writer writer:writers) {
             assertThatThrownBy(()->sql(db,writer.insert())).as("INSERT fenced: %s",writer.source())
