@@ -351,6 +351,7 @@ public class AgentStreamingService {
         String requestUser = UserContext.getUserId();
         String requestRole = UserContext.getRole();
         var requestAccess = UserContext.centralAccess();
+        var nativeOrigin=com.azhukov.agent.core.security.NativeIdentityOrigin.current();
         // Create per-stream context (replaces the old singleton volatile boolean)
         StreamContext streamCtx = new StreamContext(requestAccess);
 
@@ -399,6 +400,7 @@ public class AgentStreamingService {
                     UserContext.requireCurrentAccess();
                 } else if (requestUser != null) {
                     UserContext.set(requestUser, requestRole);
+                    com.azhukov.agent.core.security.NativeIdentityOrigin.bind(nativeOrigin);
                 }
                 long __turnStart = System.currentTimeMillis();
                 try {
@@ -423,6 +425,7 @@ public class AgentStreamingService {
                 eventHelper().safeCompleteWithError(emitter, e);
             } finally {
                 UserContext.clear();
+                com.azhukov.agent.core.security.NativeIdentityOrigin.clear();
                 if (locked && sessionTurnLockManager != null && lockSessionId != null) {
                     sessionTurnLockManager.release(lockSessionId);
                 }

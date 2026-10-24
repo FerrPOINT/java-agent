@@ -69,6 +69,11 @@ agent:
     # Container deployments bind this directory to durable storage.
     cache-root: ${AGENT_ATTACHMENTS_CACHE_ROOT:}
 
+  identity-deletion:
+    enabled: ${AGENT_IDENTITY_DELETION_ENABLED:false}
+    legacy-issuer: ${AGENT_IDENTITY_DELETION_LEGACY_ISSUER:}
+    coordinator-subjects: ${AGENT_IDENTITY_DELETION_COORDINATOR_SUBJECTS:}
+
   central-auth:
     enabled: ${AGENT_CENTRAL_AUTH_ENABLED:false}
     issuer: ${AGENT_CENTRAL_AUTH_ISSUER:}

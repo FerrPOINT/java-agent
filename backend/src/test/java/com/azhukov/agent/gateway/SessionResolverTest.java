@@ -42,6 +42,31 @@ class SessionResolverTest {
     }
 
     @Test
+    void actualTelegramOriginIsNativeAndDoesNotCreateOrLeakHumanContext() {
+        var registration=mock(com.azhukov.agent.core.ports.IdentityReferenceRegistration.class);
+        var beans=new org.springframework.beans.factory.support.StaticListableBeanFactory();
+        beans.addBean("identity",registration);
+        resolver.configureIdentityReferences(beans.getBeanProvider(com.azhukov.agent.core.ports.IdentityReferenceRegistration.class));
+        var previous=new com.azhukov.agent.core.security.NativeIdentityOrigin.Origin(com.azhukov.agent.core.security.NativeIdentityOrigin.Kind.GATEWAY_KEY,"previous",true);
+        com.azhukov.agent.core.security.NativeIdentityOrigin.bind(previous);
+        doAnswer(call->{
+            var actual=com.azhukov.agent.core.security.NativeIdentityOrigin.current();
+            assertThat(actual.kind()).isEqualTo(com.azhukov.agent.core.security.NativeIdentityOrigin.Kind.GATEWAY_EVENT);
+            assertThat(actual.principal()).isEqualTo("123456");
+            assertThat(actual.permits("different")).isFalse();
+            assertThat(com.azhukov.agent.core.security.UserContext.getUserId()).isNull();
+            return null;
+        }).when(registration).nativeStorage("123456");
+        when(sessionRepository.save(any(SessionEntity.class))).thenAnswer(call->{SessionEntity e=call.getArgument(0);e.setId(UUID.randomUUID());return e;});
+        try {
+            Session session=resolver.resolve(new SessionSource(Platform.TELEGRAM,"-100123","123456","synthetic","Synthetic"));
+            assertThat(session.userId()).isEqualTo("123456");
+            assertThat(com.azhukov.agent.core.security.NativeIdentityOrigin.current()).isEqualTo(previous);
+            verify(registration).nativeStorage("123456");
+        } finally {com.azhukov.agent.core.security.NativeIdentityOrigin.clear();}
+    }
+
+    @Test
     void resolveReturnsExistingSession() {
         UUID id = UUID.randomUUID();
         SessionEntity entity = new SessionEntity();

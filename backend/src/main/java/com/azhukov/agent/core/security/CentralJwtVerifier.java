@@ -117,11 +117,15 @@ public final class CentralJwtVerifier {
         boolean personal = bearerToken.startsWith("sdlc_pat_") || bearerToken.startsWith("pdlc_pat_");
         String subject = null;
         Instant tokenExpiry = null;
+        com.azhukov.agent.core.model.IdentityDeletionProtocol.Window signedWindow = null;
         if (!personal) {
             try {
                 var jwt = decoder.decode(bearerToken);
                 subject = jwt.getSubject();
                 tokenExpiry = jwt.getExpiresAt();
+                if(tokenExpiry==null || !tokenExpiry.isAfter(Instant.now()))throw new BadJwtException("Central identity expired");
+                long remaining=Duration.between(Instant.now(),tokenExpiry).toNanos();
+                signedWindow=new com.azhukov.agent.core.model.IdentityDeletionProtocol.Window(System.nanoTime()+remaining,tokenExpiry);
             } catch (BadJwtException invalid) {
                 throw invalid;
             } catch (JwtException unavailable) {
@@ -149,9 +153,12 @@ public final class CentralJwtVerifier {
         } else if (!subject.equals(user.get("id")) || !"active".equals(user.get("status"))) {
             throw new BadJwtException("Central identity binding is not active");
         }
+        if(signedWindow!=null && !signedWindow.current())throw new BadJwtException("Central identity expired");
         try {
             var proof = HumanApplicationAccess.confirm(user, issuer, subject, started, wallStarted,
                     tokenExpiry, requireApplicationProof);
+            if(signedWindow!=null)proof=new HumanApplicationAccess(proof.subject(),proof.role(),proof.applications(),proof.revision(),
+                proof.enforced(),proof.expiresAt(),Math.min(proof.deadlineNanos(),signedWindow.deadlineNanos()));
             if (!proof.permits(Set.of("java-agent"), false)) throw new CentralAccessDeniedException();
             return proof;
         } catch (HumanApplicationAccess.AdmissionDeniedException denied) {
@@ -160,6 +167,14 @@ public final class CentralJwtVerifier {
             throw new CentralAuthUnavailableException();
         }
     }
+
+    /** Returns provenance from the same live application decision without a second confirmation or new TTL. */
+    public VerifiedIdentity verifyIdentity(String bearerToken,String method) throws JwtException {
+        HumanApplicationAccess access=verifyAccess(bearerToken,method);
+        return new VerifiedIdentity(issuer,access,new com.azhukov.agent.core.model.IdentityDeletionProtocol.Window(access.deadlineNanos(),access.expiresAt()));
+    }
+    public record VerifiedIdentity(String issuer,HumanApplicationAccess access,
+            com.azhukov.agent.core.model.IdentityDeletionProtocol.Window window) {}
 
     /** Compatibility identity read keeps the same admission boundary as a normal request. */
     public String verifySubject(String bearerToken) throws JwtException {
