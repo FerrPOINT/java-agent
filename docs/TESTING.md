@@ -544,3 +544,11 @@ disposable backend stub, JSON/octet-stream/SSE/multipart, а также неиз
 backend/bot graph. Тот же JAR и его digest передать дальше без повторной сборки.
 Старые preparation indexes после изменения `cli/build.gradle` не считаются
 совместимыми; toolchain/pins, heaps и noncacheable Gradle receipts сохраняются.
+
+## Точный маршрут documentation validator
+
+`scripts/verify_readme.py` и `scripts/tests/test_verify_readme.py` выбирают `tooling:docs-unit`.
+Fast для source validator также сохраняет `docs:readme`; Unit/Build не выбирают application producers.
+Source command: `python -B -m unittest scripts.tests.test_verify_readme`.
+Mixed backend и неизвестные source paths сохраняют своих consumers; actual CI
+и ручные release gates остаются прежними.

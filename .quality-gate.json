@@ -14,11 +14,13 @@
   },
   "components": {
     "docs": [
+      "scripts/verify_readme.py",
       "docs/**",
       "*.md",
       "LICENSE"
     ],
     "tooling": [
+      "scripts/verify_readme.py",
       ".github/workflows/ci.yml",
       "scripts/tests/test_check_docs_standard.py",
       "scripts/tests/test_verify_readme.py",
@@ -92,6 +94,7 @@
       ],
       "cwd": ".",
       "inputs": [
+        "scripts/select_java_modules.py",
         "scripts/tests/test_check_docs_standard.py",
         "scripts/tests/test_verify_readme.py",
         "scripts/check_docs_standard.py",
@@ -1043,6 +1046,7 @@
     "tooling": [
       {
         "paths": [
+          "scripts/verify_readme.py",
           "scripts/tests/test_check_docs_standard.py",
           "scripts/tests/test_verify_readme.py"
         ],
