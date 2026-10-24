@@ -75,6 +75,9 @@ dependencies {
     // method signatures; needed at runtime (was previously transitive via backend)
     implementation 'org.reactivestreams:reactive-streams'
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    // Qualify the two real bot-owned reference tables against the actual owner
+    // and backend Flyway resources, without a production backend dependency.
+    testImplementation project(path: ':backend', configuration: 'identityOwnerTestElements')
     testImplementation 'org.springframework.boot:spring-boot-webmvc-test'
     testImplementation 'org.apache.groovy:groovy-test:6.0.0'
     runtimeOnly 'com.h2database:h2'
@@ -86,6 +89,16 @@ tasks.named('test') {
         excludeTags 'live', 'slow', 'e2e'
     }
     jvmArgs '-XX:+EnableDynamicAgentLoading'
+    maxHeapSize = '2g'
+}
+
+tasks.register('identityOwnerTest', Test) {
+    description = 'Dedicated disposable PostgreSQL migration-order and owner reference qualification'
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform { includeTags 'slow' }
+    filter { includeTestsMatching 'com.azhukov.agent.bot.config.IdentityReferenceMigrationPostgresTest' }
     maxHeapSize = '2g'
 }
 
