@@ -64,7 +64,7 @@ dependencies {
 
     // DB / migrations — versions managed by Spring Boot 4.1 BOM
     implementation 'org.flywaydb:flyway-core'
-    runtimeOnly 'org.postgresql:postgresql'
+    implementation 'org.postgresql:postgresql'
     implementation 'org.flywaydb:flyway-database-postgresql'
 
     // (Pebble templating removed — was unused)
@@ -198,6 +198,26 @@ tasks.named('jacocoTestReport') {
 // L6: Disable plain jar — only bootJar is needed for deployment
 tasks.named('jar') {
     enabled = false
+}
+
+// Bot owner qualification needs backend classes and Flyway resources without
+// publishing the disabled deployment plain jar or adding a bot runtime dependency.
+def identityOwnerTestJar = tasks.register('identityOwnerTestJar', Jar) {
+    archiveClassifier = 'identity-owner-tests'
+    from sourceSets.main.output
+}
+
+configurations {
+    identityOwnerTestElements {
+        canBeConsumed = true
+        canBeResolved = false
+        canBeDeclared = false
+        extendsFrom implementation, runtimeOnly
+    }
+}
+
+artifacts {
+    add('identityOwnerTestElements', identityOwnerTestJar)
 }
 
 def coverageFloors = new groovy.json.JsonSlurper().parse(file('../docs/standards/coverage-baseline.json'))

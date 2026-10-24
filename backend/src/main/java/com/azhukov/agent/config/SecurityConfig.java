@@ -50,6 +50,9 @@ public class SecurityConfig {
                     // (9969) — metrics carry endpoint names only, no payloads;
                     // the port stays on the internal compose network.
                     "/actuator/prometheus").permitAll()
+                // This surface has its own registered machine-PAT verifier and
+                // never enters the ordinary central/native auth filter.
+                .requestMatchers("/api/internal/v1/user-deletions/**").permitAll()
                 .anyRequest().authenticated()
             )
             .addFilterBefore(securityHeadersFilter, UsernamePasswordAuthenticationFilter.class)
