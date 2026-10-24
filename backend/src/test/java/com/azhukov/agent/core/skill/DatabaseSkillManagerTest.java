@@ -1,9 +1,14 @@
 package com.azhukov.agent.core.skill;
 
+import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.persistence.entity.SkillEntity;
 import com.azhukov.agent.persistence.repository.SkillRepository;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
 
@@ -318,18 +323,13 @@ class DatabaseSkillManagerTest {
     }
 
     @Test
-    void writeSupportFile_validatesPath_acceptsAllowedSubdir() {
+    void writeSupportFile_validatesPath_acceptsAllowedSubdir(@TempDir Path tempDir) throws IOException {
         com.azhukov.agent.core.ports.SkillStorePort repo = mock(com.azhukov.agent.core.ports.SkillStorePort.class);
-        DatabaseSkillManager mgr = new DatabaseSkillManager(repo);
-        // This should not throw on path validation (it may fail on I/O, but the
-        // validation itself passes)
-        try {
-            mgr.writeSupportFile("test", "references/example.md", "content");
-        } catch (Exception e) {
-            // I/O failures are OK — we only care that it's NOT an IllegalArgumentException
-            // about path validation
-            assertThat(e).isNotInstanceOf(IllegalArgumentException.class);
-        }
+        AgentProperties properties = new AgentProperties();
+        properties.getCore().setWorkingDirectory(tempDir.toString());
+        DatabaseSkillManager mgr = new DatabaseSkillManager(repo, properties);
+        mgr.writeSupportFile("test", "references/example.md", "content");
+        assertThat(Files.readString(tempDir.resolve("skills/test/references/example.md"))).isEqualTo("content");
     }
 
     @Test
@@ -366,19 +366,15 @@ class DatabaseSkillManagerTest {
     }
 
     @Test
-    void writeSupportFile_securityScan_allowsSafeContent() {
+    void writeSupportFile_securityScan_allowsSafeContent(@TempDir Path tempDir) throws IOException {
         com.azhukov.agent.core.ports.SkillStorePort repo = mock(com.azhukov.agent.core.ports.SkillStorePort.class);
         when(repo.findByName("safe-skill")).thenReturn(Optional.empty());
-        DatabaseSkillManager mgr = new DatabaseSkillManager(repo);
+        AgentProperties properties = new AgentProperties();
+        properties.getCore().setWorkingDirectory(tempDir.toString());
+        DatabaseSkillManager mgr = new DatabaseSkillManager(repo, properties);
         String safe = "This is a safe reference document.";
-        // This may throw on I/O (no skills dir), but should NOT throw SecurityException
-        try {
-            mgr.writeSupportFile("safe-skill", "references/ref.md", safe);
-        } catch (SecurityException e) {
-            throw new AssertionError("Safe content should not be blocked by security scan", e);
-        } catch (Exception e) {
-            // I/O failures are OK — we only care that it's NOT a SecurityException
-        }
+        mgr.writeSupportFile("safe-skill", "references/ref.md", safe);
+        assertThat(Files.readString(tempDir.resolve("skills/safe-skill/references/ref.md"))).isEqualTo(safe);
         verify(repo, never()).save(any());
     }
 }
