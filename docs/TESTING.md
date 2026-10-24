@@ -195,3 +195,11 @@ java-agent -Component cli -NativeDockerContext desktop-linux`; `-PlanOnly`
 хранятся в Base `docs/plans/java3-cli-worker-profiles-20261022.md` принятого packet.
 Raw benchmark не создаёт reusable receipts; новый exact source/caller tuple
 требует своей native qualification. Прежний workers2 proof сохраняется отдельно.
+
+## Точный маршрут documentation validator
+
+`scripts/verify_readme.py` и `scripts/tests/test_verify_readme.py` выбирают `tooling:readme-unit`.
+Fast для source validator также сохраняет `docs:readme`; Unit/Build не выбирают application producers.
+Source command: `python -B -m unittest scripts.tests.test_verify_readme`.
+Mixed backend и неизвестные source paths сохраняют своих consumers; actual CI
+и ручные release gates остаются прежними.

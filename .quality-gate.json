@@ -17,11 +17,14 @@
   },
   "components": {
     "docs": [
+      "scripts/verify_readme.py",
       "docs/**",
       "*.md",
       "LICENSE"
     ],
     "tooling": [
+      "scripts/verify_readme.py",
+      "scripts/tests/test_verify_readme.py",
       "Makefile",
       "java-artifacts.json",
       ".quality-tooling-revision",
@@ -60,6 +63,43 @@
     ]
   },
   "gates": [
+    {
+      "id": "tooling:readme-unit",
+      "component": "tooling",
+      "profiles": [
+        "fast",
+        "unit",
+        "build",
+        "integrated",
+        "release"
+      ],
+      "test_tier": "unit",
+      "execution_slot": "none",
+      "cacheable": true,
+      "tools": [
+        {
+          "argv": ["{python}", "--version"],
+          "pattern": "^Python 3\\.12\\."
+        }
+      ],
+      "argv": [
+        "{python}",
+        "-B",
+        "-m",
+        "unittest",
+        "scripts.tests.test_verify_readme",
+        "-q"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "scripts/verify_readme.py",
+        "scripts/tests/test_verify_readme.py",
+        "scripts/ci_quality_plan.py",
+        "scripts/vendor/base_quality_selection.py",
+        ".quality-gate.json",
+        ".github/workflows/ci.yml"
+      ]
+    },
     {
       "id": "tooling:release-verifier-unit",
       "component": "tooling",
@@ -1160,5 +1200,18 @@
       "live"
     ],
     "release_required": true
+  },
+  "affected_checks": {
+    "tooling": [
+      {
+        "paths": [
+          "scripts/verify_readme.py",
+          "scripts/tests/test_verify_readme.py"
+        ],
+        "gates": [
+          "tooling:readme-unit"
+        ]
+      }
+    ]
   }
 }
