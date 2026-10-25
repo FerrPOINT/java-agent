@@ -236,7 +236,10 @@ class OpenAiResponsesControllerTest {
     }
 
     @Test
-    void responsesFlatFunctionToolsAreMappedLikeOpenAiResponses() throws Exception {
+    void responsesToolDeclarationsCanOnlyNarrowConfiguredDefinitions() throws Exception {
+        ToolDefinition configured = new ToolDefinition(
+            "lookup", "Configured lookup", Map.of("type", "object", "properties", Map.of("safe", Map.of("type", "string"))));
+        when(toolRegistry.getDefinitions(Set.of("hermes-api-server"))).thenReturn(List.of(configured));
         @SuppressWarnings({"rawtypes", "unchecked"})
         ArgumentCaptor<List<ToolDefinition>> toolsCaptor = ArgumentCaptor.forClass((Class) List.class);
         when(agentRuntime.run(anyList(), toolsCaptor.capture(), any(ModelRequestOptions.class)))
@@ -268,13 +271,8 @@ class OpenAiResponsesControllerTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.output[0].content[0].text").value("ok"));
 
-        assertThat(toolsCaptor.getValue()).hasSize(1);
-        ToolDefinition tool = toolsCaptor.getValue().get(0);
-        assertThat(tool.name()).isEqualTo("lookup");
-        assertThat(tool.description()).isEqualTo("Lookup data");
-        assertThat(tool.parameters()).containsEntry("type", "object");
-        assertThat(((Map<?, ?>) tool.parameters().get("properties")).containsKey("query")).isTrue();
-        verify(toolRegistry, never()).getDefinitions(any());
+        assertThat(toolsCaptor.getValue()).containsExactly(configured);
+        verify(toolRegistry).getDefinitions(Set.of("hermes-api-server"));
     }
 
     @Test
@@ -321,6 +319,52 @@ class OpenAiResponsesControllerTest {
 
         verify(agentRuntime, never()).run(anyList(), anyList(), any(ModelRequestOptions.class));
         verify(openAiSessionService, never()).persistTurn(any(), anyList(), any(ChatResponse.class), anyList());
+    }
+
+    @Test
+    void responsesCannotIntroduceUnconfiguredTool() throws Exception {
+        when(toolRegistry.getDefinitions(Set.of("hermes-api-server")))
+            .thenReturn(List.of(new ToolDefinition("read_file", "Reads files", Map.of())));
+        @SuppressWarnings({"rawtypes", "unchecked"})
+        ArgumentCaptor<List<ToolDefinition>> toolsCaptor = ArgumentCaptor.forClass((Class) List.class);
+        when(agentRuntime.run(anyList(), toolsCaptor.capture(), any(ModelRequestOptions.class)))
+            .thenReturn(ChatResponse.text("safe"));
+
+        mockMvc.perform(post("/v1/responses")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"model":"gpt-resp","input":"run a command","tools":[
+                      {"type":"function","name":"terminal","description":"untrusted",
+                       "parameters":{"type":"object"}}]}
+                    """))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.output[0].content[0].text").value("safe"));
+
+        assertThat(toolsCaptor.getValue()).isEmpty();
+    }
+
+    @Test
+    void repeatedResponsesKeepConfiguredToolSchemaAfterClientDeclarations() throws Exception {
+        ToolDefinition configured = new ToolDefinition("read_file", "Read safely", Map.of("type", "object"));
+        when(toolRegistry.getDefinitions(Set.of("hermes-api-server"))).thenReturn(List.of(configured));
+        @SuppressWarnings({"rawtypes", "unchecked"})
+        ArgumentCaptor<List<ToolDefinition>> toolsCaptor = ArgumentCaptor.forClass((Class) List.class);
+        when(agentRuntime.run(anyList(), toolsCaptor.capture(), any(ModelRequestOptions.class)))
+            .thenReturn(ChatResponse.text("one"), ChatResponse.text("two"));
+
+        for (String description : List.of("untrusted one", "untrusted two")) {
+            mockMvc.perform(post("/v1/responses")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""
+                        {"model":"gpt-resp","input":"read","tools":[
+                         {"type":"function","name":"read_file","description":"%s",
+                          "parameters":{"type":"object","properties":{"client":{"type":"string"}}}}]}
+                        """.formatted(description)))
+                .andExpect(status().isOk());
+        }
+
+        assertThat(toolsCaptor.getAllValues()).allSatisfy(tools -> assertThat(tools)
+            .containsExactly(configured));
     }
 
     @Test

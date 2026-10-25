@@ -225,7 +225,11 @@ class ChatCompletionsControllerTest {
     }
 
     @Test
-    void requestWithToolsIncludesToolDefinitions() throws Exception {
+    void requestWithToolsCanOnlyNarrowConfiguredDefinitions() throws Exception {
+        ToolDefinition configuredTool = new ToolDefinition(
+            "web_search", "Configured registry description", objectSchema());
+        when(toolRegistry.getDefinitions(org.mockito.ArgumentMatchers.<Set<String>>any()))
+            .thenReturn(List.of(configuredTool));
         ArgumentCaptor<List<ToolDefinition>> toolsCaptor = ArgumentCaptor.forClass(List.class);
         when(agentRuntime.run(anyList(), toolsCaptor.capture(), any(ModelRequestOptions.class)))
             .thenReturn(ChatResponse.text("ok"));
@@ -262,18 +266,64 @@ class ChatCompletionsControllerTest {
         assertThat(tools).hasSize(1);
         ToolDefinition tool = tools.get(0);
         assertThat(tool.name()).isEqualTo("web_search");
-        assertThat(tool.description()).isEqualTo("Searches the web");
-        assertThat(tool.parameters()).containsEntry("type", "object");
+        assertThat(tool.description()).isEqualTo("Configured registry description");
+        assertThat(tool.parameters()).isEqualTo(objectSchema());
+    }
 
-        @SuppressWarnings("unchecked")
-        Map<String, Object> properties = (Map<String, Object>) tool.parameters().get("properties");
-        assertThat(properties).containsKey("query");
-        assertThat(tool.parameters().get("required")).isEqualTo(List.of("query"));
+    @Test
+    void requestCannotIntroduceUnconfiguredServerTool() throws Exception {
+        when(toolRegistry.getDefinitions(org.mockito.ArgumentMatchers.<Set<String>>any()))
+            .thenReturn(List.of(new ToolDefinition("read_file", "Reads files", objectSchema())));
+        ArgumentCaptor<List<ToolDefinition>> toolsCaptor = ArgumentCaptor.forClass(List.class);
+        when(agentRuntime.run(anyList(), toolsCaptor.capture(), any(ModelRequestOptions.class)))
+            .thenReturn(ChatResponse.text("safe"));
+
+        mockMvc.perform(post("/v1/chat/completions")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {
+                      "model": "gpt-test",
+                      "messages": [{"role": "user", "content": "Run a command"}],
+                      "tools": [{"type": "function", "function": {
+                        "name": "terminal", "description": "untrusted", "parameters": {"type": "object"}
+                      }}]
+                    }
+                    """))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.choices[0].message.content").value("safe"));
+
+        assertThat(toolsCaptor.getValue()).isEmpty();
+    }
+
+    @Test
+    void repeatedRequestsKeepServerToolDefinitionsIndependentOfClientSchemas() throws Exception {
+        ToolDefinition configured = new ToolDefinition("read_file", "Read safely", objectSchema());
+        when(toolRegistry.getDefinitions(org.mockito.ArgumentMatchers.<Set<String>>any()))
+            .thenReturn(List.of(configured));
+        ArgumentCaptor<List<ToolDefinition>> toolsCaptor = ArgumentCaptor.forClass(List.class);
+        when(agentRuntime.run(anyList(), toolsCaptor.capture(), any(ModelRequestOptions.class)))
+            .thenReturn(ChatResponse.text("one"), ChatResponse.text("two"));
+
+        for (String description : List.of("client schema one", "client schema two")) {
+            mockMvc.perform(post("/v1/chat/completions")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""
+                        {"model":"gpt-test","messages":[{"role":"user","content":"Read"}],
+                         "tools":[{"type":"function","function":{"name":"read_file","description":"%s",
+                         "parameters":{"type":"object","properties":{"untrusted":{"type":"string"}}}}}]}
+                        """.formatted(description)))
+                .andExpect(status().isOk());
+        }
+
+        assertThat(toolsCaptor.getAllValues()).allSatisfy(tools -> assertThat(tools)
+            .containsExactly(configured));
     }
 
     @org.junit.jupiter.api.Test
     void toolResponseExecutesToolsServerSideThenReturnsTerminalFormat() throws Exception {
         ToolCall toolCall = new ToolCall("call-abc", "web_search", "{\"query\":\"Java 25\"}");
+        when(toolRegistry.getDefinitions(org.mockito.ArgumentMatchers.<Set<String>>any()))
+            .thenReturn(List.of(new ToolDefinition("web_search", "Search", objectSchema())));
         // The stubbed runtime ALWAYS answers with the tool call → the server
         // loop executes the tool on every iteration and stops at the bound,
         // returning the terminal tool-call response in OpenAI format.
@@ -284,7 +334,8 @@ class ChatCompletionsControllerTest {
         String requestBody = """
             {
               "model": "gpt-test",
-              "messages": [{"role": "user", "content": "Search"}]
+              "messages": [{"role": "user", "content": "Search"}],
+              "tools": [{"type": "function", "function": {"name": "web_search"}}]
             }
             """;
 

@@ -253,13 +253,23 @@ public class ChatCompletionsController {
     }
 
     private List<ToolDefinition> buildTools(OpenAiChatRequest request) {
-        if (request.tools() != null) {
-            return request.tools().stream().map(openAiMapper::toToolDefinition).toList();
+        List<ToolDefinition> allowed = serverToolDefinitions();
+        if (request.tools() == null) {
+            return allowed;
         }
-        // WP-l: honor the live api_server toolset toggles (hot reload parity).
-        // ToolsetsController.toggle mutates AgentProperties in-memory; without
-        // this filter a dashboard/API enable/disable had no effect on this
-        // endpoint until a full restart.
+        // This endpoint executes tools on the server. A request may narrow the
+        // configured capability set, but cannot introduce or redefine one.
+        java.util.Set<String> requestedNames = request.tools().stream()
+            .filter(tool -> tool != null && tool.function() != null && tool.function().name() != null)
+            .map(tool -> tool.function().name().trim())
+            .filter(name -> !name.isEmpty())
+            .collect(java.util.stream.Collectors.toUnmodifiableSet());
+        return allowed.stream().filter(tool -> requestedNames.contains(tool.name())).toList();
+    }
+
+    private List<ToolDefinition> serverToolDefinitions() {
+        // Honor live API-server toolset toggles. Tool definitions are resolved
+        // from the registry, never directly from an untrusted request body.
         if (properties.getApi() != null && properties.getApi().getChatCompletionToolsets() != null
             && !properties.getApi().getChatCompletionToolsets().isEmpty()) {
             return toolRegistry.getDefinitions(new java.util.HashSet<>(properties.getApi().getChatCompletionToolsets()));

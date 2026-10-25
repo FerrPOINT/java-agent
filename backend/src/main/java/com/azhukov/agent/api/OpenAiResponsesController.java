@@ -575,12 +575,18 @@ public class OpenAiResponsesController {
     }
 
     private List<ToolDefinition> buildTools(OpenAiResponsesRequest request) {
-        if (request.tools() != null) {
-            return request.tools().stream()
-                .map(this::toToolDefinition)
-                .filter(Objects::nonNull)
-                .toList();
+        List<ToolDefinition> allowed = serverToolDefinitions();
+        if (request.tools() == null) {
+            return allowed;
         }
+        Set<String> requestedNames = request.tools().stream()
+            .map(this::requestedToolName)
+            .filter(Objects::nonNull)
+            .collect(java.util.stream.Collectors.toUnmodifiableSet());
+        return allowed.stream().filter(tool -> requestedNames.contains(tool.name())).toList();
+    }
+
+    private List<ToolDefinition> serverToolDefinitions() {
         Set<String> apiToolsets = new LinkedHashSet<>();
         if (properties.getApi().getChatCompletionToolsets() != null) {
             properties.getApi().getChatCompletionToolsets().stream()
@@ -595,24 +601,15 @@ public class OpenAiResponsesController {
         return toolRegistry.getDefinitions(apiToolsets);
     }
 
-    private ToolDefinition toToolDefinition(OpenAiResponsesTool tool) {
+    private String requestedToolName(OpenAiResponsesTool tool) {
         if (tool == null) {
             return null;
         }
-        if (tool.function() != null) {
-            return openAiMapper.toToolDefinition(new OpenAiChatRequest.OpenAiTool(tool.type(), tool.function()));
-        }
-        if (tool.type() != null && !"function".equals(tool.type().trim())) {
+        String name = tool.function() != null ? tool.function().name() : tool.name();
+        if (name == null || name.isBlank()) {
             return null;
         }
-        String name = tool.name() != null ? tool.name().trim() : "";
-        if (name.isBlank()) {
-            return null;
-        }
-        Map<String, Object> parameters = tool.parameters() != null
-            ? tool.parameters()
-            : Map.of("type", "object", "properties", Map.of(), "required", List.of());
-        return new ToolDefinition(name, tool.description() != null ? tool.description() : "", parameters);
+        return name.trim();
     }
 
     private String previousResponseId(OpenAiResponsesRequest request) {
