@@ -278,7 +278,8 @@ public class SessionQueryService {
     private static void requireOwnership(SessionEntity entity) {
         String scoped = UserContext.scopeUserId();
         if (scoped != null && !scoped.equals(entity.getUserId())) {
-            throw new SecurityException("Session does not belong to the current user");
+            throw new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.NOT_FOUND, "Session not found");
         }
     }
 

@@ -7,6 +7,7 @@ import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.metrics.AgentMetrics;
 import com.azhukov.agent.core.security.SecretRedactor;
 import com.azhukov.agent.core.security.ToolCallGuardrail;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.state.TurnState;
 import io.github.resilience4j.retry.Retry;
 import java.util.UUID;
@@ -131,7 +132,16 @@ public class ToolExecutionService {
         log.info("tool_execution_started session={} callId={} tool={} argsBytes={}",
             session != null ? session.id() : null, toolCallId, toolName,
             arguments == null ? 0 : arguments.getBytes(java.nio.charset.StandardCharsets.UTF_8).length);
-        Callable<ToolResult> callable = () -> toolRegistry.execute(toolName, toolCallId, arguments, lastAssistant, session);
+        Callable<ToolResult> callable = () -> {
+            if (session != null) {
+                UserContext.set(session.userId(), UserContext.ROLE_USER);
+            }
+            try {
+                return toolRegistry.execute(toolName, toolCallId, arguments, lastAssistant, session);
+            } finally {
+                UserContext.clear();
+            }
+        };
         Supplier<ToolResult> decorated = Retry.decorateSupplier(
             NO_RETRY_TOOLS.contains(toolName) ? noRetry : retry, () -> {
             java.util.concurrent.Future<ToolResult> future = executor.submit(callable);

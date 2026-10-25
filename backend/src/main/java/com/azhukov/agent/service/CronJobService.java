@@ -9,6 +9,7 @@ import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.tools.terminal.TerminalTool;
 import com.azhukov.agent.persistence.entity.CronExecutionLogEntity;
 import com.azhukov.agent.persistence.entity.CronJobEntity;
+import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.repository.CronExecutionLogRepository;
 import com.azhukov.agent.persistence.repository.CronJobRepository;
@@ -402,6 +403,7 @@ private static final String CRON_EXECUTION_HINT = """
         if (!noAgent && isBlank(prompt) && normalizedScript == null && isBlank(skills)) {
             throw new IllegalArgumentException(EMPTY_PAYLOAD_ERROR);
         }
+        requireAttachedSessionOwnership(userId, attachedSessionId);
         String effectiveContextFrom = continuityEnabled ? applyContinuity(contextFrom, true) : contextFrom;
 
         // Parse schedule to detect one-shot
@@ -605,6 +607,7 @@ private static final String CRON_EXECUTION_HINT = """
                 if (currentSessionId == null) {
                     throw new IllegalArgumentException("attach_to_session=true requires a current session");
                 }
+                requireAttachedSessionOwnership(null, currentSessionId);
                 entity.setAttachedSessionId(currentSessionId);
             } else {
                 entity.setAttachedSessionId(null);
@@ -981,9 +984,17 @@ private static final String CRON_EXECUTION_HINT = """
                 boolean success = false;
                 while (attempt <= maxRetries && !success) {
                     try {
-                        lastRunSessionId = runtimeMetadata.isEmpty()
-                            ? runtimeService.runBackground(enhancedPrompt, targetSessionId, true)
-                            : runtimeService.runBackground(enhancedPrompt, targetSessionId, true, runtimeMetadata);
+                        String ownerId = job.getUserId();
+                        if (ownerId == null || ownerId.isBlank()) {
+                            lastRunSessionId = runtimeMetadata.isEmpty()
+                                ? runtimeService.runBackground(enhancedPrompt, targetSessionId, true)
+                                : runtimeService.runBackground(enhancedPrompt, targetSessionId, true, runtimeMetadata);
+                        } else {
+                            lastRunSessionId = runtimeMetadata.isEmpty()
+                                ? runtimeService.runBackground(enhancedPrompt, targetSessionId, true, ownerId)
+                                : runtimeService.runBackground(
+                                    enhancedPrompt, targetSessionId, true, ownerId, runtimeMetadata);
+                        }
                         success = true;
                     } catch (Exception llmEx) {
                         attempt++;
@@ -1159,7 +1170,13 @@ private static final String CRON_EXECUTION_HINT = """
             payload.putAll(extraPayload);
         }
         try {
-            eventService.publish(eventType, jobProfile(job), job.getLastRunSessionId(), job.getId(), payload);
+            eventService.publish(
+                eventType,
+                jobProfile(job),
+                job.getLastRunSessionId(),
+                job.getId(),
+                payload,
+                job.getUserId());
         } catch (RuntimeException e) {
             log.warn("Failed to publish cron event {} for {}: {}", eventType, job.getId(), e.getMessage());
         }
@@ -2516,6 +2533,28 @@ private static final String CRON_EXECUTION_HINT = """
     private boolean isVisibleToCurrentUser(CronJobEntity entity) {
         String scoped = UserContext.scopeUserId();
         return entity != null && (scoped == null || Objects.equals(scoped, entity.getUserId()));
+    }
+
+    private void requireAttachedSessionOwnership(String requestedOwnerId, UUID sessionId) {
+        if (sessionId == null) {
+            return;
+        }
+        if (UserContext.scopeUserId() == null && requestedOwnerId == null) {
+            return;
+        }
+        String ownerId = UserContext.effectiveUserId(requestedOwnerId);
+        if (ownerId == null) {
+            return;
+        }
+        var sessions = sessionRepositoryProvider == null ? null : sessionRepositoryProvider.getIfAvailable();
+        if (sessions == null) {
+            throw new IllegalStateException("Session ownership validation is unavailable");
+        }
+        SessionEntity session = sessions.findById(sessionId)
+            .orElseThrow(() -> new IllegalArgumentException("Attached session not found: " + sessionId));
+        if (!Objects.equals(ownerId, session.getUserId())) {
+            throw new SecurityException("Attached session does not belong to the cron job owner");
+        }
     }
 
     private void requireOwnership(CronJobEntity entity) {

@@ -3,9 +3,11 @@ package com.azhukov.agent.service;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.persistence.entity.CronJobEntity;
+import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.repository.CronExecutionLogRepository;
 import com.azhukov.agent.persistence.repository.CronJobRepository;
 import com.azhukov.agent.persistence.repository.MessageRepository;
+import com.azhukov.agent.persistence.repository.SessionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -44,6 +46,10 @@ class CronJobServiceCrudBranchTest {
     private CronExecutionLogRepository cronExecutionLogRepository;
     @Mock
     private MessageRepository messageRepository;
+    @Mock
+    private ObjectProvider<SessionRepository> sessionRepositoryProvider;
+    @Mock
+    private SessionRepository sessionRepository;
 
     private AgentProperties properties;
     private CronJobService service;
@@ -59,7 +65,11 @@ class CronJobServiceCrudBranchTest {
             cronExecutionLogRepository,
             messageRepository,
             new org.springframework.transaction.support.TransactionTemplate(),
-            new CronScheduleParser());
+            new CronScheduleParser(),
+            null,
+            sessionRepositoryProvider,
+            null);
+        lenient().when(sessionRepositoryProvider.getIfAvailable()).thenReturn(sessionRepository);
         lenient().when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(inv -> {
             CronJobEntity e = inv.getArgument(0);
             if (e.getId() == null) {
@@ -96,6 +106,50 @@ class CronJobServiceCrudBranchTest {
         assertThat(job.getMonitor()).isEqualTo("monitor.sh");
         assertThat(job.isContinuityEnabled()).isTrue();
         assertThat(job.getAttachedSessionId()).isNotNull();
+    }
+
+    @Test
+    void fullCreateRejectsForeignAttachedSession() {
+        UUID sessionId = UUID.randomUUID();
+        SessionEntity foreignSession = new SessionEntity();
+        foreignSession.setId(sessionId);
+        foreignSession.setUserId("user-b");
+        when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(foreignSession));
+        com.azhukov.agent.core.security.UserContext.set("user-a",
+            com.azhukov.agent.core.security.UserContext.ROLE_USER);
+        try {
+            assertThatThrownBy(() -> service.create(
+                "full", "0 * * * *", "prompt", "local",
+                null, null, null, null, false,
+                null, null, null, null, null,
+                "monitor.sh", true, sessionId))
+                .isInstanceOf(SecurityException.class)
+                .hasMessageContaining("Attached session does not belong");
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+        }
+    }
+
+    @Test
+    void fullCreateAcceptsOwnersAttachedSession() {
+        UUID sessionId = UUID.randomUUID();
+        SessionEntity ownerSession = new SessionEntity();
+        ownerSession.setId(sessionId);
+        ownerSession.setUserId("user-a");
+        when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(ownerSession));
+        com.azhukov.agent.core.security.UserContext.set("user-a",
+            com.azhukov.agent.core.security.UserContext.ROLE_USER);
+        try {
+            CronJobEntity job = service.create(
+                "full", "0 * * * *", "prompt", "local",
+                null, null, null, null, false,
+                null, null, null, null, null,
+                "monitor.sh", true, sessionId);
+
+            assertThat(job.getAttachedSessionId()).isEqualTo(sessionId);
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+        }
     }
 
     @Test

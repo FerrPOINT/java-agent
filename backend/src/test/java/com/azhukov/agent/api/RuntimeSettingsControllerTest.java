@@ -32,6 +32,7 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
@@ -168,7 +169,23 @@ class RuntimeSettingsControllerTest {
     // ── Set reasoning ──
 
     @Test
-    void setReasoningWithValidEffortReturns200() throws Exception {
+    void foreignSessionReturnsNotFoundBeforeAnyRuntimeSettingMutation() throws Exception {
+        UserContext.set("user-a", UserContext.ROLE_USER);
+        doThrow(new org.springframework.web.server.ResponseStatusException(
+            org.springframework.http.HttpStatus.NOT_FOUND, "Session not found"))
+            .when(cliRuntimeSettingsService).setGoal(SESSION_ID, "private goal");
+
+        mockMvc.perform(post("/api/v1/agent/goal")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"sessionId\":\"" + SESSION_ID + "\",\"goal\":\"private goal\"}"))
+            .andExpect(status().isNotFound());
+
+        org.mockito.Mockito.verify(cliRuntimeSettingsService, org.mockito.Mockito.never())
+            .setGoalPaused(SESSION_ID, false);
+    }
+
+    @Test
+    void setReasoningValid() throws Exception {
         doNothing().when(cliRuntimeSettingsService).setReasoningEffort(SESSION_ID, "medium");
 
         mockMvc.perform(post("/api/v1/agent/reasoning")

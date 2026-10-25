@@ -193,7 +193,7 @@ class AgentStreamingServiceEntryBranchTest {
         try {
             org.assertj.core.api.Assertions.assertThatThrownBy(() -> streamingService.streamTurn(
                     ChatRequest.simple(SESSION_ID, "foreign", null, 5_000L)))
-                    .isInstanceOf(SecurityException.class);
+                    .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
             org.mockito.Mockito.verifyNoInteractions(sessionStore, modelClient);
         } finally {
             com.azhukov.agent.core.security.UserContext.clear();

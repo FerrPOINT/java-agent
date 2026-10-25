@@ -166,13 +166,15 @@ public class SessionCrudController {
                     "unsupported_filters", unsupported.keySet(),
                     "error", "unsupported_filters"));
         }
+        String requestedUserId = string(raw, "user_id");
+        String effectiveUserId = com.azhukov.agent.core.security.UserContext.effectiveUserId(requestedUserId);
         com.azhukov.agent.service.SessionPruneService.PruneRequest request =
             new com.azhukov.agent.service.SessionPruneService.PruneRequest(
                 string(raw, "profile"),
                 string(raw, "source"),
                 string(raw, "title_contains"),
                 string(raw, "end_reason"),
-                string(raw, "user_id"),
+                effectiveUserId,
                 string(raw, "model_contains"),
                 instant(raw, "started_before"),
                 instant(raw, "started_after"),
@@ -268,6 +270,8 @@ public class SessionCrudController {
                 "provider", providerObj != null ? providerObj.toString() : ""));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.notFound().build();
+        } catch (org.springframework.web.server.ResponseStatusException e) {
+            throw e;
         } catch (SecurityException e) {
             throw e;
         } catch (Exception e) {

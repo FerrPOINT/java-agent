@@ -1,6 +1,7 @@
 package com.azhukov.agent.api;
 
 import com.azhukov.agent.persistence.entity.CronJobEntity;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.service.CronBlueprintService;
 import com.azhukov.agent.service.CronJobService;
 import com.azhukov.agent.service.CronSuggestionService;
@@ -417,9 +418,11 @@ public class CronDashboardController {
     }
 
     private Optional<CronJobEntity> findJob(String jobId, String profile) {
+        String scopedUserId = UserContext.scopeUserId();
         try {
             UUID uuid = UUID.fromString(jobId);
-            return profile == null ? cronJobService.findById(uuid) : cronJobService.findById(uuid, profile);
+            return (profile == null ? cronJobService.findById(uuid) : cronJobService.findById(uuid, profile))
+                .filter(entity -> scopedUserId == null || scopedUserId.equals(entity.getUserId()));
         } catch (RuntimeException ignored) {
             // Dashboard routes also accept Hermes' compact 12-hex job ids.
         }
@@ -430,6 +433,7 @@ public class CronDashboardController {
             ? cronJobService.list(true)
             : cronJobService.listForProfile(profile, true);
         List<CronJobEntity> matches = candidates.stream()
+            .filter(entity -> scopedUserId == null || scopedUserId.equals(entity.getUserId()))
             .filter(entity -> jobId.equals(compactJobId(entity.getId())))
             .toList();
         if (matches.size() > 1) {
@@ -525,9 +529,12 @@ public class CronDashboardController {
     }
 
     private boolean contextJobExists(String ref, String profile) {
+        String scopedUserId = UserContext.scopeUserId();
         try {
             UUID id = UUID.fromString(ref);
-            if ((profile == null ? cronJobService.findById(id) : cronJobService.findById(id, profile)).isPresent()) {
+            if ((profile == null ? cronJobService.findById(id) : cronJobService.findById(id, profile))
+                .filter(entity -> scopedUserId == null || scopedUserId.equals(entity.getUserId()))
+                .isPresent()) {
                 return true;
             }
         } catch (RuntimeException ignored) {
@@ -541,6 +548,7 @@ public class CronDashboardController {
             ? cronJobService.list(true)
             : cronJobService.listForProfile(profile, true);
         return candidates.stream()
+            .filter(entity -> scopedUserId == null || scopedUserId.equals(entity.getUserId()))
             .anyMatch(entity -> ref.equals(compactJobId(entity.getId())));
     }
 

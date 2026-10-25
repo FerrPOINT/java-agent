@@ -1,7 +1,9 @@
 package com.azhukov.agent.service;
 
 import com.azhukov.agent.persistence.entity.AttachmentArtifactEntity;
+import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.repository.AttachmentArtifactRepository;
+import com.azhukov.agent.persistence.repository.SessionRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.io.TempDir;
@@ -36,6 +38,9 @@ class AttachmentArtifactServiceTest {
     @Mock
     private AttachmentArtifactRepository repository;
 
+    @Mock
+    private SessionRepository sessionRepository;
+
     @TempDir
     Path tempDir;
 
@@ -51,11 +56,64 @@ class AttachmentArtifactServiceTest {
     }
 
     private AttachmentArtifactService service() {
-        AttachmentArtifactService service = new AttachmentArtifactService(prov(repository));
+        AttachmentArtifactService service = new AttachmentArtifactService(prov(repository), prov(null));
         ReflectionTestUtils.setField(service, "cacheRootConfig", tempDir.toString());
         lenient().when(repository.save(any(AttachmentArtifactEntity.class)))
             .thenAnswer(inv -> inv.getArgument(0));
         return service;
+    }
+
+    private AttachmentArtifactService service(SessionRepository sessions) {
+        AttachmentArtifactService service = new AttachmentArtifactService(prov(repository), prov(sessions));
+        ReflectionTestUtils.setField(service, "cacheRootConfig", tempDir.toString());
+        lenient().when(repository.save(any(AttachmentArtifactEntity.class)))
+            .thenAnswer(inv -> inv.getArgument(0));
+        return service;
+    }
+
+    @Test
+    void registerRejectsForeignSessionBeforeWritingBlobOrMetadata() {
+        UUID foreignSessionId = UUID.randomUUID();
+        SessionEntity foreign = new SessionEntity();
+        foreign.setId(foreignSessionId);
+        foreign.setUserId("user-b");
+        when(sessionRepository.findById(foreignSessionId)).thenReturn(Optional.of(foreign));
+
+        var result = service(sessionRepository).register("user-a", "default", foreignSessionId, "m1",
+            "internal", "file", "text/plain", "note.txt", "private".getBytes());
+
+        assertThat(result.rejection()).isEqualTo("session not found");
+        assertThat(result.id()).isNull();
+        assertThat(tempDir).isEmptyDirectory();
+        verify(repository, never()).save(any());
+        verify(repository, never()).findFirstByOwnerIdAndContentHashAndDisposition(any(), any(), any());
+    }
+
+    @Test
+    void registerAcceptsOwningSession() {
+        UUID ownSessionId = UUID.randomUUID();
+        SessionEntity owned = new SessionEntity();
+        owned.setId(ownSessionId);
+        owned.setUserId("user-a");
+        when(sessionRepository.findById(ownSessionId)).thenReturn(Optional.of(owned));
+
+        var result = service(sessionRepository).register("user-a", "default", ownSessionId, "m1",
+            "internal", "file", "text/plain", "note.txt", "owned".getBytes());
+
+        assertThat(result.rejection()).isNull();
+        verify(repository).save(any(AttachmentArtifactEntity.class));
+    }
+
+    @Test
+    void registerMissingSessionFailsClosedWhenSessionRepositoryIsAvailable() {
+        UUID missingSessionId = UUID.randomUUID();
+        when(sessionRepository.findById(missingSessionId)).thenReturn(Optional.empty());
+
+        var result = service(sessionRepository).register("user-a", "default", missingSessionId, "m1",
+            "internal", "file", "text/plain", "note.txt", "private".getBytes());
+
+        assertThat(result.rejection()).isEqualTo("session not found");
+        verify(repository, never()).save(any());
     }
 
     @Test

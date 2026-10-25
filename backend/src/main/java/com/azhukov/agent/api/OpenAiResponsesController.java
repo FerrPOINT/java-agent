@@ -16,6 +16,7 @@ import com.azhukov.agent.core.model.TurnResult;
 import com.azhukov.agent.core.prompt.PromptBuilder;
 import com.azhukov.agent.core.security.ApiErrorTextRedactor;
 import com.azhukov.agent.core.security.Redactor;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.tool.ToolRegistry;
 import com.azhukov.agent.service.OpenAiIdempotencyCache;
 import com.azhukov.agent.service.ApiRunAdmissionService;
@@ -107,19 +108,10 @@ public class OpenAiResponsesController {
             priorHistory = parsedHistory.messages();
         } else if (hasText(previousResponseId)) {
             previous = responseStore.get(previousResponseId);
-            if (previous == null) {
+            if (!isStoredResponseAccessible(previous, sessionKeyHeader)) {
                 return openAiError(HttpStatus.NOT_FOUND,
                     "Previous response not found: " + previousResponseId,
                     "invalid_request_error");
-            }
-            if (previous.sessionId() != null) {
-                try {
-                    openAiSessionService.resolveStoredResponseSession(previous.sessionId(), sessionKeyHeader);
-                } catch (IllegalArgumentException e) {
-                    return openAiError(HttpStatus.NOT_FOUND,
-                        "Previous response not found: " + previousResponseId,
-                        "invalid_request_error");
-                }
             }
             priorHistory = previous.conversationHistory();
             if (!hasText(instructions)) {
@@ -411,14 +403,21 @@ public class OpenAiResponsesController {
 
     private StoredResponse accessibleStoredResponse(String responseId, String sessionKeyHeader) {
         StoredResponse stored = responseStore.get(responseId);
-        if (stored == null || stored.sessionId() == null) {
-            return stored;
+        return isStoredResponseAccessible(stored, sessionKeyHeader) ? stored : null;
+    }
+
+    private boolean isStoredResponseAccessible(StoredResponse stored, String sessionKeyHeader) {
+        if (stored == null) {
+            return false;
+        }
+        if (stored.sessionId() == null) {
+            return UserContext.scopeUserId() == null;
         }
         try {
             openAiSessionService.resolveStoredResponseSession(stored.sessionId(), sessionKeyHeader);
-            return stored;
+            return true;
         } catch (IllegalArgumentException ignored) {
-            return null;
+            return false;
         }
     }
 

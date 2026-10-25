@@ -182,18 +182,17 @@ public class AgentChatController {
         return Map.of("accepted", true, "sessionId", request.sessionId().toString());
     }
 
-    /**
-     * Ownership guard: a non-admin key may only stop/steer its own session.
-     * @throws SecurityException when the session belongs to another user
-     */
+    /** Resolve only an existing session in the caller's ownership scope. */
     private void requireSessionOwnership(UUID sessionId) {
         String scoped = com.azhukov.agent.core.security.UserContext.scopeUserId();
         if (scoped == null) return; // admin or no-auth → full access
-        sessionRepository.findById(sessionId).ifPresent(session -> {
-            if (!scoped.equals(session.getUserId())) {
-                throw new SecurityException("Session does not belong to the current user");
-            }
-        });
+        boolean visible = sessionRepository.findById(sessionId)
+            .map(session -> scoped.equals(session.getUserId()))
+            .orElse(false);
+        if (!visible) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.NOT_FOUND, "Session not found");
+        }
     }
 
 
@@ -212,14 +211,12 @@ public class AgentChatController {
 
     @org.springframework.web.bind.annotation.GetMapping("/agent/background/{id}")
     public java.util.Map<String, Object> backgroundStatus(@org.springframework.web.bind.annotation.PathVariable java.util.UUID id) {
-        var job = backgroundJobRepository.findById(id)
-            .orElseThrow(() -> new IllegalArgumentException("Unknown background job: " + id));
-        // Ownership: a job's result may only be read by the session owner.
-        // Jobs without a session (ephemeral prompts) stay readable to all
-        // authenticated users — they carry no other user's conversation.
-        if (job.getSessionId() != null) {
-            requireSessionOwnership(job.getSessionId());
-        }
+        String scopedUserId = UserContext.scopeUserId();
+        var job = (scopedUserId == null
+            ? backgroundJobRepository.findById(id)
+            : backgroundJobRepository.findByIdAndUserId(id, scopedUserId))
+            .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.NOT_FOUND, "Unknown background job: " + id));
         java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
         out.put("jobId", job.getId().toString());
         out.put("status", job.getStatus());

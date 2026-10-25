@@ -153,8 +153,9 @@ public class CheckpointManager {
         // Phase 2: persistence — short @Transactional via Spring proxy
         CheckpointEntity saved = self.getObject().persistCheckpoint(userId, description, collectedFiles);
 
-        // Auto-prune (already @Transactional via proxy)
-        self.getObject().prune(properties.getCheckpoints().getMaxSnapshots());
+        // Auto-prune within the same owner scope; one user's snapshot must
+        // never evict another user's retained checkpoints.
+        self.getObject().prune(userId, properties.getCheckpoints().getMaxSnapshots());
 
         return saved;
     }
@@ -376,8 +377,16 @@ public class CheckpointManager {
 
     @Transactional
     public int prune(int maxSnapshots) {
-        List<CheckpointEntity> all = checkpointRepository.findAll(org.springframework.data.domain.Sort.by(
-            org.springframework.data.domain.Sort.Direction.DESC, "createdAt"));
+        return prune(null, maxSnapshots);
+    }
+
+    @Transactional
+    public int prune(String userId, int maxSnapshots) {
+        List<CheckpointEntity> all = userId == null
+            ? checkpointRepository.findAll(org.springframework.data.domain.Sort.by(
+                org.springframework.data.domain.Sort.Direction.DESC, "createdAt"))
+            : checkpointRepository.findByUserId(userId, org.springframework.data.domain.Sort.by(
+                org.springframework.data.domain.Sort.Direction.DESC, "createdAt"));
 
         if (all.size() <= maxSnapshots) return 0;
 

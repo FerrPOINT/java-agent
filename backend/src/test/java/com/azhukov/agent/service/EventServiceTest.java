@@ -1,5 +1,7 @@
 package com.azhukov.agent.service;
 
+import com.azhukov.agent.persistence.entity.SessionEntity;
+import com.azhukov.agent.persistence.repository.SessionRepository;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
@@ -10,8 +12,50 @@ import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class EventServiceTest {
+
+    @Test
+    void publishDerivesOwnerFromPersistedSessionAndScopesReplay() {
+        SessionRepository sessions = mock(SessionRepository.class);
+        UUID ownedSessionId = UUID.randomUUID();
+        SessionEntity session = new SessionEntity();
+        session.setId(ownedSessionId);
+        session.setUserId("user-a");
+        when(sessions.findById(ownedSessionId)).thenReturn(java.util.Optional.of(session));
+        EventService service = new EventService(10, sessions);
+
+        EventService.EventEnvelope owned = service.publish(
+            "delegate.completed", "default", ownedSessionId, UUID.randomUUID(), Map.of());
+        service.publish("delegate.completed", "default", UUID.randomUUID(), UUID.randomUUID(), Map.of(), "user-b");
+
+        assertThat(owned.userId()).isEqualTo("user-a");
+        assertThat(service.replay(null, 0L, 10, "user-a"))
+            .extracting(EventService.EventEnvelope::sessionId)
+            .containsExactly(ownedSessionId);
+    }
+
+    @Test
+    void scopedLatestCursorDoesNotRevealForeignEvents() {
+        EventService service = new EventService(10);
+        service.publish("delegate.completed", "default", UUID.randomUUID(), UUID.randomUUID(), Map.of(), "user-a");
+        service.publish("delegate.completed", "default", UUID.randomUUID(), UUID.randomUUID(), Map.of(), "user-b");
+
+        assertThat(service.latestCursor("default", "user-a")).isEqualTo(1L);
+        assertThat(service.latestCursor("default", "user-b")).isEqualTo(2L);
+        assertThat(service.latestCursor("default", "user-c")).isZero();
+    }
+
+    @Test
+    void legacyEventsWithoutOwnerAreHiddenFromScopedReads() {
+        EventService service = new EventService(10);
+        service.publish("delegate.completed", "default", UUID.randomUUID(), UUID.randomUUID(), Map.of());
+
+        assertThat(service.replay(null, 0L, 10, "user-a")).isEmpty();
+        assertThat(service.replay(null, 0L, 10)).hasSize(1);
+    }
 
     @Test
     void publishAssignsMonotonicCursorAndStableEventId() {

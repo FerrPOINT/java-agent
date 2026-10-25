@@ -10,6 +10,7 @@ import com.azhukov.agent.metrics.AgentMetrics;
 import com.azhukov.agent.core.security.GuardrailDecision;
 import com.azhukov.agent.core.security.SecretRedactor;
 import com.azhukov.agent.core.security.ToolCallGuardrail;
+import com.azhukov.agent.core.security.UserContext;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -95,6 +96,41 @@ class ToolExecutionServiceTest {
         verify(agentMetrics, never()).incrementToolErrors(toolName);
         verify(toolResultClassifier).classify(any(ToolResult.class));
         verify(toolOutputLimiter).truncate(any(ToolResult.class), anyString());
+    }
+
+    @Test
+    @DisplayName("Should execute a tool under the owning session user on its virtual thread")
+    void shouldPropagateSessionUserToToolWorker() {
+        String toolName = "cronjob";
+        String arguments = "{\"action\":\"list\"}";
+        Session ownerSession = Session.create("owner-a", "noop", "default");
+        java.util.concurrent.atomic.AtomicReference<String> observedUser = new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicReference<String> observedRole = new java.util.concurrent.atomic.AtomicReference<>();
+        UserContext.set("request-user", UserContext.ROLE_USER);
+        try {
+            when(guardrail.beforeCall(toolName, arguments)).thenReturn(GuardrailDecision.allow(toolName));
+            when(toolRegistry.execute(toolName, "call-owner", arguments, LAST_MSG, ownerSession)).thenAnswer(invocation -> {
+                observedUser.set(UserContext.getUserId());
+                observedRole.set(UserContext.getRole());
+                return ToolResult.ok("[]");
+            });
+            when(redactor.redact("[]")).thenReturn("[]");
+            when(guardrail.afterCall(eq(toolName), eq(arguments), any(ToolResult.class), anyBoolean()))
+                .thenReturn(GuardrailDecision.allow(toolName));
+            when(toolResultClassifier.classify(any(ToolResult.class)))
+                .thenReturn(ToolResultClassifier.ResultType.SUCCESS);
+            when(toolOutputLimiter.truncate(any(ToolResult.class), anyString()))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+            ToolResult result = service.execute(toolName, "call-owner", arguments, LAST_MSG, ownerSession);
+
+            assertThat(result.success()).isTrue();
+            assertThat(observedUser.get()).isEqualTo("owner-a");
+            assertThat(observedRole.get()).isEqualTo(UserContext.ROLE_USER);
+            assertThat(UserContext.getUserId()).isEqualTo("request-user");
+        } finally {
+            UserContext.clear();
+        }
     }
 
     @Test

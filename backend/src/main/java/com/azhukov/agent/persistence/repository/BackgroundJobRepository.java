@@ -23,4 +23,6 @@ public interface BackgroundJobRepository extends JpaRepository<BackgroundJobEnti
                 @Param("finishedAt") java.time.Instant finishedAt);
 
     Optional<BackgroundJobEntity> findBySessionId(UUID sessionId);
+
+    Optional<BackgroundJobEntity> findByIdAndUserId(UUID id, String userId);
 }

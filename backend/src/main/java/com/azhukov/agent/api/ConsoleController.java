@@ -188,6 +188,7 @@ public class ConsoleController {
     public ResponseEntity<Map<String, Object>> ptyStart(
         @PathVariable(name = "profile", required = false) String profile,
         @RequestBody Map<String, Object> body) {
+        requireAdminInteractiveConsoleAccess();
         com.azhukov.agent.service.PtySessionService pty = pty();
         if (pty == null) {
             return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED)
@@ -268,7 +269,7 @@ public class ConsoleController {
             return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED)
                 .body(Map.of("error", "pub registry is not available in this deployment"));
         }
-        var result = pub.create(profile, channel);
+        var result = pub.create(profile, UserContext.scopeUserId(), channel);
         return result.allowed()
             ? ResponseEntity.ok(Map.of("channel", channel, "status", "created"))
             : ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", result.reason()));
@@ -288,7 +289,7 @@ public class ConsoleController {
         @SuppressWarnings("unchecked")
         Map<String, Object> payload = body.get("payload") instanceof Map<?, ?> m
             ? (Map<String, Object>) m : Map.of();
-        long seq = pub.publish(profile, channel, type, payload);
+        long seq = pub.publish(profile, UserContext.scopeUserId(), channel, type, payload);
         return seq >= 0
             ? ResponseEntity.ok(Map.of("channel", channel, "seq", seq))
             : ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", "unknown channel"));
@@ -305,7 +306,7 @@ public class ConsoleController {
             return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED)
                 .body(Map.of("error", "pub registry is not available in this deployment"));
         }
-        var events = pub.replay(profile, channel, after, limit);
+        var events = pub.replay(profile, UserContext.scopeUserId(), channel, after, limit);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("channel", channel);
         body.put("events", events);
@@ -321,9 +322,15 @@ public class ConsoleController {
             return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED)
                 .body(Map.of("error", "pub registry is not available in this deployment"));
         }
-        return pub.delete(profile, channel)
+        return pub.delete(profile, UserContext.scopeUserId(), channel)
             ? ResponseEntity.ok(Map.of("channel", channel, "status", "deleted"))
             : ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", "unknown channel"));
+    }
+
+    private void requireAdminInteractiveConsoleAccess() {
+        if (UserContext.getUserId() != null && !UserContext.isAdmin()) {
+            throw new SecurityException("Interactive console access is available to administrators only");
+        }
     }
 
     private com.azhukov.agent.service.ConsoleTaskService taskService() {

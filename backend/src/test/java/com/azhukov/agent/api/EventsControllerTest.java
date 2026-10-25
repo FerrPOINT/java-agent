@@ -1,9 +1,11 @@
 package com.azhukov.agent.api;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.service.EventService;
 import com.azhukov.agent.service.ProfileService;
 import com.azhukov.agent.service.RuntimeConfigService;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -37,6 +39,38 @@ class EventsControllerTest {
             "work", null, false, false, true, null, null, null, null));
         eventService = new EventService(10);
         mockMvc = MockMvcBuilders.standaloneSetup(new EventsController(eventService, profileService)).build();
+    }
+
+    @AfterEach
+    void clearUserContext() {
+        UserContext.clear();
+    }
+
+    @Test
+    void scopedUserSeesOnlyEventsOwnedByTheirSessions() throws Exception {
+        UUID ownerSession = UUID.randomUUID();
+        UUID foreignSession = UUID.randomUUID();
+        eventService.publish("delegate.completed", "default", ownerSession, UUID.randomUUID(), Map.of("name", "owner"), "user-a");
+        eventService.publish("delegate.completed", "default", foreignSession, UUID.randomUUID(), Map.of("name", "foreign"), "user-b");
+        UserContext.set("user-a", UserContext.ROLE_USER);
+
+        mockMvc.perform(get("/api/events"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.events.length()").value(1))
+            .andExpect(jsonPath("$.events[0].payload.name").value("owner"))
+            .andExpect(jsonPath("$.events[0].user_id").value("user-a"));
+    }
+
+    @Test
+    void scopedUserCannotRecoverForeignEventsThroughProfileOrCursor() throws Exception {
+        eventService.publish("delegate.completed", "work", UUID.randomUUID(), UUID.randomUUID(), Map.of("name", "foreign"), "user-b");
+        UserContext.set("user-a", UserContext.ROLE_USER);
+
+        mockMvc.perform(get("/api/events").param("profile", "work").param("after", "0"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.events").isEmpty())
+            .andExpect(jsonPath("$.next_cursor").value(0))
+            .andExpect(jsonPath("$.latest_cursor").value(0));
     }
 
     @Test

@@ -130,13 +130,13 @@ class AgentClarifyControllerTest {
             mockMvc.perform(post("/api/v1/agent/session/{sessionId}/clarify/resolve", sessionId)
                     .contentType(MediaType.APPLICATION_JSON)
                     .content("{\"clarifyId\":\"" + pending.clarifyId() + "\",\"response\":\"prod\"}"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound());
             mockMvc.perform(post("/api/v1/agent/session/{sessionId}/clarify/{clarifyId}/custom", sessionId, pending.clarifyId())
                     .contentType(MediaType.APPLICATION_JSON).content("{}"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound());
             mockMvc.perform(post("/api/v1/agent/session/{sessionId}/clarify/text", sessionId)
                     .contentType(MediaType.APPLICATION_JSON).content("{\"text\":\"prod\"}"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound());
         } finally {
             com.azhukov.agent.core.security.UserContext.clear();
         }

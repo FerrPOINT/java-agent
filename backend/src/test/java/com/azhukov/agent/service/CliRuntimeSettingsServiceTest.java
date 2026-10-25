@@ -50,7 +50,7 @@ class CliRuntimeSettingsServiceTest {
         UserContext.set("user-a", UserContext.ROLE_USER);
         try {
             assertThatThrownBy(() -> service.setGoal(SESSION_ID, "private goal"))
-                .isInstanceOf(IllegalArgumentException.class)
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
                 .hasMessageContaining("Session not found");
             assertThat(foreign.getCliState()).doesNotContainKey("goal");
         } finally {
@@ -249,11 +249,11 @@ class CliRuntimeSettingsServiceTest {
     }
 
     @Test
-    void missingSessionThrowsIllegalArgumentException() {
+    void missingSessionReturnsNotFound() {
         when(sessionRepository.findById(any())).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.setTitle(SESSION_ID, "x"))
-            .isInstanceOf(IllegalArgumentException.class)
+            .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
             .hasMessageContaining("Session not found");
     }
 }

@@ -4,6 +4,7 @@ import com.azhukov.agent.api.dto.CronExecutionLogDto;
 import com.azhukov.agent.api.dto.CronJobDto;
 import com.azhukov.agent.api.mapper.CronJobDtoMapper;
 import com.azhukov.agent.core.security.UserContext;
+import com.azhukov.agent.persistence.entity.CronJobEntity;
 import com.azhukov.agent.persistence.repository.CronExecutionLogRepository;
 import com.azhukov.agent.persistence.repository.SessionRepository;
 import com.azhukov.agent.service.CronJobService;
@@ -48,6 +49,10 @@ public class CronJobController {
 
     @PutMapping("/{id}")
     public CronJobDto update(@PathVariable UUID id, @Valid @RequestBody UpdateCronRequest request) {
+        CronJobEntity job = cronJobService.findById(id)
+            .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.NOT_FOUND, "Cron job not found"));
+        requireCronOwnership(job);
         return cronJobDtoMapper.toDto(cronJobService.update(id, request.name(), request.schedule(),
             request.prompt(), request.deliverTo(), request.enabled(),
             null, request.contextFrom(),
@@ -104,14 +109,24 @@ public class CronJobController {
         return org.springframework.http.ResponseEntity.status(403).body(java.util.Map.of("error", exception.getMessage()));
     }
 
+    private void requireCronOwnership(com.azhukov.agent.persistence.entity.CronJobEntity job) {
+        String scopedUserId = UserContext.scopeUserId();
+        if (scopedUserId != null && !scopedUserId.equals(job.getUserId())) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.NOT_FOUND, "Cron job not found");
+        }
+    }
+
     private void requireSessionOwnership(UUID sessionId) {
         String scopedUserId = UserContext.scopeUserId();
         if (scopedUserId == null) return;
-        sessionRepository.findById(sessionId).ifPresent(session -> {
-            if (!scopedUserId.equals(session.getUserId())) {
-                throw new SecurityException("Session does not belong to the current user");
-            }
-        });
+        var session = sessionRepository.findById(sessionId)
+            .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.NOT_FOUND, "Session not found"));
+        if (!scopedUserId.equals(session.getUserId())) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.NOT_FOUND, "Session not found");
+        }
     }
 
     @GetMapping("/heartbeat/{sessionId}")
@@ -195,35 +210,49 @@ public class CronJobController {
 
     @PostMapping("/{id}/pause")
     public CronJobDto pause(@PathVariable UUID id) {
+        CronJobEntity job = cronJobService.findById(id)
+            .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.NOT_FOUND, "Cron job not found"));
+        requireCronOwnership(job);
         return cronJobDtoMapper.toDto(cronJobService.pause(id));
     }
 
     @PostMapping("/{id}/resume")
     public CronJobDto resume(@PathVariable UUID id) {
+        CronJobEntity job = cronJobService.findById(id)
+            .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.NOT_FOUND, "Cron job not found"));
+        requireCronOwnership(job);
         return cronJobDtoMapper.toDto(cronJobService.resume(id));
     }
 
     @DeleteMapping("/{id}")
     public org.springframework.http.ResponseEntity<Void> delete(@PathVariable UUID id) {
-        if (!cronJobService.exists(id)) {
+        CronJobEntity job = cronJobService.findById(id).orElse(null);
+        if (job == null) {
             return org.springframework.http.ResponseEntity.notFound().build();
         }
+        requireCronOwnership(job);
         cronJobService.remove(id);
         return org.springframework.http.ResponseEntity.ok().build();
     }
 
     @PostMapping("/{id}/run")
     public CronJobDto runNow(@PathVariable UUID id) {
+        CronJobEntity job = cronJobService.findById(id)
+            .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.NOT_FOUND, "Cron job not found"));
+        requireCronOwnership(job);
         return cronJobDtoMapper.toDto(cronJobService.runNow(id));
     }
 
     // h72: Cron execution ledger — list execution history for a job.
     @GetMapping("/{id}/executions")
     public List<CronExecutionLogDto> listExecutions(@PathVariable UUID id) {
-        if (cronJobService.findById(id).isEmpty()) {
-            throw new org.springframework.web.server.ResponseStatusException(
-                org.springframework.http.HttpStatus.NOT_FOUND, "Cron job not found");
-        }
+        CronJobEntity job = cronJobService.findById(id)
+            .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.NOT_FOUND, "Cron job not found"));
+        requireCronOwnership(job);
         return cronJobDtoMapper.toExecutionLogDtoList(cronExecutionLogRepository.findByJobIdOrderByStartedAtDesc(id));
     }
 

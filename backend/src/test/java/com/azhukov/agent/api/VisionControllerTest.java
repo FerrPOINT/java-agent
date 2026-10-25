@@ -4,6 +4,7 @@ import com.azhukov.agent.api.dto.VisionRequest;
 import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.tools.browser.BrowserService;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -13,8 +14,12 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
+import com.azhukov.agent.core.security.UserContext;
+
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -41,6 +46,25 @@ class VisionControllerTest {
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler(new com.fasterxml.jackson.databind.ObjectMapper()))
             .build();
+    }
+
+    @AfterEach
+    void tearDown() {
+        UserContext.clear();
+    }
+
+    @Test
+    void regularUserCannotInvokeSharedBrowserVision() throws Exception {
+        UserContext.set("user-a", UserContext.ROLE_USER);
+        VisionRequest request = new VisionRequest("https://example.com", "Describe the page", null);
+
+        mockMvc.perform(post("/api/v1/agent/vision")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+            .andExpect(status().isForbidden());
+
+        verify(browserService, never()).navigate(any());
+        verify(modelClient, never()).analyzeImage(any(), any());
     }
 
     @Test

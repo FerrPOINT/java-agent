@@ -352,7 +352,7 @@ class AgentChatControllerT1Test {
             mockMvc.perform(post("/api/v1/agent/background")
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(body))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound());
 
             verify(agentRuntimeService, never()).submitBackgroundJob(
                 org.mockito.ArgumentMatchers.<String>any(),
@@ -383,12 +383,12 @@ class AgentChatControllerT1Test {
     }
 
     @Test
-    void backgroundStatus_notFound_returns400() throws Exception {
+    void backgroundStatus_notFound_returns404() throws Exception {
         UUID jobId = UUID.randomUUID();
         when(backgroundJobRepository.findById(jobId)).thenReturn(Optional.empty());
 
         mockMvc.perform(get("/api/v1/agent/background/{id}", jobId))
-            .andExpect(status().isBadRequest());
+            .andExpect(status().isNotFound());
     }
 
     // ── refine() ──
@@ -416,7 +416,7 @@ class AgentChatControllerT1Test {
             mockMvc.perform(post("/api/v1/agent/refine")
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(body))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound());
 
             verify(messageRepository, never()).findBySessionIdOrderByCreatedAtAsc(SESSION_ID);
         } finally {
@@ -692,7 +692,7 @@ class AgentChatControllerT1Test {
             mockMvc.perform(post("/api/v1/agent/stop")
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(objectMapper.writeValueAsString(new StopRequest(SESSION_ID))))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound());
         } finally {
             UserContext.clear();
         }
@@ -706,7 +706,7 @@ class AgentChatControllerT1Test {
             mockMvc.perform(post("/api/v1/agent/steer")
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(objectMapper.writeValueAsString(new SteerRequest(SESSION_ID, "hijack"))))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound());
         } finally {
             UserContext.clear();
         }
@@ -718,7 +718,7 @@ class AgentChatControllerT1Test {
         try {
             when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(sessionOf("owner")));
             mockMvc.perform(post("/api/v1/agent/approvals/" + SESSION_ID + "/approve"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound());
         } finally {
             UserContext.clear();
         }
@@ -746,10 +746,50 @@ class AgentChatControllerT1Test {
             job.setId(UUID.randomUUID());
             job.setStatus("DONE");
             job.setSessionId(SESSION_ID);
-            when(backgroundJobRepository.findById(job.getId())).thenReturn(Optional.of(job));
-            when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(sessionOf("owner")));
+            job.setUserId("owner");
+            when(backgroundJobRepository.findByIdAndUserId(job.getId(), "user-77"))
+                .thenReturn(Optional.empty());
             mockMvc.perform(get("/api/v1/agent/background/" + job.getId()))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound());
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
+    void backgroundStatus_otherUsersSessionlessJob_returns403() throws Exception {
+        UserContext.set("user-77", UserContext.ROLE_USER);
+        try {
+            BackgroundJobEntity job = new BackgroundJobEntity();
+            job.setId(UUID.randomUUID());
+            job.setStatus("DONE");
+            job.setResult("private result");
+            job.setUserId("owner");
+            when(backgroundJobRepository.findByIdAndUserId(job.getId(), "user-77"))
+                .thenReturn(Optional.empty());
+
+            mockMvc.perform(get("/api/v1/agent/background/" + job.getId()))
+                .andExpect(status().isNotFound());
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
+    void backgroundStatus_ownSessionlessJob_returnsResult() throws Exception {
+        UserContext.set("user-77", UserContext.ROLE_USER);
+        try {
+            BackgroundJobEntity job = new BackgroundJobEntity();
+            job.setId(UUID.randomUUID());
+            job.setStatus("DONE");
+            job.setResult("private result");
+            job.setUserId("user-77");
+            when(backgroundJobRepository.findByIdAndUserId(job.getId(), "user-77"))
+                .thenReturn(Optional.of(job));
+
+            mockMvc.perform(get("/api/v1/agent/background/" + job.getId()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.result").value("private result"));
         } finally {
             UserContext.clear();
         }

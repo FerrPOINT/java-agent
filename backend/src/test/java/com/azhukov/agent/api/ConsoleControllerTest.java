@@ -20,6 +20,7 @@ import java.util.Optional;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -35,13 +36,15 @@ class ConsoleControllerTest {
     private ConsoleTaskService consoleTaskService;
     @Mock
     private com.azhukov.agent.service.PtySessionService ptySessionService;
+    @Mock
+    private com.azhukov.agent.service.PubChannelRegistry pubChannelRegistry;
 
     private ConsoleController controller;
 
     @BeforeEach
     void setUp() {
         controller = new ConsoleController(processTool, new AgentProperties(), redactor,
-            provider(consoleTaskService), provider(ptySessionService), null);
+            provider(consoleTaskService), provider(ptySessionService), provider(pubChannelRegistry));
     }
 
     @AfterEach
@@ -96,6 +99,18 @@ class ConsoleControllerTest {
     }
 
     @Test
+    void regularUserCannotStartSharedInteractivePty() {
+        UserContext.set("user-a", UserContext.ROLE_USER);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> controller.ptyStart(null, Map.of()))
+            .isInstanceOf(SecurityException.class);
+
+        verify(ptySessionService, never()).start(org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
     void ptyInputUsesAuthenticatedUserOwnership() {
         UserContext.set("user-a", UserContext.ROLE_USER);
         when(ptySessionService.write(null, "user-a", "pty_abc", "echo hi\n")).thenReturn(true);
@@ -129,6 +144,44 @@ class ConsoleControllerTest {
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         verify(ptySessionService).close(null, "user-a", "pty_abc");
+    }
+
+    @Test
+    void pubOperationsUseAuthenticatedOwnerScope() {
+        UserContext.set("user-a", UserContext.ROLE_USER);
+        when(pubChannelRegistry.create(null, "user-a", "events"))
+            .thenReturn(new com.azhukov.agent.service.PubChannelRegistry.SubscribeResult(true, null));
+        when(pubChannelRegistry.publish(null, "user-a", "events", "tick", Map.of("n", 1)))
+            .thenReturn(1L);
+        when(pubChannelRegistry.replay(null, "user-a", "events", 0, 20))
+            .thenReturn(java.util.List.of());
+        when(pubChannelRegistry.delete(null, "user-a", "events")).thenReturn(true);
+
+        assertThat(controller.pubCreate(null, "events").getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(controller.pubPublish(null, "events", Map.of("type", "tick", "payload", Map.of("n", 1)))
+            .getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(controller.pubRead(null, "events", 0, 20).getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(controller.pubDelete(null, "events").getStatusCode()).isEqualTo(HttpStatus.OK);
+
+        verify(pubChannelRegistry).create(null, "user-a", "events");
+        verify(pubChannelRegistry).publish(null, "user-a", "events", "tick", Map.of("n", 1));
+        verify(pubChannelRegistry).replay(null, "user-a", "events", 0, 20);
+        verify(pubChannelRegistry).delete(null, "user-a", "events");
+    }
+
+    @Test
+    void pubOperationsCannotReachAnotherUsersChannel() {
+        UserContext.set("user-a", UserContext.ROLE_USER);
+        when(pubChannelRegistry.publish(null, "user-a", "events", "event", Map.of()))
+            .thenReturn(-1L);
+        when(pubChannelRegistry.delete(null, "user-a", "events")).thenReturn(false);
+
+        assertThat(controller.pubPublish(null, "events", Map.of()).getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(controller.pubDelete(null, "events").getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+
+        verify(pubChannelRegistry).publish(null, "user-a", "events", "event", Map.of());
+        verify(pubChannelRegistry).delete(null, "user-a", "events");
+        verify(pubChannelRegistry, never()).publish(null, "user-b", "events", "event", Map.of());
     }
 
     private static <T> ObjectProvider<T> provider(T value) {

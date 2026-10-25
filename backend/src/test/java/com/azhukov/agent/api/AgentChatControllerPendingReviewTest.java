@@ -188,7 +188,7 @@ class AgentChatControllerPendingReviewTest {
         UserContext.set("current-user", UserContext.ROLE_USER);
         try {
             mockMvc.perform(get("/api/v1/agent/session/{id}/review/pending", SESSION_ID))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound());
             verifyNoInteractions(memoryNudgeManager);
         } finally {
             UserContext.clear();

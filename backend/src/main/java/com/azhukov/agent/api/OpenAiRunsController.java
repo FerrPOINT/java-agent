@@ -327,8 +327,11 @@ public class OpenAiRunsController {
             return null;
         }
         StoredResponse stored = responseStore.get(previousResponseId.trim());
-        if (stored == null || stored.sessionId() == null) {
-            return stored;
+        if (stored == null) {
+            return null;
+        }
+        if (stored.sessionId() == null) {
+            return UserContext.scopeUserId() == null ? stored : null;
         }
         try {
             openAiSessionService.resolveStoredResponseSession(stored.sessionId(), sessionKeyHeader);

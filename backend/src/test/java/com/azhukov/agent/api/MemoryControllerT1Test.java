@@ -62,6 +62,11 @@ class MemoryControllerT1Test {
             .build();
     }
 
+    @org.junit.jupiter.api.AfterEach
+    void clearUserContext() {
+        UserContext.clear();
+    }
+
     // ── memory() ──
 
     @Test
@@ -227,6 +232,18 @@ class MemoryControllerT1Test {
     }
 
     // ── setApproval() / getApproval() ──
+
+    @Test
+    void regularUserCannotChangeGlobalApprovalPolicy() throws Exception {
+        UserContext.set("user-a", UserContext.ROLE_USER);
+
+        mockMvc.perform(post("/api/v1/agent/memory/approval")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"enabled\":false}"))
+            .andExpect(status().isForbidden());
+
+        verify(agentRuntimeService, never()).setMemoryApproval(false);
+    }
 
     @Test
     void setApproval_true() throws Exception {

@@ -3,6 +3,7 @@ package com.azhukov.agent.api;
 import com.azhukov.agent.api.dto.ChatResponseDto;
 import com.azhukov.agent.api.dto.MessageListDto;
 import com.azhukov.agent.api.dto.MessageDto;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.service.AgentRuntimeService;
 import com.azhukov.agent.service.AgentStreamingService;
 import com.azhukov.agent.service.SessionQueryService;
@@ -27,6 +28,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -59,6 +61,11 @@ class SessionCrudControllerTest {
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler(new com.fasterxml.jackson.databind.ObjectMapper()))
             .build();
+    }
+
+    @org.junit.jupiter.api.AfterEach
+    void clearUserContext() {
+        UserContext.clear();
     }
 
     // ── List sessions ──
@@ -227,17 +234,33 @@ class SessionCrudControllerTest {
     }
 
     @Test
-    void sessionModelLockRejectsForeignSessionBeforePersisting() throws Exception {
-        doThrow(new SecurityException("Session does not belong to the current user"))
+    void sessionModelLockHidesForeignSessionBeforePersisting() throws Exception {
+        doThrow(new org.springframework.web.server.ResponseStatusException(
+            org.springframework.http.HttpStatus.NOT_FOUND, "Session not found"))
             .when(agentRuntimeService).switchModel(SESSION_ID, "gpt-4", "openai");
 
         mockMvc.perform(post("/api/v2/sessions/{sessionId}/model", SESSION_ID)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"model\":\"gpt-4\",\"provider\":\"openai\"}"))
-            .andExpect(status().isForbidden());
+            .andExpect(status().isNotFound());
     }
 
     // ── Session-scoped chat (synchronous) ──
+
+    @Test
+    void sessionChatHidesForeignSessionBeforeRuntimeRuns() throws Exception {
+        UserContext.set("user-a", UserContext.ROLE_USER);
+        doThrow(new org.springframework.web.server.ResponseStatusException(
+            org.springframework.http.HttpStatus.NOT_FOUND, "Session not found"))
+            .when(sessionQueryService).sessionExists(SESSION_ID);
+
+        mockMvc.perform(post("/api/v2/sessions/{sessionId}/chat", SESSION_ID)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"message\":\"private\"}"))
+            .andExpect(status().isNotFound());
+
+        org.mockito.Mockito.verifyNoInteractions(agentRuntimeService);
+    }
 
     @Test
     void sessionChatReturnsResponseWhenSessionExists() throws Exception {
@@ -296,6 +319,21 @@ class SessionCrudControllerTest {
     }
 
     // ── Session-scoped chat (streaming) ──
+
+    @Test
+    void sessionChatStreamHidesForeignSessionBeforeStartingStream() throws Exception {
+        UserContext.set("user-a", UserContext.ROLE_USER);
+        doThrow(new org.springframework.web.server.ResponseStatusException(
+            org.springframework.http.HttpStatus.NOT_FOUND, "Session not found"))
+            .when(sessionQueryService).sessionExists(SESSION_ID);
+
+        mockMvc.perform(post("/api/v2/sessions/{sessionId}/chat/stream", SESSION_ID)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"message\":\"private\"}"))
+            .andExpect(status().isNotFound());
+
+        org.mockito.Mockito.verifyNoInteractions(streamingService);
+    }
 
     @Test
     void sessionChatStreamReturnsSseWhenSessionExists() throws Exception {

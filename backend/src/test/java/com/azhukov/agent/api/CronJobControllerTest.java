@@ -137,6 +137,34 @@ class CronJobControllerTest {
     }
 
     @Test
+    void heartbeatReadAndMutationHideForeignAndUnknownSessions() throws Exception {
+        UUID foreignId = UUID.randomUUID();
+        com.azhukov.agent.persistence.entity.SessionEntity foreign =
+            new com.azhukov.agent.persistence.entity.SessionEntity();
+        foreign.setId(foreignId);
+        foreign.setUserId("user-b");
+        UserContext.set("user-a", UserContext.ROLE_USER);
+        try {
+            when(sessionRepository.findById(foreignId)).thenReturn(java.util.Optional.of(foreign));
+            UUID unknownId = UUID.randomUUID();
+            when(sessionRepository.findById(unknownId)).thenReturn(java.util.Optional.empty());
+
+            mockMvc.perform(get("/api/v1/agent/cron/heartbeat/{id}", foreignId))
+                .andExpect(status().isNotFound());
+            mockMvc.perform(post("/api/v1/agent/cron/heartbeat/{id}/pause", foreignId))
+                .andExpect(status().isNotFound());
+            mockMvc.perform(post("/api/v1/agent/cron/heartbeat/{id}/result/ack", unknownId))
+                .andExpect(status().isNotFound());
+
+            verify(heartbeatService, org.mockito.Mockito.never()).get(foreignId);
+            verify(heartbeatService, org.mockito.Mockito.never()).pause(foreignId);
+            verify(heartbeatService, org.mockito.Mockito.never()).ackFireResult(unknownId);
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
     void heartbeatSetRejectsForeignSessionBeforeMutatingState() throws Exception {
         UUID sessionId = UUID.randomUUID();
         com.azhukov.agent.persistence.entity.SessionEntity foreign =
@@ -152,7 +180,7 @@ class CronJobControllerTest {
                     .content("""
                         {"sessionId":"%s","prompt":"check status","intervalSeconds":60}
                         """.formatted(sessionId)))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound());
 
             verify(heartbeatService, org.mockito.Mockito.never()).set(
                 org.mockito.ArgumentMatchers.any(),
@@ -182,10 +210,46 @@ class CronJobControllerTest {
         CronJobEntity entity = new CronJobEntity();
         entity.setId(id);
         entity.setEnabled(false);
+        when(cronJobService.findById(id)).thenReturn(java.util.Optional.of(entity));
         when(cronJobService.pause(id)).thenReturn(entity);
 
         mockMvc.perform(post("/api/v1/agent/cron/{id}/pause", id))
             .andExpect(status().isOk());
+    }
+
+    @Test
+    void cronMutationsAndExecutionLedgerHideForeignJob() throws Exception {
+        UUID id = UUID.randomUUID();
+        CronJobEntity foreign = new CronJobEntity();
+        foreign.setId(id);
+        foreign.setUserId("user-b");
+        UserContext.set("user-a", UserContext.ROLE_USER);
+        try {
+            when(cronJobService.findById(id)).thenReturn(java.util.Optional.of(foreign));
+
+            mockMvc.perform(put("/api/v1/agent/cron/{id}", id)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"name\":\"job\",\"schedule\":\"0 * * * *\"}"))
+                .andExpect(status().isNotFound());
+            mockMvc.perform(post("/api/v1/agent/cron/{id}/pause", id))
+                .andExpect(status().isNotFound());
+            mockMvc.perform(post("/api/v1/agent/cron/{id}/resume", id))
+                .andExpect(status().isNotFound());
+            mockMvc.perform(delete("/api/v1/agent/cron/{id}", id))
+                .andExpect(status().isNotFound());
+            mockMvc.perform(post("/api/v1/agent/cron/{id}/run", id))
+                .andExpect(status().isNotFound());
+            mockMvc.perform(get("/api/v1/agent/cron/{id}/executions", id))
+                .andExpect(status().isNotFound());
+
+            verify(cronJobService, never()).pause(id);
+            verify(cronJobService, never()).resume(id);
+            verify(cronJobService, never()).remove(id);
+            verify(cronJobService, never()).runNow(id);
+            verify(cronExecutionLogRepository, never()).findByJobIdOrderByStartedAtDesc(id);
+        } finally {
+            UserContext.clear();
+        }
     }
 
     @Test

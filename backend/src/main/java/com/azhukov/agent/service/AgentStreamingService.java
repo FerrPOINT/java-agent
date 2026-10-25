@@ -307,14 +307,15 @@ public class AgentStreamingService {
         return streamTurn(scopedRequest, new SseEmitter(request.timeoutMs() != null ? request.timeoutMs() : 0L));
     }
 
+    /** Resolve only an existing session in the caller's ownership scope. */
     private void requireSessionOwnership(UUID sessionId) {
-        if (sessionId == null) return;
         String scopedUserId = UserContext.scopeUserId();
-        if (scopedUserId == null) return;
+        if (sessionId == null || scopedUserId == null) return;
         SessionEntity session = transactionTemplate.execute(status ->
             sessionRepository.findById(sessionId).orElse(null));
-        if (session != null && !scopedUserId.equals(session.getUserId())) {
-            throw new SecurityException("Session does not belong to the current user");
+        if (session == null || !scopedUserId.equals(session.getUserId())) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.NOT_FOUND, "Session not found");
         }
     }
 

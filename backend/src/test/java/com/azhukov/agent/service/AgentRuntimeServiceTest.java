@@ -210,8 +210,8 @@ class AgentRuntimeServiceTest {
         try {
             assertThatThrownBy(() -> agentRuntimeService.runTurn(
                 ChatRequest.simple(EXISTING_SESSION_ID, USER_MESSAGE, null, null)))
-                .isInstanceOf(SecurityException.class)
-                .hasMessageContaining("does not belong");
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+                .hasMessageContaining("Session not found");
             verify(agentRuntime, never()).runTurn(any(Session.class), anyString(), any(), any());
         } finally {
             UserContext.clear();
@@ -480,8 +480,8 @@ class AgentRuntimeServiceTest {
         UserContext.set("user-1", UserContext.ROLE_USER);
         try {
             assertThatThrownBy(() -> agentRuntimeService.getContext(EXISTING_SESSION_ID))
-                .isInstanceOf(SecurityException.class)
-                .hasMessageContaining("does not belong");
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+                .hasMessageContaining("Session not found");
         } finally {
             UserContext.clear();
         }
@@ -525,7 +525,7 @@ class AgentRuntimeServiceTest {
         UserContext.set("user-1", UserContext.ROLE_USER);
         try {
             assertThatThrownBy(() -> agentRuntimeService.resetSession(EXISTING_SESSION_ID))
-                .isInstanceOf(SecurityException.class);
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
         } finally {
             UserContext.clear();
         }
@@ -538,7 +538,7 @@ class AgentRuntimeServiceTest {
         UserContext.set("user-1", UserContext.ROLE_USER);
         try {
             assertThatThrownBy(() -> agentRuntimeService.getUsage(EXISTING_SESSION_ID))
-                .isInstanceOf(SecurityException.class);
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
         } finally {
             UserContext.clear();
         }
@@ -568,7 +568,7 @@ class AgentRuntimeServiceTest {
         UserContext.set(USER_ID, UserContext.ROLE_USER);
         try {
             assertThatThrownBy(() -> agentRuntimeService.runHeartbeatTurn(EXISTING_SESSION_ID, "heartbeat"))
-                .isInstanceOf(SecurityException.class);
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
             verify(agentRuntime, never()).runTurn(any(Session.class), eq("heartbeat"));
         } finally {
             UserContext.clear();

@@ -24,6 +24,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -55,6 +56,7 @@ class CronJobServiceDeliveryProducerTest {
         CronJobEntity job = new CronJobEntity();
         job.setId(UUID.randomUUID());
         job.setName("daily-report");
+        job.setUserId("cron-owner");
         job.setSchedule("0 9 * * *");
         job.setPrompt("report");
         job.setDeliverTo(deliverTo);
@@ -68,9 +70,8 @@ class CronJobServiceDeliveryProducerTest {
         when(cronJobRepository.findById(job.getId())).thenReturn(Optional.of(job));
         when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(inv -> inv.getArgument(0));
         when(agentRuntimeServiceProvider.getIfAvailable()).thenReturn(runtime);
-        // Default-profile jobs run the 3-arg overload (metadata empty); non-default
-        // profiles stamp "profile" into metadata and run the 4-arg one.
-        when(runtime.runBackground(any(), any(), anyBoolean()))
+        // Owner-scoped jobs preserve their submitting user in background runtime work.
+        when(runtime.runBackground(any(), any(), anyBoolean(), eq("cron-owner")))
             .thenThrow(new IllegalStateException("provider timed out"));
         when(cronExecutionLogRepository.save(any(CronExecutionLogEntity.class))).thenAnswer(inv -> {
             CronExecutionLogEntity entity = inv.getArgument(0);

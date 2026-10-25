@@ -1,6 +1,7 @@
 package com.azhukov.agent.api;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.persistence.entity.CronJobEntity;
 import com.azhukov.agent.service.CronBlueprintService;
 import com.azhukov.agent.service.CronJobService;
@@ -347,6 +348,34 @@ class CronDashboardControllerTest {
                 .content("{\"blueprint\":\"morning-brief\",\"values\":{\"time\":\"bad\"}}"))
             .andExpect(status().isUnprocessableEntity())
             .andExpect(jsonPath("$.detail").value(org.hamcrest.Matchers.containsString("Invalid time format")));
+    }
+
+    @Test
+    void dashboardHidesForeignFullAndCompactJobIdsBeforeReadOrMutation() throws Exception {
+        CronJobEntity foreign = job("foreign", true);
+        foreign.setUserId("user-b");
+        UserContext.set("user-a", UserContext.ROLE_USER);
+        try {
+            when(cronJobService.findById(JOB_ID)).thenReturn(java.util.Optional.of(foreign));
+            when(cronJobService.list(true)).thenReturn(List.of(foreign));
+
+            mockMvc.perform(get("/api/cron/jobs"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$").isEmpty());
+            mockMvc.perform(get("/api/cron/jobs/{id}/runs", JOB_ID))
+                .andExpect(status().isNotFound());
+            mockMvc.perform(put("/api/cron/jobs/{id}", HERMES_JOB_ID)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"updates\":{\"name\":\"changed\"}}"))
+                .andExpect(status().isNotFound());
+            mockMvc.perform(post("/api/cron/jobs")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"name\":\"new\",\"schedule\":\"every 1h\",\"prompt\":\"work\",\"context_from\":[\"" + JOB_ID + "\"]}"))
+                .andExpect(status().isBadRequest());
+
+        } finally {
+            UserContext.clear();
+        }
     }
 
     private static CronJobEntity job(String name, boolean enabled) {

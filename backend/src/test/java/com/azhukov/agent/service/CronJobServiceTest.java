@@ -296,6 +296,7 @@ class CronJobServiceTest {
         CronJobEntity job = new CronJobEntity();
         job.setId(id);
         job.setName("test-job");
+        job.setUserId("cron-owner");
         job.setPrompt("Do something");
         job.setEnabled(true);
         when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
@@ -303,7 +304,7 @@ class CronJobServiceTest {
         service.runNow(id);
         verify(agentRuntimeService).runBackground(org.mockito.AdditionalMatchers.and(
             org.mockito.ArgumentMatchers.startsWith("[IMPORTANT: You are running as a scheduled cron job."),
-            org.mockito.ArgumentMatchers.contains("Do something")), eq(null), eq(true));
+            org.mockito.ArgumentMatchers.contains("Do something")), eq(null), eq(true), eq("cron-owner"));
     }
 
     @Test
@@ -364,7 +365,9 @@ class CronJobServiceTest {
         verify(skillManager).getSkill("hermes-agent");
         verify(skillManager).getSkill("backend-dev");
         // Verify the enhanced prompt (with skills injected) was passed to runtime
-        verify(agentRuntimeService).runBackground(org.mockito.ArgumentMatchers.contains("Use this skill"), eq(null), eq(true));
+        verify(agentRuntimeService).runBackground(org.mockito.AdditionalMatchers.and(
+            org.mockito.ArgumentMatchers.startsWith("[IMPORTANT: You are running as a scheduled cron job."),
+            org.mockito.ArgumentMatchers.contains("Use this skill")), eq(null), eq(true));
     }
 
     @Test

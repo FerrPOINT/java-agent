@@ -21,6 +21,10 @@ public class BackgroundJobEntity {
     @Column(name = "session_id")
     private UUID sessionId;
 
+    /** User that submitted the job, including sessionless background work. */
+    @Column(name = "user_id", nullable = false, length = 128)
+    private String userId;
+
     @Column(length = 4000)
     private String prompt;
 

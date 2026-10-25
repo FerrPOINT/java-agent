@@ -1,10 +1,13 @@
 package com.azhukov.agent.service;
 
 import com.azhukov.agent.persistence.entity.DelegatedTaskRunEntity;
+import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.repository.DelegatedTaskRunRepository;
+import com.azhukov.agent.persistence.repository.SessionRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.beans.factory.ObjectProvider;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -28,6 +31,9 @@ class DelegatedTaskRunServiceTest {
 
     @Mock
     private DelegatedTaskRunRepository repository;
+
+    @Mock
+    private SessionRepository sessionRepository;
 
     @Test
     void recordProgressCoalescesIdenticalSummariesAndClearsStalledDiagnostic() throws Exception {
@@ -53,6 +59,30 @@ class DelegatedTaskRunServiceTest {
         DelegatedTaskRunEntity next = service.recordProgress(runId, "running tests");
         assertThat(next.getLastProgressAt()).isNotNull();
         assertThat(next.getLastProgressSummary()).isEqualTo("running tests");
+    }
+
+    @Test
+    void delegatedEventsUseParentSessionOwnerForScopedReplay() {
+        UUID parentSessionId = UUID.randomUUID();
+        when(repository.save(any(DelegatedTaskRunEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        SessionEntity parent = new SessionEntity();
+        parent.setId(parentSessionId);
+        parent.setUserId("user-a");
+        when(sessionRepository.findById(parentSessionId)).thenReturn(Optional.of(parent));
+        EventService eventService = new EventService(10);
+        ObjectProvider<DeliveryWorkItemService> noDelivery = new org.springframework.beans.factory.support.StaticListableBeanFactory()
+            .getBeanProvider(DeliveryWorkItemService.class);
+        org.springframework.beans.factory.support.StaticListableBeanFactory sessionBeans =
+            new org.springframework.beans.factory.support.StaticListableBeanFactory();
+        sessionBeans.addBean("sessions", sessionRepository);
+        ObjectProvider<SessionRepository> sessions = sessionBeans.getBeanProvider(SessionRepository.class);
+        DelegatedTaskRunService service = new DelegatedTaskRunService(
+            repository, new ObjectMapper(), eventService, noDelivery, sessions);
+
+        service.create(parentSessionId, "work", "inspect parity");
+
+        assertThat(eventService.replay("work", 0L, 10, "user-a")).hasSize(1);
+        assertThat(eventService.replay("work", 0L, 10, "user-b")).isEmpty();
     }
 
     @Test

@@ -72,6 +72,7 @@ public class MemoryController {
 
     @PostMapping("/agent/memory/approval")
     public void setApproval(@RequestBody ApprovalRequest request) {
+        requireAdminMemoryApprovalAccess();
         agentRuntimeService.setMemoryApproval(request.enabled());
     }
 
@@ -89,6 +90,12 @@ public class MemoryController {
     public void deleteMemory(@PathVariable String userId, @PathVariable UUID entryId) {
         String effectiveUserId = UserContext.effectiveUserId(userId);
         agentRuntimeService.deleteMemory(effectiveUserId, entryId);
+    }
+
+    private static void requireAdminMemoryApprovalAccess() {
+        if (UserContext.getUserId() != null && !UserContext.isAdmin()) {
+            throw new SecurityException("Memory approval settings are available to administrators only");
+        }
     }
 
     /**

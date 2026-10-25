@@ -790,8 +790,8 @@ class AgentStreamingServiceBranchTest {
         try {
             assertThatThrownBy(() -> streamingService.streamTurn(
                 ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L)))
-                .isInstanceOf(SecurityException.class)
-                .hasMessageContaining("does not belong");
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+                .hasMessageContaining("Session not found");
             verify(modelClient, never()).stream(any(), any(), any(), any());
         } finally {
             UserContext.clear();

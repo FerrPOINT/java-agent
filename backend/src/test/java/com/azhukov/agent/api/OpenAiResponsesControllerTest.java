@@ -1126,6 +1126,30 @@ class OpenAiResponsesControllerTest {
     }
 
     @Test
+    void scopedUserCannotReadOrContinueLegacyOwnerlessResponse() throws Exception {
+        OpenAiResponseStore responseStore = new OpenAiResponseStore(objectMapper, null, null);
+        responseStore.put("resp_legacy", new OpenAiResponseStore.StoredResponse(
+            Map.of("id", "resp_legacy"), List.of(Message.user("private history")), "private", null), null);
+        OpenAiResponsesController controller = new OpenAiResponsesController(
+            agentRuntime, toolRegistry, promptBuilder, modelClient, objectMapper,
+            Mappers.getMapper(OpenAiMapper.class), properties, openAiSessionService, responseStore,
+            new OpenAiIdempotencyCache(), new DefaultRedactor(properties), runAdmissionService);
+        MockMvc scopedMvc = MockMvcBuilders.standaloneSetup(controller)
+            .setControllerAdvice(new GlobalExceptionHandler())
+            .build();
+        UserContext.set("user-2", UserContext.ROLE_USER);
+
+        scopedMvc.perform(get("/v1/responses/resp_legacy"))
+            .andExpect(status().isNotFound());
+        scopedMvc.perform(post("/v1/responses")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"previous_response_id\":\"resp_legacy\",\"input\":\"steal history\"}"))
+            .andExpect(status().isNotFound());
+
+        verify(agentRuntime, never()).run(anyList(), anyList(), any(ModelRequestOptions.class));
+    }
+
+    @Test
     void getStoredResponseHidesForeignSession() throws Exception {
         when(agentRuntime.run(anyList(), anyList(), any(ModelRequestOptions.class)))
             .thenReturn(ChatResponse.text("private"));

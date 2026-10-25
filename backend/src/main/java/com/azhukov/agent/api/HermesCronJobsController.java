@@ -1,6 +1,7 @@
 package com.azhukov.agent.api;
 
 import com.azhukov.agent.core.security.CronPromptScanner;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.persistence.entity.CronJobEntity;
 import com.azhukov.agent.service.CronJobService;
 import com.azhukov.agent.service.ProfileService;
@@ -49,10 +50,12 @@ public class HermesCronJobsController {
     public Map<String, Object> list(@PathVariable(name = "profile", required = false) String pathProfile,
                                     @RequestParam(name = "include_disabled", required = false) String includeDisabled) {
         String profile = pathProfile == null ? null : resolveProfileScope(pathProfile);
+        String scopedUserId = UserContext.scopeUserId();
         List<CronJobEntity> jobs = profile == null
             ? cronJobService.list(truthy(includeDisabled))
             : cronJobService.listForProfile(profile, truthy(includeDisabled));
         return Map.of("jobs", jobs.stream()
+            .filter(job -> scopedUserId == null || scopedUserId.equals(job.getUserId()))
             .map(HermesCronJobsController::hermesJob)
             .toList());
     }
@@ -311,9 +314,13 @@ public class HermesCronJobsController {
     }
 
     private Optional<CronJobEntity> findJob(String jobId, String profile) {
+        String scopedUserId = UserContext.scopeUserId();
         UUID uuid = parseUuidJobId(jobId);
         if (uuid != null) {
-            return profile == null ? cronJobService.findById(uuid) : cronJobService.findById(uuid, profile);
+            Optional<CronJobEntity> found = profile == null
+                ? cronJobService.findById(uuid)
+                : cronJobService.findById(uuid, profile);
+            return found.filter(entity -> scopedUserId == null || scopedUserId.equals(entity.getUserId()));
         }
         if (!HERMES_JOB_ID_PATTERN.matcher(jobId).matches()) {
             throw new AgentException(HttpStatus.BAD_REQUEST, "Invalid job ID format");
@@ -321,6 +328,11 @@ public class HermesCronJobsController {
         List<CronJobEntity> candidates = profile == null
             ? cronJobService.list(true)
             : cronJobService.listForProfile(profile, true);
+        if (scopedUserId != null) {
+            candidates = candidates.stream()
+                .filter(entity -> scopedUserId.equals(entity.getUserId()))
+                .toList();
+        }
         List<CronJobEntity> matches = candidates.stream()
             .filter(entity -> jobId.equals(hermesJobId(entity.getId())))
             .toList();

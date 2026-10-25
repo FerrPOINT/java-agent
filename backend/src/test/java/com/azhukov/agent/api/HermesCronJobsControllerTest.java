@@ -1,6 +1,7 @@
 package com.azhukov.agent.api;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.persistence.entity.CronJobEntity;
 import com.azhukov.agent.service.CronJobService;
 import com.azhukov.agent.service.ProfileService;
@@ -303,6 +304,31 @@ class HermesCronJobsControllerTest {
             .andExpect(jsonPath("$.error").value("Repeat must be a positive integer"));
 
         org.mockito.Mockito.verifyNoInteractions(cronJobService);
+    }
+
+    @Test
+    void nonAdminCannotResolveForeignFullOrCompactJobIds() throws Exception {
+        CronJobEntity foreign = job("foreign", true);
+        foreign.setUserId("user-b");
+        UserContext.set("user-a", UserContext.ROLE_USER);
+        try {
+            when(cronJobService.findById(JOB_ID)).thenReturn(java.util.Optional.of(foreign));
+            when(cronJobService.list(true)).thenReturn(List.of(foreign));
+
+            mockMvc.perform(get("/api/jobs?include_disabled=1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.jobs").isEmpty());
+            mockMvc.perform(get("/api/jobs/{id}", JOB_ID))
+                .andExpect(status().isNotFound());
+            mockMvc.perform(get("/api/jobs/{id}", HERMES_JOB_ID))
+                .andExpect(status().isNotFound());
+            mockMvc.perform(post("/api/jobs/{id}/pause", JOB_ID))
+                .andExpect(status().isNotFound());
+
+            verify(cronJobService, never()).pause(JOB_ID);
+        } finally {
+            UserContext.clear();
+        }
     }
 
     @Test

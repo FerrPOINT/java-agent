@@ -31,7 +31,8 @@ public class CliRuntimeSettingsService {
     private SessionEntity getSession(UUID sessionId) {
         return sessionRepository.findById(sessionId)
             .filter(this::isVisibleToCurrentUser)
-            .orElseThrow(() -> new IllegalArgumentException("Session not found: " + sessionId));
+            .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.NOT_FOUND, "Session not found"));
     }
 
     private boolean isVisibleToCurrentUser(SessionEntity session) {

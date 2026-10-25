@@ -97,8 +97,8 @@ class SessionQueryServiceTest {
         UserContext.set("owner", UserContext.ROLE_USER);
         try {
             org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.sessionExists(sessionId))
-                .isInstanceOf(SecurityException.class)
-                .hasMessageContaining("does not belong");
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+                .hasMessageContaining("Session not found");
         } finally {
             UserContext.clear();
         }
@@ -122,8 +122,8 @@ class SessionQueryServiceTest {
         UserContext.set("other-user", UserContext.ROLE_USER);
         try {
             org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.deleteSession(sessionId))
-                .isInstanceOf(SecurityException.class)
-                .hasMessageContaining("does not belong");
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+                .hasMessageContaining("Session not found");
         } finally {
             UserContext.clear();
         }

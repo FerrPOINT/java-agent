@@ -180,12 +180,13 @@ class SessionControllerT1Test {
     }
 
     @Test
-    void history_rethrowsForeignSessionOwnershipFailure() throws Exception {
-        doThrow(new SecurityException("Session does not belong to the current user"))
+    void history_hidesForeignSessionBeforeLoadingMessages() throws Exception {
+        doThrow(new org.springframework.web.server.ResponseStatusException(
+            org.springframework.http.HttpStatus.NOT_FOUND, "Session not found"))
             .when(agentRuntimeService).requireSessionOwnership(SESSION_ID);
 
         mockMvc.perform(get("/api/v1/agent/session/{sessionId}/history", SESSION_ID))
-            .andExpect(status().isForbidden());
+            .andExpect(status().isNotFound());
         verify(messageRepository, never()).findBySessionIdOrderByCreatedAtAsc(SESSION_ID);
     }
 
@@ -486,15 +487,16 @@ class SessionControllerT1Test {
     }
 
     @Test
-    void switchModel_rethrowsForeignSessionOwnershipFailure() throws Exception {
-        doThrow(new SecurityException("Session does not belong to the current user"))
+    void switchModel_hidesForeignSession() throws Exception {
+        doThrow(new org.springframework.web.server.ResponseStatusException(
+            org.springframework.http.HttpStatus.NOT_FOUND, "Session not found"))
             .when(agentRuntimeService).switchModel(SESSION_ID, "gpt-4o", null);
 
         String body = "{\"sessionId\":\"" + SESSION_ID + "\",\"model\":\"gpt-4o\"}";
         mockMvc.perform(post("/api/v1/agent/model")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body))
-            .andExpect(status().isForbidden());
+            .andExpect(status().isNotFound());
     }
 
     // ── getCurrentModel() ──
@@ -510,11 +512,12 @@ class SessionControllerT1Test {
     void getCurrentModel_rejectsForeignSessionBeforeReadingContext() throws Exception {
         UserContext.set("current-user", UserContext.ROLE_USER);
         try {
-            doThrow(new SecurityException("Session does not belong to the current user"))
+            doThrow(new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.NOT_FOUND, "Session not found"))
                 .when(agentRuntimeService).requireSessionOwnership(SESSION_ID);
 
             mockMvc.perform(get("/api/v1/agent/model").param("sessionId", SESSION_ID.toString()))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound());
 
             verify(agentRuntimeService).requireSessionOwnership(SESSION_ID);
             verify(agentRuntimeService, never()).getContext(SESSION_ID);
@@ -650,12 +653,13 @@ class SessionControllerT1Test {
     }
 
     @Test
-    void getPlan_rejectsForeignSessionBeforeLoadingTodos() throws Exception {
-        doThrow(new SecurityException("Session does not belong to the current user"))
+    void getPlan_hidesForeignSessionBeforeLoadingTodos() throws Exception {
+        doThrow(new org.springframework.web.server.ResponseStatusException(
+            org.springframework.http.HttpStatus.NOT_FOUND, "Session not found"))
             .when(agentRuntimeService).requireSessionOwnership(SESSION_ID);
 
         mockMvc.perform(get("/api/v1/agent/session/{sessionId}/plan", SESSION_ID))
-            .andExpect(status().isForbidden());
+            .andExpect(status().isNotFound());
 
         verify(todoService, never()).listBySessionId(SESSION_ID);
     }

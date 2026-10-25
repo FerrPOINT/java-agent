@@ -1,5 +1,6 @@
 package com.azhukov.agent.api;
 
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.service.EventService;
 import com.azhukov.agent.service.ProfileService;
 import lombok.RequiredArgsConstructor;
@@ -56,7 +57,12 @@ public class EventsController {
             return badRequest(e.getMessage());
         }
 
-        List<EventService.EventEnvelope> events = eventService.replay(profileScope, afterCursor, boundedLimit);
+        String scopedUserId = UserContext.scopeUserId();
+        List<EventService.EventEnvelope> events = eventService.replay(
+            profileScope,
+            afterCursor,
+            boundedLimit,
+            scopedUserId);
         long nextCursor = events.isEmpty()
             ? afterCursor
             : events.get(events.size() - 1).cursor();
@@ -68,7 +74,7 @@ public class EventsController {
         response.put("profile", profileScope != null ? profileScope : "all");
         response.put("replay_after", afterCursor);
         response.put("next_cursor", nextCursor);
-        response.put("latest_cursor", eventService.latestCursor());
+        response.put("latest_cursor", eventService.latestCursor(profileScope, scopedUserId));
         response.put("limit", boundedLimit);
         return ResponseEntity.ok(response);
     }

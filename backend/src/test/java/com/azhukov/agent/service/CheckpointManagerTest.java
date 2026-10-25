@@ -116,6 +116,29 @@ class CheckpointManagerTest {
     }
 
     @Test
+    void scopedPruneDoesNotDeleteAnotherUsersCheckpoints() {
+        CheckpointEntity ownNewest = new CheckpointEntity();
+        ownNewest.setId(UUID.randomUUID());
+        ownNewest.setUserId("user-a");
+        CheckpointEntity ownOldest = new CheckpointEntity();
+        ownOldest.setId(UUID.randomUUID());
+        ownOldest.setUserId("user-a");
+        CheckpointEntity foreign = new CheckpointEntity();
+        foreign.setId(UUID.randomUUID());
+        foreign.setUserId("user-b");
+        when(checkpointRepository.findByUserId(eq("user-a"), any(org.springframework.data.domain.Sort.class)))
+            .thenReturn(List.of(ownNewest, ownOldest));
+
+        int removed = manager.prune("user-a", 1);
+
+        assertThat(removed).isEqualTo(1);
+        verify(checkpointFileRepository).deleteByCheckpointId(ownOldest.getId());
+        verify(checkpointRepository).delete(ownOldest);
+        verify(checkpointRepository, never()).delete(foreign);
+        verify(checkpointRepository, never()).findAll(any(org.springframework.data.domain.Sort.class));
+    }
+
+    @Test
     void pruneRemovesExcessCheckpoints() {
         CheckpointEntity e1 = new CheckpointEntity();
         e1.setId(UUID.randomUUID());

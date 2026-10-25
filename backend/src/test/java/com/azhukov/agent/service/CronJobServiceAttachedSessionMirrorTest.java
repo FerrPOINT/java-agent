@@ -70,6 +70,7 @@ class CronJobServiceAttachedSessionMirrorTest {
         CronJobEntity job = new CronJobEntity();
         job.setId(UUID.randomUUID());
         job.setName("daily-report");
+        job.setUserId("cron-owner");
         job.setSchedule("0 9 * * *");
         job.setPrompt("report");
         job.setDeliverTo("telegram:111");
@@ -84,7 +85,7 @@ class CronJobServiceAttachedSessionMirrorTest {
         when(cronJobRepository.findById(job.getId())).thenReturn(Optional.of(job));
         when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(inv -> inv.getArgument(0));
         when(agentRuntimeServiceProvider.getIfAvailable()).thenReturn(runtime);
-        when(runtime.runBackground(any(), any(), anyBoolean()))
+        when(runtime.runBackground(any(), any(), anyBoolean(), org.mockito.ArgumentMatchers.eq("cron-owner")))
             .thenThrow(new IllegalStateException("provider timed out"));
         when(cronExecutionLogRepository.save(any(CronExecutionLogEntity.class))).thenAnswer(inv -> {
             CronExecutionLogEntity entity = inv.getArgument(0);

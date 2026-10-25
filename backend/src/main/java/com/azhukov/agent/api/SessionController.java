@@ -169,6 +169,8 @@ public class SessionController {
             return Map.of("ok", true, "model", model,
                 "provider", provider != null ? provider : "",
                 "sessionId", sessionId.toString());
+        } catch (org.springframework.web.server.ResponseStatusException e) {
+            throw e;
         } catch (SecurityException e) {
             throw e;
         } catch (Exception e) {
@@ -197,6 +199,8 @@ public class SessionController {
                     out.put("model", defaultModelName());
                 }
                 return out;
+            } catch (org.springframework.web.server.ResponseStatusException e) {
+                throw e;
             } catch (SecurityException e) {
                 throw e;
             } catch (Exception e) {

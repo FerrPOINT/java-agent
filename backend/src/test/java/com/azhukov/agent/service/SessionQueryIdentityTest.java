@@ -59,7 +59,8 @@ class SessionQueryIdentityTest {
         SessionEntity foreign = new SessionEntity();
         foreign.setUserId("foreign");
         when(repository.findById(id)).thenReturn(Optional.of(foreign));
-        assertThatThrownBy(() -> service.sessionExists(id)).isInstanceOf(SecurityException.class);
+        assertThatThrownBy(() -> service.sessionExists(id))
+            .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
     }
 
     @Test

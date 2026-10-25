@@ -62,17 +62,19 @@ public class AgentRuntimeService {
         });
 
     /**
-     * Ownership guard: verifies the session belongs to the current user (or admin).
-     * @throws SecurityException if the session exists but belongs to another user
+     * Resolve a session only if it belongs to the caller's scope. Foreign and
+     * unknown IDs intentionally share a 404 response to prevent enumeration.
      */
     public void requireSessionOwnership(UUID sessionId) {
         String scoped = UserContext.scopeUserId();
         if (scoped == null) return; // admin or no-auth → full access
-        sessionRepository.findById(sessionId).ifPresent(session -> {
-            if (!scoped.equals(session.getUserId())) {
-                throw new SecurityException("Session does not belong to the current user");
-            }
-        });
+        boolean visible = sessionRepository.findById(sessionId)
+            .map(session -> scoped.equals(session.getUserId()))
+            .orElse(false);
+        if (!visible) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.NOT_FOUND, "Session not found");
+        }
     }
 
     private final AgentRuntime agentRuntime;
@@ -502,22 +504,32 @@ public class AgentRuntimeService {
      *                             every cron tick could silently spend an extra LLM call.
      */
     /**
-     * Background job with persisted status + result (Hermes parity:
-     * run_in_background exposes job status/result for polling).
+     * Background job with persisted owner, status, and result. Sessionless jobs
+     * still belong to the submitting user and are never globally readable.
      */
     @org.springframework.transaction.annotation.Transactional
     public java.util.UUID submitBackgroundJob(String prompt, String sessionId, boolean skipBackgroundReview) {
+        return submitBackgroundJob(prompt, sessionId, skipBackgroundReview,
+            UserContext.effectiveUserId(AgentProperties.DEFAULT_USER_ID));
+    }
+
+    @org.springframework.transaction.annotation.Transactional
+    public java.util.UUID submitBackgroundJob(
+        String prompt, String sessionId, boolean skipBackgroundReview, String userId
+    ) {
+        String effectiveUserId = UserContext.effectiveUserId(userId);
         com.azhukov.agent.persistence.entity.BackgroundJobEntity job =
             new com.azhukov.agent.persistence.entity.BackgroundJobEntity();
         job.setPrompt(prompt);
         job.setStatus("PENDING");
+        job.setUserId(effectiveUserId);
         job.setSessionId(sessionId != null && !sessionId.isBlank() ? java.util.UUID.fromString(sessionId) : null);
         job = backgroundJobRepository.save(job);
         java.util.UUID jobId = job.getId();
         backgroundExecutor.submit(() -> {
             try {
                 backgroundJobRepository.updateStatus(jobId, "RUNNING");
-                String result = runBackground(prompt, sessionId, skipBackgroundReview);
+                String result = runBackground(prompt, sessionId, skipBackgroundReview, effectiveUserId);
                 backgroundJobRepository.finish(jobId, "DONE", result, java.time.Instant.now());
             } catch (Exception e) {
                 log.error("Background job {} failed", jobId, e);
@@ -528,7 +540,12 @@ public class AgentRuntimeService {
     }
 
     public String runBackground(String prompt, String sessionId, boolean skipBackgroundReview) {
-        return runBackground(prompt, sessionId, skipBackgroundReview, java.util.Map.of());
+        return runBackground(prompt, sessionId, skipBackgroundReview,
+            UserContext.effectiveUserId(AgentProperties.DEFAULT_USER_ID));
+    }
+
+    public String runBackground(String prompt, String sessionId, boolean skipBackgroundReview, String userId) {
+        return runBackground(prompt, sessionId, skipBackgroundReview, userId, java.util.Map.of());
     }
 
     /**
@@ -537,8 +554,14 @@ public class AgentRuntimeService {
      */
     public String runBackground(String prompt, String sessionId, boolean skipBackgroundReview,
                                 java.util.Map<String, String> runtimeMetadata) {
-        // Background task — just run a turn in a new session
-        Session baseSession = createSession(AgentProperties.DEFAULT_USER_ID, "openai-compatible", "");
+        return runBackground(prompt, sessionId, skipBackgroundReview,
+            UserContext.effectiveUserId(AgentProperties.DEFAULT_USER_ID), runtimeMetadata);
+    }
+
+    public String runBackground(String prompt, String sessionId, boolean skipBackgroundReview, String userId,
+                                java.util.Map<String, String> runtimeMetadata) {
+        // Background work must retain the submitter identity even after the request thread ends.
+        Session baseSession = createSession(UserContext.effectiveUserId(userId), "openai-compatible", "");
         java.util.Map<String, String> metadata = new java.util.HashMap<>();
         if (runtimeMetadata != null) {
             runtimeMetadata.forEach((key, value) -> {

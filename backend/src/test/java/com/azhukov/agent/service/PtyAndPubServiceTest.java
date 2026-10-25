@@ -127,6 +127,23 @@ class PtyAndPubServiceTest {
     }
 
     @Test
+    void pubChannelOwnershipIsIsolatedWithinOneProfile() {
+        PubChannelRegistry pub = new PubChannelRegistry();
+        assertThat(pub.create("default", "user-a", "events").allowed()).isTrue();
+        assertThat(pub.create("default", "user-b", "events").allowed()).isTrue();
+
+        assertThat(pub.publish("default", "user-a", "events", "private", Map.of("owner", "a"))).isEqualTo(1);
+        assertThat(pub.replay("default", "user-b", "events", 0, 10)).isEmpty();
+        assertThat(pub.publish("default", "user-b", "events", "private", Map.of("owner", "b"))).isEqualTo(1);
+        assertThat(pub.replay("default", "user-a", "events", 0, 10))
+            .extracting(event -> event.payload().get("owner")).containsExactly("a");
+
+        assertThat(pub.delete("default", "user-a", "events")).isTrue();
+        assertThat(pub.replay("default", "user-b", "events", 0, 10))
+            .extracting(event -> event.payload().get("owner")).containsExactly("b");
+    }
+
+    @Test
     void pubBackpressureDropsOldest() {
         PubChannelRegistry pub = new PubChannelRegistry();
         pub.create("default", "flood");

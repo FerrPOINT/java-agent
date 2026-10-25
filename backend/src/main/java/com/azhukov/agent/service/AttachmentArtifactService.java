@@ -2,7 +2,6 @@ package com.azhukov.agent.service;
 
 import com.azhukov.agent.persistence.entity.AttachmentArtifactEntity;
 import com.azhukov.agent.persistence.repository.AttachmentArtifactRepository;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
@@ -31,7 +30,6 @@ import java.util.UUID;
  * the same artifact twice.
  */
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class AttachmentArtifactService {
 
@@ -40,6 +38,20 @@ public class AttachmentArtifactService {
         java.util.regex.Pattern.compile("[a-zA-Z0-9._-]{1,128}");
 
     private final ObjectProvider<AttachmentArtifactRepository> repositoryProvider;
+    private final ObjectProvider<com.azhukov.agent.persistence.repository.SessionRepository> sessionRepositoryProvider;
+
+    public AttachmentArtifactService(ObjectProvider<AttachmentArtifactRepository> repositoryProvider) {
+        this(repositoryProvider, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public AttachmentArtifactService(
+        ObjectProvider<AttachmentArtifactRepository> repositoryProvider,
+        ObjectProvider<com.azhukov.agent.persistence.repository.SessionRepository> sessionRepositoryProvider
+    ) {
+        this.repositoryProvider = repositoryProvider;
+        this.sessionRepositoryProvider = sessionRepositoryProvider;
+    }
 
     @Value("${agent.attachments.cache-root:}")
     private String cacheRootConfig;
@@ -77,6 +89,10 @@ public class AttachmentArtifactService {
     public ArtifactRegistration register(String ownerId, String profile, UUID sessionId,
                                          String messageId, String origin, String disposition,
                                          String mimeType, String fileName, byte[] data) {
+        String normalizedOwnerId = normalizedOwner(ownerId);
+        if (!ownsSession(normalizedOwnerId, sessionId)) {
+            return new ArtifactRegistration(null, null, null, false, "session not found");
+        }
         String rejection = validate(disposition, origin, fileName, data);
         if (rejection != null) {
             return new ArtifactRegistration(null, null, null, false, rejection);
@@ -84,20 +100,20 @@ public class AttachmentArtifactService {
         String hash = sha256(data);
         AttachmentArtifactRepository repository = repository();
         Optional<AttachmentArtifactEntity> existing = repository
-            .findFirstByOwnerIdAndContentHashAndDisposition(ownerId, hash, disposition);
+            .findFirstByOwnerIdAndContentHashAndDisposition(normalizedOwnerId, hash, disposition);
         if (existing.isPresent()) {
             return new ArtifactRegistration(existing.get().getId(), hash,
                 existing.get().getCachePath(), true, null);
         }
         String id = "att_" + UUID.randomUUID().toString().replace("-", "");
-        String relative = ownerId + "/" + id + extensionOf(fileName, mimeType);
+        String relative = normalizedOwnerId + "/" + id + extensionOf(fileName, mimeType);
         try {
             Path target = safeCachePath(relative);
             Files.createDirectories(target.getParent());
             Files.write(target, data);
             AttachmentArtifactEntity entity = new AttachmentArtifactEntity();
             entity.setId(id);
-            entity.setOwnerId(ownerId == null || ownerId.isBlank() ? "system" : ownerId);
+            entity.setOwnerId(normalizedOwnerId);
             entity.setProfile(profile == null || profile.isBlank() ? "default" : profile);
             entity.setSessionId(sessionId);
             entity.setMessageId(messageId);
@@ -343,6 +359,26 @@ public class AttachmentArtifactService {
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 unavailable", e);
         }
+    }
+
+    private static String normalizedOwner(String ownerId) {
+        return ownerId == null || ownerId.isBlank() ? "system" : ownerId.trim();
+    }
+
+    /**
+     * A session-bound artifact is an ownership-bearing cross-resource reference.
+     * Validate it before writing a blob so an authenticated caller cannot attach
+     * data to another tenant's session merely by guessing its UUID.
+     */
+    private boolean ownsSession(String ownerId, UUID sessionId) {
+        if (sessionId == null || sessionRepositoryProvider == null) {
+            return true;
+        }
+        com.azhukov.agent.persistence.repository.SessionRepository sessions =
+            sessionRepositoryProvider.getIfAvailable();
+        return sessions == null || sessions.findById(sessionId)
+            .map(session -> java.util.Objects.equals(ownerId, session.getUserId()))
+            .orElse(false);
     }
 
     private Optional<AttachmentArtifactEntity> findEntity(String artifactId, String ownerId) {

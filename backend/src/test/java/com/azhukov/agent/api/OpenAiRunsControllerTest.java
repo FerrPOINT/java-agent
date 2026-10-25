@@ -1307,6 +1307,21 @@ class OpenAiRunsControllerTest {
     }
 
     @Test
+    void scopedUserCannotContinueLegacyOwnerlessResponseRun() throws Exception {
+        responseStore.put("resp_legacy", new StoredResponse(
+            Map.of("id", "resp_legacy"), List.of(Message.user("private request")), "private", null), null);
+        UserContext.set("user-2", UserContext.ROLE_USER);
+
+        mockMvc.perform(post("/v1/runs")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"previous_response_id\":\"resp_legacy\",\"input\":\"steal history\"}"))
+            .andExpect(status().isNotFound())
+            .andExpect(jsonPath("$.error.code").value("previous_response_not_found"));
+
+        verify(agentRuntimeService, never()).runApiTurn(any(), anyString(), any());
+    }
+
+    @Test
     void foreignUserCannotContinueStoredResponseRun() throws Exception {
         responseStore.put("resp_private", new StoredResponse(
             Map.of("id", "resp_private"),

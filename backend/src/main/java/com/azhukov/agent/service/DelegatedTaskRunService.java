@@ -63,7 +63,6 @@ public class DelegatedTaskRunService {
         this(repository, objectMapper, null);
     }
 
-    @Autowired
     public DelegatedTaskRunService(
         DelegatedTaskRunRepository repository,
         ObjectMapper objectMapper,
@@ -72,6 +71,7 @@ public class DelegatedTaskRunService {
         this(repository, objectMapper, eventService, null, null);
     }
 
+    @Autowired
     public DelegatedTaskRunService(
         DelegatedTaskRunRepository repository,
         ObjectMapper objectMapper,
@@ -228,6 +228,16 @@ public class DelegatedTaskRunService {
         } catch (Exception e) {
             log.warn("Delegated run {} delivery enqueue failed: {}", run.getId(), e.getMessage());
         }
+    }
+
+    private String ownerForParentSession(UUID parentSessionId) {
+        if (sessionRepositoryProvider == null || parentSessionId == null) {
+            return null;
+        }
+        var repository = sessionRepositoryProvider.getIfAvailable();
+        return repository == null ? null : repository.findById(parentSessionId)
+            .map(session -> session.getUserId())
+            .orElse(null);
     }
 
     private String resolveOriginTarget(UUID parentSessionId) {
@@ -630,7 +640,13 @@ public class DelegatedTaskRunService {
             payload.putAll(extraPayload);
         }
         try {
-            eventService.publish(eventType, entity.getProfile(), entity.getParentSessionId(), entity.getId(), payload);
+            eventService.publish(
+                eventType,
+                entity.getProfile(),
+                entity.getParentSessionId(),
+                entity.getId(),
+                payload,
+                ownerForParentSession(entity.getParentSessionId()));
         } catch (RuntimeException e) {
             log.warn("Failed to publish delegated task event {} for {}: {}", eventType, entity.getId(), e.getMessage());
         }
