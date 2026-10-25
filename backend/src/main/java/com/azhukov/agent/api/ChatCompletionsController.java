@@ -16,6 +16,7 @@ import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.client.StreamingResponseHandler;
 import com.azhukov.agent.core.client.ModelRequestOptions;
 import com.azhukov.agent.core.context.HistorySanitizer;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.prompt.PromptBuilder;
 import com.azhukov.agent.core.tool.ToolRegistry;
 import com.azhukov.agent.api.mapper.OpenAiMapper;
@@ -177,7 +178,9 @@ public class ChatCompletionsController {
             // continuity hint is best-effort; do not break the stream
         }
 
-        CompletableFuture.runAsync(() -> {
+        String ownerId = UserContext.getUserId();
+        String ownerRole = UserContext.getRole();
+        CompletableFuture.runAsync(() -> runWithCallerContext(ownerId, ownerRole, () -> {
             try {
                 Session session = sessionContext.session() != null
                     ? sessionContext.session()
@@ -230,9 +233,20 @@ public class ChatCompletionsController {
                 sendDone(emitter);
                 safeComplete(emitter);
             }
-        }, streamingExecutor);
+        }), streamingExecutor);
 
         return emitter;
+    }
+
+    private static void runWithCallerContext(String userId, String role, Runnable action) {
+        if (userId != null && !userId.isBlank()) {
+            UserContext.set(userId, role != null && !role.isBlank() ? role : UserContext.ROLE_USER);
+        }
+        try {
+            action.run();
+        } finally {
+            UserContext.clear();
+        }
     }
 
     private ModelRequestOptions requestOptions(OpenAiChatRequest request) {

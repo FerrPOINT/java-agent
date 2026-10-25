@@ -54,6 +54,9 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -79,6 +82,21 @@ public class OpenAiResponsesController {
     private final OpenAiIdempotencyCache idempotencyCache;
     private final Redactor redactor;
     private final ApiRunAdmissionService runAdmissionService;
+    private final ExecutorService streamingExecutor = Executors.newThreadPerTaskExecutor(
+        Thread.ofVirtual().name("openai-responses-sse-", 0).factory());
+
+    @jakarta.annotation.PreDestroy
+    void shutdown() {
+        streamingExecutor.shutdown();
+        try {
+            if (!streamingExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                streamingExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            streamingExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+    }
 
     @PostMapping
     public ResponseEntity<?> createResponse(
@@ -275,7 +293,9 @@ public class OpenAiResponsesController {
             ), request.conversation());
         }
 
-        CompletableFuture.runAsync(() -> {
+        String ownerId = UserContext.getUserId();
+        String ownerRole = UserContext.getRole();
+        CompletableFuture.runAsync(() -> runWithCallerContext(ownerId, ownerRole, () -> {
             try {
                 sendResponsesSse(emitter, sequenceNumber, "response.created", Map.of(
                     "type", "response.created",
@@ -370,7 +390,7 @@ public class OpenAiResponsesController {
             } finally {
                 reservation.get().close();
             }
-        });
+        }), streamingExecutor);
 
         return ResponseEntity.ok()
             .headers(sseResponseHeaders(sessionContext))
@@ -399,6 +419,17 @@ public class OpenAiResponsesController {
         body.put("object", "response");
         body.put("deleted", true);
         return ResponseEntity.ok(body);
+    }
+
+    private static void runWithCallerContext(String userId, String role, Runnable action) {
+        if (userId != null && !userId.isBlank()) {
+            UserContext.set(userId, role != null && !role.isBlank() ? role : UserContext.ROLE_USER);
+        }
+        try {
+            action.run();
+        } finally {
+            UserContext.clear();
+        }
     }
 
     private StoredResponse accessibleStoredResponse(String responseId, String sessionKeyHeader) {

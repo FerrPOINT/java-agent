@@ -10,6 +10,7 @@ import com.azhukov.agent.core.model.ChatResponse;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.model.ToolDefinition;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.prompt.PromptBuilder;
 import com.azhukov.agent.core.tool.ToolRegistry;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -31,6 +32,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -159,6 +162,35 @@ class ChatCompletionsControllerTest {
         verify(agentRuntime).run(anyList(), anyList(), options.capture());
         assertThat(options.getValue().modelName()).isEqualTo(MODEL);
         assertThat(options.getValue().maxCompletionTokens()).isEqualTo(128);
+    }
+
+    @Test
+    void streamingRequestRetainsCallerIdentityInWorker() throws Exception {
+        CountDownLatch invoked = new CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicReference<String> workerIdentity = new java.util.concurrent.atomic.AtomicReference<>();
+        doAnswer(invocation -> {
+            workerIdentity.set(UserContext.getUserId() + ":" + UserContext.getRole());
+            invoked.countDown();
+            StreamingResponseHandler handler = invocation.getArgument(3);
+            handler.onComplete();
+            return null;
+        }).when(modelClient).stream(anyList(), anyList(), any(ModelRequestOptions.class), any(StreamingResponseHandler.class));
+
+        UserContext.set("user-42", UserContext.ROLE_USER);
+        try {
+            MvcResult result = mockMvc.perform(post("/v1/chat/completions")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"model\":\"gpt-test\",\"messages\":[{\"role\":\"user\",\"content\":\"hello\"}],\"stream\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(request().asyncStarted())
+                .andReturn();
+
+            mockMvc.perform(asyncDispatch(result)).andExpect(status().isOk());
+            assertThat(invoked.await(2, TimeUnit.SECONDS)).isTrue();
+            assertThat(workerIdentity).hasValue("user-42:user");
+        } finally {
+            UserContext.clear();
+        }
     }
 
     @Test

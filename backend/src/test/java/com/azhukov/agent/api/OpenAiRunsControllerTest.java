@@ -264,6 +264,57 @@ class OpenAiRunsControllerTest {
     }
 
     @Test
+    void concurrentAsyncRunsRestoreTheirOwnOwnerIdentity() throws Exception {
+        OpenAiSessionContext ownerA = new OpenAiSessionContext(
+            new Session(SESSION_ID, "user-a", "OpenAI", "openai-compatible", MODEL, null, Map.of(), null),
+            false,
+            null
+        );
+        OpenAiSessionContext ownerB = new OpenAiSessionContext(
+            new Session(UUID.randomUUID(), "user-b", "OpenAI", "openai-compatible", MODEL, null, Map.of(), null),
+            false,
+            null
+        );
+        List<String> workerIdentities = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        CountDownLatch started = new CountDownLatch(2);
+        when(agentRuntimeService.runApiTurn(any(Session.class), anyString(), any(ModelRequestOptions.class)))
+            .thenAnswer(invocation -> {
+                workerIdentities.add(UserContext.getUserId() + ":" + UserContext.getRole());
+                started.countDown();
+                return new ChatResponseDto(SESSION_ID, "done", List.of(), true);
+            });
+
+        runService.submit(ownerA, Message.user("first"), MODEL, ModelRequestOptions.empty(), null, List.of());
+        runService.submit(ownerB, Message.user("second"), MODEL, ModelRequestOptions.empty(), null, List.of());
+
+        assertThat(started.await(2, TimeUnit.SECONDS)).isTrue();
+        assertThat(workerIdentities).containsExactlyInAnyOrder("user-a:user", "user-b:user");
+    }
+
+    @Test
+    void asyncRunPreservesAdminRoleForAuthorizedSession() throws Exception {
+        OpenAiSessionContext owner = new OpenAiSessionContext(
+            new Session(SESSION_ID, "admin-user", "OpenAI", "openai-compatible", MODEL, null, Map.of(), null),
+            false,
+            null
+        );
+        CountDownLatch started = new CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicReference<String> workerRole = new java.util.concurrent.atomic.AtomicReference<>();
+        when(agentRuntimeService.runApiTurn(any(Session.class), anyString(), any(ModelRequestOptions.class)))
+            .thenAnswer(invocation -> {
+                workerRole.set(UserContext.getUserId() + ":" + UserContext.getRole());
+                started.countDown();
+                return new ChatResponseDto(SESSION_ID, "done", List.of(), true);
+            });
+
+        UserContext.set("admin-user", UserContext.ROLE_ADMIN);
+        runService.submit(owner, Message.user("admin work"), MODEL, ModelRequestOptions.empty(), null, List.of());
+
+        assertThat(started.await(2, TimeUnit.SECONDS)).isTrue();
+        assertThat(workerRole).hasValue("admin-user:admin");
+    }
+
+    @Test
     void createRunAcceptsExternalStringSessionIdLikeHermes() throws Exception {
         String externalSessionId = "cron_job42_20260801_090000";
         OpenAiSessionContext external = new OpenAiSessionContext(

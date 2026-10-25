@@ -2,6 +2,7 @@ package com.azhukov.agent.service;
 
 import com.azhukov.agent.api.dto.ChatRequest;
 import com.azhukov.agent.api.dto.ChatResponseDto;
+import com.azhukov.agent.core.security.UserContext;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
@@ -60,13 +61,27 @@ public class HermesSessionStreamingService {
             Map<String, Object> runtime,
             SseEmitter emitter,
             Runnable onComplete) {
+        String userId = UserContext.getUserId();
+        String role = UserContext.getRole();
         try {
-            executor.submit(() -> run(request, requestedSessionId, runtime, emitter, onComplete));
+            executor.submit(() -> runWithCallerContext(userId, role,
+                () -> run(request, requestedSessionId, runtime, emitter, onComplete)));
         } catch (RuntimeException e) {
             completeCallback(onComplete);
             throw e;
         }
         return emitter;
+    }
+
+    private static void runWithCallerContext(String userId, String role, Runnable action) {
+        if (userId != null && !userId.isBlank()) {
+            UserContext.set(userId, role != null && !role.isBlank() ? role : UserContext.ROLE_USER);
+        }
+        try {
+            action.run();
+        } finally {
+            UserContext.clear();
+        }
     }
 
     private void run(

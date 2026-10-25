@@ -42,6 +42,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -1313,6 +1315,32 @@ class OpenAiResponsesControllerTest {
             .andExpect(jsonPath("$.output[0].call_id").value("call_abc"))
             .andExpect(jsonPath("$.output[1].type").value("message"))
             .andExpect(jsonPath("$.output[1].content[0].text").value("I need a lookup."));
+    }
+
+    @Test
+    void streamedResponseRetainsCallerIdentityInAsyncRuntime() throws Exception {
+        CountDownLatch invoked = new CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicReference<String> workerIdentity = new java.util.concurrent.atomic.AtomicReference<>();
+        when(agentRuntime.runMessages(anyList(), anyList(), any(ModelRequestOptions.class)))
+            .thenAnswer(invocation -> {
+                workerIdentity.set(UserContext.getUserId() + ":" + UserContext.getRole());
+                invoked.countDown();
+                return null;
+            });
+        when(agentRuntime.run(anyList(), anyList(), any(ModelRequestOptions.class)))
+            .thenReturn(ChatResponse.text("safe"));
+
+        UserContext.set("user-42", UserContext.ROLE_USER);
+        MvcResult result = mockMvc.perform(post("/v1/responses")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"input\":\"hello\",\"stream\":true}"))
+            .andExpect(status().isOk())
+            .andExpect(request().asyncStarted())
+            .andReturn();
+
+        mockMvc.perform(asyncDispatch(result)).andExpect(status().isOk());
+        assertThat(invoked.await(2, TimeUnit.SECONDS)).isTrue();
+        assertThat(workerIdentity).hasValue("user-42:user");
     }
 
     @Test

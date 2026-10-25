@@ -10,6 +10,7 @@ import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.security.ApiErrorTextRedactor;
 import com.azhukov.agent.core.security.ApprovalQueue;
 import com.azhukov.agent.core.security.Redactor;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.service.OpenAiSessionService.OpenAiSessionContext;
 import com.azhukov.agent.tools.terminal.ProcessTool;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -98,6 +99,7 @@ public class OpenAiRunService {
         String runId = "run_" + UUID.randomUUID().toString().replace("-", "");
         UUID controlSessionId = UUID.randomUUID();
         String userId = sessionContext.session().userId();
+        String role = UserContext.getRole();
         RunRecord record = new RunRecord(runId, sessionId, controlSessionId, userId, requestedModel);
         runs.put(runId, record);
         record.attachPersistHook((status, reason) -> persistTransition(runId, status, reason));
@@ -109,10 +111,15 @@ public class OpenAiRunService {
         }
         Session effectiveSession = runSession;
         try {
-            executor.submit(() -> run(record, effectiveSession, userMessage, options, reservation));
-            executor.submit(() -> monitorApprovals(record));
+            executor.submit(() -> run(record, effectiveSession, userMessage, options, reservation, userId, role));
+            executor.submit(() -> monitorApprovals(record, userId, role));
             return record;
         } catch (RuntimeException e) {
+            // The run was never accepted; erase its live state before returning failure.
+            runs.remove(runId, record);
+            approvalQueue.clear(controlSessionId);
+            steerBuffer.clear(controlSessionId);
+            interruptToken.remove(controlSessionId);
             closeReservation(reservation);
             throw e;
         }
@@ -261,7 +268,17 @@ public class OpenAiRunService {
                      Session session,
                      Message userMessage,
                      ModelRequestOptions options,
-                     ApiRunAdmissionService.Reservation reservation) {
+                     ApiRunAdmissionService.Reservation reservation,
+                     String userId,
+                     String role) {
+        runWithOwnerContext(userId, role, () -> runOwned(record, session, userMessage, options, reservation));
+    }
+
+    private void runOwned(RunRecord record,
+                          Session session,
+                          Message userMessage,
+                          ModelRequestOptions options,
+                          ApiRunAdmissionService.Reservation reservation) {
         record.setStatus("running", Map.of("last_event", "run.started"));
         record.emit("run.started", Map.of());
         try {
@@ -326,13 +343,28 @@ public class OpenAiRunService {
         }
     }
 
+    private static void runWithOwnerContext(String userId, String role, Runnable action) {
+        if (userId != null && !userId.isBlank()) {
+            UserContext.set(userId, role != null && !role.isBlank() ? role : UserContext.ROLE_USER);
+        }
+        try {
+            action.run();
+        } finally {
+            UserContext.clear();
+        }
+    }
+
     private static void closeReservation(ApiRunAdmissionService.Reservation reservation) {
         if (reservation != null) {
             reservation.close();
         }
     }
 
-    private void monitorApprovals(RunRecord record) {
+    private void monitorApprovals(RunRecord record, String userId, String role) {
+        runWithOwnerContext(userId, role, () -> monitorApprovalsOwned(record));
+    }
+
+    private void monitorApprovalsOwned(RunRecord record) {
         UUID lastApprovalId = null;
         try {
             while (!record.isTerminal()) {

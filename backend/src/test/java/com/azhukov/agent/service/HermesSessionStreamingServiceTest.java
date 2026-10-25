@@ -2,6 +2,7 @@ package com.azhukov.agent.service;
 
 import com.azhukov.agent.api.dto.ChatRequest;
 import com.azhukov.agent.api.dto.ChatResponseDto;
+import com.azhukov.agent.core.security.UserContext;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
@@ -49,6 +50,25 @@ class HermesSessionStreamingServiceTest {
     @AfterEach
     void tearDown() {
         service.shutdown();
+    }
+
+    @Test
+    void streamTurnPropagatesAndClearsCallerIdentity() throws Exception {
+        AtomicReference<String> workerIdentity = new AtomicReference<>();
+        when(agentRuntimeService.runTurn(any(ChatRequest.class))).thenAnswer(invocation -> {
+            workerIdentity.set(UserContext.getUserId() + ":" + UserContext.getRole());
+            return new ChatResponseDto(EFFECTIVE_SESSION_ID, "done", List.of(), true);
+        });
+        CollectingEmitter emitter = new CollectingEmitter(30_000L);
+
+        UserContext.set("user-42", UserContext.ROLE_USER);
+        try {
+            service.streamTurn(ChatRequest.simple(SESSION_ID, "hello", null, 10_000L), SESSION_ID, Map.of(), emitter);
+            emitter.awaitDone();
+            assertThat(workerIdentity).hasValue("user-42:user");
+        } finally {
+            UserContext.clear();
+        }
     }
 
     @Test
