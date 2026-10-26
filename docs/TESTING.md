@@ -58,9 +58,12 @@ heap и actual task graph проверяются отдельно на соот�
 ./gradlew fullCheck --no-daemon --max-workers=2
 ```
 
-`releaseCheck` проверяет прежний non-slow fast coverage scope: unit + integration,
+`releaseCheck` проверяет reviewed unit + integration coverage scope,
 LINE >=79.05%. `fullCheck` явно включает slow и комбинированный LINE >=79.38%.
 Bot coverage сохраняет LINE >=82.47% через существующий docs ratchet.
+Часть reviewed slow files может не иметь JUnit slow tag: их перенос меняет состав
+прежнего fast execution set. Совпадение старого набора и достижение сохранённых
+floors не объявляются доказанными до native coverage qualification.
 Live/E2E остаются отдельным прямым запросом и не входят в эти команды.
 Самостоятельный `jacocoTestReport` — ручная проверка с integration, не обычный build.
 
