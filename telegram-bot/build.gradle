@@ -118,8 +118,16 @@ tasks.withType(JavaCompile).configureEach {
     ]
 }
 
+// A changing wall clock must not invalidate resources, tests and the JAR.
+def candidateBuildEpoch = providers.environmentVariable('SOURCE_DATE_EPOCH')
 springBoot {
-    buildInfo()
+    buildInfo {
+        if (candidateBuildEpoch.isPresent()) {
+            properties { time = java.time.Instant.ofEpochSecond(Long.parseLong(candidateBuildEpoch.get())) }
+        } else {
+            excludes = ['time']
+        }
+    }
 }
 
 def ferrpointNoticeFiles = [
@@ -163,7 +171,10 @@ apply from: file("../gradle/test-lanes.gradle").exists() ? file("../gradle/test-
 
 // Backend classes/Flyway belong only to the manual PostgreSQL owner consumer.
 dependencies {
-    manualTestImplementation project(path: ':backend', configuration: 'identityOwnerTestElements')
+    // The bounded ordinary clients graph excludes backend configuration.
+    if (findProject(':backend') != null) {
+        manualTestImplementation project(path: ':backend', configuration: 'identityOwnerTestElements')
+    }
 }
 tasks.named('identityOwnerTest', Test) {
     testClassesDirs = sourceSets.manualTest.output.classesDirs
@@ -175,3 +186,6 @@ tasks.named('jacocoTestReport') {
     dependsOn tasks.named('integrationTest')
     executionData(tasks.named('test').get(), tasks.named('integrationTest').get())
 }
+
+// Read-only preparation index, not a successful build or test receipt.
+apply from: file("../gradle/quality-inputs.gradle").exists() ? file("../gradle/quality-inputs.gradle") : file("gradle/quality-inputs.gradle")

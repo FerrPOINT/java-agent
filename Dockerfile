@@ -3,14 +3,14 @@ FROM eclipse-temurin:25.0.4.1_1-jdk-noble@sha256:0d623ea18d7b0fe1e12a2c0a920f7e9
 
 WORKDIR /workspace/backend
 COPY backend/gradle/ gradle/
-COPY gradle/test-lanes.gradle gradle/test-topology.gradle gradle/test-membership.gradle gradle/test-lanes.json /workspace/gradle/
+COPY gradle/test-lanes.gradle gradle/test-topology.gradle gradle/test-membership.gradle gradle/test-lanes.json gradle/java-preparation.json gradle/quality-inputs.gradle /workspace/gradle/
 COPY docs/standards/coverage-baseline.json /workspace/docs/standards/
 COPY LICENSE NOTICE THIRD_PARTY_NOTICES.md ./
 COPY backend/gradlew backend/build.gradle backend/settings.gradle backend/gradle.properties ./
 RUN sed -i 's/\r$//' gradlew && chmod +x gradlew
 COPY backend/src src
 # h10: the backend build resolves :shared as a sibling module (backend/settings.gradle
-# includes ../shared when present) — copy it in so the container layout matches the repo.
+# includes ../shared when present) вЂ” copy it in so the container layout matches the repo.
 COPY shared/ /workspace/shared/
 RUN ./gradlew bootJar --no-daemon
 

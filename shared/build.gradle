@@ -20,11 +20,11 @@ repositories {
 }
 
 dependencies {
-    // Jackson — DTO (de)serialization shared by all modules
+    // Jackson вЂ” DTO (de)serialization shared by all modules
     api 'com.fasterxml.jackson.core:jackson-databind'
     api 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310'
 
-    // Spring web (RestClient factory) — version from Spring Boot BOM
+    // Spring web (RestClient factory) вЂ” version from Spring Boot BOM
     api 'org.springframework:spring-web'
 
     // Lombok
@@ -44,3 +44,6 @@ tasks.named('test') {
 
 // Base test lanes: unit compilation excludes manual boundary sources.
 apply from: file("../gradle/test-lanes.gradle").exists() ? file("../gradle/test-lanes.gradle") : file("gradle/test-lanes.gradle")
+
+// Read-only preparation index, not a successful build or test receipt.
+apply from: file("../gradle/quality-inputs.gradle").exists() ? file("../gradle/quality-inputs.gradle") : file("gradle/quality-inputs.gradle")

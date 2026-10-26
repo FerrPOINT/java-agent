@@ -1,0 +1,1340 @@
+{
+  "schema": "base-quality-product/v1",
+  "product": "java-agent",
+  "native_execution": {
+    "adapter": "java-compose-v1",
+    "host_platforms": [
+      "win32"
+    ],
+    "gates": {
+      "backend:unit": {
+        "component": "backend",
+        "role": "unit"
+      },
+      "backend:build": {
+        "component": "backend",
+        "role": "build"
+      },
+      "bot:unit": {
+        "component": "bot",
+        "role": "unit"
+      },
+      "cli:unit": {
+        "component": "cli",
+        "role": "unit"
+      },
+      "shared:unit": {
+        "component": "shared",
+        "role": "unit"
+      },
+      "cli:build": {
+        "component": "cli",
+        "role": "build"
+      },
+      "bot:build": {
+        "component": "bot",
+        "role": "build"
+      }
+    }
+  },
+  "components": {
+    "docs": [
+      "docs/**",
+      "*.md"
+    ],
+    "tooling": [
+      "Makefile",
+      ".quality-gate.json",
+      ".quality-tooling-revision",
+      ".github/workflows/ci.yml",
+      "Dockerfile",
+      "Dockerfile.slim",
+      "cli/Dockerfile",
+      "telegram-bot/Dockerfile",
+      "gradle/test-lanes.json",
+      "gradle/test-lanes.gradle",
+      "scripts/select_java_modules.py",
+      "scripts/quality-gradle.sh",
+      "scripts/quality-make.sh",
+      "scripts/gradle-context.py",
+      "scripts/check_docs_standard.py",
+      "scripts/verify_readme.py",
+      "scripts/check_default_settings_reference.py",
+      "scripts/release_verify.py",
+      "scripts/endpoint_coverage_report.py",
+      "scripts/check_test_lanes.py",
+      "scripts/deploy-dev-systemd.sh",
+      "scripts/deploy-dev-docker.sh",
+      "scripts/parity-dashboard.py",
+      "scripts/vendor/base_quality_selection.py",
+      "scripts/vendor/base-quality-tooling.json",
+      "scripts/tests/test_java_selection.py",
+      "scripts/tests/test_test_lanes.py",
+      "scripts/tests/test_source_sets_native.py",
+      "scripts/tests/test_check_docs_standard.py",
+      "scripts/tests/test_verify_readme.py",
+      "scripts/tests/test_check_default_settings_reference.py",
+      "scripts/tests/test_release_verify.py",
+      "scripts/tests/test_deploy_dev_systemd.py",
+      "scripts/tests/test_deploy_dev_docker.py",
+      "scripts/tests/test_parity_dashboard.py"
+    ],
+    "backend": [
+      "backend/**"
+    ],
+    "bot": [
+      "telegram-bot/**"
+    ],
+    "cli": [
+      "cli/**"
+    ],
+    "shared": [
+      "shared/**",
+      "build.gradle",
+      "gradle.properties",
+      "gradle/**",
+      ".github/**"
+    ]
+  },
+  "gates": [
+    {
+      "id": "tooling:source-sets-native",
+      "component": "tooling",
+      "profiles": [
+        "integration"
+      ],
+      "test_tier": "integration",
+      "argv": [
+        "{python}",
+        "-B",
+        "-m",
+        "unittest",
+        "scripts.tests.test_source_sets_native",
+        "-q"
+      ],
+      "inputs": [
+        "gradle/test-lanes.gradle",
+        "scripts/tests/test_source_sets_native.py",
+        "gradle/test-topology.gradle",
+        "gradle/test-membership.gradle"
+      ],
+      "requires_env": [
+        "PDLC_GRADLE_HOME",
+        "JAVA_HOME"
+      ],
+      "external_state": true,
+      "cacheable": false
+    },
+    {
+      "id": "tooling:test-lane-inventory",
+      "component": "tooling",
+      "profiles": [
+        "fast",
+        "unit",
+        "build",
+        "release"
+      ],
+      "test_tier": "static",
+      "argv": [
+        "{python}",
+        "-B",
+        "scripts/check_test_lanes.py"
+      ],
+      "inputs": [
+        "gradle/test-lanes.json",
+        "gradle/test-lanes.gradle",
+        "*/src/test/**",
+        "scripts/check_test_lanes.py",
+        "gradle/test-topology.gradle",
+        "gradle/test-membership.gradle"
+      ],
+      "cacheable": true
+    },
+    {
+      "id": "docs:readme",
+      "component": "docs",
+      "profiles": [
+        "fast",
+        "integrated",
+        "release"
+      ],
+      "argv": [
+        "{python}",
+        "-B",
+        "scripts/verify_readme.py"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": true,
+      "test_tier": "static"
+    },
+    {
+      "id": "backend:unit",
+      "component": "backend",
+      "profiles": [
+        "fast",
+        "unit",
+        "build"
+      ],
+      "argv": [
+        "bash",
+        "scripts/quality-gradle.sh",
+        "--backend",
+        ":test",
+        "--no-daemon",
+        "--max-workers=2"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1",
+          "context_argv": [
+            "{python}",
+            "scripts/gradle-context.py",
+            "--backend"
+          ],
+          "cwd": ".",
+          "context_pattern": "\"java_version\":\"25\\.0\\.4\\.1\"",
+          "reuse_pattern": "\"reuse_qualified\":true",
+          "recheck": true
+        }
+      ],
+      "environment_inputs": [
+        "SOURCE_DATE_EPOCH"
+      ],
+      "source_date_epoch": "git-head",
+      "test_tier": "unit",
+      "outputs": [
+        "backend/build/test-results/test"
+      ]
+    },
+    {
+      "id": "backend:build",
+      "component": "backend",
+      "profiles": [
+        "build"
+      ],
+      "argv": [
+        "bash",
+        "scripts/quality-gradle.sh",
+        "--backend",
+        ":bootJar",
+        "--no-daemon",
+        "--max-workers=2"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "backend/src/main/**",
+        "shared/src/main/**",
+        "shared/*.gradle",
+        "shared/gradle.properties",
+        "backend/gradlew",
+        "backend/*.gradle",
+        "backend/gradle.properties",
+        "backend/gradle/**",
+        "*.gradle",
+        "gradle.properties",
+        "gradle/**",
+        "scripts/quality-gradle.sh",
+        "LICENSE",
+        "NOTICE",
+        "THIRD_PARTY_NOTICES.md",
+        "scripts/gradle-context.py"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1",
+          "context_argv": [
+            "{python}",
+            "scripts/gradle-context.py",
+            "--backend"
+          ],
+          "cwd": ".",
+          "context_pattern": "\"java_version\":\"25\\.0\\.4\\.1\"",
+          "reuse_pattern": "\"reuse_qualified\":true",
+          "recheck": true
+        }
+      ],
+      "kind": "artifact",
+      "environment_inputs": [
+        "SOURCE_DATE_EPOCH"
+      ],
+      "source_date_epoch": "git-head",
+      "test_tier": "artifact",
+      "covers_units": [
+        "backend:unit"
+      ],
+      "outputs": [
+        "backend/build/libs/java-agent-backend-0.0.1-SNAPSHOT.jar"
+      ]
+    },
+    {
+      "id": "bot:unit",
+      "component": "bot",
+      "profiles": [
+        "fast",
+        "unit",
+        "build"
+      ],
+      "argv": [
+        "bash",
+        "scripts/quality-gradle.sh",
+        "--quality-root",
+        "--no-daemon",
+        "--max-workers=2",
+        ":telegram-bot:test"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1",
+          "context_argv": [
+            "{python}",
+            "scripts/gradle-context.py"
+          ],
+          "cwd": ".",
+          "context_pattern": "\"java_version\":\"25\\.0\\.4\\.1\"",
+          "reuse_pattern": "\"reuse_qualified\":true",
+          "recheck": true
+        }
+      ],
+      "environment_inputs": [
+        "SOURCE_DATE_EPOCH"
+      ],
+      "source_date_epoch": "git-head",
+      "test_tier": "unit",
+      "outputs": [
+        "telegram-bot/build/test-results/test"
+      ]
+    },
+    {
+      "id": "cli:unit",
+      "component": "cli",
+      "profiles": [
+        "fast",
+        "unit",
+        "build"
+      ],
+      "argv": [
+        "bash",
+        "scripts/quality-gradle.sh",
+        "--quality-root",
+        "--no-daemon",
+        "--max-workers=2",
+        ":cli:test"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1",
+          "context_argv": [
+            "{python}",
+            "scripts/gradle-context.py"
+          ],
+          "cwd": ".",
+          "context_pattern": "\"java_version\":\"25\\.0\\.4\\.1\"",
+          "reuse_pattern": "\"reuse_qualified\":true",
+          "recheck": true
+        }
+      ],
+      "environment_inputs": [
+        "SOURCE_DATE_EPOCH"
+      ],
+      "source_date_epoch": "git-head",
+      "test_tier": "unit",
+      "outputs": [
+        "cli/build/test-results/test"
+      ]
+    },
+    {
+      "id": "shared:unit",
+      "component": "shared",
+      "profiles": [
+        "fast",
+        "unit",
+        "build"
+      ],
+      "argv": [
+        "bash",
+        "scripts/quality-gradle.sh",
+        "--quality-root",
+        "--no-daemon",
+        "--max-workers=2",
+        ":shared:test"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1",
+          "context_argv": [
+            "{python}",
+            "scripts/gradle-context.py"
+          ],
+          "cwd": ".",
+          "context_pattern": "\"java_version\":\"25\\.0\\.4\\.1\"",
+          "reuse_pattern": "\"reuse_qualified\":true",
+          "recheck": true
+        }
+      ],
+      "environment_inputs": [
+        "SOURCE_DATE_EPOCH"
+      ],
+      "source_date_epoch": "git-head",
+      "test_tier": "unit",
+      "outputs": [
+        "shared/build/test-results/test"
+      ]
+    },
+    {
+      "id": "backend:integration",
+      "component": "backend",
+      "profiles": [
+        "integration"
+      ],
+      "argv": [
+        "bash",
+        "scripts/quality-gradle.sh",
+        "--backend",
+        "integrationTest",
+        "--no-daemon",
+        "--max-workers=2"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1",
+          "context_argv": [
+            "{python}",
+            "scripts/gradle-context.py",
+            "--backend"
+          ],
+          "cwd": ".",
+          "context_pattern": "\"java_version\":\"25\\.0\\.4\\.1\"",
+          "reuse_pattern": "\"reuse_qualified\":true",
+          "recheck": true
+        }
+      ],
+      "requires_env": [
+        "USAGE_PERSISTENCE_TEST_JDBC_URL",
+        "USAGE_PERSISTENCE_TEST_DB_USER",
+        "USAGE_PERSISTENCE_TEST_DB_PASSWORD",
+        "JAVA_AGENT_TEST_DB_DISPOSABLE",
+        "JAVA_AGENT_TEST_DB_URL",
+        "JAVA_AGENT_TEST_DB_USER",
+        "JAVA_AGENT_TEST_DB_PASSWORD"
+      ],
+      "environment_inputs": [
+        "SOURCE_DATE_EPOCH"
+      ],
+      "source_date_epoch": "git-head",
+      "test_tier": "integration",
+      "external_state": true
+    },
+    {
+      "id": "bot:integration",
+      "component": "bot",
+      "profiles": [
+        "integration"
+      ],
+      "argv": [
+        "bash",
+        "scripts/quality-gradle.sh",
+        ":telegram-bot:integrationTest",
+        "--no-daemon",
+        "--max-workers=2"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1",
+          "context_argv": [
+            "{python}",
+            "scripts/gradle-context.py"
+          ],
+          "cwd": ".",
+          "context_pattern": "\"java_version\":\"25\\.0\\.4\\.1\"",
+          "reuse_pattern": "\"reuse_qualified\":true",
+          "recheck": true
+        }
+      ],
+      "environment_inputs": [
+        "SOURCE_DATE_EPOCH"
+      ],
+      "source_date_epoch": "git-head",
+      "test_tier": "integration",
+      "external_state": true
+    },
+    {
+      "id": "cli:integration",
+      "component": "cli",
+      "profiles": [
+        "integration"
+      ],
+      "argv": [
+        "bash",
+        "scripts/quality-gradle.sh",
+        ":cli:integrationTest",
+        "--no-daemon",
+        "--max-workers=2"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1",
+          "context_argv": [
+            "{python}",
+            "scripts/gradle-context.py"
+          ],
+          "cwd": ".",
+          "context_pattern": "\"java_version\":\"25\\.0\\.4\\.1\"",
+          "reuse_pattern": "\"reuse_qualified\":true",
+          "recheck": true
+        }
+      ],
+      "environment_inputs": [
+        "SOURCE_DATE_EPOCH"
+      ],
+      "source_date_epoch": "git-head",
+      "test_tier": "integration",
+      "external_state": true
+    },
+    {
+      "id": "shared:integration",
+      "component": "shared",
+      "profiles": [
+        "integration"
+      ],
+      "argv": [
+        "bash",
+        "scripts/quality-gradle.sh",
+        ":shared:integrationTest",
+        "--no-daemon",
+        "--max-workers=2"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1",
+          "context_argv": [
+            "{python}",
+            "scripts/gradle-context.py"
+          ],
+          "cwd": ".",
+          "context_pattern": "\"java_version\":\"25\\.0\\.4\\.1\"",
+          "reuse_pattern": "\"reuse_qualified\":true",
+          "recheck": true
+        }
+      ],
+      "environment_inputs": [
+        "SOURCE_DATE_EPOCH"
+      ],
+      "source_date_epoch": "git-head",
+      "test_tier": "integration",
+      "external_state": true
+    },
+    {
+      "id": "backend:release",
+      "component": "backend",
+      "profiles": [
+        "release",
+        "integrated"
+      ],
+      "argv": [
+        "bash",
+        "scripts/quality-gradle.sh",
+        "--backend",
+        ":releaseCheck",
+        ":fullCheck",
+        "--no-daemon",
+        "--max-workers=2"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1",
+          "context_argv": [
+            "{python}",
+            "scripts/gradle-context.py",
+            "--backend"
+          ],
+          "cwd": ".",
+          "context_pattern": "\"java_version\":\"25\\.0\\.4\\.1\"",
+          "reuse_pattern": "\"reuse_qualified\":true",
+          "recheck": true
+        }
+      ],
+      "requires_env": [
+        "USAGE_PERSISTENCE_TEST_JDBC_URL",
+        "USAGE_PERSISTENCE_TEST_DB_USER",
+        "USAGE_PERSISTENCE_TEST_DB_PASSWORD",
+        "JAVA_AGENT_TEST_DB_DISPOSABLE",
+        "JAVA_AGENT_TEST_DB_URL",
+        "JAVA_AGENT_TEST_DB_USER",
+        "JAVA_AGENT_TEST_DB_PASSWORD"
+      ],
+      "environment_inputs": [
+        "SOURCE_DATE_EPOCH"
+      ],
+      "source_date_epoch": "git-head",
+      "test_tier": "integration",
+      "external_state": true
+    },
+    {
+      "id": "bot:release",
+      "component": "bot",
+      "profiles": [
+        "release",
+        "integrated"
+      ],
+      "argv": [
+        "bash",
+        "scripts/quality-gradle.sh",
+        ":telegram-bot:jacocoTestReport",
+        ":telegram-bot:slowTest",
+        "--no-daemon",
+        "--max-workers=2"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1",
+          "context_argv": [
+            "{python}",
+            "scripts/gradle-context.py"
+          ],
+          "cwd": ".",
+          "context_pattern": "\"java_version\":\"25\\.0\\.4\\.1\"",
+          "reuse_pattern": "\"reuse_qualified\":true",
+          "recheck": true
+        }
+      ],
+      "environment_inputs": [
+        "SOURCE_DATE_EPOCH"
+      ],
+      "source_date_epoch": "git-head",
+      "test_tier": "integration",
+      "external_state": true
+    },
+    {
+      "id": "cli:release",
+      "component": "cli",
+      "profiles": [
+        "release",
+        "integrated"
+      ],
+      "argv": [
+        "bash",
+        "scripts/quality-gradle.sh",
+        ":cli:test",
+        ":cli:integrationTest",
+        ":cli:slowTest",
+        "--no-daemon",
+        "--max-workers=2"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1",
+          "context_argv": [
+            "{python}",
+            "scripts/gradle-context.py"
+          ],
+          "cwd": ".",
+          "context_pattern": "\"java_version\":\"25\\.0\\.4\\.1\"",
+          "reuse_pattern": "\"reuse_qualified\":true",
+          "recheck": true
+        }
+      ],
+      "environment_inputs": [
+        "SOURCE_DATE_EPOCH"
+      ],
+      "source_date_epoch": "git-head",
+      "test_tier": "integration",
+      "external_state": true
+    },
+    {
+      "id": "shared:release",
+      "component": "shared",
+      "profiles": [
+        "release",
+        "integrated"
+      ],
+      "argv": [
+        "bash",
+        "scripts/quality-gradle.sh",
+        ":shared:test",
+        ":shared:integrationTest",
+        ":shared:slowTest",
+        "--no-daemon",
+        "--max-workers=2"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1",
+          "context_argv": [
+            "{python}",
+            "scripts/gradle-context.py"
+          ],
+          "cwd": ".",
+          "context_pattern": "\"java_version\":\"25\\.0\\.4\\.1\"",
+          "reuse_pattern": "\"reuse_qualified\":true",
+          "recheck": true
+        }
+      ],
+      "environment_inputs": [
+        "SOURCE_DATE_EPOCH"
+      ],
+      "source_date_epoch": "git-head",
+      "test_tier": "integration",
+      "external_state": true
+    },
+    {
+      "id": "backend:slow",
+      "component": "backend",
+      "profiles": [
+        "slow"
+      ],
+      "argv": [
+        "bash",
+        "scripts/quality-gradle.sh",
+        "--backend",
+        "slowTest",
+        "--no-daemon",
+        "--max-workers=2"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1",
+          "context_argv": [
+            "{python}",
+            "scripts/gradle-context.py",
+            "--backend"
+          ],
+          "cwd": ".",
+          "context_pattern": "\"java_version\":\"25\\.0\\.4\\.1\"",
+          "reuse_pattern": "\"reuse_qualified\":true",
+          "recheck": true
+        }
+      ],
+      "requires_env": [
+        "USAGE_PERSISTENCE_TEST_JDBC_URL",
+        "USAGE_PERSISTENCE_TEST_DB_USER",
+        "USAGE_PERSISTENCE_TEST_DB_PASSWORD",
+        "JAVA_AGENT_TEST_DB_DISPOSABLE",
+        "JAVA_AGENT_TEST_DB_URL",
+        "JAVA_AGENT_TEST_DB_USER",
+        "JAVA_AGENT_TEST_DB_PASSWORD"
+      ],
+      "environment_inputs": [
+        "SOURCE_DATE_EPOCH"
+      ],
+      "source_date_epoch": "git-head",
+      "test_tier": "slow",
+      "external_state": true
+    },
+    {
+      "id": "bot:slow",
+      "component": "bot",
+      "profiles": [
+        "slow"
+      ],
+      "argv": [
+        "bash",
+        "scripts/quality-gradle.sh",
+        ":telegram-bot:slowTest",
+        "--no-daemon",
+        "--max-workers=2"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1",
+          "context_argv": [
+            "{python}",
+            "scripts/gradle-context.py"
+          ],
+          "cwd": ".",
+          "context_pattern": "\"java_version\":\"25\\.0\\.4\\.1\"",
+          "reuse_pattern": "\"reuse_qualified\":true",
+          "recheck": true
+        }
+      ],
+      "environment_inputs": [
+        "SOURCE_DATE_EPOCH"
+      ],
+      "source_date_epoch": "git-head",
+      "test_tier": "slow",
+      "external_state": true
+    },
+    {
+      "id": "tooling:selection-unit",
+      "component": "tooling",
+      "profiles": [
+        "fast",
+        "unit",
+        "build",
+        "integrated",
+        "release"
+      ],
+      "argv": [
+        "{python}",
+        "-B",
+        "-m",
+        "unittest",
+        "scripts.tests.test_java_selection",
+        "-q"
+      ],
+      "cwd": ".",
+      "inputs": [
+        ".quality-gate.json",
+        "scripts/vendor/**",
+        "scripts/select_java_modules.py",
+        "scripts/tests/test_java_selection.py",
+        "scripts/check_docs_standard.py",
+        "scripts/verify_readme.py",
+        "scripts/check_default_settings_reference.py",
+        "scripts/release_verify.py",
+        "scripts/check_test_lanes.py"
+      ],
+      "cacheable": false,
+      "execution_slot": "none",
+      "test_tier": "unit"
+    },
+    {
+      "id": "tooling:lane-unit",
+      "component": "tooling",
+      "profiles": [
+        "fast",
+        "unit",
+        "build",
+        "integrated",
+        "release"
+      ],
+      "argv": [
+        "{python}",
+        "-B",
+        "-m",
+        "unittest",
+        "scripts.tests.test_test_lanes",
+        "-q"
+      ],
+      "cwd": ".",
+      "inputs": [
+        ".quality-gate.json",
+        "scripts/vendor/**",
+        "scripts/select_java_modules.py",
+        "scripts/tests/test_test_lanes.py",
+        "scripts/check_docs_standard.py",
+        "scripts/verify_readme.py",
+        "scripts/check_default_settings_reference.py",
+        "scripts/release_verify.py",
+        "scripts/check_test_lanes.py"
+      ],
+      "cacheable": false,
+      "execution_slot": "none",
+      "test_tier": "unit"
+    },
+    {
+      "id": "tooling:release-unit",
+      "component": "tooling",
+      "profiles": [
+        "fast",
+        "unit",
+        "build",
+        "integrated",
+        "release"
+      ],
+      "argv": [
+        "{python}",
+        "-B",
+        "-m",
+        "unittest",
+        "scripts.tests.test_release_verify",
+        "-q"
+      ],
+      "cwd": ".",
+      "inputs": [
+        ".quality-gate.json",
+        "scripts/vendor/**",
+        "scripts/select_java_modules.py",
+        "scripts/tests/test_release_verify.py",
+        "scripts/check_docs_standard.py",
+        "scripts/verify_readme.py",
+        "scripts/check_default_settings_reference.py",
+        "scripts/release_verify.py",
+        "scripts/check_test_lanes.py"
+      ],
+      "cacheable": false,
+      "execution_slot": "none",
+      "test_tier": "unit"
+    },
+    {
+      "id": "tooling:docs-unit",
+      "component": "tooling",
+      "profiles": [
+        "fast",
+        "unit",
+        "build",
+        "integrated",
+        "release"
+      ],
+      "argv": [
+        "{python}",
+        "-B",
+        "-m",
+        "unittest",
+        "scripts.tests.test_check_docs_standard",
+        "scripts.tests.test_verify_readme",
+        "scripts.tests.test_check_default_settings_reference",
+        "-q"
+      ],
+      "cwd": ".",
+      "inputs": [
+        ".quality-gate.json",
+        "scripts/vendor/**",
+        "scripts/select_java_modules.py",
+        "scripts/tests/test_check_docs_standard.py",
+        "scripts/tests/test_verify_readme.py",
+        "scripts/tests/test_check_default_settings_reference.py",
+        "scripts/check_docs_standard.py",
+        "scripts/verify_readme.py",
+        "scripts/check_default_settings_reference.py",
+        "scripts/release_verify.py",
+        "scripts/check_test_lanes.py"
+      ],
+      "cacheable": false,
+      "execution_slot": "none",
+      "test_tier": "unit"
+    },
+    {
+      "id": "tooling:process-protocol",
+      "component": "tooling",
+      "profiles": [
+        "integration",
+        "release"
+      ],
+      "argv": [
+        "{python}",
+        "-B",
+        "-m",
+        "unittest",
+        "scripts.tests.test_deploy_dev_systemd",
+        "scripts.tests.test_deploy_dev_docker",
+        "scripts.tests.test_parity_dashboard",
+        "-q"
+      ],
+      "inputs": [
+        "scripts/**",
+        "Makefile",
+        ".github/**"
+      ],
+      "cacheable": false,
+      "test_tier": "integration"
+    },
+    {
+      "id": "cli:build",
+      "component": "cli",
+      "profiles": [
+        "build"
+      ],
+      "argv": [
+        "bash",
+        "scripts/quality-gradle.sh",
+        "--quality-root",
+        "--no-daemon",
+        "--max-workers=2",
+        ":cli:bootJar"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "cli/src/main/**",
+        "cli/build.gradle",
+        "shared/src/main/**",
+        "shared/build.gradle",
+        "settings.gradle",
+        "gradle/**",
+        "scripts/quality-gradle.sh",
+        "scripts/gradle-context.py",
+        "LICENSE",
+        "NOTICE",
+        "THIRD_PARTY_NOTICES.md"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1",
+          "context_argv": [
+            "{python}",
+            "scripts/gradle-context.py"
+          ],
+          "cwd": ".",
+          "context_pattern": "\"java_version\":\"25\\.0\\.4\\.1\"",
+          "reuse_pattern": "\"reuse_qualified\":true",
+          "recheck": true
+        }
+      ],
+      "kind": "artifact",
+      "environment_inputs": [
+        "SOURCE_DATE_EPOCH"
+      ],
+      "source_date_epoch": "git-head",
+      "test_tier": "artifact",
+      "covers_units": [
+        "cli:unit"
+      ],
+      "outputs": [
+        "cli/build/libs/*.jar"
+      ]
+    },
+    {
+      "id": "bot:build",
+      "component": "bot",
+      "profiles": [
+        "build"
+      ],
+      "argv": [
+        "bash",
+        "scripts/quality-gradle.sh",
+        "--quality-root",
+        "--no-daemon",
+        "--max-workers=2",
+        ":telegram-bot:bootJar"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "telegram-bot/src/main/**",
+        "telegram-bot/build.gradle",
+        "shared/src/main/**",
+        "shared/build.gradle",
+        "settings.gradle",
+        "gradle/**",
+        "scripts/quality-gradle.sh",
+        "scripts/gradle-context.py",
+        "LICENSE",
+        "NOTICE",
+        "THIRD_PARTY_NOTICES.md"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1",
+          "context_argv": [
+            "{python}",
+            "scripts/gradle-context.py"
+          ],
+          "cwd": ".",
+          "context_pattern": "\"java_version\":\"25\\.0\\.4\\.1\"",
+          "reuse_pattern": "\"reuse_qualified\":true",
+          "recheck": true
+        }
+      ],
+      "kind": "artifact",
+      "environment_inputs": [
+        "SOURCE_DATE_EPOCH"
+      ],
+      "source_date_epoch": "git-head",
+      "test_tier": "artifact",
+      "covers_units": [
+        "bot:unit"
+      ],
+      "outputs": [
+        "telegram-bot/build/libs/*.jar"
+      ]
+    },
+    {
+      "id": "tooling:coverage-ratchet",
+      "component": "tooling",
+      "profiles": [
+        "release"
+      ],
+      "argv": [
+        "{python}",
+        "-B",
+        "scripts/check_docs_standard.py",
+        "--check-coverage"
+      ],
+      "inputs": [
+        "scripts/check_docs_standard.py",
+        "docs/standards/coverage-baseline.json"
+      ],
+      "external_state": true,
+      "cacheable": false,
+      "test_tier": "integration"
+    }
+  ],
+  "affected_checks": {
+    "tooling": [
+      {
+        "paths": [
+          "scripts/tests/test_java_selection.py"
+        ],
+        "gates": [
+          "tooling:selection-unit"
+        ]
+      },
+      {
+        "paths": [
+          "scripts/tests/test_test_lanes.py"
+        ],
+        "gates": [
+          "tooling:lane-unit"
+        ]
+      },
+      {
+        "paths": [
+          "scripts/tests/test_release_verify.py"
+        ],
+        "gates": [
+          "tooling:release-unit"
+        ]
+      },
+      {
+        "paths": [
+          "scripts/tests/test_check_docs_standard.py",
+          "scripts/tests/test_verify_readme.py",
+          "scripts/tests/test_check_default_settings_reference.py"
+        ],
+        "gates": [
+          "tooling:docs-unit"
+        ]
+      }
+    ]
+  },
+  "additional_acceptance": "Existing product CI/CONTRIBUTING: MSRV/features, ignored DB, OpenAPI/packed consumer/themes, security and live acceptance remain separate mandatory gates where applicable.",
+  "backend_unit_inputs": [
+    "backend/src/test/**",
+    "backend/src/slowTest/**",
+    "shared/src/test/**",
+    "telegram-bot/src/test/**",
+    "cli/src/test/**"
+  ],
+  "impacts": [
+    {
+      "paths": [
+        "LICENSE",
+        "NOTICE",
+        "THIRD_PARTY_NOTICES.md"
+      ],
+      "components": [
+        "backend",
+        "bot",
+        "cli",
+        "shared"
+      ]
+    },
+    {
+      "paths": [
+        "*.gradle",
+        "*.gradle.kts",
+        "gradle.properties",
+        "gradle/**",
+        "scripts/quality-gradle.sh",
+        "scripts/gradle-context.py",
+        "shared/src/main/**",
+        "shared/build.gradle",
+        "shared/settings.gradle",
+        "shared/gradle.properties"
+      ],
+      "components": [
+        "backend",
+        "bot",
+        "cli",
+        "shared",
+        "tooling"
+      ]
+    }
+  ],
+  "test_policy": {
+    "automatic": [
+      "unit",
+      "static",
+      "artifact"
+    ],
+    "manual_release": [
+      "integration",
+      "slow",
+      "live"
+    ],
+    "release_required": true
+  }
+}

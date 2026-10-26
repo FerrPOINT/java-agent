@@ -20,7 +20,7 @@ repositories {
 dependencies {
     // h10: shared mapper + REST client factory
     implementation project(':shared')
-    // Spring Boot — RestClient for REST calls to backend
+    // Spring Boot Р Р†Р вЂљРІР‚Сњ RestClient for REST calls to backend
     implementation 'org.springframework.boot:spring-boot-starter-web'
 
     // JLine for REPL
@@ -87,8 +87,16 @@ bootJar {
     }
 }
 
+// A changing wall clock must not invalidate resources, tests and the JAR.
+def candidateBuildEpoch = providers.environmentVariable('SOURCE_DATE_EPOCH')
 springBoot {
-    buildInfo()
+    buildInfo {
+        if (candidateBuildEpoch.isPresent()) {
+            properties { time = java.time.Instant.ofEpochSecond(Long.parseLong(candidateBuildEpoch.get())) }
+        } else {
+            excludes = ['time']
+        }
+    }
 }
 
 bootRun {
@@ -97,3 +105,6 @@ bootRun {
 
 // Base test lanes: unit compilation excludes manual boundary sources.
 apply from: file("../gradle/test-lanes.gradle").exists() ? file("../gradle/test-lanes.gradle") : file("gradle/test-lanes.gradle")
+
+// Read-only preparation index, not a successful build or test receipt.
+apply from: file("../gradle/quality-inputs.gradle").exists() ? file("../gradle/quality-inputs.gradle") : file("gradle/quality-inputs.gradle")

@@ -1,6 +1,42 @@
-rootProject.name = 'java-agent'
+import groovy.json.JsonSlurper
 
-include 'shared'
-include 'backend'
-include 'telegram-bot'
-include 'cli'
+rootProject.name = 'java-agent'
+def profile = providers.gradleProperty('qualityRootGraph')
+if (profile.isPresent()) {
+    def contract = new JsonSlurper().parse(file('gradle/java-preparation.json'))
+    def graph = contract.configuration_graphs?.root
+    if (!(contract.schema in ['base-java-preparation/v2', 'base-java-preparation/v3', 'base-java-preparation/v4']) || graph != ['bot', 'cli', 'shared']) {
+        throw new GradleException('Unsupported Java preparation configuration graph')
+    }
+    def directories = [bot: 'telegram-bot', cli: 'cli', shared: 'shared']
+    if (profile.get() == 'clients-v1' && contract.schema == 'base-java-preparation/v2') {
+        graph.each { include directories[it] }
+    } else if (profile.get() == 'clients-selected-v1' && contract.schema in ['base-java-preparation/v3', 'base-java-preparation/v4']) {
+        def requested = providers.gradleProperty('qualityRootComponents').orNull
+        def components = requested == null ? [] : requested.split(',', -1).toList()
+        if (!components || components.toSet().size() != components.size() || !graph.containsAll(components)) {
+            throw new GradleException('Choose explicit unique quality root components')
+        }
+        def selected = [] as Set
+        def visiting = [] as Set
+        def visit
+        visit = { String name ->
+            if (!graph.contains(name) || visiting.contains(name)) throw new GradleException('Invalid Java configuration dependency closure')
+            if (selected.contains(name)) return
+            def dependencies = contract.dependencies?.get(name)
+            if (!(dependencies instanceof List) || dependencies.toSet().size() != dependencies.size()) {
+                throw new GradleException('Invalid Java configuration dependencies')
+            }
+            visiting.add(name)
+            dependencies.each { visit(it) }
+            visiting.remove(name)
+            selected.add(name)
+        }
+        components.each { visit(it) }
+        selected.toList().sort().each { include directories[it] }
+    } else {
+        throw new GradleException('Unsupported quality root graph')
+    }
+} else {
+    include 'shared', 'backend', 'telegram-bot', 'cli'
+}

@@ -2,6 +2,7 @@ name: Manual slow integration
 
 on:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -52,6 +53,8 @@ jobs:
           key: ${{ runner.os }}-gradle-${{ hashFiles('backend/**/gradle-wrapper.properties', 'backend/**/*.gradle', 'backend/**/gradle.properties') }}
           restore-keys: |
             ${{ runner.os }}-gradle-
+      - name: Explicit product process protocols
+        run: python3 -m unittest scripts.tests.test_deploy_dev_systemd scripts.tests.test_deploy_dev_docker scripts.tests.test_parity_dashboard
       - name: Explicit slow PostgreSQL and real-wait tests
         working-directory: backend
         run: ./gradlew releaseCheck fullCheck --no-daemon --max-workers=1

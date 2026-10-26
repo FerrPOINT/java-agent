@@ -11,6 +11,54 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.classify.outputs.backend }}
+      backend_build: ${{ steps.modules.outputs.backend_build }}
+      java_backend: ${{ steps.modules.outputs.java_backend }}
+      java_root: ${{ steps.modules.outputs.java_root }}
+      java_root_tasks: ${{ steps.modules.outputs.java_root_tasks }}
+      frontend: ${{ steps.classify.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: java-agent
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Fetch exact comparison commits
+        working-directory: java-agent
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          if [ -n "$BASE_SHA" ] && [ "$BASE_SHA" != 0000000000000000000000000000000000000000 ]; then
+            git fetch --no-tags --depth=1 origin "$BASE_SHA" "$HEAD_SHA"
+          fi
+      - name: Verify packaged Base selector
+        run: |
+          python3 - <<'PY'
+          import hashlib,json,re
+          from pathlib import Path
+          root=Path('java-agent')
+          pin=(root/'.quality-tooling-revision').read_text().strip()
+          receipt=json.loads((root/'scripts/vendor/base-quality-tooling.json').read_text())
+          if not re.fullmatch(r'[0-9a-f]{40}',pin) or receipt['schema']!='base-quality-tooling/v1' or receipt['revision']!=pin:
+              raise SystemExit('Packaged Base revision mismatch')
+          if hashlib.sha256((root/'scripts/vendor/base_quality_selection.py').read_bytes()).hexdigest()!=receipt['sha256']:
+              raise SystemExit('Packaged Base selector checksum mismatch')
+          PY
+      - id: classify
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 java-agent/scripts/vendor/base_quality_selection.py --root java-agent
+      - id: modules
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 java-agent/scripts/select_java_modules.py
   docs:
     name: Docs standard ratchet
     runs-on: ubuntu-latest
@@ -22,7 +70,7 @@ jobs:
       - name: Verify shipped-default documentation coverage
         run: python3 scripts/check_default_settings_reference.py
       - name: Documentation and release-script unit tests
-        run: python3 -m unittest scripts.tests.test_check_docs_standard scripts.tests.test_check_default_settings_reference scripts.tests.test_release_verify scripts.tests.test_deploy_dev_systemd scripts.tests.test_deploy_dev_docker scripts.tests.test_parity_dashboard
+        run: python3 -m unittest scripts.tests.test_check_docs_standard scripts.tests.test_check_default_settings_reference scripts.tests.test_release_verify scripts.tests.test_test_lanes scripts.tests.test_java_selection
 
   readme:
     name: README evidence
@@ -36,12 +84,16 @@ jobs:
         run: python3 scripts/verify_readme.py
 
   test:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     name: Test
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
 
+      - name: Validate the reviewed test inventory
+        run: python3 scripts/check_test_lanes.py
       - name: Set up JDK 25
         uses: actions/setup-java@v6
         with:
@@ -56,7 +108,7 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('backend/**/gradle-wrapper.properties', 'backend/**/*.gradle', 'backend/**/gradle.properties') }}
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/gradle-wrapper.properties', '**/*.gradle', '**/gradle.properties', 'gradle/test-lanes.json', 'gradle/java-preparation.json') }}
           restore-keys: |
             ${{ runner.os }}-gradle-
 
@@ -64,14 +116,25 @@ jobs:
         run: chmod +x gradlew backend/gradlew
 
       - name: Backend unit tests and the same candidate JAR
-        working-directory: backend
-        run: ./gradlew test bootJar --no-daemon --max-workers=2
+        if: needs.changes.outputs.java_backend == 'true'
+        run: bash scripts/quality-gradle.sh --backend :test ${{ needs.changes.outputs.backend_build == 'true' && ':bootJar' || '' }} --no-daemon --max-workers=2
 
-      - name: Run telegram-bot and cli tests
-        run: ./gradlew :telegram-bot:test :cli:test :shared:test --no-daemon --max-workers=2
+      - name: Selected root unit tasks
+        if: needs.changes.outputs.java_root == 'true'
+        env:
+          ROOT_UNIT_TASKS: ${{ needs.changes.outputs.java_root_tasks }}
+        run: |
+          read -r -a tasks <<< "$ROOT_UNIT_TASKS"
+          test "${#tasks[@]}" -gt 0
+          for task in "${tasks[@]}"; do
+            case "$task" in :telegram-bot:test|:cli:test|:shared:test) ;; *) exit 64 ;; esac
+          done
+          bash scripts/quality-gradle.sh --quality-root "${tasks[@]}" --no-daemon --max-workers=2
       - name: Seal the tested backend candidate
+        if: needs.changes.outputs.backend_build == 'true'
         run: sha256sum backend/build/libs/*.jar > backend/build/libs/SHA256SUMS
       - uses: actions/upload-artifact@v7
+        if: needs.changes.outputs.backend_build == 'true'
         with:
           name: tested-backend-candidate
           path: backend/build/libs/

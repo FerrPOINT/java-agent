@@ -1,0 +1,11 @@
+name: Manual release qualification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    uses: ./.github/workflows/integration.yml

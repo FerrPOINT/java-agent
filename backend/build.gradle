@@ -62,12 +62,12 @@ dependencies {
     // MCP (GA 2.0, not in Spring Boot BOM)
     implementation 'io.modelcontextprotocol.sdk:mcp:2.0.0'
 
-    // DB / migrations — versions managed by Spring Boot 4.1 BOM
+    // DB / migrations Р Р†Р вЂљРІР‚Сњ versions managed by Spring Boot 4.1 BOM
     implementation 'org.flywaydb:flyway-core'
     implementation 'org.postgresql:postgresql'
     implementation 'org.flywaydb:flyway-database-postgresql'
 
-    // (Pebble templating removed — was unused)
+    // (Pebble templating removed Р Р†Р вЂљРІР‚Сњ was unused)
 
     implementation 'io.github.resilience4j:resilience4j-retry:2.4.0'
     implementation 'io.github.resilience4j:resilience4j-timelimiter:2.4.0'
@@ -107,7 +107,7 @@ dependencies {
     implementation 'com.cronutils:cron-utils:9.2.1'
     implementation 'com.bucket4j:bucket4j-core:8.10.1'
 
-    // (commons-imaging removed — was unused)
+    // (commons-imaging removed Р Р†Р вЂљРІР‚Сњ was unused)
 
     // Logging
     implementation 'org.slf4j:slf4j-api:2.0.20'
@@ -131,7 +131,7 @@ tasks.named('test') {
     // access to the unmodifiable env map backing System.getenv().
     jvmArgs '--add-opens=java.base/java.util=ALL-UNNAMED', '--add-opens=java.base/java.lang=ALL-UNNAMED'
     maxHeapSize = '4g'
-    // DEBT-3: strict-stubs flakes (OpenAiRunsControllerTest) under parallel forks —
+    // DEBT-3: strict-stubs flakes (OpenAiRunsControllerTest) under parallel forks Р Р†Р вЂљРІР‚Сњ
     // async run tests race Mockito verification. Serialized forks + periodic
     // fork recycling (audit 2026-09-01 stabilization, ported from 0b348696).
     maxParallelForks = 1
@@ -178,7 +178,7 @@ tasks.register('e2eTest', Test) {
     jvmArgs '-XX:+EnableDynamicAgentLoading'
     maxHeapSize = '2g'
     systemProperty 'e2e.baseUrl', System.getProperty('e2e.baseUrl', 'http://localhost:18090')
-    systemProperty 'e2e.agentName', System.getProperty('e2e.agentName', 'Джава агент')
+    systemProperty 'e2e.agentName', System.getProperty('e2e.agentName', 'Р В РІР‚СњР В Р’В¶Р В Р’В°Р В Р вЂ Р В Р’В° Р В Р’В°Р В РЎвЂ“Р В Р’ВµР В Р вЂ¦Р РЋРІР‚С™')
     testClassesDirs = sourceSets.test.output.classesDirs
     classpath = sourceSets.test.runtimeClasspath
 }
@@ -192,7 +192,7 @@ tasks.named('jacocoTestReport') {
     }
 }
 
-// L6: Disable plain jar — only bootJar is needed for deployment
+// L6: Disable plain jar Р Р†Р вЂљРІР‚Сњ only bootJar is needed for deployment
 tasks.named('jar') {
     enabled = false
 }
@@ -275,8 +275,16 @@ tasks.withType(JavaCompile).configureEach {
     options.release = 25
 }
 
+// A changing wall clock must not invalidate resources, tests and the JAR.
+def candidateBuildEpoch = providers.environmentVariable('SOURCE_DATE_EPOCH')
 springBoot {
-    buildInfo()
+    buildInfo {
+        if (candidateBuildEpoch.isPresent()) {
+            properties { time = java.time.Instant.ofEpochSecond(Long.parseLong(candidateBuildEpoch.get())) }
+        } else {
+            excludes = ['time']
+        }
+    }
 }
 
 def ferrpointNoticeFiles = [
@@ -342,3 +350,6 @@ dependencies {
     manualTestImplementation 'org.testcontainers:postgresql:1.21.4'
     manualTestImplementation 'org.testcontainers:junit-jupiter:1.21.4'
 }
+
+// Read-only preparation index, not a successful build or test receipt.
+apply from: file("../gradle/quality-inputs.gradle").exists() ? file("../gradle/quality-inputs.gradle") : file("gradle/quality-inputs.gradle")

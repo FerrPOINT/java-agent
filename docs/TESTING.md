@@ -92,3 +92,38 @@ profiles и полная release/live приёмка квалифицируют�
 fixture не заменяет компиляцию и исполнение текущих application tests.
 Прогретые Gradle dependencies/task caches сохраняются; `clean` не является
 обычной подготовкой. Ресурсные измерения не выводятся из `maxHeapSize`.
+
+## Выбор компонентов и повторная подготовка
+
+Из workspace PDLC2:
+
+```powershell
+./check-workspace.ps1 -Profile Unit -Repository java-agent -Component cli -PlanOnly
+./check-workspace.ps1 -Profile Build -Repository java-agent -BaseRef HEAD -PlanOnly
+```
+
+`-Component` задаёт явный scope; без него Base выбирает changed paths. Docs-only
+не выбирает application producers, test-only не выбирает JAR. Shared main
+расширяет проверки на реальных consumers; неизвестный путь сохраняет полный
+fallback продукта. CI потребляет тот же exact packaged selector. Root quality,
+SDK/UI/skills/operator pins независимы и не переключаются при этой adoption.
+
+`make test MODULE=cli`, `make jar MODULE=bot` выбирают один модуль и необходимые
+Shared dependencies. Совместимые goals объединяются в один вызов wrapper.
+`--quality-root` конфигурирует только выбранный client dependency closure;
+полный root graph остаётся доступен для ручной integration/coverage.
+Bot owner/Flyway dependency сохраняется только в полном manual graph.
+Raw bot/CLI Docker builders используют тот же selected Settings profile.
+
+`bootBuildInfo` получает стабильный явный `SOURCE_DATE_EPOCH` из helper; raw
+callers без этого input не записывают поле времени. Clock time больше не является
+скрытым входом ресурсов. Подтверждение actual UP-TO-DATE на native остаётся gate.
+Версии wrappers и heap/fork budgets сохранены. Automatic configuration cache
+и compiler-cache grants не включены. Download/Gradle incremental caches сохраняются.
+Product receipts пока cacheable=false до отдельной native qualification;
+это не отключает штатную инкрементальность Gradle и не разрешает повторный install.
+
+Ручной release workflow делегирует существующему integration workflow:
+повторные jobs и новая оркестрация тестов не добавляются. Проверки deploy/parity
+process protocols перенесены из automatic docs job в manual gate; их inventory
+сохранён. Финальный native/Docker/coverage gate ещё не выполнен.
