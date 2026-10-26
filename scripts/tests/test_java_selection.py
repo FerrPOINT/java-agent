@@ -72,7 +72,13 @@ class JavaSelectionTests(unittest.TestCase):
 
     def test_inventory_changes_select_validation_before_java_work(self):
         value = self.plan(['gradle/test-lanes.json'], profile='unit')
-        self.assertIn('tooling:test-lane-inventory', [g['id'] for g in value['gates']])
+        self.assertIn('tooling:unit', [g['id'] for g in value['gates']])
+
+    def test_actual_source_inventory_is_complete_before_compilation(self):
+        from scripts.check_test_lanes import validate
+        counts = validate(ROOT)
+        self.assertEqual(set(counts), {'unit', 'integration', 'slow', 'live'})
+        self.assertGreater(counts['unit'], 0)
 
 
 if __name__ == '__main__':

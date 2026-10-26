@@ -65,6 +65,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Docs & test-standard ratchet (baseline in docs/standards/coverage-baseline.json)
         run: python3 scripts/check_docs_standard.py
       - name: Verify shipped-default documentation coverage
@@ -84,13 +86,15 @@ jobs:
         run: python3 scripts/verify_readme.py
 
   test:
-    needs: changes
+    needs: [changes, docs]
     if: needs.changes.outputs.backend == 'true'
     name: Test
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Validate the reviewed test inventory
         run: python3 scripts/check_test_lanes.py

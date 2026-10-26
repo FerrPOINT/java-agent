@@ -98,6 +98,59 @@
   },
   "gates": [
     {
+      "id": "tooling:unit",
+      "component": "tooling",
+      "profiles": [
+        "fast",
+        "unit",
+        "build",
+        "integrated",
+        "release"
+      ],
+      "argv": [
+        "{python}",
+        "-B",
+        "-m",
+        "unittest",
+        "scripts.tests.test_java_selection",
+        "scripts.tests.test_test_lanes",
+        "scripts.tests.test_release_verify",
+        "scripts.tests.test_check_docs_standard",
+        "scripts.tests.test_verify_readme",
+        "scripts.tests.test_check_default_settings_reference",
+        "-q"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "gradle/test-lanes.json",
+        "gradle/test-lanes.gradle",
+        "*/src/test/**",
+        "scripts/check_test_lanes.py",
+        "gradle/test-topology.gradle",
+        "gradle/test-membership.gradle",
+        ".quality-gate.json",
+        "scripts/vendor/**",
+        "scripts/select_java_modules.py",
+        "scripts/tests/test_java_selection.py",
+        "scripts/check_docs_standard.py",
+        "scripts/verify_readme.py",
+        "scripts/check_default_settings_reference.py",
+        "scripts/release_verify.py",
+        "scripts/tests/test_test_lanes.py",
+        "scripts/tests/test_release_verify.py",
+        "scripts/tests/test_check_docs_standard.py",
+        "scripts/tests/test_verify_readme.py",
+        "scripts/tests/test_check_default_settings_reference.py",
+        "backend/src/test/**",
+        "telegram-bot/src/test/**",
+        "cli/src/test/**",
+        "shared/src/test/**"
+      ],
+      "cacheable": false,
+      "execution_slot": "none",
+      "test_tier": "unit"
+    },
+    {
       "id": "tooling:source-sets-native",
       "component": "tooling",
       "profiles": [
@@ -124,31 +177,6 @@
       ],
       "external_state": true,
       "cacheable": false
-    },
-    {
-      "id": "tooling:test-lane-inventory",
-      "component": "tooling",
-      "profiles": [
-        "fast",
-        "unit",
-        "build",
-        "release"
-      ],
-      "test_tier": "static",
-      "argv": [
-        "{python}",
-        "-B",
-        "scripts/check_test_lanes.py"
-      ],
-      "inputs": [
-        "gradle/test-lanes.json",
-        "gradle/test-lanes.gradle",
-        "*/src/test/**",
-        "scripts/check_test_lanes.py",
-        "gradle/test-topology.gradle",
-        "gradle/test-membership.gradle"
-      ],
-      "cacheable": true
     },
     {
       "id": "docs:readme",
@@ -933,146 +961,6 @@
       "external_state": true
     },
     {
-      "id": "tooling:selection-unit",
-      "component": "tooling",
-      "profiles": [
-        "fast",
-        "unit",
-        "build",
-        "integrated",
-        "release"
-      ],
-      "argv": [
-        "{python}",
-        "-B",
-        "-m",
-        "unittest",
-        "scripts.tests.test_java_selection",
-        "-q"
-      ],
-      "cwd": ".",
-      "inputs": [
-        ".quality-gate.json",
-        "scripts/vendor/**",
-        "scripts/select_java_modules.py",
-        "scripts/tests/test_java_selection.py",
-        "scripts/check_docs_standard.py",
-        "scripts/verify_readme.py",
-        "scripts/check_default_settings_reference.py",
-        "scripts/release_verify.py",
-        "scripts/check_test_lanes.py"
-      ],
-      "cacheable": false,
-      "execution_slot": "none",
-      "test_tier": "unit"
-    },
-    {
-      "id": "tooling:lane-unit",
-      "component": "tooling",
-      "profiles": [
-        "fast",
-        "unit",
-        "build",
-        "integrated",
-        "release"
-      ],
-      "argv": [
-        "{python}",
-        "-B",
-        "-m",
-        "unittest",
-        "scripts.tests.test_test_lanes",
-        "-q"
-      ],
-      "cwd": ".",
-      "inputs": [
-        ".quality-gate.json",
-        "scripts/vendor/**",
-        "scripts/select_java_modules.py",
-        "scripts/tests/test_test_lanes.py",
-        "scripts/check_docs_standard.py",
-        "scripts/verify_readme.py",
-        "scripts/check_default_settings_reference.py",
-        "scripts/release_verify.py",
-        "scripts/check_test_lanes.py"
-      ],
-      "cacheable": false,
-      "execution_slot": "none",
-      "test_tier": "unit"
-    },
-    {
-      "id": "tooling:release-unit",
-      "component": "tooling",
-      "profiles": [
-        "fast",
-        "unit",
-        "build",
-        "integrated",
-        "release"
-      ],
-      "argv": [
-        "{python}",
-        "-B",
-        "-m",
-        "unittest",
-        "scripts.tests.test_release_verify",
-        "-q"
-      ],
-      "cwd": ".",
-      "inputs": [
-        ".quality-gate.json",
-        "scripts/vendor/**",
-        "scripts/select_java_modules.py",
-        "scripts/tests/test_release_verify.py",
-        "scripts/check_docs_standard.py",
-        "scripts/verify_readme.py",
-        "scripts/check_default_settings_reference.py",
-        "scripts/release_verify.py",
-        "scripts/check_test_lanes.py"
-      ],
-      "cacheable": false,
-      "execution_slot": "none",
-      "test_tier": "unit"
-    },
-    {
-      "id": "tooling:docs-unit",
-      "component": "tooling",
-      "profiles": [
-        "fast",
-        "unit",
-        "build",
-        "integrated",
-        "release"
-      ],
-      "argv": [
-        "{python}",
-        "-B",
-        "-m",
-        "unittest",
-        "scripts.tests.test_check_docs_standard",
-        "scripts.tests.test_verify_readme",
-        "scripts.tests.test_check_default_settings_reference",
-        "-q"
-      ],
-      "cwd": ".",
-      "inputs": [
-        ".quality-gate.json",
-        "scripts/vendor/**",
-        "scripts/select_java_modules.py",
-        "scripts/tests/test_check_docs_standard.py",
-        "scripts/tests/test_verify_readme.py",
-        "scripts/tests/test_check_default_settings_reference.py",
-        "scripts/check_docs_standard.py",
-        "scripts/verify_readme.py",
-        "scripts/check_default_settings_reference.py",
-        "scripts/release_verify.py",
-        "scripts/check_test_lanes.py"
-      ],
-      "cacheable": false,
-      "execution_slot": "none",
-      "test_tier": "unit"
-    },
-    {
       "id": "tooling:process-protocol",
       "component": "tooling",
       "profiles": [
@@ -1246,36 +1134,15 @@
     "tooling": [
       {
         "paths": [
-          "scripts/tests/test_java_selection.py"
-        ],
-        "gates": [
-          "tooling:selection-unit"
-        ]
-      },
-      {
-        "paths": [
-          "scripts/tests/test_test_lanes.py"
-        ],
-        "gates": [
-          "tooling:lane-unit"
-        ]
-      },
-      {
-        "paths": [
-          "scripts/tests/test_release_verify.py"
-        ],
-        "gates": [
-          "tooling:release-unit"
-        ]
-      },
-      {
-        "paths": [
+          "scripts/tests/test_java_selection.py",
+          "scripts/tests/test_test_lanes.py",
+          "scripts/tests/test_release_verify.py",
           "scripts/tests/test_check_docs_standard.py",
           "scripts/tests/test_verify_readme.py",
           "scripts/tests/test_check_default_settings_reference.py"
         ],
         "gates": [
-          "tooling:docs-unit"
+          "tooling:unit"
         ]
       }
     ]
