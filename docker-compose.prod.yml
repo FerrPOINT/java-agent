@@ -45,6 +45,7 @@ services:
 
   # ── Backend (Java Agent) ──
   agent:
+    init: true
     build:
       context: .
       dockerfile: Dockerfile
@@ -92,7 +93,7 @@ services:
         reservations:
           memory: 512m
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/actuator/health/readiness >/dev/null || exit 1"]
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "--max-time", "2", "--output", "/dev/null", "http://localhost:8080/actuator/health/readiness"]
       interval: 15s
       timeout: 5s
       retries: 10
@@ -106,6 +107,7 @@ services:
 
   # ── Telegram Bot ──
   telegram-bot:
+    init: true
     build:
       context: .
       dockerfile: telegram-bot/Dockerfile
@@ -147,7 +149,7 @@ services:
         reservations:
           memory: 128m
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8091/actuator/health >/dev/null || exit 1"]
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "--max-time", "2", "--output", "/dev/null", "http://localhost:8091/actuator/health"]
       interval: 15s
       timeout: 5s
       retries: 5
