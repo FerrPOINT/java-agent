@@ -63,51 +63,20 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew backend/gradlew
 
-      - name: Run backend tests
+      - name: Backend unit tests and the same candidate JAR
         working-directory: backend
-        run: ./gradlew test --no-daemon
-
-      - name: Coverage report (visibility, non-blocking)
-        working-directory: backend
-        run: |
-          ./gradlew jacocoTestReport --no-daemon -x test
-          # The XML is a JaCoCo-generated local artifact, not untrusted input; stdlib parse is safe here.
-          python3 - <<'EOF'
-          import json, os, xml.etree.ElementTree as ET
-          root = ET.parse('build/reports/jacoco/test/jacocoTestReport.xml').getroot()
-          line = next(x for x in root.findall('counter') if x.get('type') == 'LINE')
-          c, m = int(line.get('covered')), int(line.get('missed'))
-          pct = 100 * c / (c + m)
-          floor = json.load(open('../docs/standards/coverage-baseline.json'))['line_coverage']['backend']
-          print(f'fast backend LINE coverage: {pct:.2f}% (floor: {floor:.2f}%)')
-          with open(os.environ.get('GITHUB_STEP_SUMMARY', '/dev/null'), 'a') as summary:
-              summary.write(f'## Fast backend LINE coverage: {pct:.2f}% (floor {floor:.2f}%)\n')
-          EOF
+        run: ./gradlew test bootJar --no-daemon --max-workers=2
 
       - name: Run telegram-bot and cli tests
-        run: ./gradlew :telegram-bot:test :cli:test --no-daemon
-
-      - name: Coverage ratchet (blocking, baseline in docs/standards/coverage-baseline.json)
-        run: |
-          ./gradlew :telegram-bot:jacocoTestReport --no-daemon -x test
-          python3 scripts/check_docs_standard.py --check-coverage
-
-  build:
-    name: Build bootJar
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v7
-      - name: Set up JDK 25
-        uses: actions/setup-java@v6
+        run: ./gradlew :telegram-bot:test :cli:test :shared:test --no-daemon --max-workers=2
+      - name: Seal the tested backend candidate
+        run: sha256sum backend/build/libs/*.jar > backend/build/libs/SHA256SUMS
+      - uses: actions/upload-artifact@v7
         with:
-          distribution: 'temurin'
-          java-version: '25.0.4+101.0.LTS'
-      - name: Verify exact Temurin runtime
-        run: java -XshowSettings:properties -version 2>&1 | grep -F 'java.runtime.version = 25.0.4.1+1-LTS'
-      - name: Build bootJar
-        working-directory: backend
-        run: ./gradlew bootJar --no-daemon -x test
+          name: tested-backend-candidate
+          path: backend/build/libs/
+          retention-days: 7
+
 
   lint:
     name: Markdown / YAML lint

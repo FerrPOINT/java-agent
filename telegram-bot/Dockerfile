@@ -3,6 +3,7 @@ WORKDIR /workspace
 COPY LICENSE NOTICE THIRD_PARTY_NOTICES.md ./
 COPY settings.gradle ./
 COPY gradle ./gradle
+COPY docs/standards/coverage-baseline.json ./docs/standards/coverage-baseline.json
 COPY gradlew ./
 # settings.gradle configures every module, so keep their build files available
 # even though this image only builds the bot and shared modules.
@@ -12,7 +13,7 @@ COPY shared/src ./shared/src
 COPY backend/build.gradle ./backend/build.gradle
 COPY telegram-bot/build.gradle ./telegram-bot/build.gradle
 COPY telegram-bot/src ./telegram-bot/src
-RUN chmod +x gradlew && ./gradlew :telegram-bot:bootJar -x test
+RUN sed -i 's/\r$//' gradlew && chmod +x gradlew && ./gradlew :telegram-bot:bootJar
 
 FROM eclipse-temurin:25.0.4.1_1-jre-noble@sha256:398f810215757dc1926390014272579fb0e57c41ef1c8aa4f64ae761613a168b
 RUN apt-get update && apt-get install -y --no-install-recommends \

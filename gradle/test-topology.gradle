@@ -1,0 +1,74 @@
+// Dependency configurations and classpaths are shared by preparation and execution.
+def commonSources = sourceSets.create('testSupport')
+def manualSources = sourceSets.create('manualTest')
+commonSources.resources.setSrcDirs([])
+manualSources.resources.setSrcDirs([])
+// Share processTestResources outputs directly. Manual tests need neither unit
+// classes nor a second copy of the same fixture resources.
+manualSources.runtimeClasspath += files(tasks.named('processTestResources'))
+['Implementation', 'CompileOnly', 'RuntimeOnly', 'AnnotationProcessor'].each { suffix ->
+    def unitConfiguration = configurations.getByName('test' + suffix)
+    configurations.named('testSupport' + suffix) { extendsFrom(unitConfiguration) }
+    configurations.named('manualTest' + suffix) { extendsFrom(unitConfiguration) }
+}
+commonSources.compileClasspath += sourceSets.main.output
+commonSources.runtimeClasspath += sourceSets.main.output
+sourceSets.test.compileClasspath += commonSources.output
+sourceSets.test.runtimeClasspath += commonSources.output
+manualSources.compileClasspath += sourceSets.main.output + commonSources.output
+manualSources.runtimeClasspath += sourceSets.main.output + commonSources.output
+
+tasks.register('integrationTest', Test) {
+    description = 'Manual release lane: boundary tests outside the reviewed unit set'
+    group = 'verification'
+    testClassesDirs = manualSources.output.classesDirs
+    classpath = manualSources.runtimeClasspath
+    useJUnitPlatform { excludeTags 'slow', 'live', 'e2e' }
+    def unit = tasks.named('test', Test).get()
+    jvmArgs unit.jvmArgs
+    maxHeapSize = unit.maxHeapSize
+    maxParallelForks = unit.maxParallelForks
+    forkEvery = unit.forkEvery
+    // External state must be checked again for each release invocation.
+    outputs.upToDateWhen { false }
+    outputs.cacheIf { false }
+}
+
+if (tasks.findByName('slowTest') == null) {
+    tasks.register('slowTest', Test) {
+        group = 'verification'
+        testClassesDirs = manualSources.output.classesDirs
+        classpath = manualSources.runtimeClasspath
+    }
+}
+tasks.named('slowTest', Test) {
+    description = 'Manual release lane: tagged and measured slow test classes'
+    testClassesDirs = manualSources.output.classesDirs
+    classpath = manualSources.runtimeClasspath
+    useJUnitPlatform {
+        // File inventory includes untagged timers/expensive cases; tags alone lost them.
+        includeTags = [] as Set
+        excludeTags 'live', 'e2e'
+    }
+    def unit = tasks.named('test', Test).get()
+    jvmArgs unit.jvmArgs
+    maxHeapSize = unit.maxHeapSize
+    maxParallelForks = unit.maxParallelForks
+    outputs.upToDateWhen { false }
+    outputs.cacheIf { false }
+}
+
+['liveTest', 'e2eTest'].each { name ->
+    if (tasks.findByName(name) != null) {
+        tasks.named(name, Test) {
+            testClassesDirs = manualSources.output.classesDirs
+            classpath = manualSources.runtimeClasspath
+            outputs.upToDateWhen { false }
+            outputs.cacheIf { false }
+        }
+    }
+}
+
+if (tasks.findByName('bootJar') != null) {
+    tasks.named('bootJar') { dependsOn tasks.named('test') }
+}

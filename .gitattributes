@@ -1,0 +1,6 @@
+
+# Stable bytes for the qualified shared Gradle source-set mechanism.
+gradle/test-lanes.gradle text eol=lf
+gradle/test-topology.gradle text eol=lf
+gradle/test-membership.gradle text eol=lf
+scripts/tests/test_source_sets_native.py text eol=lf

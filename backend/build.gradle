@@ -120,9 +120,6 @@ dependencies {
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 
     // Testcontainers for real PostgreSQL integration tests
-    testImplementation 'org.testcontainers:testcontainers:1.21.4'
-    testImplementation 'org.testcontainers:postgresql:1.21.4'
-    testImplementation 'org.testcontainers:junit-jupiter:1.21.4'
 }
 
 tasks.named('test') {
@@ -236,7 +233,8 @@ tasks.named('jacocoTestCoverageVerification', JacocoCoverageVerification) {
     }
 }
 
-check.dependsOn jacocoTestCoverageVerification
+// Full old-fast coverage is a manual release gate, not ordinary check/build.
+tasks.register('releaseCheck') { dependsOn jacocoTestCoverageVerification }
 
 // Manual only: no build/check/default coverage dependency points at this lane.
 tasks.register('jacocoFullTestReport', JacocoReport) {
@@ -320,3 +318,27 @@ tasks.named('bootJar') {
 
 // For plain java -jar runs, add this option via environment or wrapper script.
 // Example: JAVA_TOOL_OPTIONS='--enable-native-access=ALL-UNNAMED' java -jar ...
+
+// Base test lanes: unit compilation excludes manual boundary sources.
+apply from: file("../gradle/test-lanes.gradle").exists() ? file("../gradle/test-lanes.gradle") : file("gradle/test-lanes.gradle")
+
+// Preserve the former fast and combined coverage scopes and both unchanged floors.
+tasks.named('jacocoTestReport') {
+    dependsOn tasks.named('integrationTest')
+    executionData(tasks.named('test').get(), tasks.named('integrationTest').get())
+}
+tasks.named('jacocoTestCoverageVerification') {
+    executionData(tasks.named('test').get(), tasks.named('integrationTest').get())
+}
+tasks.named('jacocoFullTestReport') {
+    dependsOn tasks.named('integrationTest')
+    executionData(tasks.named('test').get(), tasks.named('integrationTest').get(), tasks.named('slowTest').get())
+}
+tasks.named('jacocoFullTestCoverageVerification') {
+    executionData(tasks.named('test').get(), tasks.named('integrationTest').get(), tasks.named('slowTest').get())
+}
+dependencies {
+    manualTestImplementation 'org.testcontainers:testcontainers:1.21.4'
+    manualTestImplementation 'org.testcontainers:postgresql:1.21.4'
+    manualTestImplementation 'org.testcontainers:junit-jupiter:1.21.4'
+}

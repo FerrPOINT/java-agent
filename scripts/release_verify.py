@@ -111,8 +111,10 @@ def line_coverage(module: str) -> dict[str, Any] | None:
 
 def collect_metrics() -> dict[str, Any]:
     return {
-        "tests": {module: test_summary(module) for module in MODULES},
-        "slow_tests": {"backend": test_summary("backend", "slowTest")},
+        "test_result_scope": "Gradle XML directory snapshots; executed scope and verdict are in gates, not old XML",
+        "tests": {module: test_summary(module) for module in (*MODULES, "shared")},
+        "integration_tests": {module: test_summary(module, "integrationTest") for module in (*MODULES, "shared")},
+        "slow_tests": {module: test_summary(module, "slowTest") for module in (*MODULES, "shared")},
         "line_coverage": {
             module: coverage
             for module in MODULES
@@ -147,9 +149,24 @@ def write_report(report_path: Path, gates: list[GateResult], state: str) -> None
     report_path.write_text(json.dumps(report, ensure_ascii=True, indent=2) + "\n")
 
 
+def gradle_commands(*, run_slow: bool, boot_jars: bool) -> list[tuple[str, list[str]]]:
+    """Keep wrapper identities while sharing each selected execution graph."""
+    backend = ["./backend/gradlew", "-p", "backend", "--no-daemon", "--max-workers=2", ":releaseCheck"]
+    clients = ["./gradlew", "--no-daemon", "--max-workers=2",
+               ":telegram-bot:jacocoTestReport", ":cli:test", ":cli:integrationTest",
+               ":shared:test", ":shared:integrationTest"]
+    if run_slow:
+        backend += [":fullCheck"]
+        clients += [":telegram-bot:slowTest", ":cli:slowTest", ":shared:slowTest"]
+    if boot_jars:
+        backend += [":bootJar"]
+        clients += [":telegram-bot:bootJar", ":cli:bootJar"]
+    return [("backend-tests-coverage" + ("-slow" if run_slow else "") + ("-jar" if boot_jars else ""), backend),
+            ("client-tests-coverage" + ("-slow" if run_slow else "") + ("-jars" if boot_jars else ""), clients)]
+
+
 def main() -> int:
     args = parse_args()
-    gradle = ["./gradlew", "--no-daemon"]
     gates: list[GateResult] = []
 
     def record(gate: GateResult) -> None:
@@ -157,21 +174,11 @@ def main() -> int:
         write_report(args.report, gates, "RUNNING")
 
     write_report(args.report, gates, "RUNNING")
+    for name, command in gradle_commands(run_slow=args.run_slow, boot_jars=not args.skip_boot_jars):
+        record(run_command(name, command, args.timeout))
     record(run_command(
-        "module-tests",
-        gradle + [":backend:test", ":telegram-bot:test", ":cli:test"],
-        args.timeout,
-    ))
-    record(run_command(
-        "coverage-reports",
-        gradle + [
-            ":backend:jacocoTestReport",
-            ":telegram-bot:jacocoTestReport",
-            "-x",
-            ":backend:test",
-            "-x",
-            ":telegram-bot:test",
-        ],
+        "documentation-coverage-ratchet",
+        [sys.executable, "scripts/check_docs_standard.py", "--check-coverage"],
         args.timeout,
     ))
     record(run_command(
@@ -179,18 +186,10 @@ def main() -> int:
         [sys.executable, "scripts/endpoint_coverage_report.py"],
         args.timeout,
     ))
-    if args.run_slow:
-        record(run_command("slow-postgresql-integration", gradle + [":backend:fullCheck"], args.timeout))
-    else:
+    if not args.run_slow:
         record(not_run("slow-postgresql-integration", "manual only; pass --run-slow"))
     if args.skip_boot_jars:
         record(not_run("boot-jars", "disabled by --skip-boot-jars"))
-    else:
-        record(run_command(
-            "boot-jars",
-            gradle + [":backend:bootJar", ":telegram-bot:bootJar", ":cli:bootJar"],
-            args.timeout,
-        ))
     record(run_command(
         "release-runner-self-test",
         [sys.executable, "-m", "unittest", "scripts.tests.test_release_verify"],

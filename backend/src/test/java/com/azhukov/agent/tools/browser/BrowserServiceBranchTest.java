@@ -311,11 +311,7 @@ class BrowserServiceBranchTest {
         var fakeWsField = CdpClient.class.getDeclaredField("webSocketClient");
         fakeWsField.setAccessible(true);
 
-        // Use the FakeWebSocket from CdpClientExtraTest pattern
-        var wsClass = Class.forName("com.azhukov.agent.tools.browser.CdpClientExtraTest$FakeWebSocket");
-        var wsConstructor = wsClass.getDeclaredConstructor();
-        wsConstructor.setAccessible(true);
-        var ws = (org.java_websocket.client.WebSocketClient) wsConstructor.newInstance();
+        var ws = new CdpTestWebSocket();
         fakeWsField.set(client, ws);
 
         CompletableFuture<JsonNode> future = client.send("Page.enable", null);

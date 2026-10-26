@@ -54,7 +54,11 @@ jobs:
             ${{ runner.os }}-gradle-
       - name: Explicit slow PostgreSQL and real-wait tests
         working-directory: backend
-        run: ./gradlew fullCheck --no-daemon --max-workers=1
+        run: ./gradlew releaseCheck fullCheck --no-daemon --max-workers=1
+      - name: Manual bot coverage and PostgreSQL owner migration graph
+        run: ./gradlew :telegram-bot:jacocoTestReport :telegram-bot:slowTest :cli:test :cli:integrationTest :cli:slowTest :shared:test :shared:integrationTest :shared:slowTest --no-daemon --max-workers=1
+      - name: Preserve backend/bot coverage ratchets
+        run: python3 scripts/check_docs_standard.py --check-coverage
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -62,3 +66,6 @@ jobs:
           path: |
             backend/build/test-results/slowTest
             backend/build/reports/jacoco/full
+            backend/build/reports/jacoco/test
+            telegram-bot/build/test-results
+            telegram-bot/build/reports/jacoco
