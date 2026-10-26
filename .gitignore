@@ -58,3 +58,6 @@ __pycache__/
 /backend/.env
 repomix-output.*
 repomix-output.xml
+
+# Owned local tooling, caches and evidence are not application source inputs.
+/.local/
