@@ -39,8 +39,13 @@ Gradle rejects unknown/stale sources before compilation. Preserve shared test
 resources and full release coverage. This sourceSet change needs application
 qualification; the bounded Gradle metadata fixture alone does not qualify it.
 New Base context readers verify the actual selected JDK/configuration using
-`scripts/gradle-context.py`. Backend/Bot/Shared and portable grouped receipt reuse
-remain disabled. The selected Windows CLI candidate declares native consent;
+`scripts/gradle-context.py`. Backend and portable grouped receipt reuse remain
+disabled. Selected Windows Bot/Shared declare native consent through the separate
+Base `javaNativeExecution` profile (`-JavaNativeExecution`, desktop-linux and
+explicit bot/shared components); their graph contains only Bot/Shared or Shared.
+Bot Build declares one exact JAR. Source consent alone is not native proof;
+the current qualification belongs to the canonical Base performance plan.
+The selected Windows CLI candidate declares native consent;
 accept it only after current distribution/resolved-input, Unit/JAR and unchanged
 Root reuse proofs in TESTING. Source consent alone is not native qualification.
 `qualityDependencyInputs` is explicit preparation only; ordinary test/bootJar

@@ -30,6 +30,27 @@ release proof.
 
 ## Разработка и сборка
 
+### Выбранные native Bot/Shared
+
+Из root workspace:
+
+```powershell
+./check-workspace.ps1 -Profile Build -Repository java-agent `
+  -Component @('bot','shared') -NativeDockerContext desktop-linux -JavaNativeExecution
+```
+
+Для отдельных компонентов использовать `-Component bot` или `-Component shared`.
+Выбираются только необходимые unit gates и один Bot JAR; CLI/Backend не входят
+в selected root graph. Default CLI packet и независимые product pins сохраняются.
+
+`bot:unit`, `bot:build`, `shared:unit` явно разрешают receipt reuse, но Base
+принимает его только при проверенном JDK/distribution/dependency graph, исходном
+unit/JAR proof и terminal cleanup. Нет пригодного proof — один admitted producer;
+есть proof — без установки, source export и Gradle. Native qualification этого
+source tuple фиксируется отдельно в каноническом performance плане Base; opt-in
+manifest и fixture tests её не заменяют. Backend/portable grouped receipts и
+compiler-cache qualification этим scope не включаются.
+
 ### Явный scope Makefile
 
 `make build MODULE=backend`, `make test MODULE=cli` и `make jar MODULE=bot`

@@ -10,7 +10,8 @@
       "bot:unit": {"component": "bot", "role": "unit"},
       "cli:unit": {"component": "cli", "role": "unit"},
       "shared:unit": {"component": "shared", "role": "unit"},
-      "cli:build": {"component": "cli", "role": "build"}
+      "cli:build": {"component": "cli", "role": "build"},
+      "bot:build": {"component": "bot", "role": "build"}
     }
   },
   "components": {
@@ -427,7 +428,7 @@
       "inputs": [
         "**"
       ],
-      "cacheable": false,
+      "cacheable": true,
       "platforms": [
         "linux"
       ],
@@ -570,6 +571,72 @@
       ]
     },
     {
+      "id": "bot:build",
+      "component": "bot",
+      "profiles": [
+        "build"
+      ],
+      "argv": [
+        "bash",
+        "scripts/quality-gradle.sh",
+        "--quality-root",
+        "--no-daemon",
+        "--max-workers=2",
+        ":telegram-bot:bootJar"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "telegram-bot/src/main/**",
+        "telegram-bot/*.gradle",
+        "telegram-bot/gradle.properties",
+        "shared/src/main/**",
+        "shared/*.gradle",
+        "shared/gradle.properties",
+        "settings.gradle",
+        "gradlew",
+        "gradle/**",
+        "scripts/quality-gradle.sh",
+        "scripts/gradle-context.py",
+        "LICENSE",
+        "NOTICE",
+        "THIRD_PARTY_NOTICES.md",
+        "build.gradle",
+        "build.gradle.kts",
+        "gradle.properties",
+        ".gitattributes"
+      ],
+      "cacheable": true,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1",
+          "context_argv": [
+            "{python}",
+            "scripts/gradle-context.py"
+          ],
+          "cwd": ".",
+          "context_pattern": "\"java_version\":\"25\\.0\\.4\\.1\"",
+          "reuse_pattern": "\"reuse_qualified\":true",
+          "recheck": true
+        }
+      ],
+      "kind": "artifact",
+      "environment_inputs": [
+        "SOURCE_DATE_EPOCH"
+      ],
+      "source_date_epoch": "git-head",
+      "test_tier": "artifact",
+      "outputs": [
+        "telegram-bot/build/libs/telegram-bot-0.0.1-SNAPSHOT.jar"
+      ]
+    },
+    {
       "id": "shared:unit",
       "component": "shared",
       "profiles": [
@@ -589,7 +656,7 @@
       "inputs": [
         "**"
       ],
-      "cacheable": false,
+      "cacheable": true,
       "platforms": [
         "linux"
       ],
