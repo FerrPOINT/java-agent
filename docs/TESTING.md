@@ -416,13 +416,16 @@ JAR с source head/epoch и QA image; после cleanup и source guards пов
 
 Это контракт source path. ZIP fixtures не доказывают actual class loading,
 embedded build epoch, resolved classpaths или native artifact handoff; эти
-controls и native qualification/exact Windows root adoption остаются открыты. Все15 Gradle
-gates по-прежнему noncacheable, prepared context не выдаёт reuse qualification.
+controls и native qualification/exact Windows root adoption проверяются отдельно.
+В исходном контракте15 Gradle gates были noncacheable. Текущий selected CLI
+candidate добавляет отдельный JAR gate и native consent только CLI Unit/JAR;
+prepared context сам по себе не выдаёт reuse qualification. Backend/Bot/Shared
+и portable grouped receipts сохраняют прежний запрет.
 
 ## Source Windows quality bridge
 
 `.quality-gate.json/native_execution` объявляет только ordinary Backend unit/JAR
-и bot/CLI/Shared unit через Base `java-compose-v1`. Generic source quality runner
+и bot/CLI/Shared unit, а также selected CLI JAR через Base `java-compose-v1`. Generic source quality runner
 сохраняет исходные gate IDs и объединяет selected graph в один QA operation;
 на Linux сохраняется прежнее Gradle grouping. Tool/argv/epoch/fixture contracts
 проверяются до dispatch. В контейнере исходные context patterns проверяются по
@@ -447,7 +450,7 @@ dirty context и полный installed root путь ещё требуют nati
 Linux qualification: backend 4805 cases, 76 с с запуском Gradle/JVM;
 bot/CLI/shared 1660 cases, 47 с. Цель прогретого runner: backend до 90 с,
 остальные вместе до 60 с; cold preparation учитывается отдельно.
-Inventory: 586 unit, 183 integration, 68 slow, 9 live test files.
+Inventory: 585 unit, 186 integration, 68 slow, 9 live test files.
 25 файлов с измеренными ожиданиями/долгими cases перенесены в slow;
 реальные DNS URL safety проверки — в integration. Изолированные URL safety
 с контролируемым resolver остаются unit. Assertions и production code сохранены.
@@ -457,11 +460,12 @@ Inventory: 586 unit, 183 integration, 68 slow, 9 live test files.
 ## Явный client graph и dependency-only preparation
 
 `bash scripts/quality-gradle.sh --quality-root :cli:test` выбирает configuration
-profile `clients-v1`: Shared, CLI и Telegram bot, без Backend. Без флага обычный
-root graph сохраняет Backend, включая `:backend:bootRun`. В preparation inputs
-входят build scripts всех трёх configured clients, даже при resolution CLI/Shared.
-`gradle/java-preparation.json` v2 владеет configured logical modules и closure;
-нужен совместимый Base v2 preparer без автоматического принятия v1 owners.
+profile `clients-selected-v1`: CLI и его Shared dependency, без Bot/Backend.
+Bot-only и Shared-only tasks выбирают собственный dependency-closed subset;
+несколько tasks объединяются в один graph. Без флага обычный root graph сохраняет
+Backend, включая `:backend:bootRun`. `gradle/java-preparation.json` v4 владеет
+configured modules и closure; source/context/index writers проверяют одно и то же
+множество. Legacy v2 metadata не превращается в v4 owner автоматически.
 
 Ordinary Make units/JAR, CI root units и systemd bot JAR используют этот client
 graph. Make coverage/report requests и standalone `make jar MODULE=shared`

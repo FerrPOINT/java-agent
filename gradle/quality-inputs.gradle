@@ -90,7 +90,7 @@ tasks.register('qualityDependencyInputs', QualityDependencyInputs) {
     moduleIdentity = project.path
     wrapperVersion = gradle.gradleVersion
     configurationProfile = rootProject.name == 'java-agent-backend' ? 'backend-v1' :
-        (providers.gradleProperty('qualityRootGraph').orNull == 'clients-v1' ? 'clients-v1' : 'full-root-v1')
+        (providers.gradleProperty('qualityRootGraph').orNull ?: 'full-root-v1')
     configuredProjects = rootProject.allprojects.collect { it.path }.sort()
     productionFiles.from(production)
     unitFiles.from(production, units)

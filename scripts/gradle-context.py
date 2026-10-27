@@ -200,7 +200,7 @@ def distribution_snapshot(directory, home):
     return version, state
 
 
-def configuration_graph(repository, backend, graph):
+def configuration_graph(repository, backend, graph, modules=None):
     """Bind the actual configured projects to the product's versioned declaration."""
     if not isinstance(graph, dict) or set(graph) != {'profile', 'projects'}:
         raise ValueError('Invalid dependency configuration graph')
@@ -222,7 +222,8 @@ def configuration_graph(repository, backend, graph):
         raise ValueError('Invalid Java preparation contract JSON') from error
     graphs = {'root': ['bot', 'cli', 'shared'], 'backend': ['backend', 'shared']}
     if (not isinstance(contract, dict) or set(contract) != {'schema', 'inputs', 'dependencies', 'configuration_graphs'}
-            or contract.get('schema') != 'base-java-preparation/v2' or contract.get('configuration_graphs') != graphs):
+            or contract.get('schema') not in ('base-java-preparation/v2', 'base-java-preparation/v3', 'base-java-preparation/v4')
+            or contract.get('configuration_graphs') != graphs):
         raise ValueError('Unsupported Java preparation configuration graph contract')
     profile = graph['profile']
     if backend:
@@ -230,7 +231,32 @@ def configuration_graph(repository, backend, graph):
         if profile != 'backend-v1':
             raise ValueError('Dependency configuration graph differs from selected wrapper')
     elif profile == 'clients-v1':
+        if contract['schema'] != 'base-java-preparation/v2':
+            raise ValueError('Dependency configuration graph differs from selected policy')
         members = graphs['root']
+    elif profile == 'clients-selected-v1' and contract['schema'] in ('base-java-preparation/v3', 'base-java-preparation/v4'):
+        if not modules or len(modules) != len(set(modules)) or not set(modules) <= set(graphs['root']):
+            raise ValueError('Selected configuration requires explicit unique root modules')
+        dependencies = contract.get('dependencies')
+        selected, visiting = set(), set()
+        def visit(name):
+            if name not in graphs['root'] or name in visiting:
+                raise ValueError('Invalid selected configuration dependency closure')
+            if name in selected:
+                return
+            values = dependencies.get(name) if isinstance(dependencies, dict) else None
+            if not isinstance(values, list) or any(not isinstance(value, str) for value in values) or len(values) != len(set(values)):
+                raise ValueError('Invalid selected configuration dependencies')
+            visiting.add(name)
+            for value in values:
+                visit(value)
+            visiting.remove(name)
+            selected.add(name)
+        for name in modules:
+            visit(name)
+        if selected != set(modules):
+            raise ValueError('Selected configuration modules must be dependency-closed')
+        members = sorted(selected)
     elif profile == 'full-root-v1':
         members = ['backend', *graphs['root']]
     else:
@@ -288,7 +314,7 @@ def dependency_snapshot(repository, home, modules, version, backend, role, *, in
                 or schema not in ('java-gradle-dependency-inputs/v1', 'java-gradle-dependency-inputs/v2')
                 or value.get('module') != identity or value.get('gradle') != version):
             raise ValueError('Dependency index does not match module/wrapper')
-        graph = configuration_graph(repository, backend, value['configuration_graph']) if schema.endswith('/v2') else None
+        graph = configuration_graph(repository, backend, value['configuration_graph'], modules) if schema.endswith('/v2') else None
         if graph is not None and identity not in graph['projects']:
             raise ValueError('Dependency index module is outside the configuration graph')
         if index_schema is not None and (index_schema != schema or actual_graph != graph):

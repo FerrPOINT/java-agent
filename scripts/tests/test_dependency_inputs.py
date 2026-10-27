@@ -90,17 +90,17 @@ class DependencyInputContracts(unittest.TestCase):
                     (root / 'gradle/test-lanes.json').write_text(json.dumps(inventory), encoding='utf-8')
                     self.assertEqual(_processor_consumers(root), [name] if required else [])
 
-    def test_windows_native_adapter_declares_only_ordinary_unit_and_backend_jar_gates(self):
+    def test_windows_native_adapter_declares_only_ordinary_unit_and_declared_jar_gates(self):
         manifest = json.loads((ROOT / '.quality-gate.json').read_text(encoding='utf-8'))
         native = manifest['native_execution']
         self.assertEqual(native['adapter'], 'java-compose-v1')
         self.assertEqual(native['host_platforms'], ['win32'])
-        self.assertEqual(set(native['gates']), {'backend:unit', 'backend:build', 'cli:unit', 'bot:unit', 'shared:unit'})
+        self.assertEqual(set(native['gates']), {'backend:unit', 'backend:build', 'cli:unit', 'cli:build', 'bot:unit', 'shared:unit'})
         gates = {gate['id']: gate for gate in manifest['gates']}
         for name, request in native['gates'].items():
             gate = gates[name]
             self.assertEqual(gate['component'], request['component'])
-            self.assertFalse(gate['cacheable'])
+            self.assertIs(gate['cacheable'], name in ('cli:unit', 'cli:build'))
             self.assertFalse(gate.get('requires_env'))
             self.assertFalse(gate.get('external_state'))
             self.assertLessEqual(set(gate['profiles']), {'fast', 'unit', 'build'})
@@ -134,7 +134,7 @@ class DependencyInputContracts(unittest.TestCase):
 
     def test_native_preparation_descriptor_matches_real_shared_project_consumers(self):
         descriptor = json.loads((ROOT / 'gradle/java-preparation.json').read_text(encoding='utf-8'))
-        self.assertEqual(descriptor['schema'], 'base-java-preparation/v2')
+        self.assertEqual(descriptor['schema'], 'base-java-preparation/v4')
         self.assertEqual(set(descriptor['inputs']), {'root', 'backend'})
         for name, directory in (('backend', 'backend'), ('shared', 'shared'), ('cli', 'cli'), ('bot', 'telegram-bot')):
             script = (ROOT / directory / 'build.gradle').read_text(encoding='utf-8')

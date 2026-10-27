@@ -9,7 +9,8 @@
       "backend:build": {"component": "backend", "role": "build"},
       "bot:unit": {"component": "bot", "role": "unit"},
       "cli:unit": {"component": "cli", "role": "unit"},
-      "shared:unit": {"component": "shared", "role": "unit"}
+      "shared:unit": {"component": "shared", "role": "unit"},
+      "cli:build": {"component": "cli", "role": "build"}
     }
   },
   "components": {
@@ -417,6 +418,7 @@
       "argv": [
         "bash",
         "scripts/quality-gradle.sh",
+        "--quality-root",
         "--no-daemon",
         "--max-workers=2",
         ":telegram-bot:test"
@@ -464,6 +466,7 @@
       "argv": [
         "bash",
         "scripts/quality-gradle.sh",
+        "--quality-root",
         "--no-daemon",
         "--max-workers=2",
         ":cli:test"
@@ -472,7 +475,7 @@
       "inputs": [
         "**"
       ],
-      "cacheable": false,
+      "cacheable": true,
       "platforms": [
         "linux"
       ],
@@ -501,6 +504,72 @@
       "gradle_unit_group": "root:unit"
     },
     {
+      "id": "cli:build",
+      "component": "cli",
+      "profiles": [
+        "build"
+      ],
+      "argv": [
+        "bash",
+        "scripts/quality-gradle.sh",
+        "--quality-root",
+        "--no-daemon",
+        "--max-workers=2",
+        ":cli:bootJar"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "cli/src/main/**",
+        "cli/*.gradle",
+        "cli/gradle.properties",
+        "shared/src/main/**",
+        "shared/*.gradle",
+        "shared/gradle.properties",
+        "settings.gradle",
+        "gradlew",
+        "gradle/**",
+        "scripts/quality-gradle.sh",
+        "scripts/gradle-context.py",
+        "LICENSE",
+        "NOTICE",
+        "THIRD_PARTY_NOTICES.md",
+        "build.gradle",
+        "build.gradle.kts",
+        "gradle.properties",
+        ".gitattributes"
+      ],
+      "cacheable": true,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1",
+          "context_argv": [
+            "{python}",
+            "scripts/gradle-context.py"
+          ],
+          "cwd": ".",
+          "context_pattern": "\"java_version\":\"25\\.0\\.4\\.1\"",
+          "reuse_pattern": "\"reuse_qualified\":true",
+          "recheck": true
+        }
+      ],
+      "kind": "artifact",
+      "environment_inputs": [
+        "SOURCE_DATE_EPOCH"
+      ],
+      "source_date_epoch": "git-head",
+      "test_tier": "artifact",
+      "outputs": [
+        "cli/build/libs/cli-0.0.1-SNAPSHOT.jar"
+      ]
+    },
+    {
       "id": "shared:unit",
       "component": "shared",
       "profiles": [
@@ -511,6 +580,7 @@
       "argv": [
         "bash",
         "scripts/quality-gradle.sh",
+        "--quality-root",
         "--no-daemon",
         "--max-workers=2",
         ":shared:test"

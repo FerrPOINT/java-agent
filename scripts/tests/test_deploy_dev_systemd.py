@@ -168,7 +168,8 @@ class DeployBuildProtocolTest(unittest.TestCase):
         self.assertEqual(["1792072450", "1792072450"], [record["epoch"] for record in records])
         options = ["--no-daemon", "--max-workers=2", "--configuration-cache", "--configuration-cache-problems=fail"]
         self.assertEqual([":bootJar", *options], records[0]["arguments"])
-        self.assertEqual([":telegram-bot:bootJar", *options, "-PqualityRootGraph=clients-v1"], records[1]["arguments"])
+        self.assertEqual([":telegram-bot:bootJar", *options, "-PqualityRootGraph=clients-selected-v1",
+                          "-PqualityRootComponents=bot"], records[1]["arguments"])
 
     def declared_artifacts(self):
         import json

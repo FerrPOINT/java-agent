@@ -15,6 +15,17 @@ SPEC.loader.exec_module(probe)
 
 
 class GradleContextTests(unittest.TestCase):
+    def test_selected_cli_context_requires_the_shared_dependency_and_excludes_bot(self):
+        self.graph_fixture()
+        self.contract.update(schema='base-java-preparation/v4',
+            dependencies={'cli': ['shared'], 'bot': ['shared'], 'shared': []})
+        self.contract_file.write_text(json.dumps(self.contract))
+        graph = {'profile': 'clients-selected-v1', 'projects': [':', ':cli', ':shared']}
+        self.assertEqual(probe.configuration_graph(self.root, False, graph, ['cli', 'shared']), graph)
+        for modules in (['cli'], ['cli', 'shared', 'bot'], ['cli', 'cli', 'shared']):
+            with self.subTest(modules=modules), self.assertRaises(ValueError):
+                probe.configuration_graph(self.root, False, graph, modules)
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -486,7 +497,7 @@ class GradleContextTests(unittest.TestCase):
         repository = SCRIPT.parents[1]
         manifest = json.loads((repository / '.quality-gate.json').read_text(encoding='utf-8'))
         gates = [gate for gate in manifest['gates'] if 'scripts/quality-gradle.sh' in gate['argv']]
-        self.assertEqual(len(gates), 15)
+        self.assertEqual(len(gates), 16)
         for gate in gates:
             with self.subTest(gate=gate['id']):
                 expected = ['{python}', 'scripts/gradle-context.py']
@@ -500,11 +511,24 @@ class GradleContextTests(unittest.TestCase):
                 self.assertEqual(tool['reuse_pattern'], '"reuse_qualified":true')
                 self.assertIs(tool['recheck'], True)
                 self.assertEqual(tool['cwd'], '.')
-                self.assertIs(gate['cacheable'], False)
+                self.assertIs(gate['cacheable'], gate['id'] in ('cli:unit', 'cli:build'))
+                if gate['id'] in ('cli:unit', 'cli:build'):
+                    self.assertIn('--quality-root', gate['argv'])
                 self.assertEqual(gate['source_date_epoch'], 'git-head')
                 self.assertIn('SOURCE_DATE_EPOCH', gate['environment_inputs'])
                 if gate.get('kind') == 'artifact':
                     self.assertIn('scripts/gradle-context.py', gate['inputs'])
+
+    def test_cli_jar_tracks_root_build_configuration_without_client_siblings(self):
+        repository = SCRIPT.parents[1]
+        manifest = json.loads((repository / '.quality-gate.json').read_text(encoding='utf-8'))
+        gate = next(gate for gate in manifest['gates'] if gate['id'] == 'cli:build')
+        for name in ('build.gradle', 'build.gradle.kts', 'gradle.properties',
+                     'settings.gradle', 'gradle/**', '.gitattributes'):
+            self.assertIn(name, gate['inputs'])
+        self.assertEqual(gate['outputs'], ['cli/build/libs/cli-0.0.1-SNAPSHOT.jar'])
+        self.assertFalse(any(value.startswith(('backend/', 'telegram-bot/'))
+                             for value in gate['inputs']))
 
 
 if __name__ == '__main__':

@@ -18,6 +18,21 @@ BASH = (str(Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Git/bin/
 
 @unittest.skipUnless(BASH and Path(BASH).is_file(), "native Bash is required; WSL is not used")
 class QualityGradleTests(unittest.TestCase):
+    @staticmethod
+    def selected_properties(components):
+        return ['-PqualityRootGraph=clients-selected-v1', '-PqualityRootComponents=' + components]
+
+    def test_selected_root_declares_only_the_requested_applications(self):
+        for tasks, components in (((':cli:test',), 'cli'),
+                ((':telegram-bot:bootJar',), 'bot'), ((':shared:test',), 'shared'),
+                ((':cli:test', ':shared:test'), 'cli,shared'),
+                ((':cli:bootJar', ':telegram-bot:test'), 'bot,cli')):
+            with self.subTest(tasks=tasks):
+                result, lines = self.invoke('--quality-root', *tasks)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(lines[-2:], ['-PqualityRootGraph=clients-selected-v1',
+                    '-PqualityRootComponents=' + components])
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -53,11 +68,11 @@ class QualityGradleTests(unittest.TestCase):
     def test_explicit_root_graph_and_dependency_mode_forward_owned_properties(self):
         cases = [
             (['--quality-root', ':cli:test'], [':cli:test', '--configuration-cache',
-                '--configuration-cache-problems=fail', '-PqualityRootGraph=clients-v1']),
+                '--configuration-cache-problems=fail', *self.selected_properties('cli')]),
             (['--quality-root', '--dependencies-only', ':cli:qualityDependencyInputs',
               ':shared:qualityDependencyInputs', '--offline', '--configuration-cache'],
              [':cli:qualityDependencyInputs', ':shared:qualityDependencyInputs', '--offline',
-              '--configuration-cache', '-PqualityRootGraph=clients-v1', '-PqualityDependenciesOnly=true']),
+              '--configuration-cache', *self.selected_properties('cli,shared'), '-PqualityDependenciesOnly=true']),
             (['--backend', '--dependencies-only', ':qualityDependencyInputs', ':shared:qualityDependencyInputs'],
              [':qualityDependencyInputs', ':shared:qualityDependencyInputs', '-PqualityDependenciesOnly=true']),
         ]
@@ -114,14 +129,15 @@ class QualityGradleTests(unittest.TestCase):
 
     def test_explicit_base_cache_keeps_strict_default_and_consumes_only_validated_policy(self):
         environment = self.compile_cache_environment()
-        for tasks in ((':cli:test',), (':shared:test',), (':cli:bootJar', ':shared:test')):
+        for tasks, components in (((':cli:test',), 'cli'), ((':shared:test',), 'shared'),
+                                  ((':cli:bootJar', ':shared:test'), 'cli,shared')):
             for switches in (('--quality-root', '--base-compile-cache'),
                              ('--base-compile-cache', '--quality-root')):
                 with self.subTest(tasks=tasks, switches=switches):
                     result, lines = self.invoke(*switches, *tasks, '--offline', environment=environment)
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertEqual(lines[2:], [*tasks, '--offline', '--configuration-cache',
-                        '--configuration-cache-problems=fail', '-PqualityRootGraph=clients-v1',
+                        '--configuration-cache-problems=fail', *self.selected_properties(components),
                         '--init-script', environment['BASE_JAVA_COMPILE_CACHE_POLICY'], '--build-cache'])
 
     def test_base_cache_refuses_invalid_graphs_flags_and_partial_environment_before_wrapper(self):
@@ -289,7 +305,7 @@ class QualityGradleTests(unittest.TestCase):
                     self.assertEqual(records[0]["backend"], module == "backend")
                     self.assertEqual(records[0]["arguments"], tasks + [
                         "--no-daemon", "--max-workers=2", "--configuration-cache", "--configuration-cache-problems=fail"]
-                        + ([] if module == "backend" else ["-PqualityRootGraph=clients-v1"]))
+                        + ([] if module == "backend" else self.selected_properties(module)))
 
     def test_make_adapter_all_uses_two_sequential_graphs_without_duplicate_units(self):
         for action in ("build", "test", "jar"):
@@ -303,7 +319,7 @@ class QualityGradleTests(unittest.TestCase):
                                  else [":telegram-bot:test", ":cli:test", ":shared:test"])
                 options = ["--no-daemon", "--max-workers=2", "--configuration-cache", "--configuration-cache-problems=fail"]
                 self.assertEqual(records[0]["arguments"], expected_backend + options)
-                self.assertEqual(records[1]["arguments"], expected_root + options + ["-PqualityRootGraph=clients-v1"])
+                self.assertEqual(records[1]["arguments"], expected_root + options + self.selected_properties('bot,cli,shared'))
 
     def test_make_adapter_scoped_jar_keeps_units_on_bootjar_and_shared_library(self):
         for module, tasks in (("backend", [":bootJar"]), ("cli", [":cli:bootJar"]),
@@ -314,7 +330,7 @@ class QualityGradleTests(unittest.TestCase):
                 self.assertEqual(len(records), 1)
                 actual_tasks = [argument for argument in records[0]["arguments"] if argument.startswith(":")]
                 self.assertEqual(actual_tasks, tasks)
-                self.assertEqual("-PqualityRootGraph=clients-v1" in records[0]["arguments"],
+                self.assertEqual("-PqualityRootGraph=clients-selected-v1" in records[0]["arguments"],
                                  module in ("cli", "bot"))
 
     def test_ci_selected_units_use_the_clients_graph_without_entering_backend(self):
@@ -322,8 +338,8 @@ class QualityGradleTests(unittest.TestCase):
         step = workflow.split("      - name: Run selected root-module units in one Gradle invocation\n", 1)[1]
         script = step.split("        run: |\n", 1)[1].split("      - ", 1)[0]
         script = "\n".join(line.removeprefix("          ") for line in script.splitlines())
-        for tasks in (":cli:test", ":telegram-bot:test", ":shared:test",
-                      ":telegram-bot:test :cli:test :shared:test"):
+        for tasks, components in ((":cli:test", "cli"), (":telegram-bot:test", "bot"),
+                      (":shared:test", "shared"), (":telegram-bot:test :cli:test :shared:test", "bot,cli,shared")):
             with self.subTest(tasks=tasks):
                 environment = {**os.environ, "SOURCE_DATE_EPOCH": "1792072450",
                                "JAVA_HOME": self.jdk.as_posix(), "ROOT_UNIT_TASKS": tasks}
@@ -334,7 +350,7 @@ class QualityGradleTests(unittest.TestCase):
                 self.assertEqual(lines[0], "EPOCH=1792072450")
                 self.assertFalse(lines[1].endswith("/backend"))
                 self.assertEqual(lines[2:], tasks.split() + ["--no-daemon", "--max-workers=2",
-                    "--configuration-cache", "--configuration-cache-problems=fail", "-PqualityRootGraph=clients-v1"])
+                    "--configuration-cache", "--configuration-cache-problems=fail", *self.selected_properties(components)])
 
     def test_make_adapter_manual_coverage_keeps_only_existing_report_consumers(self):
         for module, expected in (("backend", [(True, ":jacocoTestReport")]),
@@ -569,7 +585,8 @@ class ContainerGradleWrapperTests(unittest.TestCase):
                     self.assertEqual((directory / "invoked.txt").read_text().splitlines(),
                                      [f":{module}:bootJar", "--build-cache", "--no-daemon",
                                       "--max-workers=2", "--configuration-cache",
-                                      "--configuration-cache-problems=fail", "-PqualityRootGraph=clients-v1"])
+                                      "--configuration-cache-problems=fail",
+                                      *QualityGradleTests.selected_properties('cli' if module == 'cli' else 'bot')])
 
 
 if __name__ == "__main__":

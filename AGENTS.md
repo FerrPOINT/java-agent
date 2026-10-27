@@ -39,8 +39,10 @@ Gradle rejects unknown/stale sources before compilation. Preserve shared test
 resources and full release coverage. This sourceSet change needs application
 qualification; the bounded Gradle metadata fixture alone does not qualify it.
 New Base context readers verify the actual selected JDK/configuration using
-`scripts/gradle-context.py`. Keep all Gradle receipt reuse disabled until the
-distribution/resolved-input and native JAR proofs in TESTING are complete.
+`scripts/gradle-context.py`. Backend/Bot/Shared and portable grouped receipt reuse
+remain disabled. The selected Windows CLI candidate declares native consent;
+accept it only after current distribution/resolved-input, Unit/JAR and unchanged
+Root reuse proofs in TESTING. Source consent alone is not native qualification.
 `qualityDependencyInputs` is explicit preparation only; ordinary test/bootJar
 must not run it automatically. It indexes external production/unit inputs;
 it is not an artifact receipt. Commands and scope are in TESTING.
