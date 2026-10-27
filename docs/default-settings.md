@@ -47,6 +47,9 @@ Authoritative source: `backend/src/main/resources/application.yml`. The value is
 
 | Property | Shipped default |
 |---|---|
+| `agent.identity-deletion.enabled` | `${AGENT_IDENTITY_DELETION_ENABLED:false}` |
+| `agent.identity-deletion.legacy-issuer` | `${AGENT_IDENTITY_DELETION_LEGACY_ISSUER:}` |
+| `agent.identity-deletion.coordinator-subjects` | `${AGENT_IDENTITY_DELETION_COORDINATOR_SUBJECTS:}` |
 | `spring.application.name` | `java-agent` |
 | `spring.datasource.url` | `jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:java_agent}` |
 | `spring.datasource.username` | `<operator supplied>` |

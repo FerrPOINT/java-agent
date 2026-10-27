@@ -45,6 +45,7 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
     private final AgentProperties agentProperties;
     private final UserAccessService userAccessService;
     private CentralJwtVerifier centralJwtVerifier;
+    private com.azhukov.agent.core.ports.IdentityReferenceRegistration identityReferences;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -56,6 +57,16 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
     @org.springframework.beans.factory.annotation.Autowired
     void configureCentralVerifier(ObjectProvider<CentralJwtVerifier> provider) {
         centralJwtVerifier = provider.getIfAvailable();
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void configureIdentityReferences(ObjectProvider<com.azhukov.agent.core.ports.IdentityReferenceRegistration> provider) {
+        identityReferences = provider.getIfAvailable();
+    }
+
+    @Override
+    protected boolean shouldNotFilter(HttpServletRequest request) {
+        return IdentityDeletionBoundaryFilter.privateOwner(request);
     }
 
     /** Test-only compatibility constructor without per-user auth. */
@@ -77,7 +88,7 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
         // Auth disabled — dev mode: set a default authenticated principal
         if (configuredKey == null || configuredKey.isBlank()) {
             SecurityContextHolder.getContext().setAuthentication(new ApiKeyAuthentication("dev"));
-            UserContext.set(AgentProperties.DEFAULT_USER_ID, UserContext.ROLE_ADMIN);
+            setNativeUser(AgentProperties.DEFAULT_USER_ID, UserContext.ROLE_ADMIN, com.azhukov.agent.core.security.NativeIdentityOrigin.Kind.DEVELOPMENT, true);
             filterChain.doFilter(request, response);
             return;
         }
@@ -89,7 +100,7 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
         // internal compose network.
         if ("/actuator/prometheus".equals(requestUri)) {
             SecurityContextHolder.getContext().setAuthentication(new ApiKeyAuthentication("prometheus"));
-            UserContext.set("prometheus", UserContext.ROLE_ADMIN);
+            setNativeUser("prometheus", UserContext.ROLE_ADMIN, com.azhukov.agent.core.security.NativeIdentityOrigin.Kind.DEVELOPMENT, true);
             filterChain.doFilter(request, response);
             return;
         }
@@ -97,7 +108,7 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
         // Health endpoints are always exempt: set a default authenticated principal
         if (isHealthEndpoint(requestUri)) {
             SecurityContextHolder.getContext().setAuthentication(new ApiKeyAuthentication("health"));
-            UserContext.set("health", UserContext.ROLE_ADMIN);
+            setNativeUser("health", UserContext.ROLE_ADMIN, com.azhukov.agent.core.security.NativeIdentityOrigin.Kind.DEVELOPMENT, true);
             filterChain.doFilter(request, response);
             return;
         }
@@ -105,7 +116,7 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
         // Actuator info is explicitly public in SecurityConfig for deployment metadata.
         if ("/actuator/info".equals(requestUri)) {
             SecurityContextHolder.getContext().setAuthentication(new ApiKeyAuthentication("info"));
-            UserContext.set("info", UserContext.ROLE_ADMIN);
+            setNativeUser("info", UserContext.ROLE_ADMIN, com.azhukov.agent.core.security.NativeIdentityOrigin.Kind.DEVELOPMENT, true);
             filterChain.doFilter(request, response);
             return;
         }
@@ -123,7 +134,7 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
             ? userAccessService.authenticate(providedKey) : null;
         if (user != null) {
             SecurityContextHolder.getContext().setAuthentication(new ApiKeyAuthentication(providedKey));
-            UserContext.set(user.userId(), user.role());
+            setNativeUser(user.userId(), user.role(), com.azhukov.agent.core.security.NativeIdentityOrigin.Kind.USER_API_KEY, UserContext.ROLE_ADMIN.equals(user.role()));
             filterChain.doFilter(request, response);
             return;
         }
@@ -133,7 +144,7 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
             // anyRequest().authenticated() check passes. Global key = admin.
             Authentication auth = new ApiKeyAuthentication(providedKey);
             SecurityContextHolder.getContext().setAuthentication(auth);
-            UserContext.set(AgentProperties.DEFAULT_USER_ID, UserContext.ROLE_ADMIN);
+            setNativeUser(AgentProperties.DEFAULT_USER_ID, UserContext.ROLE_ADMIN, com.azhukov.agent.core.security.NativeIdentityOrigin.Kind.GATEWAY_KEY, true);
             filterChain.doFilter(request, response);
             return;
         }
@@ -150,6 +161,7 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
         } finally {
             // Always clear ThreadLocal to prevent leakage across virtual threads
             UserContext.clear();
+            com.azhukov.agent.core.security.NativeIdentityOrigin.clear();
         }
     }
 
@@ -164,15 +176,20 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
         }
         final com.pdlc.auth.HumanApplicationAccess access;
         try {
-            access = centralJwtVerifier.verifyAccess(extractBearerToken(request.getHeader("Authorization")),
-                    request.getMethod());
+            var verified=centralJwtVerifier.verifyIdentity(extractBearerToken(request.getHeader("Authorization")),request.getMethod());
+            access=verified.access();
+            if(identityReferences!=null)identityReferences.central(verified.issuer(),access.subject(),verified.window());
         } catch (CentralJwtVerifier.CentralAccessDeniedException denied) {
             response.setStatus(HttpStatus.FORBIDDEN.value());
             response.setContentType(MediaType.APPLICATION_JSON_VALUE);
             response.setCharacterEncoding("UTF-8");
             response.setHeader("Cache-Control", "no-store");
-            response.getWriter().write(errorJson("Нет доступа к приложению", "authorization_error",
-                    "application_access_denied"));
+            response.getWriter().write(errorJson("Нет доступа к приложению", "authorization_error", "application_access_denied"));
+            return;
+        } catch (com.azhukov.agent.core.model.IdentityDeletionProtocol.Failure failure) {
+            response.setStatus(failure.status());response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+            response.setCharacterEncoding("UTF-8");response.setHeader("Cache-Control","no-store");
+            response.getWriter().write(errorJson("Identity reference unavailable", "authentication_error", failure.code()));
             return;
         } catch (CentralJwtVerifier.CentralAuthUnavailableException unavailable) {
             response.setStatus(HttpStatus.SERVICE_UNAVAILABLE.value());
@@ -195,6 +212,11 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
         UserContext.setCentral(access);
         response.setHeader("Cache-Control", "no-store");
         chain.doFilter(request, response);
+    }
+
+    private static void setNativeUser(String userId,String role,com.azhukov.agent.core.security.NativeIdentityOrigin.Kind kind,boolean mayNameScope) {
+        UserContext.set(userId,role);
+        com.azhukov.agent.core.security.NativeIdentityOrigin.bind(new com.azhukov.agent.core.security.NativeIdentityOrigin.Origin(kind,userId,mayNameScope));
     }
 
     private String extractApiKey(HttpServletRequest request) {

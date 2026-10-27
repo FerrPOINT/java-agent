@@ -77,7 +77,7 @@ services:
     security_opt:
       - no-new-privileges:true
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8090/actuator/health/readiness >/dev/null"]
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "--max-time", "2", "--output", "/dev/null", "http://localhost:8090/actuator/health/readiness"]
       interval: 15s
       timeout: 10s
       retries: 8
@@ -102,7 +102,7 @@ services:
     ports:
       - "127.0.0.1:8889:8080"
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null 'http://localhost:8080/search?q=health&format=json' || exit 1"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "-T", "2", "http://localhost:8080/search?q=health&format=json"]
       interval: 15s
       timeout: 10s
       retries: 5
@@ -157,7 +157,7 @@ services:
     security_opt:
       - no-new-privileges:true
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8091/bot/health | grep -q '\"UP\"'"]
+      test: ["CMD-SHELL", "curl --max-time 2 -fsS http://localhost:8091/bot/health | grep -q '\"UP\"'"]
       interval: 15s
       timeout: 10s
       retries: 8
