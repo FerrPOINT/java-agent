@@ -4,27 +4,38 @@ repository=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 operation=${1:-}
 module=${2:-all}
 usage() {
-    echo 'Usage: quality-make.sh build|test|jar|coverage backend|cli|bot|shared|all [--coverage]' >&2
+    echo 'Usage: quality-make.sh build|test|jar|coverage backend|cli|bot|shared|all [--coverage] [--candidate-epoch]' >&2
     exit 64
 }
-[[ $# -ge 1 && $# -le 3 ]] || usage
+[[ $# -ge 1 && $# -le 4 ]] || usage
 case "$operation" in build|test|jar|coverage) ;; *) usage ;; esac
 case "$module" in backend|cli|bot|shared|all) ;; *) usage ;; esac
 include_coverage=false
-if [[ $# == 3 ]]; then
-    [[ "$3" == --coverage ]] || usage
-    include_coverage=true
-fi
+candidate_epoch=false
+for option in "${@:3}"; do
+    case "$option" in
+        --coverage) $include_coverage && usage; include_coverage=true ;;
+        --candidate-epoch) $candidate_epoch && usage; candidate_epoch=true ;;
+        *) usage ;;
+    esac
+done
+if $candidate_epoch && [[ "$operation" != jar ]]; then usage; fi
 [[ "$operation" != coverage ]] || include_coverage=true
 if $include_coverage && [[ "$module" == cli || "$module" == shared ]]; then
     echo 'Coverage reports are declared only for backend and bot; select their scope or all.' >&2
     exit 64
 fi
 
-# Freeze one candidate epoch for both compatible graphs. The existing helper
-# validates it and retains ownership of wrapper/configuration-cache policy.
+# Development uses a stable, explicitly unversioned epoch. A docs/test
+# commit must not invalidate buildInfo and the JAR merely through HEAD time.
+# Install/release explicitly request one candidate epoch before either wrapper;
+# an operator-supplied epoch is always preserved and the existing helper checks it.
 if [[ -z "${SOURCE_DATE_EPOCH:-}" ]]; then
-    SOURCE_DATE_EPOCH=$(git -C "$repository" show -s --format=%ct HEAD)
+    if $candidate_epoch; then
+        SOURCE_DATE_EPOCH=$(git -C "$repository" show -s --format=%ct HEAD)
+    else
+        SOURCE_DATE_EPOCH=0
+    fi
 fi
 export SOURCE_DATE_EPOCH
 options=(--no-daemon --max-workers=2)
