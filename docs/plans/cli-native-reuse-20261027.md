@@ -41,3 +41,12 @@ Integration/slow/release/coverage/live/8h выполняются отдельн�
 До actual native результата новая source декларация не считается доказательством
 ускорения, свежего JAR или прохождения units. Выполненные результаты и оставшиеся
 ограничения будут зафиксированы в каноническом плане Base.
+
+## Найденная ошибка подготовки
+
+Первый native image build на commit `a5a14776` отказал до JavaCompile/Unit:
+Spring Boot 4.1 определяет `properties.time` как `Property<String>`, тогда как
+стабильный clock передавался как `java.time.Instant`. Сохраняется тот же frozen
+epoch, но Gradle DSL получает его ISO-8601 строку через `Instant.toString()`.
+Исправлена одна и та же причинная граница в CLI, Bot и Backend. CLI проходит
+следующую native веху; Bot/Backend этим не объявляются native-qualified.
