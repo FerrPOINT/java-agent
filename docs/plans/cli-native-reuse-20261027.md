@@ -50,3 +50,18 @@ Spring Boot 4.1 определяет `properties.time` как `Property<String>`
 epoch, но Gradle DSL получает его ISO-8601 строку через `Instant.toString()`.
 Исправлена одна и та же причинная граница в CLI, Bot и Backend. CLI проходит
 следующую native веху; Bot/Backend этим не объявляются native-qualified.
+
+## Обязательный packaging contract
+
+На `be6792f6` actual CLI graph завершился успешно: 184 units, 0 failures/skips,
+JAR task выполнен. При сборе JAR обнаружен отсутствующий `java-artifacts.json`;
+общий native report остался failed. Этот partial proof не выдаётся за готовый
+artifact или разрешение reuse. Старые логи/JUnit/context/resources сохранены.
+
+Добавлен существующий Base v1 artifact contract с проверенными product module,
+filename, Start-Class и notices. Bot output также объявлен точным именем,
+cache consent Bot/Backend/Shared прежний. Новый JSON — реальный packaging input,
+не обновление SDK/tooling pin. Перед следующей native попыткой typed contract
+проверяется отдельно; существующий успешный JAR не был передан на host, поэтому
+без нового producer его приёмку подтвердить нельзя. Base переносит этот guard
+до image build, чтобы такой поздний отказ не повторялся в следующих версиях.
