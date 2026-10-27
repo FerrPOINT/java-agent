@@ -1,4 +1,5 @@
 """Snapshot task packaging and independent validation entrypoint contracts."""
+import ast
 import json
 from pathlib import Path
 import re
@@ -28,8 +29,19 @@ def _processor_consumers(root):
 
 
 class DependencyInputContracts(unittest.TestCase):
+    def test_private_gradle_fixture_has_syntax_and_a_manual_owner(self):
+        ast.parse((ROOT / 'scripts/tests/test_production_role_native.py').read_text(encoding='utf-8'))
+        manifest = json.loads((ROOT / '.quality-gate.json').read_bytes())
+        owners = [gate for gate in manifest['gates'] if 'scripts.tests.test_production_role_native' in gate['argv']]
+        self.assertEqual(len(owners), 1)
+        self.assertEqual(owners[0]['profiles'], ['integration'])
+        self.assertEqual(set(owners[0]['requires_env']), {'PDLC_GRADLE_HOME', 'JAVA_HOME'})
+        self.assertTrue(owners[0]['external_state'])
+        self.assertFalse(owners[0]['cacheable'])
+
     def test_cli_bootstrap_uses_core_starter_and_shared_explicit_client_dependencies(self):
         cli = (ROOT / 'cli/build.gradle').read_text(encoding='utf-8')
+        cli_tests = (ROOT / 'cli/test-dependencies.gradle').read_text(encoding='utf-8')
         shared = (ROOT / 'shared/build.gradle').read_text(encoding='utf-8')
         starters = re.findall(r"(?m)^\s*implementation 'org\.springframework\.boot:([^']+)'", cli)
         self.assertEqual(starters, ['spring-boot-starter'])
@@ -38,9 +50,9 @@ class DependencyInputContracts(unittest.TestCase):
                            "implementation 'org.jline:jline:4.4.7'",
                            "implementation 'com.fasterxml.jackson.core:jackson-databind'",
                            "implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310'",
-                           "implementation 'org.reactivestreams:reactive-streams'",
-                           "testImplementation 'org.springframework.boot:spring-boot-starter-test'"):
+                           "implementation 'org.reactivestreams:reactive-streams'"):
             self.assertIn(dependency, cli)
+        self.assertIn("testImplementation 'org.springframework.boot:spring-boot-starter-test'", cli_tests)
         for dependency in ('org.springframework:spring-web', 'com.fasterxml.jackson.core:jackson-databind',
                            'com.fasterxml.jackson.datatype:jackson-datatype-jsr310'):
             self.assertIn("api '" + dependency + "'", shared)
@@ -95,12 +107,13 @@ class DependencyInputContracts(unittest.TestCase):
         native = manifest['native_execution']
         self.assertEqual(native['adapter'], 'java-compose-v1')
         self.assertEqual(native['host_platforms'], ['win32'])
-        self.assertEqual(set(native['gates']), {'backend:unit', 'backend:build', 'cli:unit', 'cli:build', 'bot:unit', 'shared:unit'})
+        self.assertEqual(set(native['gates']), {'backend:unit', 'backend:build', 'cli:unit', 'cli:build', 'bot:unit', 'bot:build', 'shared:unit'})
         gates = {gate['id']: gate for gate in manifest['gates']}
         for name, request in native['gates'].items():
             gate = gates[name]
             self.assertEqual(gate['component'], request['component'])
-            self.assertIs(gate['cacheable'], name in ('cli:unit', 'cli:build'))
+            # Consent is not a qualification grant; Base still verifies the exact native tuple.
+            self.assertIs(gate['cacheable'], True)
             self.assertFalse(gate.get('requires_env'))
             self.assertFalse(gate.get('external_state'))
             self.assertLessEqual(set(gate['profiles']), {'fast', 'unit', 'build'})
@@ -154,6 +167,19 @@ class DependencyInputContracts(unittest.TestCase):
                 names = re.findall(r"file\(['\"]([^'\"]*quality-inputs\.gradle)['\"]\)", script)
                 self.assertEqual(set(names), {'../gradle/quality-inputs.gradle', 'gradle/quality-inputs.gradle'})
                 self.assertEqual((ROOT / module / '../gradle/quality-inputs.gradle').resolve(), canonical)
+
+    def test_split_test_configuration_reaches_ordinary_preparation_and_client_images(self):
+        descriptor = json.loads((ROOT / 'gradle/java-preparation.json').read_text(encoding='utf-8'))
+        self.assertIn('cli/test-dependencies.gradle', descriptor['inputs']['root'])
+        for wrapper in ('root', 'backend'):
+            self.assertIn('shared/test-dependencies.gradle', descriptor['inputs'][wrapper])
+        for name in ('cli/Dockerfile', 'telegram-bot/Dockerfile'):
+            copied = set()
+            for line in (ROOT / name).read_text(encoding='utf-8').splitlines():
+                if line.startswith('COPY ') and '--from=' not in line:
+                    copied.update(shlex.split(line)[1:-1])
+            with self.subTest(recipe=name):
+                self.assertTrue({'cli/test-dependencies.gradle', 'shared/test-dependencies.gradle'} <= copied)
 
     def test_flat_backend_recipes_stage_the_script_before_running_the_wrapper(self):
         for name in ('Dockerfile', 'Dockerfile.slim'):

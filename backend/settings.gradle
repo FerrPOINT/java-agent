@@ -1,4 +1,8 @@
 rootProject.name = 'java-agent-backend'
+if (['baseProductionRole', 'baseProductionSourceSha256', 'baseProductionOutput'].any {
+        providers.gradleProperty(it).isPresent() }) {
+    throw new GradleException('The private CLI production role is not a backend configuration')
+}
 
 // CI and standalone builds run inside backend/ as their own Gradle root.
 // When the shared module exists as a sibling (the normal repo checkout),

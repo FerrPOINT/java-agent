@@ -59,6 +59,10 @@ abstract class QualityDependencyInputs extends DefaultTask {
     }
 }
 
+def productionIndex = providers.gradleProperty('baseProductionRole').isPresent()
+if (productionIndex && (!gradle.ext.has('baseProductionScope') || gradle.ext.baseProductionScope.role != 'cli-main-v1')) {
+    throw new GradleException('Production dependency index requires its validated source role')
+}
 tasks.register('qualityDependencyInputs', QualityDependencyInputs) {
     // Project outputs belong to source/build keys. Resolving these views must not
     // compile Shared or another application merely to prepare external dependencies.
@@ -71,10 +75,10 @@ tasks.register('qualityDependencyInputs', QualityDependencyInputs) {
             .collect { configurations.findByName(it) }.findAll { it != null && it.canBeResolved }
             .collect(externalFiles)
     production.add(externalFiles(project.buildscript.configurations.classpath))
-    def units = ['testCompileClasspath', 'testRuntimeClasspath', 'testAnnotationProcessor', 'jacocoAgent']
+    def units = (productionIndex ? [] : ['testCompileClasspath', 'testRuntimeClasspath', 'testAnnotationProcessor', 'jacocoAgent'])
             .collect { configurations.findByName(it) }.findAll { it != null && it.canBeResolved }
             .collect(externalFiles)
-    ['compileGroovy', 'compileTestGroovy'].each { name ->
+    (productionIndex ? ['compileGroovy'] : ['compileGroovy', 'compileTestGroovy']).each { name ->
         def compile = tasks.findByName(name)
         // Gradle infers a detached Groovy compiler classpath, outside testRuntimeClasspath.
         // Keep its actual compiler files, without the source classpath's builtBy
@@ -89,11 +93,11 @@ tasks.register('qualityDependencyInputs', QualityDependencyInputs) {
     description = 'Snapshot external production/unit dependency inputs without application compilation'
     moduleIdentity = project.path
     wrapperVersion = gradle.gradleVersion
-    configurationProfile = rootProject.name == 'java-agent-backend' ? 'backend-v1' :
+    configurationProfile = productionIndex ? 'production-cli-v1' : rootProject.name == 'java-agent-backend' ? 'backend-v1' :
         (providers.gradleProperty('qualityRootGraph').orNull ?: 'full-root-v1')
     configuredProjects = rootProject.allprojects.collect { it.path }.sort()
     productionFiles.from(production)
-    unitFiles.from(production, units)
+    if (!productionIndex) unitFiles.from(production, units)
     manifestFile = layout.buildDirectory.file("quality/gradle-${gradle.gradleVersion}-dependency-inputs.json")
     // Do not trust Gradle's timestamp shortcut at this explicit integrity boundary.
     outputs.upToDateWhen { false }

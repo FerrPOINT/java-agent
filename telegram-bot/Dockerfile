@@ -12,8 +12,8 @@ COPY gradle ./gradle
 COPY gradlew ./
 COPY scripts/quality-gradle.sh ./scripts/quality-gradle.sh
 # The selected clients graph still configures CLI and shared alongside the bot.
-COPY cli/build.gradle ./cli/build.gradle
-COPY shared/build.gradle ./shared/build.gradle
+COPY cli/build.gradle cli/test-dependencies.gradle ./cli/
+COPY shared/build.gradle shared/test-dependencies.gradle ./shared/
 COPY shared/src ./shared/src
 COPY telegram-bot/build.gradle ./telegram-bot/build.gradle
 COPY telegram-bot/src ./telegram-bot/src

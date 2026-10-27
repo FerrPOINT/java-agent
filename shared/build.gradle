@@ -2,6 +2,10 @@ plugins {
     id 'java-library'
     id 'io.spring.dependency-management' version '1.1.7'
 }
+def privateProduction = providers.gradleProperty('baseProductionRole').isPresent()
+if (privateProduction && (!gradle.ext.has('baseProductionScope') || gradle.ext.baseProductionScope.role != 'cli-main-v1')) {
+    throw new GradleException('Private production requires its validated source settings')
+}
 
 dependencyManagement {
     imports {
@@ -30,19 +34,15 @@ dependencies {
     // Lombok
     compileOnly 'org.projectlombok:lombok:1.18.48'
     annotationProcessor 'org.projectlombok:lombok:1.18.48'
-
-    testImplementation 'org.junit.jupiter:junit-jupiter'
-    testImplementation 'org.assertj:assertj-core'
-    testImplementation 'org.springframework:spring-web'
-    testImplementation 'org.springframework:spring-test'
-    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
-tasks.named('test') {
-    useJUnitPlatform()
+if (!privateProduction) {
+    apply from: file('test-dependencies.gradle')
 }
 
 // Base test policy: automatic unit checks; explicit integration/slow release lanes.
 apply from: file('../gradle/ferrpoint-notices.gradle').exists() ? file('../gradle/ferrpoint-notices.gradle') : file('gradle/ferrpoint-notices.gradle')
-apply from: file("../gradle/test-lanes.gradle").exists() ? file("../gradle/test-lanes.gradle") : file("gradle/test-lanes.gradle")
+if (!privateProduction) {
+    apply from: file("../gradle/test-lanes.gradle").exists() ? file("../gradle/test-lanes.gradle") : file("gradle/test-lanes.gradle")
+}
 apply from: file('../gradle/quality-inputs.gradle').exists() ? file('../gradle/quality-inputs.gradle') : file('gradle/quality-inputs.gradle')

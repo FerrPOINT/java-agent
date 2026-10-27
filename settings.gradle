@@ -1,6 +1,14 @@
 import groovy.json.JsonSlurper
 
 rootProject.name = 'java-agent'
+def productionRole = providers.gradleProperty('baseProductionRole')
+if (productionRole.isPresent()) {
+    apply from: file('gradle/production/settings.gradle')
+} else {
+if (providers.gradleProperty('baseProductionSourceSha256').isPresent()
+        || providers.gradleProperty('baseProductionOutput').isPresent()) {
+    throw new GradleException('Production controls require the explicit private production role')
+}
 def profile = providers.gradleProperty('qualityRootGraph')
 if (profile.isPresent()) {
     def contract = new JsonSlurper().parse(file('gradle/java-preparation.json'))
@@ -39,4 +47,5 @@ if (profile.isPresent()) {
     }
 } else {
     include 'shared', 'backend', 'telegram-bot', 'cli'
+}
 }

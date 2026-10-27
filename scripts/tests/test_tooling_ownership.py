@@ -8,6 +8,7 @@ from scripts.vendor import base_quality_selection as selection
 
 ROOT = Path(__file__).resolve().parents[2]
 TEST_GATES = {'test_check_docs_standard': 'tooling:docs-unit', 'test_verify_readme': 'tooling:docs-unit', 'test_check_default_settings_reference': 'tooling:defaults-unit', 'test_parity_dashboard': 'tooling:selection-unit', 'test_select_java_modules': 'tooling:selection-unit', 'test_tooling_ownership': 'tooling:selection-unit'}
+TEST_GATES['test_dependency_inputs'] = 'tooling:dependency-inputs-unit'
 
 
 class SelectedClientManifestTests(unittest.TestCase):
@@ -105,6 +106,7 @@ class PythonToolingOwnershipTests(unittest.TestCase):
                 candidate = selection.plan(ROOT, profile='build', changed=[path], manifest=manifest)
                 self.assertTrue(set(manifest['components']) <= set(candidate['components']))
                 self.assertTrue(any(g.get('kind') == 'artifact' for g in candidate['gates']))
+
         candidate = selection.plan(ROOT, profile='build', changed=['backend/src/main/java/com/azhukov/agent/client/NoOpModelClient.java'], manifest=manifest)
         self.assertIn('backend', candidate['components'])
         self.assertTrue(any(g.get('kind') == 'artifact' for g in candidate['gates']))
@@ -112,6 +114,16 @@ class PythonToolingOwnershipTests(unittest.TestCase):
             candidate = selection.plan(ROOT, profile='build', changed=['frontend/src/product.tsx'], manifest=manifest)
             self.assertIn('frontend', candidate['components'])
             self.assertTrue(any(g.get('kind') == 'artifact' for g in candidate['gates']))
+
+    def test_private_gradle_fixture_is_manual_without_selecting_application_producers(self):
+        for profile in ('fast', 'unit', 'build'):
+            candidate = selection.plan(ROOT, profile=profile,
+                changed=['scripts/tests/test_production_role_native.py'])
+            self.assertEqual(candidate['components'], ['tooling'])
+            self.assertEqual([gate['id'] for gate in candidate['gates']], ['tooling:dependency-inputs-unit'])
+        manual = selection.plan(ROOT, profile='integration', components=['tooling'])
+        self.assertIn('tooling:source-sets-native', [gate['id'] for gate in manual['gates']])
+        self.assertFalse(any(gate.get('kind') == 'artifact' for gate in manual['gates']))
 
     def test_ci_runs_each_selected_module_once(self):
         ci = (ROOT / '.github/workflows/ci.yml').read_text(encoding='utf-8')

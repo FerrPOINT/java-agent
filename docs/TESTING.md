@@ -1,5 +1,48 @@
 # Тестовые уровни
 
+## Private Main producer
+
+`gradle/java-production-inputs.json` объявляет положительный Source contract для
+Base. Внутренний `baseProductionRole=cli-main-v1` допускает только CLI/Shared:
+один `:cli:bootJar` либо вместе `:cli:qualityDependencyInputs` и
+`:shared:qualityDependencyInputs`. Этот режим не включён в ordinary helpers,
+Docker recipes, CI или native receipts. Он готовит **непроверенный Main/JAR**;
+current-commit unit consumer и публикация проверенного candidate ещё не подключены.
+
+Base передаёт свежий private source view и его канонический
+`.base-production-source.json`; `baseProductionSourceSha256` удостоверяет только
+Source bytes. `baseProductionOutput` и `--project-cache-dir` требуют отдельных
+абсолютных путей вне sources. До producer/dependency tasks проверяется физический
+Source tree, включая content при старом timestamp, extra files/directories и
+symlinks. Production index имеет graph `production-cli-v1` и пустую `roles.unit`:
+он не является unit proof. Standalone backend отвергает этот CLI role.
+
+CLI/Shared test dependencies вынесены в `test-dependencies.gradle` каждого
+модуля. Обычный режим читает их и прежние test lanes; production role их не читает.
+Preparation descriptor и client Docker copies сохраняют ordinary closure.
+Build/test payload не разделяется между несовместимыми homes/workspace.
+
+Быстрые проверки без Gradle/приложений:
+
+```bash
+python3 -B -m unittest scripts.tests.test_dependency_inputs scripts.tests.test_tooling_ownership -q
+```
+
+Ручной fixture API закреплённого Gradle с двумя синтетическими Java-классами:
+
+```bash
+# Owned Linux environment; set PDLC_GRADLE_HOME=.../gradle-9.6.1 and exact JAVA_HOME.
+# Inspect foreign builders and acquire the common host slot before invoking.
+python3 -B -m unittest scripts.tests.test_production_role_native -v
+```
+
+Он работает offline с builtin plugins и требует Temurin 25.0.4.1. Проверяет
+production graph, configuration-cache/UP-TO-DATE, source tampering и отказы.
+На неподготовленном host получается SKIP, который не считается PASS. Сам fixture
+не квалифицирует Spring plugins, настоящий JAR, unit consumer или скорость
+приложения. Его исполнение остаётся manual integration; обычная правка файла
+выбирает только лёгкий contract/syntax gate, без application producers.
+
 ## Make: стабильные dev inputs и candidate epoch
 
 Обычные `make build/test/jar/coverage` без `SOURCE_DATE_EPOCH` передают

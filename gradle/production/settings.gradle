@@ -1,0 +1,60 @@
+import groovy.json.JsonSlurper
+import java.nio.file.Files
+import java.security.MessageDigest
+
+// This prepares an unqualified Main/JAR, never a tested delivery candidate.
+if (providers.gradleProperty('baseProductionRole').orNull != 'cli-main-v1'
+        || providers.gradleProperty('qualityRootGraph').isPresent()
+        || providers.gradleProperty('qualityRootComponents').isPresent()
+        || providers.gradleProperty('qualityDependenciesOnly').isPresent()
+        || !gradle.startParameter.initScripts.isEmpty()
+        || !gradle.startParameter.excludedTaskNames.isEmpty()) {
+    throw new GradleException('Unsupported or mixed private production role')
+}
+def requested = gradle.startParameter.taskNames
+def dependencies = [':cli:qualityDependencyInputs', ':shared:qualityDependencyInputs'] as Set
+if (requested.toSet().size() != requested.size()
+        || !(requested == [':cli:bootJar'] || requested.toSet() == dependencies)) {
+    throw new GradleException('Private production accepts only one JAR or the exact dependency snapshot graph')
+}
+def expected = providers.gradleProperty('baseProductionSourceSha256').orNull
+def control = layout.settingsDirectory.file('.base-production-source.json')
+if (!(expected ==~ /[a-f0-9]{64}/) || !control.asFile.isFile()
+        || Files.isSymbolicLink(control.asFile.toPath()) || control.asFile.length() > 4 * 1024 * 1024) {
+    throw new GradleException('Private production requires its captured source control')
+}
+byte[] raw = providers.fileContents(control).asBytes.get()
+if (MessageDigest.getInstance('SHA-256').digest(raw).encodeHex().toString() != expected) {
+    throw new GradleException('Production source control differs from its caller identity')
+}
+def view = new JsonSlurper().parse(raw)
+if (!(view instanceof Map) || view.keySet() != ['schema', 'component', 'wrapper', 'modules', 'files'].toSet()
+        || view.schema != 'base-java-production-source/v1' || view.component != 'cli'
+        || view.wrapper != 'root' || view.modules != ['cli', 'shared'] || !(view.files instanceof Map)) {
+    throw new GradleException('Private production requires the exact CLI/Shared source view')
+}
+def plainExternal = { File location ->
+    if (location == null || !location.isAbsolute()) throw new GradleException('Production outputs/cache require absolute private paths')
+    def path = location.toPath().toAbsolutePath()
+    def source = rootDir.toPath().toAbsolutePath().normalize()
+    if (path != path.normalize() || path.startsWith(source) || source.startsWith(path)) {
+        throw new GradleException('Production outputs/cache must remain outside the source namespace')
+    }
+    for (def node = path; node != null; node = node.parent) {
+        if (Files.isSymbolicLink(node)) throw new GradleException('Production paths cannot traverse aliases')
+    }
+    path.toFile()
+}
+def outputValue = providers.gradleProperty('baseProductionOutput').orNull
+if (!outputValue) throw new GradleException('Choose an owned private production output')
+def output = plainExternal(new File(outputValue))
+def cache = plainExternal(gradle.startParameter.projectCacheDir)
+if (cache == output) throw new GradleException('Keep project cache separate from production outputs')
+
+gradle.ext.baseProductionScope = [role: 'cli-main-v1', source: rootDir.absolutePath,
+                                 sha256: expected, output: output.absolutePath]
+gradle.beforeProject { project ->
+    project.layout.buildDirectory.set(new File(output, project.path == ':' ? 'root' : project.path.substring(1).replace(':', '/')))
+    project.apply from: new File(rootDir, 'gradle/production/project.gradle')
+}
+include 'cli', 'shared'

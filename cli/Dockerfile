@@ -11,10 +11,10 @@ COPY gradle.properties ./
 COPY gradle ./gradle
 COPY gradlew ./
 COPY scripts/quality-gradle.sh ./scripts/quality-gradle.sh
-COPY shared/build.gradle ./shared/build.gradle
+COPY shared/build.gradle shared/test-dependencies.gradle ./shared/
 COPY shared/src ./shared/src
 COPY telegram-bot/build.gradle ./telegram-bot/build.gradle
-COPY cli/build.gradle ./cli/build.gradle
+COPY cli/build.gradle cli/test-dependencies.gradle ./cli/
 COPY cli/src ./cli/src
 RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} --mount=type=cache,id=java-agent-gradle-9.6.1-temurin25.0.4.1-${TARGETARCH},target=/root/.gradle,sharing=locked sed -i 's/\r$//' gradlew scripts/quality-gradle.sh && chmod +x gradlew && bash scripts/quality-gradle.sh --quality-root :cli:bootJar --build-cache --no-daemon --max-workers=2
 

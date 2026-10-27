@@ -13,6 +13,11 @@ Java-агент: Spring Boot 4.1 + Java 25 + Telegram bot + MCP. Gradle multi-pr
 
 ## Build & Test
 
+При работе над повторным использованием Main/JAR читать раздел «Private Main
+producer» в [TESTING](docs/TESTING.md). `baseProductionRole=cli-main-v1` —
+внутренний неподключённый этап Base, без unit/candidate grant. Обычные команды
+сохраняют unit prerequisites; metadata fixture не заменяет application qualification.
+
 CI and Docker use Temurin **25.0.4.1+1-LTS**; all Docker stages pin image
 digests. Use committed wrappers: **9.6.1** at the repository root for
 bot/CLI and **9.8.0** from `backend/` for the standalone backend gates.
