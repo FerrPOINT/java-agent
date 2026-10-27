@@ -87,7 +87,7 @@ Skills are stored as rows in `skills` table. `DatabaseSkillManager` loads/saves 
 
 ## 13. MCP Integration
 
-Uses `io.modelcontextprotocol.sdk:mcp:2.0.0`. MCP servers are configured under `agent.mcp.servers` and their tools are registered dynamically at runtime.
+Uses `io.modelcontextprotocol.sdk:mcp:2.1.0`. MCP servers are configured under `agent.mcp.servers` and their tools are registered dynamically at runtime.
 
 ## 14. Browser / Vision
 
