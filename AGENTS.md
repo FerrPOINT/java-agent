@@ -1,5 +1,12 @@
 # AGENTS.md — Java Agent Development Guide
 
+## Make и время сборки
+
+Обычный Make без заданного `SOURCE_DATE_EPOCH` использует стабильный dev epoch
+`0`. Install/release запрашивают `--candidate-epoch`; явный epoch сохраняется.
+Не переносить dev epoch на native/release QA и не переиздавать старый receipt
+для нового commit. Команды и проверяемые границы — в [TESTING](docs/TESTING.md).
+
 ## Project Overview
 
 Java-агент: Spring Boot 4.1 + Java 25 + Telegram bot + MCP. Gradle multi-project: `backend` (REST API, LLM, tools) + `telegram-bot` (61 команда, streaming, polling) + `cli` (92+ slash commands, REPL). Production (dev): 0.1.239; main накопил WP-3…WP-12 + upstream sync — ждёт релиза 0.1.239.

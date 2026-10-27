@@ -410,7 +410,7 @@ class QualityGradleTests(unittest.TestCase):
         self.assertEqual(result.returncode, 51, result.stderr)
         self.assertEqual([row["backend"] for row in records], [True])
 
-    def test_make_adapter_freezes_implicit_epoch_before_the_two_graphs(self):
+    def test_make_adapter_freezes_candidate_epoch_before_the_two_graphs(self):
         environment = {**os.environ, "GIT_AUTHOR_DATE": "@1792072450 +0000",
                        "GIT_COMMITTER_DATE": "@1792072450 +0000"}
         for arguments in (["init", "-q"], ["add", "."],
@@ -421,7 +421,7 @@ class QualityGradleTests(unittest.TestCase):
             stream.write(
                 'GIT_AUTHOR_DATE="@1792072550 +0000" GIT_COMMITTER_DATE="@1792072550 +0000" '
                 'git -C .. -c user.name=Fixture -c user.email=fixture@example.test commit --allow-empty -qm moved\n')
-        result, records = self.invoke_make_adapter("jar", "all", SOURCE_DATE_EPOCH="")
+        result, records = self.invoke_make_adapter("jar", "all", "--candidate-epoch", SOURCE_DATE_EPOCH="")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual([record["epoch"] for record in records], ["1792072450", "1792072450"])
         actual_epoch = subprocess.check_output(["git", "show", "-s", "--format=%ct", "HEAD"], cwd=self.root, text=True).strip()

@@ -73,9 +73,10 @@ else
 QUALITY_OPERATION := test
 endif
 QUALITY_COVERAGE := $(if $(filter coverage,$(MAKECMDGOALS)),--coverage,)
+QUALITY_CANDIDATE := $(if $(filter install release,$(MAKECMDGOALS)),--candidate-epoch,)
 build test jar coverage: quality-graph
 quality-graph:
-	bash scripts/quality-make.sh $(QUALITY_OPERATION) "$(MODULE)" $(QUALITY_COVERAGE)
+	bash scripts/quality-make.sh $(QUALITY_OPERATION) "$(MODULE)" $(QUALITY_COVERAGE) $(QUALITY_CANDIDATE)
 
 clean:
 	$(GRADLE) clean

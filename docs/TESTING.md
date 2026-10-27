@@ -1,5 +1,34 @@
 # Тестовые уровни
 
+## Make: стабильные dev inputs и candidate epoch
+
+Обычные `make build/test/jar/coverage` без `SOURCE_DATE_EPOCH` передают
+стабильный unversioned epoch `0`: docs/test commit не меняет buildInfo через
+время HEAD. Это не обещает нулевую compilation при изменении production inputs.
+Прогретые Gradle task/dependency caches сохраняются; `clean` не добавляется.
+
+`make install` и `make release` явно передают адаптеру `--candidate-epoch`:
+он фиксирует время commit один раз до backend/root wrappers. Явно заданный
+`SOURCE_DATE_EPOCH` сохраняется и проверяется прежним Gradle helper.
+При прямом вызове адаптера candidate packaging обозначать так:
+
+```bash
+bash scripts/quality-make.sh jar all --candidate-epoch
+# Reports and packaging share the same candidate epoch and wrapper invocation:
+bash scripts/quality-make.sh jar all --coverage --candidate-epoch
+```
+
+`--candidate-epoch` разрешён только с `jar`; повторные и неизвестные switches
+отвергаются до wrapper. Настоящие install/release здесь не запускаются.
+Это developer Make contract. Native QA, release verifier и прямой
+`quality-gradle.sh` сохраняют свою candidate epoch/receipt policy; старый
+native proof не становится доказательством нового commit. Проверка между
+commit для native artifact отдельно от текущих unit receipts пока не включена.
+
+Regression: `python3 -B -m unittest scripts.tests.test_make_epoch -q`.
+Проверяются настоящий Bash/Git/Make adapter и инертный Gradle consumer; это
+не application Gradle qualification или release acceptance.
+
 ## Python helper unit
 
 Fast/Unit/Build используют точное владение известными test paths:
