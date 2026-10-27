@@ -43,7 +43,7 @@ This document maps every *core* Python dependency to a Java alternative. Optiona
 | `supermemory` | `supermemory` | REST wrapper or skip |
 | `mem0ai` | `mem0` | REST wrapper or skip |
 | `slack-bolt`, `discord.py`, `mautrix` | `messaging` | Slack SDK, Discord4J, Matrix — defer |
-| `mcp` | `mcp` | **`io.modelcontextprotocol.sdk:mcp:2.0.0`** |
+| `mcp` | `mcp` | **`io.modelcontextprotocol.sdk:mcp:2.1.0`** |
 | `agent-client-protocol` | `acp` | ACP is new; custom or JetBrains lib when stable |
 | `firecrawl-py` | `web` | Firecrawl REST API |
 | `exa-py` | `exa` | Exa REST API |
