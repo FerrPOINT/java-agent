@@ -30,7 +30,7 @@ release proof.
 
 ## Разработка и сборка
 
-### Выбранные native Bot/Shared
+### Выбранные native Backend/Bot/Shared
 
 Из root workspace:
 
@@ -40,15 +40,18 @@ release proof.
 ```
 
 Для отдельных компонентов использовать `-Component bot` или `-Component shared`.
-Выбираются только необходимые unit gates и один Bot JAR; CLI/Backend не входят
+Для standalone Backend использовать ту же команду с `-Component backend`:
+выбираются Backend unit/JAR через wrapper9.8.0 и только необходимая Shared
+dependency. Это отдельная qualification от root wrapper9.6.1.
+При выборе Bot/Shared выполняются только необходимые unit gates и один Bot JAR; CLI/Backend не входят
 в selected root graph. Default CLI packet и независимые product pins сохраняются.
 
-`bot:unit`, `bot:build`, `shared:unit` явно разрешают receipt reuse, но Base
+`backend:unit`, `backend:build`, `bot:unit`, `bot:build`, `shared:unit` явно разрешают receipt reuse, но Base
 принимает его только при проверенном JDK/distribution/dependency graph, исходном
 unit/JAR proof и terminal cleanup. Нет пригодного proof — один admitted producer;
 есть proof — без установки, source export и Gradle. Native qualification этого
 source tuple фиксируется отдельно в каноническом performance плане Base; opt-in
-manifest и fixture tests её не заменяют. Backend/portable grouped receipts и
+manifest и fixture tests её не заменяют. Portable grouped receipts и
 compiler-cache qualification этим scope не включаются.
 
 ### Явный scope Makefile

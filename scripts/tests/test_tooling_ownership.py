@@ -22,12 +22,10 @@ class SelectedClientManifestTests(unittest.TestCase):
         self.assertEqual(manifest['native_execution']['gates']['bot:build'],{'component':'bot','role':'build'})
         self.assertTrue(gate['cacheable'])
 
-    def test_bot_and_shared_opt_in_without_promoting_backend(self):
+    def test_bot_and_shared_keep_their_explicit_opt_in(self):
         gates={gate['id']:gate for gate in selection.load(ROOT)['gates']}
         for name in ['bot:unit','bot:build','shared:unit']:
             self.assertTrue(gates[name]['cacheable'],name)
-        self.assertFalse(gates['backend:unit']['cacheable'])
-        self.assertFalse(gates['backend:build']['cacheable'])
 
     def test_native_selected_graph_has_only_bot_shared_units_and_one_jar(self):
         with patch.object(selection,'git',return_value='a'*40):
@@ -44,6 +42,34 @@ class SelectedClientManifestTests(unittest.TestCase):
         for path in ['cli/src/main/java/Cli.java','backend/src/main/java/Api.java',
                      'telegram-bot/src/test/java/BotTest.java','docs/guide.md']:
             self.assertFalse(selection.matches(path,gate['inputs']),path)
+
+
+class BackendManifestTests(unittest.TestCase):
+    def test_backend_opt_in_declares_only_its_unit_and_exact_jar(self):
+        gates={gate['id']:gate for gate in selection.load(ROOT)['gates']}
+        self.assertTrue(gates['backend:unit']['cacheable'])
+        self.assertTrue(gates['backend:build']['cacheable'])
+        descriptor=json.loads((ROOT/'java-artifacts.json').read_bytes())['applications']['backend']
+        self.assertEqual(gates['backend:build']['outputs'],['backend/build/libs/'+descriptor['filename']])
+        with patch.object(selection,'git',return_value='a'*40):
+            candidate=selection.plan(ROOT,'build',components=['backend'],execution_platform='win32',native_docker_context='desktop-linux')
+        self.assertEqual({gate['id'] for gate in candidate['gates']},{'backend:unit','backend:build'})
+        self.assertEqual(candidate['native_execution']['components'],['backend'])
+
+    def test_standalone_production_inputs_keep_shared_wrapper_and_imported_gradle(self):
+        gate=next(gate for gate in selection.load(ROOT)['gates'] if gate['id']=='backend:build')
+        for path in ['backend/src/main/java/Api.java','shared/src/main/java/Dto.java',
+                     'backend/settings.gradle','backend/gradle/wrapper/gradle-wrapper.properties','gradle/build-info.gradle']:
+            self.assertTrue(selection.matches(path,gate['inputs']),path)
+        for path in ['backend/src/test/java/ApiTest.java','cli/src/main/java/Cli.java',
+                     'telegram-bot/src/main/java/Bot.java','docs/guide.md']:
+            self.assertFalse(selection.matches(path,gate['inputs']),path)
+
+    def test_backend_test_only_change_selects_no_application_artifact(self):
+        with patch.object(selection,'git',return_value='a'*40):
+            candidate=selection.plan(ROOT,'build',changed=['backend/src/test/java/ApiTest.java'],
+                execution_platform='win32',native_docker_context='desktop-linux')
+        self.assertEqual([gate['id'] for gate in candidate['gates']],['backend:unit'])
 
 
 class PythonToolingOwnershipTests(unittest.TestCase):
