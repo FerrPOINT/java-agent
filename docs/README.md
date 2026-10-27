@@ -70,7 +70,7 @@ The `backend/` directory is the actual application. The `docs/` directory is the
 | WebSocket | `org.java-websocket:Java-WebSocket` | CDP, replaces `websockets` |
 | Persistence | PostgreSQL (JDBC) + Flyway | dev DB is existing Postgres container; H2 for `noop` |
 | LLM provider | **OpenAI-compatible** (default Ollama Cloud `https://ollama.com/v1` in dev) | configurable endpoint |
-| MCP | `io.modelcontextprotocol.sdk:mcp:2.0.0` | official Anthropic Java SDK |
+| MCP | `io.modelcontextprotocol.sdk:mcp:2.1.0` | official Anthropic Java SDK |
 | CLI | Picocli 4.7.7 + JLine 4.3.1 | REPL |
 | Rate limiting | Bucket4j 8.10.1 | HTTP filter |
 | Resilience | Resilience4j 2.4.0 | retry + time-limiter for model calls |
