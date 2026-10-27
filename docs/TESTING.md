@@ -19,7 +19,15 @@ symlinks. Production index имеет graph `production-cli-v1` и пустую 
 
 Для `:cli:bootJar` Base передаёт обязательный
 `baseProductionCompilerContextSha256`: captured tool/dependency/environment и
-transport context. Для dependency indices этот параметр запрещён. JavaCompile,
+transport context. Для dependency indices этот параметр запрещён. Main также
+требует `baseProductionDependenciesFile` и `baseProductionDependenciesSha256`:
+captured CLI/Shared file maps передаются в private output `dependencies.json`.
+Typed `verifyProductionDependencies` сравнивает их с фактически разрешёнными
+production classpaths в том же graph, до compile/resources/archive и при
+compiler cache hit. Повторного `qualityDependencyInputs` или Gradle invocation
+нет. Несовпадение paths/bytes/SHA останавливает Main; сохранённый index сам по
+себе не доказывает фактический classpath. Новая граница требует native proof;
+исторический synthetic PASS до её добавления его не заменяет. JavaCompile,
 resources и archive tasks дополнительно получают hash Source closure: Shared
 не зависит от CLI-only Main files, CLI учитывает Shared. Это исключает stale
 cache hit при легитимном изменении Source/control со старым timestamp. Base
