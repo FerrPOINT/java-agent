@@ -387,7 +387,7 @@
       "inputs": [
         "**"
       ],
-      "cacheable": false,
+      "cacheable": true,
       "platforms": [
         "linux"
       ],
@@ -1005,6 +1005,12 @@
         "cli/build.gradle",
         "shared/src/main/**",
         "shared/build.gradle",
+        "build.gradle",
+        "build.gradle.kts",
+        "gradle.properties",
+        "gradlew",
+        "gradlew.bat",
+        ".gitattributes",
         "settings.gradle",
         "gradle/**",
         "scripts/quality-gradle.sh",
@@ -1013,7 +1019,7 @@
         "NOTICE",
         "THIRD_PARTY_NOTICES.md"
       ],
-      "cacheable": false,
+      "cacheable": true,
       "platforms": [
         "linux"
       ],
@@ -1044,7 +1050,7 @@
         "cli:unit"
       ],
       "outputs": [
-        "cli/build/libs/*.jar"
+        "cli/build/libs/cli-0.0.1-SNAPSHOT.jar"
       ]
     },
     {

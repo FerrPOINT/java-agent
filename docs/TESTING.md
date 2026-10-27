@@ -120,8 +120,12 @@ callers без этого input не записывают поле времен�
 скрытым входом ресурсов. Подтверждение actual UP-TO-DATE на native остаётся gate.
 Версии wrappers и heap/fork budgets сохранены. Automatic configuration cache
 и compiler-cache grants не включены. Download/Gradle incremental caches сохраняются.
-Product receipts пока cacheable=false до отдельной native qualification;
-это не отключает штатную инкрементальность Gradle и не разрешает повторный install.
+Для CLI unit/JAR выбран существующий native reuse profile JDK25.0.4.1/Gradle9.6.1:
+новый source tuple получает собственные unit/JAR/tool/dependency proofs перед
+reuse. Точный JAR path и root build/wrapper/properties inputs входят в контракт.
+Остальные product gates сохраняют cacheable=false до своей native qualification.
+Это не отключает штатную инкрементальность Gradle и не разрешает повторный install.
+План и границы CLI qualification: [selected native route](plans/cli-native-reuse-20261027.md).
 
 Ручной release workflow делегирует существующему integration workflow:
 повторные jobs и новая оркестрация тестов не добавляются. Проверки deploy/parity
