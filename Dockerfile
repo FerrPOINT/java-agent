@@ -4,6 +4,8 @@ FROM eclipse-temurin:25.0.4.1_1-jdk-noble@sha256:0d623ea18d7b0fe1e12a2c0a920f7e9
 WORKDIR /workspace
 COPY backend/gradle/ gradle/
 COPY backend/gradlew backend/build.gradle backend/settings.gradle backend/gradle.properties ./
+# Gradle reads the committed coverage floors while evaluating every task.
+COPY docs/standards/coverage-baseline.json /docs/standards/coverage-baseline.json
 RUN sed -i 's/\r$//' gradlew && chmod +x gradlew
 COPY backend/src src
 # h10: the backend build resolves :shared as a sibling module (backend/settings.gradle
