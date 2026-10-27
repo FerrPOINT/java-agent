@@ -183,6 +183,35 @@ class HermesSessionStreamingServiceTest {
         assertThat(messages.get(2).path("content").asText()).isEqualTo("final answer");
     }
 
+    @Test
+    void realAsyncDispatchRetainsActualCentralOrNativeRequestOrigin() {
+        var observed=new AtomicReference<String[]>();
+        var observedNative=new AtomicReference<com.azhukov.agent.core.security.NativeIdentityOrigin.Origin>();
+        when(agentRuntimeService.runTurn(any(ChatRequest.class))).thenAnswer(call->{
+            observed.set(new String[]{com.azhukov.agent.core.security.UserContext.getUserId(),com.azhukov.agent.core.security.UserContext.getRole()});
+            observedNative.set(com.azhukov.agent.core.security.NativeIdentityOrigin.current());
+            return new ChatResponseDto(EFFECTIVE_SESSION_ID,"synthetic",List.of(),true);
+        });
+        for(boolean nativeRequest:new boolean[]{false,true}) {
+            String subject=nativeRequest?"native-gateway-user":UUID.randomUUID().toString();
+            String role=nativeRequest?"admin":"user";
+            var origin=nativeRequest?new com.azhukov.agent.core.security.NativeIdentityOrigin.Origin(com.azhukov.agent.core.security.NativeIdentityOrigin.Kind.GATEWAY_KEY,subject,true):null;
+            com.azhukov.agent.core.security.UserContext.set(subject,role);
+            com.azhukov.agent.core.security.NativeIdentityOrigin.bind(origin);
+            CollectingEmitter emitter=new CollectingEmitter(30000L);
+            try {
+                service.streamTurn(ChatRequest.simple(SESSION_ID,"synthetic",null,10000L),SESSION_ID,Map.of(),emitter);
+            } finally {
+                com.azhukov.agent.core.security.UserContext.clear();
+                com.azhukov.agent.core.security.NativeIdentityOrigin.clear();
+            }
+            emitter.awaitDone();
+            assertThat(observed.get()).containsExactly(subject,role);
+            assertThat(observedNative.get()).isEqualTo(origin);
+            assertThat(emitter.error.get()).isNull();
+        }
+    }
+
     private JsonNode payload(CollectingEmitter emitter, String name) throws IOException {
         SseEvent event = emitter.events.stream()
             .filter(candidate -> name.equals(candidate.name))

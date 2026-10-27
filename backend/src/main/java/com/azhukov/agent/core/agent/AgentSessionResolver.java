@@ -35,6 +35,13 @@ public class AgentSessionResolver {
     private final MessageStorePort messageRepository;
     private final SessionLineageService sessionLineageService;
     private final ProjectContextDetector projectContextDetector;
+    private com.azhukov.agent.core.ports.IdentityReferenceRegistration identityReferences;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void configureIdentityReferences(org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.core.ports.IdentityReferenceRegistration> provider) {
+        identityReferences=provider.getIfAvailable();
+    }
+
 
     /**
      * Result of {@link #resolveOrCreate(UUID, String, String)} — carries the
@@ -97,6 +104,7 @@ public class AgentSessionResolver {
      * The source becomes the platform in the system prompt volatile tier.
      */
     public Session createSession(String userId, String provider, String modelName, String source) {
+        if(identityReferences!=null)identityReferences.nativeStorage(userId);
         SessionEntity e = newSessionEntity(userId, provider, modelName, source);
         SessionEntity saved = transactionTemplate.execute(status -> sessionRepository.save(e));
         return sessionMapper.toDomain(saved);
@@ -116,6 +124,7 @@ public class AgentSessionResolver {
         if (sessionId == null) {
             return createSession(userId, provider, modelName, source);
         }
+        if(identityReferences!=null)identityReferences.nativeStorage(userId);
         return transactionTemplate.execute(status -> {
             SessionEntity existing = sessionRepository.findById(sessionId).orElse(null);
             if (existing != null) {

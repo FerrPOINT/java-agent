@@ -23,10 +23,27 @@ public class SessionResolver {
 
     private final SessionRepository sessionRepository;
     private final AgentProperties properties;
+    private com.azhukov.agent.core.ports.IdentityReferenceRegistration identityReferences;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void configureIdentityReferences(org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.core.ports.IdentityReferenceRegistration> provider) {
+        identityReferences=provider.getIfAvailable();
+    }
 
     @Transactional
     public Session resolve(SessionSource source) {
         String userId = source.userId() != null ? source.userId() : source.chatId();
+        // The authenticated Telegram adapter supplies native platform ids. It
+        // does not run under an HTTP human context, and must retain that kind.
+        if(identityReferences!=null && source.platform()==com.azhukov.agent.gateway.model.Platform.TELEGRAM
+            && userId!=null && userId.matches("-?[0-9]{1,20}")) {
+            var previous=com.azhukov.agent.core.security.NativeIdentityOrigin.current();
+            try {
+                com.azhukov.agent.core.security.NativeIdentityOrigin.bind(new com.azhukov.agent.core.security.NativeIdentityOrigin.Origin(
+                    com.azhukov.agent.core.security.NativeIdentityOrigin.Kind.GATEWAY_EVENT,userId,false));
+                identityReferences.nativeStorage(userId);
+            } finally {com.azhukov.agent.core.security.NativeIdentityOrigin.bind(previous);}
+        }
         SessionEntity existing = sessionRepository.findByUserId(userId);
         if (existing != null) {
             sessionRepository.touchUpdatedAt(existing.getId(), Instant.now());

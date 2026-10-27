@@ -49,7 +49,9 @@ class CentralJwtFilterTest {
     private static String sessionUrl;
     private static final AtomicInteger sessionStatus = new AtomicInteger(200);
     private static final AtomicInteger unexpectedRequests = new AtomicInteger();
+    private static final AtomicInteger sessionConfirmations = new AtomicInteger();
     private static final AtomicReference<String> sessionReply = new AtomicReference<>();
+    private static final AtomicReference<Instant> sessionReplyNotBefore = new AtomicReference<>();
 
     @BeforeAll
     static void startJwks() throws Exception {
@@ -63,6 +65,9 @@ class CentralJwtFilterTest {
         });
         sessionReply.set("{\"id\":\"" + SUBJECT + "\",\"status\":\"active\"}");
         server.createContext("/me", exchange -> {
+            sessionConfirmations.incrementAndGet();
+            Instant notBefore=sessionReplyNotBefore.get();
+            while(notBefore!=null && Instant.now().isBefore(notBefore))java.util.concurrent.locks.LockSupport.parkNanos(1_000_000);
             byte[] reply = sessionReply.get().getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", "application/json");
             exchange.getResponseHeaders().set("Location", "/unexpected");
@@ -89,6 +94,8 @@ class CentralJwtFilterTest {
         sessionStatus.set(200);
         sessionReply.set("{\"id\":\"" + SUBJECT + "\",\"status\":\"active\"}");
         unexpectedRequests.set(0);
+        sessionConfirmations.set(0);
+        sessionReplyNotBefore.set(null);
     }
 
     private String token(Consumer<JWTClaimsSet.Builder> change, ECKey signingKey) throws Exception {
@@ -196,6 +203,43 @@ class CentralJwtFilterTest {
                 assertThat(calls.get()).isEqualTo(method.equals("GET") ? 1 : 0);
             }
         }
+    }
+
+    @Test
+    void originalSignedExpiryDuringLiveConfirmationNeverReachesController() throws Exception {
+        Instant expires=Instant.now().plusSeconds(2).truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+        sessionReplyNotBefore.set(expires.plusMillis(30));
+        MockHttpServletRequest request=new MockHttpServletRequest("GET","/api/v2/sessions");
+        request.addHeader("Authorization","Bearer "+token(builder->builder.expirationTime(Date.from(expires)),key));
+        MockHttpServletResponse response=new MockHttpServletResponse();
+        filter().doFilter(request,response,(incoming,outgoing)->fail("Expired live confirmation admitted a user"));
+        assertThat(response.getStatus()).isEqualTo(401);
+        assertThat(UserContext.getUserId()).isNull();
+    }
+
+    @Test
+    void provenanceUsesTheSameAllowedLiveDecisionWithoutConfirmingAgainOrRegisteringDeniedUsers() throws Exception {
+        var registration=mock(com.azhukov.agent.core.ports.IdentityReferenceRegistration.class);
+        var beans=new StaticListableBeanFactory();beans.addBean("references",registration);
+        var filter=filter();filter.configureIdentityReferences(beans.getBeanProvider(com.azhukov.agent.core.ports.IdentityReferenceRegistration.class));
+        AtomicReference<com.azhukov.agent.core.model.IdentityDeletionProtocol.Window> registered=new AtomicReference<>();
+        org.mockito.Mockito.doAnswer(call->{
+            assertThat((String)call.getArgument(0)).isEqualTo(ISSUER);assertThat((String)call.getArgument(1)).isEqualTo(SUBJECT);
+            registered.set(call.getArgument(2));assertThat(registered.get().current()).isTrue();return null;
+        }).when(registration).central(org.mockito.ArgumentMatchers.anyString(),org.mockito.ArgumentMatchers.anyString(),org.mockito.ArgumentMatchers.any());
+        for(boolean allowed:new boolean[]{false,true}) {
+            sessionReply.set(admission("user",allowed?"[\"java-agent\"]":"[]"));
+            var request=new MockHttpServletRequest("GET","/api/v2/sessions");request.addHeader("Authorization","Bearer "+token(builder->builder.claim("role","admin"),key));
+            var response=new MockHttpServletResponse();
+            filter.doFilter(request,response,(incoming,outgoing)->{
+                assertThat(allowed).isTrue();assertThat(UserContext.isAdmin()).isFalse();
+                assertThat(registered.get().deadlineNanos()).isEqualTo(UserContext.centralAccess().deadlineNanos());
+            });
+            assertThat(response.getStatus()).isEqualTo(allowed?200:403);
+        }
+        assertThat(sessionConfirmations.get()).isEqualTo(2);
+        org.mockito.Mockito.verify(registration,org.mockito.Mockito.times(1)).central(org.mockito.ArgumentMatchers.anyString(),org.mockito.ArgumentMatchers.anyString(),org.mockito.ArgumentMatchers.any());
+        assertThat(UserContext.centralAccess()).isNull();
     }
 
     @ParameterizedTest
