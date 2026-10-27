@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import tempfile
@@ -59,8 +60,16 @@ class ProductionRoleNativeTests(unittest.TestCase):
         command = [str(Path(java_home) / 'bin/java'), '-cp', str(launchers[0]), 'org.gradle.launcher.GradleMain']
         environment = {**os.environ, 'SOURCE_DATE_EPOCH': '0'}
 
-        def run(tasks, *, success=True, more=()):
-            result = subprocess.run([*command, *tasks, *options, *more], cwd=root, env=environment,
+        def run(tasks, *, success=True, more=(), case_root=None):
+            selected_options = list(options)
+            if case_root is not None:
+                # Settings failures may write Gradle problem reports before the
+                # private buildDirectory callback. Never reuse that failed source
+                # namespace for the positive immutable-source qualification.
+                selected_options[selected_options.index('--project-cache-dir') + 1] = str(case_root.parent / (case_root.name + '-cache'))
+                selected_options = [('-PbaseProductionOutput=' + str(case_root.parent / (case_root.name + '-outputs')))
+                                    if value.startswith('-PbaseProductionOutput=') else value for value in selected_options]
+            result = subprocess.run([*command, *tasks, *selected_options, *more], cwd=case_root or root, env=environment,
                                     capture_output=True, text=True, timeout=90)
             text = result.stdout + result.stderr
             if success:
@@ -69,8 +78,12 @@ class ProductionRoleNativeTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0, text[-14000:])
             return text
 
-        run([':cli:test'], success=False)
-        run([':cli:bootJar'], success=False, more=['-PbaseProductionSourceSha256=' + '0' * 64])
+        rejected_task = owner / 'rejected-task-source'
+        rejected_sha = owner / 'rejected-sha-source'
+        shutil.copytree(root, rejected_task)
+        shutil.copytree(root, rejected_sha)
+        run([':cli:test'], success=False, case_root=rejected_task)
+        run([':cli:bootJar'], success=False, more=['-PbaseProductionSourceSha256=' + '0' * 64], case_root=rejected_sha)
         index = run([':cli:qualityDependencyInputs', ':shared:qualityDependencyInputs'])
         self.assertNotIn('> Task :cli:compileJava', index)
         for module in ['cli', 'shared']:

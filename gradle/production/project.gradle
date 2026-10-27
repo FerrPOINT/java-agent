@@ -64,7 +64,7 @@ abstract class VerifyProductionSource extends DefaultTask {
                 def name = root.relativize(path).toString().replace('\\', '/')
                 if (Files.isSymbolicLink(path)) throw new GradleException('Production source contains an alias')
                 if (Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) {
-                    if (!directories.contains(name)) throw new GradleException('Unexpected production source directory')
+                    if (!directories.contains(name)) throw new GradleException('Unexpected production source directory: ' + name)
                 } else {
                     if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) || !files.containsKey(name)) {
                         throw new GradleException('Unexpected production source file')
