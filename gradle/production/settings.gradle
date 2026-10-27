@@ -37,6 +37,10 @@ if (!(view instanceof Map) || view.keySet() != ['schema', 'component', 'wrapper'
 if (view.schema == 'base-java-production-configuration/v1' && requested.toSet() != dependencies) {
     throw new GradleException('Dependency configuration cannot authorize Main/JAR production')
 }
+def compilerContext = providers.gradleProperty('baseProductionCompilerContextSha256').orNull
+if (requested == [':cli:bootJar'] ? !(compilerContext ==~ /[a-f0-9]{64}/) : compilerContext != null) {
+    throw new GradleException('Main requires its captured compiler context; dependency preparation must remain separate')
+}
 def plainExternal = { File location ->
     if (location == null || !location.isAbsolute()) throw new GradleException('Production outputs/cache require absolute private paths')
     def path = location.toPath().toAbsolutePath()
@@ -56,7 +60,8 @@ def cache = plainExternal(gradle.startParameter.projectCacheDir)
 if (cache == output) throw new GradleException('Keep project cache separate from production outputs')
 
 gradle.ext.baseProductionScope = [role: 'cli-main-v1', source: rootDir.absolutePath,
-                                 sha256: expected, output: output.absolutePath]
+                                 sha256: expected, output: output.absolutePath, compilerContext: compilerContext,
+                                 sourceFiles: view.files]
 gradle.beforeProject { project ->
     project.layout.buildDirectory.set(new File(output, project.path == ':' ? 'root' : project.path.substring(1).replace(':', '/')))
     project.apply from: new File(rootDir, 'gradle/production/project.gradle')

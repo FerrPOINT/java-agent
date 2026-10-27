@@ -119,6 +119,8 @@ class ProductionRoleNativeTests(unittest.TestCase):
             target = root / module / 'src/main/java/fixture'
             target.mkdir(parents=True)
             source = 'public static String value(){ return "shared"; }' if module == 'shared' else 'public static String value(){ return Shared.value(); }'
+            if module == 'cli':
+                source += ' public static void main(String[] args){ System.out.print(value()); }'
             (target / (module.title() + '.java')).write_text('package fixture; public class ' + module.title() + ' {' + source + '}')
             build = "plugins { id 'java-library' }\n"
             if module == 'cli':
@@ -145,6 +147,8 @@ class ProductionRoleNativeTests(unittest.TestCase):
 
         def run(tasks, *, success=True, more=(), case_root=None):
             selected_options = list(options)
+            if ':cli:bootJar' in tasks:
+                selected_options.append('-PbaseProductionCompilerContextSha256=' + 'f' * 64)
             if case_root is not None:
                 # Settings failures may write Gradle problem reports before the
                 # private buildDirectory callback. Never reuse that failed source
@@ -163,10 +167,13 @@ class ProductionRoleNativeTests(unittest.TestCase):
 
         rejected_task = owner / 'rejected-task-source'
         rejected_sha = owner / 'rejected-sha-source'
+        rejected_context = owner / 'rejected-context-source'
         shutil.copytree(root, rejected_task)
         shutil.copytree(root, rejected_sha)
+        shutil.copytree(root, rejected_context)
         run([':cli:test'], success=False, case_root=rejected_task)
         run([':cli:bootJar'], success=False, more=['-PbaseProductionSourceSha256=' + '0' * 64], case_root=rejected_sha)
+        run([':cli:bootJar'], success=False, more=['-PbaseProductionCompilerContextSha256='], case_root=rejected_context)
         index = run([':cli:qualityDependencyInputs', ':shared:qualityDependencyInputs'])
         self.assertNotIn('> Task :cli:compileJava', index)
         for module in ['cli', 'shared']:
@@ -186,10 +193,27 @@ class ProductionRoleNativeTests(unittest.TestCase):
         self.assertIn(':cli:bootJar UP-TO-DATE', second)
         self.assertEqual((hashlib.sha256(jar.read_bytes()).hexdigest(), jar.stat().st_mtime_ns), before)
         main = root / 'cli/src/main/java/fixture/Cli.java'
+        original_main = main.read_bytes()
         main.write_bytes(main.read_bytes() + b'\n// changed with an old timestamp\n')
         os.utime(main, (1, 1))
         rejected = run([':cli:bootJar'], success=False)
         self.assertIn('Production source content/budget changed', rejected)
         self.assertEqual((hashlib.sha256(jar.read_bytes()).hexdigest(), jar.stat().st_mtime_ns), before)
+        # A valid new Source/control with the same old stat time must compile new
+        # bytes, while the independent Shared task retains its useful result.
+        changed_main = original_main.replace(b'return Shared.value();', b'return Shared.value() + "-changed";')
+        self.assertNotEqual(changed_main, original_main)
+        main.write_bytes(changed_main)
+        os.utime(main, (1, 1))
+        view['files']['cli/src/main/java/fixture/Cli.java'] = hashlib.sha256(changed_main).hexdigest()
+        updated = json.dumps(view, sort_keys=True, separators=(',', ':')).encode()
+        marker.write_bytes(updated)
+        changed = run([':cli:bootJar'], more=['-PbaseProductionSourceSha256=' + hashlib.sha256(updated).hexdigest()])
+        self.assertIn(':shared:compileJava UP-TO-DATE', changed)
+        self.assertNotEqual(hashlib.sha256(jar.read_bytes()).hexdigest(), before[0])
+        executed = subprocess.run([str(Path(java_home) / 'bin/java'), '-cp',
+            str(jar) + os.pathsep + str(output / 'shared/libs/shared.jar'), 'fixture.Cli'],
+            env=environment, capture_output=True, text=True, timeout=15)
+        self.assertEqual((executed.returncode, executed.stdout), (0, 'shared-changed'), executed.stderr)
         marker.unlink()
         self.assertIn('Private production requires its captured source control', run([':cli:bootJar'], success=False))

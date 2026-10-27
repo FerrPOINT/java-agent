@@ -1,4 +1,5 @@
 import groovy.json.JsonSlurper
+import groovy.json.JsonOutput
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
@@ -94,19 +95,39 @@ if (project.path == ':') {
     }
 }
 def verifier = rootProject.tasks.named('verifyProductionSource')
+// Bind content independently of Gradle's timestamp-based file-hash shortcuts.
+// CLI consumes Shared; Shared does not consume CLI source. Configuration stays
+// common because an executable build script can configure a neighboring project.
+def members = project.path == ':shared' ? ['shared'] : ['cli', 'shared']
+def selectedSources = new TreeMap(scope.sourceFiles.findAll { name, sha ->
+    !name.contains('/src/main/') || members.any { name.startsWith(it + '/src/main/') }
+})
+def sourceIdentity = MessageDigest.getInstance('SHA-256')
+    .digest(JsonOutput.toJson(selectedSources).getBytes('UTF-8')).encodeHex().toString()
+def bindCompilerInputs = { task ->
+    if (scope.compilerContext != null) {
+        task.inputs.property('baseProductionCompilerContext', scope.compilerContext)
+        task.inputs.property('baseProductionSourceContent', sourceIdentity)
+    }
+}
 tasks.withType(JavaCompile).configureEach {
     dependsOn verifier
+    bindCompilerInputs(delegate)
     if (name != 'compileJava') {
         doFirst { throw new GradleException('Test compilation is not a production operation') }
     }
 }
 tasks.withType(ProcessResources).configureEach {
     dependsOn verifier
+    bindCompilerInputs(delegate)
     if (name != 'processResources') {
         doFirst { throw new GradleException('Test resources are not a production operation') }
     }
 }
-tasks.withType(AbstractArchiveTask).configureEach { dependsOn verifier }
+tasks.withType(AbstractArchiveTask).configureEach {
+    dependsOn verifier
+    bindCompilerInputs(delegate)
+}
 tasks.withType(Test).configureEach {
     doFirst { throw new GradleException('This unqualified Main producer cannot execute or certify units') }
 }
