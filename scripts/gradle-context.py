@@ -202,6 +202,10 @@ def distribution_snapshot(directory, home):
 
 def configuration_graph(repository, backend, graph, modules=None):
     """Bind the actual configured projects to the product's versioned declaration."""
+    return _configuration_graph(repository, backend, graph, modules)
+
+
+def _configuration_graph(repository, backend, graph, modules, *, production_configuration=False):
     if not isinstance(graph, dict) or set(graph) != {'profile', 'projects'}:
         raise ValueError('Invalid dependency configuration graph')
     path = plain(repository / 'gradle/java-preparation.json', repository)
@@ -234,7 +238,8 @@ def configuration_graph(repository, backend, graph, modules=None):
         if contract['schema'] != 'base-java-preparation/v2':
             raise ValueError('Dependency configuration graph differs from selected policy')
         members = graphs['root']
-    elif profile == 'clients-selected-v1' and contract['schema'] in ('base-java-preparation/v3', 'base-java-preparation/v4'):
+    elif (profile == 'clients-selected-v1' and contract['schema'] in ('base-java-preparation/v3', 'base-java-preparation/v4')
+          or production_configuration and profile == 'production-cli-v1' and contract['schema'] == 'base-java-preparation/v4'):
         if not modules or len(modules) != len(set(modules)) or not set(modules) <= set(graphs['root']):
             raise ValueError('Selected configuration requires explicit unique root modules')
         dependencies = contract.get('dependencies')
@@ -272,6 +277,23 @@ def configuration_graph(repository, backend, graph, modules=None):
 
 def dependency_snapshot(repository, home, modules, version, backend, role, *, indices=None):
     """Validate selected external role bytes, sharing reads across module indexes."""
+    return _dependency_snapshot(repository, home, modules, version, backend, role, indices=indices)
+
+
+def production_dependency_snapshot(repository, home, version, *, indices):
+    """Private CLI/Shared production index, never a complete unit environment.
+
+    The admitted Base owner captures external output indices explicitly. This
+    read-only byte proof does not grant preparation provenance or artifact reuse.
+    """
+    if version != '9.6.1' or not isinstance(indices, dict) or set(indices) != {'cli', 'shared'}:
+        raise ValueError('Private production inputs require the exact CLI/Shared Gradle9.6.1 index bundle')
+    return _dependency_snapshot(repository, home, ['cli', 'shared'], version, False, 'production',
+                                indices=indices, production_configuration=True)
+
+
+def _dependency_snapshot(repository, home, modules, version, backend, role, *, indices=None,
+                         production_configuration=False):
     locations = {'backend': ('backend', ':' if backend else ':backend'),
                  'shared': ('shared', ':shared'), 'cli': ('cli', ':cli'), 'bot': ('telegram-bot', ':telegram-bot')}
     if (role not in ('production', 'unit') or not modules or len(modules) != len(set(modules))
@@ -314,7 +336,11 @@ def dependency_snapshot(repository, home, modules, version, backend, role, *, in
                 or schema not in ('java-gradle-dependency-inputs/v1', 'java-gradle-dependency-inputs/v2')
                 or value.get('module') != identity or value.get('gradle') != version):
             raise ValueError('Dependency index does not match module/wrapper')
-        graph = configuration_graph(repository, backend, value['configuration_graph'], modules) if schema.endswith('/v2') else None
+        if production_configuration and (schema != 'java-gradle-dependency-inputs/v2'
+                or value['configuration_graph'] != {'profile': 'production-cli-v1', 'projects': [':', ':cli', ':shared']}):
+            raise ValueError('Private production index has a different configuration graph')
+        graph = _configuration_graph(repository, backend, value['configuration_graph'], modules,
+            production_configuration=production_configuration) if schema.endswith('/v2') else None
         if graph is not None and identity not in graph['projects']:
             raise ValueError('Dependency index module is outside the configuration graph')
         if index_schema is not None and (index_schema != schema or actual_graph != graph):
@@ -327,7 +353,11 @@ def dependency_snapshot(repository, home, modules, version, backend, role, *, in
             if (not isinstance(members, list) or len(members) > 4096 or any(not isinstance(member, str) for member in members)
                     or members != sorted(set(members))):
                 raise ValueError('Invalid dependency role members')
-        if not set(roles['production']).issubset(roles['unit']) or set(files) != set(roles['unit']):
+        if production_configuration:
+            complete = roles['unit'] == [] and set(files) == set(roles['production'])
+        else:
+            complete = set(roles['production']).issubset(roles['unit']) and set(files) == set(roles['unit'])
+        if not complete:
             raise ValueError('Dependency index role closure is incomplete')
         total = 0
         for filename, row in files.items():

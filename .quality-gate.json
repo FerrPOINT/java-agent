@@ -217,8 +217,8 @@
       "profiles": ["integration"],
       "test_tier": "integration",
       "argv": ["{python}", "-B", "-m", "unittest", "scripts.tests.test_source_sets_native", "scripts.tests.test_production_role_native", "-q"],
-      "inputs": ["settings.gradle", "gradle/production/**", "gradle/quality-inputs.gradle", "scripts/tests/test_production_role_native.py", "gradle/test-lanes.gradle", "scripts/tests/test_source_sets_native.py", "gradle/test-topology.gradle", "gradle/test-membership.gradle"],
-      "requires_env": ["PDLC_GRADLE_HOME", "JAVA_HOME"],
+      "inputs": ["settings.gradle", "gradle/production/**", "gradle/quality-inputs.gradle", "scripts/tests/test_production_role_native.py", "scripts/gradle-context.py", "gradle/java-preparation.json", "gradle/test-lanes.gradle", "scripts/tests/test_source_sets_native.py", "gradle/test-topology.gradle", "gradle/test-membership.gradle"],
+      "requires_env": ["PDLC_GRADLE_HOME", "JAVA_HOME", "GRADLE_USER_HOME"],
       "external_state": true,
       "cacheable": false
     },

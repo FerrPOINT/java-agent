@@ -1,5 +1,6 @@
 """Manual pinned Gradle API fixture; builtin plugins, no application/network."""
 import hashlib
+import importlib.util
 import json
 import os
 import shutil
@@ -23,6 +24,10 @@ class ProductionRoleNativeTests(unittest.TestCase):
         self.assertIn('JAVA_VERSION="25.0.4.1"', (Path(java_home) / 'release').read_text())
         launchers = list((home / 'lib').glob('gradle-gradle-cli-main-*.jar'))
         self.assertEqual(len(launchers), 1)
+        dependency_home = Path(os.environ['GRADLE_USER_HOME']).resolve()
+        cached = list((dependency_home / 'caches/modules-2/files-2.1/org.junit.jupiter/junit-jupiter-api').glob('*/*/*.jar'))
+        self.assertEqual(len(cached), 1, 'The immutable fixture image must have one captured JUnit API version')
+        dependency = cached[0]
         with tempfile.TemporaryDirectory(prefix='java-production-configuration-') as temporary:
             owner = Path(temporary)
             root = owner / 'configuration'
@@ -38,6 +43,7 @@ class ProductionRoleNativeTests(unittest.TestCase):
                 # An unresolved test dependency proves preparation does not
                 # accidentally resolve unit configurations in this role.
                 (directory / 'build.gradle').write_text("plugins { id 'java-library' }\n"
+                    "dependencies { implementation files(" + json.dumps(str(dependency)) + ") }\n"
                     "dependencies { testImplementation 'invalid.fixture:must-not-resolve:0' }\n"
                     "tasks.register('bootJar', Jar) { from sourceSets.main.output }\n"
                     "apply from: '../gradle/quality-inputs.gradle'\n", encoding='utf-8')
@@ -67,12 +73,25 @@ class ProductionRoleNativeTests(unittest.TestCase):
             prepared, text = run(root, [':cli:qualityDependencyInputs', ':shared:qualityDependencyInputs'])
             self.assertEqual(prepared.returncode, 0, text[-14000:])
             self.assertNotIn('compileJava', text)
+            indices = {}
             for module in ['cli', 'shared']:
                 data = json.loads((owner / 'configuration-output' / module /
                     'quality/gradle-9.6.1-dependency-inputs.json').read_bytes())
+                indices[module] = data
                 self.assertEqual(data['configuration_graph'],
                     {'profile': 'production-cli-v1', 'projects': [':', ':cli', ':shared']})
                 self.assertEqual(data['roles']['unit'], [])
+            spec = importlib.util.spec_from_file_location('private_production_reader', ROOT / 'scripts/gradle-context.py')
+            reader = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(reader)
+            context = reader.production_dependency_snapshot(ROOT, dependency_home, '9.6.1', indices=indices)
+            self.assertEqual((context['files'], context['bytes'], context['role']),
+                             (1, dependency.stat().st_size, 'production'))
+            for role in ['production', 'unit']:
+                with self.subTest(legacy_role=role), self.assertRaises(ValueError):
+                    reader.dependency_snapshot(ROOT, dependency_home, ['cli', 'shared'], '9.6.1', False, role,
+                                               indices=indices)
+            print('PRODUCTION_DEPENDENCY_READER=' + json.dumps(context), flush=True)
             actual = {p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
                       for p in root.rglob('*') if p.is_file()}
             self.assertEqual(actual, {**view['files'], '.base-production-source.json': sha})

@@ -35,7 +35,8 @@ class DependencyInputContracts(unittest.TestCase):
         owners = [gate for gate in manifest['gates'] if 'scripts.tests.test_production_role_native' in gate['argv']]
         self.assertEqual(len(owners), 1)
         self.assertEqual(owners[0]['profiles'], ['integration'])
-        self.assertEqual(set(owners[0]['requires_env']), {'PDLC_GRADLE_HOME', 'JAVA_HOME'})
+        self.assertEqual(set(owners[0]['requires_env']), {'PDLC_GRADLE_HOME', 'JAVA_HOME', 'GRADLE_USER_HOME'})
+        self.assertTrue({'scripts/gradle-context.py', 'gradle/java-preparation.json'} <= set(owners[0]['inputs']))
         self.assertTrue(owners[0]['external_state'])
         self.assertFalse(owners[0]['cacheable'])
 

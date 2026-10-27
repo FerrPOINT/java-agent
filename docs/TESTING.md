@@ -26,6 +26,16 @@ Main/JAR требует полного `base-java-production-source/v1`. Configu
 Новый bounded native fixture проверяет эту границу отдельно; его результат не
 распространяется на реальные application artifacts.
 
+`scripts/gradle-context.py` предоставляет отдельный read-only API
+`production_dependency_snapshot(repository, home, '9.6.1', indices=...)`.
+Caller передаёт captured CLI/Shared indices из private outputs. API проверяет
+v4 metadata/graph, пустую unit role, полный production file map, размер и SHA
+реальных external files в выбранном home. Один файл, общий для CLI/Shared,
+хешируется один раз; конфликтующие records отвергаются. Legacy reader и обычный
+`snapshot(..., prepared_modules=...)` этот graph не принимают ни как unit, ни
+как legacy production context. Новый API не выдаёт prepared-home provenance или
+artifact/candidate grant; Base owner ещё должен связать tools, commands и inputs.
+
 CLI/Shared test dependencies вынесены в `test-dependencies.gradle` каждого
 модуля. Обычный режим читает их и прежние test lanes; production role их не читает.
 Preparation descriptor и client Docker copies сохраняют ordinary closure.
@@ -40,7 +50,7 @@ python3 -B -m unittest scripts.tests.test_dependency_inputs scripts.tests.test_t
 Ручной fixture API закреплённого Gradle с двумя синтетическими Java-классами:
 
 ```bash
-# Owned Linux environment; set PDLC_GRADLE_HOME=.../gradle-9.6.1 and exact JAVA_HOME.
+# Owned Linux environment: accepted PDLC_GRADLE_HOME, JAVA_HOME and GRADLE_USER_HOME.
 # Inspect foreign builders and acquire the common host slot before invoking.
 python3 -B -m unittest scripts.tests.test_production_role_native -v
 ```

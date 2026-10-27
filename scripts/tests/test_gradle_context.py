@@ -15,6 +15,81 @@ SPEC.loader.exec_module(probe)
 
 
 class GradleContextTests(unittest.TestCase):
+    def production_indices(self):
+        self.graph_fixture()
+        self.contract.update(schema='base-java-preparation/v4',
+            dependencies={'cli': ['shared'], 'bot': ['shared'], 'shared': []})
+        self.contract_file.write_text(json.dumps(self.contract))
+        self.index_data['configuration_graph'] = {'profile': 'production-cli-v1', 'projects': [':', ':cli', ':shared']}
+        self.index_data['roles']['unit'] = []
+        self.index_data['files'] = {name: self.index_data['files'][name]
+                                    for name in self.index_data['roles']['production']}
+        self.write_index()
+        indices = {name: json.loads(json.dumps({**self.index_data, 'module': ':' + name}))
+                   for name in ['cli', 'shared']}
+        return indices
+
+    def test_private_production_index_reads_exact_external_bytes_without_resolver_or_units(self):
+        indices = self.production_indices()
+        with patch.object(probe.subprocess, 'run', side_effect=AssertionError('No resolver or JVM')):
+            result = probe.production_dependency_snapshot(self.root, self.home, '9.6.1', indices=indices)
+        self.assertEqual((result['files'], result['bytes'], result['role']), (1, 4, 'production'))
+        self.assertEqual(result['configuration_graph'], self.index_data['configuration_graph'])
+        self.assertNotIn(str(self.home), json.dumps(result))
+        for role in ['production', 'unit']:
+            with self.subTest(role=role), self.assertRaises(ValueError):
+                probe.dependency_snapshot(self.root, self.home, ['cli', 'shared'], '9.6.1', False, role, indices=indices)
+
+    def test_private_production_index_refuses_unit_payloads_legacy_graphs_and_wrong_wrapper(self):
+        original = self.production_indices()
+        invalid = []
+        for mutation in ['unit', 'files', 'graph', 'schema', 'module', 'missing', 'extra']:
+            indices = json.loads(json.dumps(original))
+            row = indices['cli']
+            if mutation == 'unit': row['roles']['unit'] = row['roles']['production']
+            elif mutation == 'files': row['roles']['production'] = []
+            elif mutation == 'graph': row['configuration_graph']['profile'] = 'clients-selected-v1'
+            elif mutation == 'schema':
+                row['schema'] = 'java-gradle-dependency-inputs/v1'
+                del row['configuration_graph']
+            elif mutation == 'module': row['module'] = ':shared'
+            elif mutation == 'missing': del indices['shared']
+            else: indices['bot'] = indices['shared']
+            invalid.append((mutation, indices))
+        for mutation, indices in invalid:
+            with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                probe.production_dependency_snapshot(self.root, self.home, '9.6.1', indices=indices)
+        for version in ['9.8.0', '9.8.1', 'unknown']:
+            with self.subTest(version=version), self.assertRaises(ValueError):
+                probe.production_dependency_snapshot(self.root, self.home, version, indices=original)
+
+    def test_private_production_index_refuses_old_timestamp_corruption_and_graph_drift(self):
+        indices = self.production_indices()
+        jar = Path(indices['cli']['roles']['production'][0])
+        stamp = jar.stat()
+        jar.write_bytes(b'CCCC')
+        os.utime(jar, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+        with self.assertRaisesRegex(ValueError, 'integrity'):
+            probe.production_dependency_snapshot(self.root, self.home, '9.6.1', indices=indices)
+        jar.write_bytes(b'AAAA')
+        self.contract['dependencies']['cli'] = ['bot']
+        self.contract_file.write_text(json.dumps(self.contract))
+        with self.assertRaises(ValueError):
+            probe.production_dependency_snapshot(self.root, self.home, '9.6.1', indices=indices)
+
+    def test_private_production_index_rejects_outside_files_and_conflicting_shared_records(self):
+        indices = self.production_indices()
+        selected = indices['cli']['roles']['production'][0]
+        indices['shared']['files'][selected]['sha256'] = '0' * 64
+        with self.assertRaisesRegex(ValueError, 'Conflicting'):
+            probe.production_dependency_snapshot(self.root, self.home, '9.6.1', indices=indices)
+        row = indices['cli']['files'].pop(selected)
+        outside = str(self.root / 'outside-private.jar')
+        indices['cli']['files'][outside] = row
+        indices['cli']['roles']['production'] = [outside]
+        with self.assertRaisesRegex(ValueError, 'cache root'):
+            probe.production_dependency_snapshot(self.root, self.home, '9.6.1', indices=indices)
+
     def test_selected_cli_context_requires_the_shared_dependency_and_excludes_bot(self):
         self.graph_fixture()
         self.contract.update(schema='base-java-preparation/v4',
@@ -25,6 +100,22 @@ class GradleContextTests(unittest.TestCase):
         for modules in (['cli'], ['cli', 'shared', 'bot'], ['cli', 'cli', 'shared']):
             with self.subTest(modules=modules), self.assertRaises(ValueError):
                 probe.configuration_graph(self.root, False, graph, modules)
+
+    def test_private_production_dependency_identity_ignores_sources_but_tracks_valid_dependency_change(self):
+        indices = self.production_indices()
+        before = probe.production_dependency_snapshot(self.root, self.home, '9.6.1', indices=indices)
+        for name in ['cli/src/main/java/Main.java', 'cli/src/test/java/Test.java', 'README.md']:
+            path = self.root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b'unrelated to dependency bytes')
+        self.assertEqual(before, probe.production_dependency_snapshot(self.root, self.home, '9.6.1', indices=indices))
+        selected = indices['cli']['roles']['production'][0]
+        Path(selected).write_bytes(b'CCCC')
+        for value in indices.values():
+            value['files'][selected]['sha256'] = probe.content(Path(selected))
+        after = probe.production_dependency_snapshot(self.root, self.home, '9.6.1', indices=indices)
+        self.assertNotEqual(before['sha256'], after['sha256'])
+        self.assertEqual((before['files'], before['bytes']), (after['files'], after['bytes']))
 
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -497,7 +588,13 @@ class GradleContextTests(unittest.TestCase):
         repository = SCRIPT.parents[1]
         manifest = json.loads((repository / '.quality-gate.json').read_text(encoding='utf-8'))
         gates = [gate for gate in manifest['gates'] if 'scripts/quality-gradle.sh' in gate['argv']]
-        self.assertEqual(len(gates), 16)
+        expected_ids = {component + ':' + lane for component in ['backend', 'bot', 'cli', 'shared']
+                        for lane in ['unit', 'integration', 'release']}
+        native_reuse = {'backend:unit', 'backend:build', 'bot:unit', 'bot:build',
+                        'cli:unit', 'cli:build', 'shared:unit'}
+        expected_ids.update(native_reuse | {'backend:slow', 'bot:slow'})
+        self.assertEqual({gate['id'] for gate in gates}, expected_ids)
+        self.assertEqual(len(gates), len(expected_ids))
         for gate in gates:
             with self.subTest(gate=gate['id']):
                 expected = ['{python}', 'scripts/gradle-context.py']
@@ -511,7 +608,7 @@ class GradleContextTests(unittest.TestCase):
                 self.assertEqual(tool['reuse_pattern'], '"reuse_qualified":true')
                 self.assertIs(tool['recheck'], True)
                 self.assertEqual(tool['cwd'], '.')
-                self.assertIs(gate['cacheable'], gate['id'] in ('cli:unit', 'cli:build'))
+                self.assertIs(gate['cacheable'], gate['id'] in native_reuse)
                 if gate['id'] in ('cli:unit', 'cli:build'):
                     self.assertIn('--quality-root', gate['argv'])
                 self.assertEqual(gate['source_date_epoch'], 'git-head')
