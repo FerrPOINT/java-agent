@@ -17,6 +17,14 @@ Source tree, включая content при старом timestamp, extra files/d
 symlinks. Production index имеет graph `production-cli-v1` и пустую `roles.unit`:
 он не является unit proof. Standalone backend отвергает этот CLI role.
 
+Для `:cli:bootJar` Base передаёт обязательный
+`baseProductionCompilerContextSha256`: captured tool/dependency/environment и
+transport context. Для dependency indices этот параметр запрещён. JavaCompile,
+resources и archive tasks дополнительно получают hash Source closure: Shared
+не зависит от CLI-only Main files, CLI учитывает Shared. Это исключает stale
+cache hit при легитимном изменении Source/control со старым timestamp. Base
+factory отдельно проверяет полный Source и JAR и не выдаёт unit/candidate grant.
+
 Для отдельной подготовки зависимостей Base может передать control со schema
 `base-java-production-configuration/v1`: только объявленные configuration,
 wrapper и lock bytes, без `src/main` и test source sets. Этот control допускает
