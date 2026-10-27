@@ -58,9 +58,23 @@ if (!outputValue) throw new GradleException('Choose an owned private production 
 def output = plainExternal(new File(outputValue))
 def cache = plainExternal(gradle.startParameter.projectCacheDir)
 if (cache == output) throw new GradleException('Keep project cache separate from production outputs')
+def dependencyFile = providers.gradleProperty('baseProductionDependenciesFile').orNull
+def dependencySha = providers.gradleProperty('baseProductionDependenciesSha256').orNull
+if (requested == [':cli:bootJar']) {
+    if (!(dependencySha ==~ /[a-f0-9]{64}/) || !dependencyFile) {
+        throw new GradleException('Main requires captured production dependency classpaths')
+    }
+    def captured = plainExternal(new File(dependencyFile))
+    if (captured.toPath() != output.toPath().resolve('dependencies.json')) {
+        throw new GradleException('Main dependency control must belong to its private output')
+    }
+} else if (dependencyFile != null || dependencySha != null) {
+    throw new GradleException('Dependency preparation cannot consume a Main classpath control')
+}
 
 gradle.ext.baseProductionScope = [role: 'cli-main-v1', source: rootDir.absolutePath,
                                  sha256: expected, output: output.absolutePath, compilerContext: compilerContext,
+                                 dependencyFile: dependencyFile, dependencySha256: dependencySha,
                                  sourceFiles: view.files]
 gradle.beforeProject { project ->
     project.layout.buildDirectory.set(new File(output, project.path == ':' ? 'root' : project.path.substring(1).replace(':', '/')))

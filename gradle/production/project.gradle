@@ -83,6 +83,52 @@ abstract class VerifyProductionSource extends DefaultTask {
     }
 }
 
+@DisableCachingByDefault(because = 'Observe resolved production classpaths even when compiler outputs are cached')
+abstract class VerifyProductionDependencies extends DefaultTask {
+    @Input abstract Property<String> getModuleIdentity()
+    @Input abstract Property<String> getExpectedSha256()
+    @InputFile @PathSensitive(PathSensitivity.NONE) abstract RegularFileProperty getControlFile()
+    @InputFiles @PathSensitive(PathSensitivity.ABSOLUTE) abstract ConfigurableFileCollection getActualFiles()
+
+    @TaskAction void verify() {
+        def control = controlFile.get().asFile.toPath()
+        if (Files.isSymbolicLink(control) || Files.size(control) > 4L * 1024 * 1024
+                || VerifyProductionSource.digest(control) != expectedSha256.get()) {
+            throw new GradleException('Production dependency control changed')
+        }
+        def value = new JsonSlurper().parse(control.toFile())
+        if (!(value instanceof Map) || value.keySet() != ['schema', 'modules'].toSet()
+                || value.schema != 'base-java-production-dependencies/v1'
+                || !(value.modules instanceof Map) || value.modules.keySet() != ['cli', 'shared'].toSet()) {
+            throw new GradleException('Invalid production dependency control')
+        }
+        def expected = value.modules[moduleIdentity.get()]
+        if (!(expected instanceof Map) || expected.size() > 4096) {
+            throw new GradleException('Invalid production dependency inventory')
+        }
+        def actual = new TreeMap()
+        long total = 0
+        actualFiles.files.each { file ->
+            def path = file.toPath().toAbsolutePath()
+            if (path != path.normalize() || !Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
+                throw new GradleException('Invalid resolved production dependency')
+            }
+            for (def node = path; node != null; node = node.parent) {
+                if (Files.isSymbolicLink(node)) throw new GradleException('Production dependency traverses an alias')
+            }
+            long size = Files.size(path)
+            total += size
+            if (actual.size() >= 4096 || total > 2L * 1024 * 1024 * 1024) {
+                throw new GradleException('Production dependency budget exceeded')
+            }
+            actual[path.toString()] = [bytes: size, sha256: VerifyProductionSource.digest(path)]
+        }
+        if (actual != expected) {
+            throw new GradleException('Resolved production classpaths differ from captured preparation: ' + moduleIdentity.get())
+        }
+    }
+}
+
 if (!gradle.ext.has('baseProductionScope') || gradle.ext.baseProductionScope.role != 'cli-main-v1') {
     throw new GradleException('Production project configuration requires validated private settings')
 }
@@ -95,6 +141,13 @@ if (project.path == ':') {
     }
 }
 def verifier = rootProject.tasks.named('verifyProductionSource')
+def dependencyVerifier = scope.compilerContext != null && project.path != ':' ?
+    tasks.register('verifyProductionDependencies', VerifyProductionDependencies) {
+        dependsOn verifier
+        moduleIdentity = project.name
+        controlFile = new File(scope.dependencyFile)
+        expectedSha256 = scope.dependencySha256
+    } : null
 // Bind content independently of Gradle's timestamp-based file-hash shortcuts.
 // CLI consumes Shared; Shared does not consume CLI source. Configuration stays
 // common because an executable build script can configure a neighboring project.
@@ -112,6 +165,7 @@ def bindCompilerInputs = { task ->
 }
 tasks.withType(JavaCompile).configureEach {
     dependsOn verifier
+    if (dependencyVerifier != null) dependsOn dependencyVerifier
     bindCompilerInputs(delegate)
     if (name != 'compileJava') {
         doFirst { throw new GradleException('Test compilation is not a production operation') }
@@ -119,6 +173,7 @@ tasks.withType(JavaCompile).configureEach {
 }
 tasks.withType(ProcessResources).configureEach {
     dependsOn verifier
+    if (dependencyVerifier != null) dependsOn dependencyVerifier
     bindCompilerInputs(delegate)
     if (name != 'processResources') {
         doFirst { throw new GradleException('Test resources are not a production operation') }
@@ -126,6 +181,7 @@ tasks.withType(ProcessResources).configureEach {
 }
 tasks.withType(AbstractArchiveTask).configureEach {
     dependsOn verifier
+    if (dependencyVerifier != null) dependsOn dependencyVerifier
     bindCompilerInputs(delegate)
 }
 tasks.withType(Test).configureEach {

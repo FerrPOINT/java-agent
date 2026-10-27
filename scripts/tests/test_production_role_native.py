@@ -149,6 +149,8 @@ class ProductionRoleNativeTests(unittest.TestCase):
             selected_options = list(options)
             if ':cli:bootJar' in tasks:
                 selected_options.append('-PbaseProductionCompilerContextSha256=' + 'f' * 64)
+                selected_options.extend(['-PbaseProductionDependenciesFile=' + str(output / 'dependencies.json'),
+                    '-PbaseProductionDependenciesSha256=' + hashlib.sha256(dependency_control).hexdigest()])
             if case_root is not None:
                 # Settings failures may write Gradle problem reports before the
                 # private buildDirectory callback. Never reuse that failed source
@@ -166,6 +168,7 @@ class ProductionRoleNativeTests(unittest.TestCase):
             return text
 
         rejected_task = owner / 'rejected-task-source'
+        dependency_control = b'{}'
         rejected_sha = owner / 'rejected-sha-source'
         rejected_context = owner / 'rejected-context-source'
         shutil.copytree(root, rejected_task)
@@ -176,10 +179,15 @@ class ProductionRoleNativeTests(unittest.TestCase):
         run([':cli:bootJar'], success=False, more=['-PbaseProductionCompilerContextSha256='], case_root=rejected_context)
         index = run([':cli:qualityDependencyInputs', ':shared:qualityDependencyInputs'])
         self.assertNotIn('> Task :cli:compileJava', index)
+        module_files = {}
         for module in ['cli', 'shared']:
             data = json.loads((output / module / 'quality/gradle-9.6.1-dependency-inputs.json').read_bytes())
             self.assertEqual(data['configuration_graph'], {'profile': 'production-cli-v1', 'projects': [':', ':cli', ':shared']})
             self.assertEqual(data['roles']['unit'], [])
+            module_files[module] = data['files']
+        dependency_control = json.dumps({'schema': 'base-java-production-dependencies/v1',
+            'modules': module_files}, sort_keys=True, separators=(',', ':')).encode()
+        (output / 'dependencies.json').write_bytes(dependency_control)
         self.assertFalse((output / 'cli/classes').exists())
         first = run([':cli:bootJar'])
         self.assertNotIn('> Task :cli:test', first)

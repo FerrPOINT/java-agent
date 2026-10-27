@@ -102,3 +102,9 @@ tasks.register('qualityDependencyInputs', QualityDependencyInputs) {
     // Do not trust Gradle's timestamp shortcut at this explicit integrity boundary.
     outputs.upToDateWhen { false }
 }
+if (productionIndex && gradle.ext.baseProductionScope.compilerContext != null) {
+    // Reuse the same lazy external views, without scheduling the snapshot task
+    // or starting another resolver invocation. Main must match preparation.
+    def capturedFiles = tasks.named('qualityDependencyInputs').get().productionFiles
+    tasks.named('verifyProductionDependencies').configure { actualFiles.from(capturedFiles) }
+}
