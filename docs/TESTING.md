@@ -17,6 +17,15 @@ Source tree, включая content при старом timestamp, extra files/d
 symlinks. Production index имеет graph `production-cli-v1` и пустую `roles.unit`:
 он не является unit proof. Standalone backend отвергает этот CLI role.
 
+Для отдельной подготовки зависимостей Base может передать control со schema
+`base-java-production-configuration/v1`: только объявленные configuration,
+wrapper и lock bytes, без `src/main` и test source sets. Этот control допускает
+только пару dependency index tasks; `:cli:bootJar` отказывает до task execution.
+Main/JAR требует полного `base-java-production-source/v1`. Configuration identity
+не заменяет toolchain/dependency/executor identity подготовленного окружения.
+Новый bounded native fixture проверяет эту границу отдельно; его результат не
+распространяется на реальные application artifacts.
+
 CLI/Shared test dependencies вынесены в `test-dependencies.gradle` каждого
 модуля. Обычный режим читает их и прежние test lanes; production role их не читает.
 Preparation descriptor и client Docker copies сохраняют ordinary closure.

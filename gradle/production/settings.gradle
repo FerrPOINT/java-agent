@@ -29,9 +29,13 @@ if (MessageDigest.getInstance('SHA-256').digest(raw).encodeHex().toString() != e
 }
 def view = new JsonSlurper().parse(raw)
 if (!(view instanceof Map) || view.keySet() != ['schema', 'component', 'wrapper', 'modules', 'files'].toSet()
-        || view.schema != 'base-java-production-source/v1' || view.component != 'cli'
+        || !(view.schema in ['base-java-production-source/v1', 'base-java-production-configuration/v1'])
+        || view.component != 'cli'
         || view.wrapper != 'root' || view.modules != ['cli', 'shared'] || !(view.files instanceof Map)) {
     throw new GradleException('Private production requires the exact CLI/Shared source view')
+}
+if (view.schema == 'base-java-production-configuration/v1' && requested.toSet() != dependencies) {
+    throw new GradleException('Dependency configuration cannot authorize Main/JAR production')
 }
 def plainExternal = { File location ->
     if (location == null || !location.isAbsolute()) throw new GradleException('Production outputs/cache require absolute private paths')
