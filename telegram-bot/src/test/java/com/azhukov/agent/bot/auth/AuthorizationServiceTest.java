@@ -86,10 +86,23 @@ class AuthorizationServiceTest {
         assertThat(service.isAuthorized(event)).isTrue();
     }
 
+    @Test
+    void disabledPairingIgnoresPreviouslyApprovedUserEvenAfterAllowlistRemoval() {
+        properties.getAuth().getAllowedUserIds().add("123");
+        assertThat(service.isAuthorized(123, null, 456)).isTrue();
+        properties.getAuth().getAllowedUserIds().remove("123");
+        assertThat(service.isAuthorized(123, null, 456)).isFalse();
+        assertThat(service.isAuthorized(123, null, 456)).isFalse();
+        verifyNoInteractions(pairingService);
+        properties.getAuth().getAllowedUserIds().add("123");
+        assertThat(service.isAuthorized(123, null, 456)).isTrue();
+    }
+
     // ─── Pairing check tests ──────────────────────────────────────
 
     @Test
     void approvedPairing_allowsAccess() {
+        properties.getAuth().getPairing().setEnabled(true);
         when(pairingService.hasApprovedPairing("123")).thenReturn(true);
         assertThat(service.isAuthorized(123, "jdoe", 456)).isTrue();
     }
@@ -102,6 +115,7 @@ class AuthorizationServiceTest {
 
     @Test
     void approvedPairing_checkedAfterOtherMethodsFail() {
+        properties.getAuth().getPairing().setEnabled(true);
         // User not in allowlist, but has approved pairing
         when(pairingService.hasApprovedPairing("999")).thenReturn(true);
         assertThat(service.isAuthorized(999, "unknown", -1)).isTrue();
