@@ -427,6 +427,10 @@ Full conventions doc: `backend/docs/conventions.md`
 
 ## Общий UI платформы
 
+Для будущего web UI свободная строка с подсказками использует AutocompleteInput Base, закрытый
+выбор — Select, удалённый каталог — SearchableSelect. Это правило не добавляет
+frontend-зависимость Java CLI или Telegram.
+
 При разработке web-интерфейса использовать публичные компоненты Base и стандарт
 docs/platform/CHOICE_CONTROLS.md: Select, MultiSelect, SearchableSelect.
 Общие механизмы и оформление принадлежат Base; данные и правила — продукту.
@@ -440,7 +444,12 @@ docs/platform/CHOICE_CONTROLS.md: Select, MultiSelect, SearchableSelect.
 Общий контракт добавлять в Base вместе с metadata и примером, затем явно
 обновлять UI pin потребителя. Локальная копия не заменяет эту интеграцию.
 
-При работе над web UI читать [маршрут разработки со справочником Base](https://github.com/FerrPOINT/services-base/blob/ae2b41291eee5af752daff89f760fba5aff41783/base-modules/ui/reference/guides/agent.md).
+При работе над web UI читать [маршрут разработки со справочником Base](https://github.com/FerrPOINT/services-base/blob/f7998b33d87e9ade59bbd6907a8145a70b0b8c00/base-modules/ui/reference/guides/agent.md).
+
+Для компоновки и ревью web UI применять [рабочий маршрут Base](https://github.com/FerrPOINT/services-base/blob/f7998b33d87e9ade59bbd6907a8145a70b0b8c00/docs/platform/DESIGN_SYSTEM.md#рабочий-маршрут-изменения-ui):
+задача → контракт → группы полей → применимые состояния → доказательство.
+Source guard, unit и browser-приёмка различаются; ссылка на правила не обновляет UI/SDK/skills pins.
+
 CLI можно читать из выбранного Base checkout на Node 22 без установки пакетов:
 из корня Base `node base-modules/ui/tools/ui-reference/cli.mjs check`, затем
 `search "задача"`, адресный `show` и один `example`. Явно фиксировать исследуемый
@@ -448,16 +457,46 @@ Base SHA; отсутствие UI pin не означает adoption новог�
 не получают фиктивных frontend-зависимостей. Полный каталог в контекст не загружать.
 
 Button, Input, Textarea, Checkbox, RadioGroup/Radio, Switch, меню, Card, Table, Disclosure,
-Dialog и Toaster/toast использовать из публичного @pdlc/ui. Общий дефект
+Dialog, ActionGroup и Toaster/toast использовать из публичного @pdlc/ui. Общий дефект
 исправлять в Base; продукт сохраняет данные, права и сохранение. Прямой Sonner,
 копии примитивов и продуктовые определения общих tokens не добавлять.
 Брендинг применяется общим runtime; draft preview изолируется BrandingScope.
+Строки явных действий используют ActionGroup (SSR — action_group): перенос и gap
+принадлежат Base, внешние margin/width/grid — экрану. Выбор значения использует
+RadioGroup/Select; контекст ресурса не превращается в фиктивную строку действий.
 Канонический контракт — Base docs/platform/DESIGN_SYSTEM.md и docs/BRANDING.md.
 UI/SDK/skills pins независимы; source-изменения не означают установку.
 
 В web UI одно значение из видимых вариантов использует RadioGroup, режимы — appearance="segmented",
 вкладки с панелями — Tabs; закрытые списки — Select/MultiSelect. Сверять UI pin.
 Стандарт относится к web UI при его наличии; CLI/Telegram не получают фиктивных frontend-зависимостей.
+
+## Подписи и карточки вариантов выбора
+
+После проверки API в принятом UI pin используйте label или children Checkbox/Radio
+для обычной подписи, appearance="card" — для варианта с рамкой и описанием.
+Не копируйте label с border/rounded/padding и не оборачивайте такой выбор в
+Card asChild. Base владеет hit target, focus, checked/disabled и нативной формой;
+продукт — данными, правами и обработчиком. Внешняя grid/flex-компоновка допустима.
+SSR использует checkbox_control/radio_control с appearance='card'; отдельный
+click-handler или повторное input/change для оформления не нужен.
+Контракт и пример: Base docs/platform/CHOICE_CONTROLS.md, pdlc-ui example Checkbox --case cards.
+
+Правило применяется к веб-интерфейсу, когда он разрабатывается. CLI/Telegram
+не получают React-зависимость или фиктивные общие компоненты.
+
+
+Видимый выбор файла использует `Input type="file"` Base: кнопка выбора,
+focus и disabled следуют теме и branding. Native файловый диалог остаётся у ОС;
+чтение, проверка содержимого/размера и отправка — у продукта. Скрытый технический
+file input за Button допустим; видимый raw input не добавлять. Для обновления
+оформления сверять UI pin; CLI/Telegram без web UI не получают новых зависимостей.
+
+Подписи web-полей оформлять публичным Label; подпись/подсказку/ошибку одного
+поля — FormField Base. Продукт сохраняет текст, htmlFor/id, required, данные
+и обработчики; не копировать типографику подписи и фон/рамку/радиусы/padding
+Input/Textarea. Внешняя компоновка, высота Textarea и моноширинный код допустимы.
+Правило применяется при наличии web UI; CLI/Telegram не получают фиктивных npm-зависимостей.
 
 ## Проверка Git-гигиены
 
