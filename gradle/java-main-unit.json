@@ -1,0 +1,7 @@
+{
+  "schema": "base-java-main-unit-consent/v1",
+  "profile": "cli-main-unit-v1",
+  "main_reuse": true,
+  "unit_receipt_reuse": true,
+  "epoch": "0"
+}

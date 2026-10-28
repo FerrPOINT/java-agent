@@ -4,8 +4,15 @@
 
 Обычный Make без заданного `SOURCE_DATE_EPOCH` использует стабильный dev epoch
 `0`. Install/release запрашивают `--candidate-epoch`; явный epoch сохраняется.
-Не переносить dev epoch на native/release QA и не переиздавать старый receipt
+Не переносить dev epoch на legacy native/release QA и не переиздавать старый receipt
 для нового commit. Команды и проверяемые границы — в [TESTING](docs/TESTING.md).
+
+Для separate Base `cli-main-unit-v1` читать в принятом quality packet
+`docs/plans/java-main-unit-ordinary-parent-20261028.md`: это явно выбранный dev
+profile с epoch `0`, original Main и current-commit CLI/Shared units. Eligibility
+объявлена в `gradle/java-main-unit.json`; она не включает новый workspace profile
+и не заменяет native qualification. CLI/Bot/Backend legacy, release и independent
+SDK/UI/skills/operator pins остаются отдельными маршрутами.
 
 ## Project Overview
 

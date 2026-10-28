@@ -9,6 +9,15 @@ Base. Внутренний `baseProductionRole=cli-main-v1` допускает �
 Docker recipes, CI или native receipts. Он готовит **непроверенный Main/JAR**;
 current-commit unit consumer и публикация проверенного candidate ещё не подключены.
 
+Для отдельного Base profile `cli-main-unit-v1` source parent теперь соединяет
+original Main и current CLI/Shared units. Product consent находится в
+`gradle/java-main-unit.json`, development epoch — `0`; native qualification и
+workspace `javaMainUnitExecution` adoption выполняются отдельно. До adoption
+прежние команды используют прежний route. Контракт в принятом Base quality
+packet: `docs/plans/java-main-unit-ordinary-parent-20261028.md`; release и legacy
+native QA не переводятся на dev epoch. Same-commit unit receipt не заменяет
+manual integration/slow/release, а production-only home не является unit-ready.
+
 Base передаёт свежий private source view и его канонический
 `.base-production-source.json`; `baseProductionSourceSha256` удостоверяет только
 Source bytes. `baseProductionOutput` и `--project-cache-dir` требуют отдельных
