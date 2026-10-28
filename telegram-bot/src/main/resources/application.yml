@@ -167,7 +167,7 @@ spring:
 bot:
   mode: polling
   auth:
-    allow-by-default: true
+    allow-by-default: ${BOT_ALLOW_BY_DEFAULT:false}
 
 logging:
   level:
