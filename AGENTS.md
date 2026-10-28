@@ -458,3 +458,10 @@ UI/SDK/skills pins независимы; source-изменения не озна
 В web UI одно значение из видимых вариантов использует RadioGroup, режимы — appearance="segmented",
 вкладки с панелями — Tabs; закрытые списки — Select/MultiSelect. Сверять UI pin.
 Стандарт относится к web UI при его наличии; CLI/Telegram не получают фиктивных frontend-зависимостей.
+
+## Проверка Git-гигиены
+
+Перед коммитом: `python3 -B scripts/check_repository_hygiene.py --index`.
+Перед публикацией проверять точный кандидат через `--ref <commit>`. Установка
+hooks и допустимые артефакты: [правила](docs/REPOSITORY_HYGIENE.md).
+Копии проверки принадлежат Base; SDK/UI pins не меняются.

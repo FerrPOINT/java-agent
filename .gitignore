@@ -58,3 +58,17 @@ __pycache__/
 /backend/.env
 repomix-output.*
 repomix-output.xml
+
+# Disposable artifacts: enforced by scripts/check_repository_hygiene.py
+node_modules/
+.pnpm-store/
+.venv/
+.local/
+.worktree/
+.worktrees/
+worktree/
+worktrees/
+target-cache*/
+target-stage/
+target-stable/
+*.tsbuildinfo
