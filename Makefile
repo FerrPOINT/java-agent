@@ -58,7 +58,7 @@ build:
 	$(GRADLE) compileJava compileTestJava
 	@echo "$(GREEN)Build successful.$(NC)"
 
-test:
+test: repository-hygiene
 	@echo "$(CYAN)Running tests...$(NC)"
 	$(GRADLE) test
 	@echo "$(GREEN)All tests passed.$(NC)"
@@ -143,3 +143,10 @@ skill-update:
 	@echo ""
 	@echo ">>> Paste the block above into the skill's 'Current Parity Status' header,"
 	@echo ">>> then append session findings to 'Fully Ported' / 'Known Gaps'."
+
+.PHONY: repository-hygiene repository-hygiene-ref
+repository-hygiene:
+	python3 -B scripts/check_repository_hygiene.py --index
+
+repository-hygiene-ref:
+	python3 -B scripts/check_repository_hygiene.py --ref HEAD
