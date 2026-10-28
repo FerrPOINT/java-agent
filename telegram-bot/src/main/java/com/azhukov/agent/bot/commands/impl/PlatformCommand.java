@@ -65,20 +65,7 @@ public class PlatformCommand implements CommandHandler {
         }
 
         // Allowed users count
-        int allowedIds = properties.getAuth().getAllowedUserIds().size();
-        int allowedUsernames = properties.getAuth().getAllowedUsernames().size();
-        int allowedChats = properties.getAuth().getAllowedChatIds().size();
-        int totalAllowed = allowedIds + allowedUsernames + allowedChats;
-        sb.append("  Allowed users: ").append(totalAllowed);
-        if (totalAllowed > 0) {
-            sb.append(" (").append(allowedIds).append(" IDs, ")
-              .append(allowedUsernames).append(" usernames, ")
-              .append(allowedChats).append(" chats)");
-        }
-        if (properties.getAuth().isAllowByDefault()) {
-            sb.append(" [open access]");
-        }
-        sb.append("\n");
+        sb.append("  Allowed users: ").append(properties.getAuth().getAllowedUserIds().size()).append("\n");
 
         // Default model
         String defaultModel = properties.getDefaultModel();
