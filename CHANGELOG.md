@@ -1,5 +1,8 @@
 ## [Unreleased]
 
+- Сборщик backend Docker-образа получает закреплённый `coverage-baseline.json`:
+  конфигурация Gradle доступна и для `bootJar -x test`, без изменения порогов покрытия.
+
 - The final backend image includes Git for the agent's repository tools; the runtime no longer depends on an unavailable host Git installation.
 
 - The dev Docker launcher now delegates only the selected initialized workspace's Java backend to its workspace helper. It rejects mismatched projects, missing storage metadata and argument overrides; it no longer guesses volumes, changes ownership or stops host services. This also removes the legacy direct-container launch that blocked qualified workspace Build.
