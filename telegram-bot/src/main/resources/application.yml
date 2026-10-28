@@ -107,15 +107,8 @@ bot:
 
   auth:
     allowed-user-ids: ${BOT_ALLOWED_USER_IDS:}
-    allowed-usernames: ${BOT_ALLOWED_USERNAMES:}
-    allowed-chat-ids: ${BOT_ALLOWED_CHAT_IDS:}
-    allow-by-default: ${BOT_ALLOW_BY_DEFAULT:false}
     admin-user-ids: ${BOT_ADMIN_USER_IDS:}
     user-allowed-commands: ${BOT_USER_ALLOWED_COMMANDS:}
-    pairing:
-      enabled: ${BOT_PAIRING_ENABLED:false}
-      code-expiry-hours: 1
-      max-pending: 3
 
   display:
     # Hermes parity: display.tool_progress: all (operator's effective config),
@@ -166,8 +159,6 @@ spring:
 
 bot:
   mode: polling
-  auth:
-    allow-by-default: ${BOT_ALLOW_BY_DEFAULT:false}
 
 logging:
   level:

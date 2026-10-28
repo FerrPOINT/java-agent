@@ -415,21 +415,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         if (!authorizationService.isAuthorized(event)) {
             log.debug("Unauthorized message from userId={} username={} chatId={}",
                 event.userId(), event.username(), chatId);
-            // B2.5: If pairing is enabled, generate a pairing code
-            if (authorizationService.isPairingEnabled()) {
-                java.util.Optional<String> code = authorizationService.generatePairingCode(
-                    event.userId(), event.username(), chatId);
-                if (code.isPresent()) {
-                    telegramClient.sendMessage(chatId,
-                        "🔐 You are not authorized. Send this code to the bot owner: " + code.get());
-                } else {
-                    telegramClient.sendMessage(chatId,
-                        "⛔ You are not authorized. Pairing code limit reached. Contact the bot owner.");
-                }
-            } else {
-                telegramClient.sendMessage(chatId,
-                    "⛔ You are not authorized to use this bot.");
-            }
+            telegramClient.sendMessage(chatId, "⛔ You are not authorized to use this bot.");
             return;
         }
 

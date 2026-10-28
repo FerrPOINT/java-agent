@@ -766,31 +766,8 @@ class BotMessageProcessorTest {
     @Test
     void unauthorizedMessageSendsNotAuthorized() {
         when(authorizationService.isAuthorized(any(UpdateEvent.class))).thenReturn(false);
-        when(authorizationService.isPairingEnabled()).thenReturn(false);
         processor.accept(textEvent(1, 100L, "hello"));
         verify(telegramClient).sendMessage(eq(100L), contains("not authorized"));
-        verifyNoInteractions(backendClient);
-    }
-
-    @Test
-    void unauthorizedMessageWithPairingEnabledAndCodePresent() {
-        when(authorizationService.isAuthorized(any(UpdateEvent.class))).thenReturn(false);
-        when(authorizationService.isPairingEnabled()).thenReturn(true);
-        when(authorizationService.generatePairingCode(anyLong(), anyString(), anyLong()))
-            .thenReturn(Optional.of("PAIR123"));
-        processor.accept(textEvent(1, 100L, "hello"));
-        verify(telegramClient).sendMessage(eq(100L), contains("PAIR123"));
-        verifyNoInteractions(backendClient);
-    }
-
-    @Test
-    void unauthorizedMessageWithPairingEnabledButCodeEmpty() {
-        when(authorizationService.isAuthorized(any(UpdateEvent.class))).thenReturn(false);
-        when(authorizationService.isPairingEnabled()).thenReturn(true);
-        when(authorizationService.generatePairingCode(anyLong(), anyString(), anyLong()))
-            .thenReturn(Optional.empty());
-        processor.accept(textEvent(1, 100L, "hello"));
-        verify(telegramClient).sendMessage(eq(100L), contains("Pairing code limit reached"));
         verifyNoInteractions(backendClient);
     }
 
