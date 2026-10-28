@@ -444,7 +444,12 @@ docs/platform/CHOICE_CONTROLS.md: Select, MultiSelect, SearchableSelect.
 Общий контракт добавлять в Base вместе с metadata и примером, затем явно
 обновлять UI pin потребителя. Локальная копия не заменяет эту интеграцию.
 
-При работе над web UI читать [маршрут разработки со справочником Base](https://github.com/FerrPOINT/services-base/blob/ae2b41291eee5af752daff89f760fba5aff41783/base-modules/ui/reference/guides/agent.md).
+При работе над web UI читать [маршрут разработки со справочником Base](https://github.com/FerrPOINT/services-base/blob/f7998b33d87e9ade59bbd6907a8145a70b0b8c00/base-modules/ui/reference/guides/agent.md).
+
+Для компоновки и ревью web UI применять [рабочий маршрут Base](https://github.com/FerrPOINT/services-base/blob/f7998b33d87e9ade59bbd6907a8145a70b0b8c00/docs/platform/DESIGN_SYSTEM.md#рабочий-маршрут-изменения-ui):
+задача → контракт → группы полей → применимые состояния → доказательство.
+Source guard, unit и browser-приёмка различаются; ссылка на правила не обновляет UI/SDK/skills pins.
+
 CLI можно читать из выбранного Base checkout на Node 22 без установки пакетов:
 из корня Base `node base-modules/ui/tools/ui-reference/cli.mjs check`, затем
 `search "задача"`, адресный `show` и один `example`. Явно фиксировать исследуемый
