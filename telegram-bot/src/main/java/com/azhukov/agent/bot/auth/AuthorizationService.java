@@ -45,8 +45,8 @@ public class AuthorizationService {
         // 5. chat-id match (group allowlist)
         if (auth.getAllowedChatIds().contains(chatIdStr)) return true;
 
-        // 5b. pairing check — if user has an approved pairing code, allow access
-        if (pairingService.hasApprovedPairing(String.valueOf(userId))) return true;
+        // Disabled pairing must not preserve access through old approvals.
+        if (auth.getPairing().isEnabled() && pairingService.hasApprovedPairing(userIdStr)) return true;
 
         // 6. deny (fail-closed)
         log.debug("Authorization denied for userId={} username={} chatId={}", userId, username, chatId);
