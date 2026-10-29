@@ -29,23 +29,31 @@ CI and Docker use Temurin **25.0.4.1+1-LTS**; all Docker stages pin image
 digests. Use committed wrappers: **9.6.1** at the repository root for
 bot/CLI and **9.8.0** from `backend/` for the standalone backend gates.
 
+Из корня выбранного source checkout запускать только затронутый модуль:
+`backend`, `cli`, `bot` или `shared`. Например, для CLI:
+
 ```bash
-cd /opt/dev/java-agent
-# Ordinary build: reviewed isolated units and the candidate JAR.
-bash scripts/quality-gradle.sh --backend :test :bootJar --no-daemon --max-workers=2
-bash scripts/quality-gradle.sh --quality-root :telegram-bot:test :cli:test --no-daemon --max-workers=2
-# Manual release only: integration, slow checks and full coverage in one graph.
-python3 scripts/release_verify.py
-# During implementation: one affected test class, without packaging.
-bash scripts/quality-gradle.sh --backend :test --tests 'com.azhukov.agent.gateway.GatewayLifecycleServiceTest' --no-daemon --max-workers=2
+make test MODULE=cli
 ```
+
+`MODULE=all` — явный полный обход, а не повседневное значение для копирования.
+Для JAR сначала проверить пригодный artifact; `make jar MODULE=cli` нужен только
+при отсутствии совместимого результата. Полный release и применимые внешние
+сценарии выполняются на отдельной согласованной ручной вехе:
+
+```bash
+python3 scripts/release_verify.py
+```
+
+Эти примеры не являются поручением запустить сборку/релиз; при запрете builds
+продолжать source/static работу. Применимые live/E2E gates — по release checklist.
 
 Integration/slow/full coverage run manually before release. Ordinary build/check
 uses the reviewed unit inventory in `gradle/test-lanes.json`; it does not select
 the manual lanes. Backend integration requires the disposable PostgreSQL fixture declared in
 `.quality-gate.json`. Use an owned Linux runner for POSIX-dependent tests.
-The helper freezes SOURCE_DATE_EPOCH from the candidate; preserve the tested JAR
-and its digest for delivery. Coverage tasks use the same Gradle graph and do not
+Development Make uses stable SOURCE_DATE_EPOCH=0; install/release explicitly
+selects the candidate epoch. Preserve the tested JAR and its digest for delivery. Coverage tasks use the same Gradle graph and do not
 need a second test invocation. Keep maxParallelForks and product coverage gates.
 Ordinary helper tasks use the qualified strict configuration-cache default;
 scope and notice-input requirements are in [TESTING](docs/TESTING.md).
@@ -113,10 +121,12 @@ cd backend
 ./gradlew bootRun --args='--spring.profiles.active=noop'
 ```
 
-`maxHeapSize = 2g` установлен в `build.gradle` как страховка от OOM.
-Gradle daemon (~500MB–1GB) + app heap разделят одну JVM — при
-больших LLM-payloads памяти может не хватить. Для реальных нагрузок
-используй `java -jar`.
+`backend/build.gradle` задаёт для `bootRun` предел heap `2g`, не измеренную RAM.
+[BootRun](https://docs.spring.io/spring-boot/gradle-plugin/api/java/org/springframework/boot/gradle/tasks/run/BootRun.html)
+использует [JavaExec](https://docs.gradle.org/current/dsl/org.gradle.api.tasks.JavaExec.html):
+приложение работает в отдельной JVM. Gradle и приложение учитывать раздельно;
+`java -jar` запускает готовый JAR без удержания Gradle launcher. Heap/RSS/commit
+и память всего контейнера — разные показатели; лимиты менять по измерениям.
 
 ### CLI (standalone, общается с backend через REST)
 
