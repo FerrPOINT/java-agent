@@ -38,14 +38,24 @@ CI and Docker use Temurin **25.0.4.1+1-LTS**; all Docker stages pin image
 digests. Use committed wrappers: **9.6.1** at the repository root for
 bot/CLI and **9.8.2** from `backend/` for the standalone backend gates.
 
+Из корня выбранного source checkout запускать только затронутый модуль:
+`backend`, `cli`, `bot` или `shared`. Например, для CLI:
+
 ```bash
-cd /opt/dev/java-agent
-./gradlew check                # workspace regression suite
-./gradlew compileJava          # compile only
-./gradlew bootJar              # build JAR
-./gradlew slowTest             # @Tag("slow") integration tests
-./gradlew jacocoTestReport     # coverage report
+make test MODULE=cli
 ```
+
+`MODULE=all` — явный полный обход, а не повседневное значение для копирования.
+Для JAR сначала проверить пригодный artifact; `make jar MODULE=cli` нужен только
+при отсутствии совместимого результата. Полный release и применимые внешние
+сценарии выполняются на отдельной согласованной ручной вехе:
+
+```bash
+python3 scripts/release_verify.py --run-slow
+```
+
+Эти примеры не являются поручением запустить сборку/релиз; при запрете builds
+продолжать source/static работу. Применимые live/E2E gates — по release checklist.
 
 ## Run
 
@@ -68,10 +78,12 @@ cd backend
 ./gradlew bootRun --args='--spring.profiles.active=noop'
 ```
 
-`maxHeapSize = 2g` установлен в `build.gradle` как страховка от OOM.
-Gradle daemon (~500MB–1GB) + app heap разделят одну JVM — при
-больших LLM-payloads памяти может не хватить. Для реальных нагрузок
-используй `java -jar`.
+`backend/build.gradle` задаёт для `bootRun` предел heap `2g`, не измеренную RAM.
+[BootRun](https://docs.spring.io/spring-boot/gradle-plugin/api/java/org/springframework/boot/gradle/tasks/run/BootRun.html)
+использует [JavaExec](https://docs.gradle.org/current/dsl/org.gradle.api.tasks.JavaExec.html):
+приложение работает в отдельной JVM. Gradle и приложение учитывать раздельно;
+`java -jar` запускает готовый JAR без удержания Gradle launcher. Heap/RSS/commit
+и память всего контейнера — разные показатели; лимиты менять по измерениям.
 
 ### CLI (standalone, общается с backend через REST)
 
