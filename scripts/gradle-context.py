@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import subprocess
 import sys
 
@@ -30,17 +31,21 @@ def content(path):
 def inventory(root):
     """Bound one read-only tree; no mtime keys or traversal through external links."""
     rows, visited, count, size, complete, entries = {}, {}, 0, 0, True, 0
-    if root.is_symlink() or (root.exists() and getattr(root.lstat(), 'st_file_attributes', 0) & 0x400):
+    try:
+        root_info = root.lstat()
+    except (FileNotFoundError, NotADirectoryError):
+        return {'sha256': digest({}), 'files': 0, 'bytes': 0, 'complete': True}
+    if stat.S_ISLNK(root_info.st_mode) or getattr(root_info, 'st_file_attributes', 0) & 0x400:
         return {'sha256': digest({'link': os.readlink(root)}), 'files': 0, 'bytes': 0, 'complete': False}
 
     def paths():
-        pending = [root] if root.is_dir() else []
+        pending = [root] if stat.S_ISDIR(root_info.st_mode) else []
         while pending:
             with os.scandir(pending.pop()) as items:
                 for item in items:
                     path = Path(item.path)
-                    linked = item.is_symlink() or getattr(path.lstat(), 'st_file_attributes', 0) & 0x400
-                    if item.is_dir(follow_symlinks=False) and not linked:
+                    if (item.is_dir(follow_symlinks=False)
+                            and not getattr(item.stat(follow_symlinks=False), 'st_file_attributes', 0) & 0x400):
                         pending.append(path)
                     yield path
 
@@ -51,24 +56,31 @@ def inventory(root):
             break
         relative = path.relative_to(root).as_posix()
         target = path.resolve()
-        if path.is_symlink() or getattr(path.lstat(), 'st_file_attributes', 0) & 0x400:
+        # One fresh non-following observation supplies type, size and mode.
+        # DirEntry metadata is used only to avoid descending into aliases.
+        info = path.lstat()
+        if stat.S_ISLNK(info.st_mode) or getattr(info, 'st_file_attributes', 0) & 0x400:
             if not target.is_relative_to(root.resolve()) or path.is_dir():
                 rows[relative] = {'link': digest(os.readlink(path))}
                 complete = False
                 continue
-        if path.is_dir():
+            if not path.is_file():
+                complete = False
+                continue
+            info = path.stat()  # Preserve the existing internal regular-file alias policy.
+        if stat.S_ISDIR(info.st_mode):
             continue
-        if not path.is_file():
+        if not stat.S_ISREG(info.st_mode):
             complete = False
             continue
         count += 1
-        size += path.stat().st_size
+        size += info.st_size
         if size > 2 * 1024**3:
             complete = False
             break
         if target not in visited:
             visited[target] = content(path)
-        rows[relative] = {'sha256': visited[target], 'executable': bool(path.stat().st_mode & 0o111)}
+        rows[relative] = {'sha256': visited[target], 'executable': bool(info.st_mode & 0o111)}
     return {'sha256': digest(rows), 'files': count, 'bytes': size, 'complete': complete}
 
 

@@ -57,6 +57,11 @@ Regression: `python3 -B -m unittest scripts.tests.test_make_epoch -q`.
 
 ## Разработка и сборка
 
+Prepared inspector сокращает повторные metadata reads одного inventory;
+content hashes обновляются при каждом наблюдении. Source counters не
+заменяют actual JDK/Gradle benchmark или native receipt qualification.
+[Изменение и ограничения](https://github.com/FerrPOINT/services-base/blob/chore/build-performance-20261015/docs/plans/java-inventory-metadata-20261101.md).
+
 Read-only prepared inspector распознаёт actual root9.6.1/backend9.8.2.
 Он сверяет полные installed bytes/dependency indexes без bootstrap; ready
 snapshot сам по себе не разрешает native/compiler receipt reuse.
