@@ -1,10 +1,10 @@
 """Epoch policy at the real Make adapter boundary; no JVM or Gradle."""
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 BASH = str(Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Git/bin/bash.exe") if os.name == "nt" else shutil.which("bash")
@@ -21,15 +21,35 @@ class MakeEpochTests(unittest.TestCase):
         (scripts / "quality-make.sh").write_bytes((ROOT / "scripts/quality-make.sh").read_bytes().replace(b"\r\n", b"\n"))
         (scripts / "quality-gradle.sh").write_text(
             'printf "CALL\\nEPOCH=%s\\n" "$SOURCE_DATE_EPOCH"\n'
+            'printf "ARG=%s\\n" "$@"\n'
             'if [[ "${MOVE_HEAD:-}" == 1 && "${1:-}" == --backend ]]; then\n'
             ' GIT_AUTHOR_DATE="@1792072550 +0000" GIT_COMMITTER_DATE="@1792072550 +0000" '
             'git -C "$(dirname "$0")/.." -c user.name=Fixture -c user.email=fixture@example.test '
             'commit --allow-empty -qm moved\nfi\n', newline="\n")
 
+    def test_missing_or_empty_module_never_starts_a_graph(self):
+        for arguments in (("jar",), ("build",), ("test", ""), ("coverage", "")):
+            with self.subTest(arguments=arguments):
+                result, epochs = self.invoke(*arguments)
+                self.assertEqual(result.returncode, 64, result.stdout + result.stderr)
+                self.assertEqual(epochs, [])
+
+    def test_selected_module_dispatches_only_its_compatible_tasks(self):
+        for module, mode, graph, task in (("cli", "jar", "--quality-root", ":cli:bootJar"),
+                                          ("bot", "jar", "--quality-root", ":telegram-bot:bootJar"),
+                                          ("backend", "build", "--backend", ":test"),
+                                          ("shared", "test", "--quality-root", ":shared:test")):
+            with self.subTest(module=module):
+                result, epochs = self.invoke(mode, module)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                arguments = [line.removeprefix("ARG=") for line in result.stdout.splitlines() if line.startswith("ARG=")]
+                self.assertEqual(epochs, ["0"])
+                self.assertEqual(arguments, [graph, task, "--no-daemon", "--max-workers=2"])
+
     def invoke(self, *arguments, **overrides):
         environment = {key: value for key, value in os.environ.items() if key != "SOURCE_DATE_EPOCH"}
         result = subprocess.run([BASH, "scripts/quality-make.sh", *arguments], cwd=self.root,
-                                env={**environment, **overrides}, text=True, capture_output=True)
+                                env={**environment, **overrides}, text=True, capture_output=True, check=False)
         return result, [line.removeprefix("EPOCH=") for line in result.stdout.splitlines() if line.startswith("EPOCH=")]
 
     def initialize_git(self):
@@ -82,11 +102,14 @@ class MakeEpochTests(unittest.TestCase):
         (self.root / "Makefile").write_bytes((ROOT / "Makefile").read_bytes())
         (self.root / ".version").write_text("0.1.0")
         environment = {key: value for key, value in os.environ.items() if key != "SOURCE_DATE_EPOCH"}
-        result = subprocess.run(["make", "--no-print-directory", "jar", "MODULE=backend"], cwd=self.root, env=environment, text=True, capture_output=True)
+        result = subprocess.run(["make", "--no-print-directory", "jar", "MODULE=backend"], cwd=self.root, env=environment, text=True, capture_output=True, check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("EPOCH=0", result.stdout)
+        refused = subprocess.run(["make", "--no-print-directory", "jar"], cwd=self.root, env=environment, text=True, capture_output=True, check=False)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertNotIn("EPOCH=", refused.stdout)
         for goal in ("install", "release"):
-            result = subprocess.run(["make", "--no-print-directory", "-n", goal], cwd=self.root, env=environment, text=True, capture_output=True)
+            result = subprocess.run(["make", "--no-print-directory", "-n", goal], cwd=self.root, env=environment, text=True, capture_output=True, check=False)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("--candidate-epoch", result.stdout)
 

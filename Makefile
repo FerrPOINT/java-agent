@@ -1,8 +1,8 @@
 # java-agent Makefile — build, test, version, install
 # Usage:
-#   make build       — compile and run reviewed units (MODULE=all by default)
+#   make build       — compile and run reviewed units (explicit MODULE)
 #   make test        — run reviewed units (MODULE=backend|cli|bot|shared|all)
-#   make jar         — build selected JARs (MODULE=all by default)
+#   make jar         — build selected JARs (explicit MODULE)
 #   make install     — build + test + jar + install to /opt/java-agent
 #   make version     — show current version
 #   make patch       — bump patch version (0.1.0 → 0.1.1)
@@ -16,7 +16,12 @@
 
 SHELL := /bin/bash
 GRADLE := ./gradlew
-MODULE ?= all
+MODULE ?= $(if $(filter install release,$(MAKECMDGOALS)),all,)
+ifneq ($(filter build test jar coverage,$(MAKECMDGOALS)),)
+ifeq ($(strip $(MODULE)),)
+$(error Select MODULE=backend|cli|bot|shared; MODULE=all is an explicit full graph)
+endif
+endif
 INSTALL_DIR := /opt/java-agent
 VERSION_FILE := .version
 JAVA := java
@@ -42,9 +47,9 @@ endif
 
 help:
 	@echo "java-agent Makefile — commands:"
-	@echo "  make build       — compile and run reviewed units (MODULE=all)"
+	@echo "  make build       — compile and run reviewed units (explicit MODULE)"
 	@echo "  make test        — reviewed units (MODULE=backend|cli|bot|shared|all)"
-	@echo "  make jar         — build selected JARs (MODULE=all)"
+	@echo "  make jar         — build selected JARs (explicit MODULE)"
 	@echo "  make install     — build + test + jar + install to $(INSTALL_DIR)"
 	@echo "  make version     — show current version"
 	@echo "  make patch       — bump patch version"
