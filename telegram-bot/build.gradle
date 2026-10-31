@@ -77,7 +77,6 @@ dependencies {
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     // Qualify the two real bot-owned reference tables against the actual owner
     // and backend Flyway resources, without a production backend dependency.
-    testImplementation project(path: ':backend', configuration: 'identityOwnerTestElements')
     testImplementation 'org.springframework.boot:spring-boot-webmvc-test'
     testImplementation 'org.apache.groovy:groovy-test:6.0.0'
     runtimeOnly 'com.h2database:h2'
@@ -119,8 +118,16 @@ tasks.withType(JavaCompile).configureEach {
     ]
 }
 
+// A changing wall clock must not invalidate resources, tests and the JAR.
+def candidateBuildEpoch = providers.environmentVariable('SOURCE_DATE_EPOCH')
 springBoot {
-    buildInfo()
+    buildInfo {
+        if (candidateBuildEpoch.isPresent()) {
+            properties { time = java.time.Instant.ofEpochSecond(Long.parseLong(candidateBuildEpoch.get())).toString() }
+        } else {
+            excludes = ['time']
+        }
+    }
 }
 
 def ferrpointNoticeFiles = [
@@ -158,3 +165,27 @@ tasks.named('bootJar') {
         attributes 'Start-Class': 'com.azhukov.agent.bot.BotApplication'
     }
 }
+
+// Base test lanes: unit compilation excludes manual boundary sources.
+apply from: file("../gradle/test-lanes.gradle").exists() ? file("../gradle/test-lanes.gradle") : file("gradle/test-lanes.gradle")
+
+// Backend classes/Flyway belong only to the manual PostgreSQL owner consumer.
+dependencies {
+    // The bounded ordinary clients graph excludes backend configuration.
+    if (findProject(':backend') != null) {
+        manualTestImplementation project(path: ':backend', configuration: 'identityOwnerTestElements')
+    }
+}
+tasks.named('identityOwnerTest', Test) {
+    testClassesDirs = sourceSets.manualTest.output.classesDirs
+    classpath = sourceSets.manualTest.runtimeClasspath
+    outputs.upToDateWhen { false }
+    outputs.cacheIf { false }
+}
+tasks.named('jacocoTestReport') {
+    dependsOn tasks.named('integrationTest')
+    executionData(tasks.named('test').get(), tasks.named('integrationTest').get())
+}
+
+// Read-only preparation index, not a successful build or test receipt.
+apply from: file("../gradle/quality-inputs.gradle").exists() ? file("../gradle/quality-inputs.gradle") : file("gradle/quality-inputs.gradle")

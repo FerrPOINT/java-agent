@@ -1,0 +1,24 @@
+// Dependency preparation must never interpret or bypass the reviewed source partition.
+def preparation = providers.gradleProperty('qualityDependenciesOnly')
+if (preparation.isPresent()) {
+    if (preparation.get() != 'true') throw new GradleException('Unsupported dependency preparation mode')
+    def clients = providers.gradleProperty('qualityRootGraph').orNull
+    def backend = rootProject.name == 'java-agent-backend'
+    if (!backend && !(clients in ['clients-v1', 'clients-selected-v1'])) {
+        throw new GradleException('Root dependency preparation requires the explicit clients graph')
+    }
+    def allowed = backend ? [':qualityDependencyInputs', ':shared:qualityDependencyInputs'] :
+        [':shared:qualityDependencyInputs', ':cli:qualityDependencyInputs', ':telegram-bot:qualityDependencyInputs']
+    if (!gradle.startParameter.initScripts.isEmpty() || !gradle.startParameter.excludedTaskNames.isEmpty()) {
+        throw new GradleException('Dependency preparation cannot alter the task graph')
+    }
+    def requested = gradle.startParameter.taskNames
+    if (requested.isEmpty() || requested.toSet().size() != requested.size() || !allowed.containsAll(requested)) {
+        throw new GradleException('Dependency preparation accepts only explicit dependency snapshot tasks')
+    }
+}
+def scripts = file('../gradle/test-topology.gradle').isFile() ? file('../gradle') : file('gradle')
+apply from: new File(scripts, 'test-topology.gradle')
+if (!preparation.isPresent()) {
+    apply from: new File(scripts, 'test-membership.gradle')
+}

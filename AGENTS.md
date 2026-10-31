@@ -1,5 +1,12 @@
 # AGENTS.md — Java Agent Development Guide
 
+## Make и время сборки
+
+Обычный Make без заданного `SOURCE_DATE_EPOCH` использует стабильный dev epoch
+`0`. Install/release запрашивают `--candidate-epoch`; явный epoch сохраняется.
+Не переносить dev epoch на native/release QA и не переиздавать старый receipt
+для нового commit. Команды и проверяемые границы — в [TESTING](docs/TESTING.md).
+
 ## Docker и Kubernetes
 
 Поддерживаются обычный Docker/Compose без Kubernetes и Kubernetes. Общие API,
@@ -16,18 +23,40 @@ Java-агент: Spring Boot 4.1 + Java 25 + Telegram bot + MCP. Gradle multi-pr
 
 ## Build & Test
 
+Перед Gradle/build/test читать [TESTING](docs/TESTING.md) и стандарт Base из него.
+Во время разработки запускать scoped unit/static; full native/release gate —
+на интегрированной вехе. `gradle/test-lanes.json` разделяет compile graph:
+unit не компилирует manual tests и не использует их compiled output.
+`integrationTest`, `slowTest`, coverage reports и fullCheck — ручные команды;
+ordinary build/check/bootJar выполняют reviewed unit. Не повторять dependencies
+install, test или compile при пригодных штатных результатах Gradle.
+Перед повторным heavy назвать changed inputs/missing evidence и проверить общий
+host slot. Heap limits не считать фактическим потреблением приложения.
+
+
 CI and Docker use Temurin **25.0.4.1+1-LTS**; all Docker stages pin image
 digests. Use committed wrappers: **9.6.1** at the repository root for
 bot/CLI and **9.8.2** from `backend/` for the standalone backend gates.
 
+Из корня выбранного source checkout запускать только затронутый модуль:
+`backend`, `cli`, `bot` или `shared`. Например, для CLI:
+
 ```bash
-cd /opt/dev/java-agent
-./gradlew check                # workspace regression suite
-./gradlew compileJava          # compile only
-./gradlew bootJar              # build JAR
-./gradlew slowTest             # @Tag("slow") integration tests
-./gradlew jacocoTestReport     # coverage report
+make test MODULE=cli
 ```
+
+Для обычных build/test/jar/coverage `MODULE` обязателен: без него команда
+отказывает до запуска wrapper. `MODULE=all` — явный полный обход.
+Для JAR сначала проверить пригодный artifact; `make jar MODULE=cli` нужен только
+при отсутствии совместимого результата. Полный release и применимые внешние
+сценарии выполняются на отдельной согласованной ручной вехе:
+
+```bash
+python3 scripts/release_verify.py --run-slow
+```
+
+Эти примеры не являются поручением запустить сборку/релиз; при запрете builds
+продолжать source/static работу. Применимые live/E2E gates — по release checklist.
 
 ## Run
 
@@ -50,10 +79,12 @@ cd backend
 ./gradlew bootRun --args='--spring.profiles.active=noop'
 ```
 
-`maxHeapSize = 2g` установлен в `build.gradle` как страховка от OOM.
-Gradle daemon (~500MB–1GB) + app heap разделят одну JVM — при
-больших LLM-payloads памяти может не хватить. Для реальных нагрузок
-используй `java -jar`.
+`backend/build.gradle` задаёт для `bootRun` предел heap `2g`, не измеренную RAM.
+[BootRun](https://docs.spring.io/spring-boot/gradle-plugin/api/java/org/springframework/boot/gradle/tasks/run/BootRun.html)
+использует [JavaExec](https://docs.gradle.org/current/dsl/org.gradle.api.tasks.JavaExec.html):
+приложение работает в отдельной JVM. Gradle и приложение учитывать раздельно;
+`java -jar` запускает готовый JAR без удержания Gradle launcher. Heap/RSS/commit
+и память всего контейнера — разные показатели; лимиты менять по измерениям.
 
 ### CLI (standalone, общается с backend через REST)
 
@@ -216,7 +247,7 @@ private final ScheduledExecutorService executor = Executors.newSingleThreadSched
 ### 5. Testing
 
 - `slowTest`, real retry/backoff/timeout waits, live and E2E suites run only by explicit manual request. Do not attach them to `build`, `check`, ordinary PR/push CI, default coverage, or the default release verifier. Preserve the tests in the manual lane; do not weaken their assertions or production timeouts to make a build fast.
-- Ordinary `test`/coverage keep the fast lane. Invoke `./gradlew slowTest` from `backend/`, the manual integration workflow, or `python3 scripts/release_verify.py --run-slow` when that qualification is requested.
+- Ordinary `test` keeps only reviewed units; coverage reports are manual and preserve the former non-slow scope. Invoke `./gradlew slowTest` from `backend/`, the manual integration workflow, or `python3 scripts/release_verify.py --run-slow` when that qualification is requested.
 
 - Точное число тестов берётся из XML текущего прогона; исторические totals не подтверждают новый commit.
 - Blocking LINE floors: fast backend 79.05%, manual combined backend 79.38%, bot 82.47%, source `docs/standards/coverage-baseline.json`. Tests precede the coverage ratchet; missing configured reports fail. The separate 80% backend summary is informational.

@@ -1,0 +1,78 @@
+{
+  "schema": "base-java-preparation/v4",
+  "inputs": {
+    "root": [
+      "build.gradle",
+      "build.gradle.kts",
+      "settings.gradle",
+      "gradle.properties",
+      "gradlew",
+      "gradle/wrapper/**",
+      "gradle/gradle-daemon-jvm.properties",
+      "cli/build.gradle",
+      "cli/settings.gradle",
+      "cli/gradle.properties",
+      "telegram-bot/build.gradle",
+      "telegram-bot/settings.gradle",
+      "telegram-bot/gradle.properties",
+      "shared/build.gradle",
+      "shared/settings.gradle",
+      "shared/gradle.properties",
+      "gradle/build-info.gradle",
+      "gradle/ferrpoint-notices.gradle",
+      "gradle/quality-inputs.gradle",
+      "gradle/test-lanes.gradle",
+      "gradle/test-topology.gradle",
+      "gradle/*.toml",
+      "gradle/verification-metadata.xml",
+      "LICENSE",
+      "NOTICE",
+      "THIRD_PARTY_NOTICES.md",
+      "scripts/quality-gradle.sh",
+      "scripts/gradle-context.py"
+    ],
+    "backend": [
+      "backend/build.gradle",
+      "backend/settings.gradle",
+      "backend/gradle.properties",
+      "backend/gradlew",
+      "backend/gradle/**",
+      "shared/build.gradle",
+      "gradle/build-info.gradle",
+      "gradle/ferrpoint-notices.gradle",
+      "gradle/quality-inputs.gradle",
+      "gradle/test-lanes.gradle",
+      "gradle/test-topology.gradle",
+      "gradle/*.toml",
+      "gradle/verification-metadata.xml",
+      "LICENSE",
+      "NOTICE",
+      "THIRD_PARTY_NOTICES.md",
+      "scripts/quality-gradle.sh",
+      "scripts/gradle-context.py"
+    ]
+  },
+  "dependencies": {
+    "backend": [
+      "shared"
+    ],
+    "shared": [],
+    "cli": [
+      "shared"
+    ],
+    "bot": [
+      "shared"
+    ]
+  },
+  "configuration_graphs": {
+    "root": [
+      "bot",
+      "cli",
+      "shared"
+    ],
+    "backend": [
+      "backend",
+      "shared"
+    ]
+  }
+}

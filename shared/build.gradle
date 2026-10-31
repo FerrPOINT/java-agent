@@ -41,3 +41,9 @@ dependencies {
 tasks.named('test') {
     useJUnitPlatform()
 }
+
+// Base test lanes: unit compilation excludes manual boundary sources.
+apply from: file("../gradle/test-lanes.gradle").exists() ? file("../gradle/test-lanes.gradle") : file("gradle/test-lanes.gradle")
+
+// Read-only preparation index, not a successful build or test receipt.
+apply from: file("../gradle/quality-inputs.gradle").exists() ? file("../gradle/quality-inputs.gradle") : file("gradle/quality-inputs.gradle")

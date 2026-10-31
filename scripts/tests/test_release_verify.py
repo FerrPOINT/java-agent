@@ -95,14 +95,17 @@ class ReleaseVerifyTest(unittest.TestCase):
 
     def test_default_release_cli_leaves_slow_lane_unexecuted(self):
         commands, report = self.run_release_cli()
-        self.assertFalse(any(":backend:slowTest" in command or ":backend:fullCheck" in command for command in commands))
+        self.assertFalse(any("slowTest" in argument or "fullCheck" in argument or "identityOwnerTest" in argument
+                             for command in commands for argument in command))
         gate = next(item for item in report["gates"] if item["name"] == "slow-postgresql-integration")
         self.assertEqual(gate["status"], "NOT_RUN")
         self.assertIn("--run-slow", gate["detail"])
 
     def test_slow_lane_requires_explicit_cli_opt_in(self):
         commands, _ = self.run_release_cli("--run-slow")
-        self.assertEqual(sum(":backend:fullCheck" in command for command in commands), 1)
+        selected = [command for command in commands if ":fullCheck" in command]
+        self.assertEqual(len(selected), 1)
+        self.assertEqual(selected[0][:3], ["./backend/gradlew", "-p", "backend"])
 
     def test_line_coverage_returns_percent(self) -> None:
         verify = load_module("release_verify", "release_verify.py")
@@ -157,6 +160,57 @@ class ReleaseVerifyTest(unittest.TestCase):
         self.assertEqual("RUNNING", persisted["state"])
         self.assertEqual([], persisted["gates"])
 
+
+
+class GradleCommandUnionTest(unittest.TestCase):
+    def test_manual_reports_and_jars_share_their_correct_wrappers(self):
+        verify = load_module("release_verify_union", "release_verify.py")
+        commands = verify.gradle_commands(run_slow=False, boot_jars=True)
+        self.assertEqual(len(commands), 2)
+        backend, clients = [command for _name, command in commands]
+        self.assertEqual(backend[:3], ["./backend/gradlew", "-p", "backend"])
+        self.assertEqual(clients[0], "./gradlew")
+        self.assertIn(":releaseCheck", backend)
+        self.assertIn(":bootJar", backend)
+        self.assertIn(":telegram-bot:jacocoTestReport", clients)
+        self.assertIn(":cli:test", clients)
+        self.assertIn(":shared:test", clients)
+        self.assertIn(":cli:integrationTest", clients)
+        self.assertIn(":shared:integrationTest", clients)
+        self.assertNotIn("-x", backend + clients)
+        self.assertFalse(any("slowTest" in arg or "fullCheck" in arg or "identityOwnerTest" in arg
+                             for arg in backend + clients))
+
+    def test_slow_is_explicit_and_does_not_create_a_second_test_or_report_invocation(self):
+        verify = load_module("release_verify_union", "release_verify.py")
+        commands = verify.gradle_commands(run_slow=True, boot_jars=False)
+        self.assertEqual(len(commands), 2)
+        backend, clients = [command for _name, command in commands]
+        self.assertIn(":fullCheck", backend)
+        self.assertNotIn(":telegram-bot:identityOwnerTest", clients)
+        self.assertIn(":telegram-bot:slowTest", clients)
+        self.assertFalse(any("bootJar" in arg for arg in backend + clients))
+        self.assertEqual(len(backend), len(set(backend)))
+        self.assertEqual(len(clients), len(set(clients)))
+
+
+class LaneEvidenceMetricsTest(unittest.TestCase):
+    def test_each_lane_and_shared_results_are_visible_without_certifying_old_xml(self):
+        verify = load_module("release_verify_metrics", "release_verify.py")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for module in (*verify.MODULES, "shared"):
+                for task, count in (("test", 1), ("integrationTest", 2), ("slowTest", 3)):
+                    target = root / module / "build/test-results" / task / "TEST-owned.xml"
+                    target.parent.mkdir(parents=True)
+                    target.write_text(f'<testsuite tests="{count}" failures="0" errors="0" skipped="0"/>')
+            with patch.object(verify, "REPO", root):
+                value = verify.collect_metrics()
+        self.assertEqual(value["tests"]["shared"]["tests"], 1)
+        self.assertEqual(value["integration_tests"]["backend"]["tests"], 2)
+        self.assertEqual(value["slow_tests"]["telegram-bot"]["tests"], 3)
+        self.assertIn("snapshots", value["test_result_scope"])
+        self.assertNotIn("status", value)
 
 if __name__ == "__main__":
     unittest.main()

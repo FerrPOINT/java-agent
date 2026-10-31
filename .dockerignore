@@ -7,3 +7,13 @@
 work
 .tmp
 .tmp/**
+
+# Local caches, recovery archives and reports are not image inputs.
+.local
+**/.local
+**/.gradle
+**/node_modules
+handoff
+.artifacts
+.pytest_cache
+**/__pycache__

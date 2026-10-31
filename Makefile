@@ -1,8 +1,8 @@
 # java-agent Makefile — build, test, version, install
 # Usage:
-#   make build       — compile all modules
-#   make test        — run all tests
-#   make jar         — build fat JARs
+#   make build MODULE=backend — compile and run reviewed units
+#   make test MODULE=cli      — run reviewed units for one module
+#   make jar MODULE=bot       — build a selected JAR
 #   make install     — build + test + jar + install to /opt/java-agent
 #   make version     — show current version
 #   make patch       — bump patch version (0.1.0 → 0.1.1)
@@ -12,10 +12,16 @@
 #   make run         — run backend with dev profile
 #   make cli         — run CLI REPL
 #   make bot         — run telegram bot
-#   make coverage    — generate coverage report
+#   make coverage    — manual full coverage (MODULE=backend|bot|all)
 
 SHELL := /bin/bash
 GRADLE := ./gradlew
+MODULE ?= $(if $(filter install release,$(MAKECMDGOALS)),all,)
+ifneq ($(filter build test jar coverage,$(MAKECMDGOALS)),)
+ifeq ($(strip $(MODULE)),)
+$(error Select MODULE=backend|cli|bot|shared; MODULE=all is an explicit full graph)
+endif
+endif
 INSTALL_DIR := /opt/java-agent
 VERSION_FILE := .version
 JAVA := java
@@ -30,13 +36,20 @@ YELLOW := \033[0;33m
 CYAN := \033[0;36m
 NC := \033[0m
 
-.PHONY: build test jar install version patch minor release clean run cli bot coverage help
+.PHONY: build test jar coverage quality-graph install version patch minor release clean run cli bot help
+# Backend and root wrappers share this host's build budget, including make -j.
+.NOTPARALLEL:
+ifneq ($(filter install release,$(MAKECMDGOALS)),)
+ifneq ($(MODULE),all)
+$(error install/release require MODULE=all)
+endif
+endif
 
 help:
 	@echo "java-agent Makefile — commands:"
-	@echo "  make build       — compile all modules"
-	@echo "  make test        — run all tests"
-	@echo "  make jar         — build fat JARs"
+	@echo "  make build MODULE=backend — compile and run reviewed units"
+	@echo "  make test MODULE=cli      — reviewed units for one module"
+	@echo "  make jar MODULE=bot       — build a selected JAR"
 	@echo "  make install     — build + test + jar + install to $(INSTALL_DIR)"
 	@echo "  make version     — show current version"
 	@echo "  make patch       — bump patch version"
@@ -46,31 +59,29 @@ help:
 	@echo "  make run         — run backend (dev profile)"
 	@echo "  make cli         — run CLI REPL"
 	@echo "  make bot         — run telegram bot"
-	@echo "  make coverage    — generate coverage report"
+	@echo "  make coverage    — manual full coverage (MODULE=backend|bot|all)"
 	@echo "  make parity-dashboard  — show parity status snapshot"
 	@echo "  make skill-update       — refresh dashboard + show block for skill"
 
 version:
 	@echo "$(GREEN)java-agent version: $(VERSION)$(NC)"
 
-build:
-	@echo "$(CYAN)Building java-agent v$(VERSION)...$(NC)"
-	$(GRADLE) compileJava compileTestJava
-	@echo "$(GREEN)Build successful.$(NC)"
-
-test: repository-hygiene
-	@echo "$(CYAN)Running tests...$(NC)"
-	$(GRADLE) test
-	@echo "$(GREEN)All tests passed.$(NC)"
-
-jar:
-	@echo "$(CYAN)Building JARs...$(NC)"
-	$(GRADLE) test bootJar
-	@echo "$(GREEN)JARs built.$(NC)"
-
-coverage:
-	$(GRADLE) jacocoTestReport
-	@echo "Coverage report: backend/build/reports/jacoco/test/html/index.html"
+# Coalesce all explicit goals before starting either compatible wrapper. Reports
+# imply tests, while all+coverage alone must not add CLI/shared unit consumers.
+ifneq ($(filter jar install release,$(MAKECMDGOALS)),)
+QUALITY_OPERATION := jar
+else ifneq ($(filter build test,$(MAKECMDGOALS)),)
+QUALITY_OPERATION := test
+else ifneq ($(filter coverage,$(MAKECMDGOALS)),)
+QUALITY_OPERATION := coverage
+else
+QUALITY_OPERATION := test
+endif
+QUALITY_COVERAGE := $(if $(filter coverage,$(MAKECMDGOALS)),--coverage,)
+QUALITY_CANDIDATE := $(if $(filter install release,$(MAKECMDGOALS)),--candidate-epoch,)
+build test jar coverage: quality-graph
+quality-graph: repository-hygiene
+	bash scripts/quality-make.sh $(QUALITY_OPERATION) "$(MODULE)" $(QUALITY_COVERAGE) $(QUALITY_CANDIDATE)
 
 clean:
 	$(GRADLE) clean

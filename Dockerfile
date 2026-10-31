@@ -1,17 +1,18 @@
 # syntax=docker/dockerfile:1
 FROM eclipse-temurin:25.0.4.1_1-jdk-noble@sha256:0d623ea18d7b0fe1e12a2c0a920f7e950cad433387e5a49d3611e1507fa07602 AS builder
 
-WORKDIR /workspace
+WORKDIR /workspace/backend
 COPY backend/gradle/ gradle/
+COPY gradle/test-lanes.gradle gradle/test-topology.gradle gradle/test-membership.gradle gradle/test-lanes.json gradle/java-preparation.json gradle/quality-inputs.gradle /workspace/gradle/
+COPY docs/standards/coverage-baseline.json /workspace/docs/standards/
+COPY LICENSE NOTICE THIRD_PARTY_NOTICES.md ./
 COPY backend/gradlew backend/build.gradle backend/settings.gradle backend/gradle.properties ./
-# Gradle reads the committed coverage floors while evaluating every task.
-COPY docs/standards/coverage-baseline.json /docs/standards/coverage-baseline.json
 RUN sed -i 's/\r$//' gradlew && chmod +x gradlew
 COPY backend/src src
 # h10: the backend build resolves :shared as a sibling module (backend/settings.gradle
 # includes ../shared when present) — copy it in so the container layout matches the repo.
-COPY shared/ shared/
-RUN ./gradlew bootJar --no-daemon -x test
+COPY shared/ /workspace/shared/
+RUN ./gradlew bootJar --no-daemon
 
 FROM eclipse-temurin:25.0.4.1_1-jre-noble@sha256:398f810215757dc1926390014272579fb0e57c41ef1c8aa4f64ae761613a168b
 
@@ -75,7 +76,7 @@ RUN apt-get update \
 
 RUN groupadd --gid 10001 agent && useradd --uid 10001 --gid agent --create-home agent
 WORKDIR /app
-COPY --from=builder /workspace/build/libs/*.jar app.jar
+COPY --from=builder /workspace/backend/build/libs/*.jar app.jar
 RUN mkdir -p /workspace /artifacts /home/agent/.java-agent \
     && chown -R agent:agent /app /workspace /artifacts /home/agent/.java-agent \
     && chmod 0700 /home/agent/.java-agent
