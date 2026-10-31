@@ -1,5 +1,14 @@
 # Тесты и сборки Java Agent
 
+## Явный scope обычного Make
+
+`make build/test/jar/coverage` требуют `MODULE=backend|cli|bot|shared`.
+Без значения или с пустым MODULE команда отказывает до wrapper;
+полный обход выполняется только с явным `MODULE=all`.
+`install/release` сохраняют полный graph и candidate epoch.
+Root changed-path selection и независимые pins не меняются.
+Проверка adapter использует инертный Gradle consumer, без JVM/сборки.
+
 ## Make: стабильные dev inputs и candidate epoch
 
 Обычные `make build/test/jar/coverage` без `SOURCE_DATE_EPOCH` передают

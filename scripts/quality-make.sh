@@ -2,12 +2,12 @@
 set -euo pipefail
 repository=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 operation=${1:-}
-module=${2:-all}
+module=${2:-}
 usage() {
     echo 'Usage: quality-make.sh build|test|jar|coverage backend|cli|bot|shared|all [--coverage] [--candidate-epoch]' >&2
     exit 64
 }
-[[ $# -ge 1 && $# -le 4 ]] || usage
+[[ $# -ge 2 && $# -le 4 ]] || usage
 case "$operation" in build|test|jar|coverage) ;; *) usage ;; esac
 case "$module" in backend|cli|bot|shared|all) ;; *) usage ;; esac
 include_coverage=false

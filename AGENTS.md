@@ -46,7 +46,8 @@ bot/CLI and **9.8.0** from `backend/` for the standalone backend gates.
 make test MODULE=cli
 ```
 
-`MODULE=all` — явный полный обход, а не повседневное значение для копирования.
+Для обычных build/test/jar/coverage `MODULE` обязателен: без него команда
+отказывает до запуска wrapper. `MODULE=all` — явный полный обход.
 Для JAR сначала проверить пригодный artifact; `make jar MODULE=cli` нужен только
 при отсутствии совместимого результата. Полный release и применимые внешние
 сценарии выполняются на отдельной согласованной ручной вехе:
