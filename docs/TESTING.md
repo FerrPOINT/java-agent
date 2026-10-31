@@ -57,6 +57,12 @@ Regression: `python3 -B -m unittest scripts.tests.test_make_epoch -q`.
 
 ## Разработка и сборка
 
+Read-only prepared inspector распознаёт actual root9.6.1/backend9.8.2.
+Он сверяет полные installed bytes/dependency indexes без bootstrap; ready
+snapshot сам по себе не разрешает native/compiler receipt reuse.
+Source regressions: `python -B -m unittest scripts.tests.test_java_selection`.
+[Общий контракт и границы qualification](https://github.com/FerrPOINT/services-base/blob/chore/build-performance-20261015/docs/plans/java-current-wrapper-reader-20261101.md).
+
 Использовать закреплённые wrappers: root 9.6.1, standalone backend 9.8.2.
 
 ```bash

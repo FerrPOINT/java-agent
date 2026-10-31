@@ -123,6 +123,7 @@
       ],
       "cwd": ".",
       "inputs": [".github/workflows/ci.yml", "Makefile", "scripts/quality-make.sh", "scripts/tests/test_make_epoch.py",
+        "scripts/gradle-context.py", "backend/gradle/wrapper/gradle-wrapper.properties",
         "gradle/test-lanes.json",
         "gradle/test-lanes.gradle",
         "*/src/test/**",

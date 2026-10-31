@@ -168,7 +168,8 @@ def distribution_snapshot(directory, home):
         if values.get(key) != expected:
             raise ValueError('Prepared wrapper layout is not qualified')
     url = values.get('distributionUrl', '')
-    version = re.fullmatch(r'https://services\.gradle\.org/distributions/gradle-(9\.6\.1|9\.8\.0|9\.8\.1)-bin\.zip', url)
+    # Recognize adopted wrapper inputs; native reuse permission remains separate.
+    version = re.fullmatch(r'https://services\.gradle\.org/distributions/gradle-(9\.6\.1|9\.8\.0|9\.8\.1|9\.8\.2)-bin\.zip', url)
     if not version:
         raise ValueError('Prepared distribution URL is not qualified')
     version = version[1]
