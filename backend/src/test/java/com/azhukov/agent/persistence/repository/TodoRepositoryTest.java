@@ -179,6 +179,75 @@ class TodoRepositoryTest extends PostgresTestContainer {
 
     @Test
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void competingParentLockAndAdvisoryLockMustNotDeadlock() throws Exception {
+        String user = "lock-inversion-" + UUID.randomUUID();
+        var first = sessionRepository.saveAndFlush(newSession(user, "First"));
+        var second = sessionRepository.saveAndFlush(newSession(user, "Second"));
+        var secondTodo = todoRepository.saveAndFlush(newTodo(second.getId(), user, "second", STATUS_PENDING, PRIORITY_HIGH, T1));
+        var firstDomain = new com.azhukov.agent.core.model.Session(first.getId(), user, "owner", MODEL_PROVIDER, MODEL_NAME, null, java.util.Map.of());
+        var secondDomain = new com.azhukov.agent.core.model.Session(second.getId(), user, "owner", MODEL_PROVIDER, MODEL_NAME, null, java.util.Map.of());
+        var aLocked = new java.util.concurrent.CountDownLatch(1);
+        var releaseA = new java.util.concurrent.CountDownLatch(1);
+        var parentLocked = new java.util.concurrent.CountDownLatch(1);
+        var aPid = new java.util.concurrent.atomic.AtomicInteger();
+        var bPid = new java.util.concurrent.atomic.AtomicInteger();
+        var dPid = new java.util.concurrent.atomic.AtomicInteger();
+        var deletionReady = new java.util.concurrent.CountDownLatch(1);
+        var jdbc = applicationContext.getBean(org.springframework.jdbc.core.JdbcTemplate.class);
+        var aDelegate = org.mockito.Mockito.mock(TodoRepository.class, invocation -> {
+            try {
+                var result = invocation.getMethod().invoke(todoRepository, invocation.getArguments());
+                if (invocation.getMethod().getName().equals("lockUserList")) {
+                    aLocked.countDown();
+                    if (!releaseA.await(20, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("release timeout");
+                }
+                return result;
+            } catch (java.lang.reflect.InvocationTargetException e) { throw e.getCause(); }
+        });
+        var bDelegate = org.mockito.Mockito.mock(TodoRepository.class, invocation -> {
+            try {
+                var result = invocation.getMethod().invoke(todoRepository, invocation.getArguments());
+                if (invocation.getMethod().getName().equals("lockTodoSession")) parentLocked.countDown();
+                return result;
+            } catch (java.lang.reflect.InvocationTargetException e) { throw e.getCause(); }
+        });
+        var aTool = new com.azhukov.agent.tools.memory.TodoTool(aDelegate);
+        var bTool = new com.azhukov.agent.tools.memory.TodoTool(bDelegate);
+        var tx = new org.springframework.transaction.support.TransactionTemplate(applicationContext.getBean(org.springframework.transaction.PlatformTransactionManager.class));
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(3);
+        try {
+            var a = pool.submit(() -> tx.execute(status -> {
+                aPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                return aTool.execute("{\"merge\":true,\"todos\":[{\"id\":\"" + secondTodo.getId() + "\",\"content\":\"update\"}]}", null, firstDomain);
+            }));
+            assertThat(aLocked.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            var b = pool.submit(() -> tx.execute(status -> {
+                bPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                return bTool.execute("{\"merge\":true,\"todos\":[{\"content\":\"new\"}]}", null, secondDomain);
+            }));
+            assertThat(parentLocked.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertAdvisoryBlocked(bPid.get(), aPid.get());
+            var deletion = pool.submit(() -> tx.execute(status -> {
+                dPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                deletionReady.countDown();
+                boolean removed = sessionQueryService.deleteSession(second.getId());
+                sessionRepository.flush();
+                return removed;
+            }));
+            assertThat(deletionReady.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertDatabaseBlocked(dPid.get(), bPid.get());
+            releaseA.countDown();
+            assertThat(a.get(10, java.util.concurrent.TimeUnit.SECONDS).success()).isTrue();
+            assertThat(b.get(10, java.util.concurrent.TimeUnit.SECONDS).success()).isTrue();
+            assertThat(deletion.get(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        } finally {
+            releaseA.countDown(); pool.shutdownNow(); pool.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
+            todoRepository.deleteByUserId(user); sessionRepository.deleteById(first.getId()); sessionRepository.deleteById(second.getId());
+        }
+    }
+
+    @Test
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     void deletedSessionCannotReplaceAnotherSessionsTodos() {
         String user = "missing-parent-" + UUID.randomUUID();
         var retained = sessionRepository.saveAndFlush(newSession(user, "Retained"));
