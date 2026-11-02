@@ -468,6 +468,8 @@ public class AgentProperties {
             private String sseEndpoint = "/mcp/sse";
             /** SSE message endpoint path (default "/mcp/message"). */
             private String messageEndpoint = "/mcp/message";
+            /** Interval for detecting disconnected SSE clients. */
+            private java.time.Duration sseKeepAliveInterval = java.time.Duration.ofSeconds(15);
             /** Server name reported to MCP clients. */
             private String name = "java-agent";
             /** Server version reported to MCP clients. */

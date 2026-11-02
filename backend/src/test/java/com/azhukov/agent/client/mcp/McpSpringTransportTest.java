@@ -94,6 +94,52 @@ class McpSpringTransportTest {
     }
 
     @Test
+    void foreignCredentialCannotPostIntoAnotherMcpSseSession() throws Exception {
+        var app = new SpringApplication(Application.class);
+        app.setDefaultProperties(Map.of("server.port", "0", "server.address", "127.0.0.1",
+            "agent.mcp.server.enabled", "true", "agent.mcp.server.transport", "sse",
+            "spring.autoconfigure.exclude", "org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration,org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration"));
+        try (var context = (ServletWebServerApplicationContext) app.run("--agent.security.api-key=test-only-key", "--agent.mcp.server.sse-keep-alive-interval=1s")) {
+            String url = "http://127.0.0.1:" + context.getWebServer().getPort();
+            assertThat(context.getBean(AgentProperties.class).getMcp().getServer().getSseKeepAliveInterval()).isEqualTo(java.time.Duration.ofSeconds(1));
+            var http = java.net.http.HttpClient.newHttpClient();
+            var endpointForClosedSession = new java.util.concurrent.atomic.AtomicReference<String>();
+            var stream = http.send(java.net.http.HttpRequest.newBuilder(java.net.URI.create(url + "/mcp/sse"))
+                .header("X-API-Key", "alice-key").GET().build(), java.net.http.HttpResponse.BodyHandlers.ofInputStream());
+            try (var input = new java.io.BufferedReader(new java.io.InputStreamReader(stream.body()))) {
+                assertThat(stream.statusCode()).isEqualTo(200);
+                String endpoint = null;
+                for (int i = 0; i < 10 && endpoint == null; i++) {
+                    String line = input.readLine();
+                    if (line == null) break;
+                    if (line.startsWith("data:")) endpoint = line.substring(5).trim();
+                }
+                assertThat(endpoint).isNotBlank();
+                endpointForClosedSession.set(endpoint);
+                String message = "{\"jsonrpc\":\"2.0\",\"id\":41,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{},\"clientInfo\":{\"name\":\"probe\",\"version\":\"1\"}}}";
+                var ownerResponse = http.send(java.net.http.HttpRequest.newBuilder(java.net.URI.create(url + endpoint))
+                    .timeout(java.time.Duration.ofSeconds(5)).header("X-API-Key", "alice-key")
+                    .header("Content-Type", "application/json").POST(java.net.http.HttpRequest.BodyPublishers.ofString(message)).build(),
+                    java.net.http.HttpResponse.BodyHandlers.ofString());
+                assertThat(ownerResponse.statusCode()).isEqualTo(200);
+                var response = http.send(java.net.http.HttpRequest.newBuilder(java.net.URI.create(url + endpoint))
+                    .timeout(java.time.Duration.ofSeconds(5)).header("X-API-Key", "bob-key")
+                    .header("Content-Type", "application/json").POST(java.net.http.HttpRequest.BodyPublishers.ofString(message)).build(),
+                    java.net.http.HttpResponse.BodyHandlers.ofString());
+                assertThat(response.statusCode()).isIn(401, 403, 404);
+            }
+            final String closedEndpoint = endpointForClosedSession.get();
+            org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(5)).untilAsserted(() -> {
+                var denied = http.send(java.net.http.HttpRequest.newBuilder(java.net.URI.create(url + closedEndpoint))
+                    .timeout(java.time.Duration.ofSeconds(3)).header("X-API-Key", "alice-key")
+                    .header("Content-Type", "application/json").POST(java.net.http.HttpRequest.BodyPublishers.ofString("{}")).build(),
+                    java.net.http.HttpResponse.BodyHandlers.ofString());
+                assertThat(denied.statusCode()).isEqualTo(404);
+            });
+        }
+    }
+
+    @Test
     void individualKeysRetainTheirOwnIdentityAcrossRepeatedMcpCalls() {
         var app = new SpringApplication(Application.class);
         app.setDefaultProperties(Map.of("server.port", "0", "server.address", "127.0.0.1",

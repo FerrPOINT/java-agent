@@ -198,10 +198,15 @@ public class McpServerService {
         JacksonMcpJsonMapper jsonMapper = new JacksonMcpJsonMapper(objectMapper);
 
         if ("sse".equalsIgnoreCase(config.getTransport())) {
+            var keepAlive = config.getSseKeepAliveInterval();
+            if (keepAlive == null || keepAlive.isZero() || keepAlive.isNegative()) {
+                throw new IllegalArgumentException("MCP SSE keep-alive interval must be positive");
+            }
             HttpServletSseServerTransportProvider sseProvider = HttpServletSseServerTransportProvider.builder()
                 .jsonMapper(jsonMapper)
                 .sseEndpoint(config.getSseEndpoint())
                 .messageEndpoint(config.getMessageEndpoint())
+                .keepAliveInterval(keepAlive)
                 .contextExtractor(request -> {
                     String user = com.azhukov.agent.core.security.UserContext.getUserId();
                     String role = com.azhukov.agent.core.security.UserContext.getRole();
@@ -212,7 +217,7 @@ public class McpServerService {
                 .build();
 
             // Register the SSE servlet with Spring Boot's embedded servlet container
-            servletRegistration = new ServletRegistrationBean<>(sseProvider,
+            servletRegistration = new ServletRegistrationBean<>(new OwnedMcpSseServlet(sseProvider),
                 config.getSseEndpoint(), config.getMessageEndpoint());
             servletRegistration.setLoadOnStartup(1);
 
