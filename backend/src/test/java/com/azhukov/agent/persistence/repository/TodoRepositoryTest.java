@@ -177,6 +177,108 @@ class TodoRepositoryTest extends PostgresTestContainer {
         }
     }
 
+    @Test
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void mergeAcrossSessionsWhenSecondSessionIsDeletedDoesNotDeadlock() throws Exception {
+        String user = "second-session-" + UUID.randomUUID();
+        var firstSession = sessionRepository.saveAndFlush(newSession(user, "First"));
+        var secondSession = sessionRepository.saveAndFlush(newSession(user, "Second"));
+        var first = todoRepository.saveAndFlush(newTodo(firstSession.getId(), user, "first", STATUS_PENDING, PRIORITY_HIGH, T1));
+        var second = todoRepository.saveAndFlush(newTodo(secondSession.getId(), user, "second", STATUS_PENDING, PRIORITY_HIGH, T2));
+        var session = new com.azhukov.agent.core.model.Session(firstSession.getId(), user, "owner", MODEL_PROVIDER, MODEL_NAME, null, java.util.Map.of());
+        var firstLocked = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var deleted = new java.util.concurrent.CountDownLatch(1);
+        var finishDeletion = new java.util.concurrent.CountDownLatch(1);
+        var delegate = org.mockito.Mockito.mock(TodoRepository.class, invocation -> {
+            try {
+                var result = invocation.getMethod().invoke(todoRepository, invocation.getArguments());
+                if (invocation.getMethod().getName().equals("findOwnedForUpdate") && first.getId().equals(invocation.getArgument(0))) {
+                    firstLocked.countDown();
+                    if (!release.await(15, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("release timeout");
+                }
+                return result;
+            } catch (java.lang.reflect.InvocationTargetException e) { throw e.getCause(); }
+        });
+        var tool = new com.azhukov.agent.tools.memory.TodoTool(delegate);
+        var transactions = new org.springframework.transaction.support.TransactionTemplate(applicationContext.getBean(org.springframework.transaction.PlatformTransactionManager.class));
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            var merge = pool.submit(() -> transactions.execute(status -> tool.execute("{\"merge\":true,\"todos\":[{\"id\":\"" + first.getId() + "\",\"content\":\"first updated\"},{\"id\":\"" + second.getId() + "\",\"content\":\"second updated\"}]}", null, session)));
+            assertThat(firstLocked.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            var deletion = pool.submit(() -> transactions.execute(status -> {
+                boolean removed = sessionQueryService.deleteSession(secondSession.getId());
+                sessionRepository.flush();
+                deleted.countDown();
+                try { if (!finishDeletion.await(15, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("release timeout"); }
+                catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new IllegalStateException(e); }
+                return removed;
+            }));
+            assertThat(deleted.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            release.countDown();
+            finishDeletion.countDown();
+            assertThat(deletion.get(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(merge.get(10, java.util.concurrent.TimeUnit.SECONDS).success()).isTrue();
+            assertThat(todoRepository.findByUserId(user)).extracting(TodoEntity::getTitle).containsExactlyInAnyOrder("first updated", "second updated");
+        } finally {
+            release.countDown(); finishDeletion.countDown(); pool.shutdownNow(); pool.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
+            todoRepository.deleteByUserId(user); sessionRepository.deleteById(firstSession.getId()); sessionRepository.deleteById(secondSession.getId());
+        }
+    }
+
+    @Test
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void mergeAcrossSessionsDoesNotDeadlockWithConcurrentSessionDeletion() throws Exception {
+        String user = "multi-session-" + UUID.randomUUID();
+        var firstSession = sessionRepository.saveAndFlush(newSession(user, "First"));
+        var secondSession = sessionRepository.saveAndFlush(newSession(user, "Second"));
+        var first = todoRepository.saveAndFlush(newTodo(firstSession.getId(), user, "first", STATUS_PENDING, PRIORITY_HIGH, T1));
+        var second = todoRepository.saveAndFlush(newTodo(secondSession.getId(), user, "second", STATUS_PENDING, PRIORITY_HIGH, T2));
+        var session = new com.azhukov.agent.core.model.Session(secondSession.getId(), user, "owner", MODEL_PROVIDER, MODEL_NAME, null, java.util.Map.of());
+        var firstLocked = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var holderPid = new java.util.concurrent.atomic.AtomicInteger();
+        var waiterPid = new java.util.concurrent.atomic.AtomicInteger();
+        var ready = new java.util.concurrent.CountDownLatch(1);
+        var jdbc = applicationContext.getBean(org.springframework.jdbc.core.JdbcTemplate.class);
+        var delegate = org.mockito.Mockito.mock(TodoRepository.class, invocation -> {
+            try {
+                var result = invocation.getMethod().invoke(todoRepository, invocation.getArguments());
+                if (invocation.getMethod().getName().equals("findOwnedForUpdate") && first.getId().equals(invocation.getArgument(0))) {
+                    firstLocked.countDown();
+                    if (!release.await(15, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("release timeout");
+                }
+                return result;
+            } catch (java.lang.reflect.InvocationTargetException e) { throw e.getCause(); }
+        });
+        var tool = new com.azhukov.agent.tools.memory.TodoTool(delegate);
+        var transactions = new org.springframework.transaction.support.TransactionTemplate(applicationContext.getBean(org.springframework.transaction.PlatformTransactionManager.class));
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            var merge = pool.submit(() -> transactions.execute(status -> {
+                holderPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                return tool.execute("{\"merge\":true,\"todos\":[{\"id\":\"" + first.getId() + "\",\"content\":\"first updated\"},{\"id\":\"" + second.getId() + "\",\"content\":\"second updated\"}]}", null, session);
+            }));
+            assertThat(firstLocked.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            var deletion = pool.submit(() -> transactions.execute(status -> {
+                waiterPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                ready.countDown();
+                boolean removed = sessionQueryService.deleteSession(firstSession.getId());
+                sessionRepository.flush();
+                return removed;
+            }));
+            assertThat(ready.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertDatabaseBlocked(waiterPid.get(), holderPid.get());
+            release.countDown();
+            assertThat(merge.get(10, java.util.concurrent.TimeUnit.SECONDS).success()).isTrue();
+            assertThat(deletion.get(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(todoRepository.findByUserId(user)).extracting(TodoEntity::getTitle).containsExactly("second updated");
+        } finally {
+            release.countDown(); pool.shutdownNow(); pool.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
+            todoRepository.deleteByUserId(user); sessionRepository.deleteById(firstSession.getId()); sessionRepository.deleteById(secondSession.getId());
+        }
+    }
+
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
