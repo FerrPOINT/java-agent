@@ -70,6 +70,18 @@ class ModelCommandTest {
     }
 
     @Test
+    void configuredListRejectsModelOutsideAllowlist() {
+        BotSessionStore store = mock(BotSessionStore.class);
+        BotProperties properties = new BotProperties();
+        properties.getAvailableModels().add("app-test");
+        var cmd = makeCommand(store, properties);
+        BotSessionEntity session = new BotSessionEntity();
+        session.setId(UUID.randomUUID());
+        assertThat(cmd.handle(makeEvent("unavailable"), session)).containsIgnoringCase("not available");
+        org.mockito.Mockito.verify(store, org.mockito.Mockito.never()).setModelOverride(any(), any());
+    }
+
+    @Test
     void withArgs_setsModel() {
         BotSessionStore store = mock(BotSessionStore.class);
         doNothing().when(store).setModelOverride(any(UUID.class), eq("claude-3-opus"));

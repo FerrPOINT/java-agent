@@ -63,6 +63,9 @@ public class ModelCommand implements CommandHandler {
             store.setModelOverride(session.getId(), null);
             return "Model reset to default.";
         }
+        if (!properties.getAvailableModels().isEmpty() && !properties.getAvailableModels().contains(trimmed)) {
+            return "Model not available: " + trimmed;
+        }
         store.setModelOverride(session.getId(), trimmed);
         return "Model set to: " + trimmed;
     }
