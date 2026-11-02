@@ -1113,6 +1113,16 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                             capturedError.set(error);
                         }
                     });
+                    budget = iterationBudget.recordModelCall(budget,
+                        tokenEstimator.estimateTokens(context), estimateResponseTokens(contentBuilder.toString(), collectedToolCalls));
+                    if (capturedError.get() == null) {
+                        try {
+                            usageTracker.recordTurn(session.id(), session.userId(), properties.getModel().getModelName(),
+                                tokenEstimator.estimateTokens(context), estimateResponseTokens(contentBuilder.toString(), collectedToolCalls));
+                        } catch (Exception usageEx) {
+                            log.debug("Failed to record streaming usage: {}", usageEx.getMessage());
+                        }
+                    }
                     // Re-stream completed (blocking call) — check for error first,
                     // then re-read routing flags and fall through to finish_reason
                     // routing in THIS iteration. Do NOT 'continue' back to while(true)

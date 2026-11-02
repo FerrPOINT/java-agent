@@ -208,6 +208,8 @@ class AgentStreamingServiceBranchTest {
         emitter.awaitDone();
         assertThat(emitter.error.get()).isNull();
         assertThat(attempts.get()).isEqualTo(2);
+        verify(iterationBudget, times(2)).recordModelCall(any(), anyInt(), anyInt());
+        verify(usageTracker, times(2)).recordTurn(any(), any(), any(), anyInt(), anyInt());
         assertThat(emitter.events).anySatisfy(event -> {
             assertThat(event.name).isEqualTo("token");
             assertThat(event.data).contains("recovered answer");
