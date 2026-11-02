@@ -30,6 +30,26 @@ class ToolParallelSafetyCanonicalisationTest {
     }
 
     @Test
+    void missingTargetUnderSymlinkReservesSamePath() throws IOException {
+        Path directory = Files.createDirectory(tempDir.resolve("real"));
+        Path link = createSymlinkOrSkip(tempDir.resolve("alias"), directory);
+        Path target = directory.resolve("new-file");
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        var first = new com.azhukov.agent.core.model.ToolCall("a", "write_file", mapper.writeValueAsString(java.util.Map.of("path", target.toString())));
+        var second = new com.azhukov.agent.core.model.ToolCall("b", "write_file", mapper.writeValueAsString(java.util.Map.of("path", link.resolve("new-file").toString())));
+        assertThat(ToolParallelSafety.shouldParallelize(java.util.List.of(first, second), java.util.Set.of("write_file"))).isFalse();
+    }
+
+    @Test
+    void danglingAncestorForcesSequential() throws IOException {
+        Path dangling = createSymlinkOrSkip(tempDir.resolve("dangling"), tempDir.resolve("missing"));
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        var first = new com.azhukov.agent.core.model.ToolCall("a", "write_file", mapper.writeValueAsString(java.util.Map.of("path", dangling.resolve("file").toString())));
+        var second = new com.azhukov.agent.core.model.ToolCall("b", "write_file", mapper.writeValueAsString(java.util.Map.of("path", tempDir.resolve("other").toString())));
+        assertThat(ToolParallelSafety.shouldParallelize(java.util.List.of(first, second), java.util.Set.of("write_file"))).isFalse();
+    }
+
+    @Test
     void canonicalise_existingFile_resolvesToRealPath() throws IOException {
         Path file = tempDir.resolve("test.txt");
         Files.writeString(file, "test");

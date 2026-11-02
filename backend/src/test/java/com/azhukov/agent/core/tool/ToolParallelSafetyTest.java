@@ -24,6 +24,14 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class ToolParallelSafetyTest {
 
+    @org.junit.jupiter.api.Test
+    void emptyJsonInputFallsBackToSequential() {
+        var calls = java.util.List.of(
+            new com.azhukov.agent.core.model.ToolCall("a", "web_search", ""),
+            new com.azhukov.agent.core.model.ToolCall("b", "web_search", "{}"));
+        org.assertj.core.api.Assertions.assertThat(ToolParallelSafety.shouldParallelize(calls, java.util.Set.of("web_search"))).isFalse();
+    }
+
     private static final Set<String> REGISTERED = Set.of(
         "read_file", "write_file", "patch", "terminal", "search_files",
         "clarify", "skill_view", "session_search", "web_search",
