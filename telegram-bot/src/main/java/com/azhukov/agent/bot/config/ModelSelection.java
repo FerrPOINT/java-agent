@@ -4,6 +4,13 @@ package com.azhukov.agent.bot.config;
 public final class ModelSelection {
     private ModelSelection() {}
 
+    /** An absent unrestricted override lets the backend choose its own default. */
+    public static String forRequest(BotProperties properties, String override) {
+        var available = properties.getAvailableModels();
+        if ((available == null || available.isEmpty()) && (override == null || override.isBlank())) return null;
+        return resolve(properties, override);
+    }
+
     public static String resolve(BotProperties properties, String override) {
         var available = properties.getAvailableModels();
         if (available != null && !available.isEmpty()) {

@@ -102,6 +102,36 @@ class AgentBackendClientTest {
     // ═══════════════════════════════════════════════════════════════
 
     @Test
+    void chatWithoutAllowedListAndOverrideLeavesModelToBackend() {
+        properties.getAvailableModels().clear();
+        properties.setDefaultModel("bot-display-default");
+        when(responseSpec.body(String.class)).thenReturn("{\"response\":\"OK\"}");
+        client.chat("hello", "session", new BotSessionEntity());
+        verify(postSpec).body(argThat((Object body) -> body instanceof java.util.Map<?, ?> map
+            && !map.containsKey("model")));
+    }
+
+    @Test
+    void streamWithoutAllowedListAndOverrideLeavesModelToBackend() {
+        properties.getAvailableModels().clear();
+        properties.setDefaultModel("bot-display-default");
+        when(responseSpec.body(InputStream.class)).thenReturn(sseStream("data:{\"type\":\"done\"}"));
+        client.chatStream("hello", "s1", new BotSessionEntity(), t -> {}, t -> {}, (n, r) -> {}, t -> {}, r -> {}, e -> {});
+        verify(postSpec).body(argThat((Object body) -> body instanceof java.util.Map<?, ?> map && !map.containsKey("model")));
+    }
+
+    @Test
+    void chatWithoutAllowedListRetainsExplicitModelOverride() {
+        properties.getAvailableModels().clear();
+        when(responseSpec.body(String.class)).thenReturn("{\"response\":\"OK\"}");
+        var runtime = new BotSessionEntity();
+        runtime.setModelOverride("custom-model");
+        client.chat("hello", "session", runtime);
+        verify(postSpec).body(argThat((Object body) -> body instanceof java.util.Map<?, ?> map
+            && "custom-model".equals(map.get("model"))));
+    }
+
+    @Test
     void chatReplacesStaleSessionModelWithConfiguredAllowedModel() {
         properties.getAvailableModels().add("app-test");
         properties.setDefaultModel("app-test");
