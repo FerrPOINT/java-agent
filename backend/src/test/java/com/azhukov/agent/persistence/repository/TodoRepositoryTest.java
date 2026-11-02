@@ -57,6 +57,21 @@ class TodoRepositoryTest extends PostgresTestContainer {
     @Autowired
     private com.azhukov.agent.service.TodoService todoService;
 
+    private void assertAdvisoryBlocked(int waiterPid, int holderPid) throws InterruptedException {
+        var jdbc = applicationContext.getBean(org.springframework.jdbc.core.JdbcTemplate.class);
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+        boolean blocked = false;
+        while (System.nanoTime() < deadline) {
+            blocked = Boolean.TRUE.equals(jdbc.queryForObject("""
+                select exists (select 1 from pg_locks where pid = ? and locktype = 'advisory' and not granted)
+                    and ? = any(pg_blocking_pids(?))
+                """, Boolean.class, waiterPid, holderPid, waiterPid));
+            if (blocked) break;
+            Thread.sleep(25);
+        }
+        assertThat(blocked).as("waiter is blocked by replacement transaction's advisory lock").isTrue();
+    }
+
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
@@ -67,6 +82,10 @@ class TodoRepositoryTest extends PostgresTestContainer {
         var session = new com.azhukov.agent.core.model.Session(saved.getId(), user, "owner", MODEL_PROVIDER, MODEL_NAME, null, java.util.Map.of());
         var deleted = new java.util.concurrent.CountDownLatch(1);
         var release = new java.util.concurrent.CountDownLatch(1);
+        var holderPid = new java.util.concurrent.atomic.AtomicInteger();
+        var waiterPid = new java.util.concurrent.atomic.AtomicInteger();
+        var waiterReady = new java.util.concurrent.CountDownLatch(1);
+        var jdbc = applicationContext.getBean(org.springframework.jdbc.core.JdbcTemplate.class);
         var delegate = org.mockito.Mockito.mock(TodoRepository.class, invocation -> {
             try {
                 var result = invocation.getMethod().invoke(todoRepository, invocation.getArguments());
@@ -81,11 +100,18 @@ class TodoRepositoryTest extends PostgresTestContainer {
         var transactions = new org.springframework.transaction.support.TransactionTemplate(applicationContext.getBean(org.springframework.transaction.PlatformTransactionManager.class));
         var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
         try {
-            var replacement = pool.submit(() -> transactions.execute(status -> tool.execute("{\"todos\":[{\"content\":\"replacement\"}]}", null, session)));
+            var replacement = pool.submit(() -> transactions.execute(status -> {
+                holderPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                return tool.execute("{\"todos\":[{\"content\":\"replacement\"}]}", null, session);
+            }));
             assertThat(deleted.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
-            var done = pool.submit(() -> scoped ? todoService.markDoneForUser(original.getId(), user) : todoService.markDone(original.getId()));
-            org.assertj.core.api.Assertions.assertThatThrownBy(() -> done.get(500, java.util.concurrent.TimeUnit.MILLISECONDS))
-                .isInstanceOf(java.util.concurrent.TimeoutException.class);
+            var done = pool.submit(() -> transactions.execute(status -> {
+                waiterPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                waiterReady.countDown();
+                return scoped ? todoService.markDoneForUser(original.getId(), user) : todoService.markDone(original.getId());
+            }));
+            assertThat(waiterReady.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertAdvisoryBlocked(waiterPid.get(), holderPid.get());
             release.countDown();
             assertThat(replacement.get(10, java.util.concurrent.TimeUnit.SECONDS).success()).isTrue();
             assertThat(done.get(10, java.util.concurrent.TimeUnit.SECONDS)).isEmpty();
@@ -104,6 +130,10 @@ class TodoRepositoryTest extends PostgresTestContainer {
         var session = new com.azhukov.agent.core.model.Session(saved.getId(), user, "owner", MODEL_PROVIDER, MODEL_NAME, null, java.util.Map.of());
         var deleted = new java.util.concurrent.CountDownLatch(1);
         var release = new java.util.concurrent.CountDownLatch(1);
+        var holderPid = new java.util.concurrent.atomic.AtomicInteger();
+        var waiterPid = new java.util.concurrent.atomic.AtomicInteger();
+        var waiterReady = new java.util.concurrent.CountDownLatch(1);
+        var jdbc = applicationContext.getBean(org.springframework.jdbc.core.JdbcTemplate.class);
         var delegate = org.mockito.Mockito.mock(TodoRepository.class, invocation -> {
             try {
                 var result = invocation.getMethod().invoke(todoRepository, invocation.getArguments());
@@ -118,12 +148,19 @@ class TodoRepositoryTest extends PostgresTestContainer {
         var transactions = new org.springframework.transaction.support.TransactionTemplate(applicationContext.getBean(org.springframework.transaction.PlatformTransactionManager.class));
         var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
         try {
-            var replacement = pool.submit(() -> transactions.execute(status -> tool.execute("{\"todos\":[{\"content\":\"replacement\"}]}", null, session)));
+            var replacement = pool.submit(() -> transactions.execute(status -> {
+                holderPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                return tool.execute("{\"todos\":[{\"content\":\"replacement\"}]}", null, session);
+            }));
             assertThat(deleted.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
-            var started = new java.util.concurrent.CountDownLatch(1);
-            var clear = pool.submit(() -> { started.countDown(); todoService.clearByUserId(user); });
-            assertThat(started.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
-            org.assertj.core.api.Assertions.assertThatThrownBy(() -> clear.get(500, java.util.concurrent.TimeUnit.MILLISECONDS)).isInstanceOf(java.util.concurrent.TimeoutException.class);
+            var clear = pool.submit(() -> transactions.execute(status -> {
+                waiterPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                waiterReady.countDown();
+                todoService.clearByUserId(user);
+                return null;
+            }));
+            assertThat(waiterReady.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertAdvisoryBlocked(waiterPid.get(), holderPid.get());
             release.countDown();
             assertThat(replacement.get(10, java.util.concurrent.TimeUnit.SECONDS).success()).isTrue();
             clear.get(10, java.util.concurrent.TimeUnit.SECONDS);
@@ -142,6 +179,10 @@ class TodoRepositoryTest extends PostgresTestContainer {
         var session = new com.azhukov.agent.core.model.Session(saved.getId(), user, "owner", MODEL_PROVIDER, MODEL_NAME, null, java.util.Map.of());
         var deleted = new java.util.concurrent.CountDownLatch(1);
         var release = new java.util.concurrent.CountDownLatch(1);
+        var holderPid = new java.util.concurrent.atomic.AtomicInteger();
+        var waiterPid = new java.util.concurrent.atomic.AtomicInteger();
+        var waiterReady = new java.util.concurrent.CountDownLatch(1);
+        var jdbc = applicationContext.getBean(org.springframework.jdbc.core.JdbcTemplate.class);
         var delegate = org.mockito.Mockito.mock(TodoRepository.class, invocation -> {
             try {
                 var result = invocation.getMethod().invoke(todoRepository, invocation.getArguments());
@@ -156,12 +197,18 @@ class TodoRepositoryTest extends PostgresTestContainer {
         var transactions = new org.springframework.transaction.support.TransactionTemplate(applicationContext.getBean(org.springframework.transaction.PlatformTransactionManager.class));
         var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
         try {
-            var replacement = pool.submit(() -> transactions.execute(status -> tool.execute("{\"todos\":[{\"content\":\"replacement\"}]}", null, session)));
+            var replacement = pool.submit(() -> transactions.execute(status -> {
+                holderPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                return tool.execute("{\"todos\":[{\"content\":\"replacement\"}]}", null, session);
+            }));
             assertThat(deleted.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
-            var started = new java.util.concurrent.CountDownLatch(1);
-            var add = pool.submit(() -> { started.countDown(); return todoService.add(user, "service addition"); });
-            assertThat(started.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
-            org.assertj.core.api.Assertions.assertThatThrownBy(() -> add.get(500, java.util.concurrent.TimeUnit.MILLISECONDS)).isInstanceOf(java.util.concurrent.TimeoutException.class);
+            var add = pool.submit(() -> transactions.execute(status -> {
+                waiterPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                waiterReady.countDown();
+                return todoService.add(user, "service addition");
+            }));
+            assertThat(waiterReady.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertAdvisoryBlocked(waiterPid.get(), holderPid.get());
             release.countDown();
             assertThat(replacement.get(10, java.util.concurrent.TimeUnit.SECONDS).success()).isTrue();
             assertThat(add.get(10, java.util.concurrent.TimeUnit.SECONDS)).isNotNull();
