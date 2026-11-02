@@ -91,15 +91,16 @@ public class ProcessTool implements ToolHandler {
         if (targetsProcess && (sessionId == null || sessionId.isBlank())) {
             return failJson("session_id is required for " + args.action());
         }
-                return switch (action) {
-            case "list" -> listProcesses();
-            case "poll" -> poll(sessionId);
-            case "log" -> log(sessionId, args.offset(), args.limit());
-            case "wait" -> waitFor(sessionId, args.timeout());
-            case "kill" -> kill(sessionId);
-            case "write" -> writeStdin(sessionId, args.data());
-            case "submit" -> submitStdin(sessionId, args.data());
-            case "close" -> closeStdin(sessionId);
+        UUID controlSessionId = com.azhukov.agent.core.agent.RunControlScope.controlSessionId(session);
+        return switch (action) {
+            case "list" -> listProcesses(controlSessionId);
+            case "poll" -> poll(sessionId, controlSessionId);
+            case "log" -> log(sessionId, args.offset(), args.limit(), controlSessionId);
+            case "wait" -> waitFor(sessionId, args.timeout(), controlSessionId);
+            case "kill" -> kill(sessionId, controlSessionId);
+            case "write" -> writeStdin(sessionId, args.data(), controlSessionId);
+            case "submit" -> submitStdin(sessionId, args.data(), controlSessionId);
+            case "close" -> closeStdin(sessionId, controlSessionId);
             default -> failJson("Unknown process action: " + args.action() + ". Use: list, poll, log, wait, kill, write, submit, close");
         };
     }
@@ -184,9 +185,10 @@ public class ProcessTool implements ToolHandler {
         return spawn(command, timeoutSeconds, false, null, null);
     }
 
-    private ToolResult listProcesses() {
+    private ToolResult listProcesses(UUID ownerSessionId) {
         List<String> lines = new ArrayList<>();
         for (ManagedProcess p : processes.values()) {
+            if (ownerSessionId != null && !ownerSessionId.equals(p.ownerSessionId)) continue;
             String status = p.process.isAlive() ? "running" : "exited";
             // rev-113: command line redacted too (Hermes redact_sensitive_text
             // on s.command, process_registry.py:2748) — env vars with secrets
@@ -202,18 +204,23 @@ public class ProcessTool implements ToolHandler {
      * ManagedProcess, or null if no match is found or the prefix is ambiguous.
      */
     private ManagedProcess findProcess(String sessionId) {
+        return findProcess(sessionId, null);
+    }
+
+    private ManagedProcess findProcess(String sessionId, UUID ownerSessionId) {
         if (sessionId == null || sessionId.isBlank()) {
             return null;
         }
         // Fast path: exact match
         ManagedProcess exact = processes.get(sessionId);
         if (exact != null) {
-            return exact;
+            return ownerSessionId == null || ownerSessionId.equals(exact.ownerSessionId) ? exact : null;
         }
         // Prefix match: find all processes whose ID starts with the given prefix
         List<ManagedProcess> matches = new ArrayList<>();
         for (Map.Entry<String, ManagedProcess> entry : processes.entrySet()) {
-            if (entry.getKey().startsWith(sessionId)) {
+            if (entry.getKey().startsWith(sessionId)
+                && (ownerSessionId == null || ownerSessionId.equals(entry.getValue().ownerSessionId))) {
                 matches.add(entry.getValue());
             }
         }
@@ -223,8 +230,8 @@ public class ProcessTool implements ToolHandler {
         return null; // no match or ambiguous
     }
 
-    private ToolResult poll(String sessionId) {
-        ManagedProcess p = findProcess(sessionId);
+    private ToolResult poll(String sessionId, UUID ownerSessionId) {
+        ManagedProcess p = findProcess(sessionId, ownerSessionId);
         if (p == null) {
             // PR-3 parity: unknown id is a soft, queryable state — the model can
             // discover it without a hard error (Hermes process_tool not_found).
@@ -238,8 +245,8 @@ public class ProcessTool implements ToolHandler {
         return ToolResult.ok(formatResult(p, false));
     }
 
-    private ToolResult log(@JsonProperty("session_id") @JsonAlias("sessionId") String sessionId, int offset, int limit) {
-        ManagedProcess p = findProcess(sessionId);
+    private ToolResult log(@JsonProperty("session_id") @JsonAlias("sessionId") String sessionId, int offset, int limit, UUID ownerSessionId) {
+        ManagedProcess p = findProcess(sessionId, ownerSessionId);
         if (p == null) {
             // PR-3 parity: unknown id is a soft, queryable state — the model can
             // discover it without a hard error (Hermes process_tool not_found).
@@ -261,11 +268,11 @@ public class ProcessTool implements ToolHandler {
         return ToolResult.ok(redactor.redact(String.join("\n", lines.subList(start, end))));
     }
 
-    private ToolResult waitFor(String sessionId, Integer timeout) {
+    private ToolResult waitFor(String sessionId, Integer timeout, UUID ownerSessionId) {
         if (timeout != null && timeout <= 0) {
             return failJson("timeout must be positive (got " + timeout + ")");
         }
-        ManagedProcess p = findProcess(sessionId);
+        ManagedProcess p = findProcess(sessionId, ownerSessionId);
         if (p == null) {
             // PR-3 parity: unknown id is a soft, queryable state — the model can
             // discover it without a hard error (Hermes process_tool not_found).
@@ -289,8 +296,8 @@ public class ProcessTool implements ToolHandler {
         }
     }
 
-    private ToolResult kill(String sessionId) {
-        ManagedProcess p = findProcess(sessionId);
+    private ToolResult kill(String sessionId, UUID ownerSessionId) {
+        ManagedProcess p = findProcess(sessionId, ownerSessionId);
         if (p == null) {
             // PR-3 parity: unknown id is a soft, queryable state — the model can
             // discover it without a hard error (Hermes process_tool not_found).
@@ -306,8 +313,8 @@ public class ProcessTool implements ToolHandler {
         return ToolResult.ok("Killed process " + p.id);
     }
 
-    private ToolResult writeStdin(String sessionId, String data) {
-        ManagedProcess p = findProcess(sessionId);
+    private ToolResult writeStdin(String sessionId, String data, UUID ownerSessionId) {
+        ManagedProcess p = findProcess(sessionId, ownerSessionId);
         if (p == null) {
             // PR-3 parity: unknown id is a soft, queryable state — the model can
             // discover it without a hard error (Hermes process_tool not_found).
@@ -322,12 +329,12 @@ public class ProcessTool implements ToolHandler {
         return ToolResult.ok("Data written to stdin");
     }
 
-    private ToolResult submitStdin(String sessionId, String data) {
-        return writeStdin(sessionId, (data == null ? "" : data) + "\n");
+    private ToolResult submitStdin(String sessionId, String data, UUID ownerSessionId) {
+        return writeStdin(sessionId, (data == null ? "" : data) + "\n", ownerSessionId);
     }
 
-    private ToolResult closeStdin(String sessionId) {
-        ManagedProcess p = findProcess(sessionId);
+    private ToolResult closeStdin(String sessionId, UUID ownerSessionId) {
+        ManagedProcess p = findProcess(sessionId, ownerSessionId);
         if (p == null) {
             // PR-3 parity: unknown id is a soft, queryable state — the model can
             // discover it without a hard error (Hermes process_tool not_found).
