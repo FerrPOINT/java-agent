@@ -190,6 +190,28 @@ class AgentStreamingServiceBranchTest {
     }
 
     @Test
+    void truncatedStreamingRetryHonorsExhaustedModelBudget() throws Exception {
+        var calls = new AtomicInteger();
+        var snapshot = mock(IterationBudget.TurnSnapshot.class);
+        when(iterationBudget.startTurn(any())).thenReturn(snapshot);
+        when(iterationBudget.recordModelCall(any(), anyInt(), anyInt())).thenReturn(snapshot);
+        when(iterationBudget.isExhausted(any())).thenAnswer(inv -> calls.get() >= 1);
+        when(iterationBudget.status(any())).thenReturn(new IterationBudget.BudgetStatus(false, 0, 0, 0, 0, "limit"));
+        doAnswer(inv -> {
+            calls.incrementAndGet();
+            StreamingResponseHandler handler = inv.getArgument(3);
+            handler.onToolCalls(List.of(new ToolCall("c1", "weather", "{}")));
+            handler.onComplete("length", 1L);
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+        var emitter = new CollectingEmitter(30_000L);
+        streamingService.streamTurn(ChatRequest.simple(SESSION_ID, "hello", null, 10_000L), emitter);
+        emitter.awaitDone();
+        assertThat(calls.get()).isEqualTo(1);
+        verify(toolExecutionService, never()).execute(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
     void streamedToolRetryContentIsDelivered() throws Exception {
         var attempts = new AtomicInteger();
         doAnswer(inv -> {

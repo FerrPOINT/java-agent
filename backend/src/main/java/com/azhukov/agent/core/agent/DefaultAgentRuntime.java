@@ -702,6 +702,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
             // (2^attempt × base, capped at 32768) giving the model room to finish.
             while (ResponseRecoveryPolicy.isTruncatedToolCall(response.finishReason(), response.hasToolCalls())
                     && truncatedToolCallRetries < ResponseRecoveryPolicy.MAX_TRUNCATED_TOOL_CALL_RETRIES) {
+                if (iterationBudget.isExhausted(budget)) break;
                 truncatedToolCallRetries++;
                 int boostedMax = ResponseRecoveryPolicy.boostedMaxTokens(
                     properties.getModel().getMaxTokens(), truncatedToolCallRetries);
@@ -716,6 +717,11 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 budget = iterationBudget.recordModelCall(budget,
                     tokenEstimator.estimateTokens(context), estimateResponseTokens(response));
                 turnState.recordModelCall();
+            }
+
+            if (ResponseRecoveryPolicy.isTruncatedToolCall(response.finishReason(), response.hasToolCalls())
+                    && iterationBudget.isExhausted(budget)) {
+                continue;
             }
 
             // Truncated tool call ceiling reached — refuse to execute incomplete arguments.

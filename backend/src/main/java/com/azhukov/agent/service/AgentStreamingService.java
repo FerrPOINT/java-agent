@@ -609,7 +609,7 @@ public class AgentStreamingService {
         // active/fallback client the inner stream loop switched to.
         final java.util.concurrent.atomic.AtomicReference<ModelClient> activeStreamClientRef =
             new java.util.concurrent.atomic.AtomicReference<>(modelClient);
-        for (int i = 0; i < maxTurns; i++) {
+        agentLoop: for (int i = 0; i < maxTurns; i++) {
           try {
             // Check for interrupt at the top of each agentic-loop iteration
             if (interruptToken != null && interruptToken.isCancelled(session.id())) {
@@ -1059,6 +1059,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                 // (2^attempt × base, capped at 32768) giving the model room to finish.
                 if (com.azhukov.agent.core.agent.ResponseRecoveryPolicy.isTruncatedToolCall(finishReason, hasToolCalls)
                         && truncatedToolCallRetries < MAX_TRUNCATED_TOOL_CALL_RETRIES) {
+                    if (iterationBudget.isExhausted(budget)) continue agentLoop;
                     truncatedToolCallRetries++;
                     int boostedMax = com.azhukov.agent.core.agent.ResponseRecoveryPolicy.boostedMaxTokens(
                         properties.getModel().getMaxTokens(), truncatedToolCallRetries);
@@ -1152,6 +1153,8 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     }
                     log.info("Re-stream finish_reason={} for session {} (content={} chars, toolCalls={})",
                         finishReason, session.id(), contentBuilder.length(), collectedToolCalls.size());
+                    if (com.azhukov.agent.core.agent.ResponseRecoveryPolicy.isTruncatedToolCall(finishReason, hasToolCalls)
+                            && iterationBudget.isExhausted(budget)) continue agentLoop;
                     // A second truncated response is never safe to dispatch even
                     // when its argument JSON happens to be syntactically valid.
                     if (com.azhukov.agent.core.agent.ResponseRecoveryPolicy.isTruncatedToolCall(finishReason, hasToolCalls)

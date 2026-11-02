@@ -123,6 +123,19 @@ class SyncRecoveryParityTest {
     }
 
     @Test
+    void truncatedRetryDoesNotExceedModelCallBudget() {
+        var calls = new AtomicInteger();
+        var props = new AgentProperties();
+        props.getBudget().setMaxModelCallsPerTurn(1);
+        var budget = new DefaultIterationBudget(props);
+        var runtime = buildRuntime(calls, (n, total) ->
+            new ChatResponse("", List.of(new ToolCall("c1", "weather", "{}")), "LENGTH"), budget);
+        runtime.runTurn(Session.create("user", "noop", "noop"), "hi");
+        // One ordinary call plus the documented toolless budget-summary call.
+        assertThat(calls.get()).isLessThanOrEqualTo(2);
+    }
+
+    @Test
     void repeatedlyTruncatedResponsesStopAtRetryCeiling() {
         AtomicInteger calls = new AtomicInteger();
         var runtime = buildRuntime(calls, (n, total) -> n <= 5
