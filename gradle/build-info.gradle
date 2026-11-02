@@ -1,0 +1,11 @@
+// A changing wall clock must not invalidate resources, tests and the JAR.
+def candidateBuildEpoch = providers.environmentVariable('SOURCE_DATE_EPOCH')
+springBoot {
+    buildInfo {
+        if (candidateBuildEpoch.isPresent()) {
+            properties { time = java.time.Instant.ofEpochSecond(Long.parseLong(candidateBuildEpoch.get())).toString() }
+        } else {
+            excludes = ['time']
+        }
+    }
+}

@@ -1,0 +1,3 @@
+java-production-inputs.json text eol=lf
+java-main-unit.json text eol=lf
+production/*.gradle text eol=lf

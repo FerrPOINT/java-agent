@@ -1,11 +1,11 @@
 FROM eclipse-temurin:25.0.4.1_1-jdk-noble@sha256:0d623ea18d7b0fe1e12a2c0a920f7e950cad433387e5a49d3611e1507fa07602 AS builder
 WORKDIR /workspace
 COPY LICENSE NOTICE THIRD_PARTY_NOTICES.md ./
-COPY settings.gradle ./
+COPY settings.gradle gradle.properties ./
 COPY gradle ./gradle
 COPY docs/standards/coverage-baseline.json ./docs/standards/coverage-baseline.json
 COPY gradlew ./
-COPY shared/build.gradle ./shared/build.gradle
+COPY shared/build.gradle shared/test-dependencies.gradle ./shared/
 COPY shared/src ./shared/src
 COPY telegram-bot/build.gradle ./telegram-bot/build.gradle
 COPY telegram-bot/src ./telegram-bot/src

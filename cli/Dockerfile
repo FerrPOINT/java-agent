@@ -1,13 +1,13 @@
 FROM eclipse-temurin:25.0.4.1_1-jdk-noble@sha256:0d623ea18d7b0fe1e12a2c0a920f7e950cad433387e5a49d3611e1507fa07602 AS builder
 WORKDIR /workspace
 COPY LICENSE NOTICE THIRD_PARTY_NOTICES.md ./
-COPY settings.gradle ./
+COPY settings.gradle gradle.properties ./
 COPY gradle ./gradle
 COPY docs/standards/coverage-baseline.json ./docs/standards/coverage-baseline.json
 COPY gradlew ./
-COPY shared/build.gradle ./shared/build.gradle
+COPY shared/build.gradle shared/test-dependencies.gradle ./shared/
 COPY shared/src ./shared/src
-COPY cli/build.gradle ./cli/build.gradle
+COPY cli/build.gradle cli/test-dependencies.gradle ./cli/
 COPY cli/src ./cli/src
 RUN sed -i 's/\r$//' gradlew && chmod +x gradlew && ./gradlew -PqualityRootGraph=clients-selected-v1 -PqualityRootComponents=cli :cli:bootJar --no-daemon --max-workers=2
 

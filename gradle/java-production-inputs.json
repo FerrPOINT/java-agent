@@ -1,0 +1,44 @@
+{
+  "schema": "base-java-production-source/v1",
+  "common": [
+    "LICENSE",
+    "NOTICE",
+    "THIRD_PARTY_NOTICES.md",
+    "gradle/build-info.gradle",
+    "gradle/ferrpoint-notices.gradle",
+    "gradle/quality-inputs.gradle",
+    "gradle/production/settings.gradle",
+    "gradle/production/project.gradle"
+  ],
+  "wrappers": {
+    "root": [
+      "settings.gradle",
+      "gradle.properties",
+      "gradlew",
+      "gradle/wrapper/gradle-wrapper.jar",
+      "gradle/wrapper/gradle-wrapper.properties"
+    ],
+    "backend": [
+      "backend/build.gradle",
+      "backend/settings.gradle",
+      "backend/gradle.properties",
+      "backend/gradlew",
+      "backend/gradle/wrapper/gradle-wrapper.jar",
+      "backend/gradle/wrapper/gradle-wrapper.properties"
+    ]
+  },
+  "modules": {
+    "backend": [
+      "backend/build.gradle"
+    ],
+    "shared": [
+      "shared/build.gradle"
+    ],
+    "cli": [
+      "cli/build.gradle"
+    ],
+    "bot": [
+      "telegram-bot/build.gradle"
+    ]
+  }
+}

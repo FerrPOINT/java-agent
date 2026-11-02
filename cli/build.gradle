@@ -6,6 +6,10 @@ plugins {
 
 group = 'com.azhukov'
 version = '0.0.1-SNAPSHOT'
+def privateProduction = providers.gradleProperty('baseProductionRole').isPresent()
+if (privateProduction && (!gradle.ext.has('baseProductionScope') || gradle.ext.baseProductionScope.role != 'cli-main-v1')) {
+    throw new GradleException('Private production requires its validated source settings')
+}
 
 java {
     sourceCompatibility = JavaVersion.VERSION_25
@@ -20,8 +24,8 @@ repositories {
 dependencies {
     // h10: shared mapper + REST client factory
     implementation project(':shared')
-    // Spring Boot — RestClient for REST calls to backend
-    implementation 'org.springframework.boot:spring-boot-starter-web'
+    // Non-web Boot bootstrap; Shared exports the explicit REST client dependencies.
+    implementation 'org.springframework.boot:spring-boot-starter'
 
     // JLine for REPL
     implementation 'org.jline:jline:4.4.8'
@@ -36,21 +40,10 @@ dependencies {
     // Lombok
     compileOnly 'org.projectlombok:lombok:1.18.48'
     annotationProcessor 'org.projectlombok:lombok:1.18.48'
-    testCompileOnly 'org.projectlombok:lombok:1.18.48'
-    testAnnotationProcessor 'org.projectlombok:lombok:1.18.48'
-
-    // Test
-    testImplementation 'org.springframework.boot:spring-boot-starter-test'
-    testImplementation 'org.junit.jupiter:junit-jupiter'
-    testImplementation 'org.mockito:mockito-core'
-    testImplementation 'org.mockito:mockito-junit-jupiter'
-    testImplementation 'org.assertj:assertj-core'
-    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
-tasks.named('test') {
-    useJUnitPlatform()
-    jvmArgs '-XX:+EnableDynamicAgentLoading'
+if (!privateProduction) {
+    apply from: file('test-dependencies.gradle')
 }
 
 tasks.withType(JavaCompile).configureEach {
@@ -58,28 +51,7 @@ tasks.withType(JavaCompile).configureEach {
     options.compilerArgs += ['-parameters']
 }
 
-def ferrpointNoticeFiles = [
-    rootProject.file('LICENSE'),
-    rootProject.file('NOTICE'),
-    rootProject.file('THIRD_PARTY_NOTICES.md')
-]
-
-tasks.withType(Jar).configureEach {
-    ferrpointNoticeFiles.each { noticeFile ->
-        from(noticeFile) {
-            into 'META-INF'
-        }
-    }
-    manifest {
-        attributes(
-            'Implementation-Vendor': 'FerrPOINT',
-            'Implementation-Vendor-Id': 'FerrPOINT',
-            'License': 'LicenseRef-FerrPOINT-Proprietary',
-            'License-Name': 'FerrPOINT Proprietary Source-Available Evaluation License v1.0',
-            'License-File': 'META-INF/LICENSE'
-        )
-    }
-}
+apply from: file('../gradle/ferrpoint-notices.gradle').exists() ? file('../gradle/ferrpoint-notices.gradle') : file('gradle/ferrpoint-notices.gradle')
 
 bootJar {
     manifest {
@@ -87,24 +59,14 @@ bootJar {
     }
 }
 
-// A changing wall clock must not invalidate resources, tests and the JAR.
-def candidateBuildEpoch = providers.environmentVariable('SOURCE_DATE_EPOCH')
-springBoot {
-    buildInfo {
-        if (candidateBuildEpoch.isPresent()) {
-            properties { time = java.time.Instant.ofEpochSecond(Long.parseLong(candidateBuildEpoch.get())).toString() }
-        } else {
-            excludes = ['time']
-        }
-    }
-}
+apply from: file('../gradle/build-info.gradle').exists() ? file('../gradle/build-info.gradle') : file('gradle/build-info.gradle')
 
 bootRun {
     maxHeapSize = '512m'
 }
 
-// Base test lanes: unit compilation excludes manual boundary sources.
-apply from: file("../gradle/test-lanes.gradle").exists() ? file("../gradle/test-lanes.gradle") : file("gradle/test-lanes.gradle")
-
-// Read-only preparation index, not a successful build or test receipt.
-apply from: file("../gradle/quality-inputs.gradle").exists() ? file("../gradle/quality-inputs.gradle") : file("gradle/quality-inputs.gradle")
+// Base test policy: automatic unit checks; explicit integration/slow release lanes.
+if (!privateProduction) {
+    apply from: file("../gradle/test-lanes.gradle").exists() ? file("../gradle/test-lanes.gradle") : file("gradle/test-lanes.gradle")
+}
+apply from: file('../gradle/quality-inputs.gradle').exists() ? file('../gradle/quality-inputs.gradle') : file('gradle/quality-inputs.gradle')

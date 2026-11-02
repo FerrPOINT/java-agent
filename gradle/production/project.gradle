@@ -1,0 +1,190 @@
+import groovy.json.JsonSlurper
+import groovy.json.JsonOutput
+import java.nio.file.Files
+import java.nio.file.LinkOption
+import java.nio.file.Path
+import java.security.MessageDigest
+import org.gradle.api.tasks.compile.JavaCompile
+import org.gradle.api.tasks.bundling.AbstractArchiveTask
+import org.gradle.api.tasks.testing.Test
+import org.gradle.language.jvm.tasks.ProcessResources
+import org.gradle.work.DisableCachingByDefault
+
+@DisableCachingByDefault(because = 'Private production source integrity must be observed before compilation')
+abstract class VerifyProductionSource extends DefaultTask {
+    @Internal abstract DirectoryProperty getSourceRoot()
+    @Input abstract Property<String> getExpectedSha256()
+    @InputFile @PathSensitive(PathSensitivity.NONE) abstract RegularFileProperty getControlFile()
+
+    static String digest(Path path) {
+        def hash = MessageDigest.getInstance('SHA-256')
+        Files.newInputStream(path).withCloseable { stream ->
+            byte[] bytes = new byte[65536]
+            int count
+            while ((count = stream.read(bytes)) != -1) hash.update(bytes, 0, count)
+        }
+        hash.digest().encodeHex().toString()
+    }
+
+    @TaskAction void verify() {
+        def root = sourceRoot.get().asFile.toPath()
+        def marker = controlFile.get().asFile.toPath()
+        if (Files.isSymbolicLink(marker) || Files.size(marker) > 4 * 1024 * 1024 || digest(marker) != expectedSha256.get()) {
+            throw new GradleException('Production source control changed')
+        }
+        def view = new JsonSlurper().parse(marker.toFile())
+        if (!(view.files instanceof Map) || view.files.isEmpty() || view.files.size() > 10000) {
+            throw new GradleException('Invalid production source inventory')
+        }
+        def files = new LinkedHashMap(view.files)
+        def folded = [] as Set
+        def directories = [] as Set
+        files.each { name, sha ->
+            if (!(name instanceof String) || !(sha instanceof String) || !(sha ==~ /[a-f0-9]{64}/)
+                    || name.isEmpty() || name.contains('\\') || name.contains(':')
+                    || name.any { it in ['\r', '\n', '\u0000'] }) {
+                throw new GradleException('Invalid production source path/hash')
+            }
+            def relative = new File(name).toPath()
+            if (relative.isAbsolute() || relative.normalize().toString().replace('\\', '/') != name
+                    || name == '.' || name.split('/').contains('..') || !folded.add(name.toLowerCase(Locale.ROOT))) {
+                throw new GradleException('Ambiguous production source path')
+            }
+            for (def parent = relative.parent; parent != null; parent = parent.parent) {
+                directories.add(parent.toString().replace('\\', '/'))
+            }
+        }
+        files['.base-production-source.json'] = expectedSha256.get()
+        def observed = [] as Set
+        long total = 0
+        Files.walk(root).withCloseable { stream ->
+            def iterator = stream.iterator()
+            while (iterator.hasNext()) {
+                def path = iterator.next()
+                if (path == root) continue
+                def name = root.relativize(path).toString().replace('\\', '/')
+                if (Files.isSymbolicLink(path)) throw new GradleException('Production source contains an alias')
+                if (Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) {
+                    if (!directories.contains(name)) throw new GradleException('Unexpected production source directory: ' + name)
+                } else {
+                    if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) || !files.containsKey(name)) {
+                        throw new GradleException('Unexpected production source file')
+                    }
+                    long size = Files.size(path)
+                    total += size
+                    if (size > 64L * 1024 * 1024 || total > 260L * 1024 * 1024 || digest(path) != files[name]) {
+                        throw new GradleException('Production source content/budget changed')
+                    }
+                    observed.add(name)
+                }
+            }
+        }
+        if (observed != files.keySet()) throw new GradleException('Production source file is missing')
+    }
+}
+
+@DisableCachingByDefault(because = 'Observe resolved production classpaths even when compiler outputs are cached')
+abstract class VerifyProductionDependencies extends DefaultTask {
+    @Input abstract Property<String> getModuleIdentity()
+    @Input abstract Property<String> getExpectedSha256()
+    @InputFile @PathSensitive(PathSensitivity.NONE) abstract RegularFileProperty getControlFile()
+    @InputFiles @PathSensitive(PathSensitivity.ABSOLUTE) abstract ConfigurableFileCollection getActualFiles()
+
+    @TaskAction void verify() {
+        def control = controlFile.get().asFile.toPath()
+        if (Files.isSymbolicLink(control) || Files.size(control) > 4L * 1024 * 1024
+                || VerifyProductionSource.digest(control) != expectedSha256.get()) {
+            throw new GradleException('Production dependency control changed')
+        }
+        def value = new JsonSlurper().parse(control.toFile())
+        if (!(value instanceof Map) || value.keySet() != ['schema', 'modules'].toSet()
+                || value.schema != 'base-java-production-dependencies/v1'
+                || !(value.modules instanceof Map) || value.modules.keySet() != ['cli', 'shared'].toSet()) {
+            throw new GradleException('Invalid production dependency control')
+        }
+        def expected = value.modules[moduleIdentity.get()]
+        if (!(expected instanceof Map) || expected.size() > 4096) {
+            throw new GradleException('Invalid production dependency inventory')
+        }
+        def actual = new TreeMap()
+        long total = 0
+        actualFiles.files.each { file ->
+            def path = file.toPath().toAbsolutePath()
+            if (path != path.normalize() || !Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
+                throw new GradleException('Invalid resolved production dependency')
+            }
+            for (def node = path; node != null; node = node.parent) {
+                if (Files.isSymbolicLink(node)) throw new GradleException('Production dependency traverses an alias')
+            }
+            long size = Files.size(path)
+            total += size
+            if (actual.size() >= 4096 || total > 2L * 1024 * 1024 * 1024) {
+                throw new GradleException('Production dependency budget exceeded')
+            }
+            actual[path.toString()] = [bytes: size, sha256: VerifyProductionSource.digest(path)]
+        }
+        if (actual != expected) {
+            throw new GradleException('Resolved production classpaths differ from captured preparation: ' + moduleIdentity.get())
+        }
+    }
+}
+
+if (!gradle.ext.has('baseProductionScope') || gradle.ext.baseProductionScope.role != 'cli-main-v1') {
+    throw new GradleException('Production project configuration requires validated private settings')
+}
+def scope = gradle.ext.baseProductionScope
+if (project.path == ':') {
+    tasks.register('verifyProductionSource', VerifyProductionSource) {
+        sourceRoot = layout.projectDirectory
+        controlFile = layout.projectDirectory.file('.base-production-source.json')
+        expectedSha256 = scope.sha256
+    }
+}
+def verifier = rootProject.tasks.named('verifyProductionSource')
+def dependencyVerifier = scope.compilerContext != null && project.path != ':' ?
+    tasks.register('verifyProductionDependencies', VerifyProductionDependencies) {
+        dependsOn verifier
+        moduleIdentity = project.name
+        controlFile = new File(scope.dependencyFile)
+        expectedSha256 = scope.dependencySha256
+    } : null
+// Bind content independently of Gradle's timestamp-based file-hash shortcuts.
+// CLI consumes Shared; Shared does not consume CLI source. Configuration stays
+// common because an executable build script can configure a neighboring project.
+def members = project.path == ':shared' ? ['shared'] : ['cli', 'shared']
+def selectedSources = new TreeMap(scope.sourceFiles.findAll { name, sha ->
+    !name.contains('/src/main/') || members.any { name.startsWith(it + '/src/main/') }
+})
+def sourceIdentity = MessageDigest.getInstance('SHA-256')
+    .digest(JsonOutput.toJson(selectedSources).getBytes('UTF-8')).encodeHex().toString()
+def bindCompilerInputs = { task ->
+    if (scope.compilerContext != null) {
+        task.inputs.property('baseProductionCompilerContext', scope.compilerContext)
+        task.inputs.property('baseProductionSourceContent', sourceIdentity)
+    }
+}
+tasks.withType(JavaCompile).configureEach {
+    dependsOn verifier
+    if (dependencyVerifier != null) dependsOn dependencyVerifier
+    bindCompilerInputs(delegate)
+    if (name != 'compileJava') {
+        doFirst { throw new GradleException('Test compilation is not a production operation') }
+    }
+}
+tasks.withType(ProcessResources).configureEach {
+    dependsOn verifier
+    if (dependencyVerifier != null) dependsOn dependencyVerifier
+    bindCompilerInputs(delegate)
+    if (name != 'processResources') {
+        doFirst { throw new GradleException('Test resources are not a production operation') }
+    }
+}
+tasks.withType(AbstractArchiveTask).configureEach {
+    dependsOn verifier
+    if (dependencyVerifier != null) dependsOn dependencyVerifier
+    bindCompilerInputs(delegate)
+}
+tasks.withType(Test).configureEach {
+    doFirst { throw new GradleException('This unqualified Main producer cannot execute or certify units') }
+}
+tasks.matching { it.name == 'qualityDependencyInputs' }.configureEach { dependsOn verifier }
