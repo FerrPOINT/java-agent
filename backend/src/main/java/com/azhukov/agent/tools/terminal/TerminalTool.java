@@ -459,6 +459,8 @@ public class TerminalTool implements ToolHandler {
                     }
                 };
                 interruptToken.registerCancellationCallback(sessionId, callback);
+                // Cancellation may have arrived between process start and registration.
+                if (interruptToken.isCancelled(sessionId)) callback.run();
             }
 
             boolean finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);

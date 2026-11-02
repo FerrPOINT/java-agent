@@ -89,6 +89,29 @@ class TerminalToolTest {
     }
 
     @Test
+    void cancellationBeforeCallbackRegistrationTerminatesProcess() throws Exception {
+        var token = new InterruptToken() {
+            @Override public void registerCancellationCallback(UUID id, Runnable callback) {
+                cancel(id);
+                super.registerCancellationCallback(id, callback);
+            }
+        };
+        var tool = new TerminalTool(processTool, properties(), redactor, checkpointManager, token);
+        var current = session();
+        var result = new java.util.concurrent.atomic.AtomicReference<ToolResult>();
+        var thread = new Thread(() -> result.set(tool.execute("{\"command\":\"exec sleep 60\"}", null, current)));
+        thread.start();
+        try {
+            thread.join(1500);
+            assertThat(thread.isAlive()).isFalse();
+            assertThat(result.get().success()).isFalse();
+        } finally {
+            thread.interrupt();
+            thread.join(3000);
+        }
+    }
+
+    @Test
     void cancellingSessionTerminatesRealForegroundProcess(@org.junit.jupiter.api.io.TempDir java.nio.file.Path directory) throws Exception {
         var token = new InterruptToken();
         var tool = new TerminalTool(processTool, properties(), redactor, checkpointManager, token);
