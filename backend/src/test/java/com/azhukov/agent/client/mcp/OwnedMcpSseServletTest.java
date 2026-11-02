@@ -20,6 +20,44 @@ class OwnedMcpSseServletTest {
     @AfterEach void clear() { UserContext.clear(); }
 
     @Test
+    void bindingCleanupFromOldGenerationCannotEraseNewGeneration() throws Exception {
+        var oldDelegate = mock(HttpServletSseServerTransportProvider.class);
+        var newDelegate = mock(HttpServletSseServerTransportProvider.class);
+        var servlet = new OwnedMcpSseServlet(oldDelegate);
+        var firstReq = mock(HttpServletRequest.class);
+        var secondReq = mock(HttpServletRequest.class);
+        var firstResp = mock(HttpServletResponse.class);
+        var secondResp = mock(HttpServletResponse.class);
+        var firstAsync = mock(AsyncContext.class);
+        var secondAsync = mock(AsyncContext.class);
+        when(firstReq.getAsyncContext()).thenReturn(firstAsync);
+        when(secondReq.getAsyncContext()).thenReturn(secondAsync);
+        when(firstResp.getWriter()).thenReturn(new PrintWriter(new StringWriter()));
+        when(secondResp.getWriter()).thenReturn(new PrintWriter(new StringWriter()));
+        org.mockito.stubbing.Answer<Void> emit = inv -> {
+            var writer = ((HttpServletResponse) inv.getArgument(1)).getWriter();
+            writer.write("event: endpoint\ndata: /mcp/message?sessionId=123e4567-e89b-12d3-a456-426614174000\n\n");
+            writer.flush();
+            return null;
+        };
+        doAnswer(emit).when(oldDelegate).service(any(HttpServletRequest.class), any(HttpServletResponse.class));
+        doAnswer(emit).when(newDelegate).service(any(HttpServletRequest.class), any(HttpServletResponse.class));
+        UserContext.set("alice", "user");
+        servlet.doGet(firstReq, firstResp);
+        var listener = ArgumentCaptor.forClass(AsyncListener.class);
+        verify(firstAsync).addListener(listener.capture());
+        servlet.replaceDelegate(newDelegate);
+        servlet.doGet(secondReq, secondResp);
+        listener.getValue().onComplete(new AsyncEvent(firstAsync));
+        var post = mock(HttpServletRequest.class);
+        var result = mock(HttpServletResponse.class);
+        when(post.getParameterValues("sessionId")).thenReturn(new String[]{"123e4567-e89b-12d3-a456-426614174000"});
+        reset(newDelegate);
+        servlet.doPost(post, result);
+        verify(newDelegate).service(post, result);
+    }
+
+    @Test
     void pendingGetCannotReintroduceBindingAfterDelegateReplacement() throws Exception {
         var oldDelegate = mock(HttpServletSseServerTransportProvider.class);
         var newDelegate = mock(HttpServletSseServerTransportProvider.class);

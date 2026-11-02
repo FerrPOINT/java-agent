@@ -21,7 +21,8 @@ import java.util.concurrent.ConcurrentMap;
 /** Binds the SDK-generated SSE endpoint to its authenticated opener. */
 final class OwnedMcpSseServlet extends HttpServlet {
     private volatile HttpServletSseServerTransportProvider delegate;
-    private final ConcurrentMap<String, String> owners = new ConcurrentHashMap<>();
+    private record Binding(String owner, Object generation) { }
+    private final ConcurrentMap<String, Binding> owners = new ConcurrentHashMap<>();
 
     OwnedMcpSseServlet(HttpServletSseServerTransportProvider delegate) {
         this.delegate = delegate;
@@ -49,9 +50,10 @@ final class OwnedMcpSseServlet extends HttpServlet {
                         private final StringBuilder buffer = new StringBuilder();
                         private boolean bound;
                         private String sessionId;
+                        private final Binding binding = new Binding(owner, new Object());
                         private void verifyTarget() throws IOException {
                             if (target.checkError()) {
-                                if (sessionId != null) owners.remove(sessionId, owner);
+                                if (sessionId != null) owners.remove(sessionId, binding);
                                 throw new IOException("MCP stream write failed");
                             }
                         }
@@ -67,20 +69,20 @@ final class OwnedMcpSseServlet extends HttpServlet {
                                 String event = buffer.substring(0, end);
                                 String id = endpointSessionId(event);
                                 synchronized (OwnedMcpSseServlet.this) {
-                                    if (requestDelegate != delegate || id == null || owners.putIfAbsent(id, owner) != null)
+                                    if (requestDelegate != delegate || id == null || owners.putIfAbsent(id, binding) != null)
                                         throw new IOException("Invalid or stale MCP endpoint event");
                                 }
                                 sessionId = id;
                                 try {
                                     request.getAsyncContext().addListener(new AsyncListener() {
-                                        private void cleanup() { owners.remove(id, owner); }
+                                        private void cleanup() { owners.remove(id, binding); }
                                         @Override public void onComplete(AsyncEvent event) { cleanup(); }
                                         @Override public void onTimeout(AsyncEvent event) { cleanup(); }
                                         @Override public void onError(AsyncEvent event) { cleanup(); }
                                         @Override public void onStartAsync(AsyncEvent event) { event.getAsyncContext().addListener(this); }
                                     });
                                 } catch (RuntimeException ex) {
-                                    owners.remove(id, owner);
+                                    owners.remove(id, binding);
                                     throw new IOException("Cannot bind MCP async session", ex);
                                 }
                                 bound = true;
@@ -107,7 +109,8 @@ final class OwnedMcpSseServlet extends HttpServlet {
         String[] ids = request.getParameterValues("sessionId");
         String id = ids != null && ids.length == 1 ? ids[0] : null;
         String owner = UserContext.getUserId();
-        if (id == null || owner == null || !owner.equals(owners.get(id))) {
+        Binding binding = id == null ? null : owners.get(id);
+        if (owner == null || binding == null || !owner.equals(binding.owner())) {
             response.setStatus(404);
             return;
         }
