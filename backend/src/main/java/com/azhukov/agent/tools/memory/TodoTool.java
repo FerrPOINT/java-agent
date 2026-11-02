@@ -124,7 +124,7 @@ public class TodoTool implements ToolHandler {
             if (merge && item.id() != null && !item.id().isBlank()) {
                 UUID itemId = resolveTodoId(item.id(), session);
                 if (itemId != null) {
-                    entity = todoRepository.findById(itemId).orElse(null);
+                    entity = todoRepository.findOwnedForUpdate(itemId, session.userId()).orElse(null);
                 }
                 if (entity == null || !entity.getUserId().equals(session.userId())) {
                     entity = null;

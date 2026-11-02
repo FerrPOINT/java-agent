@@ -56,7 +56,7 @@ public class TodoService {
                     throw new SecurityException("Task does not belong to the current user");
                 }
                 todoRepository.lockUserList(owner);
-                return todoRepository.findById(id).filter(todo -> owner.equals(todo.getUserId()));
+                return todoRepository.findOwnedForUpdate(id, owner);
             }).map(todo -> {
                 todo.setStatus("completed");
                 todo.setUpdatedAt(Instant.now());
@@ -67,8 +67,7 @@ public class TodoService {
     public Optional<TodoDto> markDoneForUser(UUID id, String userId) {
         if (userId == null) return Optional.empty();
         todoRepository.lockUserList(userId);
-        return todoRepository.findById(id)
-            .filter(todo -> userId.equals(todo.getUserId()))
+        return todoRepository.findOwnedForUpdate(id, userId)
             .map(todo -> {
                 todo.setStatus("completed");
                 todo.setUpdatedAt(Instant.now());

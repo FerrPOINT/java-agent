@@ -289,7 +289,7 @@ class MemoryTodoBranchTest {
     @Test
     void todo_mergeItemWithExistingNotFound_createsNew() {
         UUID todoId = UUID.randomUUID();
-        when(todoRepository.findById(todoId)).thenReturn(Optional.empty());
+        when(todoRepository.findOwnedForUpdate(todoId, USER_ID)).thenReturn(Optional.empty());
         when(todoRepository.findByUserIdOrderByCreatedAtAsc(USER_ID)).thenReturn(List.of());
         when(todoRepository.save(any(TodoEntity.class))).thenAnswer(inv -> inv.getArgument(0));
 
@@ -306,7 +306,7 @@ class MemoryTodoBranchTest {
         TodoEntity existing = new TodoEntity();
         existing.setId(todoId);
         existing.setUserId("different-user");
-        when(todoRepository.findById(todoId)).thenReturn(Optional.of(existing));
+        when(todoRepository.findOwnedForUpdate(todoId, USER_ID)).thenReturn(Optional.of(existing));
         when(todoRepository.findByUserIdOrderByCreatedAtAsc(USER_ID)).thenReturn(List.of());
         when(todoRepository.save(any(TodoEntity.class))).thenAnswer(inv -> inv.getArgument(0));
 

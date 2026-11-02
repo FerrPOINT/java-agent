@@ -100,7 +100,7 @@ class TodoToolTest {
         existing.setCreatedAt(Instant.now());
         existing.setUpdatedAt(Instant.now());
 
-        when(todoRepository.findById(existingId)).thenReturn(Optional.of(existing));
+        when(todoRepository.findOwnedForUpdate(existingId, USER_ID)).thenReturn(Optional.of(existing));
         when(todoRepository.findByUserIdOrderByCreatedAtAsc(USER_ID))
             .thenReturn(List.of(existing));
 
@@ -258,7 +258,7 @@ class TodoToolTest {
 
         when(todoRepository.findByUserIdOrderByCreatedAtAsc(USER_ID))
             .thenReturn(List.of(existing));
-        when(todoRepository.findById(existingId)).thenReturn(Optional.of(existing));
+        when(todoRepository.findOwnedForUpdate(existingId, USER_ID)).thenReturn(Optional.of(existing));
 
         // Use "1" (1-based position) instead of UUID
         String args = "{\"todos\":[{\"id\":\"1\",\"content\":\"Updated\",\"status\":\"completed\"}],\"merge\":true}";
@@ -266,7 +266,7 @@ class TodoToolTest {
         ToolResult result = tool.execute(args, LAST_MESSAGE, SESSION);
 
         assertThat(result.success()).isTrue();
-        verify(todoRepository).findById(existingId);
+        verify(todoRepository).findOwnedForUpdate(existingId, USER_ID);
         verify(todoRepository).save(any(TodoEntity.class));
     }
 

@@ -22,6 +22,11 @@ public interface TodoRepository extends JpaRepository<TodoEntity, UUID> {
     @org.springframework.data.jpa.repository.Query("select t.userId from TodoEntity t where t.id = :id")
     java.util.Optional<String> findOwnerId(@org.springframework.data.repository.query.Param("id") UUID id);
 
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @org.springframework.data.jpa.repository.Query("select t from TodoEntity t where t.id = :id and t.userId = :userId")
+    java.util.Optional<TodoEntity> findOwnedForUpdate(@org.springframework.data.repository.query.Param("id") UUID id,
+        @org.springframework.data.repository.query.Param("userId") String userId);
+
     List<TodoEntity> findByUserId(String userId);
 
     List<TodoEntity> findByUserIdOrderByCreatedAtAsc(String userId);
