@@ -49,6 +49,28 @@ class TodoRepositoryTest extends PostgresTestContainer {
     private SessionRepository sessionRepository;
 
     @Test
+    void malformedToolReplacementPreservesPersistedListsAndValidReplacementStillWorks() {
+        SessionEntity first = sessionRepository.save(newSession(USER_ID_1, "Owner"));
+        SessionEntity second = sessionRepository.save(newSession(USER_ID_2, "Other"));
+        todoRepository.save(newTodo(first.getId(), USER_ID_1, TITLE_BUY_MILK, STATUS_PENDING, PRIORITY_HIGH, T1));
+        todoRepository.save(newTodo(second.getId(), USER_ID_2, TITLE_READ_BOOK, STATUS_PENDING, PRIORITY_HIGH, T2));
+        todoRepository.flush();
+        var tool = new com.azhukov.agent.tools.memory.TodoTool(todoRepository);
+        var owner = new com.azhukov.agent.core.model.Session(first.getId(), USER_ID_1, "Owner", MODEL_PROVIDER, MODEL_NAME, null, java.util.Map.of());
+        for (int i = 0; i < 2; i++) {
+            var result = tool.execute("{\"todos\":[{\"content\":\"valid\"},null]}", null, owner);
+            assertThat(result.success()).isFalse();
+            assertThat(todoRepository.findByUserId(USER_ID_1)).extracting(TodoEntity::getTitle).containsExactly(TITLE_BUY_MILK);
+            assertThat(todoRepository.findByUserId(USER_ID_2)).extracting(TodoEntity::getTitle).containsExactly(TITLE_READ_BOOK);
+        }
+        var result = tool.execute("{\"todos\":[{\"content\":\"replacement\"}]}", null, owner);
+        assertThat(result.success()).isTrue();
+        todoRepository.flush();
+        assertThat(todoRepository.findByUserId(USER_ID_1)).extracting(TodoEntity::getTitle).containsExactly("replacement");
+        assertThat(todoRepository.findByUserId(USER_ID_2)).extracting(TodoEntity::getTitle).containsExactly(TITLE_READ_BOOK);
+    }
+
+    @Test
     void saveTodoForUser() {
         SessionEntity session = sessionRepository.save(newSession(USER_ID_1, "Todo Session"));
         TodoEntity todo = newTodo(session.getId(), USER_ID_1, TITLE_BUY_MILK, STATUS_PENDING, PRIORITY_HIGH, T1);
