@@ -179,6 +179,50 @@ class TodoRepositoryTest extends PostgresTestContainer {
 
     @Test
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void deletingSeveralSessionsMustNotDeadlockWithTodoReplacement() throws Exception {
+        String user = "multi-delete-" + UUID.randomUUID();
+        var first = sessionRepository.saveAndFlush(newSession(user, "First"));
+        var second = sessionRepository.saveAndFlush(newSession(user, "Second"));
+        todoRepository.saveAndFlush(newTodo(second.getId(), user, "existing", STATUS_PENDING, PRIORITY_HIGH, T1));
+        var session = new com.azhukov.agent.core.model.Session(first.getId(), user, "owner", MODEL_PROVIDER, MODEL_NAME, null, java.util.Map.of());
+        var parentHeld = new java.util.concurrent.CountDownLatch(1);
+        var continueDelete = new java.util.concurrent.CountDownLatch(1);
+        var toolReady = new java.util.concurrent.CountDownLatch(1);
+        var dPid = new java.util.concurrent.atomic.AtomicInteger();
+        var tPid = new java.util.concurrent.atomic.AtomicInteger();
+        var jdbc = applicationContext.getBean(org.springframework.jdbc.core.JdbcTemplate.class);
+        var tx = new org.springframework.transaction.support.TransactionTemplate(applicationContext.getBean(org.springframework.transaction.PlatformTransactionManager.class));
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            var deletion = pool.submit(() -> tx.execute(status -> {
+                dPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                boolean deleted = sessionQueryService.deleteSession(first.getId());
+                sessionRepository.flush();
+                parentHeld.countDown();
+                try { if (!continueDelete.await(15, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("release timeout"); }
+                catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new IllegalStateException(e); }
+                return deleted && sessionQueryService.deleteSession(second.getId());
+            }));
+            assertThat(parentHeld.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            var tool = pool.submit(() -> tx.execute(status -> {
+                tPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                toolReady.countDown();
+                return todoTool.execute("{\"todos\":[{\"content\":\"replacement\"}]}", null, session);
+            }));
+            assertThat(toolReady.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertDatabaseBlocked(tPid.get(), dPid.get());
+            continueDelete.countDown();
+            assertThat(deletion.get(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(tool.get(10, java.util.concurrent.TimeUnit.SECONDS).success()).isFalse();
+            assertThat(todoRepository.findByUserId(user)).isEmpty();
+        } finally {
+            continueDelete.countDown(); pool.shutdownNow(); pool.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
+            todoRepository.deleteByUserId(user); sessionRepository.deleteById(first.getId()); sessionRepository.deleteById(second.getId());
+        }
+    }
+
+    @Test
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     void competingParentLockAndAdvisoryLockMustNotDeadlock() throws Exception {
         String user = "lock-inversion-" + UUID.randomUUID();
         var first = sessionRepository.saveAndFlush(newSession(user, "First"));
