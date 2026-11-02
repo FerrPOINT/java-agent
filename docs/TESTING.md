@@ -264,3 +264,9 @@ native/cache grants здесь автоматически не включают�
 corruption/recovery и actual CPU/RAM. Release/integration/slow/live выполняются
 на согласованной ручной вехе. Общий контракт — Base
 `docs/plans/java-main-unit-ordinary-parent-20261028.md`.
+
+Private production dependency index uses the validated `cli-main-v1` role and
+production-only external views; ordinary unit/buildscript/Groovy views remain.
+The actual compiler dependency verifier receives those same lazy views without
+another resolver invocation. Native environment/home projection qualification
+and exact caller adoption remain separate; no tooling/cache pin changes here.
