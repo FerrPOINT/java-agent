@@ -212,6 +212,28 @@ class AgentStreamingServiceBranchTest {
     }
 
     @Test
+    void boostedRetryWithoutFinishMetadataMustNotReuseTruncatedFinishReason() throws Exception {
+        var attempts = new AtomicInteger();
+        doAnswer(inv -> {
+            StreamingResponseHandler handler = inv.getArgument(3);
+            if (attempts.incrementAndGet() == 1) {
+                handler.onToolCalls(List.of(new ToolCall("first", "weather", "{}")));
+                handler.onComplete("length", 1L);
+            } else {
+                handler.onToken("recovered answer");
+                handler.onComplete();
+            }
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+        var emitter = new CollectingEmitter(30_000L);
+        streamingService.streamTurn(ChatRequest.simple(SESSION_ID, "hello", null, 10_000L), emitter);
+        emitter.awaitDone();
+        assertThat(emitter.error.get()).isNull();
+        assertThat(attempts.get()).isEqualTo(2);
+        assertThat(emitter.events.stream().filter(e -> "continuation".equals(e.name))).isEmpty();
+    }
+
+    @Test
     void streamedToolRetryContentIsDelivered() throws Exception {
         var attempts = new AtomicInteger();
         doAnswer(inv -> {

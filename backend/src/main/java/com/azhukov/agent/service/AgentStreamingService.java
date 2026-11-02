@@ -1072,6 +1072,9 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     // with a boosted max_tokens so the model has room to complete the JSON.
                     contentBuilder.setLength(0);
                     collectedToolCalls.clear();
+                    capturedFinishReason.set(null);
+                    capturedOutputTokens.set(null);
+                    capturedReasoning.set(null);
                     scrubber.reset();
                     com.azhukov.agent.core.client.ModelRequestOptions boostedOptions =
                         com.azhukov.agent.core.agent.TurnExecutorUtils.withBoostedMaxTokens(streamOptions, boostedMax);
@@ -1107,6 +1110,12 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                             capturedFinishReason.set(finishReason2);
                             capturedOutputTokens.set(outputTokens2);
                             onComplete();
+                        }
+
+                        @Override
+                        public void onComplete(String finishReason2, Long outputTokens2, String reasoning) {
+                            capturedReasoning.set(reasoning);
+                            onComplete(finishReason2, outputTokens2);
                         }
 
                         @Override
