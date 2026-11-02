@@ -69,6 +69,16 @@ class McpServerServiceTest {
     }
 
     @Test
+    void missingMcpSessionFailsClosedWithoutExecutingTool() throws Exception {
+        var service = new McpServerService(properties, objectMapper, toolRegistry);
+        var method = McpServerService.class.getDeclaredMethod("handleToolCall", String.class, McpSchema.CallToolRequest.class, String.class);
+        method.setAccessible(true);
+        var result = (McpSchema.CallToolResult) method.invoke(service, "process", new McpSchema.CallToolRequest("process", Map.of("action", "list")), null);
+        assertThat(result.isError()).isTrue();
+        verifyNoInteractions(toolRegistry);
+    }
+
+    @Test
     void shouldNotStartWhenDisabled() {
         properties.getMcp().getServer().setEnabled(false);
         McpServerService service = new McpServerService(properties, objectMapper, toolRegistry);
