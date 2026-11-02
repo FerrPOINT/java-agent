@@ -89,18 +89,18 @@ public class DefaultIterationBudget implements IterationBudget {
         if (!properties.getBudget().isEnabled() || snapshot.toolExecutions() <= 0) {
             return snapshot;
         }
+        TurnSnapshot refunded = new TurnSnapshot(
+            snapshot.sessionId(), snapshot.startedAt(), snapshot.turnIndex(),
+            snapshot.modelCalls(), snapshot.toolExecutions() - 1,
+            snapshot.totalInputTokens(), snapshot.totalOutputTokens(),
+            snapshot.totalToolDurationMs(), false, null);
+        var config = properties.getBudget();
+        boolean exhausted = isExhausted(refunded, config);
         return new TurnSnapshot(
-            snapshot.sessionId(),
-            snapshot.startedAt(),
-            snapshot.turnIndex(),
-            snapshot.modelCalls(),
-            snapshot.toolExecutions() - 1,
-            snapshot.totalInputTokens(),
-            snapshot.totalOutputTokens(),
-            snapshot.totalToolDurationMs(),
-            false,
-            null
-        );
+            refunded.sessionId(), refunded.startedAt(), refunded.turnIndex(),
+            refunded.modelCalls(), refunded.toolExecutions(), refunded.totalInputTokens(),
+            refunded.totalOutputTokens(), refunded.totalToolDurationMs(), exhausted,
+            exhausted ? exhaustionReason(refunded, config) : null);
     }
 
     @Override
