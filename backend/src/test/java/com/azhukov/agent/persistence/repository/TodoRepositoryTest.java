@@ -57,6 +57,70 @@ class TodoRepositoryTest extends PostgresTestContainer {
     @Autowired
     private com.azhukov.agent.service.TodoService todoService;
 
+    @Autowired
+    private com.azhukov.agent.service.SessionQueryService sessionQueryService;
+
+    @Test
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void deletingOldSessionDuringReplacementKeepsNewSessionsTodo() throws Exception {
+        String user = "session-cascade-" + UUID.randomUUID();
+        var oldSession = sessionRepository.saveAndFlush(newSession(user, "Old"));
+        var newSession = sessionRepository.saveAndFlush(newSession(user, "New"));
+        todoRepository.saveAndFlush(newTodo(oldSession.getId(), user, "old", STATUS_PENDING, PRIORITY_HIGH, T1));
+        var session = new com.azhukov.agent.core.model.Session(newSession.getId(), user, "owner", MODEL_PROVIDER, MODEL_NAME, null, java.util.Map.of());
+        var deleted = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var holderPid = new java.util.concurrent.atomic.AtomicInteger();
+        var waiterPid = new java.util.concurrent.atomic.AtomicInteger();
+        var ready = new java.util.concurrent.CountDownLatch(1);
+        var jdbc = applicationContext.getBean(org.springframework.jdbc.core.JdbcTemplate.class);
+        var delegate = org.mockito.Mockito.mock(TodoRepository.class, invocation -> {
+            try {
+                var result = invocation.getMethod().invoke(todoRepository, invocation.getArguments());
+                if (invocation.getMethod().getName().equals("deleteByUserId")) {
+                    deleted.countDown();
+                    if (!release.await(15, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("release timeout");
+                }
+                return result;
+            } catch (java.lang.reflect.InvocationTargetException e) { throw e.getCause(); }
+        });
+        var tool = new com.azhukov.agent.tools.memory.TodoTool(delegate);
+        var transactions = new org.springframework.transaction.support.TransactionTemplate(applicationContext.getBean(org.springframework.transaction.PlatformTransactionManager.class));
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            var replacement = pool.submit(() -> transactions.execute(status -> {
+                holderPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                return tool.execute("{\"todos\":[{\"content\":\"new\"}]}", null, session);
+            }));
+            assertThat(deleted.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            var removal = pool.submit(() -> transactions.execute(status -> {
+                waiterPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                ready.countDown();
+                boolean result = sessionQueryService.deleteSession(oldSession.getId());
+                sessionRepository.flush();
+                return result;
+            }));
+            assertThat(ready.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+            boolean blocked = false;
+            while (System.nanoTime() < deadline) {
+                blocked = Boolean.TRUE.equals(jdbc.queryForObject("select ? = any(pg_blocking_pids(?))", Boolean.class, holderPid.get(), waiterPid.get()));
+                if (blocked) break;
+                Thread.sleep(25);
+            }
+            assertThat(blocked).as("session cascade waits for concurrent deletion of its todo").isTrue();
+            release.countDown();
+            assertThat(replacement.get(10, java.util.concurrent.TimeUnit.SECONDS).success()).isTrue();
+            assertThat(removal.get(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(sessionRepository.findById(oldSession.getId())).isEmpty();
+            assertThat(todoRepository.findByUserId(user)).extracting(TodoEntity::getTitle).containsExactly("new");
+            assertThat(todoRepository.findByUserId(user).getFirst().getSessionId()).isEqualTo(newSession.getId());
+        } finally {
+            release.countDown(); pool.shutdownNow(); pool.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
+            todoRepository.deleteByUserId(user); sessionRepository.deleteById(oldSession.getId()); sessionRepository.deleteById(newSession.getId());
+        }
+    }
+
     private void assertAdvisoryBlocked(int waiterPid, int holderPid) throws InterruptedException {
         var jdbc = applicationContext.getBean(org.springframework.jdbc.core.JdbcTemplate.class);
         long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);

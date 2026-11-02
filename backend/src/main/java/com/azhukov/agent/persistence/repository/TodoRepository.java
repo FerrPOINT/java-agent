@@ -40,9 +40,10 @@ public interface TodoRepository extends JpaRepository<TodoEntity, UUID> {
     @Transactional
     void deleteByUserIdAndStatus(String userId, String status);
 
-    @Modifying
+    @Modifying(flushAutomatically = true)
+    @org.springframework.data.jpa.repository.Query("delete from TodoEntity t where t.userId = :userId")
     @Transactional
-    void deleteByUserId(String userId);
+    void deleteByUserId(@org.springframework.data.repository.query.Param("userId") String userId);
 
     @Modifying
     @Transactional
