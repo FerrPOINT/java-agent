@@ -241,3 +241,26 @@ Fast для source validator также сохраняет `docs:readme`; Unit/B
 Source command: `python -B -m unittest scripts.tests.test_verify_readme`.
 Mixed backend и неизвестные source paths сохраняют своих consumers; actual CI
 и ручные release gates остаются прежними.
+
+## Раздельные CLI Main/unit: Source integration
+
+Продукт принимает закрытый Base contract `gradle/java-production-inputs.json`
+и eligibility `gradle/java-main-unit.json`. Private `cli-main-v1` включает только
+CLI/Shared Main и необходимые configuration/legal files. Test dependencies
+хранятся отдельно и не входят в production view; обычные unit/integration/slow
+команды и membership сохраняются. CLI остаётся non-web (`web-application-type:
+none`); Shared предоставляет REST client API без embedded servlet server.
+
+Версии JLine, wrappers, SDK и остальных зависимостей этого checkout сохранены.
+Test-only изменение не меняет production source key; изменение test dependency
+обновляет Unit environment inputs. Обычные Docker builders копируют новые
+configuration files и продолжают выполнять предусмотренные units.
+
+Это Source adoption, а не native qualification или разрешение считать JAR
+проверенным. Environment каждого checkout должен совпадать с его фактическими
+inputs. Optional `javaMainUnitExecution` role, current Main/unit receipt и
+native/cache grants здесь автоматически не включаются. Полный native gate
+проверяет Main reuse, отсутствие повторной Main compilation в units, invalidation,
+corruption/recovery и actual CPU/RAM. Release/integration/slow/live выполняются
+на согласованной ручной вехе. Общий контракт — Base
+`docs/plans/java-main-unit-ordinary-parent-20261028.md`.
