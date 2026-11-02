@@ -116,7 +116,7 @@ public class McpServerService {
 
             McpServerFeatures.SyncToolSpecification spec = McpServerFeatures.SyncToolSpecification.builder()
                 .tool(tool)
-                .callHandler((exchange, request) -> handleToolCall(def.name(), request, exchange.sessionId()))
+                .callHandler((exchange, request) -> handleToolCall(def.name(), request, exchange.sessionId(), exchange.transportContext()))
                 .build();
 
             specs.add(spec);
@@ -127,17 +127,39 @@ public class McpServerService {
     /**
      * Handles an MCP tool call by delegating to the agent's {@link ToolRegistry}.
      */
-    private McpSchema.CallToolResult handleToolCall(String toolName, McpSchema.CallToolRequest request, String mcpSessionId) {
+    private static final String MCP_USER = "agent.user";
+    private static final String MCP_ROLE = "agent.role";
+
+    private McpSchema.CallToolResult handleToolCall(String toolName, McpSchema.CallToolRequest request, String mcpSessionId,
+                                                     io.modelcontextprotocol.common.McpTransportContext transportContext) {
         try {
             if (mcpSessionId == null || mcpSessionId.isBlank()) {
                 return McpSchema.CallToolResult.builder().addTextContent("MCP session is required").isError(true).build();
             }
             String argumentsJson = objectMapper.writeValueAsString(request.arguments());
+            String owner = transportContext == null ? null : (String) transportContext.get(MCP_USER);
+            String role = transportContext == null ? null : (String) transportContext.get(MCP_ROLE);
+            if (owner == null || owner.isBlank()) {
+                if ("sse".equalsIgnoreCase(properties.getMcp().getServer().getTransport())) {
+                    return McpSchema.CallToolResult.builder().addTextContent("Authenticated identity is required").isError(true).build();
+                }
+                owner = "mcp-client";
+            }
+            // Length-prefix the authenticated owner to prevent ambiguous identities.
             var sessionId = java.util.UUID.nameUUIDFromBytes(
-                ("mcp-session:" + mcpSessionId).getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            Session session = new Session(sessionId, "mcp-client", null, "mcp", "mcp", null, java.util.Map.of());
-            ToolResult result = toolRegistry.execute(toolName, "mcp-" + System.nanoTime(),
-                argumentsJson, Message.user(""), session);
+                ("mcp-session:" + owner.length() + ":" + owner + mcpSessionId)
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            Session session = new Session(sessionId, owner, null, "mcp", "mcp", null, java.util.Map.of());
+            String priorUser = com.azhukov.agent.core.security.UserContext.getUserId();
+            String priorRole = com.azhukov.agent.core.security.UserContext.getRole();
+            ToolResult result;
+            try {
+                com.azhukov.agent.core.security.UserContext.set(owner, role);
+                result = toolRegistry.execute(toolName, "mcp-" + System.nanoTime(), argumentsJson, Message.user(""), session);
+            } finally {
+                if (priorUser == null) com.azhukov.agent.core.security.UserContext.clear();
+                else com.azhukov.agent.core.security.UserContext.set(priorUser, priorRole);
+            }
 
             McpSchema.CallToolResult.Builder builder = McpSchema.CallToolResult.builder()
                 .addTextContent(modelVisibleResult(result));
@@ -180,6 +202,13 @@ public class McpServerService {
                 .jsonMapper(jsonMapper)
                 .sseEndpoint(config.getSseEndpoint())
                 .messageEndpoint(config.getMessageEndpoint())
+                .contextExtractor(request -> {
+                    String user = com.azhukov.agent.core.security.UserContext.getUserId();
+                    String role = com.azhukov.agent.core.security.UserContext.getRole();
+                    return user == null ? io.modelcontextprotocol.common.McpTransportContext.EMPTY
+                        : io.modelcontextprotocol.common.McpTransportContext.create(java.util.Map.of(
+                            MCP_USER, user, MCP_ROLE, role == null ? com.azhukov.agent.core.security.UserContext.ROLE_USER : role));
+                })
                 .build();
 
             // Register the SSE servlet with Spring Boot's embedded servlet container

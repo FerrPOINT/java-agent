@@ -50,14 +50,22 @@ class McpServerServiceTest {
         when(toolRegistry.getDefinitions()).thenReturn(List.of(
             new ToolDefinition("process", "Process", Map.of("type", "object", "properties", Map.of()))));
         when(toolRegistry.execute(anyString(), anyString(), anyString(), any(), any()))
-            .thenReturn(ToolResult.ok("ok"));
+            .thenAnswer(invocation -> {
+                var s = (com.azhukov.agent.core.model.Session) invocation.getArgument(4);
+                assertThat(com.azhukov.agent.core.security.UserContext.getUserId()).isEqualTo(s.userId());
+                assertThat(com.azhukov.agent.core.security.UserContext.getRole()).isEqualTo("user");
+                return ToolResult.ok("ok");
+            });
         var method = McpServerService.class.getDeclaredMethod("buildToolSpecifications");
         method.setAccessible(true);
         var specs = (List<io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification>) method.invoke(service);
         var exchangeA = mock(io.modelcontextprotocol.server.McpSyncServerExchange.class);
         var exchangeB = mock(io.modelcontextprotocol.server.McpSyncServerExchange.class);
+        var ctxA = io.modelcontextprotocol.common.McpTransportContext.create(Map.of("agent.user", "alice", "agent.role", "user"));
+        when(exchangeA.transportContext()).thenReturn(ctxA);
+        when(exchangeB.transportContext()).thenReturn(io.modelcontextprotocol.common.McpTransportContext.create(Map.of("agent.user", "bob", "agent.role", "user")));
         when(exchangeA.sessionId()).thenReturn("connection-a");
-        when(exchangeB.sessionId()).thenReturn("connection-b");
+        when(exchangeB.sessionId()).thenReturn("connection-a");
         var request = new McpSchema.CallToolRequest("process", Map.of("action", "list"));
         specs.getFirst().callHandler().apply(exchangeA, request);
         specs.getFirst().callHandler().apply(exchangeA, request);
@@ -66,14 +74,16 @@ class McpServerServiceTest {
         verify(toolRegistry, times(3)).execute(anyString(), anyString(), anyString(), any(), sessions.capture());
         var captured = sessions.getAllValues();
         assertThat(captured.get(0).id()).isEqualTo(captured.get(1).id()).isNotEqualTo(captured.get(2).id());
+        assertThat(captured).extracting(com.azhukov.agent.core.model.Session::userId).containsExactly("alice", "alice", "bob");
+        assertThat(com.azhukov.agent.core.security.UserContext.getUserId()).isNull();
     }
 
     @Test
     void missingMcpSessionFailsClosedWithoutExecutingTool() throws Exception {
         var service = new McpServerService(properties, objectMapper, toolRegistry);
-        var method = McpServerService.class.getDeclaredMethod("handleToolCall", String.class, McpSchema.CallToolRequest.class, String.class);
+        var method = McpServerService.class.getDeclaredMethod("handleToolCall", String.class, McpSchema.CallToolRequest.class, String.class, io.modelcontextprotocol.common.McpTransportContext.class);
         method.setAccessible(true);
-        var result = (McpSchema.CallToolResult) method.invoke(service, "process", new McpSchema.CallToolRequest("process", Map.of("action", "list")), null);
+        var result = (McpSchema.CallToolResult) method.invoke(service, "process", new McpSchema.CallToolRequest("process", Map.of("action", "list")), null, null);
         assertThat(result.isError()).isTrue();
         verifyNoInteractions(toolRegistry);
     }
@@ -331,10 +341,10 @@ class McpServerServiceTest {
                                                     String toolName,
                                                     Map<String, Object> arguments) throws Exception {
         Method method = McpServerService.class.getDeclaredMethod(
-            "handleToolCall", String.class, McpSchema.CallToolRequest.class, String.class);
+            "handleToolCall", String.class, McpSchema.CallToolRequest.class, String.class, io.modelcontextprotocol.common.McpTransportContext.class);
         method.setAccessible(true);
         return (McpSchema.CallToolResult) method.invoke(
-            service, toolName, new McpSchema.CallToolRequest(toolName, arguments), "test-session");
+            service, toolName, new McpSchema.CallToolRequest(toolName, arguments), "test-session", null);
     }
 
     private String textContent(McpSchema.CallToolResult result) {

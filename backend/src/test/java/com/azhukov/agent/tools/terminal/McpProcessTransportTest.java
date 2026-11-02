@@ -22,6 +22,21 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 class McpProcessTransportTest {
+    private static org.apache.tomcat.util.descriptor.web.FilterDef filterDef() {
+        var def = new org.apache.tomcat.util.descriptor.web.FilterDef();
+        def.setFilterName("identity");
+        def.setFilter(new jakarta.servlet.Filter() {
+            @Override public void doFilter(jakarta.servlet.ServletRequest request, jakarta.servlet.ServletResponse response,
+                                           jakarta.servlet.FilterChain chain) throws java.io.IOException, jakarta.servlet.ServletException {
+                com.azhukov.agent.core.security.UserContext.set("test-owner", "user");
+                try { chain.doFilter(request, response); }
+                finally { com.azhukov.agent.core.security.UserContext.clear(); }
+            }
+        });
+        def.setAsyncSupported("true");
+        return def;
+    }
+
     @Test
     void realSseClientsCannotControlEachOthersBackgroundProcesses(@TempDir Path dir) throws Exception {
         var props = new AgentProperties();
@@ -50,6 +65,11 @@ class McpProcessTransportTest {
             Tomcat.addServlet(context, "mcp", registration.getServlet()).setAsyncSupported(true);
             context.addServletMappingDecoded("/mcp/sse", "mcp");
             context.addServletMappingDecoded("/mcp/message", "mcp");
+            context.addFilterDef(filterDef());
+            var mapping = new org.apache.tomcat.util.descriptor.web.FilterMap();
+            mapping.setFilterName("identity");
+            mapping.addURLPattern("/*");
+            context.addFilterMap(mapping);
             server.start();
             String url = "http://127.0.0.1:" + server.getConnector().getLocalPort();
             try (var a = McpClient.sync(HttpClientSseClientTransport.builder(url).sseEndpoint("/mcp/sse").build()).build();

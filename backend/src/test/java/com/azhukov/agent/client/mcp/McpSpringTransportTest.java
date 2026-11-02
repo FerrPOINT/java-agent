@@ -34,8 +34,14 @@ class McpSpringTransportTest {
             p.getMcp().getServer().setMessageEndpoint("/mcp/message");
             return p;
         }
-        @Bean com.azhukov.agent.api.filter.ApiKeyAuthFilter apiKeyAuthFilter(AgentProperties p) {
-            return new com.azhukov.agent.api.filter.ApiKeyAuthFilter(p);
+        @Bean com.azhukov.agent.service.UserAccessService users() {
+            var users = mock(com.azhukov.agent.service.UserAccessService.class);
+            when(users.authenticate("alice-key")).thenReturn(new com.azhukov.agent.service.UserAccessService.AuthenticatedUser("alice", "user"));
+            when(users.authenticate("bob-key")).thenReturn(new com.azhukov.agent.service.UserAccessService.AuthenticatedUser("bob", "user"));
+            return users;
+        }
+        @Bean com.azhukov.agent.api.filter.ApiKeyAuthFilter apiKeyAuthFilter(AgentProperties p, com.azhukov.agent.service.UserAccessService users) {
+            return new com.azhukov.agent.api.filter.ApiKeyAuthFilter(p, users);
         }
         @Bean com.azhukov.agent.api.filter.SecurityHeadersFilter headersFilter() {
             return new com.azhukov.agent.api.filter.SecurityHeadersFilter();
@@ -44,7 +50,11 @@ class McpSpringTransportTest {
         @Bean ToolRegistry registry() {
             var r = mock(ToolRegistry.class);
             when(r.getDefinitions()).thenReturn(List.of(new ToolDefinition("echo", "Echo", Map.of("type", "object", "properties", Map.of()))));
-            when(r.execute(anyString(), anyString(), anyString(), any(), any())).thenReturn(ToolResult.ok("spring transport works"));
+            when(r.execute(anyString(), anyString(), anyString(), any(), any())).thenAnswer(inv -> {
+                var session = (com.azhukov.agent.core.model.Session) inv.getArgument(4);
+                assertThat(com.azhukov.agent.core.security.UserContext.getUserId()).isEqualTo(session.userId());
+                return ToolResult.ok("spring transport works:" + session.userId());
+            });
             return r;
         }
         @Bean McpServerService mcpServer(AgentProperties p, ObjectMapper m, ToolRegistry r) {
@@ -75,7 +85,32 @@ class McpSpringTransportTest {
                 client.initialize();
                 var result = client.callTool(new McpSchema.CallToolRequest("echo", Map.of()));
                 assertThat(result.isError()).isNotEqualTo(true);
-                assertThat(((McpSchema.TextContent) result.content().getFirst()).text()).isEqualTo("spring transport works");
+                assertThat(((McpSchema.TextContent) result.content().getFirst()).text()).startsWith("spring transport works:");
+            }
+            var registry = context.getBean(ToolRegistry.class);
+            verify(registry).execute(eq("echo"), anyString(), anyString(), any(),
+                argThat(session -> com.azhukov.agent.config.AgentProperties.DEFAULT_USER_ID.equals(session.userId())));
+        }
+    }
+
+    @Test
+    void individualKeysRetainTheirOwnIdentityAcrossRepeatedMcpCalls() {
+        var app = new SpringApplication(Application.class);
+        app.setDefaultProperties(Map.of("server.port", "0", "server.address", "127.0.0.1",
+            "agent.mcp.server.enabled", "true", "agent.mcp.server.transport", "sse",
+            "spring.autoconfigure.exclude", "org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration,org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration"));
+        try (var context = (ServletWebServerApplicationContext) app.run("--agent.security.api-key=test-only-key")) {
+            String url = "http://127.0.0.1:" + context.getWebServer().getPort();
+            var aTransport = HttpClientSseClientTransport.builder(url).sseEndpoint("/mcp/sse")
+                .httpRequestCustomizer((builder, method, uri, body, transportContext) -> builder.header("X-API-Key", "alice-key")).build();
+            var bTransport = HttpClientSseClientTransport.builder(url).sseEndpoint("/mcp/sse")
+                .httpRequestCustomizer((builder, method, uri, body, transportContext) -> builder.header("X-API-Key", "bob-key")).build();
+            try (var a = McpClient.sync(aTransport).build(); var b = McpClient.sync(bTransport).build()) {
+                a.initialize(); b.initialize();
+                var request = new McpSchema.CallToolRequest("echo", Map.of());
+                assertThat(((McpSchema.TextContent) a.callTool(request).content().getFirst()).text()).endsWith(":alice");
+                assertThat(((McpSchema.TextContent) b.callTool(request).content().getFirst()).text()).endsWith(":bob");
+                assertThat(((McpSchema.TextContent) a.callTool(request).content().getFirst()).text()).endsWith(":alice");
             }
         }
     }
@@ -95,7 +130,7 @@ class McpSpringTransportTest {
                 assertThat(client.listTools().tools()).extracting(McpSchema.Tool::name).contains("echo");
                 var result = client.callTool(new McpSchema.CallToolRequest("echo", Map.of()));
                 assertThat(result.isError()).isNotEqualTo(true);
-                assertThat(((McpSchema.TextContent) result.content().getFirst()).text()).isEqualTo("spring transport works");
+                assertThat(((McpSchema.TextContent) result.content().getFirst()).text()).startsWith("spring transport works:");
             }
         }
     }
