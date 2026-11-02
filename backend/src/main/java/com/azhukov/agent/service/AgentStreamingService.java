@@ -609,6 +609,7 @@ public class AgentStreamingService {
         // active/fallback client the inner stream loop switched to.
         final java.util.concurrent.atomic.AtomicReference<ModelClient> activeStreamClientRef =
             new java.util.concurrent.atomic.AtomicReference<>(modelClient);
+        boolean lastResponseHadToolCalls = false;
         agentLoop: for (int i = 0; i < maxTurns; i++) {
           try {
             // Check for interrupt at the top of each agentic-loop iteration
@@ -679,7 +680,6 @@ public class AgentStreamingService {
             int compressionAttempts = 0;
             final int MAX_COMPRESSION_ATTEMPTS = 3;
             StringBuilder truncatedParts = new StringBuilder();
-            boolean lastResponseHadToolCalls = false;
             // R3/R4 (Hermes 7728-7760 + empty_response_guard): per-turn fallback chain
             // and deterministic-empty tracker for the streaming path too.
             com.azhukov.agent.core.agent.FallbackManager streamFallbackManager =

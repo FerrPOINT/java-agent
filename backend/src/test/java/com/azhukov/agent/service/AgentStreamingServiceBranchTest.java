@@ -212,6 +212,30 @@ class AgentStreamingServiceBranchTest {
     }
 
     @Test
+    void streamingEmptyAfterToolSendsRecoveryNudge() throws Exception {
+        var requests = new CopyOnWriteArrayList<List<Message>>();
+        var calls = new AtomicInteger();
+        when(toolExecutionService.enforceToolResultBudget(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(toolExecutionService.execute(any(), any(), any(), any(), any(), any())).thenReturn(ToolResult.ok("ok"));
+        doAnswer(inv -> {
+            requests.add(List.copyOf(inv.getArgument(0)));
+            var handler = (StreamingResponseHandler) inv.getArgument(3);
+            switch (calls.incrementAndGet()) {
+                case 1 -> { handler.onToolCalls(List.of(new ToolCall("c1", "weather", "{}"))); handler.onComplete("tool_calls", 2L); }
+                case 2 -> handler.onComplete("stop", 1L);
+                default -> { handler.onToken("done"); handler.onComplete("stop", 2L); }
+            }
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+        var emitter = new CollectingEmitter(30_000L);
+        streamingService.streamTurn(ChatRequest.simple(SESSION_ID, "hello", null, 10_000L), emitter);
+        emitter.awaitDone();
+        assertThat(requests).hasSize(3);
+        assertThat(requests.get(2)).anySatisfy(m -> assertThat(m.content()).contains(
+            com.azhukov.agent.core.agent.ResponseRecoveryPolicy.EMPTY_AFTER_TOOLS_NUDGE));
+    }
+
+    @Test
     void secondStreamingLengthContinuationRetainsAllPriorFragments() throws Exception {
         var requests = new CopyOnWriteArrayList<List<Message>>();
         var attempts = new AtomicInteger();
