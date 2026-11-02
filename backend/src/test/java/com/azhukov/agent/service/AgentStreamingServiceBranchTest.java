@@ -212,6 +212,32 @@ class AgentStreamingServiceBranchTest {
     }
 
     @Test
+    void boostedTruncatedRetryUsesIncreasingOutputBudgets() throws Exception {
+        var attempts = new AtomicInteger();
+        var limits = new java.util.concurrent.CopyOnWriteArrayList<Integer>();
+        properties.getModel().setMaxTokens(1000);
+        doAnswer(inv -> {
+            int n = attempts.incrementAndGet();
+            ModelRequestOptions opts = inv.getArgument(2);
+            limits.add(opts == null || opts.maxCompletionTokens() == null ? 0 : opts.maxCompletionTokens());
+            StreamingResponseHandler handler = inv.getArgument(3);
+            if (n <= 4) {
+                handler.onToolCalls(List.of(new ToolCall("c" + n, "weather", "{}")));
+                handler.onComplete("length", 1L);
+            } else {
+                handler.onToken("done");
+                handler.onComplete("stop", 1L);
+            }
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+        var emitter = new CollectingEmitter(30_000L);
+        streamingService.streamTurn(ChatRequest.simple(SESSION_ID, "hello", null, 10_000L), emitter);
+        emitter.awaitDone();
+        assertThat(emitter.error.get()).isNull();
+        assertThat(limits).containsExactly(0, 2000, 4000, 8000, 16000);
+    }
+
+    @Test
     void boostedRetryWithoutFinishMetadataMustNotReuseTruncatedFinishReason() throws Exception {
         var attempts = new AtomicInteger();
         doAnswer(inv -> {

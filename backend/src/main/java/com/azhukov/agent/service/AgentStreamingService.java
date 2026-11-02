@@ -1057,7 +1057,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                 // mid-tool-call JSON. The arguments are truncated/incomplete and must
                 // NOT be executed. Re-run the same API call with a boosted max_tokens
                 // (2^attempt × base, capped at 32768) giving the model room to finish.
-                if (com.azhukov.agent.core.agent.ResponseRecoveryPolicy.isTruncatedToolCall(finishReason, hasToolCalls)
+                while (com.azhukov.agent.core.agent.ResponseRecoveryPolicy.isTruncatedToolCall(finishReason, hasToolCalls)
                         && truncatedToolCallRetries < MAX_TRUNCATED_TOOL_CALL_RETRIES) {
                     if (iterationBudget.isExhausted(budget)) continue agentLoop;
                     truncatedToolCallRetries++;
@@ -1154,23 +1154,18 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     finishReason = capturedFinishReason.get();
                     hasContent = contentBuilder.length() > 0;
                     hasToolCalls = !collectedToolCalls.isEmpty();
-                    if (hasContent) {
+                    // Retry another truncated response directly with its next boosted limit.
+                    // Only publish the final retry response; intermediate attempts were rejected.
+                    if (com.azhukov.agent.core.agent.ResponseRecoveryPolicy.isTruncatedToolCall(finishReason, hasToolCalls)
+                            && iterationBudget.isExhausted(budget)) continue agentLoop;
+                    if (hasContent && !com.azhukov.agent.core.agent.ResponseRecoveryPolicy.isTruncatedToolCall(finishReason, hasToolCalls)) {
                         eventHelper().send(emitter, new StreamEvent("token", contentBuilder.toString(), null, null), streamCtx);
                     }
-                    if (hasToolCalls) {
+                    if (hasToolCalls && !com.azhukov.agent.core.agent.ResponseRecoveryPolicy.isTruncatedToolCall(finishReason, true)) {
                         eventHelper().send(emitter, new StreamEvent("tool_calls", null, List.copyOf(collectedToolCalls), null), streamCtx);
                     }
                     log.info("Re-stream finish_reason={} for session {} (content={} chars, toolCalls={})",
                         finishReason, session.id(), contentBuilder.length(), collectedToolCalls.size());
-                    if (com.azhukov.agent.core.agent.ResponseRecoveryPolicy.isTruncatedToolCall(finishReason, hasToolCalls)
-                            && iterationBudget.isExhausted(budget)) continue agentLoop;
-                    // A second truncated response is never safe to dispatch even
-                    // when its argument JSON happens to be syntactically valid.
-                    if (com.azhukov.agent.core.agent.ResponseRecoveryPolicy.isTruncatedToolCall(finishReason, hasToolCalls)
-                            && truncatedToolCallRetries < MAX_TRUNCATED_TOOL_CALL_RETRIES) {
-                        continue;
-                    }
-                    // Fall through to ceiling check + normal finish_reason routing below
                 }
 
                 // Truncated tool call ceiling reached — refuse to execute incomplete arguments.
