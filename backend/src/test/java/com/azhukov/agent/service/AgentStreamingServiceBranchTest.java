@@ -190,6 +190,31 @@ class AgentStreamingServiceBranchTest {
     }
 
     @Test
+    void streamedToolRetryContentIsDelivered() throws Exception {
+        var attempts = new AtomicInteger();
+        doAnswer(inv -> {
+            StreamingResponseHandler handler = inv.getArgument(3);
+            if (attempts.incrementAndGet() == 1) {
+                handler.onToolCalls(List.of(new ToolCall("truncated", "weather", "{}")));
+                handler.onComplete("length", 1L);
+            } else {
+                handler.onToken("recovered answer");
+                handler.onComplete("stop", 2L);
+            }
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+        var emitter = new CollectingEmitter(30_000L);
+        streamingService.streamTurn(ChatRequest.simple(SESSION_ID, "hello", null, 10_000L), emitter);
+        emitter.awaitDone();
+        assertThat(emitter.error.get()).isNull();
+        assertThat(attempts.get()).isEqualTo(2);
+        assertThat(emitter.events).anySatisfy(event -> {
+            assertThat(event.name).isEqualTo("token");
+            assertThat(event.data).contains("recovered answer");
+        });
+    }
+
+    @Test
     void repeatedTruncatedStreamingToolCallsNeverExecute() throws Exception {
         var attempts = new AtomicInteger();
         when(toolExecutionService.enforceToolResultBudget(any())).thenAnswer(inv -> inv.getArgument(0));

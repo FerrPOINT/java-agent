@@ -1094,13 +1094,18 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
 
                         @Override
                         public void onComplete() {
-                            // No-op — finish_reason + outputTokens come via the 2-arg overload
+                            String remaining = scrubber.flush();
+                            if (remaining != null && !remaining.isEmpty()) {
+                                remaining = ctxScrubber.feed(remaining);
+                                if (!remaining.isEmpty()) contentBuilder.append(remaining);
+                            }
                         }
 
                         @Override
                         public void onComplete(String finishReason2, Long outputTokens2) {
                             capturedFinishReason.set(finishReason2);
                             capturedOutputTokens.set(outputTokens2);
+                            onComplete();
                         }
 
                         @Override
@@ -1129,6 +1134,12 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     finishReason = capturedFinishReason.get();
                     hasContent = contentBuilder.length() > 0;
                     hasToolCalls = !collectedToolCalls.isEmpty();
+                    if (hasContent) {
+                        eventHelper().send(emitter, new StreamEvent("token", contentBuilder.toString(), null, null), streamCtx);
+                    }
+                    if (hasToolCalls) {
+                        eventHelper().send(emitter, new StreamEvent("tool_calls", null, List.copyOf(collectedToolCalls), null), streamCtx);
+                    }
                     log.info("Re-stream finish_reason={} for session {} (content={} chars, toolCalls={})",
                         finishReason, session.id(), contentBuilder.length(), collectedToolCalls.size());
                     // A second truncated response is never safe to dispatch even
