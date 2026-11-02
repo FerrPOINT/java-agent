@@ -159,6 +159,7 @@ public class ToolExecutionService {
                     properties.getToolOutput().getTimeoutSecondsOrDefault(120));
                 return failureResult("Tool timed out: " + toolName);
             } catch (InterruptedException e) {
+                future.cancel(true);
                 Thread.currentThread().interrupt();
                 return failureResult("Interrupted: " + toolName);
             } catch (ExecutionException e) {
