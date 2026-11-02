@@ -1164,7 +1164,8 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     // Only publish the final retry response; intermediate attempts were rejected.
                     if (com.azhukov.agent.core.agent.ResponseRecoveryPolicy.isTruncatedToolCall(finishReason, hasToolCalls)
                             && iterationBudget.isExhausted(budget)) continue agentLoop;
-                    if (hasContent && !com.azhukov.agent.core.agent.ResponseRecoveryPolicy.isTruncatedToolCall(finishReason, hasToolCalls)) {
+                    if (hasContent && !"content_filter".equalsIgnoreCase(finishReason)
+                            && !com.azhukov.agent.core.agent.ResponseRecoveryPolicy.isTruncatedToolCall(finishReason, hasToolCalls)) {
                         eventHelper().send(emitter, new StreamEvent("token", contentBuilder.toString(), null, null), streamCtx);
                     }
                     if (hasToolCalls && !com.azhukov.agent.core.agent.ResponseRecoveryPolicy.isTruncatedToolCall(finishReason, true)) {
@@ -1172,6 +1173,15 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     }
                     log.info("Re-stream finish_reason={} for session {} (content={} chars, toolCalls={})",
                         finishReason, session.id(), contentBuilder.length(), collectedToolCalls.size());
+                }
+
+                // A retry may itself produce a terminal provider refusal.
+                if ("content_filter".equalsIgnoreCase(finishReason) && !hasToolCalls) {
+                    String filterMsg = (contentBuilder.length() > 0 ? contentBuilder.toString().strip() + "\n\n" : "")
+                        + ResponseRecoveryPolicy.CONTENT_POLICY_RECOVERY_HINT;
+                    eventHelper().send(emitter, new StreamEvent("token", filterMsg, null, null), streamCtx);
+                    response = ChatResponse.text(filterMsg);
+                    break;
                 }
 
                 // Truncated tool call ceiling reached — refuse to execute incomplete arguments.

@@ -112,6 +112,18 @@ class SyncRecoveryParityTest {
     }
 
     @Test
+    void boostedRetryContentFilterIsTerminalAndPreservesPolicyHint() {
+        var calls = new AtomicInteger();
+        var runtime = buildRuntime(calls, (n, total) -> n == 1
+            ? new ChatResponse("", List.of(new ToolCall("c1", "weather", "{}")), "LENGTH")
+            : ChatResponse.text("provider refusal", "CONTENT_FILTER"));
+        TurnResult result = runtime.runTurn(Session.create("user", "noop", "noop"), "hi");
+        assertThat(calls.get()).isEqualTo(2);
+        assertThat(lastAssistant(result)).contains("provider refusal")
+            .contains(ResponseRecoveryPolicy.CONTENT_POLICY_RECOVERY_HINT);
+    }
+
+    @Test
     void cancellationDuringSyncRecoveryDoesNotReturnRecoveredAnswer() {
         var calls = new AtomicInteger();
         var interrupt = new InterruptToken();

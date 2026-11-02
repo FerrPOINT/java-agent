@@ -212,6 +212,29 @@ class AgentStreamingServiceBranchTest {
     }
 
     @Test
+    void boostedRetryContentFilterDoesNotTriggerEmptyRetry() throws Exception {
+        var attempts = new AtomicInteger();
+        doAnswer(inv -> {
+            StreamingResponseHandler handler = inv.getArgument(3);
+            if (attempts.incrementAndGet() == 1) {
+                handler.onToolCalls(List.of(new ToolCall("c1", "weather", "{}")));
+                handler.onComplete("length", 1L);
+            } else {
+                handler.onComplete("content_filter", 0L);
+            }
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+        var emitter = new CollectingEmitter(30_000L);
+        streamingService.streamTurn(ChatRequest.simple(SESSION_ID, "hello", null, 10_000L), emitter);
+        emitter.awaitDone();
+        assertThat(attempts.get()).isEqualTo(2);
+        assertThat(emitter.events).anySatisfy(event -> {
+            assertThat(event.name).isEqualTo("token");
+            assertThat(event.data).contains(com.azhukov.agent.core.agent.ResponseRecoveryPolicy.CONTENT_POLICY_RECOVERY_HINT);
+        });
+    }
+
+    @Test
     void boostedRetryThrowingExceptionEmitsRetryErrorWithoutExecutingTool() throws Exception {
         var attempts = new AtomicInteger();
         doAnswer(inv -> {
