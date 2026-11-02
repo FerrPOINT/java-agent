@@ -475,6 +475,7 @@ public class TerminalTool implements ToolHandler {
             }
 
             if (!finished) {
+                process.descendants().forEach(ProcessHandle::destroyForcibly);
                 process.destroyForcibly();
                 // Wait briefly for the output reader to drain any remaining output
                 if (outputReader != null) {

@@ -112,6 +112,25 @@ class TerminalToolTest {
     }
 
     @Test
+    void timeoutTerminatesForegroundChildProcess(@org.junit.jupiter.api.io.TempDir java.nio.file.Path directory) throws Exception {
+        var pidFile = directory.resolve("child-pid");
+        String command = "sh -c 'echo $$ > \"" + pidFile + "\"; exec sleep 60'";
+        String arguments = JSON.writeValueAsString(Map.of("command", command, "timeout", 1));
+        long pid = -1;
+        try {
+            ToolResult result = newTool(properties()).execute(arguments, null, session());
+            assertThat(result.success()).isFalse();
+            assertThat(java.nio.file.Files.exists(pidFile)).isTrue();
+            pid = Long.parseLong(java.nio.file.Files.readString(pidFile).trim());
+            final long childPid = pid;
+            org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(3))
+                .until(() -> ProcessHandle.of(childPid).map(p -> !p.isAlive()).orElse(true));
+        } finally {
+            if (pid > 0) ProcessHandle.of(pid).ifPresent(ProcessHandle::destroyForcibly);
+        }
+    }
+
+    @Test
     void cancellingSessionTerminatesRealForegroundProcess(@org.junit.jupiter.api.io.TempDir java.nio.file.Path directory) throws Exception {
         var token = new InterruptToken();
         var tool = new TerminalTool(processTool, properties(), redactor, checkpointManager, token);
