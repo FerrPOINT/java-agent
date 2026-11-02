@@ -59,6 +59,12 @@ class SyncRecoveryParityTest {
 
     private DefaultAgentRuntime buildRuntime(AtomicInteger calls, BiFunction<Integer, Integer, ChatResponse> responder,
                                             com.azhukov.agent.core.budget.IterationBudget overrideBudget) {
+        return buildRuntime(calls, responder, overrideBudget, null);
+    }
+
+    private DefaultAgentRuntime buildRuntime(AtomicInteger calls, BiFunction<Integer, Integer, ChatResponse> responder,
+                                            com.azhukov.agent.core.budget.IterationBudget overrideBudget,
+                                            InterruptToken interrupt) {
         ToolRegistry registry = mock(ToolRegistry.class);
         when(registry.getDefinitions(any())).thenReturn(List.of());
         when(registry.getDefinitions(any(Set.class))).thenReturn(List.of());
@@ -92,7 +98,7 @@ class SyncRecoveryParityTest {
             overrideBudget != null ? overrideBudget : new DefaultIterationBudget(properties),
             new MessageSanitizer(new SecretRedactor(properties)), svc, properties,
             new UserInputSanitizer(), new DefaultToolCallGuardrail(properties),
-            new TurnStateManager(), null, null, null, new SteerBuffer(),
+            new TurnStateManager(), null, interrupt, null, new SteerBuffer(),
             new ErrorClassifier(), null, new com.azhukov.agent.core.security.ApprovalQueue(), null, null,
             new TokenEstimator(), new ToolResultFormatter(), null, null);
     }
@@ -103,6 +109,21 @@ class SyncRecoveryParityTest {
             .reduce((a, b) -> b)
             .map(Message::content)
             .orElse("");
+    }
+
+    @Test
+    void cancellationDuringSyncRecoveryDoesNotReturnRecoveredAnswer() {
+        var calls = new AtomicInteger();
+        var interrupt = new InterruptToken();
+        var session = Session.create("user", "noop", "noop");
+        var runtime = buildRuntime(calls, (n, total) -> {
+            if (n == 1) return new ChatResponse("", List.of(new ToolCall("c1", "weather", "{}")), "LENGTH");
+            interrupt.cancel(session.id());
+            return ChatResponse.text("should not be delivered", "STOP");
+        }, null, interrupt);
+        TurnResult result = runtime.runTurn(session, "hi");
+        assertThat(lastAssistant(result)).doesNotContain("should not be delivered");
+        assertThat(lastAssistant(result)).containsIgnoringCase("cancel");
     }
 
     @Test

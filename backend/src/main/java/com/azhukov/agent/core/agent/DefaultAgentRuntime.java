@@ -571,6 +571,13 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 itersSinceSkill.computeIfAbsent(session.id(), k -> new AtomicInteger(0)).incrementAndGet();
             }
 
+            if (interruptToken != null && interruptToken.isCancelled(session.id())) {
+                turnMessages.add(Message.assistant("Turn cancelled by user.", turnIndex));
+                if (turnFinalizer != null) {
+                    turnFinalizer.finalize(session.id(), turnMessages, false, TurnExitReason.INTERRUPTED);
+                }
+                return new TurnResult(turnMessages, true, null);
+            }
             if (guardrail.isHalted(session.id())) {
                 turnMessages.add(Message.assistant(guardrail.haltMessage(session.id()), turnIndex));
                 if (turnFinalizer != null) {
@@ -702,6 +709,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
             // (2^attempt × base, capped at 32768) giving the model room to finish.
             while (ResponseRecoveryPolicy.isTruncatedToolCall(response.finishReason(), response.hasToolCalls())
                     && truncatedToolCallRetries < ResponseRecoveryPolicy.MAX_TRUNCATED_TOOL_CALL_RETRIES) {
+                if (interruptToken != null && interruptToken.isCancelled(session.id())) break;
                 if (iterationBudget.isExhausted(budget)) break;
                 truncatedToolCallRetries++;
                 int boostedMax = ResponseRecoveryPolicy.boostedMaxTokens(
@@ -719,6 +727,13 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 turnState.recordModelCall();
             }
 
+            if (interruptToken != null && interruptToken.isCancelled(session.id())) {
+                turnMessages.add(Message.assistant("Turn cancelled by user.", turnIndex));
+                if (turnFinalizer != null) {
+                    turnFinalizer.finalize(session.id(), turnMessages, false, TurnExitReason.INTERRUPTED);
+                }
+                return new TurnResult(turnMessages, true, null);
+            }
             if (ResponseRecoveryPolicy.isTruncatedToolCall(response.finishReason(), response.hasToolCalls())
                     && iterationBudget.isExhausted(budget)) {
                 continue;
