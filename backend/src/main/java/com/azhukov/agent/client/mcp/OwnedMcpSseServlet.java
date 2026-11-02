@@ -39,6 +39,7 @@ final class OwnedMcpSseServlet extends HttpServlet {
             response.sendError(401);
             return;
         }
+        HttpServletSseServerTransportProvider requestDelegate = delegate;
         var wrapper = new HttpServletResponseWrapper(response) {
             private PrintWriter writer;
             @Override public PrintWriter getWriter() throws IOException {
@@ -65,7 +66,10 @@ final class OwnedMcpSseServlet extends HttpServlet {
                                 }
                                 String event = buffer.substring(0, end);
                                 String id = endpointSessionId(event);
-                                if (id == null || owners.putIfAbsent(id, owner) != null) throw new IOException("Invalid MCP endpoint event");
+                                synchronized (OwnedMcpSseServlet.this) {
+                                    if (requestDelegate != delegate || id == null || owners.putIfAbsent(id, owner) != null)
+                                        throw new IOException("Invalid or stale MCP endpoint event");
+                                }
                                 sessionId = id;
                                 try {
                                     request.getAsyncContext().addListener(new AsyncListener() {
@@ -95,7 +99,7 @@ final class OwnedMcpSseServlet extends HttpServlet {
                 return writer;
             }
         };
-        delegate.service(request, wrapper);
+        requestDelegate.service(request, wrapper);
     }
 
     @Override
