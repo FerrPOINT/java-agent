@@ -1059,6 +1059,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                 // (2^attempt × base, capped at 32768) giving the model room to finish.
                 while (com.azhukov.agent.core.agent.ResponseRecoveryPolicy.isTruncatedToolCall(finishReason, hasToolCalls)
                         && truncatedToolCallRetries < MAX_TRUNCATED_TOOL_CALL_RETRIES) {
+                    if (interruptToken != null && interruptToken.isCancelled(session.id())) continue agentLoop;
                     if (iterationBudget.isExhausted(budget)) continue agentLoop;
                     truncatedToolCallRetries++;
                     int boostedMax = com.azhukov.agent.core.agent.ResponseRecoveryPolicy.boostedMaxTokens(
@@ -1150,6 +1151,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                             midTurnPersistenceCallback != null ? persistedUpTo : 0);
                         return;
                     }
+                    if (interruptToken != null && interruptToken.isCancelled(session.id())) continue agentLoop;
                     // Re-read routing flags from the re-streamed response
                     finishReason = capturedFinishReason.get();
                     hasContent = contentBuilder.length() > 0;

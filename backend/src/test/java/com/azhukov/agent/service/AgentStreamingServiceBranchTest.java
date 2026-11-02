@@ -212,6 +212,50 @@ class AgentStreamingServiceBranchTest {
     }
 
     @Test
+    void cancellationDuringBoostedRetryDoesNotDeliverFinalAnswer() throws Exception {
+        var attempts = new AtomicInteger();
+        doAnswer(inv -> {
+            int n = attempts.incrementAndGet();
+            StreamingResponseHandler handler = inv.getArgument(3);
+            if (n == 1) {
+                handler.onToolCalls(List.of(new ToolCall("c1", "weather", "{}")));
+                handler.onComplete("length", 1L);
+            } else {
+                interruptToken.cancel(SESSION_ID);
+                handler.onToken("must not deliver");
+                handler.onComplete("stop", 1L);
+            }
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+        var emitter = new CollectingEmitter(30_000L);
+        streamingService.streamTurn(ChatRequest.simple(SESSION_ID, "hello", null, 10_000L), emitter);
+        emitter.awaitDone();
+        assertThat(emitter.events.stream().filter(e -> "interrupted".equals(e.name))).isNotEmpty();
+        assertThat(emitter.events.stream().filter(e -> e.data != null && e.data.contains("must not deliver"))).isEmpty();
+    }
+
+    @Test
+    void cancellationDuringBoostedRetryDoesNotExecuteTool() throws Exception {
+        var attempts = new AtomicInteger();
+        when(toolExecutionService.enforceToolResultBudget(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(toolExecutionService.execute(any(), any(), any(), any(), any(), any())).thenReturn(ToolResult.ok("executed"));
+        doAnswer(inv -> {
+            int n = attempts.incrementAndGet();
+            StreamingResponseHandler handler = inv.getArgument(3);
+            if (n == 2) interruptToken.cancel(SESSION_ID);
+            handler.onToolCalls(List.of(new ToolCall("c" + n, "weather", "{}")));
+            handler.onComplete(n == 1 ? "length" : "tool_calls", 1L);
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+        var emitter = new CollectingEmitter(30_000L);
+        streamingService.streamTurn(ChatRequest.simple(SESSION_ID, "hello", null, 10_000L), emitter);
+        emitter.awaitDone();
+        assertThat(attempts.get()).isEqualTo(2);
+        verify(toolExecutionService, never()).execute(any(), any(), any(), any(), any(), any());
+        assertThat(emitter.events.stream().filter(e -> "interrupted".equals(e.name))).isNotEmpty();
+    }
+
+    @Test
     void boostedTruncatedRetryUsesIncreasingOutputBudgets() throws Exception {
         var attempts = new AtomicInteger();
         var limits = new java.util.concurrent.CopyOnWriteArrayList<Integer>();
