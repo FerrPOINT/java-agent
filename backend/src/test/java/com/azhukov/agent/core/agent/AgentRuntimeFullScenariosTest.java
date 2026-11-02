@@ -217,6 +217,34 @@ class AgentRuntimeFullScenariosTest {
     }
 
     @Test
+    void emptyResponseAfterToolIncludesEphemeralRecoveryNudgeInNextRequest() {
+        stubRunTurnMocks();
+        properties.getCore().setEmptyResponseRetry(true);
+        properties.getCore().setEmptyBackoffBaseMs(1);
+        properties.getCore().setEmptyBackoffCapMs(2);
+        var snapshot = freshBudget();
+        when(iterationBudget.startTurn(session.id())).thenReturn(snapshot);
+        when(iterationBudget.isExhausted(any())).thenReturn(false);
+        when(iterationBudget.recordModelCall(any(), anyInt(), anyInt())).thenReturn(snapshot);
+        when(iterationBudget.recordToolExecution(any(), anyString(), anyLong())).thenReturn(snapshot);
+        when(toolExecutionService.execute(anyString(), anyString(), anyString(), any(), any(), any()))
+            .thenReturn(ToolResult.ok("result"));
+        var requests = new java.util.ArrayList<List<Message>>();
+        useModelClient((messages, tools, options) -> {
+            requests.add(List.copyOf(messages));
+            return switch (requests.size()) {
+                case 1 -> ChatResponse.toolCalls(List.of(new ToolCall("c1", "tool", "{}")));
+                case 2 -> ChatResponse.text("", "STOP");
+                default -> ChatResponse.text("done", "STOP");
+            };
+        });
+        TurnResult result = runtime.runTurn(session, "run");
+        assertThat(requests).hasSize(3);
+        assertThat(requests.get(2)).anySatisfy(m -> assertThat(m.content()).contains(ResponseRecoveryPolicy.EMPTY_AFTER_TOOLS_NUDGE));
+        assertThat(result.messages()).noneSatisfy(m -> assertThat(m.content()).contains(ResponseRecoveryPolicy.EMPTY_AFTER_TOOLS_NUDGE));
+    }
+
+    @Test
     void runTurnExecutesOneToolCallAndReturnsFinalText() {
         stubRunTurnMocks();
         IterationBudget.TurnSnapshot budget = freshBudget();

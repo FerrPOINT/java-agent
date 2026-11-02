@@ -933,8 +933,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                         }
                         // Plain-empty: Hermes adds NO synthetic message — backoff + fresh call only.
                         turnIndex++;
-                        context = contextEngine.prepareContext(session, retryContext);
-                        session = resolveRotatedSession(session);
+                        pendingRecoveryContext = retryContext;
                         continue;
                     }
                     // ── Exhausted (Hermes 7728-7760): fallback attempt BEFORE terminal ──
