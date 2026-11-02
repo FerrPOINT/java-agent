@@ -162,6 +162,26 @@ class McpSpringTransportTest {
     }
 
     @Test
+    void stoppingAndRestartingSseServerKeepsRegisteredServletUsable() {
+        var app = new SpringApplication(Application.class);
+        app.setDefaultProperties(Map.of("server.port", "0", "server.address", "127.0.0.1",
+            "agent.mcp.server.enabled", "true", "agent.mcp.server.transport", "sse",
+            "spring.autoconfigure.exclude", "org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration,org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration"));
+        try (var context = (ServletWebServerApplicationContext) app.run()) {
+            var server = context.getBean(McpServerService.class);
+            server.stop();
+            server.start();
+            assertThat(server.isRunning()).isTrue();
+            String url = "http://127.0.0.1:" + context.getWebServer().getPort();
+            var transport = HttpClientSseClientTransport.builder(url).sseEndpoint("/mcp/sse").build();
+            try (var client = McpClient.sync(transport).initializationTimeout(java.time.Duration.ofSeconds(4)).build()) {
+                client.initialize();
+                assertThat(client.listTools().tools()).extracting(McpSchema.Tool::name).contains("echo");
+            }
+        }
+    }
+
+    @Test
     void springBootRegistersServletAndAcceptsMcpCalls() {
         var app = new SpringApplication(Application.class);
         app.setDefaultProperties(Map.of("server.port", "0", "server.address", "127.0.0.1",

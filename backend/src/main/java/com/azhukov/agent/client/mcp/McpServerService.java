@@ -217,9 +217,13 @@ public class McpServerService {
                 .build();
 
             // Register the SSE servlet with Spring Boot's embedded servlet container
-            servletRegistration = new ServletRegistrationBean<>(new OwnedMcpSseServlet(sseProvider),
-                config.getSseEndpoint(), config.getMessageEndpoint());
-            servletRegistration.setLoadOnStartup(1);
+            if (servletRegistration == null) {
+                servletRegistration = new ServletRegistrationBean<>(new OwnedMcpSseServlet(sseProvider),
+                    config.getSseEndpoint(), config.getMessageEndpoint());
+                servletRegistration.setLoadOnStartup(1);
+            } else {
+                ((OwnedMcpSseServlet) servletRegistration.getServlet()).replaceDelegate(sseProvider);
+            }
 
             log.info("MCP SSE transport: sse={}, message={}", config.getSseEndpoint(), config.getMessageEndpoint());
             return sseProvider;
@@ -262,7 +266,7 @@ public class McpServerService {
     }
 
     @PreDestroy
-    public void stop() {
+    public synchronized void stop() {
         if (mcpServer != null) {
             try {
                 mcpServer.closeGracefully();
@@ -280,6 +284,5 @@ public class McpServerService {
         }
         mcpServer = null;
         transportProvider = null;
-        servletRegistration = null;
     }
 }

@@ -20,11 +20,16 @@ import java.util.concurrent.ConcurrentMap;
 
 /** Binds the SDK-generated SSE endpoint to its authenticated opener. */
 final class OwnedMcpSseServlet extends HttpServlet {
-    private final HttpServletSseServerTransportProvider delegate;
+    private volatile HttpServletSseServerTransportProvider delegate;
     private final ConcurrentMap<String, String> owners = new ConcurrentHashMap<>();
 
     OwnedMcpSseServlet(HttpServletSseServerTransportProvider delegate) {
         this.delegate = delegate;
+    }
+
+    synchronized void replaceDelegate(HttpServletSseServerTransportProvider replacement) {
+        owners.clear();
+        delegate = replacement;
     }
 
     @Override
