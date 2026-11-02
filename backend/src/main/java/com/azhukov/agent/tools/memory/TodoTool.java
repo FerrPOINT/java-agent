@@ -74,6 +74,7 @@ public class TodoTool implements ToolHandler {
     private final TodoRepository todoRepository;
 
     @Override
+    @org.springframework.transaction.annotation.Transactional
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
         TodoArgs args = ToolHandler.parseJson(arguments, TodoArgs.class);
 

@@ -48,6 +48,29 @@ class TodoRepositoryTest extends PostgresTestContainer {
     @Autowired
     private SessionRepository sessionRepository;
 
+    @Autowired
+    private com.azhukov.agent.tools.memory.TodoTool todoTool;
+
+    @Test
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void replacementRollsBackIfLaterInsertFailsAtDatabase() {
+        String user = "rollback-" + java.util.UUID.randomUUID();
+        var sessionEntity = sessionRepository.saveAndFlush(newSession(user, "Atomic replacement"));
+        var tool = todoTool;
+        var session = new com.azhukov.agent.core.model.Session(sessionEntity.getId(), user, "owner", MODEL_PROVIDER, MODEL_NAME, null, java.util.Map.of());
+        tool.execute("{\"todos\":[{\"content\":\"original\"}]}", null, session);
+        assertThat(todoRepository.findByUserId(user)).extracting(TodoEntity::getTitle).containsExactly("original");
+        try {
+            tool.execute("{\"todos\":[{\"content\":\"first replacement\"},{\"content\":\"bad\\u0000value\"}]}", null, session);
+            org.assertj.core.api.Assertions.fail("Expected PostgreSQL to reject NUL in text");
+        } catch (org.springframework.dao.DataAccessException expected) {
+            assertThat(todoRepository.findByUserId(user)).extracting(TodoEntity::getTitle).containsExactly("original");
+        } finally {
+            todoRepository.deleteByUserId(user);
+            sessionRepository.deleteById(sessionEntity.getId());
+        }
+    }
+
     @Test
     void malformedToolReplacementPreservesPersistedListsAndValidReplacementStillWorks() {
         SessionEntity first = sessionRepository.save(newSession(USER_ID_1, "Owner"));
