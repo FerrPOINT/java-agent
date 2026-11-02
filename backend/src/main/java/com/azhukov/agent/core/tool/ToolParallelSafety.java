@@ -82,6 +82,11 @@ public final class ToolParallelSafety {
      */
     public static boolean shouldParallelize(List<ToolCall> calls,
                                             Set<String> registeredToolNames) {
+        return shouldParallelize(calls, registeredToolNames, null);
+    }
+
+    public static boolean shouldParallelize(List<ToolCall> calls, Set<String> registeredToolNames,
+                                            com.azhukov.agent.core.model.Session session) {
         if (calls == null || calls.size() <= 1) {
             return false;
         }
@@ -117,7 +122,16 @@ public final class ToolParallelSafety {
 
             // Path-scoped tools: check for overlapping paths
             if (PATH_SCOPED_TOOLS.contains(toolName)) {
-                Path scopedPath = extractScopePath(toolName, args);
+                Path scopedPath;
+                try {
+                    JsonNode pathArg = args.get("path");
+                    String rawPath = pathArg != null && pathArg.isTextual() ? pathArg.asText() : null;
+                    if ((rawPath == null || rawPath.isBlank()) && "search_files".equals(toolName)) rawPath = ".";
+                    scopedPath = rawPath == null || rawPath.isBlank() ? null : canonicalise(
+                        com.azhukov.agent.tools.file.FileToolSafety.resolvePath(rawPath, session));
+                } catch (RuntimeException e) {
+                    return false;
+                }
                 if (scopedPath == null) {
                     return false;
                 }
