@@ -70,7 +70,8 @@ public class McpServerService {
      * Starts the MCP server if {@code agent.mcp.server.enabled} is true.
      * Registers all tools from the {@link ToolRegistry} as MCP tool specifications.
      */
-    public void start() {
+    public synchronized void start() {
+        if (mcpServer != null) return;
         AgentProperties.McpProperties.Server config = properties.getMcp().getServer();
         if (!config.isEnabled()) {
             log.debug("MCP server mode is disabled");
@@ -88,7 +89,7 @@ public class McpServerService {
                 .tools(true)
                 .build();
 
-            transportProvider = createTransportProvider(config);
+            if (transportProvider == null) transportProvider = createTransportProvider(config);
 
             mcpServer = McpServer.sync(transportProvider)
                 .serverInfo(serverInfo)
@@ -195,10 +196,14 @@ public class McpServerService {
         return new StdioServerTransportProvider(jsonMapper);
     }
 
-    /**
-     * Returns the servlet registration bean for SSE transport, or null if stdio.
-     * This is used by a configuration class to register the servlet.
-     */
+    /** Prepare the servlet before the web server starts; tool registration remains deferred. */
+    public synchronized ServletRegistrationBean<?> prepareSseServletRegistration() {
+        if (servletRegistration == null) {
+            transportProvider = createTransportProvider(properties.getMcp().getServer());
+        }
+        return servletRegistration;
+    }
+
     public ServletRegistrationBean<?> getServletRegistration() {
         return servletRegistration;
     }
@@ -241,5 +246,6 @@ public class McpServerService {
         }
         mcpServer = null;
         transportProvider = null;
+        servletRegistration = null;
     }
 }
