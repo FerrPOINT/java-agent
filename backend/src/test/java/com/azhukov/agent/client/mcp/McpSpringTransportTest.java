@@ -53,6 +53,34 @@ class McpSpringTransportTest {
     }
 
     @Test
+    void apiKeyRequiredAndAuthenticatedClientCanCallMcp() throws Exception {
+        var app = new SpringApplication(Application.class);
+        app.setDefaultProperties(Map.of("server.port", "0", "server.address", "127.0.0.1",
+            "agent.mcp.server.enabled", "true", "agent.mcp.server.transport", "sse",
+            "spring.autoconfigure.exclude", "org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration,org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration"));
+        try (var context = (ServletWebServerApplicationContext) app.run("--agent.security.api-key=test-only-key")) {
+            assertThat(context.getBean(AgentProperties.class).getSecurity().getApiKey()).isEqualTo("test-only-key");
+            String url = "http://127.0.0.1:" + context.getWebServer().getPort();
+            var http = java.net.http.HttpClient.newHttpClient();
+            var denied = http.send(java.net.http.HttpRequest.newBuilder(java.net.URI.create(url + "/mcp/sse"))
+                .timeout(java.time.Duration.ofSeconds(5)).GET().build(), java.net.http.HttpResponse.BodyHandlers.ofInputStream());
+            try (var ignored = denied.body()) { assertThat(denied.statusCode()).isEqualTo(401); }
+            var wrong = http.send(java.net.http.HttpRequest.newBuilder(java.net.URI.create(url + "/mcp/sse"))
+                .timeout(java.time.Duration.ofSeconds(5)).header("X-API-Key", "wrong-test-key").GET().build(), java.net.http.HttpResponse.BodyHandlers.ofInputStream());
+            try (var ignored = wrong.body()) { assertThat(wrong.statusCode()).isEqualTo(401); }
+            var transport = HttpClientSseClientTransport.builder(url).sseEndpoint("/mcp/sse")
+                .httpRequestCustomizer((builder, method, uri, body, transportContext) -> builder.header("X-API-Key", "test-only-key"))
+                .build();
+            try (var client = McpClient.sync(transport).initializationTimeout(java.time.Duration.ofSeconds(8)).build()) {
+                client.initialize();
+                var result = client.callTool(new McpSchema.CallToolRequest("echo", Map.of()));
+                assertThat(result.isError()).isNotEqualTo(true);
+                assertThat(((McpSchema.TextContent) result.content().getFirst()).text()).isEqualTo("spring transport works");
+            }
+        }
+    }
+
+    @Test
     void springBootRegistersServletAndAcceptsMcpCalls() {
         var app = new SpringApplication(Application.class);
         app.setDefaultProperties(Map.of("server.port", "0", "server.address", "127.0.0.1",
