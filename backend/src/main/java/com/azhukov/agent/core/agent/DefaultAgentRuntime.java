@@ -700,7 +700,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
             // mid-tool-call JSON. The arguments are truncated/incomplete and must
             // NOT be executed. Re-run the same API call with a boosted max_tokens
             // (2^attempt × base, capped at 32768) giving the model room to finish.
-            if (ResponseRecoveryPolicy.isTruncatedToolCall(response.finishReason(), response.hasToolCalls())
+            while (ResponseRecoveryPolicy.isTruncatedToolCall(response.finishReason(), response.hasToolCalls())
                     && truncatedToolCallRetries < ResponseRecoveryPolicy.MAX_TRUNCATED_TOOL_CALL_RETRIES) {
                 truncatedToolCallRetries++;
                 int boostedMax = ResponseRecoveryPolicy.boostedMaxTokens(
@@ -713,7 +713,6 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 context = contextEngine.prepareContext(session, turnMessages);
                 session = resolveRotatedSession(session);
                 response = callModelWithRetry(context, tools, session, boostedOptions);
-                continue;
             }
 
             // Truncated tool call ceiling reached — refuse to execute incomplete arguments.

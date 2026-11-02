@@ -101,6 +101,28 @@ class SyncRecoveryParityTest {
     }
 
     @Test
+    void successfulBoostedTruncatedToolRetryIsProcessedInsteadOfDiscarded() {
+        AtomicInteger calls = new AtomicInteger();
+        var runtime = buildRuntime(calls, (n, total) -> n == 1
+            ? new ChatResponse("", List.of(new ToolCall("c1", "weather", "{}")), "LENGTH")
+            : ChatResponse.text("recovered", "STOP"));
+        TurnResult result = runtime.runTurn(Session.create("user", "noop", "noop"), "hi");
+        assertThat(calls.get()).isEqualTo(2);
+        assertThat(lastAssistant(result)).isEqualTo("recovered");
+    }
+
+    @Test
+    void repeatedlyTruncatedResponsesStopAtRetryCeiling() {
+        AtomicInteger calls = new AtomicInteger();
+        var runtime = buildRuntime(calls, (n, total) -> n <= 5
+            ? new ChatResponse("", List.of(new ToolCall("c" + n, "weather", "{}")), "LENGTH")
+            : ChatResponse.text("after recovery", "STOP"));
+        TurnResult result = runtime.runTurn(Session.create("user", "noop", "noop"), "hi");
+        assertThat(result.messages()).anyMatch(m -> m.role() == Role.TOOL && m.content().contains("not executed"));
+        assertThat(calls.get()).isLessThanOrEqualTo(7);
+    }
+
+    @Test
     void lengthTruncationStitchesPartialAndContinues() {
         AtomicInteger calls = new AtomicInteger();
         var runtime = buildRuntime(calls, (n, total) ->
