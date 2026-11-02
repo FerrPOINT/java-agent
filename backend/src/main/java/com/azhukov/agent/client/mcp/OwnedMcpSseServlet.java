@@ -21,6 +21,7 @@ import java.util.concurrent.ConcurrentMap;
 /** Binds the SDK-generated SSE endpoint to its authenticated opener. */
 final class OwnedMcpSseServlet extends HttpServlet {
     private volatile HttpServletSseServerTransportProvider delegate;
+    private volatile boolean destroyed;
     private record Binding(String owner, Object generation) { }
     private final ConcurrentMap<String, Binding> owners = new ConcurrentHashMap<>();
 
@@ -29,6 +30,7 @@ final class OwnedMcpSseServlet extends HttpServlet {
     }
 
     synchronized void replaceDelegate(HttpServletSseServerTransportProvider replacement) {
+        if (destroyed) throw new IllegalStateException("MCP servlet is destroyed");
         owners.clear();
         delegate = replacement;
     }
@@ -69,7 +71,7 @@ final class OwnedMcpSseServlet extends HttpServlet {
                                 String event = buffer.substring(0, end);
                                 String id = endpointSessionId(event);
                                 synchronized (OwnedMcpSseServlet.this) {
-                                    if (requestDelegate != delegate || id == null || owners.putIfAbsent(id, binding) != null)
+                                    if (destroyed || requestDelegate != delegate || id == null || owners.putIfAbsent(id, binding) != null)
                                         throw new IOException("Invalid or stale MCP endpoint event");
                                 }
                                 sessionId = id;
@@ -139,7 +141,8 @@ final class OwnedMcpSseServlet extends HttpServlet {
         return null;
     }
 
-    @Override public void destroy() {
+    @Override public synchronized void destroy() {
+        destroyed = true;
         owners.clear();
         delegate.destroy();
         super.destroy();

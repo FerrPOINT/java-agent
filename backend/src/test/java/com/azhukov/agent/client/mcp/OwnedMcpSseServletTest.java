@@ -20,6 +20,49 @@ class OwnedMcpSseServletTest {
     @AfterEach void clear() { UserContext.clear(); }
 
     @Test
+    void oldGetCannotCreateBindingAfterServletDestroy() throws Exception {
+        var delegate = mock(HttpServletSseServerTransportProvider.class);
+        var servlet = new OwnedMcpSseServlet(delegate);
+        var get = mock(HttpServletRequest.class);
+        var response = mock(HttpServletResponse.class);
+        when(get.getAsyncContext()).thenReturn(mock(AsyncContext.class));
+        when(response.getWriter()).thenReturn(new PrintWriter(new StringWriter()));
+        var entered = new java.util.concurrent.CountDownLatch(1);
+        var resume = new java.util.concurrent.CountDownLatch(1);
+        doAnswer(inv -> {
+            if (inv.getArgument(0) != get) return null;
+            entered.countDown();
+            assertThat(resume.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            var writer = ((HttpServletResponse) inv.getArgument(1)).getWriter();
+            writer.write("event: endpoint\ndata: /mcp/message?sessionId=123e4567-e89b-12d3-a456-426614174000\n\n");
+            writer.flush();
+            return null;
+        }).when(delegate).service(any(HttpServletRequest.class), any(HttpServletResponse.class));
+        var error = new java.util.concurrent.atomic.AtomicReference<Throwable>();
+        var thread = new Thread(() -> {
+            UserContext.set("alice", "user");
+            try { servlet.doGet(get, response); }
+            catch (Throwable t) { error.set(t); }
+            finally { UserContext.clear(); }
+        });
+        thread.start();
+        try {
+            assertThat(entered.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            servlet.destroy();
+            resume.countDown();
+            thread.join(5000);
+            assertThat(thread.isAlive()).isFalse();
+            assertThat(error.get()).isNull();
+            var post = mock(HttpServletRequest.class);
+            var result = mock(HttpServletResponse.class);
+            when(post.getParameterValues("sessionId")).thenReturn(new String[]{"123e4567-e89b-12d3-a456-426614174000"});
+            UserContext.set("alice", "user");
+            servlet.doPost(post, result);
+            verify(result).setStatus(404);
+        } finally { resume.countDown(); thread.join(5000); }
+    }
+
+    @Test
     void bindingCleanupFromOldGenerationCannotEraseNewGeneration() throws Exception {
         var oldDelegate = mock(HttpServletSseServerTransportProvider.class);
         var newDelegate = mock(HttpServletSseServerTransportProvider.class);
