@@ -262,18 +262,7 @@ public final class ToolParallelSafety {
      * Mirrors Hermes' {@code _paths_overlap}.
      */
     static boolean pathsOverlap(Path left, Path right) {
-        int leftLen = left.getNameCount();
-        int rightLen = right.getNameCount();
-        if (leftLen == 0 || rightLen == 0) {
-            return leftLen == rightLen && leftLen > 0;
-        }
-        int commonLen = Math.min(leftLen, rightLen);
-        for (int i = 0; i < commonLen; i++) {
-            if (!left.getName(i).equals(right.getName(i))) {
-                return false;
-            }
-        }
-        return true;
+        return left.startsWith(right) || right.startsWith(left);
     }
 
     private static String expandUserHome(String path) {

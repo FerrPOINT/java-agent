@@ -50,6 +50,14 @@ class ToolParallelSafetyCanonicalisationTest {
     }
 
     @Test
+    void searchOfFilesystemRootOverlapsEveryAbsoluteTarget() throws Exception {
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        var search = new com.azhukov.agent.core.model.ToolCall("a", "search_files", mapper.writeValueAsString(java.util.Map.of("path", tempDir.getRoot().toString())));
+        var write = new com.azhukov.agent.core.model.ToolCall("b", "write_file", mapper.writeValueAsString(java.util.Map.of("path", tempDir.resolve("new-file").toString())));
+        assertThat(ToolParallelSafety.shouldParallelize(java.util.List.of(search, write), java.util.Set.of("search_files", "write_file"))).isFalse();
+    }
+
+    @Test
     void canonicalise_existingFile_resolvesToRealPath() throws IOException {
         Path file = tempDir.resolve("test.txt");
         Files.writeString(file, "test");
