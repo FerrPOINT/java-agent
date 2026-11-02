@@ -94,7 +94,7 @@ public class TodoTool implements ToolHandler {
 
         // Validate each item
         for (TodoItem item : items) {
-            if (item.content() == null || item.content().isBlank()) {
+            if (item == null || item.content() == null || item.content().isBlank()) {
                 return ToolResult.fail("Each todo item must have 'content'.");
             }
             if (item.content().length() > MAX_CONTENT_CHARS) {

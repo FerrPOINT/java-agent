@@ -121,6 +121,14 @@ class TodoToolTest {
     // ── Validation ──
 
     @Test
+    void nullItemFailsValidationBeforeReplacingExistingList() {
+        var tool = new TodoTool(todoRepository);
+        var result = tool.execute("{\"todos\":[null]}", LAST_MESSAGE, SESSION);
+        assertThat(result.success()).isFalse();
+        verifyNoInteractions(todoRepository);
+    }
+
+    @Test
     @DisplayName("Reject invalid status")
     void rejectInvalidStatus() {
         TodoTool tool = new TodoTool(todoRepository);
