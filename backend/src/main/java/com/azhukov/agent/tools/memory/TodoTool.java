@@ -108,6 +108,8 @@ public class TodoTool implements ToolHandler {
             }
         }
 
+        // PostgreSQL transaction-scoped lock covers empty lists and multiple application instances.
+        todoRepository.lockUserList(session.userId());
         boolean merge = args.merge() != null && args.merge();
 
         if (!merge) {

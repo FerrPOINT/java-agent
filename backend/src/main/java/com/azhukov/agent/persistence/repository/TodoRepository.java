@@ -14,6 +14,14 @@ import java.util.UUID;
 @Repository
 public interface TodoRepository extends JpaRepository<TodoEntity, UUID> {
 
+    /** Serialize tool list mutations per user, including when the list is empty. */
+    @org.springframework.data.jpa.repository.Query(value = "SELECT 1 FROM (SELECT pg_advisory_xact_lock(hashtextextended(CONCAT('agent:todo:', :userId), 0))) locked", nativeQuery = true)
+    int lockUserList(@org.springframework.data.repository.query.Param("userId") String userId);
+
+    /** Scalar owner lookup avoids retaining a managed entity while waiting for the user lock. */
+    @org.springframework.data.jpa.repository.Query("select t.userId from TodoEntity t where t.id = :id")
+    java.util.Optional<String> findOwnerId(@org.springframework.data.repository.query.Param("id") UUID id);
+
     List<TodoEntity> findByUserId(String userId);
 
     List<TodoEntity> findByUserIdOrderByCreatedAtAsc(String userId);

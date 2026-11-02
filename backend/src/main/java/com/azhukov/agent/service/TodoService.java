@@ -37,6 +37,7 @@ public class TodoService {
         if (text == null || text.isBlank()) {
             throw new IllegalArgumentException("Task text is required");
         }
+        todoRepository.lockUserList(userId);
         TodoEntity todo = new TodoEntity();
         todo.setUserId(userId);
         todo.setTitle(text);
@@ -48,13 +49,15 @@ public class TodoService {
     }
 
     public Optional<TodoDto> markDone(UUID id) {
-        return todoRepository.findById(id)
-            .map(todo -> {
-                // Ownership: a non-admin key can only complete its own items
+        return todoRepository.findOwnerId(id)
+            .flatMap(owner -> {
                 String scoped = com.azhukov.agent.core.security.UserContext.scopeUserId();
-                if (scoped != null && !scoped.equals(todo.getUserId())) {
+                if (scoped != null && !scoped.equals(owner)) {
                     throw new SecurityException("Task does not belong to the current user");
                 }
+                todoRepository.lockUserList(owner);
+                return todoRepository.findById(id).filter(todo -> owner.equals(todo.getUserId()));
+            }).map(todo -> {
                 todo.setStatus("completed");
                 todo.setUpdatedAt(Instant.now());
                 return toDto(todoRepository.save(todo));
@@ -62,8 +65,10 @@ public class TodoService {
     }
 
     public Optional<TodoDto> markDoneForUser(UUID id, String userId) {
+        if (userId == null) return Optional.empty();
+        todoRepository.lockUserList(userId);
         return todoRepository.findById(id)
-            .filter(todo -> userId != null && userId.equals(todo.getUserId()))
+            .filter(todo -> userId.equals(todo.getUserId()))
             .map(todo -> {
                 todo.setStatus("completed");
                 todo.setUpdatedAt(Instant.now());
@@ -72,6 +77,7 @@ public class TodoService {
     }
 
     public void clearByUserId(String userId) {
+        todoRepository.lockUserList(userId);
         todoRepository.deleteByUserId(userId);
     }
 
