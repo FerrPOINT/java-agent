@@ -1083,6 +1083,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     context = HistorySanitizer.sanitizeForModelRequest(context);
                     session = resolveRotatedSession(session);
                     // Re-issue the stream call with boosted max_tokens
+                    try {
                     activeStreamClient.stream(context, tools, boostedOptions, new StreamingResponseHandler() {
                         @Override
                         public void onToken(String token) {
@@ -1124,6 +1125,9 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                             capturedError.set(error);
                         }
                     });
+                    } catch (Exception retryException) {
+                        capturedError.set(retryException);
+                    }
                     budget = iterationBudget.recordModelCall(budget,
                         tokenEstimator.estimateTokens(context), estimateResponseTokens(contentBuilder.toString(), collectedToolCalls));
                     if (capturedError.get() == null) {
