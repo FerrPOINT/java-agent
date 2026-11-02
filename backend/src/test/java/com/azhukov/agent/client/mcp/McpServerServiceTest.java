@@ -45,6 +45,30 @@ class McpServerServiceTest {
     }
 
     @Test
+    void toolCallsReuseMcpConnectionSessionWithoutSharingWithOtherConnections() throws Exception {
+        var service = new McpServerService(properties, objectMapper, toolRegistry);
+        when(toolRegistry.getDefinitions()).thenReturn(List.of(
+            new ToolDefinition("process", "Process", Map.of("type", "object", "properties", Map.of()))));
+        when(toolRegistry.execute(anyString(), anyString(), anyString(), any(), any()))
+            .thenReturn(ToolResult.ok("ok"));
+        var method = McpServerService.class.getDeclaredMethod("buildToolSpecifications");
+        method.setAccessible(true);
+        var specs = (List<io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification>) method.invoke(service);
+        var exchangeA = mock(io.modelcontextprotocol.server.McpSyncServerExchange.class);
+        var exchangeB = mock(io.modelcontextprotocol.server.McpSyncServerExchange.class);
+        when(exchangeA.sessionId()).thenReturn("connection-a");
+        when(exchangeB.sessionId()).thenReturn("connection-b");
+        var request = new McpSchema.CallToolRequest("process", Map.of("action", "list"));
+        specs.getFirst().callHandler().apply(exchangeA, request);
+        specs.getFirst().callHandler().apply(exchangeA, request);
+        specs.getFirst().callHandler().apply(exchangeB, request);
+        var sessions = org.mockito.ArgumentCaptor.forClass(com.azhukov.agent.core.model.Session.class);
+        verify(toolRegistry, times(3)).execute(anyString(), anyString(), anyString(), any(), sessions.capture());
+        var captured = sessions.getAllValues();
+        assertThat(captured.get(0).id()).isEqualTo(captured.get(1).id()).isNotEqualTo(captured.get(2).id());
+    }
+
+    @Test
     void shouldNotStartWhenDisabled() {
         properties.getMcp().getServer().setEnabled(false);
         McpServerService service = new McpServerService(properties, objectMapper, toolRegistry);
@@ -297,10 +321,10 @@ class McpServerServiceTest {
                                                     String toolName,
                                                     Map<String, Object> arguments) throws Exception {
         Method method = McpServerService.class.getDeclaredMethod(
-            "handleToolCall", String.class, McpSchema.CallToolRequest.class);
+            "handleToolCall", String.class, McpSchema.CallToolRequest.class, String.class);
         method.setAccessible(true);
         return (McpSchema.CallToolResult) method.invoke(
-            service, toolName, new McpSchema.CallToolRequest(toolName, arguments));
+            service, toolName, new McpSchema.CallToolRequest(toolName, arguments), "test-session");
     }
 
     private String textContent(McpSchema.CallToolResult result) {

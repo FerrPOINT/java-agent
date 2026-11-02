@@ -115,7 +115,7 @@ public class McpServerService {
 
             McpServerFeatures.SyncToolSpecification spec = McpServerFeatures.SyncToolSpecification.builder()
                 .tool(tool)
-                .callHandler((exchange, request) -> handleToolCall(def.name(), request))
+                .callHandler((exchange, request) -> handleToolCall(def.name(), request, exchange.sessionId()))
                 .build();
 
             specs.add(spec);
@@ -126,10 +126,15 @@ public class McpServerService {
     /**
      * Handles an MCP tool call by delegating to the agent's {@link ToolRegistry}.
      */
-    private McpSchema.CallToolResult handleToolCall(String toolName, McpSchema.CallToolRequest request) {
+    private McpSchema.CallToolResult handleToolCall(String toolName, McpSchema.CallToolRequest request, String mcpSessionId) {
         try {
+            if (mcpSessionId == null || mcpSessionId.isBlank()) {
+                return McpSchema.CallToolResult.builder().addTextContent("MCP session is required").isError(true).build();
+            }
             String argumentsJson = objectMapper.writeValueAsString(request.arguments());
-            Session session = Session.create("mcp-client", "mcp", "mcp");
+            var sessionId = java.util.UUID.nameUUIDFromBytes(
+                ("mcp-session:" + mcpSessionId).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            Session session = new Session(sessionId, "mcp-client", null, "mcp", "mcp", null, java.util.Map.of());
             ToolResult result = toolRegistry.execute(toolName, "mcp-" + System.nanoTime(),
                 argumentsJson, Message.user(""), session);
 
