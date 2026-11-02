@@ -73,6 +73,19 @@ class IterationBudgetRefundTest {
     }
 
     @Test
+    void refundedExecutionAfterExhaustedBatchDoesNotRefundEarlierExecution() {
+        AgentProperties properties = new AgentProperties();
+        properties.getBudget().setMaxToolExecutionsPerTurn(1);
+        DefaultIterationBudget b = new DefaultIterationBudget(properties);
+        var snapshot = b.recordToolExecution(b.startTurn(UUID.randomUUID()), "first", 3);
+        snapshot = b.recordToolExecution(snapshot, "refunded", 4);
+        snapshot = b.refundToolExecution(snapshot);
+        assertThat(snapshot.toolExecutions()).isEqualTo(1);
+        assertThat(snapshot.totalToolDurationMs()).isEqualTo(7);
+        assertThat(b.isExhausted(snapshot)).isTrue();
+    }
+
+    @Test
     void refundAtZeroIsNoop() {
         DefaultIterationBudget b = budget();
         var snap = b.startTurn(UUID.randomUUID());

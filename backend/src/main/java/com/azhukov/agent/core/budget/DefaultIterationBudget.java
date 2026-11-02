@@ -67,9 +67,9 @@ public class DefaultIterationBudget implements IterationBudget {
         if (!config.isEnabled()) {
             return snapshot;
         }
-        if (snapshot.exhausted()) {
-            return snapshot;
-        }
+        // A batch can complete multiple tools before its accounting is applied.
+        // Count every completed execution even after a limit is reached so a
+        // later refund cannot remove a different tool's charge.
         TurnSnapshot updated = new TurnSnapshot(
             snapshot.sessionId(), snapshot.startedAt(), snapshot.turnIndex(),
             snapshot.modelCalls(), snapshot.toolExecutions() + 1,
