@@ -270,3 +270,8 @@ production-only external views; ordinary unit/buildscript/Groovy views remain.
 The actual compiler dependency verifier receives those same lazy views without
 another resolver invocation. Native environment/home projection qualification
 and exact caller adoption remain separate; no tooling/cache pin changes here.
+
+The reader exposes a separate private production dependency API; its records
+cannot qualify the ordinary unit environment. Pure reader cases cover real
+dependency bytes, old timestamps, graph drift, outside paths and conflicting
+shared records. Legacy wrapper/JDK/inventory behavior is retained.
