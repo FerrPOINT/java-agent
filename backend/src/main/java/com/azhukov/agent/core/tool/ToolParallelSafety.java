@@ -262,7 +262,15 @@ public final class ToolParallelSafety {
      * Mirrors Hermes' {@code _paths_overlap}.
      */
     static boolean pathsOverlap(Path left, Path right) {
-        return left.startsWith(right) || right.startsWith(left);
+        if (left.startsWith(right) || right.startsWith(left)) return true;
+        try {
+            return java.nio.file.Files.isSameFile(left, right);
+        } catch (java.nio.file.NoSuchFileException e) {
+            return false;
+        } catch (java.io.IOException | SecurityException e) {
+            // An unresolved identity is unsafe to treat as independent.
+            return true;
+        }
     }
 
     private static String expandUserHome(String path) {

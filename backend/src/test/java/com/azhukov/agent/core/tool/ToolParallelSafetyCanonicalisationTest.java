@@ -50,6 +50,16 @@ class ToolParallelSafetyCanonicalisationTest {
     }
 
     @Test
+    void hardLinksToSameFileMustNotRunConflictingWritesConcurrently() throws IOException {
+        Path first = Files.writeString(tempDir.resolve("first"), "initial");
+        Path alias = Files.createLink(tempDir.resolve("alias"), first);
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        var one = new com.azhukov.agent.core.model.ToolCall("a", "write_file", mapper.writeValueAsString(java.util.Map.of("path", first.toString())));
+        var two = new com.azhukov.agent.core.model.ToolCall("b", "write_file", mapper.writeValueAsString(java.util.Map.of("path", alias.toString())));
+        assertThat(ToolParallelSafety.shouldParallelize(java.util.List.of(one, two), java.util.Set.of("write_file"))).isFalse();
+    }
+
+    @Test
     void searchOfFilesystemRootOverlapsEveryAbsoluteTarget() throws Exception {
         var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
         var search = new com.azhukov.agent.core.model.ToolCall("a", "search_files", mapper.writeValueAsString(java.util.Map.of("path", tempDir.getRoot().toString())));
