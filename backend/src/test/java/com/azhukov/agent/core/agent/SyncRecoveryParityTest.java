@@ -65,6 +65,12 @@ class SyncRecoveryParityTest {
     private DefaultAgentRuntime buildRuntime(AtomicInteger calls, BiFunction<Integer, Integer, ChatResponse> responder,
                                             com.azhukov.agent.core.budget.IterationBudget overrideBudget,
                                             InterruptToken interrupt) {
+        return buildRuntime(calls, responder, overrideBudget, interrupt, new java.util.ArrayList<>());
+    }
+
+    private DefaultAgentRuntime buildRuntime(AtomicInteger calls, BiFunction<Integer, Integer, ChatResponse> responder,
+                                            com.azhukov.agent.core.budget.IterationBudget overrideBudget,
+                                            InterruptToken interrupt, List<List<Message>> requests) {
         ToolRegistry registry = mock(ToolRegistry.class);
         when(registry.getDefinitions(any())).thenReturn(List.of());
         when(registry.getDefinitions(any(Set.class))).thenReturn(List.of());
@@ -74,10 +80,11 @@ class SyncRecoveryParityTest {
         PromptBuilder promptBuilder = new DefaultPromptBuilder(properties, registry);
         ContextEngine contextEngine = mock(ContextEngine.class);
         when(contextEngine.prepareContext(any(), any()))
-            .thenReturn(List.of(Message.system("sys"), Message.user("hi")));
+            .thenAnswer(inv -> new java.util.ArrayList<Message>(inv.getArgument(1)));
 
         java.util.concurrent.atomic.AtomicInteger lastPromptSize = new java.util.concurrent.atomic.AtomicInteger(0);
         com.azhukov.agent.core.client.ModelClient model = (msgs, tools, opts) -> {
+            requests.add(List.copyOf(msgs));
             int n = calls.incrementAndGet();
             lastPromptSize.set(msgs.size());
             return responder.apply(n, calls.get());
@@ -109,6 +116,21 @@ class SyncRecoveryParityTest {
             .reduce((a, b) -> b)
             .map(Message::content)
             .orElse("");
+    }
+
+    @Test
+    void droppedToolCallNudgeReachesNextSynchronousModelRequest() {
+        var calls = new AtomicInteger();
+        var requests = new java.util.ArrayList<List<Message>>();
+        var runtime = buildRuntime(calls, (n, total) -> n == 1
+            ? new ChatResponse("calling", List.of(), "TOOL_EXECUTION")
+            : ChatResponse.text("done", "STOP"), null, null, requests);
+        TurnResult result = runtime.runTurn(Session.create("user", "noop", "noop"), "hi");
+        assertThat(requests).hasSize(2);
+        assertThat(requests.get(1)).anySatisfy(message ->
+            assertThat(message.content()).contains(ResponseRecoveryPolicy.DROPPED_TOOLCALL_NUDGE));
+        assertThat(result.messages()).noneSatisfy(message ->
+            assertThat(message.content()).contains(ResponseRecoveryPolicy.DROPPED_TOOLCALL_NUDGE));
     }
 
     @Test

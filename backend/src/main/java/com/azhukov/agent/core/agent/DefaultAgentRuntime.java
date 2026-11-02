@@ -560,6 +560,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
         // If the JVM crashes mid-turn, all progress up to the last batch is preserved.
         int persistedUpTo = turnMessages.size();
 
+        List<Message> pendingRecoveryContext = null;
         for (int i = 0; i < maxTurns; i++) {
           try {
             // M10: Increment skill iteration counter at the TOP of the loop
@@ -613,7 +614,9 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 return new TurnResult(turnMessages, true, null);
             }
 
-            List<Message> context = contextEngine.prepareContext(session, turnMessages);
+            List<Message> context = contextEngine.prepareContext(session,
+                pendingRecoveryContext != null ? pendingRecoveryContext : turnMessages);
+            pendingRecoveryContext = null;
             session = resolveRotatedSession(session);
             // Hermes parity: pre-API-call /steer drain (conversation_loop.py:2104-2153).
             // c2: shared owner in TurnExecutorUtils — previously a verbatim copy
@@ -807,8 +810,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 }
                 droppedContext.add(Message.user(ResponseRecoveryPolicy.DROPPED_TOOLCALL_NUDGE));
                 turnIndex++;
-                context = contextEngine.prepareContext(session, droppedContext);
-                session = resolveRotatedSession(session);
+                pendingRecoveryContext = droppedContext;
                 continue;
             }
 
