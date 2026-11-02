@@ -51,6 +51,32 @@ class TodoRepositoryTest extends PostgresTestContainer {
     @Autowired
     private com.azhukov.agent.tools.memory.TodoTool todoTool;
 
+    @Autowired
+    private com.azhukov.agent.core.tool.SpringToolRegistry registry;
+
+    @Test
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void registryExecutesTransactionalTodoWithAtomicRollback() {
+        String user = "registry-" + UUID.randomUUID();
+        var saved = sessionRepository.saveAndFlush(newSession(user, "Registry atomicity"));
+        var session = new com.azhukov.agent.core.model.Session(saved.getId(), user, "owner", MODEL_PROVIDER, MODEL_NAME, null, java.util.Map.of());
+        try {
+            var first = registry.execute("todo", "first", "{\"todos\":[{\"content\":\"original\"}]}", null, session);
+            assertThat(first.success()).isTrue();
+            assertThat(todoRepository.findByUserId(user)).extracting(TodoEntity::getTitle).containsExactly("original");
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> registry.execute("todo", "second",
+                "{\"todos\":[{\"content\":\"replacement\"},{\"content\":\"bad\\u0000value\"}]}", null, session))
+                .isInstanceOf(org.springframework.dao.DataAccessException.class);
+            assertThat(todoRepository.findByUserId(user)).extracting(TodoEntity::getTitle).containsExactly("original");
+            var finalResult = registry.execute("todo", "third", "{\"todos\":[{\"content\":\"final\"}]}", null, session);
+            assertThat(finalResult.success()).isTrue();
+            assertThat(todoRepository.findByUserId(user)).extracting(TodoEntity::getTitle).containsExactly("final");
+        } finally {
+            todoRepository.deleteByUserId(user);
+            sessionRepository.deleteById(saved.getId());
+        }
+    }
+
     @Test
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     void replacementRollsBackIfLaterInsertFailsAtDatabase() {
