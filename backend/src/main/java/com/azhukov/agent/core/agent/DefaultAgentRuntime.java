@@ -731,9 +731,8 @@ public class DefaultAgentRuntime implements AgentRuntime {
                         turnIndex));
                 }
                 turnIndex++;
-                context = contextEngine.prepareContext(session, turnMessages);
-                session = resolveRotatedSession(session);
-                response = callModelWithRetry(context, tools, session, options);
+                // The next outer iteration issues the recovery request using
+                // the persisted tool-result stub; do not discard a separate call.
                 continue;
             }
 

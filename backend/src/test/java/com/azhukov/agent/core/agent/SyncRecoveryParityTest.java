@@ -119,7 +119,8 @@ class SyncRecoveryParityTest {
             : ChatResponse.text("after recovery", "STOP"));
         TurnResult result = runtime.runTurn(Session.create("user", "noop", "noop"), "hi");
         assertThat(result.messages()).anyMatch(m -> m.role() == Role.TOOL && m.content().contains("not executed"));
-        assertThat(calls.get()).isLessThanOrEqualTo(7);
+        assertThat(calls.get()).isEqualTo(6);
+        assertThat(lastAssistant(result)).isEqualTo("after recovery");
     }
 
     @Test
