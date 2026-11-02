@@ -713,6 +713,9 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 context = contextEngine.prepareContext(session, turnMessages);
                 session = resolveRotatedSession(session);
                 response = callModelWithRetry(context, tools, session, boostedOptions);
+                budget = iterationBudget.recordModelCall(budget,
+                    tokenEstimator.estimateTokens(context), estimateResponseTokens(response));
+                turnState.recordModelCall();
             }
 
             // Truncated tool call ceiling reached — refuse to execute incomplete arguments.

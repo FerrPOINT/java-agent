@@ -54,6 +54,11 @@ class SyncRecoveryParityTest {
     }
 
     private DefaultAgentRuntime buildRuntime(AtomicInteger calls, BiFunction<Integer, Integer, ChatResponse> responder) {
+        return buildRuntime(calls, responder, null);
+    }
+
+    private DefaultAgentRuntime buildRuntime(AtomicInteger calls, BiFunction<Integer, Integer, ChatResponse> responder,
+                                            com.azhukov.agent.core.budget.IterationBudget overrideBudget) {
         ToolRegistry registry = mock(ToolRegistry.class);
         when(registry.getDefinitions(any())).thenReturn(List.of());
         when(registry.getDefinitions(any(Set.class))).thenReturn(List.of());
@@ -84,7 +89,7 @@ class SyncRecoveryParityTest {
         return new DefaultAgentRuntime(
             model, registry, toolExecutionService, promptBuilder, contextEngine,
             mock(MemoryProvider.class), mock(SkillManager.class),
-            new DefaultIterationBudget(properties),
+            overrideBudget != null ? overrideBudget : new DefaultIterationBudget(properties),
             new MessageSanitizer(new SecretRedactor(properties)), svc, properties,
             new UserInputSanitizer(), new DefaultToolCallGuardrail(properties),
             new TurnStateManager(), null, null, null, new SteerBuffer(),
@@ -102,12 +107,18 @@ class SyncRecoveryParityTest {
 
     @Test
     void successfulBoostedTruncatedToolRetryIsProcessedInsteadOfDiscarded() {
-        AtomicInteger calls = new AtomicInteger();
+        var calls = new AtomicInteger();
+        var budget = mock(com.azhukov.agent.core.budget.IterationBudget.class);
+        var snap = mock(com.azhukov.agent.core.budget.IterationBudget.TurnSnapshot.class);
+        when(budget.startTurn(any())).thenReturn(snap);
+        when(budget.recordModelCall(any(), org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.anyInt())).thenReturn(snap);
         var runtime = buildRuntime(calls, (n, total) -> n == 1
             ? new ChatResponse("", List.of(new ToolCall("c1", "weather", "{}")), "LENGTH")
-            : ChatResponse.text("recovered", "STOP"));
+            : ChatResponse.text("recovered", "STOP"), budget);
         TurnResult result = runtime.runTurn(Session.create("user", "noop", "noop"), "hi");
         assertThat(calls.get()).isEqualTo(2);
+        org.mockito.Mockito.verify(budget, org.mockito.Mockito.times(2))
+            .recordModelCall(any(), org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.anyInt());
         assertThat(lastAssistant(result)).isEqualTo("recovered");
     }
 
