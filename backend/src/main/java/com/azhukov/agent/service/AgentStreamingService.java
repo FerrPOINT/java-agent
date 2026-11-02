@@ -1234,7 +1234,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     contentBuilder.setLength(0);
                     collectedToolCalls.clear();
                     List<Message> lengthContext = new ArrayList<>(turnMessages);
-                    lengthContext.add(Message.assistant(partialContent, turnIndex));
+                    lengthContext.add(Message.assistant(truncatedParts.toString(), turnIndex));
                     lengthContext.add(Message.user(com.azhukov.agent.core.agent.ResponseRecoveryPolicy.LENGTH_NUDGE));
                     context = contextEngine.prepareContext(session, lengthContext);
                     context = HistorySanitizer.sanitizeForModelRequest(context);

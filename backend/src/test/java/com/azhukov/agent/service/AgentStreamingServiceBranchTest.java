@@ -212,6 +212,26 @@ class AgentStreamingServiceBranchTest {
     }
 
     @Test
+    void secondStreamingLengthContinuationRetainsAllPriorFragments() throws Exception {
+        var requests = new CopyOnWriteArrayList<List<Message>>();
+        var attempts = new AtomicInteger();
+        doAnswer(inv -> {
+            requests.add(List.copyOf(inv.getArgument(0)));
+            var handler = (StreamingResponseHandler) inv.getArgument(3);
+            int n = attempts.incrementAndGet();
+            handler.onToken(n == 1 ? "first fragment" : n == 2 ? "second fragment" : "final");
+            handler.onComplete(n < 3 ? "length" : "stop", 1L);
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+        var emitter = new CollectingEmitter(30_000L);
+        streamingService.streamTurn(ChatRequest.simple(SESSION_ID, "hello", null, 10_000L), emitter);
+        emitter.awaitDone();
+        assertThat(attempts.get()).isEqualTo(3);
+        assertThat(requests.get(2)).anySatisfy(message -> assertThat(message.content()).contains("first fragment"));
+        assertThat(requests.get(2)).anySatisfy(message -> assertThat(message.content()).contains("second fragment"));
+    }
+
+    @Test
     void boostedRetryContentFilterDoesNotTriggerEmptyRetry() throws Exception {
         var attempts = new AtomicInteger();
         doAnswer(inv -> {
