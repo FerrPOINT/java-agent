@@ -502,12 +502,7 @@ public class MessageApiClient extends BaseBackendClient {
         }
         // Per-session model override (/model command) — the backend threads it
         // through ModelRequestOptions so every model call in the turn uses it.
-        String model = runtime.getModelOverride();
-        var available = properties.getAvailableModels();
-        if (!available.isEmpty() && (model == null || model.isBlank() || !available.contains(model))) {
-            String fallback = properties.getDefaultModel();
-            model = available.contains(fallback) ? fallback : available.getFirst();
-        }
+        String model = com.azhukov.agent.bot.config.ModelSelection.resolve(properties, runtime.getModelOverride());
         if (model != null && !model.isBlank()) {
             body.put("model", model);
         }

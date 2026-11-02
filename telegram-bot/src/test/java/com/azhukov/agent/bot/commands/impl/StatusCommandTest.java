@@ -17,6 +17,17 @@ import static org.mockito.Mockito.*;
 class StatusCommandTest {
 
     @Test
+    void staleOverrideShowsEffectiveAllowedModel() {
+        BotProperties props = new BotProperties();
+        props.getAvailableModels().add("app-test");
+        props.setDefaultModel("app-test");
+        var cmd = new StatusCommand(props, mock(AgentBackendClient.class));
+        var session = newSession(UUID.randomUUID());
+        session.setModelOverride("obsolete");
+        assertThat(cmd.handle(makeEvent(""), session)).contains("Model: app-test").doesNotContain("obsolete");
+    }
+
+    @Test
     void nameAndDescription() {
         var cmd = new StatusCommand(mock(BotProperties.class), mock(AgentBackendClient.class));
         assertThat(cmd.name()).isEqualTo("status");

@@ -800,10 +800,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         if (result != null && result.modelUsed() != null && !result.modelUsed().isBlank()) {
             return result.modelUsed();
         }
-        if (session.getModelOverride() != null && !session.getModelOverride().isBlank()) {
-            return session.getModelOverride();
-        }
-        return properties.getDefaultModel();
+        return com.azhukov.agent.bot.config.ModelSelection.resolve(properties, session.getModelOverride());
     }
 
     @Override

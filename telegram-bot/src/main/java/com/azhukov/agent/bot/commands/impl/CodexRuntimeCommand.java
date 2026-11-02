@@ -74,10 +74,10 @@ public class CodexRuntimeCommand implements CommandHandler {
 	}
 
 	private String showCurrent(BotSessionEntity session) {
-		String model = properties.getDefaultModel();
 		String sessionModel = session != null ? session.getModelOverride() : null;
-		if (sessionModel != null && !sessionModel.isBlank()) {
-			model = sessionModel;
+		String model = com.azhukov.agent.bot.config.ModelSelection.resolve(properties, sessionModel);
+		if (!properties.getAvailableModels().isEmpty() && !properties.getAvailableModels().contains(sessionModel)) {
+			sessionModel = null;
 		}
 
 		StringBuilder sb = new StringBuilder("Current runtime:\n");

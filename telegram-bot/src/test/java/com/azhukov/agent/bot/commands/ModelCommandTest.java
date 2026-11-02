@@ -40,7 +40,7 @@ class ModelCommandTest {
     void noArgs_showsCurrentModelInKeyboardHeader() {
         BotSessionStore store = mock(BotSessionStore.class);
         BotProperties properties = new BotProperties();
-        properties.getAvailableModels().add("app-test");
+        properties.getAvailableModels().add("gpt-4o");
         var cmd = makeCommand(store, properties);
         BotSessionEntity session = new BotSessionEntity();
         session.setId(UUID.randomUUID());
@@ -59,13 +59,14 @@ class ModelCommandTest {
         BotSessionStore store = mock(BotSessionStore.class);
         BotProperties properties = new BotProperties();
         properties.getAvailableModels().add("app-test");
+        properties.setDefaultModel("app-test");
         var cmd = makeCommand(store, properties);
         BotSessionEntity session = new BotSessionEntity();
         session.setId(UUID.randomUUID());
         UpdateEvent event = makeEvent("");
         cmd.handle(event, session);
         verify(tc).sendMessage(anyLong(),
-            argThat(text -> text != null && text.contains("default")),
+            argThat(text -> text != null && text.contains("app-test")),
             isNull(), isNull(), any());
     }
 
