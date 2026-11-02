@@ -189,6 +189,31 @@ class AgentStreamingServiceBranchTest {
             new CliStateApplier(null), null, null, new com.azhukov.agent.core.metadata.ModelMetadataService(), null);
     }
 
+    @Test
+    void repeatedTruncatedStreamingToolCallsNeverExecute() throws Exception {
+        var attempts = new AtomicInteger();
+        when(toolExecutionService.enforceToolResultBudget(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(toolExecutionService.execute(any(), any(), any(), any(), any(), any())).thenReturn(ToolResult.ok("executed"));
+        doAnswer(inv -> {
+            int attempt = attempts.incrementAndGet();
+            StreamingResponseHandler handler = inv.getArgument(3);
+            if (attempt <= 3) {
+                handler.onToolCalls(List.of(new ToolCall("call-" + attempt, "weather", "{\"city\":\"valid-but-incomplete-response\"}")));
+                handler.onComplete("length", 10L);
+            } else {
+                handler.onToken("finished");
+                handler.onComplete("stop", 1L);
+            }
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+        var emitter = new CollectingEmitter(30_000L);
+        streamingService.streamTurn(ChatRequest.simple(SESSION_ID, "hello", null, 10_000L), emitter);
+        emitter.awaitDone();
+        assertThat(emitter.error.get()).isNull();
+        assertThat(attempts.get()).isGreaterThanOrEqualTo(4);
+        verify(toolExecutionService, never()).execute(any(), any(), any(), any(), any(), any());
+    }
+
     // ── selectTools: disabledTools filtering ──
 
     @Test

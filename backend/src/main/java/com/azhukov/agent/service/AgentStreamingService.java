@@ -1131,6 +1131,12 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     hasToolCalls = !collectedToolCalls.isEmpty();
                     log.info("Re-stream finish_reason={} for session {} (content={} chars, toolCalls={})",
                         finishReason, session.id(), contentBuilder.length(), collectedToolCalls.size());
+                    // A second truncated response is never safe to dispatch even
+                    // when its argument JSON happens to be syntactically valid.
+                    if (com.azhukov.agent.core.agent.ResponseRecoveryPolicy.isTruncatedToolCall(finishReason, hasToolCalls)
+                            && truncatedToolCallRetries < MAX_TRUNCATED_TOOL_CALL_RETRIES) {
+                        continue;
+                    }
                     // Fall through to ceiling check + normal finish_reason routing below
                 }
 
