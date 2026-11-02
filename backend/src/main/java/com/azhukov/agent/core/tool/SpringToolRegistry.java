@@ -188,7 +188,8 @@ public class SpringToolRegistry implements ToolRegistry {
     void registerBeans() {
         Map<String, Object> beans = context.getBeansWithAnnotation(AgentTool.class);
         for (Object bean : beans.values()) {
-            AgentTool annotation = bean.getClass().getAnnotation(AgentTool.class);
+            AgentTool annotation = org.springframework.core.annotation.AnnotatedElementUtils.findMergedAnnotation(
+                org.springframework.aop.support.AopUtils.getTargetClass(bean), AgentTool.class);
             if (annotation == null || !(bean instanceof ToolHandler handler)) {
                 continue;
             }
@@ -210,7 +211,7 @@ public class SpringToolRegistry implements ToolRegistry {
                 continue;
             }
             @SuppressWarnings("unchecked")
-            Class<? extends ToolHandler> handlerClass = (Class<? extends ToolHandler>) bean.getClass();
+            Class<? extends ToolHandler> handlerClass = (Class<? extends ToolHandler>) org.springframework.aop.support.AopUtils.getTargetClass(bean);
             ToolDefinition definition = buildDefinition(annotation.name(), annotation.description(), handlerClass);
             entries.put(annotation.name(), new ToolEntry(annotation, handler, definition));
         }
