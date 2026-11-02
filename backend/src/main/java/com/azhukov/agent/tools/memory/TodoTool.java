@@ -108,6 +108,9 @@ public class TodoTool implements ToolHandler {
             }
         }
 
+        if (session.id() == null || todoRepository.lockTodoSession(session.id()).isEmpty()) {
+            return ToolResult.fail("Session no longer exists.");
+        }
         // PostgreSQL transaction-scoped lock covers empty lists and multiple application instances.
         todoRepository.lockUserList(session.userId());
         boolean merge = args.merge() != null && args.merge();

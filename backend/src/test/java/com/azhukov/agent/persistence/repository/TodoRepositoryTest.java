@@ -179,6 +179,75 @@ class TodoRepositoryTest extends PostgresTestContainer {
 
     @Test
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void deletedSessionCannotReplaceAnotherSessionsTodos() {
+        String user = "missing-parent-" + UUID.randomUUID();
+        var retained = sessionRepository.saveAndFlush(newSession(user, "Retained"));
+        var removed = sessionRepository.saveAndFlush(newSession(user, "Removed"));
+        todoRepository.saveAndFlush(newTodo(retained.getId(), user, "retained", STATUS_PENDING, PRIORITY_HIGH, T1));
+        var stale = new com.azhukov.agent.core.model.Session(removed.getId(), user, "owner", MODEL_PROVIDER, MODEL_NAME, null, java.util.Map.of());
+        try {
+            assertThat(sessionQueryService.deleteSession(removed.getId())).isTrue();
+            var result = todoTool.execute("{\"todos\":[{\"content\":\"new\"}]}", null, stale);
+            assertThat(result.success()).isFalse();
+            assertThat(todoRepository.findByUserId(user)).extracting(TodoEntity::getTitle).containsExactly("retained");
+        } finally {
+            todoRepository.deleteByUserId(user); sessionRepository.deleteById(retained.getId()); sessionRepository.deleteById(removed.getId());
+        }
+    }
+
+    @Test
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void mergeWithNewItemAndDeleteSameSessionDoNotDeadlock() throws Exception {
+        String user = "same-session-new-" + UUID.randomUUID();
+        var saved = sessionRepository.saveAndFlush(newSession(user, "Same"));
+        var original = todoRepository.saveAndFlush(newTodo(saved.getId(), user, "old", STATUS_PENDING, PRIORITY_HIGH, T1));
+        var session = new com.azhukov.agent.core.model.Session(saved.getId(), user, "owner", MODEL_PROVIDER, MODEL_NAME, null, java.util.Map.of());
+        var locked = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var ready = new java.util.concurrent.CountDownLatch(1);
+        var holderPid = new java.util.concurrent.atomic.AtomicInteger();
+        var waiterPid = new java.util.concurrent.atomic.AtomicInteger();
+        var jdbc = applicationContext.getBean(org.springframework.jdbc.core.JdbcTemplate.class);
+        var delegate = org.mockito.Mockito.mock(TodoRepository.class, invocation -> {
+            try {
+                var result = invocation.getMethod().invoke(todoRepository, invocation.getArguments());
+                if (invocation.getMethod().getName().equals("findOwnedForUpdate")) {
+                    locked.countDown();
+                    if (!release.await(15, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("release timeout");
+                }
+                return result;
+            } catch (java.lang.reflect.InvocationTargetException e) { throw e.getCause(); }
+        });
+        var tool = new com.azhukov.agent.tools.memory.TodoTool(delegate);
+        var transactions = new org.springframework.transaction.support.TransactionTemplate(applicationContext.getBean(org.springframework.transaction.PlatformTransactionManager.class));
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            var merge = pool.submit(() -> transactions.execute(status -> {
+                holderPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                return tool.execute("{\"merge\":true,\"todos\":[{\"id\":\"" + original.getId() + "\",\"content\":\"updated\"},{\"content\":\"new\"}]}", null, session);
+            }));
+            assertThat(locked.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            var deletion = pool.submit(() -> transactions.execute(status -> {
+                waiterPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                ready.countDown();
+                boolean removed = sessionQueryService.deleteSession(saved.getId());
+                sessionRepository.flush();
+                return removed;
+            }));
+            assertThat(ready.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertDatabaseBlocked(waiterPid.get(), holderPid.get());
+            release.countDown();
+            assertThat(merge.get(10, java.util.concurrent.TimeUnit.SECONDS).success()).isTrue();
+            assertThat(deletion.get(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(todoRepository.findByUserId(user)).isEmpty();
+        } finally {
+            release.countDown(); pool.shutdownNow(); pool.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
+            todoRepository.deleteByUserId(user); sessionRepository.deleteById(saved.getId());
+        }
+    }
+
+    @Test
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     void mergeAndDeleteSameSessionDoNotDeadlock() throws Exception {
         String user = "same-session-" + UUID.randomUUID();
         var saved = sessionRepository.saveAndFlush(newSession(user, "Same"));

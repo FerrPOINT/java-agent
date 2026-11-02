@@ -35,6 +35,11 @@ class TodoToolTest {
     @Mock
     private TodoRepository todoRepository;
 
+    @org.junit.jupiter.api.BeforeEach
+    void allowExistingSession() {
+        lenient().when(todoRepository.lockTodoSession(SESSION.id())).thenReturn(Optional.of(SESSION.id()));
+    }
+
     // ── Read (no args = list) ──
 
     @Test

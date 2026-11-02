@@ -39,6 +39,11 @@ class MemoryTodoBranchTest {
     @Mock
     private TodoRepository todoRepository;
 
+    @org.junit.jupiter.api.BeforeEach
+    void allowExistingTodoSession() {
+        lenient().when(todoRepository.lockTodoSession(SESSION.id())).thenReturn(Optional.of(SESSION.id()));
+    }
+
     @Mock
     private WriteApprovalGate writeApprovalGate;
 
