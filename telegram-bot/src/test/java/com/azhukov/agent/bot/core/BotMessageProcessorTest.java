@@ -563,6 +563,16 @@ class BotMessageProcessorTest {
     }
 
     @Test
+    void multipartFallbackStopsWhenAChunkIsNotAccepted() {
+        String response = "x".repeat(9000);
+        stubStreamingResult(response, false);
+        when(telegramClient.sendMessage(eq(100L), anyString(), anyString(), any(), any()))
+            .thenReturn(Optional.of(41L), Optional.empty(), Optional.of(43L));
+        processor.accept(textEvent(1, 100L, "Hello"));
+        verify(telegramClient, times(2)).sendMessage(eq(100L), anyString(), anyString(), any(), any());
+    }
+
+    @Test
     void textMessageWithFooterAppendsFooter() {
         stubStreamingResult("Response", false);
         when(runtimeFooter.format(anyString(), anyInt(), anyInt(), anyString())).thenReturn("\n\nfooter");
@@ -2058,6 +2068,8 @@ class BotMessageProcessorTest {
     void longTextSplitIntoMultipleChunks() {
         String longText = "A".repeat(5000); // Exceeds 4096 limit
         stubStreamingResult(longText, false);
+        when(telegramClient.sendMessage(eq(100L), anyString(), anyString(), any(), any()))
+            .thenReturn(Optional.of(1L));
         processor.accept(textEvent(1, 100L, "hello"));
         // MessageSplitter should split into at least 2 chunks
         verify(telegramClient, atLeast(2)).sendMessage(eq(100L), anyString(), anyString(), any(), any());

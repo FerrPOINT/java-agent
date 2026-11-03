@@ -1143,11 +1143,15 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                 } else {
                     sent = telegramClient.sendMessage(chatId, chunk, parseMode, replyToMessageId, null);
                 }
-                if (retryable && sent.isEmpty()) {
-                    int retryAfter = telegramClient.takeLastRetryAfterSeconds();
-                    if (retryAfter > 0) {
-                        scheduleFinalDelivery(chatId, text, userMessageId, messageThreadId, (long) retryAfter + 1L, retries + 1);
+                if (sent.isEmpty()) {
+                    if (retryable) {
+                        int retryAfter = telegramClient.takeLastRetryAfterSeconds();
+                        if (retryAfter > 0) {
+                            scheduleFinalDelivery(chatId, text, userMessageId, messageThreadId, (long) retryAfter + 1L, retries + 1);
+                        }
                     }
+                    // Do not send later chunks after a missing or ambiguous receipt.
+                    return;
                 }
             }
         }
