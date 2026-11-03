@@ -66,6 +66,12 @@ class MessageSplitterTest {
     }
 
     @Test
+    void tinyLimitPreservesNewlinesVerbatim() {
+        String original = "a\n\nb\n\nc";
+        assertThat(String.join("", MessageSplitter.split(original, 2))).isEqualTo(original);
+    }
+
+    @Test
     void multiChunkHasContinuationIndicator() {
         // Create text > 4096 chars
         StringBuilder sb = new StringBuilder();

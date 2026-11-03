@@ -55,7 +55,7 @@ public final class MessageSplitter {
             if (maxLength < 2 && text.codePoints().anyMatch(cp -> Character.charCount(cp) == 2)) {
                 throw new IllegalArgumentException("maxLength cannot fit a Unicode code point");
             }
-            return doSplit(text, maxLength);
+            return splitVerbatim(text, maxLength);
         }
         int longestTag = text.lines().map(String::strip).filter(line -> line.startsWith("```"))
             .map(line -> line.substring(3).strip())
