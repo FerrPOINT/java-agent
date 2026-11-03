@@ -129,6 +129,7 @@ public class McpServerService {
      */
     private static final String MCP_USER = "agent.user";
     private static final String MCP_ROLE = "agent.role";
+    private static final String MCP_ACCESS = "agent.access";
 
     private McpSchema.CallToolResult handleToolCall(String toolName, McpSchema.CallToolRequest request, String mcpSessionId,
                                                      io.modelcontextprotocol.common.McpTransportContext transportContext) {
@@ -152,12 +153,23 @@ public class McpServerService {
             Session session = new Session(sessionId, owner, null, "mcp", "mcp", null, java.util.Map.of());
             String priorUser = com.azhukov.agent.core.security.UserContext.getUserId();
             String priorRole = com.azhukov.agent.core.security.UserContext.getRole();
+            var priorAccess = com.azhukov.agent.core.security.UserContext.centralAccess();
+            var access = transportContext == null ? null : (com.pdlc.auth.HumanApplicationAccess) transportContext.get(MCP_ACCESS);
             ToolResult result;
             try {
-                com.azhukov.agent.core.security.UserContext.set(owner, role);
+                if (access != null) {
+                    if (!access.subject().equals(owner) || !access.role().equals(role)) {
+                        throw new org.springframework.security.access.AccessDeniedException("MCP authority mismatch");
+                    }
+                    com.azhukov.agent.core.security.UserContext.setCentral(access);
+                    com.azhukov.agent.core.security.UserContext.requireCurrentAccess();
+                } else {
+                    com.azhukov.agent.core.security.UserContext.set(owner, role);
+                }
                 result = toolRegistry.execute(toolName, "mcp-" + System.nanoTime(), argumentsJson, Message.user(""), session);
             } finally {
-                if (priorUser == null) com.azhukov.agent.core.security.UserContext.clear();
+                if (priorAccess != null) com.azhukov.agent.core.security.UserContext.setCentral(priorAccess);
+                else if (priorUser == null) com.azhukov.agent.core.security.UserContext.clear();
                 else com.azhukov.agent.core.security.UserContext.set(priorUser, priorRole);
             }
 
@@ -210,9 +222,13 @@ public class McpServerService {
                 .contextExtractor(request -> {
                     String user = com.azhukov.agent.core.security.UserContext.getUserId();
                     String role = com.azhukov.agent.core.security.UserContext.getRole();
-                    return user == null ? io.modelcontextprotocol.common.McpTransportContext.EMPTY
-                        : io.modelcontextprotocol.common.McpTransportContext.create(java.util.Map.of(
-                            MCP_USER, user, MCP_ROLE, role == null ? com.azhukov.agent.core.security.UserContext.ROLE_USER : role));
+                    if (user == null) return io.modelcontextprotocol.common.McpTransportContext.EMPTY;
+                    var context = new java.util.HashMap<String, Object>();
+                    context.put(MCP_USER, user);
+                    context.put(MCP_ROLE, role == null ? com.azhukov.agent.core.security.UserContext.ROLE_USER : role);
+                    var access = com.azhukov.agent.core.security.UserContext.centralAccess();
+                    if (access != null) context.put(MCP_ACCESS, access);
+                    return io.modelcontextprotocol.common.McpTransportContext.create(context);
                 })
                 .build();
 
