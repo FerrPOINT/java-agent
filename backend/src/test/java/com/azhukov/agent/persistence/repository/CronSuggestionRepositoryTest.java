@@ -34,6 +34,28 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
 
     @Test
     @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void upgradesV73CronDataAndRestoresImmutableInventory() {
+        String schema = "cron_v73_" + java.util.UUID.randomUUID().toString().replace("-", "");
+        var jdbc = new org.springframework.jdbc.core.JdbcTemplate(dataSource);
+        var id = java.util.UUID.randomUUID();
+        try {
+            org.flywaydb.core.Flyway.configure().dataSource(dataSource).schemas(schema).defaultSchema(schema)
+                .locations("classpath:db/migration", "classpath:db/postgresql").target("73").load().migrate();
+            jdbc.update("insert into " + schema + ".cron_suggestions(id,user_id,title,source,job_name,job_schedule,job_prompt,dedup_key) values (?,?,?,?,?,?,?,?)",
+                id, "owner", "title", "test", "job", "0 9 * * *", "prompt", "key");
+            org.flywaydb.core.Flyway.configure().dataSource(dataSource).schemas(schema).defaultSchema(schema)
+                .locations("classpath:db/migration", "classpath:db/postgresql").load().migrate();
+            assertThat(jdbc.queryForObject("select count(*) from " + schema + ".cron_suggestions where id=? and user_id='owner'", Integer.class, id)).isEqualTo(1);
+            assertThat(jdbc.queryForObject("select count(*) from " + schema + ".java_identity_reference_sources where source='cron_suggestions'", Integer.class)).isEqualTo(1);
+            assertThatThrownBy(() -> jdbc.update("delete from " + schema + ".java_identity_reference_sources where source='cron_suggestions'"))
+                .hasStackTraceContaining("identity_provenance_immutable");
+        } finally {
+            jdbc.execute("drop schema if exists " + schema + " cascade");
+        }
+    }
+
+    @Test
+    @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     void upgradesMainSchemaFromV72ToCronSuggestionsV73() {
         String schema = "cron_upgrade_" + java.util.UUID.randomUUID().toString().replace("-", "");
         var jdbc = new org.springframework.jdbc.core.JdbcTemplate(dataSource);
