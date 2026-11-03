@@ -368,6 +368,21 @@ class StreamingOrchestratorTest {
     }
 
     @Test
+    void draftFloodWaitRetainsFinalTextAndCooldown() {
+        when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong())).thenReturn(Optional.empty());
+        when(streamEditor.finalizeStream(100L, -1L, "draft answer"))
+            .thenThrow(new com.azhukov.agent.bot.client.TelegramApiException(429, "flood", 17));
+        stubChatStream(ctx -> {
+            ctx.tokenConsumer.accept("draft answer");
+            ctx.onComplete.accept(new AgentBackendClient.ChatResult("draft answer", "model", 1, 10, true));
+            ctx.returnResult = new AgentBackendClient.ChatResult("draft answer", "model", 1, 10, true, false, null);
+        });
+        var result = orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
+        assertThat(result.streamFinalized()).isFalse();
+        verify(streamEditor).recordFinalDeliveryFailure(100L, "draft answer", 17);
+    }
+
+    @Test
     void streamChat_draftCompletionFinalizesTheDraftSession() {
         when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong()))
             .thenReturn(Optional.empty()); // Native drafts intentionally have no message id.

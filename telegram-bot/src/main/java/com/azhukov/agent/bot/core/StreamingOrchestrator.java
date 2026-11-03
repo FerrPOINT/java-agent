@@ -428,9 +428,18 @@ public class StreamingOrchestrator {
                     // heartbeat and remove the draft session. Sending directly here leaked
                     // the StreamSession indefinitely after a successful response.
                     if (messageId[0] < 0 && accumulated.length() > 0) {
-                        boolean delivered = streamEditor.finalizeStream(chatId, -1L, accumulated.toString());
+                        boolean delivered;
+                        try {
+                            delivered = streamEditor.finalizeStream(chatId, -1L, accumulated.toString());
+                        } catch (TelegramApiException e) {
+                            streamEditor.recordFinalDeliveryFailure(chatId, accumulated.toString(), e.getRetryAfter());
+                            failedFinalDelivery[0] = true;
+                            finalized[0] = false;
+                            return;
+                        }
                         if (!delivered) {
                             streamEditor.recordFinalDeliveryFailure(chatId, accumulated.toString());
+                            failedFinalDelivery[0] = true;
                         }
                         finalized[0] = delivered;
                     }
