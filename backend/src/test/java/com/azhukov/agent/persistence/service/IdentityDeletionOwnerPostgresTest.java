@@ -90,6 +90,17 @@ class IdentityDeletionOwnerPostgresTest {
         owner.release(r,window());sql(db,"DELETE FROM sessions WHERE id='"+session+"'");
         assertThat(owner.check(new Request(1,UUID.randomUUID(),r.identity(),r.inventoryRevision()),window()).referenceCount()).isPositive();
     });}
+    @Test void cron_suggestions_are_counted_and_fenced()throws Exception{isolated(false,db->{
+        var owner=store(db);Request r=request();owner.central(ISSUER,r.identity().subject(),window());
+        long before=owner.check(r,window()).referenceCount();
+        String insert="INSERT INTO cron_suggestions(id,user_id,title,source,job_name,job_schedule,job_prompt,dedup_key) VALUES ('"+UUID.randomUUID()+"','"+r.identity().subject()+"','title','test','job','0 9 * * *','prompt','key')";
+        sql(db,insert);
+        assertThat(owner.check(r,window()).referenceCount()).isEqualTo(before+1);
+        owner.freeze(r,window());
+        assertThatThrownBy(()->sql(db,insert.replace("'key'", "'another'"))).isInstanceOf(SQLException.class).hasMessageContaining("identity_deletion_fenced");
+        owner.release(r,window());
+        sql(db,insert.replace("'key'", "'another'").replaceFirst("'[0-9a-f-]{36}'", "'"+UUID.randomUUID()+"'"));
+    });}
     @Test void native_uuid_and_native_gateway_never_become_a_guessed_auth_subject()throws Exception{isolated(false,db->{
         var owner=store(db);Request r=request();String id=r.identity().subject();
         sql(db,"INSERT INTO agent_users(id,username,role) VALUES('"+id+"','synthetic-native','user')");session(db,UUID.randomUUID(),id);
