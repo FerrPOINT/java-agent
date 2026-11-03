@@ -55,6 +55,21 @@ class StreamEditorFloodFallbackTest {
     // ─── 4a: Flood strikes fallback mode tests ─────────────────────
 
     @Test
+    void freshFinalFloodWaitPreservesCooldownForFallback() {
+        var session = editor.sessionFor(123L);
+        session.streamStartTime = System.currentTimeMillis() - 10000;
+        session.currentMessageId.set(42L);
+        org.springframework.test.util.ReflectionTestUtils.setField(editor, "freshFinalTimeoutMs", 1L);
+        when(client.sendMessage(eq(123L), anyString(), any(), any(), any(), anyBoolean()))
+            .thenReturn(Optional.empty());
+        when(client.takeLastRetryAfterSeconds()).thenReturn(270);
+        assertThat(editor.finalizeStream(123L, 42L, "final response")).isFalse();
+        editor.recordFinalDeliveryFailure(123L, "final response");
+        assertThat(editor.takePendingFinalRetryAfterSeconds(123L)).isEqualTo(270);
+        verify(client, never()).deleteMessage(123L, 42L);
+    }
+
+    @Test
     void draftRichFinalUsesOriginalForumThread() {
         var rich = mock(RichMessageSupport.class);
         var props = new BotProperties();

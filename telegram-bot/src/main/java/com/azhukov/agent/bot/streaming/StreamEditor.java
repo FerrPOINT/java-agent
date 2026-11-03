@@ -749,6 +749,8 @@ public class StreamEditor {
                 log.debug("Fresh-final sent for chat {}, new messageId={}", chatId, newMsgId.get());
                 return true;
             }
+            int retryAfter = telegramClient.takeLastRetryAfterSeconds();
+            if (retryAfter > 0) session.pendingFinalRetryAfterSeconds = retryAfter;
             log.warn("Fresh-final sendMessage failed for chat {}; preserving draft message {}", chatId, effectiveMessageId);
             return false;
         }
