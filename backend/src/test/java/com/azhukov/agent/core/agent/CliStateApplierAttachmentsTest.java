@@ -143,6 +143,43 @@ class CliStateApplierAttachmentsTest {
     }
 
     @Test
+    void firstTurnScopesGatewayAndAuthenticatedUsersToEffectiveOwner() {
+        var service = Mockito.mock(AttachmentArtifactService.class);
+        var applier = new CliStateApplier(prov(service));
+        var request = requestWith(List.of(AttachmentRef.of("att_private"))).withUserId("sender");
+        try {
+            com.azhukov.agent.core.security.UserContext.set("gateway", com.azhukov.agent.core.security.UserContext.ROLE_ADMIN);
+            applier.applyCliState(request, null);
+            Mockito.verify(service).find("att_private", "sender");
+            com.azhukov.agent.core.security.UserContext.set("ordinary", com.azhukov.agent.core.security.UserContext.ROLE_USER);
+            applier.applyCliState(request, null);
+            Mockito.verify(service).find("att_private", "ordinary");
+            Mockito.verify(service, Mockito.never()).find("att_private");
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+        }
+    }
+
+    @Test
+    void existingSessionUsesPersistedOwnerEvenIfGatewayRequestsAnother() {
+        var service = Mockito.mock(AttachmentArtifactService.class);
+        var session = session();
+        session.setUserId("session-owner");
+        var request = requestWith(List.of(AttachmentRef.of("att_private"))).withUserId("different");
+        try {
+            com.azhukov.agent.core.security.UserContext.set("gateway", com.azhukov.agent.core.security.UserContext.ROLE_ADMIN);
+            var applier = new CliStateApplier(prov(service));
+            applier.applyCliState(request, session);
+            applier.applyCliState(request, session);
+            Mockito.verify(service, Mockito.times(2)).find("att_private", "session-owner");
+            Mockito.verify(service, Mockito.never()).find("att_private");
+            Mockito.verify(service, Mockito.never()).contentPath(Mockito.anyString(), Mockito.anyString());
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+        }
+    }
+
+    @Test
     void invalidRefsAreSkippedEntirely() {
         AttachmentArtifactService service = Mockito.mock(AttachmentArtifactService.class);
         CliStateApplier applier = new CliStateApplier(prov(service));
