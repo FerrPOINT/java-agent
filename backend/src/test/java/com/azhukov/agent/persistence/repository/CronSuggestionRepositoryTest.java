@@ -45,18 +45,24 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
 
     @Test
     @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
-    void legacyCronV72CannotSilentlyUpgradeAsIdentityV72() {
+    void legacyCronV72CannotSilentlyUpgradeAsIdentityV72(@org.junit.jupiter.api.io.TempDir java.nio.file.Path legacyPostgres) throws Exception {
         String schema = "cron_legacy_" + java.util.UUID.randomUUID().toString().replace("-", "");
         var jdbc = new org.springframework.jdbc.core.JdbcTemplate(dataSource);
+        var postgresMigrations = java.nio.file.Path.of(getClass().getResource("/db/postgresql").toURI());
         try {
+            try (var paths = java.nio.file.Files.list(postgresMigrations)) {
+                for (var path : paths.filter(p -> !p.getFileName().toString().startsWith("V72__")).toList()) {
+                    java.nio.file.Files.copy(path, legacyPostgres.resolve(path.getFileName()));
+                }
+            }
             org.flywaydb.core.Flyway.configure().dataSource(dataSource).schemas(schema).defaultSchema(schema)
-                .locations("classpath:db/migration", "classpath:db/postgresql").target("71").load().migrate();
-            jdbc.execute("create table " + schema + ".cron_suggestions (id uuid primary key, user_id text not null)");
-            jdbc.update("insert into " + schema + ".cron_suggestions(id,user_id) values (?,?)", java.util.UUID.randomUUID(), "owner");
-            jdbc.update("insert into " + schema + ".flyway_schema_history(installed_rank,version,description,type,script,checksum,installed_by,execution_time,success) values ((select max(installed_rank)+1 from " + schema + ".flyway_schema_history), '72', 'cron suggestions', 'SQL', 'V72__cron_suggestions.sql', 123456, current_user, 0, true)");
+                .locations("classpath:db/migration", "classpath:legacy-cron", "filesystem:" + legacyPostgres).target("72").load().migrate();
+            jdbc.update("insert into " + schema + ".cron_suggestions(id,user_id,title,source,job_name,job_schedule,job_prompt,dedup_key) values (?,?,?,?,?,?,?,?)",
+                java.util.UUID.randomUUID(), "owner", "title", "test", "job", "0 9 * * *", "prompt", "key");
             assertThatThrownBy(() -> org.flywaydb.core.Flyway.configure().dataSource(dataSource)
                 .schemas(schema).defaultSchema(schema).locations("classpath:db/migration", "classpath:db/postgresql")
-                .load().migrate()).isInstanceOf(org.flywaydb.core.api.exception.FlywayValidateException.class);
+                .load().migrate()).isInstanceOf(org.flywaydb.core.api.exception.FlywayValidateException.class)
+                .hasMessageContaining("Migration checksum mismatch for migration version 72");
             assertThat(jdbc.queryForObject("select count(*) from " + schema + ".cron_suggestions", Integer.class)).isEqualTo(1);
         } finally {
             jdbc.execute("drop schema if exists " + schema + " cascade");
