@@ -534,6 +534,21 @@ class BotMessageProcessorTest {
     }
 
     @Test
+    void deferredFinalRetriesAgainAfterSecondFloodRejection() {
+        stubStreamingResult("Response text", false);
+        when(streamEditor.takePendingFinalText(100L)).thenReturn("Response text");
+        when(streamEditor.takePendingFinalRetryAfterSeconds(100L)).thenReturn(1);
+        when(telegramClient.sendMessage(eq(100L), contains("Response text"), anyString(), any(), any()))
+            .thenReturn(java.util.Optional.empty(), java.util.Optional.of(42L));
+        when(telegramClient.takeLastRetryAfterSeconds()).thenReturn(1);
+
+        processor.accept(textEvent(1, 100L, "Hello"));
+
+        verify(telegramClient, timeout(7000).times(2))
+            .sendMessage(eq(100L), contains("Response text"), anyString(), any(), any());
+    }
+
+    @Test
     void textMessageWithFooterAppendsFooter() {
         stubStreamingResult("Response", false);
         when(runtimeFooter.format(anyString(), anyInt(), anyInt(), anyString())).thenReturn("\n\nfooter");
