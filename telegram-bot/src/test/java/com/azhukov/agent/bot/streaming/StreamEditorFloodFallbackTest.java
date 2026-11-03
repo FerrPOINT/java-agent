@@ -55,6 +55,19 @@ class StreamEditorFloodFallbackTest {
     // ─── 4a: Flood strikes fallback mode tests ─────────────────────
 
     @Test
+    void draftFinalFloodWaitPreservesCooldownForFallback() {
+        var session = editor.sessionFor(123L);
+        session.useDraftStreaming = true;
+        when(client.sendMessage(eq(123L), anyString(), any(), any(), any(), anyBoolean()))
+            .thenReturn(Optional.empty());
+        when(client.takeLastRetryAfterSeconds()).thenReturn(270);
+
+        assertThat(editor.finalizeStream(123L, -1L, "final response")).isFalse();
+        editor.recordFinalDeliveryFailure(123L, "final response");
+        assertThat(editor.takePendingFinalRetryAfterSeconds(123L)).isEqualTo(270);
+    }
+
+    @Test
     void finalMultiChunkSendStopsAtFirstUnacceptedChunk() {
         String text = "a".repeat(9000);
         when(client.sendMessage(eq(123L), anyString(), any(), any(), any(), anyBoolean()))

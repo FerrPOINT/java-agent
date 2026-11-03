@@ -663,11 +663,13 @@ public class StreamEditor {
             // Send the final text as a formatted message (commits the draft)
             // Hermes parity: apply MarkdownConverter before delivery, not raw markdown
             Optional<Long> finalMsgId = sendFormattedFinalMessage(chatId, scrubbed);
-            removeSession(chatId);
             if (finalMsgId.isPresent()) {
+                removeSession(chatId);
                 log.debug("Draft finalized for chat {}, messageId={}", chatId, finalMsgId.get());
                 return true;
             } else {
+                int retryAfter = telegramClient.takeLastRetryAfterSeconds();
+                if (retryAfter > 0) session.pendingFinalRetryAfterSeconds = retryAfter;
                 log.warn("Draft finalize sendMessage failed for chat {}", chatId);
                 return false;
             }
