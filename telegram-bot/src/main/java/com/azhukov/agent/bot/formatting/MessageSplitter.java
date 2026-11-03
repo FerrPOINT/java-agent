@@ -57,7 +57,17 @@ public final class MessageSplitter {
             }
             return doSplit(text, maxLength);
         }
-        int splitLimit = Math.max(2, maxLength - prefixReserve - (text.contains("```") ? 16 : 0));
+        int longestTag = text.lines().map(String::strip).filter(line -> line.startsWith("```"))
+            .map(line -> line.substring(3).strip())
+            .map(tag -> tag.isEmpty() ? "" : tag.split("\\s+", 2)[0])
+            .mapToInt(String::length).max().orElse(0);
+        int fenceReserve = text.contains("```") ? longestTag + 8 : 0;
+        if (maxLength - prefixReserve - fenceReserve < 2) {
+            // A fence label may be longer than an entire message. Preserve the
+            // source rather than inserting balancing markup and truncating it.
+            return splitVerbatim(text, maxLength);
+        }
+        int splitLimit = maxLength - prefixReserve - fenceReserve;
         List<String> chunks = balanceFencesAcrossChunks(doSplit(text, splitLimit), maxLength);
 
         // Add "(1/N)" continuation indicator when splitting into multiple chunks.
@@ -86,6 +96,20 @@ public final class MessageSplitter {
             return indexed;
         }
 
+        return chunks;
+    }
+
+    private static List<String> splitVerbatim(String text, int maxLength) {
+        List<String> chunks = new ArrayList<>();
+        int start = 0;
+        while (start < text.length()) {
+            int end = Math.min(text.length(), start + maxLength);
+            if (end < text.length() && Character.isHighSurrogate(text.charAt(end - 1))
+                    && Character.isLowSurrogate(text.charAt(end))) end--;
+            if (end == start) throw new IllegalArgumentException("maxLength cannot fit a Unicode code point");
+            chunks.add(text.substring(start, end));
+            start = end;
+        }
         return chunks;
     }
 

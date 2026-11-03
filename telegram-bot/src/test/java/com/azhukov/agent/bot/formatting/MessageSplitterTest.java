@@ -58,6 +58,14 @@ class MessageSplitterTest {
     }
 
     @Test
+    void extremelyLongFenceTagPreservesSourceWithoutOverflow() {
+        String original = "```" + "y".repeat(5000) + "\n" + "x".repeat(5000) + "\n```";
+        var chunks = MessageSplitter.split(original);
+        assertThat(String.join("", chunks)).isEqualTo(original);
+        assertThat(chunks).allSatisfy(chunk -> assertThat(chunk.length()).isLessThanOrEqualTo(4096));
+    }
+
+    @Test
     void multiChunkHasContinuationIndicator() {
         // Create text > 4096 chars
         StringBuilder sb = new StringBuilder();
