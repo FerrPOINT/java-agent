@@ -651,7 +651,8 @@ public class StreamEditor {
 
             // P1: Try rich message delivery first
             if (richMessageSupport != null && richMessageSupport.shouldAttemptRich(scrubbed)) {
-                Optional<Long> richMsgId = richMessageSupport.sendRichMessage(chatId, scrubbed, null, null);
+                Optional<Long> richMsgId = richMessageSupport.sendRichMessage(chatId, scrubbed, null,
+                    session.messageThreadId > 0 ? session.messageThreadId : null);
                 if (richMsgId.isPresent()) {
                     log.debug("Draft finalized via rich message for chat {}", chatId);
                     removeSession(chatId);

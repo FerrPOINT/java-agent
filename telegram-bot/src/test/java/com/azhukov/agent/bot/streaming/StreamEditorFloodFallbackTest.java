@@ -55,6 +55,21 @@ class StreamEditorFloodFallbackTest {
     // ─── 4a: Flood strikes fallback mode tests ─────────────────────
 
     @Test
+    void draftRichFinalUsesOriginalForumThread() {
+        var rich = mock(RichMessageSupport.class);
+        var props = new BotProperties();
+        var richEditor = new StreamEditor(client, props, new MediaDeliveryService(), rich);
+        richEditor.init();
+        var session = richEditor.sessionFor(123L);
+        session.useDraftStreaming = true;
+        session.messageThreadId = 77L;
+        when(rich.shouldAttemptRich(anyString())).thenReturn(true);
+        when(rich.sendRichMessage(eq(123L), anyString(), isNull(), eq(77L))).thenReturn(Optional.of(99L));
+        assertThat(richEditor.finalizeStream(123L, -1L, "final response")).isTrue();
+        verify(rich).sendRichMessage(eq(123L), anyString(), isNull(), eq(77L));
+    }
+
+    @Test
     void draftFinalUsesOriginalForumThread() {
         var session = editor.sessionFor(123L);
         session.useDraftStreaming = true;
