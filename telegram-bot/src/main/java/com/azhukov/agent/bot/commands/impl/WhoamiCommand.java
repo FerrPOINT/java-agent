@@ -2,7 +2,7 @@ package com.azhukov.agent.bot.commands.impl;
 
 import com.azhukov.agent.bot.auth.SlashAccessPolicy;
 import com.azhukov.agent.bot.commands.CommandHandler;
-import com.azhukov.agent.bot.config.BotProperties;
+import com.azhukov.agent.bot.auth.AuthorizationService;
 import com.azhukov.agent.bot.polling.UpdateEvent;
 import com.azhukov.agent.bot.session.BotSessionEntity;
 import org.springframework.stereotype.Component;
@@ -12,7 +12,7 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class WhoamiCommand implements CommandHandler {
 
-    private final BotProperties properties;
+    private final AuthorizationService authorizationService;
     private final SlashAccessPolicy slashAccessPolicy;
 
 
@@ -29,7 +29,7 @@ public class WhoamiCommand implements CommandHandler {
     @Override
     public String handle(UpdateEvent event, BotSessionEntity session) {
         String accessLevel = slashAccessPolicy.accessLevel(event.userId());
-        boolean authorized = properties.getAuth().getAllowedUserIds().contains(String.valueOf(event.userId()));
+        boolean authorized = authorizationService.isAuthorized(event);
         return "User info:\n"
             + "  User ID: " + event.userId() + "\n"
             + "  Username: " + (event.username() != null ? "@" + event.username() : "unknown") + "\n"

@@ -18,11 +18,10 @@ class WhoamiCommandTest {
         BotProperties properties = mock(BotProperties.class);
         BotProperties.Auth auth = mock(BotProperties.Auth.class);
         when(auth.getAllowedUserIds()).thenReturn(List.of("456"));
-        when(auth.isAllowByDefault()).thenReturn(false);
         when(properties.getAuth()).thenReturn(auth);
         SlashAccessPolicy policy = mock(SlashAccessPolicy.class);
         when(policy.accessLevel(456L)).thenReturn("admin");
-        var cmd = new WhoamiCommand(properties, policy);
+        var cmd = new WhoamiCommand(new com.azhukov.agent.bot.auth.AuthorizationService(properties), policy);
         UpdateEvent event = makeEvent("");
         String result = cmd.handle(event, null);
         assertThat(result).contains("User ID: 456");
@@ -37,11 +36,10 @@ class WhoamiCommandTest {
         BotProperties properties = mock(BotProperties.class);
         BotProperties.Auth auth = mock(BotProperties.Auth.class);
         when(auth.getAllowedUserIds()).thenReturn(List.of("999"));
-        when(auth.isAllowByDefault()).thenReturn(false);
         when(properties.getAuth()).thenReturn(auth);
         SlashAccessPolicy policy = mock(SlashAccessPolicy.class);
         when(policy.accessLevel(456L)).thenReturn("none");
-        var cmd = new WhoamiCommand(properties, policy);
+        var cmd = new WhoamiCommand(new com.azhukov.agent.bot.auth.AuthorizationService(properties), policy);
         UpdateEvent event = makeEvent("");
         String result = cmd.handle(event, null);
         assertThat(result).contains("Authorized: false");
@@ -53,13 +51,13 @@ class WhoamiCommandTest {
         var properties = new BotProperties();
         properties.getAuth().getAllowedUserIds().clear();
         properties.getAuth().setAllowByDefault(true);
-        var cmd = new WhoamiCommand(properties, mock(SlashAccessPolicy.class));
+        var cmd = new WhoamiCommand(new com.azhukov.agent.bot.auth.AuthorizationService(properties), mock(SlashAccessPolicy.class));
         assertThat(cmd.handle(makeEvent(""), null)).contains("Authorized: false");
     }
 
     @Test
     void nameAndDescription() {
-        var cmd = new WhoamiCommand(mock(BotProperties.class), mock(SlashAccessPolicy.class));
+        var cmd = new WhoamiCommand(mock(com.azhukov.agent.bot.auth.AuthorizationService.class), mock(SlashAccessPolicy.class));
         assertThat(cmd.name()).isEqualTo("whoami");
         assertThat(cmd.description()).isEqualTo("Show your user info");
     }
