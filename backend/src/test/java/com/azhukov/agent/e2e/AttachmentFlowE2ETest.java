@@ -155,6 +155,37 @@ class AttachmentFlowE2ETest extends PostgresTestContainer {
     }
 
     @Test
+    void authenticatedUserCannotUseForeignSessionToReadAttachments() throws Exception {
+        String owner = "session-owner-" + UUID.randomUUID();
+        String attacker = "caller-" + UUID.randomUUID();
+        String payload = "secret-" + UUID.randomUUID();
+        String artifact = uploadTextArtifact("private.txt", payload, owner);
+        var session = new com.azhukov.agent.persistence.entity.SessionEntity();
+        session.setUserId(owner);
+        session.setModelProvider("noop");
+        session.setModelName("noop");
+        session = sessionRepository.saveAndFlush(session);
+        var users = org.mockito.Mockito.mock(com.azhukov.agent.service.UserAccessService.class);
+        org.mockito.Mockito.when(users.authenticate("fixture-user-key")).thenReturn(
+            new com.azhukov.agent.service.UserAccessService.AuthenticatedUser(attacker, "user"));
+        var properties = new com.azhukov.agent.config.AgentProperties();
+        properties.getSecurity().setApiKey("fixture-global-key");
+        var filter = new com.azhukov.agent.api.filter.ApiKeyAuthFilter(properties, users);
+        var mvc = org.springframework.test.web.servlet.setup.MockMvcBuilders
+            .webAppContextSetup(webApplicationContext).addFilters(filter).build();
+        var response = mvc.perform(post("/api/v1/agent/chat").header("X-API-Key", "fixture-user-key")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"sessionId":"%s","message":"inspect","userId":"%s","attachments":[{"artifactId":"%s"}]}
+                    """.formatted(session.getId(), owner, artifact)))
+            .andReturn().getResponse();
+        assertThat(response.getStatus()).isIn(403, 404);
+        assertThat(response.getContentAsString()).doesNotContain(payload);
+        assertThat(messageRepository.findBySessionIdOrderByCreatedAtAsc(session.getId())).isEmpty();
+        assertThat(com.azhukov.agent.core.security.UserContext.getUserId()).isNull();
+    }
+
+    @Test
     void uploadChatWithAttachmentAndDeliveredReceipt() throws Exception {
         String ownerId = "e2e-" + UUID.randomUUID().toString().substring(0, 8);
 
