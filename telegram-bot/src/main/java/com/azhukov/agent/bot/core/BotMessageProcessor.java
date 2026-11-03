@@ -70,6 +70,7 @@ import jakarta.annotation.PostConstruct;
 @Slf4j
 @RequiredArgsConstructor
 public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatcher.Handlers, StreamingOrchestrator.ProcessorHooks {
+    private static final int MAX_DEFERRED_FLOOD_RETRIES = 3;
 
     private final TelegramClient telegramClient;
     private final AuthorizationService authorizationService;
@@ -316,8 +317,13 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
 
     private void scheduleFinalDelivery(long chatId, String response, long userMessageId,
                                        long messageThreadId, long delaySeconds) {
+        scheduleFinalDelivery(chatId, response, userMessageId, messageThreadId, delaySeconds, 0);
+    }
+
+    private void scheduleFinalDelivery(long chatId, String response, long userMessageId,
+                                       long messageThreadId, long delaySeconds, int retries) {
         deferredFinalDeliveryExecutor.schedule(
-            () -> sendFormatted(chatId, response, userMessageId, messageThreadId),
+            () -> sendFormatted(chatId, response, userMessageId, messageThreadId, retries),
             delaySeconds, TimeUnit.SECONDS);
     }
 
@@ -1070,6 +1076,10 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
      * @param messageThreadId the Telegram forum thread ID (0 = no thread routing)
      */
     private void sendFormatted(long chatId, String text, long userMessageId, long messageThreadId) {
+        sendFormatted(chatId, text, userMessageId, messageThreadId, -1);
+    }
+
+    private void sendFormatted(long chatId, String text, long userMessageId, long messageThreadId, int retries) {
         // B2.8: Response filter — filter silent/empty responses
         if (responseFilter.shouldFilter(text)) {
             log.debug("Response filtered (silent or empty) for chat {}", chatId);
@@ -1124,11 +1134,20 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                 } else {
                     replyToMessageId = null;
                 }
-                // Use 6-arg sendMessage when thread routing is needed, 5-arg otherwise
+                // Retry only a whole, text-only message that Telegram explicitly rejected.
+                // Replaying a multipart or media response can duplicate accepted sends.
+                boolean retryable = retries >= 0 && retries < MAX_DEFERRED_FLOOD_RETRIES && chunks.size() == 1 && text.equals(textForDisplay);
+                java.util.Optional<Long> sent;
                 if (threadId != null) {
-                    telegramClient.sendMessage(chatId, chunk, parseMode, replyToMessageId, threadId, false);
+                    sent = telegramClient.sendMessage(chatId, chunk, parseMode, replyToMessageId, threadId, false);
                 } else {
-                    telegramClient.sendMessage(chatId, chunk, parseMode, replyToMessageId, null);
+                    sent = telegramClient.sendMessage(chatId, chunk, parseMode, replyToMessageId, null);
+                }
+                if (retryable && sent.isEmpty()) {
+                    int retryAfter = telegramClient.takeLastRetryAfterSeconds();
+                    if (retryAfter > 0) {
+                        scheduleFinalDelivery(chatId, text, userMessageId, messageThreadId, (long) retryAfter + 1L, retries + 1);
+                    }
                 }
             }
         }

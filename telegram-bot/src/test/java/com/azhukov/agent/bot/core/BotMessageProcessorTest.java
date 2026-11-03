@@ -549,6 +549,20 @@ class BotMessageProcessorTest {
     }
 
     @Test
+    void deferredFinalDoesNotRetryAmbiguousFailure() throws InterruptedException {
+        stubStreamingResult("Response text", false);
+        when(streamEditor.takePendingFinalText(100L)).thenReturn("Response text");
+        when(streamEditor.takePendingFinalRetryAfterSeconds(100L)).thenReturn(1);
+        when(telegramClient.sendMessage(eq(100L), contains("Response text"), anyString(), any(), any()))
+            .thenReturn(java.util.Optional.empty());
+        when(telegramClient.takeLastRetryAfterSeconds()).thenReturn(-1);
+        processor.accept(textEvent(1, 100L, "Hello"));
+        verify(telegramClient, timeout(4000)).sendMessage(eq(100L), contains("Response text"), anyString(), any(), any());
+        Thread.sleep(2300);
+        verify(telegramClient, times(1)).sendMessage(eq(100L), contains("Response text"), anyString(), any(), any());
+    }
+
+    @Test
     void textMessageWithFooterAppendsFooter() {
         stubStreamingResult("Response", false);
         when(runtimeFooter.format(anyString(), anyInt(), anyInt(), anyString())).thenReturn("\n\nfooter");
