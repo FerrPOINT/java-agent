@@ -563,6 +563,22 @@ class BotMessageProcessorTest {
     }
 
     @Test
+    void deferredFloodRetriesAreBounded() throws InterruptedException {
+        stubStreamingResult("Response text", false);
+        when(streamEditor.takePendingFinalText(100L)).thenReturn("Response text");
+        when(streamEditor.takePendingFinalRetryAfterSeconds(100L)).thenReturn(1);
+        when(telegramClient.sendMessage(eq(100L), contains("Response text"), anyString(), any(), any()))
+            .thenReturn(Optional.empty());
+        when(telegramClient.takeLastRetryAfterSeconds()).thenReturn(1);
+        processor.accept(textEvent(1, 100L, "Hello"));
+        verify(telegramClient, timeout(12000).times(4))
+            .sendMessage(eq(100L), contains("Response text"), anyString(), any(), any());
+        Thread.sleep(2300);
+        verify(telegramClient, times(4))
+            .sendMessage(eq(100L), contains("Response text"), anyString(), any(), any());
+    }
+
+    @Test
     void multipartFallbackStopsWhenAChunkIsNotAccepted() {
         String response = "x".repeat(9000);
         stubStreamingResult(response, false);
