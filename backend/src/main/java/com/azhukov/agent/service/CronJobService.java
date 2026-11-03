@@ -774,10 +774,16 @@ private static final String CRON_EXECUTION_HINT = """
     }
 
     private void scheduleJob(CronJobEntity job, long delaySeconds) {
-        ScheduledFuture<?> future = scheduler.schedule(
-            () -> executeAndReschedule(job.getId()),
-            delaySeconds, TimeUnit.SECONDS
-        );
+        ScheduledFuture<?> future;
+        try {
+            future = scheduler.schedule(() -> executeAndReschedule(job.getId()), delaySeconds, TimeUnit.SECONDS);
+        } catch (java.util.concurrent.RejectedExecutionException rejected) {
+            job.setLastStatus("error");
+            job.setLastError("Failed to schedule cron job");
+            job.setNextRunAt(null);
+            cronJobRepository.save(job);
+            return;
+        }
         scheduledTasks.put(job.getId(), future);
         job.setNextRunAt(Instant.now().plusSeconds(delaySeconds));
         cronJobRepository.save(job);

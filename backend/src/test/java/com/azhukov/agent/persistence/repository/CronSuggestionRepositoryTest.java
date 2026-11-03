@@ -202,9 +202,39 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
         }
     }
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.azhukov.agent.api.CronJobController cronController;
+
     @Test
     @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
-    void schedulerFailureDoesNotReportAcceptanceAsSuccessfullyScheduled() {
+    void controllerReportsCommittedSchedulerRejection() {
+        var tx = new org.springframework.transaction.support.TransactionTemplate(transactionManager);
+        var properties = (com.azhukov.agent.config.AgentProperties) org.springframework.test.util.ReflectionTestUtils.getField(cronJobService, "properties");
+        boolean previous = properties.getCron().isEnabled();
+        var scheduler = org.springframework.test.util.ReflectionTestUtils.getField(cronJobService, "scheduler");
+        var rejecting = org.mockito.Mockito.mock(java.util.concurrent.ScheduledExecutorService.class);
+        org.mockito.Mockito.when(rejecting.schedule(org.mockito.ArgumentMatchers.any(Runnable.class), org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.any()))
+            .thenThrow(new java.util.concurrent.RejectedExecutionException("scheduler unavailable"));
+        String owner = "http-status-" + java.util.UUID.randomUUID();
+        var id = tx.execute(s -> cronSuggestionRepository.saveAndFlush(newSuggestion(owner, "key")).getId());
+        try {
+            properties.getCron().setEnabled(true);
+            org.springframework.test.util.ReflectionTestUtils.setField(cronJobService, "scheduler", rejecting);
+            com.azhukov.agent.core.security.UserContext.set(owner, com.azhukov.agent.core.security.UserContext.ROLE_USER);
+            var result = cronController.acceptSuggestion(id.toString());
+            assertThat(result).containsEntry("accepted", true).containsEntry("schedulingStatus", "failed");
+            assertThat(cronJobRepository.findById(java.util.UUID.fromString((String) result.get("jobId"))).orElseThrow().getLastStatus()).isEqualTo("error");
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+            org.springframework.test.util.ReflectionTestUtils.setField(cronJobService, "scheduler", scheduler);
+            properties.getCron().setEnabled(previous);
+            tx.executeWithoutResult(s -> { cronJobRepository.deleteAll(cronJobRepository.findAll().stream().filter(j -> owner.equals(j.getUserId())).toList()); cronSuggestionRepository.deleteById(id); });
+        }
+    }
+
+    @Test
+    @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void schedulerFailurePersistsAndReportsErrorWithoutPretendingRollback() {
         var tx = new org.springframework.transaction.support.TransactionTemplate(transactionManager);
         var properties = (com.azhukov.agent.config.AgentProperties) org.springframework.test.util.ReflectionTestUtils.getField(cronJobService, "properties");
         boolean previous = properties.getCron().isEnabled();
@@ -218,8 +248,24 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
             properties.getCron().setEnabled(true);
             org.springframework.test.util.ReflectionTestUtils.setField(cronJobService, "scheduler", rejecting);
             com.azhukov.agent.core.security.UserContext.set(owner, com.azhukov.agent.core.security.UserContext.ROLE_USER);
-            assertThatThrownBy(() -> suggestionService.acceptSuggestion(id.toString()))
-                .hasStackTraceContaining("scheduler unavailable");
+            var accepted = suggestionService.acceptSuggestion(id.toString());
+            assertThat(accepted).isNotNull();
+            var persisted = cronJobRepository.findById(accepted.getId()).orElseThrow();
+            assertThat(persisted.getLastStatus()).isEqualTo("error");
+            assertThat(persisted.getLastError()).contains("schedule");
+            assertThat(persisted.getNextRunAt()).isNull();
+            assertThat(cronSuggestionRepository.findById(id).orElseThrow().getStatus()).isEqualTo("accepted");
+            assertThat(suggestionService.acceptSuggestion(id.toString())).isNull();
+            org.springframework.test.util.ReflectionTestUtils.setField(cronJobService, "scheduler", scheduler);
+            cronJobService.init();
+            var recovered = cronJobRepository.findById(accepted.getId()).orElseThrow();
+            assertThat(recovered.getNextRunAt()).isNotNull();
+            assertThat(recovered.getLastStatus()).isNull();
+            @SuppressWarnings("unchecked")
+            var tasks = (java.util.Map<java.util.UUID, java.util.concurrent.ScheduledFuture<?>>) org.springframework.test.util.ReflectionTestUtils.getField(cronJobService, "scheduledTasks");
+            var future = tasks.remove(accepted.getId());
+            assertThat((Object) future).isNotNull();
+            future.cancel(false);
         } finally {
             com.azhukov.agent.core.security.UserContext.clear();
             org.springframework.test.util.ReflectionTestUtils.setField(cronJobService, "scheduler", scheduler);
