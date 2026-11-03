@@ -1121,10 +1121,16 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
 
         // B1.6: Thread reply mode — off/all/first
         String replyMode = properties.getReplyToMode();
-        Long replyToMessageId = null; // null = no reply_to by default
-
         List<String> chunks = MessageSplitter.split(formatted);
-        for (int i = 0; i < chunks.size(); i++) {
+        sendFormattedChunks(chatId, chunks, 0, parseMode, replyMode, userMessageId, messageThreadId,
+            text.equals(textForDisplay) ? retries : -1);
+    }
+
+    private void sendFormattedChunks(long chatId, List<String> chunks, int start, String parseMode,
+                                     String replyMode, long userMessageId, long messageThreadId, int retries) {
+        Integer threadId = messageThreadId > 0 ? (int) messageThreadId : null;
+        Long replyToMessageId;
+        for (int i = start; i < chunks.size(); i++) {
             String chunk = chunks.get(i);
             if (!chunk.isBlank()) {
                 if ("all".equalsIgnoreCase(replyMode) && userMessageId > 0) {
@@ -1134,9 +1140,8 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                 } else {
                     replyToMessageId = null;
                 }
-                // Retry only a whole, text-only message that Telegram explicitly rejected.
-                // Replaying a multipart or media response can duplicate accepted sends.
-                boolean retryable = retries >= 0 && retries < MAX_DEFERRED_FLOOD_RETRIES && chunks.size() == 1 && text.equals(textForDisplay);
+                // Resume at the rejected chunk; previously accepted chunks must not be replayed.
+                boolean retryable = retries >= 0 && retries < MAX_DEFERRED_FLOOD_RETRIES;
                 java.util.Optional<Long> sent;
                 if (threadId != null) {
                     sent = telegramClient.sendMessage(chatId, chunk, parseMode, replyToMessageId, threadId, false);
@@ -1147,7 +1152,11 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                     if (retryable) {
                         int retryAfter = telegramClient.takeLastRetryAfterSeconds();
                         if (retryAfter > 0) {
-                            scheduleFinalDelivery(chatId, text, userMessageId, messageThreadId, (long) retryAfter + 1L, retries + 1);
+                            int failedIndex = i;
+                            deferredFinalDeliveryExecutor.schedule(
+                                () -> sendFormattedChunks(chatId, chunks, failedIndex, parseMode, replyMode,
+                                    userMessageId, messageThreadId, retries + 1),
+                                (long) retryAfter + 1L, TimeUnit.SECONDS);
                         }
                     }
                     // Do not send later chunks after a missing or ambiguous receipt.

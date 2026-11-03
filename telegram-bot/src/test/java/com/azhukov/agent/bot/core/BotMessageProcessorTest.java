@@ -579,8 +579,41 @@ class BotMessageProcessorTest {
     }
 
     @Test
+    void deferredMultipartRetriesOnlyRejectedChunkAndContinues() {
+        String response = "a".repeat(4000) + "b".repeat(4000) + "c".repeat(1000);
+        stubStreamingResult(response, false);
+        when(streamEditor.takePendingFinalText(100L)).thenReturn(response);
+        when(streamEditor.takePendingFinalRetryAfterSeconds(100L)).thenReturn(1);
+        when(telegramClient.sendMessage(eq(100L), anyString(), anyString(), any(), any()))
+            .thenReturn(Optional.of(41L), Optional.empty(), Optional.of(42L), Optional.of(43L));
+        when(telegramClient.takeLastRetryAfterSeconds()).thenReturn(1);
+        processor.accept(textEvent(1, 100L, "Hello"));
+        verify(telegramClient, timeout(8000).times(4))
+            .sendMessage(eq(100L), anyString(), anyString(), any(), any());
+        var chunks = ArgumentCaptor.forClass(String.class);
+        verify(telegramClient, times(4)).sendMessage(eq(100L), chunks.capture(), anyString(), any(), any());
+        assertThat(chunks.getAllValues().get(1)).isEqualTo(chunks.getAllValues().get(2));
+        assertThat(chunks.getAllValues().get(0)).isNotEqualTo(chunks.getAllValues().get(1));
+    }
+
+    @Test
+    void deferredMultipartDoesNotReplayAmbiguousMiddleChunk() throws InterruptedException {
+        String response = "a".repeat(4000) + "b".repeat(4000) + "c".repeat(1000);
+        stubStreamingResult(response, false);
+        when(streamEditor.takePendingFinalText(100L)).thenReturn(response);
+        when(streamEditor.takePendingFinalRetryAfterSeconds(100L)).thenReturn(1);
+        when(telegramClient.sendMessage(eq(100L), anyString(), anyString(), any(), any()))
+            .thenReturn(Optional.of(41L), Optional.empty());
+        when(telegramClient.takeLastRetryAfterSeconds()).thenReturn(-1);
+        processor.accept(textEvent(1, 100L, "Hello"));
+        verify(telegramClient, timeout(5000).times(2)).sendMessage(eq(100L), anyString(), anyString(), any(), any());
+        Thread.sleep(2300);
+        verify(telegramClient, times(2)).sendMessage(eq(100L), anyString(), anyString(), any(), any());
+    }
+
+    @Test
     void multipartFallbackStopsWhenAChunkIsNotAccepted() {
-        String response = "x".repeat(9000);
+        String response = "a".repeat(4000) + "b".repeat(4000) + "c".repeat(1000);
         stubStreamingResult(response, false);
         when(telegramClient.sendMessage(eq(100L), anyString(), anyString(), any(), any()))
             .thenReturn(Optional.of(41L), Optional.empty(), Optional.of(43L));
