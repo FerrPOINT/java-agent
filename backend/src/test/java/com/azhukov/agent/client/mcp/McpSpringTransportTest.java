@@ -96,6 +96,51 @@ class McpSpringTransportTest {
     }
 
     @Test
+    void expiredCentralAuthorityCannotExecuteViaAsyncTransport() throws Exception {
+        var app = new SpringApplication(Application.class);
+        app.setDefaultProperties(Map.of("server.port", "0", "server.address", "127.0.0.1",
+            "agent.mcp.server.enabled", "true", "agent.mcp.server.transport", "sse",
+            "spring.autoconfigure.exclude", "org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration,org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration"));
+        try (var context = (ServletWebServerApplicationContext) app.run("--agent.security.api-key=test-only-key")) {
+            var valid = new com.pdlc.auth.HumanApplicationAccess("alice", "user", java.util.Set.of("java-agent"), 1,
+                true, java.time.Instant.now().plusSeconds(60), System.nanoTime() + 60_000_000_000L);
+            var expired = new com.pdlc.auth.HumanApplicationAccess("alice", "user", java.util.Set.of("java-agent"), 1,
+                true, java.time.Instant.now().minusSeconds(1), System.nanoTime() - 1);
+            var selected = new java.util.concurrent.atomic.AtomicReference<>(valid);
+            var verifier = mock(com.azhukov.agent.core.security.CentralJwtVerifier.class);
+            when(verifier.verifyIdentity(anyString(), anyString())).thenAnswer(inv ->
+                new com.azhukov.agent.core.security.CentralJwtVerifier.VerifiedIdentity("https://auth.example.test", selected.get(), null));
+            org.springframework.test.util.ReflectionTestUtils.setField(
+                context.getBean(com.azhukov.agent.api.filter.ApiKeyAuthFilter.class), "centralJwtVerifier", verifier);
+            var registry = context.getBean(ToolRegistry.class);
+            var calls = new java.util.concurrent.atomic.AtomicInteger();
+            doAnswer(inv -> {
+                calls.incrementAndGet();
+                assertThat(com.azhukov.agent.core.security.UserContext.centralAccess()).isSameAs(valid);
+                return ToolResult.ok("ok");
+            }).when(registry).execute(anyString(), anyString(), anyString(), any(), any());
+            String url = "http://127.0.0.1:" + context.getWebServer().getPort();
+            var transport = HttpClientSseClientTransport.builder(url).sseEndpoint("/mcp/sse")
+                .httpRequestCustomizer((builder, method, uri, body, transportContext) -> builder.header("Authorization", "Bearer test-proof"))
+                .build();
+            try (var client = McpClient.sync(transport).initializationTimeout(java.time.Duration.ofSeconds(8))
+                    .requestTimeout(java.time.Duration.ofSeconds(5)).build()) {
+                client.initialize();
+                assertThat(client.callTool(new McpSchema.CallToolRequest("echo", Map.of())).isError()).isNotEqualTo(true);
+                assertThat(calls.get()).isEqualTo(1);
+                selected.set(expired);
+                try {
+                    var result = client.callTool(new McpSchema.CallToolRequest("echo", Map.of()));
+                    assertThat(result.isError()).isTrue();
+                } catch (RuntimeException rejected) {
+                    // Authentication may reject the POST before the SDK can return a tool result.
+                }
+                assertThat(calls.get()).isEqualTo(1);
+            }
+        }
+    }
+
+    @Test
     void apiKeyRequiredAndAuthenticatedClientCanCallMcp() throws Exception {
         var app = new SpringApplication(Application.class);
         app.setDefaultProperties(Map.of("server.port", "0", "server.address", "127.0.0.1",
