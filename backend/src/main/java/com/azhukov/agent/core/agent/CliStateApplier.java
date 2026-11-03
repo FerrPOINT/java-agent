@@ -3,6 +3,7 @@ package com.azhukov.agent.core.agent;
 import com.azhukov.agent.api.dto.AttachmentRef;
 import com.azhukov.agent.api.dto.ChatRequest;
 import com.azhukov.agent.core.security.UserContext;
+import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.service.AttachmentArtifactService;
 import org.springframework.beans.factory.ObjectProvider;
@@ -56,7 +57,7 @@ public class CliStateApplier {
             if (request.attachments() == null || request.attachments().isEmpty()) {
                 return request;
             }
-            String withAttachments = appendAttachments(request.message(), request.attachments());
+            String withAttachments = appendAttachments(request.message(), request.attachments(), attachmentOwner(request, null));
             return new ChatRequest(
                 request.sessionId(), withAttachments,
                 request.delegationDepth(), request.timeoutMs(),
@@ -81,7 +82,7 @@ public class CliStateApplier {
         String subgoals = session.getCliStateValue("subgoals");
 
         String finalMessage = buildMergedMessage(request.message(), queuedPrompt, goal, subgoals, subgoal);
-        String withAttachments = appendAttachments(finalMessage, request.attachments());
+        String withAttachments = appendAttachments(finalMessage, request.attachments(), attachmentOwner(request, session));
         // Hermes /queue semantics: the queued prompt applies to the NEXT turn only.
         // Mark it consumed so callers can clear the persisted value inside a write tx.
         this.consumedQueuedPrompt.set(queuedPrompt != null && !queuedPrompt.isBlank());
@@ -149,7 +150,16 @@ public class CliStateApplier {
      * safe cache path. Unknown/unresolvable ids degrade honestly — the model
      * sees "[unavailable]" instead of a fabricated path.
      */
-    private String appendAttachments(String message, java.util.List<AttachmentRef> attachments) {
+    private static String attachmentOwner(ChatRequest request, SessionEntity session) {
+        if (session != null && session.getUserId() != null && !session.getUserId().isBlank()) {
+            return session.getUserId();
+        }
+        String requested = request.userId() != null && !request.userId().isBlank()
+            ? request.userId() : AgentProperties.DEFAULT_USER_ID;
+        return UserContext.effectiveUserId(requested);
+    }
+
+    private String appendAttachments(String message, java.util.List<AttachmentRef> attachments, String ownerId) {
         if (attachments == null || attachments.isEmpty()) {
             return message;
         }
@@ -161,18 +171,14 @@ public class CliStateApplier {
             if (ref == null || !ref.valid()) {
                 continue;
             }
-            String ownerId = UserContext.scopeUserId();
-            AttachmentArtifactService.AttachmentArtifact artifact = service == null ? null
-                : (ownerId == null ? service.find(ref.artifactId())
-                    : service.find(ref.artifactId(), ownerId)).orElse(null);
+            AttachmentArtifactService.AttachmentArtifact artifact = service == null || ownerId == null ? null
+                : service.find(ref.artifactId(), ownerId).orElse(null);
             if (artifact == null) {
                 sb.append("[unavailable: ").append(ref.artifactId()).append("]\n");
                 appended++;
                 continue;
             }
-            java.util.Optional<Path> content = ownerId == null
-                ? service.contentPath(ref.artifactId())
-                : service.contentPath(ref.artifactId(), ownerId);
+            java.util.Optional<Path> content = service.contentPath(ref.artifactId(), ownerId);
             String preview = content
                 .map(this::boundedTextPreview)
                 .filter(t -> t != null && !t.isBlank())

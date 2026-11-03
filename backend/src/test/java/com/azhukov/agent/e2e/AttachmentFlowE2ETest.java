@@ -56,6 +56,26 @@ class AttachmentFlowE2ETest extends PostgresTestContainer {
     }
 
     @Test
+    void firstTurnDoesNotInjectOtherOwnersAttachment() throws Exception {
+        String owner = "owner-" + UUID.randomUUID();
+        String other = "other-" + UUID.randomUUID();
+        String payload = "private-" + UUID.randomUUID();
+        String foreignId = uploadTextArtifact("private.txt", payload, other);
+        String ownId = uploadTextArtifact("own.txt", "owner-content", owner);
+        var response = mockMvc.perform(post("/api/v1/agent/chat")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"message":"inspect","userId":"%s","attachments":[{"artifactId":"%s"},{"artifactId":"%s"}]}
+                    """.formatted(owner, foreignId, ownId)))
+            .andExpect(status().isOk()).andReturn();
+        UUID sessionId = UUID.fromString(com.fasterxml.jackson.databind.json.JsonMapper.builder().build()
+            .readTree(response.getResponse().getContentAsString()).path("sessionId").asText());
+        String persisted = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).stream()
+            .filter(m -> "user".equals(m.getRole())).findFirst().orElseThrow().getContent();
+        assertThat(persisted).contains("owner-content", "[unavailable: " + foreignId + "]").doesNotContain(payload);
+    }
+
+    @Test
     void uploadChatWithAttachmentAndDeliveredReceipt() throws Exception {
         String ownerId = "e2e-" + UUID.randomUUID().toString().substring(0, 8);
 
