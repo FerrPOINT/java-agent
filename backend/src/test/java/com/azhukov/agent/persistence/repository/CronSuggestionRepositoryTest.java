@@ -43,6 +43,50 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
         }
     }
 
+    @Autowired
+    private com.azhukov.agent.service.CronSuggestionService suggestionService;
+
+    @Autowired
+    private org.springframework.transaction.PlatformTransactionManager transactionManager;
+
+    @Test
+    @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void dismissCannotOverwriteConcurrentAcceptance() throws Exception {
+        var tx = new org.springframework.transaction.support.TransactionTemplate(transactionManager);
+        String owner = "race-" + java.util.UUID.randomUUID();
+        var id = tx.execute(s -> cronSuggestionRepository.saveAndFlush(newSuggestion(owner, "key")).getId());
+        var acquired = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        try (var pool = java.util.concurrent.Executors.newFixedThreadPool(2)) {
+            var accept = pool.submit(() -> tx.execute(s -> {
+                var entity = cronSuggestionRepository.findByIdAndUserIdForUpdate(id, owner).orElseThrow();
+                acquired.countDown();
+                try {
+                    if (!release.await(10, java.util.concurrent.TimeUnit.SECONDS)) throw new IllegalStateException("timeout");
+                } catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new IllegalStateException(e); }
+                entity.setStatus("accepted");
+                return null;
+            }));
+            assertThat(acquired.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            var dismiss = pool.submit(() -> {
+                com.azhukov.agent.core.security.UserContext.set(owner, com.azhukov.agent.core.security.UserContext.ROLE_USER);
+                try { return suggestionService.dismissSuggestion(id.toString()); }
+                finally { com.azhukov.agent.core.security.UserContext.clear(); }
+            });
+            try {
+                assertThatThrownBy(() -> dismiss.get(500, java.util.concurrent.TimeUnit.MILLISECONDS))
+                    .isInstanceOf(java.util.concurrent.TimeoutException.class);
+            } finally { release.countDown(); }
+            accept.get(10, java.util.concurrent.TimeUnit.SECONDS);
+            assertThat(dismiss.get(10, java.util.concurrent.TimeUnit.SECONDS)).isFalse();
+            String status = tx.execute(s -> cronSuggestionRepository.findById(id).orElseThrow().getStatus());
+            assertThat(status).isEqualTo("accepted");
+        } finally {
+            release.countDown();
+            tx.executeWithoutResult(s -> cronSuggestionRepository.deleteById(id));
+        }
+    }
+
     @Test
     void ownerScopedQueriesDoNotLeakOrReuseAnotherUsersDedupKey() {
         CronSuggestionEntity alice = cronSuggestionRepository.save(newSuggestion("alice", "daily-briefing"));

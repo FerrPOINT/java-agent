@@ -59,7 +59,7 @@ class SuggestionCatalogParityTest {
             stored.add(entity);
             return entity;
         });
-        CronSuggestionService service = new CronSuggestionService(null, repository);
+        CronSuggestionService service = new CronSuggestionService(null, repository, org.mockito.Mockito.mock(jakarta.persistence.EntityManager.class));
         int seeded = service.seedCatalogSuggestions();
         assertThat(seeded).isEqualTo(4);
 

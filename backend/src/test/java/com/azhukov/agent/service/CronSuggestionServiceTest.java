@@ -77,7 +77,7 @@ class CronSuggestionServiceTest {
             stored.removeAll(invocation.getArgument(0));
             return null;
         }).when(cronSuggestionRepository).deleteAll(any());
-        service = new CronSuggestionService(cronJobService, cronSuggestionRepository);
+        service = new CronSuggestionService(cronJobService, cronSuggestionRepository, mock(jakarta.persistence.EntityManager.class));
     }
 
     @AfterEach

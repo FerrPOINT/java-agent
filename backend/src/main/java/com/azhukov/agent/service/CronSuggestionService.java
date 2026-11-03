@@ -31,6 +31,7 @@ public class CronSuggestionService {
 
  private final CronJobService cronJobService;
  private final CronSuggestionRepository cronSuggestionRepository;
+ private final jakarta.persistence.EntityManager entityManager;
 
  /**
  * Add a pending suggestion for the authenticated owner, or return null if it was
@@ -122,7 +123,7 @@ public class CronSuggestionService {
  /** Dismiss a current-owner suggestion and retain its dedup latch. */
  @Transactional
  public boolean dismissSuggestion(String ref) {
- CronSuggestionEntity suggestion = resolve(ref, currentUserId());
+ CronSuggestionEntity suggestion = resolveForUpdate(ref, currentUserId());
  if (suggestion == null || !STATUS_PENDING.equals(suggestion.getStatus())) {
  return false;
  }
@@ -147,7 +148,12 @@ public class CronSuggestionService {
  if (suggestion == null) {
  return null;
  }
- return cronSuggestionRepository.findByIdAndUserIdForUpdate(suggestion.getId(), userId).orElse(null);
+ CronSuggestionEntity locked = cronSuggestionRepository.findByIdAndUserIdForUpdate(suggestion.getId(), userId).orElse(null);
+ if (locked != null) {
+ // The initial lookup may have loaded stale state while another transaction held the lock.
+ entityManager.refresh(locked);
+ }
+ return locked;
  }
 
  private CronSuggestionEntity resolve(String ref, String userId) {
