@@ -49,6 +49,15 @@ class WhoamiCommandTest {
     }
 
     @Test
+    void obsoleteAllowByDefaultDoesNotClaimUserIsAuthorized() {
+        var properties = new BotProperties();
+        properties.getAuth().getAllowedUserIds().clear();
+        properties.getAuth().setAllowByDefault(true);
+        var cmd = new WhoamiCommand(properties, mock(SlashAccessPolicy.class));
+        assertThat(cmd.handle(makeEvent(""), null)).contains("Authorized: false");
+    }
+
+    @Test
     void nameAndDescription() {
         var cmd = new WhoamiCommand(mock(BotProperties.class), mock(SlashAccessPolicy.class));
         assertThat(cmd.name()).isEqualTo("whoami");

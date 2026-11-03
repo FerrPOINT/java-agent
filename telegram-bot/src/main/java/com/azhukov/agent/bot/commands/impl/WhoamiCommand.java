@@ -29,8 +29,7 @@ public class WhoamiCommand implements CommandHandler {
     @Override
     public String handle(UpdateEvent event, BotSessionEntity session) {
         String accessLevel = slashAccessPolicy.accessLevel(event.userId());
-        boolean authorized = properties.getAuth().getAllowedUserIds().contains(String.valueOf(event.userId()))
-            || properties.getAuth().isAllowByDefault();
+        boolean authorized = properties.getAuth().getAllowedUserIds().contains(String.valueOf(event.userId()));
         return "User info:\n"
             + "  User ID: " + event.userId() + "\n"
             + "  Username: " + (event.username() != null ? "@" + event.username() : "unknown") + "\n"
