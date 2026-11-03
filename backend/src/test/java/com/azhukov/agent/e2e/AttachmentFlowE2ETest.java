@@ -76,6 +76,35 @@ class AttachmentFlowE2ETest extends PostgresTestContainer {
     }
 
     @Test
+    void streamingFirstTurnScopesAttachmentsBeforePersisting() throws Exception {
+        String owner = "stream-owner-" + UUID.randomUUID();
+        String other = "stream-other-" + UUID.randomUUID();
+        String secret = "private-" + UUID.randomUUID();
+        String foreign = uploadTextArtifact("private.txt", secret, other);
+        String own = uploadTextArtifact("own.txt", "own-stream-content", owner);
+        var started = mockMvc.perform(post("/api/v1/agent/chat/stream")
+                .contentType(MediaType.APPLICATION_JSON).accept(MediaType.TEXT_EVENT_STREAM)
+                .content("""
+                    {"message":"inspect","userId":"%s","attachments":[{"artifactId":"%s"},{"artifactId":"%s"}]}
+                    """.formatted(owner, foreign, own)))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.request().asyncStarted())
+            .andReturn();
+        started.getAsyncResult(30_000);
+        var completed = mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch(started))
+            .andExpect(status().isOk()).andReturn();
+        String events = completed.getResponse().getContentAsString();
+        var sessions = sessionRepository.findAllByUserId(owner, org.springframework.data.domain.PageRequest.of(0, 10));
+        assertThat(sessions).hasSize(1);
+        String persisted = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessions.getContent().get(0).getId()).stream()
+            .filter(m -> "user".equals(m.getRole())).findFirst().orElseThrow().getContent();
+        assertThat(persisted).contains("own-stream-content", "[unavailable: " + foreign + "]").doesNotContain(secret);
+        assertThat(events).doesNotContain(secret);
+    }
+
+    @Autowired
+    private com.azhukov.agent.persistence.repository.SessionRepository sessionRepository;
+
+    @Test
     void uploadChatWithAttachmentAndDeliveredReceipt() throws Exception {
         String ownerId = "e2e-" + UUID.randomUUID().toString().substring(0, 8);
 
