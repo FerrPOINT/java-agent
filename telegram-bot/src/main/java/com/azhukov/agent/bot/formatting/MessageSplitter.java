@@ -46,7 +46,10 @@ public final class MessageSplitter {
         // a closing "\n```" and a language-tagged reopening to neighbouring
         // chunks; without this reserve a hard split at 4096 overflows Telegram
         // after the otherwise-correct fence repair.
-        int splitLimit = text.contains("```") ? Math.max(1, maxLength - 16) : maxLength;
+        // Reserve the complete index before splitting; truncating after adding it
+        // silently loses source characters at every full-size boundary.
+        int prefixReserve = 2 * Integer.toString(text.length()).length() + 4;
+        int splitLimit = Math.max(1, maxLength - prefixReserve - (text.contains("```") ? 16 : 0));
         List<String> chunks = balanceFencesAcrossChunks(doSplit(text, splitLimit), maxLength);
 
         // Add "(1/N)" continuation indicator when splitting into multiple chunks.

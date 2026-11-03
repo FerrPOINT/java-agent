@@ -18,6 +18,26 @@ class MessageSplitterTest {
     }
 
     @Test
+    void continuationPrefixesNeverDiscardPayloadCharacters() {
+        String original = "a".repeat(4096) + "b".repeat(4096) + "end";
+        List<String> chunks = MessageSplitter.split(original);
+        String restored = chunks.stream().map(chunk -> chunk.replaceFirst("^\\(\\d+/\\d+\\) ", ""))
+            .collect(java.util.stream.Collectors.joining());
+        assertThat(restored).isEqualTo(original);
+        assertThat(chunks).allSatisfy(chunk -> assertThat(chunk.length()).isLessThanOrEqualTo(4096));
+    }
+
+    @Test
+    void continuationPrefixesPreserveSurrogatePairsAcrossChunks() {
+        String original = "a".repeat(4084) + "🐟".repeat(2400) + "end";
+        List<String> chunks = MessageSplitter.split(original);
+        String restored = chunks.stream().map(chunk -> chunk.replaceFirst("^\\(\\d+/\\d+\\) ", ""))
+            .collect(java.util.stream.Collectors.joining());
+        assertThat(restored).isEqualTo(original);
+        assertThat(chunks).allSatisfy(chunk -> assertThat(chunk.length()).isLessThanOrEqualTo(4096));
+    }
+
+    @Test
     void multiChunkHasContinuationIndicator() {
         // Create text > 4096 chars
         StringBuilder sb = new StringBuilder();
