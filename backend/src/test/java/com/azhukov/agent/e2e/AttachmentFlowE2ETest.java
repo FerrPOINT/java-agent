@@ -41,7 +41,7 @@ class AttachmentFlowE2ETest extends PostgresTestContainer {
     private com.azhukov.agent.persistence.repository.SessionRepository sessionRepository;
 
     @Autowired
-    private com.azhukov.agent.service.AgentRuntimeService applicationRuntime;
+    private org.springframework.web.context.WebApplicationContext webApplicationContext;
 
     private static final String TEXT_PAYLOAD = "quarterly figures: 42";
 
@@ -71,15 +71,15 @@ class AttachmentFlowE2ETest extends PostgresTestContainer {
         var properties = new com.azhukov.agent.config.AgentProperties();
         properties.getSecurity().setApiKey("fixture-global-key");
         var filter = new com.azhukov.agent.api.filter.ApiKeyAuthFilter(properties, access);
-        var request = new org.springframework.mock.web.MockHttpServletRequest("POST", "/api/v1/agent/chat");
-        request.addHeader("X-API-Key", "fixture-user-key");
-        var response = new org.springframework.mock.web.MockHttpServletResponse();
-        var sessionId = new java.util.concurrent.atomic.AtomicReference<UUID>();
-        filter.doFilter(request, response, (incoming, outgoing) -> {
-            var chat = com.azhukov.agent.api.dto.ChatRequest.simple(null, "inspect", null, null).withUserId(requestedUser);
-            sessionId.set(applicationRuntime.runTurn(chat).sessionId());
-        });
-        assertThat(sessionRepository.findById(sessionId.get()).orElseThrow().getUserId()).isEqualTo(authenticatedUser);
+        var mvc = org.springframework.test.web.servlet.setup.MockMvcBuilders
+            .webAppContextSetup(webApplicationContext).addFilters(filter).build();
+        var result = mvc.perform(post("/api/v1/agent/chat").header("X-API-Key", "fixture-user-key")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"message\":\"inspect\",\"userId\":\"" + requestedUser + "\"}"))
+            .andExpect(status().isOk()).andReturn();
+        UUID sessionId = UUID.fromString(com.fasterxml.jackson.databind.json.JsonMapper.builder().build()
+            .readTree(result.getResponse().getContentAsString()).path("sessionId").asText());
+        assertThat(sessionRepository.findById(sessionId).orElseThrow().getUserId()).isEqualTo(authenticatedUser);
         assertThat(com.azhukov.agent.core.security.UserContext.getUserId()).isNull();
     }
 
