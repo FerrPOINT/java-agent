@@ -50,6 +50,14 @@ class MessageSplitterTest {
     }
 
     @Test
+    void fencedChunksStayWithinCustomLimitWithoutTruncatingContent() {
+        String body = "x".repeat(8000);
+        List<String> chunks = MessageSplitter.split("```" + "y".repeat(80) + "\n" + body + "\n```", 4096);
+        assertThat(chunks).allSatisfy(chunk -> assertThat(chunk.length()).isLessThanOrEqualTo(4096));
+        assertThat(chunks.stream().mapToLong(chunk -> chunk.chars().filter(c -> c == 'x').count()).sum()).isEqualTo(8000);
+    }
+
+    @Test
     void multiChunkHasContinuationIndicator() {
         // Create text > 4096 chars
         StringBuilder sb = new StringBuilder();
