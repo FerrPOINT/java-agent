@@ -22,6 +22,27 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
     @Autowired
     private CronSuggestionRepository cronSuggestionRepository;
 
+    @Autowired
+    private javax.sql.DataSource dataSource;
+
+    @Test
+    @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void upgradesMainSchemaFromV72ToCronSuggestionsV73() {
+        String schema = "cron_upgrade_" + java.util.UUID.randomUUID().toString().replace("-", "");
+        var jdbc = new org.springframework.jdbc.core.JdbcTemplate(dataSource);
+        try {
+            org.flywaydb.core.Flyway.configure().dataSource(dataSource).schemas(schema).defaultSchema(schema)
+                .locations("classpath:db/migration", "classpath:db/postgresql").target("72").load().migrate();
+            assertThat(jdbc.queryForObject("select count(*) from " + schema + ".flyway_schema_history where version='72' and success", Integer.class)).isEqualTo(1);
+            org.flywaydb.core.Flyway.configure().dataSource(dataSource).schemas(schema).defaultSchema(schema)
+                .locations("classpath:db/migration", "classpath:db/postgresql").load().migrate();
+            assertThat(jdbc.queryForObject("select count(*) from " + schema + ".flyway_schema_history where version='73' and success", Integer.class)).isEqualTo(1);
+            assertThat(jdbc.queryForObject("select count(*) from " + schema + ".cron_suggestions", Integer.class)).isZero();
+        } finally {
+            jdbc.execute("drop schema if exists " + schema + " cascade");
+        }
+    }
+
     @Test
     void ownerScopedQueriesDoNotLeakOrReuseAnotherUsersDedupKey() {
         CronSuggestionEntity alice = cronSuggestionRepository.save(newSuggestion("alice", "daily-briefing"));
