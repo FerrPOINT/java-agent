@@ -44,6 +44,7 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
             org.flywaydb.core.Flyway.configure().dataSource(dataSource).schemas(schema).defaultSchema(schema)
                 .locations("classpath:db/migration", "classpath:db/postgresql").load().migrate();
             assertThat(jdbc.queryForObject("select count(*) from " + schema + ".flyway_schema_history where version='73' and success", Integer.class)).isEqualTo(1);
+            assertThat(jdbc.queryForObject("select count(*) from " + schema + ".flyway_schema_history where version='74' and success", Integer.class)).isEqualTo(1);
             assertThat(jdbc.queryForObject("select count(*) from " + schema + ".cron_suggestions", Integer.class)).isZero();
         } finally {
             jdbc.execute("drop schema if exists " + schema + " cascade");
