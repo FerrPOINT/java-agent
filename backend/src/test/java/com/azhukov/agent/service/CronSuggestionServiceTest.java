@@ -86,6 +86,15 @@ class CronSuggestionServiceTest {
     }
 
     @Test
+    void resolvedSuggestionRemainsFindableByTitle() {
+        var spec = new CronSuggestionService.JobSpec("name", "0 9 * * *", "prompt", null, null);
+        service.addSuggestion("Find Me", "desc", "catalog", spec, "key");
+        assertThat(service.dismissSuggestion("Find Me")).isTrue();
+        assertThat(service.getSuggestion("Find Me")).isNotNull();
+        assertThat(service.getSuggestion("Find Me").status()).isEqualTo("dismissed");
+    }
+
+    @Test
     void addSuggestion_isPending() {
         var spec = new CronSuggestionService.JobSpec("daily-report", "0 9 * * *", "Generate report", null, null);
         var record = service.addSuggestion("Daily Report", "Generates a daily report", "catalog", spec, "daily-report-key");

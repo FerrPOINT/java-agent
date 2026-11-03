@@ -170,7 +170,8 @@ public class CronSuggestionService {
  return pending.get(index);
  }
  }
- return pending.stream().filter(s -> s.getTitle().equalsIgnoreCase(ref)).findFirst().orElse(null);
+ return cronSuggestionRepository.findByUserIdOrderByCreatedAtAsc(userId).stream()
+ .filter(s -> s.getTitle().equalsIgnoreCase(ref)).findFirst().orElse(null);
  }
 
  private static void applyJobSpec(CronSuggestionEntity entity, JobSpec jobSpec) {
