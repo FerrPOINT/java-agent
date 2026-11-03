@@ -110,6 +110,20 @@ class StreamEditorFloodFallbackTest {
     }
 
     @Test
+    void multipartFinalStopsWhenMiddleChunkIsRejected() {
+        String text = "a".repeat(4000) + "b".repeat(4000) + "c".repeat(1000);
+        var session = editor.sessionFor(123L);
+        session.useDraftStreaming = true;
+        when(client.sendMessage(eq(123L), anyString(), any(), any(), any(), anyBoolean()))
+            .thenReturn(Optional.of(41L), Optional.empty(), Optional.of(42L));
+        when(client.takeLastRetryAfterSeconds()).thenReturn(270);
+        assertThat(editor.finalizeStream(123L, -1L, text)).isFalse();
+        verify(client, times(2)).sendMessage(eq(123L), anyString(), any(), any(), any(), anyBoolean());
+        editor.recordFinalDeliveryFailure(123L, text);
+        assertThat(editor.takePendingFinalRetryAfterSeconds(123L)).isEqualTo(270);
+    }
+
+    @Test
     void finalMultiChunkSendStopsAtFirstUnacceptedChunk() {
         String text = "a".repeat(9000);
         when(client.sendMessage(eq(123L), anyString(), any(), any(), any(), anyBoolean()))
