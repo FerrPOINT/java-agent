@@ -43,6 +43,26 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
         }
     }
 
+    @Test
+    @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void legacyCronV72CannotSilentlyUpgradeAsIdentityV72() {
+        String schema = "cron_legacy_" + java.util.UUID.randomUUID().toString().replace("-", "");
+        var jdbc = new org.springframework.jdbc.core.JdbcTemplate(dataSource);
+        try {
+            org.flywaydb.core.Flyway.configure().dataSource(dataSource).schemas(schema).defaultSchema(schema)
+                .locations("classpath:db/migration", "classpath:db/postgresql").target("71").load().migrate();
+            jdbc.execute("create table " + schema + ".cron_suggestions (id uuid primary key, user_id text not null)");
+            jdbc.update("insert into " + schema + ".cron_suggestions(id,user_id) values (?,?)", java.util.UUID.randomUUID(), "owner");
+            jdbc.update("insert into " + schema + ".flyway_schema_history(installed_rank,version,description,type,script,checksum,installed_by,execution_time,success) values ((select max(installed_rank)+1 from " + schema + ".flyway_schema_history), '72', 'cron suggestions', 'SQL', 'V72__cron_suggestions.sql', 123456, current_user, 0, true)");
+            assertThatThrownBy(() -> org.flywaydb.core.Flyway.configure().dataSource(dataSource)
+                .schemas(schema).defaultSchema(schema).locations("classpath:db/migration", "classpath:db/postgresql")
+                .load().migrate()).isInstanceOf(org.flywaydb.core.api.exception.FlywayValidateException.class);
+            assertThat(jdbc.queryForObject("select count(*) from " + schema + ".cron_suggestions", Integer.class)).isEqualTo(1);
+        } finally {
+            jdbc.execute("drop schema if exists " + schema + " cascade");
+        }
+    }
+
     @Autowired
     private com.azhukov.agent.service.CronSuggestionService suggestionService;
 
