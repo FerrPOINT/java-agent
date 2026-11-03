@@ -112,6 +112,37 @@ class TerminalToolTest {
     }
 
     @Test
+    void cancellingSessionTerminatesForegroundChildProcess(@org.junit.jupiter.api.io.TempDir java.nio.file.Path directory) throws Exception {
+        var token = new InterruptToken();
+        var tool = new TerminalTool(processTool, properties(), redactor, checkpointManager, token);
+        var current = session();
+        var pidFile = directory.resolve("child-pid");
+        String command = "sh -c 'echo $$ > \"" + pidFile + "\"; exec sleep 60'";
+        String arguments = JSON.writeValueAsString(Map.of("command", command));
+        var result = new java.util.concurrent.atomic.AtomicReference<ToolResult>();
+        var thread = new Thread(() -> result.set(tool.execute(arguments, null, current)));
+        long pid = -1;
+        thread.start();
+        try {
+            org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(5))
+                .until(() -> java.nio.file.Files.exists(pidFile) && !java.nio.file.Files.readString(pidFile).isBlank());
+            pid = Long.parseLong(java.nio.file.Files.readString(pidFile).trim());
+            assertThat(ProcessHandle.of(pid).map(ProcessHandle::isAlive)).contains(true);
+            token.cancel(current.id());
+            thread.join(5000);
+            assertThat(thread.isAlive()).isFalse();
+            assertThat(result.get().success()).isFalse();
+            final long childPid = pid;
+            org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(3))
+                .until(() -> ProcessHandle.of(childPid).map(p -> !p.isAlive()).orElse(true));
+        } finally {
+            if (pid > 0) ProcessHandle.of(pid).ifPresent(ProcessHandle::destroyForcibly);
+            thread.interrupt();
+            thread.join(3000);
+        }
+    }
+
+    @Test
     void timeoutTerminatesForegroundChildProcess(@org.junit.jupiter.api.io.TempDir java.nio.file.Path directory) throws Exception {
         var pidFile = directory.resolve("child-pid");
         String command = "sh -c 'echo $$ > \"" + pidFile + "\"; exec sleep 60'";
