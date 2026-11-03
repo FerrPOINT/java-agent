@@ -55,6 +55,15 @@ class StreamEditorFloodFallbackTest {
     // ─── 4a: Flood strikes fallback mode tests ─────────────────────
 
     @Test
+    void finalMultiChunkSendStopsAtFirstUnacceptedChunk() {
+        String text = "a".repeat(9000);
+        when(client.sendMessage(eq(123L), anyString(), any(), any(), any(), anyBoolean()))
+            .thenReturn(Optional.empty(), Optional.of(99L));
+        assertThat(editor.sendFormattedFinalMessage(123L, text)).isEmpty();
+        verify(client, times(1)).sendMessage(eq(123L), anyString(), any(), any(), any(), anyBoolean());
+    }
+
+    @Test
     void floodFallback_entersFallbackModeAfter3Strikes() throws InterruptedException {
         // Start stream successfully
         when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
