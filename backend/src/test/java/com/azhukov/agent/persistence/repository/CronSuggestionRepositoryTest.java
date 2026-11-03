@@ -201,6 +201,42 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
         }
     }
 
+    @Test
+    @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void startupRearmsCommittedJobMissingItsInMemorySchedule() {
+        var tx = new org.springframework.transaction.support.TransactionTemplate(transactionManager);
+        var properties = (com.azhukov.agent.config.AgentProperties) org.springframework.test.util.ReflectionTestUtils.getField(cronJobService, "properties");
+        boolean previous = properties.getCron().isEnabled();
+        String owner = "startup-" + java.util.UUID.randomUUID();
+        var id = tx.execute(s -> cronSuggestionRepository.saveAndFlush(newSuggestion(owner, "key")).getId());
+        java.util.UUID jobId = null;
+        try {
+            properties.getCron().setEnabled(false);
+            com.azhukov.agent.core.security.UserContext.set(owner, com.azhukov.agent.core.security.UserContext.ROLE_USER);
+            jobId = suggestionService.acceptSuggestion(id.toString()).getId();
+            assertThat(cronJobRepository.findById(jobId)).isPresent();
+            @SuppressWarnings("unchecked")
+            var tasks = (java.util.Map<java.util.UUID, java.util.concurrent.ScheduledFuture<?>>) org.springframework.test.util.ReflectionTestUtils.getField(cronJobService, "scheduledTasks");
+            assertThat(tasks).doesNotContainKey(jobId);
+            properties.getCron().setEnabled(true);
+            cronJobService.init();
+            assertThat(tasks).containsKey(jobId);
+            assertThat(cronJobRepository.findById(jobId).orElseThrow().getNextRunAt()).isNotNull();
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+            properties.getCron().setEnabled(previous);
+            @SuppressWarnings("unchecked")
+            var tasks = (java.util.Map<java.util.UUID, java.util.concurrent.ScheduledFuture<?>>) org.springframework.test.util.ReflectionTestUtils.getField(cronJobService, "scheduledTasks");
+            if (jobId != null) {
+                var future = tasks.remove(jobId);
+                if (future != null) future.cancel(false);
+                var cleanupJobId = jobId;
+                tx.executeWithoutResult(s -> cronJobRepository.deleteById(cleanupJobId));
+            }
+            tx.executeWithoutResult(s -> cronSuggestionRepository.deleteById(id));
+        }
+    }
+
     @Autowired
     private com.azhukov.agent.service.CronJobService cronJobService;
     @Autowired
