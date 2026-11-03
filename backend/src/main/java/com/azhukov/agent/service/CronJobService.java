@@ -451,7 +451,19 @@ private static final String CRON_EXECUTION_HINT = """
 
         entity = cronJobRepository.save(entity);
         if (properties.getCron().isEnabled()) {
-            scheduleJob(entity);
+            CronJobEntity scheduled = entity;
+            if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()) {
+                org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                    new org.springframework.transaction.support.TransactionSynchronization() {
+                        @Override public void afterCommit() {
+                            var newTransaction = new org.springframework.transaction.support.TransactionTemplate(transactionTemplate.getTransactionManager());
+                            newTransaction.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+                            newTransaction.executeWithoutResult(status -> scheduleJob(scheduled));
+                        }
+                    });
+            } else {
+                scheduleJob(scheduled);
+            }
         }
         log.info("Created cron job: {} (profile: {}, schedule: {}, skills: {}, context_from: {}, repeat: {}, noAgent: {}, script: {})",
             name, normalizedProfile, schedule, skills, contextFrom, effectiveRepeat, noAgent, normalizedScript);

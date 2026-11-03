@@ -137,6 +137,76 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
     }
 
     @Test
+    @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void rolledBackAcceptanceMustNotLeaveScheduledJob() {
+        var tx = new org.springframework.transaction.support.TransactionTemplate(transactionManager);
+        var properties = org.springframework.test.util.ReflectionTestUtils.getField(cronJobService, "properties");
+        var cron = ((com.azhukov.agent.config.AgentProperties) properties).getCron();
+        boolean previous = cron.isEnabled();
+        String owner = "rollback-" + java.util.UUID.randomUUID();
+        var id = tx.execute(s -> cronSuggestionRepository.saveAndFlush(newSuggestion(owner, "key")).getId());
+        try {
+            cron.setEnabled(true);
+            com.azhukov.agent.core.security.UserContext.set(owner, com.azhukov.agent.core.security.UserContext.ROLE_USER);
+            var jobId = tx.execute(status -> {
+                var job = suggestionService.acceptSuggestion(id.toString());
+                assertThat(job).isNotNull();
+                status.setRollbackOnly();
+                return job.getId();
+            });
+            assertThat(cronJobRepository.findById(jobId)).isEmpty();
+            @SuppressWarnings("unchecked")
+            var tasks = (java.util.Map<java.util.UUID, ?>) org.springframework.test.util.ReflectionTestUtils.getField(cronJobService, "scheduledTasks");
+            assertThat(tasks).doesNotContainKey(jobId);
+            assertThat(cronSuggestionRepository.findById(id).orElseThrow().getStatus()).isEqualTo("pending");
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+            cron.setEnabled(previous);
+            tx.executeWithoutResult(s -> cronSuggestionRepository.deleteById(id));
+        }
+    }
+
+    @Test
+    @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void committedAcceptanceSchedulesPersistedJobOnce() {
+        var tx = new org.springframework.transaction.support.TransactionTemplate(transactionManager);
+        var properties = (com.azhukov.agent.config.AgentProperties) org.springframework.test.util.ReflectionTestUtils.getField(cronJobService, "properties");
+        boolean previous = properties.getCron().isEnabled();
+        String owner = "commit-" + java.util.UUID.randomUUID();
+        var id = tx.execute(s -> cronSuggestionRepository.saveAndFlush(newSuggestion(owner, "key")).getId());
+        java.util.UUID jobId = null;
+        try {
+            properties.getCron().setEnabled(true);
+            com.azhukov.agent.core.security.UserContext.set(owner, com.azhukov.agent.core.security.UserContext.ROLE_USER);
+            jobId = suggestionService.acceptSuggestion(id.toString()).getId();
+            assertThat(suggestionService.acceptSuggestion(id.toString())).isNull();
+            var persisted = cronJobRepository.findById(jobId).orElseThrow();
+            assertThat(persisted.getUserId()).isEqualTo(owner);
+            assertThat(persisted.getNextRunAt()).isNotNull();
+            @SuppressWarnings("unchecked")
+            var tasks = (java.util.Map<java.util.UUID, java.util.concurrent.ScheduledFuture<?>>) org.springframework.test.util.ReflectionTestUtils.getField(cronJobService, "scheduledTasks");
+            assertThat(tasks).containsKey(jobId);
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+            properties.getCron().setEnabled(previous);
+            @SuppressWarnings("unchecked")
+            var tasks = (java.util.Map<java.util.UUID, java.util.concurrent.ScheduledFuture<?>>) org.springframework.test.util.ReflectionTestUtils.getField(cronJobService, "scheduledTasks");
+            if (jobId != null) {
+                var future = tasks.remove(jobId);
+                if (future != null) future.cancel(false);
+                var cleanupJobId = jobId;
+                tx.executeWithoutResult(s -> cronJobRepository.deleteById(cleanupJobId));
+            }
+            tx.executeWithoutResult(s -> cronSuggestionRepository.deleteById(id));
+        }
+    }
+
+    @Autowired
+    private com.azhukov.agent.service.CronJobService cronJobService;
+    @Autowired
+    private CronJobRepository cronJobRepository;
+
+    @Test
     void ownerScopedQueriesDoNotLeakOrReuseAnotherUsersDedupKey() {
         CronSuggestionEntity alice = cronSuggestionRepository.save(newSuggestion("alice", "daily-briefing"));
         CronSuggestionEntity bob = cronSuggestionRepository.save(newSuggestion("bob", "daily-briefing"));
