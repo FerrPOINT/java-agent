@@ -40,6 +40,9 @@ class AttachmentFlowE2ETest extends PostgresTestContainer {
     @Autowired
     private com.azhukov.agent.persistence.repository.SessionRepository sessionRepository;
 
+    @Autowired
+    private com.azhukov.agent.service.AgentRuntimeService applicationRuntime;
+
     private static final String TEXT_PAYLOAD = "quarterly figures: 42";
 
     private String uploadTextArtifact(String fileName, String content, String ownerId)
@@ -56,6 +59,28 @@ class AttachmentFlowE2ETest extends PostgresTestContainer {
         String body = result.getResponse().getContentAsString();
         return com.fasterxml.jackson.databind.json.JsonMapper.builder().build()
             .readTree(body).path("id").asText();
+    }
+
+    @Test
+    void apiKeyFilterCannotImpersonatePersistedSessionOwner() throws Exception {
+        String authenticatedUser = "http-owner-" + UUID.randomUUID();
+        String requestedUser = "different-owner-" + UUID.randomUUID();
+        var access = org.mockito.Mockito.mock(com.azhukov.agent.service.UserAccessService.class);
+        org.mockito.Mockito.when(access.authenticate("fixture-user-key")).thenReturn(
+            new com.azhukov.agent.service.UserAccessService.AuthenticatedUser(authenticatedUser, "user"));
+        var properties = new com.azhukov.agent.config.AgentProperties();
+        properties.getSecurity().setApiKey("fixture-global-key");
+        var filter = new com.azhukov.agent.api.filter.ApiKeyAuthFilter(properties, access);
+        var request = new org.springframework.mock.web.MockHttpServletRequest("POST", "/api/v1/agent/chat");
+        request.addHeader("X-API-Key", "fixture-user-key");
+        var response = new org.springframework.mock.web.MockHttpServletResponse();
+        var sessionId = new java.util.concurrent.atomic.AtomicReference<UUID>();
+        filter.doFilter(request, response, (incoming, outgoing) -> {
+            var chat = com.azhukov.agent.api.dto.ChatRequest.simple(null, "inspect", null, null).withUserId(requestedUser);
+            sessionId.set(applicationRuntime.runTurn(chat).sessionId());
+        });
+        assertThat(sessionRepository.findById(sessionId.get()).orElseThrow().getUserId()).isEqualTo(authenticatedUser);
+        assertThat(com.azhukov.agent.core.security.UserContext.getUserId()).isNull();
     }
 
     @Test
