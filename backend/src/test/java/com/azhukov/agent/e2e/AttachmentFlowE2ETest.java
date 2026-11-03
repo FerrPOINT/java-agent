@@ -37,6 +37,9 @@ class AttachmentFlowE2ETest extends PostgresTestContainer {
     @Autowired
     private com.azhukov.agent.persistence.repository.MessageRepository messageRepository;
 
+    @Autowired
+    private com.azhukov.agent.persistence.repository.SessionRepository sessionRepository;
+
     private static final String TEXT_PAYLOAD = "quarterly figures: 42";
 
     private String uploadTextArtifact(String fileName, String content, String ownerId)
@@ -94,6 +97,7 @@ class AttachmentFlowE2ETest extends PostgresTestContainer {
         assertThat(userMessages).isNotEmpty();
         String persisted = userMessages.get(userMessages.size() - 1).getContent();
         assertThat(persisted).contains("summarize the attachment");
+        assertThat(sessionRepository.findById(sessionId).orElseThrow().getUserId()).isEqualTo(ownerId);
         assertThat(persisted).contains("[Attachments]");
         assertThat(persisted).contains(TEXT_PAYLOAD);
         assertThat(persisted).contains("notes.txt");
