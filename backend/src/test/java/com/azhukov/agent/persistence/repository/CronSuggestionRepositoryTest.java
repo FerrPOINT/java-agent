@@ -26,6 +26,13 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
     private javax.sql.DataSource dataSource;
 
     @Test
+    void cronSuggestionsAreRegisteredAsIdentityReferences() {
+        var jdbc = new org.springframework.jdbc.core.JdbcTemplate(dataSource);
+        assertThat(jdbc.queryForObject("select count(*) from java_identity_reference_sources where source = 'cron_suggestions' and 'user_id' = any(user_columns)", Integer.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select count(*) from pg_trigger where tgrelid = 'cron_suggestions'::regclass and tgname = 'z_identity_reference_guard' and not tgisinternal", Integer.class)).isEqualTo(1);
+    }
+
+    @Test
     @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     void upgradesMainSchemaFromV72ToCronSuggestionsV73() {
         String schema = "cron_upgrade_" + java.util.UUID.randomUUID().toString().replace("-", "");
