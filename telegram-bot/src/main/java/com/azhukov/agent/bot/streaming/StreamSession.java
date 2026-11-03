@@ -85,8 +85,9 @@ public class StreamSession {
 
     /**
      * Full final response retained after a failed live Telegram delivery.
-     * It is consumed by {@code BotMessageProcessor}'s durable recovery lane,
-     * rather than attempting another immediate send during a FloodWait.
+     * It is consumed by {@code BotMessageProcessor}'s in-memory deferred delivery
+     * path, rather than attempting another immediate send during a FloodWait.
+     * This state is not durable across process restarts.
      */
     public volatile String pendingFinalText = null;
     public volatile int pendingFinalRetryAfterSeconds = -1;
