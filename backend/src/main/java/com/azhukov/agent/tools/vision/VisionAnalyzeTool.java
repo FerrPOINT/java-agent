@@ -14,7 +14,6 @@ import com.azhukov.agent.service.ImageShrinkerService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
-import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.net.URI;
 import java.nio.file.Files;
@@ -82,10 +81,8 @@ public class VisionAnalyzeTool implements ToolHandler {
                         current = current.resolve(location);
                         continue;
                     }
-                    try (InputStream in = connection.getInputStream();
-                         ByteArrayOutputStream out = new ByteArrayOutputStream()) {
-                        in.transferTo(out);
-                        bytes = out.toByteArray();
+                    try (InputStream in = connection.getInputStream()) {
+                        bytes = in.readNBytes((int) MAX_IMAGE_BYTES + 1);
                     }
                     break;
                 } finally {

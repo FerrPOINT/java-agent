@@ -110,6 +110,42 @@ class VisionAnalyzeToolTest {
     }
 
     @Test
+    void remoteImageReadStopsAtSizeLimit() throws Exception {
+        var server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        var sent = new java.util.concurrent.atomic.AtomicLong();
+        var done = new java.util.concurrent.CountDownLatch(1);
+        server.createContext("/image", exchange -> {
+            try {
+                exchange.sendResponseHeaders(200, 0);
+                byte[] chunk = new byte[8192];
+                try (var out = exchange.getResponseBody()) {
+                    for (int i = 0; i < 8192; i++) {
+                        out.write(chunk);
+                        sent.addAndGet(chunk.length);
+                    }
+                }
+            } catch (java.io.IOException ignored) {
+                // Closing after the limit interrupts the producer.
+            } finally {
+                exchange.close();
+                done.countDown();
+            }
+        });
+        server.start();
+        try {
+            String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/image";
+            var result = tool.execute("{\"image_url\":\"" + url + "\"}", null, null);
+            assertThat(result.success()).isFalse();
+            assertThat(result.error()).contains("50MB");
+            assertThat(done.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(sent.get()).isLessThan(64L * 1024 * 1024);
+            verifyNoInteractions(modelClient);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void execute_withNullImage_returnsFail() {
         ToolResult result = tool.execute("{\"image_url\":null}", Message.assistant("test", 0), Session.create("test", "noop", "noop"));
         assertThat(result.success()).isFalse();
