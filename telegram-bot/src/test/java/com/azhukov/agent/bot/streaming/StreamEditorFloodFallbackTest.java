@@ -55,6 +55,18 @@ class StreamEditorFloodFallbackTest {
     // ─── 4a: Flood strikes fallback mode tests ─────────────────────
 
     @Test
+    void draftFinalUsesOriginalForumThread() {
+        var session = editor.sessionFor(123L);
+        session.useDraftStreaming = true;
+        session.messageThreadId = 77L;
+        when(client.sendMessage(eq(123L), anyString(), any(), any(), eq(77), anyBoolean()))
+            .thenReturn(Optional.of(99L));
+
+        assertThat(editor.finalizeStream(123L, -1L, "final response")).isTrue();
+        verify(client).sendMessage(eq(123L), anyString(), any(), any(), eq(77), anyBoolean());
+    }
+
+    @Test
     void draftFinalFloodWaitPreservesCooldownForFallback() {
         var session = editor.sessionFor(123L);
         session.useDraftStreaming = true;

@@ -662,7 +662,7 @@ public class StreamEditor {
 
             // Send the final text as a formatted message (commits the draft)
             // Hermes parity: apply MarkdownConverter before delivery, not raw markdown
-            Optional<Long> finalMsgId = sendFormattedFinalMessage(chatId, scrubbed);
+            Optional<Long> finalMsgId = sendFormattedFinalMessage(chatId, scrubbed, session.messageThreadId);
             if (finalMsgId.isPresent()) {
                 removeSession(chatId);
                 log.debug("Draft finalized for chat {}, messageId={}", chatId, finalMsgId.get());
