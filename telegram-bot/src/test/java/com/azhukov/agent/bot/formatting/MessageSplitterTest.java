@@ -38,6 +38,18 @@ class MessageSplitterTest {
     }
 
     @Test
+    void smallLimitAllowsSurrogatePairsWithoutPrefixes() {
+        List<String> chunks = MessageSplitter.split("🐟🐟", 2);
+        assertThat(chunks).containsExactly("🐟", "🐟");
+    }
+
+    @Test
+    void impossibleOrNonpositiveLimitFailsImmediately() {
+        org.assertj.core.api.Assertions.assertThatIllegalArgumentException().isThrownBy(() -> MessageSplitter.split("🐟🐟", 1));
+        org.assertj.core.api.Assertions.assertThatIllegalArgumentException().isThrownBy(() -> MessageSplitter.split("text", 0));
+    }
+
+    @Test
     void multiChunkHasContinuationIndicator() {
         // Create text > 4096 chars
         StringBuilder sb = new StringBuilder();

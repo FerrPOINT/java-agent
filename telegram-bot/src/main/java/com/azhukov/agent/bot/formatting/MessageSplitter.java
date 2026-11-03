@@ -34,6 +34,7 @@ public final class MessageSplitter {
      * @return list of chunks
      */
     public static List<String> split(String text, int maxLength) {
+        if (maxLength < 1) throw new IllegalArgumentException("maxLength must be positive");
         if (text == null || text.isEmpty()) {
             return List.of("");
         }
@@ -49,7 +50,14 @@ public final class MessageSplitter {
         // Reserve the complete index before splitting; truncating after adding it
         // silently loses source characters at every full-size boundary.
         int prefixReserve = 2 * Integer.toString(text.length()).length() + 4;
-        int splitLimit = Math.max(1, maxLength - prefixReserve - (text.contains("```") ? 16 : 0));
+        // Tiny custom limits cannot fit an index and a Unicode code point.
+        if (maxLength < prefixReserve + 2) {
+            if (maxLength < 2 && text.codePoints().anyMatch(cp -> Character.charCount(cp) == 2)) {
+                throw new IllegalArgumentException("maxLength cannot fit a Unicode code point");
+            }
+            return doSplit(text, maxLength);
+        }
+        int splitLimit = Math.max(2, maxLength - prefixReserve - (text.contains("```") ? 16 : 0));
         List<String> chunks = balanceFencesAcrossChunks(doSplit(text, splitLimit), maxLength);
 
         // Add "(1/N)" continuation indicator when splitting into multiple chunks.
