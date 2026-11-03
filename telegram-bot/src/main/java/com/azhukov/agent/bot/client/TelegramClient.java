@@ -236,11 +236,14 @@ public class TelegramClient {
                         Thread.currentThread().interrupt();
                         return Optional.empty();
                     }
-                    // Single retry
+                    // The next attempt can have an ambiguous outcome; never reuse
+                    // the first rejection's retry-after for that later attempt.
+                    lastRetryAfterSeconds.remove();
                     try {
                         Optional<TelegramResponse> retry = callApi("sendMessage", params);
                         return retry.flatMap(r -> Optional.ofNullable(r.resultMessageIdAsLong()));
                     } catch (TelegramApiException retryEx) {
+                        if (retryEx.isRateLimit()) lastRetryAfterSeconds.set(retryEx.getRetryAfter());
                         log.warn("sendMessage 429 retry also failed: {}", retryEx.getMessage());
                         return Optional.empty();
                     }
