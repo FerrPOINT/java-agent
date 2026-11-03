@@ -303,6 +303,22 @@ class TelegramClientTest {
         }
 
         @Test
+        void consecutiveFloodResponsesExposeLatestRetryAfter() {
+            when(restClient.post()).thenReturn(postUriSpec);
+            when(postUriSpec.uri(anyString(), any(), any())).thenReturn(bodySpec);
+            when(bodySpec.accept(any(MediaType.class))).thenReturn(bodySpec);
+            when(bodySpec.contentType(any(MediaType.class))).thenReturn(bodySpec);
+            when(bodySpec.body(anyMap())).thenReturn(bodySpec);
+            when(bodySpec.retrieve()).thenReturn(responseSpec);
+            when(responseSpec.body(TelegramResponse.class))
+                .thenReturn(errorResponseWithParams(429, "Too Many Requests", Map.of("retry_after", IntNode.valueOf(0))))
+                .thenReturn(errorResponseWithParams(429, "Too Many Requests", Map.of("retry_after", IntNode.valueOf(37))));
+            assertThat(client.sendMessage(1L, "text")).isEmpty();
+            assertThat(client.takeLastRetryAfterSeconds()).isEqualTo(37);
+            assertThat(client.takeLastRetryAfterSeconds()).isEqualTo(-1);
+        }
+
+        @Test
         void floodRetryFollowedByAmbiguousResponseDoesNotExposeStaleRetryAfter() {
             when(restClient.post()).thenReturn(postUriSpec);
             when(postUriSpec.uri(anyString(), any(), any())).thenReturn(bodySpec);
