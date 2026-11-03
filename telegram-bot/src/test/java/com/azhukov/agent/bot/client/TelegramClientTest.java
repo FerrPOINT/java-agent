@@ -303,6 +303,36 @@ class TelegramClientTest {
         }
 
         @Test
+        void parseFallbackFloodWaitIsExposedToCaller() {
+            when(restClient.post()).thenReturn(postUriSpec);
+            when(postUriSpec.uri(anyString(), any(), any())).thenReturn(bodySpec);
+            when(bodySpec.accept(any(MediaType.class))).thenReturn(bodySpec);
+            when(bodySpec.contentType(any(MediaType.class))).thenReturn(bodySpec);
+            when(bodySpec.body(anyMap())).thenReturn(bodySpec);
+            when(bodySpec.retrieve()).thenReturn(responseSpec);
+            when(responseSpec.body(TelegramResponse.class))
+                .thenReturn(errorResponse(400, "can't parse entities"))
+                .thenReturn(errorResponseWithParams(429, "Too Many Requests", Map.of("retry_after", IntNode.valueOf(37))));
+            assertThat(client.sendMessage(1L, "text", "MarkdownV2", null, null)).isEmpty();
+            assertThat(client.takeLastRetryAfterSeconds()).isEqualTo(37);
+        }
+
+        @Test
+        void replyFallbackFloodWaitIsExposedToCaller() {
+            when(restClient.post()).thenReturn(postUriSpec);
+            when(postUriSpec.uri(anyString(), any(), any())).thenReturn(bodySpec);
+            when(bodySpec.accept(any(MediaType.class))).thenReturn(bodySpec);
+            when(bodySpec.contentType(any(MediaType.class))).thenReturn(bodySpec);
+            when(bodySpec.body(anyMap())).thenReturn(bodySpec);
+            when(bodySpec.retrieve()).thenReturn(responseSpec);
+            when(responseSpec.body(TelegramResponse.class))
+                .thenReturn(errorResponse(400, "reply message not found"))
+                .thenReturn(errorResponseWithParams(429, "Too Many Requests", Map.of("retry_after", IntNode.valueOf(37))));
+            assertThat(client.sendMessage(1L, "text", null, 77L, null)).isEmpty();
+            assertThat(client.takeLastRetryAfterSeconds()).isEqualTo(37);
+        }
+
+        @Test
         void consecutiveFloodResponsesExposeLatestRetryAfter() {
             when(restClient.post()).thenReturn(postUriSpec);
             when(postUriSpec.uri(anyString(), any(), any())).thenReturn(bodySpec);

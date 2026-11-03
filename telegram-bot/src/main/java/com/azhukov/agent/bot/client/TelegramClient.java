@@ -260,6 +260,7 @@ public class TelegramClient {
                     Optional<TelegramResponse> retry = callApi("sendMessage", plainParams);
                     return retry.flatMap(r -> Optional.ofNullable(r.resultMessageIdAsLong()));
                 } catch (TelegramApiException retryEx) {
+                    if (retryEx.isRateLimit()) lastRetryAfterSeconds.set(retryEx.getRetryAfter());
                     log.warn("sendMessage plain-text fallback also failed: {}", retryEx.getMessage());
                     return Optional.empty();
                 }
@@ -273,6 +274,7 @@ public class TelegramClient {
                     Optional<TelegramResponse> retry = callApi("sendMessage", retryParams);
                     return retry.flatMap(r -> Optional.ofNullable(r.resultMessageIdAsLong()));
                 } catch (TelegramApiException retryEx) {
+                    if (retryEx.isRateLimit()) lastRetryAfterSeconds.set(retryEx.getRetryAfter());
                     log.warn("sendMessage retry without reply_to also failed: {}", retryEx.getMessage());
                     return Optional.empty();
                 }
