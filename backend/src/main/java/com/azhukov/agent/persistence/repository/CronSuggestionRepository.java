@@ -15,6 +15,10 @@ import java.util.UUID;
 @Repository
 public interface CronSuggestionRepository extends JpaRepository<CronSuggestionEntity, UUID> {
 
+    /** Serialize owner backlog and dedup checks before insertion, including an empty backlog. */
+    @Query(value = "SELECT 1 FROM (SELECT pg_advisory_xact_lock(hashtextextended(CONCAT('agent:cron-suggestions:', :userId), 0))) locked", nativeQuery = true)
+    int lockOwner(@Param("userId") String userId);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select suggestion from CronSuggestionEntity suggestion where suggestion.id = :id and suggestion.userId = :userId")
     Optional<CronSuggestionEntity> findByIdAndUserIdForUpdate(@Param("id") UUID id, @Param("userId") String userId);

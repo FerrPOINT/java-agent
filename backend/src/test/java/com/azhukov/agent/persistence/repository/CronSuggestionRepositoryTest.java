@@ -108,6 +108,35 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
     }
 
     @Test
+    @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void concurrentIdenticalOffersReturnOneRecordWithoutTransactionFailure() throws Exception {
+        String owner = "duplicate-" + java.util.UUID.randomUUID();
+        var ready = new java.util.concurrent.CountDownLatch(2);
+        var start = new java.util.concurrent.CountDownLatch(1);
+        var spec = new com.azhukov.agent.service.CronSuggestionService.JobSpec("job", "0 9 * * *", "prompt", "local", null);
+        try (var pool = java.util.concurrent.Executors.newFixedThreadPool(2)) {
+            java.util.concurrent.Callable<com.azhukov.agent.service.CronSuggestionService.SuggestionRecord> work = () -> {
+                com.azhukov.agent.core.security.UserContext.set(owner, com.azhukov.agent.core.security.UserContext.ROLE_USER);
+                try {
+                    ready.countDown();
+                    if (!start.await(10, java.util.concurrent.TimeUnit.SECONDS)) throw new IllegalStateException("timeout");
+                    return suggestionService.addSuggestion("title", "description", "catalog", spec, "same");
+                } finally { com.azhukov.agent.core.security.UserContext.clear(); }
+            };
+            var a = pool.submit(work);
+            var b = pool.submit(work);
+            assertThat(ready.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+            var results = java.util.Arrays.asList(a.get(20, java.util.concurrent.TimeUnit.SECONDS), b.get(20, java.util.concurrent.TimeUnit.SECONDS));
+            assertThat(results.stream().filter(java.util.Objects::nonNull)).hasSize(1);
+        } finally {
+            start.countDown();
+            new org.springframework.transaction.support.TransactionTemplate(transactionManager).executeWithoutResult(s ->
+                cronSuggestionRepository.deleteAll(cronSuggestionRepository.findByUserIdOrderByCreatedAtAsc(owner)));
+        }
+    }
+
+    @Test
     void ownerScopedQueriesDoNotLeakOrReuseAnotherUsersDedupKey() {
         CronSuggestionEntity alice = cronSuggestionRepository.save(newSuggestion("alice", "daily-briefing"));
         CronSuggestionEntity bob = cronSuggestionRepository.save(newSuggestion("bob", "daily-briefing"));

@@ -7,7 +7,6 @@ import com.azhukov.agent.persistence.entity.CronSuggestionEntity;
 import com.azhukov.agent.persistence.repository.CronSuggestionRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -51,6 +50,7 @@ public class CronSuggestionService {
  }
 
  String userId = currentUserId();
+ cronSuggestionRepository.lockOwner(userId);
  String normalizedDedupKey = dedupKey.strip();
  if (cronSuggestionRepository.findByUserIdAndDedupKey(userId, normalizedDedupKey).isPresent()) {
  return null;
@@ -69,12 +69,7 @@ public class CronSuggestionService {
  entity.setDedupKey(normalizedDedupKey);
  entity.setStatus(STATUS_PENDING);
  entity.setCreatedAt(Instant.now());
- try {
  return toRecord(cronSuggestionRepository.save(entity));
- } catch (DataIntegrityViolationException ignored) {
- // The unique owner/dedup key constraint closes races between application nodes.
- return null;
- }
  }
 
  /** List the current owner's pending suggestions in creation order. */
