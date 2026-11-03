@@ -495,6 +495,7 @@ public class StreamingOrchestrator {
                         // S-2: Extract MEDIA: tags before finalizing the stream message
                         // so the displayed text doesn't contain raw MEDIA: tags
                         if (properties.isMediaDeliveryEnabled()) {
+                            String fallbackText = finalText;
                             MediaDeliveryService.ExtractionResult extraction = mediaDeliveryService.extractMediaTags(finalText);
                             finalText = extraction.cleanedText();
                             // Finalize the stream with cleaned text
@@ -502,13 +503,13 @@ public class StreamingOrchestrator {
                             try {
                                 delivered = streamEditor.finalizeStream(chatId, messageId[0], finalText);
                             } catch (TelegramApiException e) {
-                                streamEditor.recordFinalDeliveryFailure(chatId, finalText, e.getRetryAfter());
+                                streamEditor.recordFinalDeliveryFailure(chatId, fallbackText, e.getRetryAfter());
                                 failedFinalDelivery[0] = true;
                                 finalized[0] = false;
                                 return;
                             }
                             if (!delivered) {
-                                streamEditor.recordFinalDeliveryFailure(chatId, finalText);
+                                streamEditor.recordFinalDeliveryFailure(chatId, fallbackText);
                                 failedFinalDelivery[0] = true;
                             }
                             finalized[0] = delivered;
