@@ -76,6 +76,31 @@ class AttachmentFlowE2ETest extends PostgresTestContainer {
     }
 
     @Test
+    void repeatTurnUsesSessionOwnerForAttachmentEvenWhenRequestNamesAnother() throws Exception {
+        String owner = "repeat-owner-" + UUID.randomUUID();
+        String other = "repeat-other-" + UUID.randomUUID();
+        String secret = "private-" + UUID.randomUUID();
+        String foreign = uploadTextArtifact("private.txt", secret, other);
+        String own = uploadTextArtifact("own.txt", "owner-repeat-content", owner);
+        var session = new com.azhukov.agent.persistence.entity.SessionEntity();
+        session.setUserId(owner);
+        session.setModelProvider("noop");
+        session.setModelName("noop");
+        session = sessionRepository.saveAndFlush(session);
+        var result = mockMvc.perform(post("/api/v1/agent/chat")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"sessionId":"%s","message":"inspect repeat","userId":"%s","attachments":[{"artifactId":"%s"},{"artifactId":"%s"}]}
+                    """.formatted(session.getId(), other, foreign, own)))
+            .andExpect(status().isOk()).andReturn();
+        assertThat(com.fasterxml.jackson.databind.json.JsonMapper.builder().build()
+            .readTree(result.getResponse().getContentAsString()).path("sessionId").asText()).isEqualTo(session.getId().toString());
+        String persisted = messageRepository.findBySessionIdOrderByCreatedAtAsc(session.getId()).stream()
+            .filter(m -> "user".equals(m.getRole())).findFirst().orElseThrow().getContent();
+        assertThat(persisted).contains("owner-repeat-content", "[unavailable: " + foreign + "]").doesNotContain(secret);
+    }
+
+    @Test
     void streamingFirstTurnScopesAttachmentsBeforePersisting() throws Exception {
         String owner = "stream-owner-" + UUID.randomUUID();
         String other = "stream-other-" + UUID.randomUUID();
