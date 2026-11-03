@@ -166,9 +166,13 @@ public class CronSuggestionService {
  List<CronSuggestionEntity> pending = cronSuggestionRepository
  .findByUserIdAndStatusOrderByCreatedAtAsc(userId, STATUS_PENDING);
  if (ref.matches("\\d+")) {
+ try {
  int index = Integer.parseInt(ref) - 1;
  if (index >= 0 && index < pending.size()) {
  return pending.get(index);
+ }
+ } catch (NumberFormatException ignored) {
+ // A numeric title may be larger than the index range; try title lookup.
  }
  }
  return cronSuggestionRepository.findByUserIdOrderByCreatedAtAsc(userId).stream()

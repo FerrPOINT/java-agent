@@ -95,6 +95,15 @@ class CronSuggestionServiceTest {
     }
 
     @Test
+    void oversizedNumericReferenceDoesNotThrow() {
+        String title = "999999999999999999999999999999999999";
+        assertThat(service.getSuggestion(title)).isNull();
+        var spec = new CronSuggestionService.JobSpec("name", "0 9 * * *", "prompt", null, null);
+        service.addSuggestion(title, "desc", "catalog", spec, "numeric-title");
+        assertThat(service.getSuggestion(title).title()).isEqualTo(title);
+    }
+
+    @Test
     void addSuggestion_isPending() {
         var spec = new CronSuggestionService.JobSpec("daily-report", "0 9 * * *", "Generate report", null, null);
         var record = service.addSuggestion("Daily Report", "Generates a daily report", "catalog", spec, "daily-report-key");
