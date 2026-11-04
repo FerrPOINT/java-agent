@@ -120,6 +120,22 @@ class DeliveryLedgerConsumerRefusalTest {
     }
 
     @Test
+    void partialRefusalOnCoalescedBatchFencesEveryClaim() {
+        spec();
+        when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean()))
+            .thenReturn(Optional.of(123L))
+            .thenThrow(new TelegramClient.SendRefusalException(95, "429: Too Many Requests"));
+        var items = new java.util.ArrayList<DeliveryLedgerConsumer.ClaimedItem>();
+        for (int i = 0; i < 10; i++) items.add(delegate(String.valueOf(i), "a".repeat(1000)));
+        consumer().deliverBatchForTest(items);
+        ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
+        verify(specMock, times(10)).body(body.capture());
+        assertThat(body.getAllValues()).allSatisfy(value -> assertThat(value).contains("partial_chunk_failure"));
+        verify(restClient.post(), times(10)).uri("/api/v1/agent/delivery/unknown");
+        verify(restClient.post(), org.mockito.Mockito.never()).uri("/api/v1/agent/delivery/release");
+    }
+
+    @Test
     void definiteApiRefusalReleasesAsSendRefused() {
         spec();
         when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean()))
