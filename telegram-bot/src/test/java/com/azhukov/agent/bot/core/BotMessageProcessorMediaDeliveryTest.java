@@ -236,6 +236,23 @@ class BotMessageProcessorMediaDeliveryTest {
     }
 
     @Test
+    void imageBatchSkipsSymlinkWithoutRecordingItsReceipt(@TempDir Path outsideDir) throws Exception {
+        Path safe = createTempFile("safe.png");
+        Path outside = Files.writeString(outsideDir.resolve("outside.png"), "private");
+        Path link = Files.createSymbolicLink(tempDir.resolve("att_abcdef.png"), outside);
+        var field = BotMessageProcessor.class.getDeclaredField("attachmentApiClient");
+        field.setAccessible(true);
+        AttachmentApiClient api = (AttachmentApiClient) field.get(processor);
+        when(api.find("att_abcdef")).thenReturn(Optional.empty());
+        when(telegramClient.sendMediaGroup(eq(100L), any())).thenReturn(List.of(123L));
+        processor.deliverMedia(100L, List.of(
+            new MediaDeliveryService.MediaDescriptor(safe.toString(), ".png", false, false),
+            new MediaDeliveryService.MediaDescriptor(link.toString(), ".png", false, false)), null);
+        verify(telegramClient).sendMediaGroup(eq(100L), any());
+        verify(api, never()).markDelivered(eq("att_abcdef"), nullable(String.class));
+    }
+
+    @Test
     void invalidMediaPathsDoNotPreventDeliveryOfLaterValidFiles() throws Exception {
         Path document = createTempFile("valid.pdf");
         processor.deliverMedia(100L, List.of(
