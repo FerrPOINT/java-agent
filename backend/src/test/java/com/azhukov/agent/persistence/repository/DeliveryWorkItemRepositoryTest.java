@@ -94,6 +94,24 @@ class DeliveryWorkItemRepositoryTest extends PostgresTestContainer {
         }
     }
 
+    @Autowired
+    private com.azhukov.agent.service.DeliveryWorkItemService deliveryService;
+
+    @Test
+    void expiredClaimWithUnknownSendOutcomeMustNotBecomeRetryable() {
+        DeliveryWorkItemEntity pending = pendingItem("default", "cron_execution", "stale-" + UUID.randomUUID(), "telegram:100");
+        pending.setAvailableAt(Instant.now().minusSeconds(1800));
+        DeliveryWorkItemEntity item = repository.saveAndFlush(pending);
+        Instant now = Instant.now();
+        assertThat(repository.claimPending(item.getId(), "expired-token", now.minusSeconds(900))).isEqualTo(1);
+
+        deliveryService.sweepStaleClaims(now, java.time.Duration.ofMinutes(10));
+
+        DeliveryWorkItemEntity after = repository.findById(item.getId()).orElseThrow();
+        assertThat(after.getState()).isEqualTo("unknown");
+        assertThat(repository.claimPending(item.getId(), "new-token", now.plusSeconds(60))).isZero();
+    }
+
     @Test
     void terminalTransitionsRequireMatchingClaimToken() {
         DeliveryWorkItemEntity item = repository.saveAndFlush(
