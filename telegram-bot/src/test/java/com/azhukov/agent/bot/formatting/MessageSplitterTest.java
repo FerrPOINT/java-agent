@@ -149,6 +149,59 @@ class MessageSplitterTest {
     }
 
     @Test
+    void codeFenceSplitPreservesClosingMarkerAfterLongLine() {
+        String input = "```java\n" + "x".repeat(5000) + "```" + "z".repeat(3000);
+        var chunks = MessageSplitter.splitAndFormat(input, "MarkdownV2");
+        assertThat(chunks.stream().mapToLong(s -> s.chars().filter(c -> c == 'x').count()).sum()).isEqualTo(5000);
+        assertThat(chunks.stream().mapToLong(s -> s.chars().filter(c -> c == 'z').count()).sum()).isEqualTo(3000);
+        assertThat(chunks).allSatisfy(chunk -> assertThat(chunk.length()).isLessThanOrEqualTo(4096));
+        assertThat(chunks).allSatisfy(chunk -> assertThat(countOccurrences(chunk, "```") % 2).isZero());
+    }
+
+    @Test
+    void codeFenceBoundarySweepDoesNotLoseCharacters() {
+        for (int n = 2020; n < 2060; n++) {
+            String input = "```java\n" + "x".repeat(n) + "\n```\n" + "y".repeat(3000);
+            var chunks = MessageSplitter.splitAndFormat(input, "MarkdownV2");
+            for (String chunk : chunks) assertThat(chunk.length()).isLessThanOrEqualTo(4096);
+            assertThat(chunks.stream().mapToLong(s -> s.chars().filter(c -> c == 'x').count()).sum()).as("n=%s", n).isEqualTo(n);
+            assertThat(chunks.stream().mapToLong(s -> s.chars().filter(c -> c == 'y').count()).sum()).as("n=%s", n).isEqualTo(3000);
+        }
+    }
+
+    @Test
+    void longCodeWithNewlinesSurvivesSplitAndFormatting() {
+        String input = "```python\n" + "x = 1\n".repeat(1000) + "```";
+        var chunks = MessageSplitter.splitAndFormat(input, "MarkdownV2");
+        StringBuilder restored = new StringBuilder();
+        for (int i = 0; i < chunks.size(); i++) {
+            String chunk = chunks.get(i).replaceFirst("^\\\\\\(\\d+/\\d+\\\\\\) ", "");
+            if (i > 0) chunk = chunk.substring("```python\n".length());
+            if (i + 1 < chunks.size()) chunk = chunk.substring(0, chunk.length() - "\n```".length());
+            restored.append(chunk);
+        }
+        assertThat(restored.toString()).isEqualTo(input);
+    }
+
+    @Test
+    void longFenceTagFallsBackToLiteralMarkdownWithoutDataLoss() {
+        String input = "```" + "language".repeat(400) + "\n" + "a_`\\>".repeat(1400) + "\n```";
+        var chunks = MessageSplitter.splitAndFormat(input, "MarkdownV2");
+        assertThat(chunks.size()).isLessThan(20);
+        StringBuilder restored = new StringBuilder();
+        for (String chunk : chunks) {
+            assertThat(chunk.length()).isLessThanOrEqualTo(4096);
+            String body = chunk.replaceFirst("^\\\\\\(\\d+/\\d+\\\\\\) ", "");
+            for (int i = 0; i < body.length(); i++) {
+                char c = body.charAt(i);
+                if (c == '\\' && i + 1 < body.length()) c = body.charAt(++i);
+                restored.append(c);
+            }
+        }
+        assertThat(restored.toString()).isEqualTo(input);
+    }
+
+    @Test
     void multiChunkHasContinuationIndicator() {
         // Create text > 4096 chars
         StringBuilder sb = new StringBuilder();

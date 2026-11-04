@@ -160,7 +160,25 @@ public final class MessageSplitter {
             rawMaxLen = 1; // ensure at least 1 char per chunk
         }
 
-        List<String> rawChunks = splitPreservingBoundaries(text, rawMaxLen);
+        int longestTag = text.lines().map(String::strip).filter(line -> line.startsWith("```"))
+            .map(line -> line.substring(3).strip())
+            .map(tag -> tag.isEmpty() ? "" : tag.split("\\s+", 2)[0])
+            .mapToInt(String::length).max().orElse(0);
+        int fenceReserve = text.contains("```") ? longestTag + 8 : 0;
+        if (rawMaxLen - fenceReserve < 64) {
+            // Treat pathological fence labels as literal text. This keeps every
+            // source character without manufacturing oversized code fences.
+            List<String> literalChunks = splitPreservingBoundaries(text, rawMaxLen);
+            List<String> literal = new ArrayList<>(literalChunks.size());
+            for (int i = 0; i < literalChunks.size(); i++) {
+                String indicator = "(" + (i + 1) + "/" + literalChunks.size() + ") ";
+                literal.add(MarkdownConverter.escapeMarkdownV2(indicator)
+                    + MarkdownConverter.escapeMarkdownV2(literalChunks.get(i)));
+            }
+            return literal;
+        }
+        List<String> rawChunks = balanceFencesAcrossChunks(
+            splitPreservingBoundaries(text, rawMaxLen - fenceReserve), rawMaxLen);
         int total = rawChunks.size();
         List<String> result = new ArrayList<>(total);
 
