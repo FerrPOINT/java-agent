@@ -184,6 +184,7 @@ public class DeliveryLedgerConsumer {
         log.info("delivery_batch_started items={} sourceIds={} chat={} attempts={}", batch.size(),
             batch.stream().map(ClaimedItem::sourceId).toList(), chatId,
             batch.stream().map(ClaimedItem::attempts).toList());
+        boolean sentAny = false;
         try {
             List<String> chunks = com.azhukov.agent.bot.formatting.MessageSplitter.split(text);
             Long lastMessageId = null;
@@ -197,6 +198,7 @@ public class DeliveryLedgerConsumer {
                     break;
                 }
                 lastMessageId = sent.get();
+                sentAny = true;
             }
             if (!sendFailed) {
                 String messageId = lastMessageId == null ? null : lastMessageId.toString();
@@ -218,6 +220,10 @@ public class DeliveryLedgerConsumer {
                 batch.stream().map(ClaimedItem::sourceId).toList(), chatId,
                 lastMessageId != null ? "partial_chunk_failure" : "empty_send_result");
         } catch (TelegramClient.SendRefusalException e) {
+            if (sentAny) {
+                for (ClaimedItem item : batch) outcome(item, "unknown", "partial_chunk_failure", null);
+                return;
+            }
             // Hermes delivery.py parity: the platform REFUSED the send — a
             // known failure (never ambiguous). A flood refusal (429) keeps the
             // platform's own retry_after wait; any other definite refusal
@@ -236,10 +242,11 @@ public class DeliveryLedgerConsumer {
                 category, e.getRetryAfterSeconds());
         } catch (Exception e) {
             for (ClaimedItem item : batch) {
-                outcome(item, "release", "transport_error", e.getMessage());
+                outcome(item, "unknown", sentAny ? "partial_chunk_failure" : "transport_error", null);
             }
-            log.warn("delivery_batch_released items={} sourceIds={} chat={} error={}", batch.size(),
-                batch.stream().map(ClaimedItem::sourceId).toList(), chatId, e.getMessage());
+            log.warn("delivery_batch_unresolved items={} sourceIds={} chat={} category={}", batch.size(),
+                batch.stream().map(ClaimedItem::sourceId).toList(), chatId,
+                sentAny ? "partial_chunk_failure" : "transport_error");
         }
     }
 

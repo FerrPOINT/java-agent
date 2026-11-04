@@ -82,6 +82,44 @@ class DeliveryLedgerConsumerRefusalTest {
     }
 
     @Test
+    void refusalAfterAcceptedChunkFencesBatchAsUnknown() {
+        spec();
+        when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean()))
+            .thenReturn(Optional.of(123L))
+            .thenThrow(new TelegramClient.SendRefusalException(95, "429: Too Many Requests"));
+        consumer().deliverBatchForTest(List.of(delegate("42", "a".repeat(9000))));
+        ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
+        verify(specMock).body(body.capture());
+        assertThat(body.getValue()).contains("partial_chunk_failure");
+        RestClient.RequestBodyUriSpec uriSpec = restClient.post();
+        verify(uriSpec).uri("/api/v1/agent/delivery/unknown");
+        verify(uriSpec, org.mockito.Mockito.never()).uri("/api/v1/agent/delivery/release");
+    }
+
+    @Test
+    void transportExceptionAfterAcceptedChunkFencesBatchAsUnknown() {
+        spec();
+        when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean()))
+            .thenReturn(Optional.of(123L))
+            .thenThrow(new IllegalStateException("connection failed"));
+        consumer().deliverBatchForTest(List.of(delegate("42", "a".repeat(9000))));
+        ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
+        verify(specMock).body(body.capture());
+        assertThat(body.getValue()).contains("partial_chunk_failure");
+        verify(restClient.post()).uri("/api/v1/agent/delivery/unknown");
+    }
+
+    @Test
+    void transportExceptionBeforeReceiptIsUnknownNotRetryable() {
+        spec();
+        when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean()))
+            .thenThrow(new IllegalStateException("connection failed"));
+        consumer().deliverBatchForTest(List.of(delegate("42", "payload")));
+        verify(restClient.post()).uri("/api/v1/agent/delivery/unknown");
+        verify(restClient.post(), org.mockito.Mockito.never()).uri("/api/v1/agent/delivery/release");
+    }
+
+    @Test
     void definiteApiRefusalReleasesAsSendRefused() {
         spec();
         when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean()))
