@@ -833,6 +833,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         // Partition: images (not as_document) go to batch, everything else goes individually
         List<MediaDeliveryService.MediaDescriptor> imageBatch = new ArrayList<>();
         List<MediaDeliveryService.MediaDescriptor> individualFiles = new ArrayList<>();
+        java.util.Set<MediaDeliveryService.MediaDescriptor> seen = new java.util.HashSet<>();
 
         for (MediaDeliveryService.MediaDescriptor desc : media) {
             // Security: validate path against allowed base directories
@@ -840,6 +841,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                 log.warn("media_delivery_rejected reason=outside_allowed_root file={}", mediaFileName(desc));
                 continue;
             }
+            if (!seen.add(desc)) continue;
             // WP-11: skip artifacts that were already delivered — a retry after
             // an ambiguous send must never re-send the same file.
             String artifactId = artifactIdForPath(desc.path());

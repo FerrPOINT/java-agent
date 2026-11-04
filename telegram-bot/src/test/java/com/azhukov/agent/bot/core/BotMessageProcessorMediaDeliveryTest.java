@@ -397,6 +397,26 @@ class BotMessageProcessorMediaDeliveryTest {
     }
 
     @Test
+    void repeatedIdenticalMediaDescriptorIsSentOnce() throws Exception {
+        Path file = createTempFile("report.pdf");
+        var item = new MediaDeliveryService.MediaDescriptor(file.toString(), ".pdf", false, false);
+        processor.deliverMedia(100L, List.of(item, item), null);
+        verify(telegramClient, times(1)).sendDocument(eq(100L), any(byte[].class), anyString(), nullable(String.class), nullable(String.class));
+    }
+
+    @Test
+    void sameFilenameInDifferentDirectoriesIsNotDeduplicated() throws Exception {
+        Path firstDir = Files.createDirectory(tempDir.resolve("first"));
+        Path secondDir = Files.createDirectory(tempDir.resolve("second"));
+        Path first = Files.writeString(firstDir.resolve("report.pdf"), "first");
+        Path second = Files.writeString(secondDir.resolve("report.pdf"), "second");
+        processor.deliverMedia(100L, List.of(
+            new MediaDeliveryService.MediaDescriptor(first.toString(), ".pdf", false, false),
+            new MediaDeliveryService.MediaDescriptor(second.toString(), ".pdf", false, false)), null);
+        verify(telegramClient, times(2)).sendDocument(eq(100L), any(byte[].class), anyString(), nullable(String.class), nullable(String.class));
+    }
+
+    @Test
     void invalidMediaPathsDoNotPreventDeliveryOfLaterValidFiles() throws Exception {
         Path document = createTempFile("valid.pdf");
         processor.deliverMedia(100L, List.of(
