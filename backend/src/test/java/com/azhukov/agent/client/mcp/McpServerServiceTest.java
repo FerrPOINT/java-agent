@@ -45,6 +45,86 @@ class McpServerServiceTest {
     }
 
     @Test
+    void toolCallsReuseMcpConnectionSessionWithoutSharingWithOtherConnections() throws Exception {
+        var service = new McpServerService(properties, objectMapper, toolRegistry);
+        when(toolRegistry.getDefinitions()).thenReturn(List.of(
+            new ToolDefinition("process", "Process", Map.of("type", "object", "properties", Map.of()))));
+        when(toolRegistry.execute(anyString(), anyString(), anyString(), any(), any()))
+            .thenAnswer(invocation -> {
+                var s = (com.azhukov.agent.core.model.Session) invocation.getArgument(4);
+                assertThat(com.azhukov.agent.core.security.UserContext.getUserId()).isEqualTo(s.userId());
+                assertThat(com.azhukov.agent.core.security.UserContext.getRole()).isEqualTo("user");
+                return ToolResult.ok("ok");
+            });
+        var method = McpServerService.class.getDeclaredMethod("buildToolSpecifications");
+        method.setAccessible(true);
+        var specs = (List<io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification>) method.invoke(service);
+        var exchangeA = mock(io.modelcontextprotocol.server.McpSyncServerExchange.class);
+        var exchangeB = mock(io.modelcontextprotocol.server.McpSyncServerExchange.class);
+        var ctxA = io.modelcontextprotocol.common.McpTransportContext.create(Map.of("agent.user", "alice", "agent.role", "user"));
+        when(exchangeA.transportContext()).thenReturn(ctxA);
+        when(exchangeB.transportContext()).thenReturn(io.modelcontextprotocol.common.McpTransportContext.create(Map.of("agent.user", "bob", "agent.role", "user")));
+        when(exchangeA.sessionId()).thenReturn("connection-a");
+        when(exchangeB.sessionId()).thenReturn("connection-a");
+        var request = new McpSchema.CallToolRequest("process", Map.of("action", "list"));
+        specs.getFirst().callHandler().apply(exchangeA, request);
+        specs.getFirst().callHandler().apply(exchangeA, request);
+        specs.getFirst().callHandler().apply(exchangeB, request);
+        var sessions = org.mockito.ArgumentCaptor.forClass(com.azhukov.agent.core.model.Session.class);
+        verify(toolRegistry, times(3)).execute(anyString(), anyString(), anyString(), any(), sessions.capture());
+        var captured = sessions.getAllValues();
+        assertThat(captured.get(0).id()).isEqualTo(captured.get(1).id()).isNotEqualTo(captured.get(2).id());
+        assertThat(captured).extracting(com.azhukov.agent.core.model.Session::userId).containsExactly("alice", "alice", "bob");
+        assertThat(com.azhukov.agent.core.security.UserContext.getUserId()).isNull();
+    }
+
+    @Test
+    void centralProofMustNotBeConvertedIntoUnboundedRole() throws Exception {
+        var service = new McpServerService(properties, objectMapper, toolRegistry);
+        var proof = new com.pdlc.auth.HumanApplicationAccess("alice", "admin", java.util.Set.of("java-agent"), 1,
+            true, java.time.Instant.now().plusSeconds(60), System.nanoTime() + 60_000_000_000L);
+        var observed = new java.util.concurrent.atomic.AtomicReference<com.pdlc.auth.HumanApplicationAccess>();
+        when(toolRegistry.execute(anyString(), anyString(), anyString(), any(), any())).thenAnswer(inv -> {
+            observed.set(com.azhukov.agent.core.security.UserContext.centralAccess());
+            return ToolResult.ok("ok");
+        });
+        var method = McpServerService.class.getDeclaredMethod("handleToolCall", String.class,
+            McpSchema.CallToolRequest.class, String.class, io.modelcontextprotocol.common.McpTransportContext.class);
+        method.setAccessible(true);
+        var ctx = io.modelcontextprotocol.common.McpTransportContext.create(Map.of(
+            "agent.user", "alice", "agent.role", "admin", "agent.access", proof));
+        method.invoke(service, "echo", new McpSchema.CallToolRequest("echo", Map.of()), "connection", ctx);
+        assertThat(observed.get()).isSameAs(proof);
+        assertThat(com.azhukov.agent.core.security.UserContext.centralAccess()).isNull();
+    }
+
+    @Test
+    void expiredCentralProofCannotExecuteTool() throws Exception {
+        var service = new McpServerService(properties, objectMapper, toolRegistry);
+        var proof = new com.pdlc.auth.HumanApplicationAccess("alice", "admin", java.util.Set.of("java-agent"), 1,
+            true, java.time.Instant.now().minusSeconds(1), System.nanoTime() - 1);
+        var method = McpServerService.class.getDeclaredMethod("handleToolCall", String.class,
+            McpSchema.CallToolRequest.class, String.class, io.modelcontextprotocol.common.McpTransportContext.class);
+        method.setAccessible(true);
+        var ctx = io.modelcontextprotocol.common.McpTransportContext.create(Map.of(
+            "agent.user", "alice", "agent.role", "admin", "agent.access", proof));
+        var result = (McpSchema.CallToolResult) method.invoke(service, "echo", new McpSchema.CallToolRequest("echo", Map.of()), "connection", ctx);
+        assertThat(result.isError()).isTrue();
+        verifyNoInteractions(toolRegistry);
+        assertThat(com.azhukov.agent.core.security.UserContext.centralAccess()).isNull();
+    }
+
+    @Test
+    void missingMcpSessionFailsClosedWithoutExecutingTool() throws Exception {
+        var service = new McpServerService(properties, objectMapper, toolRegistry);
+        var method = McpServerService.class.getDeclaredMethod("handleToolCall", String.class, McpSchema.CallToolRequest.class, String.class, io.modelcontextprotocol.common.McpTransportContext.class);
+        method.setAccessible(true);
+        var result = (McpSchema.CallToolResult) method.invoke(service, "process", new McpSchema.CallToolRequest("process", Map.of("action", "list")), null, null);
+        assertThat(result.isError()).isTrue();
+        verifyNoInteractions(toolRegistry);
+    }
+
+    @Test
     void shouldNotStartWhenDisabled() {
         properties.getMcp().getServer().setEnabled(false);
         McpServerService service = new McpServerService(properties, objectMapper, toolRegistry);
@@ -297,10 +377,10 @@ class McpServerServiceTest {
                                                     String toolName,
                                                     Map<String, Object> arguments) throws Exception {
         Method method = McpServerService.class.getDeclaredMethod(
-            "handleToolCall", String.class, McpSchema.CallToolRequest.class);
+            "handleToolCall", String.class, McpSchema.CallToolRequest.class, String.class, io.modelcontextprotocol.common.McpTransportContext.class);
         method.setAccessible(true);
         return (McpSchema.CallToolResult) method.invoke(
-            service, toolName, new McpSchema.CallToolRequest(toolName, arguments));
+            service, toolName, new McpSchema.CallToolRequest(toolName, arguments), "test-session", null);
     }
 
     private String textContent(McpSchema.CallToolResult result) {

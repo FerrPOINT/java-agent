@@ -41,6 +41,49 @@ class ProcessToolActionsTest {
     }
 
     @Test
+    void processListDoesNotExposeAnotherSessionsBackgroundProcess() throws Exception {
+        var owner = com.azhukov.agent.core.model.Session.create("owner", "test", "test");
+        var other = com.azhukov.agent.core.model.Session.create("other", "test", "test");
+        Process process = mock(Process.class);
+        when(process.isAlive()).thenReturn(true);
+        when(process.pid()).thenReturn(42L);
+        var managed = new ProcessTool.ManagedProcess("proc_private", "private command", process, 30, null, owner.id());
+        inject(managed.id, managed);
+        assertThat(tool.execute("{\"action\":\"list\"}", null, owner).content()).contains(managed.id);
+        assertThat(tool.execute("{\"action\":\"list\"}", null, other).content()).doesNotContain(managed.id, "private command");
+        for (String action : java.util.List.of("poll", "log", "wait", "kill", "write", "submit", "close")) {
+            String args = "{\"action\":\"" + action + "\",\"session_id\":\"proc_private\"}";
+            assertThat(tool.execute(args, null, other).content()).contains("not_found");
+        }
+        assertThat(processes).containsKey(managed.id);
+    }
+
+    @Test
+    void runControlScopeOwnsRealSpawnedProcessAndHidesItFromOtherRuns() throws Exception {
+        var base = com.azhukov.agent.core.model.Session.create("owner", "test", "test");
+        var first = com.azhukov.agent.core.agent.RunControlScope.withControlSessionId(base, java.util.UUID.randomUUID());
+        var second = com.azhukov.agent.core.agent.RunControlScope.withControlSessionId(base, java.util.UUID.randomUUID());
+        var proc = tool.spawn("exec sleep 60", 30, false, null, null, null,
+            com.azhukov.agent.core.agent.RunControlScope.controlSessionId(first));
+        try {
+            String prefix = proc.id.substring(0, proc.id.length() - 2);
+            assertThat(tool.execute("{\"action\":\"list\"}", null, first).content()).contains(proc.id);
+            assertThat(tool.execute("{\"action\":\"list\"}", null, second).content()).doesNotContain(proc.id);
+            String poll = "{\"action\":\"poll\",\"session_id\":\"" + prefix + "\"}";
+            assertThat(tool.execute(poll, null, first).content()).contains(proc.id);
+            assertThat(tool.execute(poll, null, second).content()).contains("not_found");
+            String kill = "{\"action\":\"kill\",\"session_id\":\"" + proc.id + "\"}";
+            assertThat(tool.execute(kill, null, second).content()).contains("not_found");
+            assertThat(proc.process.isAlive()).isTrue();
+            assertThat(tool.execute(kill, null, first).content()).contains("Killed process");
+            assertThat(proc.process.isAlive()).isFalse();
+            assertThat(tool.execute(poll, null, first).content()).contains("not_found");
+        } finally {
+            proc.destroy();
+        }
+    }
+
+    @Test
     void pollReturnsStatus() throws Exception {
         ProcessTool.ManagedProcess mp = fakeProcess("p1");
         inject("p1", mp);
