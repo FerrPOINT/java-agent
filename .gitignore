@@ -72,3 +72,13 @@ target-cache*/
 target-stage/
 target-stable/
 *.tsbuildinfo
+
+# Disposable results are not repository inputs.
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+playwright-report/
+test-results/
+htmlcov/
+handoff/workspace-recovery*/
+docs/**/*.log
