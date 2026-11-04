@@ -37,6 +37,12 @@ class AttachmentFlowE2ETest extends PostgresTestContainer {
     @Autowired
     private com.azhukov.agent.persistence.repository.MessageRepository messageRepository;
 
+    @Autowired
+    private com.azhukov.agent.persistence.repository.SessionRepository sessionRepository;
+
+    @Autowired
+    private org.springframework.web.context.WebApplicationContext webApplicationContext;
+
     private static final String TEXT_PAYLOAD = "quarterly figures: 42";
 
     private String uploadTextArtifact(String fileName, String content, String ownerId)
@@ -53,6 +59,28 @@ class AttachmentFlowE2ETest extends PostgresTestContainer {
         String body = result.getResponse().getContentAsString();
         return com.fasterxml.jackson.databind.json.JsonMapper.builder().build()
             .readTree(body).path("id").asText();
+    }
+
+    @Test
+    void apiKeyFilterCannotImpersonatePersistedSessionOwner() throws Exception {
+        String authenticatedUser = "http-owner-" + UUID.randomUUID();
+        String requestedUser = "different-owner-" + UUID.randomUUID();
+        var access = org.mockito.Mockito.mock(com.azhukov.agent.service.UserAccessService.class);
+        org.mockito.Mockito.when(access.authenticate("fixture-user-key")).thenReturn(
+            new com.azhukov.agent.service.UserAccessService.AuthenticatedUser(authenticatedUser, "user"));
+        var properties = new com.azhukov.agent.config.AgentProperties();
+        properties.getSecurity().setApiKey("fixture-global-key");
+        var filter = new com.azhukov.agent.api.filter.ApiKeyAuthFilter(properties, access);
+        var mvc = org.springframework.test.web.servlet.setup.MockMvcBuilders
+            .webAppContextSetup(webApplicationContext).addFilters(filter).build();
+        var result = mvc.perform(post("/api/v1/agent/chat").header("X-API-Key", "fixture-user-key")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"message\":\"inspect\",\"userId\":\"" + requestedUser + "\"}"))
+            .andExpect(status().isOk()).andReturn();
+        UUID sessionId = UUID.fromString(com.fasterxml.jackson.databind.json.JsonMapper.builder().build()
+            .readTree(result.getResponse().getContentAsString()).path("sessionId").asText());
+        assertThat(sessionRepository.findById(sessionId).orElseThrow().getUserId()).isEqualTo(authenticatedUser);
+        assertThat(com.azhukov.agent.core.security.UserContext.getUserId()).isNull();
     }
 
     @Test
@@ -94,6 +122,7 @@ class AttachmentFlowE2ETest extends PostgresTestContainer {
         assertThat(userMessages).isNotEmpty();
         String persisted = userMessages.get(userMessages.size() - 1).getContent();
         assertThat(persisted).contains("summarize the attachment");
+        assertThat(sessionRepository.findById(sessionId).orElseThrow().getUserId()).isEqualTo(ownerId);
         assertThat(persisted).contains("[Attachments]");
         assertThat(persisted).contains(TEXT_PAYLOAD);
         assertThat(persisted).contains("notes.txt");

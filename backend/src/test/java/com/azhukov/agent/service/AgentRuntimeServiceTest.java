@@ -177,6 +177,33 @@ class AgentRuntimeServiceTest {
     }
 
     @Test
+    void syncSessionCreationRespectsAuthenticatedIdentityAndGatewayAuthor() {
+        var turn = new TurnResult(List.of(Message.user(USER_MESSAGE), Message.assistant(ASSISTANT_REPLY, 1)), true, null);
+        when(agentRuntime.runTurn(any(Session.class), eq(USER_MESSAGE), eq(List.of()), any())).thenReturn(turn);
+        when(sessionRepository.save(any(SessionEntity.class))).thenAnswer(invocation -> {
+            SessionEntity entity = invocation.getArgument(0);
+            entity.setId(UUID.randomUUID());
+            return entity;
+        });
+        try {
+            var request = ChatRequest.simple(null, USER_MESSAGE, null, null).withUserId("telegram-author");
+            UserContext.set("ordinary-user", UserContext.ROLE_USER);
+            agentRuntimeService.runTurn(request);
+            UserContext.setCentral(new com.pdlc.auth.HumanApplicationAccess("central-human", "admin",
+                java.util.Set.of("java-agent"), 1, true, Instant.now().plusSeconds(60), System.nanoTime() + 60_000_000_000L));
+            agentRuntimeService.runTurn(request);
+            UserContext.set("gateway", UserContext.ROLE_ADMIN);
+            agentRuntimeService.runTurn(request);
+            ArgumentCaptor<SessionEntity> captured = ArgumentCaptor.forClass(SessionEntity.class);
+            verify(sessionRepository, times(3)).save(captured.capture());
+            assertThat(captured.getAllValues()).extracting(SessionEntity::getUserId)
+                .containsExactly("ordinary-user", "central-human", "telegram-author");
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
     void runTurnLoadsExistingSessionByUuid() {
         ChatRequest request = ChatRequest.simple(EXISTING_SESSION_ID, USER_MESSAGE, null, null);
 
