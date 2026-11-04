@@ -55,6 +55,33 @@ class StreamEditorFloodFallbackTest {
     // ─── 4a: Flood strikes fallback mode tests ─────────────────────
 
     @Test
+    void failedEditFallbackPreservesForumThread() {
+        editor.sessionFor(123L).messageThreadId = 77L;
+        when(client.editMessageText(eq(123L), eq(42L), anyString(), eq("MarkdownV2"), eq(false))).thenReturn(false);
+        when(client.sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), eq(77), eq(false)))
+            .thenReturn(Optional.of(1L));
+        assertThat(editor.finalizeStream(123L, 42L, "answer")).isTrue();
+        verify(client).sendMessage(eq(123L), eq("answer"), eq("MarkdownV2"), any(), eq(77), eq(false));
+    }
+
+    @Test
+    void fallbackMultipartDoesNotConvertAlreadyFormattedMarkdownTwice() {
+        var session = editor.sessionFor(123L);
+        session.currentMessageId.set(42L);
+        String text = "prefix_".repeat(700);
+        when(client.editMessageText(eq(123L), eq(42L), anyString(), eq("MarkdownV2"), eq(false))).thenReturn(false);
+        when(client.sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), eq(false)))
+            .thenReturn(Optional.of(1L));
+        assertThat(editor.finalizeStream(123L, 42L, text)).isTrue();
+        var sent = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(client, atLeastOnce()).sendMessage(eq(123L), sent.capture(), eq("MarkdownV2"), any(), any(), eq(false));
+        String restored = sent.getAllValues().stream()
+            .map(chunk -> chunk.replaceFirst("^\\\\\\(\\d+/\\d+\\\\\\) ", ""))
+            .collect(java.util.stream.Collectors.joining()).replace("\\_", "_");
+        assertThat(restored).isEqualTo(text);
+    }
+
+    @Test
     void multipartFallbackStopsOnFirstAmbiguousReceipt() {
         String text = "a".repeat(4000) + "b".repeat(4000) + "c".repeat(1000);
         when(client.sendMessage(eq(123L), anyString(), any(), any(), any()))

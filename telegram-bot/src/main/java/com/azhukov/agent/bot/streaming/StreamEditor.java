@@ -793,7 +793,7 @@ public class StreamEditor {
         // Fallback: if edit failed, try sendMessage as a new message
         if (!success) {
             log.warn("Final edit failed for chat {}, messageId={}, trying sendMessage fallback", chatId, effectiveMessageId);
-            Optional<Long> fallbackMsgId = sendFormattedMessage(chatId, formatted);
+            Optional<Long> fallbackMsgId = sendFormattedFinalMessage(chatId, scrubbed, session.messageThreadId);
             if (fallbackMsgId.isPresent()) {
                 // Optionally delete the old stale message
                 telegramClient.deleteMessage(chatId, effectiveMessageId);

@@ -238,14 +238,14 @@ class StreamEditorTest {
     void finalizeStream_fallsBackToSendMessageOnEditFailure() {
         when(client.editMessageText(anyLong(), anyLong(), anyString(), anyString(), anyBoolean()))
             .thenReturn(false);
-        when(client.sendMessage(anyLong(), anyString(), anyString(), any(), any()))
+        when(client.sendMessage(anyLong(), anyString(), anyString(), any(), any(), eq(false)))
             .thenReturn(Optional.of(99L));
 
         boolean result = editor.finalizeStream(123L, 42L, "Final text");
 
         assertThat(result).isTrue();
         verify(client).editMessageText(eq(123L), eq(42L), anyString(), eq("MarkdownV2"), eq(false));
-        verify(client).sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any());
+        verify(client).sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), eq(false));
         verify(client).deleteMessage(123L, 42L);
     }
 
