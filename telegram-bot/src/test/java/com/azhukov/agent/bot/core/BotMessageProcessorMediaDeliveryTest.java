@@ -397,6 +397,25 @@ class BotMessageProcessorMediaDeliveryTest {
     }
 
     @Test
+    void workspaceReplacedBySymlinkBeforeDeliveryMustNotExposeExternalFile(@TempDir Path outsideDir) throws Exception {
+        Path file = Files.writeString(tempDir.resolve("report.pdf"), "safe");
+        Files.writeString(outsideDir.resolve("report.pdf"), "outside");
+        processor.init();
+        Path moved = tempDir.resolveSibling(tempDir.getFileName() + "-moved");
+        try {
+            Files.move(tempDir, moved);
+            Files.createSymbolicLink(tempDir, outsideDir);
+            processor.deliverMedia(100L, List.of(new MediaDeliveryService.MediaDescriptor(file.toString(), ".pdf", false, false)), null);
+            verify(telegramClient, never()).sendDocument(eq(100L),
+                org.mockito.AdditionalMatchers.aryEq("outside".getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                anyString(), nullable(String.class), nullable(String.class));
+        } finally {
+            if (Files.isSymbolicLink(tempDir)) Files.delete(tempDir);
+            if (Files.exists(moved)) Files.move(moved, tempDir);
+        }
+    }
+
+    @Test
     void repeatedIdenticalMediaDescriptorIsSentOnce() throws Exception {
         Path file = createTempFile("report.pdf");
         var item = new MediaDeliveryService.MediaDescriptor(file.toString(), ".pdf", false, false);
