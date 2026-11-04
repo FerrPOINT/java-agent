@@ -1029,8 +1029,7 @@ public class StreamEditor {
         if (session.useDraftStreaming) {
             // Send the accumulated text as a real message (committing the draft)
             String scrubbed = scrubThink(session, accumulatedText);
-            String formatted = formatForTelegramDelegate(scrubbed);
-            sendFormattedMessage(chatId, formatted);
+            sendFormattedFinalMessage(chatId, scrubbed, session.messageThreadId);
             // Bump draftId for the next segment
             int newDraftId = draftIdCounter.incrementAndGet();
             session.draftId = newDraftId;

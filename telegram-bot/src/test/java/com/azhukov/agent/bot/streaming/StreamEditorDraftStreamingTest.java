@@ -208,17 +208,41 @@ class StreamEditorDraftStreamingTest {
     // ─── Segment break tests ─────────────────────────────────────
 
     @Test
+    void draftSegmentLongMarkdownIsConvertedOnce() {
+        editor.startStream(123L, "First", "forum", 77L);
+        String text = "prefix_".repeat(700);
+        when(client.sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), eq(77), eq(false)))
+            .thenReturn(Optional.of(50L));
+        editor.onSegmentBreak(123L, -1, text);
+        var sent = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(client, atLeast(2)).sendMessage(eq(123L), sent.capture(), eq("MarkdownV2"), any(), eq(77), eq(false));
+        String restored = sent.getAllValues().stream()
+            .map(chunk -> chunk.replaceFirst("^\\\\\\(\\d+/\\d+\\\\\\) ", ""))
+            .collect(java.util.stream.Collectors.joining()).replace("\\_", "_");
+        assertThat(restored).isEqualTo(text);
+    }
+
+    @Test
+    void draftSegmentPreservesForumTopic() {
+        editor.startStream(123L, "First", "forum", 77L);
+        when(client.sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), eq(77), eq(false)))
+            .thenReturn(Optional.of(50L));
+        editor.onSegmentBreak(123L, -1, "First segment");
+        verify(client).sendMessage(eq(123L), eq("First segment"), eq("MarkdownV2"), any(), eq(77), eq(false));
+    }
+
+    @Test
     void onSegmentBreak_withDraftStreaming_commitsDraftAndBumpsId() {
         editor.startStream(123L, "First segment text", "dm");
 
         // Send a segment break — should commit the draft as a real message
-        when(client.sendMessage(anyLong(), anyString(), anyString(), any(), any()))
+        when(client.sendMessage(anyLong(), anyString(), anyString(), any(), any(), eq(false)))
             .thenReturn(Optional.of(50L));
 
         editor.onSegmentBreak(123L, -1, "First segment text accumulated");
 
         // Should have sent the accumulated text as a real message
-        verify(client).sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any());
+        verify(client).sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), eq(false));
         // Draft streaming should still be active (segment break doesn't disable it)
         assertThat(editor.isDraftStreamingActive(123L)).isTrue();
     }
