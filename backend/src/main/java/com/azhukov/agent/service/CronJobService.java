@@ -657,10 +657,25 @@ private static final String CRON_EXECUTION_HINT = """
         // allows disabling a job to a stub and re-editing later.
 
         entity = cronJobRepository.save(entity);
-        // Reschedule
-        cancelJob(id);
-        if (entity.isEnabled() && properties.getCron().isEnabled()) {
-            scheduleJob(entity);
+        // Reconcile the scheduler only after the enclosing transaction commits.
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()) {
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                new org.springframework.transaction.support.TransactionSynchronization() {
+                    @Override public void afterCommit() {
+                        var tx = new org.springframework.transaction.support.TransactionTemplate(transactionTemplate.getTransactionManager());
+                        tx.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+                        tx.executeWithoutResult(status -> {
+                            cancelJob(id);
+                            cronJobRepository.findById(id)
+                                .filter(CronJobEntity::isEnabled)
+                                .filter(job -> properties.getCron().isEnabled())
+                                .ifPresent(CronJobService.this::scheduleJob);
+                        });
+                    }
+                });
+        } else {
+            cancelJob(id);
+            if (entity.isEnabled() && properties.getCron().isEnabled()) scheduleJob(entity);
         }
         log.info("Updated cron job: {}", id);
         return entity;
