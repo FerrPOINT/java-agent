@@ -672,7 +672,21 @@ private static final String CRON_EXECUTION_HINT = """
         requireOwnership(entity);
         entity.setEnabled(false);
         entity = cronJobRepository.save(entity);
-        cancelJob(id);
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()) {
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                new org.springframework.transaction.support.TransactionSynchronization() {
+                    @Override public void afterCommit() {
+                        var tx = new org.springframework.transaction.support.TransactionTemplate(transactionTemplate.getTransactionManager());
+                        tx.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+                        tx.executeWithoutResult(status -> {
+                            var persisted = cronJobRepository.findById(id);
+                            if (persisted.isEmpty() || !persisted.get().isEnabled()) cancelJob(id);
+                        });
+                    }
+                });
+        } else {
+            cancelJob(id);
+        }
         log.info("Paused cron job: {}", id);
         return entity;
     }
