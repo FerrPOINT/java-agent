@@ -140,8 +140,14 @@ class DeliveryLedgerConsumerRefusalTest {
         spec();
         var item = new DeliveryLedgerConsumer.ClaimedItem("id-42", "token-42", "cron_execution", "42",
             "telegram", "100200300", "not-an-integer", "payload", 1);
-        consumer().deliverBatchForTest(List.of(item));
-        verify(restClient.post()).uri("/api/v1/agent/delivery/drop");
+        var second = new DeliveryLedgerConsumer.ClaimedItem("id-43", "token-43", "cron_execution", "43",
+            "telegram", "100200300", "not-an-integer", "payload 2", 1);
+        consumer().deliverBatchForTest(List.of(item, second));
+        verify(restClient.post(), times(2)).uri("/api/v1/agent/delivery/drop");
+        ArgumentCaptor<String> bodies = ArgumentCaptor.forClass(String.class);
+        verify(specMock, times(2)).body(bodies.capture());
+        assertThat(bodies.getAllValues()).anySatisfy(body -> assertThat(body).contains("id-42", "token-42", "invalid_thread_id"));
+        assertThat(bodies.getAllValues()).anySatisfy(body -> assertThat(body).contains("id-43", "token-43", "invalid_thread_id"));
         verify(telegram, org.mockito.Mockito.never()).sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean());
     }
 
