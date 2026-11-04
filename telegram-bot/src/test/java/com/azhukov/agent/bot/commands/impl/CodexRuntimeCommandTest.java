@@ -46,6 +46,13 @@ class CodexRuntimeCommandTest {
     }
 
     @Test
+    void unrestrictedWithoutOverrideShowsBackendDefault() {
+        properties.getAvailableModels().clear();
+        String result = cmd.handle(textEvent("/codex_runtime", null), session);
+        assertThat(result).contains("Model: backend default").doesNotContain("kimi-k2.6");
+    }
+
+    @Test
     void listModels() {
         String result = cmd.handle(textEvent("/codex_runtime", "list"), session);
         assertThat(result).contains("kimi-k2.6");

@@ -75,7 +75,8 @@ public class CodexRuntimeCommand implements CommandHandler {
 
 	private String showCurrent(BotSessionEntity session) {
 		String sessionModel = session != null ? session.getModelOverride() : null;
-		String model = com.azhukov.agent.bot.config.ModelSelection.resolve(properties, sessionModel);
+		String model = com.azhukov.agent.bot.config.ModelSelection.forRequest(properties, sessionModel);
+		if (model == null || model.isBlank()) model = "backend default";
 		if (!properties.getAvailableModels().isEmpty() && !properties.getAvailableModels().contains(sessionModel)) {
 			sessionModel = null;
 		}
