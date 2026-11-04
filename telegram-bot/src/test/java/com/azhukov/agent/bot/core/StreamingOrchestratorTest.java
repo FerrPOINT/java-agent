@@ -281,6 +281,21 @@ class StreamingOrchestratorTest {
     }
 
     @Test
+    void failedReviewIsSentAgainOnNextPollEvenWhenOutcomeIsUnknown() {
+        UUID backendSessionId = UUID.randomUUID();
+        UUID deliveryId = UUID.randomUUID();
+        String review = "x".repeat(9000);
+        when(backendClient.getPendingReview(backendSessionId.toString())).thenReturn(
+            new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode()
+                .put("pending", true).put("summary", review).put("deliveryId", deliveryId.toString()));
+        when(hooks.sendReviewMessage(100L, review, 5L, 0L)).thenReturn(false);
+        assertThat(orchestrator.deliverPendingReview(backendSessionId.toString(), 100L, 5L, 0L, hooks)).isFalse();
+        assertThat(orchestrator.deliverPendingReview(backendSessionId.toString(), 100L, 5L, 0L, hooks)).isFalse();
+        verify(hooks, times(1)).sendReviewMessage(100L, review, 5L, 0L);
+        verify(backendClient, never()).acknowledgePendingReview(anyString(), anyString());
+    }
+
+    @Test
     void streamReviewAckFailureRetainsReceiptAndDoesNotResendOnRetry() {
         UUID backendSessionId = UUID.randomUUID();
         UUID deliveryId = UUID.randomUUID();
