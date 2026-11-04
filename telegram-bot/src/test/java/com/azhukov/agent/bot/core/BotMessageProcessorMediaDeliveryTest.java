@@ -408,6 +408,25 @@ class BotMessageProcessorMediaDeliveryTest {
     }
 
     @Test
+    void configuredWorkspaceReplacedBeforeDeliveryDoesNotExposeExternalFile(@TempDir Path outsideDir) throws Exception {
+        Path file = Files.writeString(tempDir.resolve("report.pdf"), "safe");
+        Files.writeString(outsideDir.resolve("report.pdf"), "outside");
+        processor.init();
+        Path moved = tempDir.resolveSibling(tempDir.getFileName() + "-moved");
+        try {
+            Files.move(tempDir, moved);
+            Files.move(outsideDir, tempDir);
+            processor.deliverMedia(100L, List.of(new MediaDeliveryService.MediaDescriptor(file.toString(), ".pdf", false, false)), null);
+            verify(telegramClient, never()).sendDocument(eq(100L), org.mockito.AdditionalMatchers.aryEq("outside".getBytes(java.nio.charset.StandardCharsets.UTF_8)), anyString(), nullable(String.class), nullable(String.class));
+        } finally {
+            if (Files.exists(moved)) {
+                Files.move(tempDir, outsideDir);
+                Files.move(moved, tempDir);
+            }
+        }
+    }
+
+    @Test
     void invalidMediaPathsDoNotPreventDeliveryOfLaterValidFiles() throws Exception {
         Path document = createTempFile("valid.pdf");
         processor.deliverMedia(100L, List.of(
