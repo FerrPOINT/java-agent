@@ -748,7 +748,7 @@ public class TurnExecutor {
             }
         }
         boolean shouldParallel = !anyApprovalRequired
-            && ToolParallelSafety.shouldParallelize(toolCalls, registeredToolNames);
+            && ToolParallelSafety.shouldParallelize(toolCalls, registeredToolNames, session);
 
         if (!shouldParallel) {
             // Sequential path
