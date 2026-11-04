@@ -184,6 +184,13 @@ class MessageSplitterTest {
     }
 
     @Test
+    void literalFallbackEscapesLeadingBlockquoteMarkers() {
+        String input = "```" + "language".repeat(400) + "\n> not a quote\n" + "x".repeat(5000);
+        var chunks = MessageSplitter.splitAndFormat(input, "MarkdownV2");
+        assertThat(String.join("", chunks)).contains("\n\\> not a quote");
+    }
+
+    @Test
     void longFenceTagFallsBackToLiteralMarkdownWithoutDataLoss() {
         String input = "```" + "language".repeat(400) + "\n" + "a_`\\>".repeat(1400) + "\n```";
         var chunks = MessageSplitter.splitAndFormat(input, "MarkdownV2");

@@ -99,6 +99,16 @@ public final class MessageSplitter {
         return chunks;
     }
 
+    private static String escapeLiteralMarkdown(String text) {
+        StringBuilder out = new StringBuilder(text.length() * 2);
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if ("_*[]()~`>#+-=|{}.!\\".indexOf(c) >= 0) out.append('\\');
+            out.append(c);
+        }
+        return out.toString();
+    }
+
     private static List<String> splitVerbatim(String text, int maxLength) {
         List<String> chunks = new ArrayList<>();
         int start = 0;
@@ -173,7 +183,7 @@ public final class MessageSplitter {
             for (int i = 0; i < literalChunks.size(); i++) {
                 String indicator = "(" + (i + 1) + "/" + literalChunks.size() + ") ";
                 literal.add(MarkdownConverter.escapeMarkdownV2(indicator)
-                    + MarkdownConverter.escapeMarkdownV2(literalChunks.get(i)));
+                    + escapeLiteralMarkdown(literalChunks.get(i)));
             }
             return literal;
         }
