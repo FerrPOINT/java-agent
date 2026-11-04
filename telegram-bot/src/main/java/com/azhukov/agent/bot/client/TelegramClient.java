@@ -288,12 +288,11 @@ public class TelegramClient {
                 // platform's own retry_after wait (Hermes flood_not_before).
                 throw new SendRefusalException(e.getRetryAfter(), e.getMessage());
             }
-            if (e.getErrorCode() > 0) {
-                // Definite Telegram API refusal (4xx/5xx with a code): the
-                // message was NOT accepted. Retrying may succeed later.
+            if (e.getErrorCode() >= 400 && e.getErrorCode() < 500) {
+                // A client-error response explicitly rejects this request.
                 throw new SendRefusalException(-1, e.getMessage());
             }
-            return Optional.empty();  // ambiguous transport outcome
+            return Optional.empty();  // server or transport outcome may be ambiguous
         }
     }
 

@@ -66,6 +66,19 @@ class TelegramClientTest {
         client = new TelegramClient(restClient, objectMapper, "BOT_TOKEN", 0);
     }
 
+    @Test
+    void checkedSendTreatsClientFailureAsDefiniteRefusal() {
+        stubPostChain(errorResponse(400, "Bad Request"));
+        assertThatThrownBy(() -> client.sendMessageChecked(1L, "text", null, null, null, null, false))
+            .isInstanceOf(TelegramClient.SendRefusalException.class);
+    }
+
+    @Test
+    void checkedSendTreatsServerFailureAsAmbiguous() {
+        stubPostChain(errorResponse(500, "Internal Server Error"));
+        assertThat(client.sendMessageChecked(1L, "text", null, null, null, null, false)).isEmpty();
+    }
+
     // ─── Helper: stub a successful JSON POST callApi chain ─────────
 
     /**
