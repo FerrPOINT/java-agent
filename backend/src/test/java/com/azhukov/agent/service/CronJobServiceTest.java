@@ -322,6 +322,29 @@ class CronJobServiceTest {
     }
 
     @Test
+    void repeatedResumeCancelsPreviouslyScheduledFuture() {
+        properties.getCron().setEnabled(true);
+        UUID id = UUID.randomUUID();
+        CronJobEntity job = new CronJobEntity();
+        job.setId(id);
+        job.setName("job");
+        job.setSchedule("every 1h");
+        job.setEnabled(false);
+        when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
+        when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        var scheduler = mock(java.util.concurrent.ScheduledExecutorService.class);
+        var first = mock(java.util.concurrent.ScheduledFuture.class);
+        var second = mock(java.util.concurrent.ScheduledFuture.class);
+        doReturn(first, second).when(scheduler).schedule(any(Runnable.class), anyLong(), any(java.util.concurrent.TimeUnit.class));
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "scheduler", scheduler);
+        service.resume(id);
+        service.resume(id);
+        verify(first).cancel(false);
+        service.pause(id);
+        verify(second).cancel(false);
+    }
+
+    @Test
     void removeCronJob() {
         UUID id = UUID.randomUUID();
         service.remove(id);
