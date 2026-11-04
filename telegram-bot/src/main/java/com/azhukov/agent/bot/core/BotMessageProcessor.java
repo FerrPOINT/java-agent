@@ -1026,15 +1026,15 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         }
         String parseMode = properties.getParseMode();
         String formatted = StreamEditor.stripThinkTagsRegex(textForDisplay);
-        if ("MarkdownV2".equalsIgnoreCase(parseMode)) {
-            formatted = MarkdownConverter.convert(formatted);
-        } else if ("HTML".equalsIgnoreCase(parseMode)) {
+        if ("HTML".equalsIgnoreCase(parseMode)) {
             formatted = formatted.replace("&", "&amp;")
                 .replace("<", "&lt;")
                 .replace(">", "&gt;");
         }
         boolean sentAny = false;
-        List<String> chunks = MessageSplitter.split(formatted);
+        List<String> chunks = "MarkdownV2".equalsIgnoreCase(parseMode)
+            ? MessageSplitter.splitAndFormat(formatted, parseMode)
+            : MessageSplitter.split(formatted);
         for (int i = 0; i < chunks.size(); i++) {
             String chunk = chunks.get(i);
             if (chunk.isBlank()) {

@@ -534,6 +534,29 @@ class BotMessageProcessorTest {
     }
 
     @Test
+    void reviewPartialFailureDoesNotClaimSuccessfulReceipt() {
+        when(telegramClient.sendMessage(eq(100L), anyString(), eq("MarkdownV2"), any(), any()))
+            .thenReturn(Optional.of(1L), Optional.empty(), Optional.of(3L));
+        assertThat(processor.sendReviewMessage(100L, "x".repeat(9000), 1L, 0L)).isFalse();
+        verify(telegramClient, times(2)).sendMessage(eq(100L), anyString(), eq("MarkdownV2"), any(), any());
+    }
+
+    @Test
+    void reviewWithMarkdownExpansionIsSplitWithinTelegramLimit() {
+        String review = "_".repeat(3000);
+        when(telegramClient.sendMessage(eq(100L), anyString(), eq("MarkdownV2"), any(), any()))
+            .thenReturn(Optional.of(42L));
+        assertThat(processor.sendReviewMessage(100L, review, 1L, 0L)).isTrue();
+        var sent = ArgumentCaptor.forClass(String.class);
+        verify(telegramClient, atLeast(2)).sendMessage(eq(100L), sent.capture(), eq("MarkdownV2"), any(), any());
+        assertThat(sent.getAllValues()).allSatisfy(part -> assertThat(part.length()).isLessThanOrEqualTo(4096));
+        String restored = sent.getAllValues().stream()
+            .map(chunk -> chunk.replaceFirst("^\\\\\\(\\d+/\\d+\\\\\\) ", ""))
+            .collect(java.util.stream.Collectors.joining()).replace("\\_", "_");
+        assertThat(restored).isEqualTo(review);
+    }
+
+    @Test
     void deferredFinalRetriesAgainAfterSecondFloodRejection() {
         stubStreamingResult("Response text", false);
         when(streamEditor.takePendingFinalText(100L)).thenReturn("Response text");
