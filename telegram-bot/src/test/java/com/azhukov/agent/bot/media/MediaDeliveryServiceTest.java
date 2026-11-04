@@ -154,6 +154,14 @@ class MediaDeliveryServiceTest {
     }
 
     @Test
+    void duplicateTagAndBarePathProduceOneDescriptor(@TempDir Path root) throws Exception {
+        Path file = Files.writeString(root.resolve("report.pdf"), "content");
+        var result = service.extractMediaTags("MEDIA:" + file + "\nSee " + file);
+        assertEquals(1, result.media().size());
+        assertEquals(file.toString(), result.media().getFirst().path());
+    }
+
+    @Test
     void extractMediaTags_emptyText() {
         MediaDeliveryService.ExtractionResult result = service.extractMediaTags("");
         assertEquals(0, result.media().size());
