@@ -1157,6 +1157,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
             List<MediaDeliveryService.MediaDescriptor> chunk = images.subList(i, end);
 
             List<TelegramClient.PhotoInput> photoInputs = new ArrayList<>();
+            List<MediaDeliveryService.MediaDescriptor> included = new ArrayList<>();
             for (MediaDeliveryService.MediaDescriptor desc : chunk) {
                 try {
                     File file = new File(desc.path());
@@ -1171,6 +1172,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                     // First photo in the group gets the caption (if any)
                     String caption = (photoInputs.isEmpty()) ? null : null;
                     photoInputs.add(new TelegramClient.PhotoInput(data, fileName, caption));
+                    included.add(desc);
                 } catch (Exception e) {
                     log.warn("Failed to read media file {}: {}", desc.path(), e.getMessage());
                 }
@@ -1182,7 +1184,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                 // platform message id of the album.
                 String firstMsgId = messageIds == null || messageIds.isEmpty()
                     ? null : String.valueOf(messageIds.get(0));
-                for (MediaDeliveryService.MediaDescriptor desc : chunk) {
+                for (MediaDeliveryService.MediaDescriptor desc : included) {
                     String artifactId = artifactIdForPath(desc.path());
                     if (artifactId != null) {
                         attachmentApiClient.markDelivered(artifactId, firstMsgId);

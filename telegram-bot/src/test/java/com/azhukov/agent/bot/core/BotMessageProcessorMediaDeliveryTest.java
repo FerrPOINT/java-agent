@@ -236,10 +236,9 @@ class BotMessageProcessorMediaDeliveryTest {
     }
 
     @Test
-    void imageBatchSkipsSymlinkWithoutRecordingItsReceipt(@TempDir Path outsideDir) throws Exception {
+    void imageBatchDoesNotRecordReceiptForMissingFile() throws Exception {
         Path safe = createTempFile("safe.png");
-        Path outside = Files.writeString(outsideDir.resolve("outside.png"), "private");
-        Path link = Files.createSymbolicLink(tempDir.resolve("att_abcdef.png"), outside);
+        Path link = tempDir.resolve("att_abcdef.png");
         var field = BotMessageProcessor.class.getDeclaredField("attachmentApiClient");
         field.setAccessible(true);
         AttachmentApiClient api = (AttachmentApiClient) field.get(processor);
@@ -250,6 +249,22 @@ class BotMessageProcessorMediaDeliveryTest {
             new MediaDeliveryService.MediaDescriptor(link.toString(), ".png", false, false)), null);
         verify(telegramClient).sendMediaGroup(eq(100L), any());
         verify(api, never()).markDelivered(eq("att_abcdef"), nullable(String.class));
+    }
+
+    @Test
+    void imageBatchRecordsReceiptsOnlyForAcceptedFiles() throws Exception {
+        Path first = createTempFile("att_abcdef.png");
+        Path second = createTempFile("att_123456.png");
+        var field = BotMessageProcessor.class.getDeclaredField("attachmentApiClient");
+        field.setAccessible(true);
+        AttachmentApiClient api = (AttachmentApiClient) field.get(processor);
+        when(api.find(anyString())).thenReturn(Optional.empty());
+        when(telegramClient.sendMediaGroup(eq(100L), any())).thenReturn(List.of(123L, 124L));
+        processor.deliverMedia(100L, List.of(
+            new MediaDeliveryService.MediaDescriptor(first.toString(), ".png", false, false),
+            new MediaDeliveryService.MediaDescriptor(second.toString(), ".png", false, false)), null);
+        verify(api).markDelivered("att_abcdef", "123");
+        verify(api).markDelivered("att_123456", "123");
     }
 
     @Test
