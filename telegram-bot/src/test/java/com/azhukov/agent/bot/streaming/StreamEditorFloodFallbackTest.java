@@ -55,6 +55,15 @@ class StreamEditorFloodFallbackTest {
     // ─── 4a: Flood strikes fallback mode tests ─────────────────────
 
     @Test
+    void multipartFallbackStopsOnFirstAmbiguousReceipt() {
+        String text = "a".repeat(4000) + "b".repeat(4000) + "c".repeat(1000);
+        when(client.sendMessage(eq(123L), anyString(), any(), any(), any()))
+            .thenReturn(Optional.of(1L), Optional.empty(), Optional.of(3L));
+        assertThat(editor.sendFormattedMessage(123L, text)).isEmpty();
+        verify(client, times(2)).sendMessage(eq(123L), anyString(), any(), any(), any());
+    }
+
+    @Test
     void freshFinalFloodWaitPreservesCooldownForFallback() {
         var session = editor.sessionFor(123L);
         session.streamStartTime = System.currentTimeMillis() - 10000;
