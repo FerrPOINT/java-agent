@@ -84,6 +84,7 @@ class BotMessageProcessorMediaDeliveryTest {
     private GoalAutoContinueService goalAutoContinueService;
     private EditCaptureService editCaptureService;
 
+    private AttachmentApiClient attachmentApiClient;
     private BotMessageProcessor processor;
     private final com.azhukov.agent.bot.session.BotSessionStore sessionStoreMock = org.mockito.Mockito.mock(com.azhukov.agent.bot.session.BotSessionStore.class);
 
@@ -161,10 +162,11 @@ class BotMessageProcessorMediaDeliveryTest {
             mock(com.azhukov.agent.bot.client.TelegramClient.class), sessionStoreMock,
             mock(com.azhukov.agent.bot.keyboard.ClarifyInteractionRenderer.class));
 
+        attachmentApiClient = mock(AttachmentApiClient.class);
         processor = new BotMessageProcessor(
             telegramClient, authorizationService, sessionStore, busyHandler,
             typingManager, backendClient, commandRegistry, callbackQueryHandler,
-            properties, streamEditor, inboundMediaHandler, mediaDeliveryService, org.mockito.Mockito.mock(com.azhukov.agent.bot.core.AttachmentApiClient.class),
+            properties, streamEditor, inboundMediaHandler, mediaDeliveryService, attachmentApiClient,
             runtimeFooter, reactionManager, textBatchDebouncer, photoBatchDebouncer,
             groupMessageFilter, slashAccessPolicy, responseFilter, goalAutoContinueService,
             editCaptureService, updateDispatcher, streamingOrchestrator);
@@ -222,9 +224,7 @@ class BotMessageProcessorMediaDeliveryTest {
     void replacingValidatedFileWithSymlinkDoesNotDeliverOutsideContent(@TempDir Path outsideDir) throws Exception {
         Path local = Files.writeString(tempDir.resolve("att_abcdef.pdf"), "safe");
         Path outside = Files.writeString(outsideDir.resolve("private.pdf"), "private test data");
-        var field = BotMessageProcessor.class.getDeclaredField("attachmentApiClient");
-        field.setAccessible(true);
-        AttachmentApiClient api = (AttachmentApiClient) field.get(processor);
+        AttachmentApiClient api = attachmentApiClient;
         when(api.find("att_abcdef")).thenAnswer(invocation -> {
             Files.delete(local);
             Files.createSymbolicLink(local, outside);
@@ -239,9 +239,7 @@ class BotMessageProcessorMediaDeliveryTest {
     void imageBatchDoesNotRecordReceiptForMissingFile() throws Exception {
         Path safe = createTempFile("safe.png");
         Path link = tempDir.resolve("att_abcdef.png");
-        var field = BotMessageProcessor.class.getDeclaredField("attachmentApiClient");
-        field.setAccessible(true);
-        AttachmentApiClient api = (AttachmentApiClient) field.get(processor);
+        AttachmentApiClient api = attachmentApiClient;
         when(api.find("att_abcdef")).thenReturn(Optional.empty());
         when(telegramClient.sendPhoto(eq(100L), any(byte[].class), nullable(String.class), nullable(String.class)))
             .thenReturn(Optional.of(123L));
@@ -256,9 +254,7 @@ class BotMessageProcessorMediaDeliveryTest {
     void imageBatchRecordsReceiptsOnlyForAcceptedFiles() throws Exception {
         Path first = createTempFile("att_abcdef.png");
         Path second = createTempFile("att_123456.png");
-        var field = BotMessageProcessor.class.getDeclaredField("attachmentApiClient");
-        field.setAccessible(true);
-        AttachmentApiClient api = (AttachmentApiClient) field.get(processor);
+        AttachmentApiClient api = attachmentApiClient;
         when(api.find(anyString())).thenReturn(Optional.empty());
         when(telegramClient.sendMediaGroup(eq(100L), any())).thenReturn(List.of(123L, 124L));
         processor.deliverMedia(100L, List.of(
@@ -281,9 +277,7 @@ class BotMessageProcessorMediaDeliveryTest {
     void imageBatchWithoutTelegramReceiptDoesNotMarkArtifactsDelivered() throws Exception {
         Path first = createTempFile("att_abcdef.png");
         Path second = createTempFile("att_123456.png");
-        var field = BotMessageProcessor.class.getDeclaredField("attachmentApiClient");
-        field.setAccessible(true);
-        AttachmentApiClient api = (AttachmentApiClient) field.get(processor);
+        AttachmentApiClient api = attachmentApiClient;
         when(api.find(anyString())).thenReturn(Optional.empty());
         when(telegramClient.sendMediaGroup(eq(100L), any())).thenReturn(List.of());
         processor.deliverMedia(100L, List.of(
@@ -295,9 +289,7 @@ class BotMessageProcessorMediaDeliveryTest {
     @Test
     void documentWithoutTelegramReceiptDoesNotMarkArtifactDelivered() throws Exception {
         Path file = createTempFile("att_abcdef.pdf");
-        var field = BotMessageProcessor.class.getDeclaredField("attachmentApiClient");
-        field.setAccessible(true);
-        AttachmentApiClient api = (AttachmentApiClient) field.get(processor);
+        AttachmentApiClient api = attachmentApiClient;
         when(api.find("att_abcdef")).thenReturn(Optional.empty());
         when(telegramClient.sendDocument(eq(100L), any(byte[].class), anyString(), nullable(String.class), nullable(String.class)))
             .thenReturn(Optional.empty());
@@ -309,9 +301,7 @@ class BotMessageProcessorMediaDeliveryTest {
     void incompleteAlbumResponseDoesNotGuessWhichFileReceivedId() throws Exception {
         Path first = createTempFile("att_abcdef.png");
         Path second = createTempFile("att_123456.png");
-        var field = BotMessageProcessor.class.getDeclaredField("attachmentApiClient");
-        field.setAccessible(true);
-        AttachmentApiClient api = (AttachmentApiClient) field.get(processor);
+        AttachmentApiClient api = attachmentApiClient;
         when(api.find(anyString())).thenReturn(Optional.empty());
         when(telegramClient.sendMediaGroup(eq(100L), any())).thenReturn(List.of(124L));
         processor.deliverMedia(100L, List.of(
@@ -334,9 +324,7 @@ class BotMessageProcessorMediaDeliveryTest {
     void replacingConfiguredWorkspaceWithSymlinkDoesNotDeliverOutsideFile(@TempDir Path outsideDir) throws Exception {
         Path file = Files.writeString(tempDir.resolve("att_abcdef.pdf"), "safe");
         Files.writeString(outsideDir.resolve("att_abcdef.pdf"), "outside");
-        var field = BotMessageProcessor.class.getDeclaredField("attachmentApiClient");
-        field.setAccessible(true);
-        AttachmentApiClient api = (AttachmentApiClient) field.get(processor);
+        AttachmentApiClient api = attachmentApiClient;
         when(api.find("att_abcdef")).thenAnswer(invocation -> {
             Path moved = tempDir.resolveSibling(tempDir.getFileName() + "-moved");
             Files.move(tempDir, moved);
@@ -371,9 +359,7 @@ class BotMessageProcessorMediaDeliveryTest {
     void mediaRootReplacedWithDirectoryDoesNotDeliverOutsideFile(@TempDir Path outsideDir) throws Exception {
         Path file = Files.writeString(tempDir.resolve("att_abcdef.pdf"), "safe");
         Files.writeString(outsideDir.resolve("att_abcdef.pdf"), "outside");
-        var field = BotMessageProcessor.class.getDeclaredField("attachmentApiClient");
-        field.setAccessible(true);
-        AttachmentApiClient api = (AttachmentApiClient) field.get(processor);
+        AttachmentApiClient api = attachmentApiClient;
         when(api.find("att_abcdef")).thenAnswer(invocation -> {
             Files.move(tempDir, tempDir.resolveSibling(tempDir.getFileName() + "-moved"));
             Files.move(outsideDir, tempDir);
