@@ -48,6 +48,922 @@ class TodoRepositoryTest extends PostgresTestContainer {
     @Autowired
     private SessionRepository sessionRepository;
 
+    @Autowired
+    private com.azhukov.agent.tools.memory.TodoTool todoTool;
+
+    @Autowired
+    private com.azhukov.agent.core.tool.SpringToolRegistry registry;
+
+    @Autowired
+    private com.azhukov.agent.service.TodoService todoService;
+
+    @Autowired
+    private com.azhukov.agent.service.SessionQueryService sessionQueryService;
+
+    private void assertDatabaseBlocked(int waiterPid, int holderPid) throws InterruptedException {
+        var jdbc = applicationContext.getBean(org.springframework.jdbc.core.JdbcTemplate.class);
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+        boolean blocked = false;
+        while (System.nanoTime() < deadline) {
+            blocked = Boolean.TRUE.equals(jdbc.queryForObject("select ? = any(pg_blocking_pids(?))", Boolean.class, holderPid, waiterPid));
+            if (blocked) break;
+            Thread.sleep(25);
+        }
+        assertThat(blocked).as("session deletion waits for todo transaction in PostgreSQL").isTrue();
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void deletingSessionDuringMarkDone(boolean scoped) throws Exception {
+        String user = "done-cascade-" + UUID.randomUUID();
+        var saved = sessionRepository.saveAndFlush(newSession(user, "Done cascade"));
+        var original = todoRepository.saveAndFlush(newTodo(saved.getId(), user, "original", STATUS_PENDING, PRIORITY_HIGH, T1));
+        var found = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var holderPid = new java.util.concurrent.atomic.AtomicInteger();
+        var waiterPid = new java.util.concurrent.atomic.AtomicInteger();
+        var waiterReady = new java.util.concurrent.CountDownLatch(1);
+        var jdbc = applicationContext.getBean(org.springframework.jdbc.core.JdbcTemplate.class);
+        var delegate = org.mockito.Mockito.mock(TodoRepository.class, invocation -> {
+            try {
+                var result = invocation.getMethod().invoke(todoRepository, invocation.getArguments());
+                if (invocation.getMethod().getName().equals("findOwnedForUpdate")) {
+                    found.countDown();
+                    if (!release.await(15, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("release timeout");
+                }
+                return result;
+            } catch (java.lang.reflect.InvocationTargetException e) { throw e.getCause(); }
+        });
+        var service = new com.azhukov.agent.service.TodoService(delegate);
+        var transactions = new org.springframework.transaction.support.TransactionTemplate(applicationContext.getBean(org.springframework.transaction.PlatformTransactionManager.class));
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            var done = pool.submit(() -> transactions.execute(status -> {
+                holderPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                return scoped ? service.markDoneForUser(original.getId(), user) : service.markDone(original.getId());
+            }));
+            assertThat(found.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            var deletion = pool.submit(() -> transactions.execute(status -> {
+                waiterPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                waiterReady.countDown();
+                boolean removed = sessionQueryService.deleteSession(saved.getId());
+                sessionRepository.flush();
+                return removed;
+            }));
+            assertThat(waiterReady.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertDatabaseBlocked(waiterPid.get(), holderPid.get());
+            release.countDown();
+            assertThat(done.get(10, java.util.concurrent.TimeUnit.SECONDS)).isPresent();
+            assertThat(deletion.get(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(todoRepository.findByUserId(user)).isEmpty();
+        } finally {
+            release.countDown(); pool.shutdownNow(); pool.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
+            todoRepository.deleteByUserId(user); sessionRepository.deleteById(saved.getId());
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void deletingSessionDuringMergeOfItsTodo(boolean numericId) throws Exception {
+        String user = "merge-cascade-" + UUID.randomUUID();
+        var oldSession = sessionRepository.saveAndFlush(newSession(user, "Old"));
+        var newSession = sessionRepository.saveAndFlush(newSession(user, "New"));
+        var original = todoRepository.saveAndFlush(newTodo(oldSession.getId(), user, "old", STATUS_PENDING, PRIORITY_HIGH, T1));
+        var session = new com.azhukov.agent.core.model.Session(newSession.getId(), user, "owner", MODEL_PROVIDER, MODEL_NAME, null, java.util.Map.of());
+        var found = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var holderPid = new java.util.concurrent.atomic.AtomicInteger();
+        var waiterPid = new java.util.concurrent.atomic.AtomicInteger();
+        var waiterReady = new java.util.concurrent.CountDownLatch(1);
+        var jdbc = applicationContext.getBean(org.springframework.jdbc.core.JdbcTemplate.class);
+        var delegate = org.mockito.Mockito.mock(TodoRepository.class, invocation -> {
+            try {
+                var result = invocation.getMethod().invoke(todoRepository, invocation.getArguments());
+                if (invocation.getMethod().getName().equals("findOwnedForUpdate")) {
+                    found.countDown();
+                    if (!release.await(15, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("release timeout");
+                }
+                return result;
+            } catch (java.lang.reflect.InvocationTargetException e) { throw e.getCause(); }
+        });
+        var tool = new com.azhukov.agent.tools.memory.TodoTool(delegate);
+        var transactions = new org.springframework.transaction.support.TransactionTemplate(applicationContext.getBean(org.springframework.transaction.PlatformTransactionManager.class));
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            var merging = pool.submit(() -> transactions.execute(status -> {
+                holderPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                String id = numericId ? "1" : original.getId().toString();
+                return tool.execute("{\"merge\":true,\"todos\":[{\"id\":\"" + id + "\",\"content\":\"updated\"}]}", null, session);
+            }));
+            assertThat(found.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            var deletion = pool.submit(() -> transactions.execute(status -> {
+                waiterPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                waiterReady.countDown();
+                boolean removed = sessionQueryService.deleteSession(oldSession.getId());
+                sessionRepository.flush();
+                return removed;
+            }));
+            assertThat(waiterReady.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertDatabaseBlocked(waiterPid.get(), holderPid.get());
+            release.countDown();
+            assertThat(merging.get(10, java.util.concurrent.TimeUnit.SECONDS).success()).isTrue();
+            assertThat(deletion.get(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(todoRepository.findByUserId(user)).isEmpty();
+        } finally {
+            release.countDown(); pool.shutdownNow(); pool.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
+            todoRepository.deleteByUserId(user); sessionRepository.deleteById(oldSession.getId()); sessionRepository.deleteById(newSession.getId());
+        }
+    }
+
+    @Test
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void deletingSeveralSessionsMustNotDeadlockWithTodoReplacement() throws Exception {
+        String user = "multi-delete-" + UUID.randomUUID();
+        var first = sessionRepository.saveAndFlush(newSession(user, "First"));
+        var second = sessionRepository.saveAndFlush(newSession(user, "Second"));
+        todoRepository.saveAndFlush(newTodo(second.getId(), user, "existing", STATUS_PENDING, PRIORITY_HIGH, T1));
+        var session = new com.azhukov.agent.core.model.Session(first.getId(), user, "owner", MODEL_PROVIDER, MODEL_NAME, null, java.util.Map.of());
+        var parentHeld = new java.util.concurrent.CountDownLatch(1);
+        var continueDelete = new java.util.concurrent.CountDownLatch(1);
+        var toolReady = new java.util.concurrent.CountDownLatch(1);
+        var dPid = new java.util.concurrent.atomic.AtomicInteger();
+        var tPid = new java.util.concurrent.atomic.AtomicInteger();
+        var jdbc = applicationContext.getBean(org.springframework.jdbc.core.JdbcTemplate.class);
+        var tx = new org.springframework.transaction.support.TransactionTemplate(applicationContext.getBean(org.springframework.transaction.PlatformTransactionManager.class));
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            var deletion = pool.submit(() -> tx.execute(status -> {
+                dPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                boolean deleted = sessionQueryService.deleteSession(first.getId());
+                sessionRepository.flush();
+                parentHeld.countDown();
+                try { if (!continueDelete.await(15, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("release timeout"); }
+                catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new IllegalStateException(e); }
+                return deleted && sessionQueryService.deleteSession(second.getId());
+            }));
+            assertThat(parentHeld.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            var tool = pool.submit(() -> tx.execute(status -> {
+                tPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                toolReady.countDown();
+                return todoTool.execute("{\"todos\":[{\"content\":\"replacement\"}]}", null, session);
+            }));
+            assertThat(toolReady.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertDatabaseBlocked(tPid.get(), dPid.get());
+            continueDelete.countDown();
+            assertThat(deletion.get(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(tool.get(10, java.util.concurrent.TimeUnit.SECONDS).success()).isFalse();
+            assertThat(todoRepository.findByUserId(user)).isEmpty();
+        } finally {
+            continueDelete.countDown(); pool.shutdownNow(); pool.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
+            todoRepository.deleteByUserId(user); sessionRepository.deleteById(first.getId()); sessionRepository.deleteById(second.getId());
+        }
+    }
+
+    @Test
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void competingParentLockAndAdvisoryLockMustNotDeadlock() throws Exception {
+        String user = "lock-inversion-" + UUID.randomUUID();
+        var first = sessionRepository.saveAndFlush(newSession(user, "First"));
+        var second = sessionRepository.saveAndFlush(newSession(user, "Second"));
+        var secondTodo = todoRepository.saveAndFlush(newTodo(second.getId(), user, "second", STATUS_PENDING, PRIORITY_HIGH, T1));
+        var firstDomain = new com.azhukov.agent.core.model.Session(first.getId(), user, "owner", MODEL_PROVIDER, MODEL_NAME, null, java.util.Map.of());
+        var secondDomain = new com.azhukov.agent.core.model.Session(second.getId(), user, "owner", MODEL_PROVIDER, MODEL_NAME, null, java.util.Map.of());
+        var aLocked = new java.util.concurrent.CountDownLatch(1);
+        var releaseA = new java.util.concurrent.CountDownLatch(1);
+        var parentLocked = new java.util.concurrent.CountDownLatch(1);
+        var aPid = new java.util.concurrent.atomic.AtomicInteger();
+        var bPid = new java.util.concurrent.atomic.AtomicInteger();
+        var dPid = new java.util.concurrent.atomic.AtomicInteger();
+        var deletionReady = new java.util.concurrent.CountDownLatch(1);
+        var jdbc = applicationContext.getBean(org.springframework.jdbc.core.JdbcTemplate.class);
+        var aDelegate = org.mockito.Mockito.mock(TodoRepository.class, invocation -> {
+            try {
+                var result = invocation.getMethod().invoke(todoRepository, invocation.getArguments());
+                if (invocation.getMethod().getName().equals("lockUserList")) {
+                    aLocked.countDown();
+                    if (!releaseA.await(20, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("release timeout");
+                }
+                return result;
+            } catch (java.lang.reflect.InvocationTargetException e) { throw e.getCause(); }
+        });
+        var bDelegate = org.mockito.Mockito.mock(TodoRepository.class, invocation -> {
+            try {
+                var result = invocation.getMethod().invoke(todoRepository, invocation.getArguments());
+                if (invocation.getMethod().getName().equals("lockTodoSession")) parentLocked.countDown();
+                return result;
+            } catch (java.lang.reflect.InvocationTargetException e) { throw e.getCause(); }
+        });
+        var aTool = new com.azhukov.agent.tools.memory.TodoTool(aDelegate);
+        var bTool = new com.azhukov.agent.tools.memory.TodoTool(bDelegate);
+        var tx = new org.springframework.transaction.support.TransactionTemplate(applicationContext.getBean(org.springframework.transaction.PlatformTransactionManager.class));
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(3);
+        try {
+            var a = pool.submit(() -> tx.execute(status -> {
+                aPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                return aTool.execute("{\"merge\":true,\"todos\":[{\"id\":\"" + secondTodo.getId() + "\",\"content\":\"update\"}]}", null, firstDomain);
+            }));
+            assertThat(aLocked.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            var b = pool.submit(() -> tx.execute(status -> {
+                bPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                return bTool.execute("{\"merge\":true,\"todos\":[{\"content\":\"new\"}]}", null, secondDomain);
+            }));
+            assertThat(parentLocked.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertAdvisoryBlocked(bPid.get(), aPid.get());
+            var deletion = pool.submit(() -> tx.execute(status -> {
+                dPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                deletionReady.countDown();
+                boolean removed = sessionQueryService.deleteSession(second.getId());
+                sessionRepository.flush();
+                return removed;
+            }));
+            assertThat(deletionReady.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertDatabaseBlocked(dPid.get(), bPid.get());
+            releaseA.countDown();
+            assertThat(a.get(10, java.util.concurrent.TimeUnit.SECONDS).success()).isTrue();
+            assertThat(b.get(10, java.util.concurrent.TimeUnit.SECONDS).success()).isTrue();
+            assertThat(deletion.get(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        } finally {
+            releaseA.countDown(); pool.shutdownNow(); pool.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
+            todoRepository.deleteByUserId(user); sessionRepository.deleteById(first.getId()); sessionRepository.deleteById(second.getId());
+        }
+    }
+
+    @Test
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void deletedSessionCannotReplaceAnotherSessionsTodos() {
+        String user = "missing-parent-" + UUID.randomUUID();
+        var retained = sessionRepository.saveAndFlush(newSession(user, "Retained"));
+        var removed = sessionRepository.saveAndFlush(newSession(user, "Removed"));
+        todoRepository.saveAndFlush(newTodo(retained.getId(), user, "retained", STATUS_PENDING, PRIORITY_HIGH, T1));
+        var stale = new com.azhukov.agent.core.model.Session(removed.getId(), user, "owner", MODEL_PROVIDER, MODEL_NAME, null, java.util.Map.of());
+        try {
+            assertThat(sessionQueryService.deleteSession(removed.getId())).isTrue();
+            var result = todoTool.execute("{\"todos\":[{\"content\":\"new\"}]}", null, stale);
+            assertThat(result.success()).isFalse();
+            assertThat(todoRepository.findByUserId(user)).extracting(TodoEntity::getTitle).containsExactly("retained");
+        } finally {
+            todoRepository.deleteByUserId(user); sessionRepository.deleteById(retained.getId()); sessionRepository.deleteById(removed.getId());
+        }
+    }
+
+    @Test
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void mergeWithNewItemAndDeleteSameSessionDoNotDeadlock() throws Exception {
+        String user = "same-session-new-" + UUID.randomUUID();
+        var saved = sessionRepository.saveAndFlush(newSession(user, "Same"));
+        var original = todoRepository.saveAndFlush(newTodo(saved.getId(), user, "old", STATUS_PENDING, PRIORITY_HIGH, T1));
+        var session = new com.azhukov.agent.core.model.Session(saved.getId(), user, "owner", MODEL_PROVIDER, MODEL_NAME, null, java.util.Map.of());
+        var locked = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var ready = new java.util.concurrent.CountDownLatch(1);
+        var holderPid = new java.util.concurrent.atomic.AtomicInteger();
+        var waiterPid = new java.util.concurrent.atomic.AtomicInteger();
+        var jdbc = applicationContext.getBean(org.springframework.jdbc.core.JdbcTemplate.class);
+        var delegate = org.mockito.Mockito.mock(TodoRepository.class, invocation -> {
+            try {
+                var result = invocation.getMethod().invoke(todoRepository, invocation.getArguments());
+                if (invocation.getMethod().getName().equals("findOwnedForUpdate")) {
+                    locked.countDown();
+                    if (!release.await(15, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("release timeout");
+                }
+                return result;
+            } catch (java.lang.reflect.InvocationTargetException e) { throw e.getCause(); }
+        });
+        var tool = new com.azhukov.agent.tools.memory.TodoTool(delegate);
+        var transactions = new org.springframework.transaction.support.TransactionTemplate(applicationContext.getBean(org.springframework.transaction.PlatformTransactionManager.class));
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            var merge = pool.submit(() -> transactions.execute(status -> {
+                holderPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                return tool.execute("{\"merge\":true,\"todos\":[{\"id\":\"" + original.getId() + "\",\"content\":\"updated\"},{\"content\":\"new\"}]}", null, session);
+            }));
+            assertThat(locked.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            var deletion = pool.submit(() -> transactions.execute(status -> {
+                waiterPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                ready.countDown();
+                boolean removed = sessionQueryService.deleteSession(saved.getId());
+                sessionRepository.flush();
+                return removed;
+            }));
+            assertThat(ready.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertDatabaseBlocked(waiterPid.get(), holderPid.get());
+            release.countDown();
+            assertThat(merge.get(10, java.util.concurrent.TimeUnit.SECONDS).success()).isTrue();
+            assertThat(deletion.get(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(todoRepository.findByUserId(user)).isEmpty();
+        } finally {
+            release.countDown(); pool.shutdownNow(); pool.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
+            todoRepository.deleteByUserId(user); sessionRepository.deleteById(saved.getId());
+        }
+    }
+
+    @Test
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void mergeAndDeleteSameSessionDoNotDeadlock() throws Exception {
+        String user = "same-session-" + UUID.randomUUID();
+        var saved = sessionRepository.saveAndFlush(newSession(user, "Same"));
+        var original = todoRepository.saveAndFlush(newTodo(saved.getId(), user, "old", STATUS_PENDING, PRIORITY_HIGH, T1));
+        var session = new com.azhukov.agent.core.model.Session(saved.getId(), user, "owner", MODEL_PROVIDER, MODEL_NAME, null, java.util.Map.of());
+        var locked = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var ready = new java.util.concurrent.CountDownLatch(1);
+        var holderPid = new java.util.concurrent.atomic.AtomicInteger();
+        var waiterPid = new java.util.concurrent.atomic.AtomicInteger();
+        var jdbc = applicationContext.getBean(org.springframework.jdbc.core.JdbcTemplate.class);
+        var delegate = org.mockito.Mockito.mock(TodoRepository.class, invocation -> {
+            try {
+                var result = invocation.getMethod().invoke(todoRepository, invocation.getArguments());
+                if (invocation.getMethod().getName().equals("findOwnedForUpdate")) {
+                    locked.countDown();
+                    if (!release.await(15, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("release timeout");
+                }
+                return result;
+            } catch (java.lang.reflect.InvocationTargetException e) { throw e.getCause(); }
+        });
+        var tool = new com.azhukov.agent.tools.memory.TodoTool(delegate);
+        var transactions = new org.springframework.transaction.support.TransactionTemplate(applicationContext.getBean(org.springframework.transaction.PlatformTransactionManager.class));
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            var merge = pool.submit(() -> transactions.execute(status -> {
+                holderPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                return tool.execute("{\"merge\":true,\"todos\":[{\"id\":\"" + original.getId() + "\",\"content\":\"updated\"}]}", null, session);
+            }));
+            assertThat(locked.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            var deletion = pool.submit(() -> transactions.execute(status -> {
+                waiterPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                ready.countDown();
+                boolean removed = sessionQueryService.deleteSession(saved.getId());
+                sessionRepository.flush();
+                return removed;
+            }));
+            assertThat(ready.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertDatabaseBlocked(waiterPid.get(), holderPid.get());
+            release.countDown();
+            assertThat(merge.get(10, java.util.concurrent.TimeUnit.SECONDS).success()).isTrue();
+            assertThat(deletion.get(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(todoRepository.findByUserId(user)).isEmpty();
+        } finally {
+            release.countDown(); pool.shutdownNow(); pool.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
+            todoRepository.deleteByUserId(user); sessionRepository.deleteById(saved.getId());
+        }
+    }
+
+    @Test
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void mergeAcrossSessionsWhenSecondSessionIsDeletedDoesNotDeadlock() throws Exception {
+        String user = "second-session-" + UUID.randomUUID();
+        var firstSession = sessionRepository.saveAndFlush(newSession(user, "First"));
+        var secondSession = sessionRepository.saveAndFlush(newSession(user, "Second"));
+        var first = todoRepository.saveAndFlush(newTodo(firstSession.getId(), user, "first", STATUS_PENDING, PRIORITY_HIGH, T1));
+        var second = todoRepository.saveAndFlush(newTodo(secondSession.getId(), user, "second", STATUS_PENDING, PRIORITY_HIGH, T2));
+        var session = new com.azhukov.agent.core.model.Session(firstSession.getId(), user, "owner", MODEL_PROVIDER, MODEL_NAME, null, java.util.Map.of());
+        var firstLocked = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var deleted = new java.util.concurrent.CountDownLatch(1);
+        var finishDeletion = new java.util.concurrent.CountDownLatch(1);
+        var delegate = org.mockito.Mockito.mock(TodoRepository.class, invocation -> {
+            try {
+                var result = invocation.getMethod().invoke(todoRepository, invocation.getArguments());
+                if (invocation.getMethod().getName().equals("findOwnedForUpdate") && first.getId().equals(invocation.getArgument(0))) {
+                    firstLocked.countDown();
+                    if (!release.await(15, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("release timeout");
+                }
+                return result;
+            } catch (java.lang.reflect.InvocationTargetException e) { throw e.getCause(); }
+        });
+        var tool = new com.azhukov.agent.tools.memory.TodoTool(delegate);
+        var transactions = new org.springframework.transaction.support.TransactionTemplate(applicationContext.getBean(org.springframework.transaction.PlatformTransactionManager.class));
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            var merge = pool.submit(() -> transactions.execute(status -> tool.execute("{\"merge\":true,\"todos\":[{\"id\":\"" + first.getId() + "\",\"content\":\"first updated\"},{\"id\":\"" + second.getId() + "\",\"content\":\"second updated\"}]}", null, session)));
+            assertThat(firstLocked.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            var deletion = pool.submit(() -> transactions.execute(status -> {
+                boolean removed = sessionQueryService.deleteSession(secondSession.getId());
+                sessionRepository.flush();
+                deleted.countDown();
+                try { if (!finishDeletion.await(15, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("release timeout"); }
+                catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new IllegalStateException(e); }
+                return removed;
+            }));
+            assertThat(deleted.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            release.countDown();
+            finishDeletion.countDown();
+            assertThat(deletion.get(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(merge.get(10, java.util.concurrent.TimeUnit.SECONDS).success()).isTrue();
+            assertThat(todoRepository.findByUserId(user)).extracting(TodoEntity::getTitle).containsExactlyInAnyOrder("first updated", "second updated");
+        } finally {
+            release.countDown(); finishDeletion.countDown(); pool.shutdownNow(); pool.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
+            todoRepository.deleteByUserId(user); sessionRepository.deleteById(firstSession.getId()); sessionRepository.deleteById(secondSession.getId());
+        }
+    }
+
+    @Test
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void mergeAcrossSessionsDoesNotDeadlockWithConcurrentSessionDeletion() throws Exception {
+        String user = "multi-session-" + UUID.randomUUID();
+        var firstSession = sessionRepository.saveAndFlush(newSession(user, "First"));
+        var secondSession = sessionRepository.saveAndFlush(newSession(user, "Second"));
+        var first = todoRepository.saveAndFlush(newTodo(firstSession.getId(), user, "first", STATUS_PENDING, PRIORITY_HIGH, T1));
+        var second = todoRepository.saveAndFlush(newTodo(secondSession.getId(), user, "second", STATUS_PENDING, PRIORITY_HIGH, T2));
+        var session = new com.azhukov.agent.core.model.Session(secondSession.getId(), user, "owner", MODEL_PROVIDER, MODEL_NAME, null, java.util.Map.of());
+        var firstLocked = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var holderPid = new java.util.concurrent.atomic.AtomicInteger();
+        var waiterPid = new java.util.concurrent.atomic.AtomicInteger();
+        var ready = new java.util.concurrent.CountDownLatch(1);
+        var jdbc = applicationContext.getBean(org.springframework.jdbc.core.JdbcTemplate.class);
+        var delegate = org.mockito.Mockito.mock(TodoRepository.class, invocation -> {
+            try {
+                var result = invocation.getMethod().invoke(todoRepository, invocation.getArguments());
+                if (invocation.getMethod().getName().equals("findOwnedForUpdate") && first.getId().equals(invocation.getArgument(0))) {
+                    firstLocked.countDown();
+                    if (!release.await(15, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("release timeout");
+                }
+                return result;
+            } catch (java.lang.reflect.InvocationTargetException e) { throw e.getCause(); }
+        });
+        var tool = new com.azhukov.agent.tools.memory.TodoTool(delegate);
+        var transactions = new org.springframework.transaction.support.TransactionTemplate(applicationContext.getBean(org.springframework.transaction.PlatformTransactionManager.class));
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            var merge = pool.submit(() -> transactions.execute(status -> {
+                holderPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                return tool.execute("{\"merge\":true,\"todos\":[{\"id\":\"" + first.getId() + "\",\"content\":\"first updated\"},{\"id\":\"" + second.getId() + "\",\"content\":\"second updated\"}]}", null, session);
+            }));
+            assertThat(firstLocked.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            var deletion = pool.submit(() -> transactions.execute(status -> {
+                waiterPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                ready.countDown();
+                boolean removed = sessionQueryService.deleteSession(firstSession.getId());
+                sessionRepository.flush();
+                return removed;
+            }));
+            assertThat(ready.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertDatabaseBlocked(waiterPid.get(), holderPid.get());
+            release.countDown();
+            assertThat(merge.get(10, java.util.concurrent.TimeUnit.SECONDS).success()).isTrue();
+            assertThat(deletion.get(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(todoRepository.findByUserId(user)).extracting(TodoEntity::getTitle).containsExactly("second updated");
+        } finally {
+            release.countDown(); pool.shutdownNow(); pool.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
+            todoRepository.deleteByUserId(user); sessionRepository.deleteById(firstSession.getId()); sessionRepository.deleteById(secondSession.getId());
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void mergeAndMarkDoneAfterConcurrentCascadeDoNotUpdateDeletedRow(boolean merge) throws Exception {
+        String user = "cascade-first-" + UUID.randomUUID();
+        var oldSession = sessionRepository.saveAndFlush(newSession(user, "Old"));
+        var newSession = sessionRepository.saveAndFlush(newSession(user, "New"));
+        var original = todoRepository.saveAndFlush(newTodo(oldSession.getId(), user, "old", STATUS_PENDING, PRIORITY_HIGH, T1));
+        var session = new com.azhukov.agent.core.model.Session(newSession.getId(), user, "owner", MODEL_PROVIDER, MODEL_NAME, null, java.util.Map.of());
+        var held = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var ready = new java.util.concurrent.CountDownLatch(1);
+        var holderPid = new java.util.concurrent.atomic.AtomicInteger();
+        var waiterPid = new java.util.concurrent.atomic.AtomicInteger();
+        var jdbc = applicationContext.getBean(org.springframework.jdbc.core.JdbcTemplate.class);
+        var transactions = new org.springframework.transaction.support.TransactionTemplate(applicationContext.getBean(org.springframework.transaction.PlatformTransactionManager.class));
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            var deletion = pool.submit(() -> transactions.execute(status -> {
+                holderPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                boolean removed = sessionQueryService.deleteSession(oldSession.getId());
+                sessionRepository.flush();
+                held.countDown();
+                try { if (!release.await(15, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("release timeout"); }
+                catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new IllegalStateException(e); }
+                return removed;
+            }));
+            assertThat(held.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            var operation = pool.submit(() -> transactions.execute(status -> {
+                waiterPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                ready.countDown();
+                if (merge) return todoTool.execute("{\"merge\":true,\"todos\":[{\"id\":\"" + original.getId() + "\",\"content\":\"new\"}]}", null, session).success();
+                return todoService.markDoneForUser(original.getId(), user).isEmpty();
+            }));
+            assertThat(ready.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertDatabaseBlocked(waiterPid.get(), holderPid.get());
+            release.countDown();
+            assertThat(deletion.get(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(operation.get(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            var todos = todoRepository.findByUserId(user);
+            if (merge) assertThat(todos).extracting(TodoEntity::getTitle).containsExactly("new");
+            else assertThat(todos).isEmpty();
+        } finally {
+            release.countDown(); pool.shutdownNow(); pool.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
+            todoRepository.deleteByUserId(user); sessionRepository.deleteById(oldSession.getId()); sessionRepository.deleteById(newSession.getId());
+        }
+    }
+
+    @Test
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void deletingOldSessionDuringReplacementKeepsNewSessionsTodo() throws Exception {
+        String user = "session-cascade-" + UUID.randomUUID();
+        var oldSession = sessionRepository.saveAndFlush(newSession(user, "Old"));
+        var newSession = sessionRepository.saveAndFlush(newSession(user, "New"));
+        todoRepository.saveAndFlush(newTodo(oldSession.getId(), user, "old", STATUS_PENDING, PRIORITY_HIGH, T1));
+        var session = new com.azhukov.agent.core.model.Session(newSession.getId(), user, "owner", MODEL_PROVIDER, MODEL_NAME, null, java.util.Map.of());
+        var deleted = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var holderPid = new java.util.concurrent.atomic.AtomicInteger();
+        var waiterPid = new java.util.concurrent.atomic.AtomicInteger();
+        var ready = new java.util.concurrent.CountDownLatch(1);
+        var jdbc = applicationContext.getBean(org.springframework.jdbc.core.JdbcTemplate.class);
+        var delegate = org.mockito.Mockito.mock(TodoRepository.class, invocation -> {
+            try {
+                var result = invocation.getMethod().invoke(todoRepository, invocation.getArguments());
+                if (invocation.getMethod().getName().equals("deleteByUserId")) {
+                    deleted.countDown();
+                    if (!release.await(15, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("release timeout");
+                }
+                return result;
+            } catch (java.lang.reflect.InvocationTargetException e) { throw e.getCause(); }
+        });
+        var tool = new com.azhukov.agent.tools.memory.TodoTool(delegate);
+        var transactions = new org.springframework.transaction.support.TransactionTemplate(applicationContext.getBean(org.springframework.transaction.PlatformTransactionManager.class));
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            var replacement = pool.submit(() -> transactions.execute(status -> {
+                holderPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                return tool.execute("{\"todos\":[{\"content\":\"new\"}]}", null, session);
+            }));
+            assertThat(deleted.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            var removal = pool.submit(() -> transactions.execute(status -> {
+                waiterPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                ready.countDown();
+                boolean result = sessionQueryService.deleteSession(oldSession.getId());
+                sessionRepository.flush();
+                return result;
+            }));
+            assertThat(ready.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+            boolean blocked = false;
+            while (System.nanoTime() < deadline) {
+                blocked = Boolean.TRUE.equals(jdbc.queryForObject("select ? = any(pg_blocking_pids(?))", Boolean.class, holderPid.get(), waiterPid.get()));
+                if (blocked) break;
+                Thread.sleep(25);
+            }
+            assertThat(blocked).as("session cascade waits for concurrent deletion of its todo").isTrue();
+            release.countDown();
+            assertThat(replacement.get(10, java.util.concurrent.TimeUnit.SECONDS).success()).isTrue();
+            assertThat(removal.get(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(sessionRepository.findById(oldSession.getId())).isEmpty();
+            assertThat(todoRepository.findByUserId(user)).extracting(TodoEntity::getTitle).containsExactly("new");
+            assertThat(todoRepository.findByUserId(user).getFirst().getSessionId()).isEqualTo(newSession.getId());
+        } finally {
+            release.countDown(); pool.shutdownNow(); pool.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
+            todoRepository.deleteByUserId(user); sessionRepository.deleteById(oldSession.getId()); sessionRepository.deleteById(newSession.getId());
+        }
+    }
+
+    private void assertAdvisoryBlocked(int waiterPid, int holderPid) throws InterruptedException {
+        var jdbc = applicationContext.getBean(org.springframework.jdbc.core.JdbcTemplate.class);
+        long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+        boolean blocked = false;
+        while (System.nanoTime() < deadline) {
+            blocked = Boolean.TRUE.equals(jdbc.queryForObject("""
+                select exists (select 1 from pg_locks where pid = ? and locktype = 'advisory' and not granted)
+                    and ? = any(pg_blocking_pids(?))
+                """, Boolean.class, waiterPid, holderPid, waiterPid));
+            if (blocked) break;
+            Thread.sleep(25);
+        }
+        assertThat(blocked).as("waiter is blocked by replacement transaction's advisory lock").isTrue();
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void markingDoneWaitsForReplacementAndDoesNotResurrectDeletedTodo(boolean scoped) throws Exception {
+        String user = "done-race-" + UUID.randomUUID();
+        var saved = sessionRepository.saveAndFlush(newSession(user, "Done race"));
+        var original = todoRepository.saveAndFlush(newTodo(saved.getId(), user, "original", STATUS_PENDING, PRIORITY_HIGH, T1));
+        var session = new com.azhukov.agent.core.model.Session(saved.getId(), user, "owner", MODEL_PROVIDER, MODEL_NAME, null, java.util.Map.of());
+        var deleted = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var holderPid = new java.util.concurrent.atomic.AtomicInteger();
+        var waiterPid = new java.util.concurrent.atomic.AtomicInteger();
+        var waiterReady = new java.util.concurrent.CountDownLatch(1);
+        var jdbc = applicationContext.getBean(org.springframework.jdbc.core.JdbcTemplate.class);
+        var delegate = org.mockito.Mockito.mock(TodoRepository.class, invocation -> {
+            try {
+                var result = invocation.getMethod().invoke(todoRepository, invocation.getArguments());
+                if (invocation.getMethod().getName().equals("deleteByUserId")) {
+                    deleted.countDown();
+                    if (!release.await(10, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("release timeout");
+                }
+                return result;
+            } catch (java.lang.reflect.InvocationTargetException e) { throw e.getCause(); }
+        });
+        var tool = new com.azhukov.agent.tools.memory.TodoTool(delegate);
+        var transactions = new org.springframework.transaction.support.TransactionTemplate(applicationContext.getBean(org.springframework.transaction.PlatformTransactionManager.class));
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            var replacement = pool.submit(() -> transactions.execute(status -> {
+                holderPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                return tool.execute("{\"todos\":[{\"content\":\"replacement\"}]}", null, session);
+            }));
+            assertThat(deleted.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            var done = pool.submit(() -> transactions.execute(status -> {
+                waiterPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                waiterReady.countDown();
+                return scoped ? todoService.markDoneForUser(original.getId(), user) : todoService.markDone(original.getId());
+            }));
+            assertThat(waiterReady.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertAdvisoryBlocked(waiterPid.get(), holderPid.get());
+            release.countDown();
+            assertThat(replacement.get(10, java.util.concurrent.TimeUnit.SECONDS).success()).isTrue();
+            assertThat(done.get(10, java.util.concurrent.TimeUnit.SECONDS)).isEmpty();
+            assertThat(todoRepository.findByUserId(user)).extracting(TodoEntity::getTitle).containsExactly("replacement");
+        } finally {
+            release.countDown(); pool.shutdownNow(); pool.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
+            todoRepository.deleteByUserId(user); sessionRepository.deleteById(saved.getId());
+        }
+    }
+
+    @Test
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void serviceClearWaitsForConcurrentToolReplacement() throws Exception {
+        String user = "clear-race-" + UUID.randomUUID();
+        var saved = sessionRepository.saveAndFlush(newSession(user, "Clear race"));
+        var session = new com.azhukov.agent.core.model.Session(saved.getId(), user, "owner", MODEL_PROVIDER, MODEL_NAME, null, java.util.Map.of());
+        var deleted = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var holderPid = new java.util.concurrent.atomic.AtomicInteger();
+        var waiterPid = new java.util.concurrent.atomic.AtomicInteger();
+        var waiterReady = new java.util.concurrent.CountDownLatch(1);
+        var jdbc = applicationContext.getBean(org.springframework.jdbc.core.JdbcTemplate.class);
+        var delegate = org.mockito.Mockito.mock(TodoRepository.class, invocation -> {
+            try {
+                var result = invocation.getMethod().invoke(todoRepository, invocation.getArguments());
+                if (invocation.getMethod().getName().equals("deleteByUserId")) {
+                    deleted.countDown();
+                    if (!release.await(10, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("release timeout");
+                }
+                return result;
+            } catch (java.lang.reflect.InvocationTargetException e) { throw e.getCause(); }
+        });
+        var tool = new com.azhukov.agent.tools.memory.TodoTool(delegate);
+        var transactions = new org.springframework.transaction.support.TransactionTemplate(applicationContext.getBean(org.springframework.transaction.PlatformTransactionManager.class));
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            var replacement = pool.submit(() -> transactions.execute(status -> {
+                holderPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                return tool.execute("{\"todos\":[{\"content\":\"replacement\"}]}", null, session);
+            }));
+            assertThat(deleted.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            var clear = pool.submit(() -> transactions.execute(status -> {
+                waiterPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                waiterReady.countDown();
+                todoService.clearByUserId(user);
+                return null;
+            }));
+            assertThat(waiterReady.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertAdvisoryBlocked(waiterPid.get(), holderPid.get());
+            release.countDown();
+            assertThat(replacement.get(10, java.util.concurrent.TimeUnit.SECONDS).success()).isTrue();
+            clear.get(10, java.util.concurrent.TimeUnit.SECONDS);
+            assertThat(todoRepository.findByUserId(user)).isEmpty();
+        } finally {
+            release.countDown(); pool.shutdownNow(); pool.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
+            todoRepository.deleteByUserId(user); sessionRepository.deleteById(saved.getId());
+        }
+    }
+
+    @Test
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void serviceAddWaitsForConcurrentToolReplacement() throws Exception {
+        String user = "mixed-" + UUID.randomUUID();
+        var saved = sessionRepository.saveAndFlush(newSession(user, "Mixed writes"));
+        var session = new com.azhukov.agent.core.model.Session(saved.getId(), user, "owner", MODEL_PROVIDER, MODEL_NAME, null, java.util.Map.of());
+        var deleted = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var holderPid = new java.util.concurrent.atomic.AtomicInteger();
+        var waiterPid = new java.util.concurrent.atomic.AtomicInteger();
+        var waiterReady = new java.util.concurrent.CountDownLatch(1);
+        var jdbc = applicationContext.getBean(org.springframework.jdbc.core.JdbcTemplate.class);
+        var delegate = org.mockito.Mockito.mock(TodoRepository.class, invocation -> {
+            try {
+                var result = invocation.getMethod().invoke(todoRepository, invocation.getArguments());
+                if (invocation.getMethod().getName().equals("deleteByUserId")) {
+                    deleted.countDown();
+                    if (!release.await(10, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("release timeout");
+                }
+                return result;
+            } catch (java.lang.reflect.InvocationTargetException e) { throw e.getCause(); }
+        });
+        var tool = new com.azhukov.agent.tools.memory.TodoTool(delegate);
+        var transactions = new org.springframework.transaction.support.TransactionTemplate(applicationContext.getBean(org.springframework.transaction.PlatformTransactionManager.class));
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            var replacement = pool.submit(() -> transactions.execute(status -> {
+                holderPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                return tool.execute("{\"todos\":[{\"content\":\"replacement\"}]}", null, session);
+            }));
+            assertThat(deleted.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            var add = pool.submit(() -> transactions.execute(status -> {
+                waiterPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                waiterReady.countDown();
+                return todoService.add(user, "service addition");
+            }));
+            assertThat(waiterReady.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertAdvisoryBlocked(waiterPid.get(), holderPid.get());
+            release.countDown();
+            assertThat(replacement.get(10, java.util.concurrent.TimeUnit.SECONDS).success()).isTrue();
+            assertThat(add.get(10, java.util.concurrent.TimeUnit.SECONDS)).isNotNull();
+            assertThat(todoRepository.findByUserId(user)).extracting(TodoEntity::getTitle).containsExactlyInAnyOrder("replacement", "service addition");
+        } finally {
+            release.countDown(); pool.shutdownNow(); pool.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
+            todoRepository.deleteByUserId(user); sessionRepository.deleteById(saved.getId());
+        }
+    }
+
+    @Test
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void userLockIsReleasedAfterTransactionRollback() throws Exception {
+        String user = "rollback-lock-" + UUID.randomUUID();
+        var template = new org.springframework.transaction.support.TransactionTemplate(
+            applicationContext.getBean(org.springframework.transaction.PlatformTransactionManager.class));
+        var holding = new java.util.concurrent.CountDownLatch(1);
+        var rollback = new java.util.concurrent.CountDownLatch(1);
+        var pool = java.util.concurrent.Executors.newSingleThreadExecutor();
+        try {
+            var failed = pool.submit(() -> template.execute(status -> {
+                todoRepository.lockUserList(user);
+                holding.countDown();
+                try {
+                    if (!rollback.await(5, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("rollback timeout");
+                } catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new IllegalStateException(e); }
+                throw new IllegalStateException("force rollback");
+            }));
+            assertThat(holding.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> template.execute(status -> {
+                applicationContext.getBean(org.springframework.jdbc.core.JdbcTemplate.class).execute("set local lock_timeout = '250ms'");
+                return todoRepository.lockUserList(user);
+            })).isInstanceOf(org.springframework.dao.DataAccessException.class);
+            rollback.countDown();
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> failed.get(5, java.util.concurrent.TimeUnit.SECONDS))
+                .isInstanceOf(java.util.concurrent.ExecutionException.class).hasCauseInstanceOf(IllegalStateException.class);
+            Integer result = template.execute(status -> {
+                applicationContext.getBean(org.springframework.jdbc.core.JdbcTemplate.class).execute("set local lock_timeout = '2s'");
+                return todoRepository.lockUserList(user);
+            });
+            assertThat(result).isEqualTo(1);
+        } finally {
+            rollback.countDown(); pool.shutdownNow(); pool.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void concurrentReplacementAndWriteAreSerialized(boolean merge) throws Exception {
+        String user = "concurrent-" + UUID.randomUUID();
+        var saved = sessionRepository.saveAndFlush(newSession(user, "Concurrent replacement"));
+        var session = new com.azhukov.agent.core.model.Session(saved.getId(), user, "owner", MODEL_PROVIDER, MODEL_NAME, null, java.util.Map.of());
+        var deletionReached = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var first = new java.util.concurrent.atomic.AtomicBoolean(true);
+        var bAttemptingLock = new java.util.concurrent.CountDownLatch(1);
+        var delegate = org.mockito.Mockito.mock(TodoRepository.class, invocation -> {
+            try {
+                if (invocation.getMethod().getName().equals("lockUserList") && Thread.currentThread().getName().equals("todo-second")) bAttemptingLock.countDown();
+                if (invocation.getMethod().getName().equals("deleteByUserId")) {
+                    var result = invocation.getMethod().invoke(todoRepository, invocation.getArguments());
+                    if (first.compareAndSet(true, false)) {
+                        deletionReached.countDown();
+                        if (!release.await(10, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("release timeout");
+                    }
+                    return result;
+                }
+                return invocation.getMethod().invoke(todoRepository, invocation.getArguments());
+            } catch (java.lang.reflect.InvocationTargetException e) { throw e.getCause(); }
+        });
+        var target = new com.azhukov.agent.tools.memory.TodoTool(delegate);
+        var txManager = applicationContext.getBean(org.springframework.transaction.PlatformTransactionManager.class);
+        var template = new org.springframework.transaction.support.TransactionTemplate(txManager);
+        String otherUser = "independent-" + UUID.randomUUID();
+        var otherSaved = sessionRepository.saveAndFlush(newSession(otherUser, "Independent"));
+        var otherSession = new com.azhukov.agent.core.model.Session(otherSaved.getId(), otherUser, "owner", MODEL_PROVIDER, MODEL_NAME, null, java.util.Map.of());
+        var firstPid = new java.util.concurrent.atomic.AtomicInteger();
+        var secondPid = new java.util.concurrent.atomic.AtomicInteger();
+        var jdbc = applicationContext.getBean(org.springframework.jdbc.core.JdbcTemplate.class);
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(3);
+        try {
+            var a = pool.submit(() -> template.execute(status -> {
+                firstPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                return target.execute("{\"todos\":[{\"content\":\"plan-a\"}]}", null, session);
+            }));
+            assertThat(deletionReached.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            var b = pool.submit(() -> { Thread.currentThread().setName("todo-second"); return template.execute(status -> {
+                secondPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
+                return target.execute("{\"merge\":" + merge + ",\"todos\":[{\"content\":\"plan-b\"}]}", null, session);
+            }); });
+            assertThat(bAttemptingLock.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+            boolean waiting = false;
+            while (System.nanoTime() < deadline) {
+                waiting = Boolean.TRUE.equals(jdbc.queryForObject("""
+                    select exists (select 1 from pg_locks
+                      where pid = ? and locktype = 'advisory' and not granted)
+                      and ? = any(pg_blocking_pids(?))
+                    """, Boolean.class, secondPid.get(), firstPid.get(), secondPid.get()));
+                if (waiting) break;
+                Thread.sleep(25);
+            }
+            assertThat(waiting).as("second transaction is waiting on an advisory lock held by first").isTrue();
+            var independent = pool.submit(() -> template.execute(status -> target.execute("{\"todos\":[{\"content\":\"other\"}]}", null, otherSession)));
+            assertThat(independent.get(5, java.util.concurrent.TimeUnit.SECONDS).success()).isTrue();
+            release.countDown();
+            assertThat(a.get(10, java.util.concurrent.TimeUnit.SECONDS).success()).isTrue();
+            assertThat(b.get(10, java.util.concurrent.TimeUnit.SECONDS).success()).isTrue();
+            var titles = todoRepository.findByUserId(user).stream().map(TodoEntity::getTitle).toList();
+            if (merge) assertThat(titles).containsExactlyInAnyOrder("plan-a", "plan-b");
+            else assertThat(titles).containsExactly("plan-b");
+        } finally {
+            release.countDown();
+            pool.shutdownNow();
+            pool.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS);
+            todoRepository.deleteByUserId(user);
+            todoRepository.deleteByUserId(otherUser);
+            sessionRepository.deleteById(otherSaved.getId());
+            sessionRepository.deleteById(saved.getId());
+        }
+    }
+
+    @Autowired
+    private org.springframework.context.ApplicationContext applicationContext;
+
+    @Test
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void registryExecutesTransactionalTodoWithAtomicRollback() {
+        String user = "registry-" + UUID.randomUUID();
+        var saved = sessionRepository.saveAndFlush(newSession(user, "Registry atomicity"));
+        var session = new com.azhukov.agent.core.model.Session(saved.getId(), user, "owner", MODEL_PROVIDER, MODEL_NAME, null, java.util.Map.of());
+        try {
+            var first = registry.execute("todo", "first", "{\"todos\":[{\"content\":\"original\"}]}", null, session);
+            assertThat(first.success()).isTrue();
+            assertThat(todoRepository.findByUserId(user)).extracting(TodoEntity::getTitle).containsExactly("original");
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> registry.execute("todo", "second",
+                "{\"todos\":[{\"content\":\"replacement\"},{\"content\":\"bad\\u0000value\"}]}", null, session))
+                .isInstanceOf(org.springframework.dao.DataAccessException.class);
+            assertThat(todoRepository.findByUserId(user)).extracting(TodoEntity::getTitle).containsExactly("original");
+            var finalResult = registry.execute("todo", "third", "{\"todos\":[{\"content\":\"final\"}]}", null, session);
+            assertThat(finalResult.success()).isTrue();
+            assertThat(todoRepository.findByUserId(user)).extracting(TodoEntity::getTitle).containsExactly("final");
+        } finally {
+            todoRepository.deleteByUserId(user);
+            sessionRepository.deleteById(saved.getId());
+        }
+    }
+
+    @Test
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void replacementRollsBackIfLaterInsertFailsAtDatabase() {
+        String user = "rollback-" + java.util.UUID.randomUUID();
+        var sessionEntity = sessionRepository.saveAndFlush(newSession(user, "Atomic replacement"));
+        var tool = todoTool;
+        var session = new com.azhukov.agent.core.model.Session(sessionEntity.getId(), user, "owner", MODEL_PROVIDER, MODEL_NAME, null, java.util.Map.of());
+        tool.execute("{\"todos\":[{\"content\":\"original\"}]}", null, session);
+        assertThat(todoRepository.findByUserId(user)).extracting(TodoEntity::getTitle).containsExactly("original");
+        try {
+            tool.execute("{\"todos\":[{\"content\":\"first replacement\"},{\"content\":\"bad\\u0000value\"}]}", null, session);
+            org.assertj.core.api.Assertions.fail("Expected PostgreSQL to reject NUL in text");
+        } catch (org.springframework.dao.DataAccessException expected) {
+            assertThat(todoRepository.findByUserId(user)).extracting(TodoEntity::getTitle).containsExactly("original");
+        } finally {
+            todoRepository.deleteByUserId(user);
+            sessionRepository.deleteById(sessionEntity.getId());
+        }
+    }
+
+    @Test
+    void malformedToolReplacementPreservesPersistedListsAndValidReplacementStillWorks() {
+        SessionEntity first = sessionRepository.save(newSession(USER_ID_1, "Owner"));
+        SessionEntity second = sessionRepository.save(newSession(USER_ID_2, "Other"));
+        todoRepository.save(newTodo(first.getId(), USER_ID_1, TITLE_BUY_MILK, STATUS_PENDING, PRIORITY_HIGH, T1));
+        todoRepository.save(newTodo(second.getId(), USER_ID_2, TITLE_READ_BOOK, STATUS_PENDING, PRIORITY_HIGH, T2));
+        todoRepository.flush();
+        var tool = new com.azhukov.agent.tools.memory.TodoTool(todoRepository);
+        var owner = new com.azhukov.agent.core.model.Session(first.getId(), USER_ID_1, "Owner", MODEL_PROVIDER, MODEL_NAME, null, java.util.Map.of());
+        for (int i = 0; i < 2; i++) {
+            var result = tool.execute("{\"todos\":[{\"content\":\"valid\"},null]}", null, owner);
+            assertThat(result.success()).isFalse();
+            assertThat(todoRepository.findByUserId(USER_ID_1)).extracting(TodoEntity::getTitle).containsExactly(TITLE_BUY_MILK);
+            assertThat(todoRepository.findByUserId(USER_ID_2)).extracting(TodoEntity::getTitle).containsExactly(TITLE_READ_BOOK);
+        }
+        var result = tool.execute("{\"todos\":[{\"content\":\"replacement\"}]}", null, owner);
+        assertThat(result.success()).isTrue();
+        todoRepository.flush();
+        assertThat(todoRepository.findByUserId(USER_ID_1)).extracting(TodoEntity::getTitle).containsExactly("replacement");
+        assertThat(todoRepository.findByUserId(USER_ID_2)).extracting(TodoEntity::getTitle).containsExactly(TITLE_READ_BOOK);
+    }
+
     @Test
     void saveTodoForUser() {
         SessionEntity session = sessionRepository.save(newSession(USER_ID_1, "Todo Session"));
