@@ -810,6 +810,26 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
     public void deliverMedia(long chatId, List<MediaDeliveryService.MediaDescriptor> media, Integer threadId) {
         if (media == null || media.isEmpty()) return;
 
+        List<MediaRoot> roots = new ArrayList<>();
+        try {
+            for (Path candidate : List.of(Paths.get(properties.getWorkingDirectory()).toAbsolutePath().normalize(), AgentMediaPaths.mediaDir())) {
+                try {
+                    var stream = Files.newDirectoryStream(candidate);
+                    if (stream instanceof java.nio.file.SecureDirectoryStream<Path> secure) roots.add(new MediaRoot(candidate, secure));
+                    else stream.close();
+                } catch (java.io.IOException ignored) { }
+            }
+            deliverMediaWithRoots(chatId, media, roots);
+        } finally {
+            for (MediaRoot root : roots) {
+                try { root.directory().close(); } catch (java.io.IOException e) { log.warn("Failed to close media directory"); }
+            }
+        }
+    }
+
+    private record MediaRoot(Path path, java.nio.file.SecureDirectoryStream<Path> directory) {}
+
+    private void deliverMediaWithRoots(long chatId, List<MediaDeliveryService.MediaDescriptor> media, List<MediaRoot> roots) {
         // Partition: images (not as_document) go to batch, everything else goes individually
         List<MediaDeliveryService.MediaDescriptor> imageBatch = new ArrayList<>();
         List<MediaDeliveryService.MediaDescriptor> individualFiles = new ArrayList<>();
@@ -836,12 +856,12 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
 
         // Deliver image batch via sendMediaGroup (up to 10 per call)
         if (!imageBatch.isEmpty()) {
-            deliverImageBatch(chatId, imageBatch);
+            deliverImageBatch(chatId, imageBatch, roots);
         }
 
         // Deliver individual files
         for (MediaDeliveryService.MediaDescriptor desc : individualFiles) {
-            deliverSingleMedia(chatId, desc);
+            deliverSingleMedia(chatId, desc, roots);
         }
     }
 
@@ -1124,11 +1144,20 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         }
     }
 
+    private byte[] readMedia(Path path, List<MediaRoot> roots) throws java.io.IOException {
+        Path absolute = path.toAbsolutePath().normalize();
+        for (MediaRoot root : roots) {
+            if (absolute.startsWith(root.path()) && !absolute.equals(root.path()))
+                return SecureMediaReader.read(root.directory(), root.path().relativize(absolute));
+        }
+        throw new java.io.IOException("Media root unavailable");
+    }
+
     /**
      * Deliver a batch of images via sendMediaGroup (up to 10 per call).
      * For a single image, uses sendPhoto instead.
      */
-    private void deliverImageBatch(long chatId, List<MediaDeliveryService.MediaDescriptor> images) {
+    private void deliverImageBatch(long chatId, List<MediaDeliveryService.MediaDescriptor> images, List<MediaRoot> roots) {
         if (images.size() == 1) {
             // Single image — use sendPhoto
             MediaDeliveryService.MediaDescriptor desc = images.get(0);
@@ -1140,7 +1169,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                     telegramClient.sendMessage(chatId, "⚠️ Media file not found: " + desc.path());
                     return;
                 }
-                byte[] data = SecureMediaReader.read(file.toPath());
+                byte[] data = readMedia(file.toPath(), roots);
                 String fileName = file.getName();
                 java.util.Optional<Long> sent = telegramClient.sendPhoto(chatId, data, null, null);
                 markArtifactDelivered(artifactIdForPath(desc.path()), sent);
@@ -1167,7 +1196,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                         telegramClient.sendMessage(chatId, "⚠️ Media file not found: " + desc.path());
                         continue;
                     }
-                    byte[] data = SecureMediaReader.read(file.toPath());
+                    byte[] data = readMedia(file.toPath(), roots);
                     String fileName = file.getName();
                     // First photo in the group gets the caption (if any)
                     String caption = (photoInputs.isEmpty()) ? null : null;
@@ -1207,7 +1236,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
      * - Image with [[as_document]] → sendDocument
      * - Everything else → sendDocument
      */
-    private void deliverSingleMedia(long chatId, MediaDeliveryService.MediaDescriptor desc) {
+    private void deliverSingleMedia(long chatId, MediaDeliveryService.MediaDescriptor desc, List<MediaRoot> roots) {
         try {
             File file = new File(desc.path());
             if (!file.exists() || !file.isFile()) {
@@ -1216,7 +1245,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                 telegramClient.sendMessage(chatId, "⚠️ Media file not found: " + desc.path());
                 return;
             }
-            byte[] data = SecureMediaReader.read(file.toPath());
+            byte[] data = readMedia(file.toPath(), roots);
             String fileName = file.getName();
             String parseMode = properties.getParseMode();
 

@@ -361,7 +361,7 @@ class BotMessageProcessorMediaDeliveryTest {
         });
         try {
             processor.deliverMedia(100L, List.of(new MediaDeliveryService.MediaDescriptor(file.toString(), ".pdf", false, false)), null);
-            verify(telegramClient, never()).sendDocument(anyLong(), any(byte[].class), anyString(), nullable(String.class), nullable(String.class));
+            verify(telegramClient).sendDocument(eq(100L), org.mockito.AdditionalMatchers.aryEq("safe".getBytes(java.nio.charset.StandardCharsets.UTF_8)), anyString(), nullable(String.class), nullable(String.class));
         } finally {
             if (Files.isSymbolicLink(tempDir)) {
                 Files.delete(tempDir);
@@ -397,7 +397,7 @@ class BotMessageProcessorMediaDeliveryTest {
         });
         try {
             processor.deliverMedia(100L, List.of(new MediaDeliveryService.MediaDescriptor(file.toString(), ".pdf", false, false)), null);
-            verify(telegramClient, never()).sendDocument(anyLong(), any(byte[].class), anyString(), nullable(String.class), nullable(String.class));
+            verify(telegramClient).sendDocument(eq(100L), org.mockito.AdditionalMatchers.aryEq("safe".getBytes(java.nio.charset.StandardCharsets.UTF_8)), anyString(), nullable(String.class), nullable(String.class));
         } finally {
             Path moved = tempDir.resolveSibling(tempDir.getFileName() + "-moved");
             if (Files.exists(moved)) {
