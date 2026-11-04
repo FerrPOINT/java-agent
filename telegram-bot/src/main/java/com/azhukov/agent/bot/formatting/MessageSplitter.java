@@ -160,7 +160,7 @@ public final class MessageSplitter {
             rawMaxLen = 1; // ensure at least 1 char per chunk
         }
 
-        List<String> rawChunks = doSplit(text, rawMaxLen);
+        List<String> rawChunks = splitPreservingBoundaries(text, rawMaxLen);
         int total = rawChunks.size();
         List<String> result = new ArrayList<>(total);
 
@@ -232,6 +232,26 @@ public final class MessageSplitter {
             balanced.add(body);
         }
         return balanced;
+    }
+
+    private static List<String> splitPreservingBoundaries(String text, int maxLength) {
+        List<String> chunks = new ArrayList<>();
+        int start = 0;
+        while (start < text.length()) {
+            int end = Math.min(text.length(), start + maxLength);
+            if (end < text.length()) {
+                if (Character.isHighSurrogate(text.charAt(end - 1))
+                        && Character.isLowSurrogate(text.charAt(end))) end--;
+                int paragraph = text.lastIndexOf("\n\n", end - 2);
+                int newline = text.lastIndexOf('\n', end - 1);
+                int boundary = paragraph >= start ? paragraph + 2 : newline >= start ? newline + 1 : end;
+                end = boundary > start ? boundary : end;
+            }
+            if (end == start) throw new IllegalArgumentException("maxLength cannot fit a Unicode code point");
+            chunks.add(text.substring(start, end));
+            start = end;
+        }
+        return chunks;
     }
 
     private static List<String> doSplit(String text, int maxLength) {

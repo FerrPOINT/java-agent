@@ -91,6 +91,16 @@ class MessageSplitterTest {
     }
 
     @Test
+    void markdownPreservesRepeatedNewlinesAndUnicodeAcrossBoundaries() {
+        String input = "a".repeat(2037) + "\n\n\n" + "😀".repeat(1100) + "\n\n";
+        var chunks = MessageSplitter.splitAndFormat(input, "MarkdownV2");
+        String restored = chunks.stream().map(chunk -> chunk.replaceFirst("^\\\\\\(\\d+/\\d+\\\\\\) ", ""))
+            .collect(java.util.stream.Collectors.joining());
+        assertThat(restored).isEqualTo(input);
+        assertThat(chunks).allSatisfy(chunk -> assertThat(chunk.length()).isLessThanOrEqualTo(4096));
+    }
+
+    @Test
     void markdownCodeFenceIsBalancedAcrossChunks() {
         String input = "```python\n" + "x = 1\n".repeat(1000) + "```";
         var chunks = MessageSplitter.splitAndFormat(input, "MarkdownV2");
