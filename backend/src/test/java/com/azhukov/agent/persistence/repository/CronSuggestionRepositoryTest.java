@@ -312,6 +312,51 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
 
     @Test
     @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void twoResumesInOneTransactionLeaveOnlyOneLiveFuture() {
+        var tx = new org.springframework.transaction.support.TransactionTemplate(transactionManager);
+        var properties = (com.azhukov.agent.config.AgentProperties) org.springframework.test.util.ReflectionTestUtils.getField(cronJobService, "properties");
+        boolean previous = properties.getCron().isEnabled();
+        String owner = "resume-repeat-" + java.util.UUID.randomUUID();
+        var suggestionId = tx.execute(s -> cronSuggestionRepository.saveAndFlush(newSuggestion(owner, "key")).getId());
+        var oldScheduler = org.springframework.test.util.ReflectionTestUtils.getField(cronJobService, "scheduler");
+        var recordingScheduler = java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
+        var scheduled = new java.util.concurrent.CopyOnWriteArrayList<java.util.concurrent.ScheduledFuture<?>>();
+        var wrapper = org.mockito.Mockito.mock(java.util.concurrent.ScheduledExecutorService.class);
+        org.mockito.Mockito.doAnswer(inv -> {
+            var future = recordingScheduler.schedule(inv.getArgument(0, Runnable.class), inv.getArgument(1, Long.class), inv.getArgument(2, java.util.concurrent.TimeUnit.class));
+            scheduled.add(future);
+            return future;
+        }).when(wrapper).schedule(org.mockito.ArgumentMatchers.any(Runnable.class), org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.any());
+        java.util.UUID jobId = null;
+        try {
+            properties.getCron().setEnabled(false);
+            com.azhukov.agent.core.security.UserContext.set(owner, com.azhukov.agent.core.security.UserContext.ROLE_USER);
+            jobId = suggestionService.acceptSuggestion(suggestionId.toString()).getId();
+            cronJobService.pause(jobId);
+            org.springframework.test.util.ReflectionTestUtils.setField(cronJobService, "scheduler", wrapper);
+            properties.getCron().setEnabled(true);
+            var selected = jobId;
+            tx.executeWithoutResult(status -> { cronJobService.resume(selected); cronJobService.resume(selected); });
+            assertThat(scheduled.stream().filter(f -> !f.isCancelled() && !f.isDone()).count()).isEqualTo(1);
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+            org.springframework.test.util.ReflectionTestUtils.setField(cronJobService, "scheduler", oldScheduler);
+            properties.getCron().setEnabled(previous);
+            scheduled.forEach(f -> f.cancel(false));
+            recordingScheduler.shutdownNow();
+            @SuppressWarnings("unchecked")
+            var tasks = (java.util.Map<java.util.UUID, java.util.concurrent.ScheduledFuture<?>>) org.springframework.test.util.ReflectionTestUtils.getField(cronJobService, "scheduledTasks");
+            if (jobId != null) {
+                tasks.remove(jobId);
+                var cleanupJobId = jobId;
+                tx.executeWithoutResult(s -> cronJobRepository.deleteById(cleanupJobId));
+            }
+            tx.executeWithoutResult(s -> cronSuggestionRepository.deleteById(suggestionId));
+        }
+    }
+
+    @Test
+    @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     void rolledBackRemoveKeepsExistingSchedule() {
         var tx = new org.springframework.transaction.support.TransactionTemplate(transactionManager);
         var properties = (com.azhukov.agent.config.AgentProperties) org.springframework.test.util.ReflectionTestUtils.getField(cronJobService, "properties");
