@@ -63,6 +63,25 @@ class CronJobServiceTest {
     }
 
     @Test
+    void schedulerDoesNotRunJobBeforeSchedulePersistence() {
+        var scheduler = mock(java.util.concurrent.ScheduledExecutorService.class);
+        var future = mock(java.util.concurrent.ScheduledFuture.class);
+        doAnswer(invocation -> {
+            invocation.<Runnable>getArgument(0).run();
+            return future;
+        }).when(scheduler).schedule(any(Runnable.class), anyLong(), any(java.util.concurrent.TimeUnit.class));
+        when(cronJobRepository.save(any(CronJobEntity.class))).thenThrow(new IllegalStateException("database unavailable"));
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "scheduler", scheduler);
+        var job = new CronJobEntity();
+        job.setId(UUID.randomUUID());
+        job.setName("job");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+            org.springframework.test.util.ReflectionTestUtils.invokeMethod(service, "scheduleJob", job, 0L))
+            .hasMessageContaining("database unavailable");
+        verify(cronJobRepository, never()).findById(job.getId());
+    }
+
+    @Test
     void createPersistsCurrentUserOnTheFirstSave() {
         java.util.List<CronJobEntity> saves = new java.util.ArrayList<>();
         when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(invocation -> {
