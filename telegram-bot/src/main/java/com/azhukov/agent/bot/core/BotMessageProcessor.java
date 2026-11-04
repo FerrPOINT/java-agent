@@ -1109,9 +1109,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         // StreamEditor strips them during streaming, but sendFormatted is used
         // when streaming didn't finalize — without this, raw think tags reach the user.
         formatted = StreamEditor.stripThinkTagsRegex(formatted);
-        if ("MarkdownV2".equalsIgnoreCase(parseMode)) {
-            formatted = MarkdownConverter.convert(formatted);
-        } else if ("HTML".equalsIgnoreCase(parseMode)) {
+        if ("HTML".equalsIgnoreCase(parseMode)) {
             // Audit M20: escape HTML-special characters in LLM output to prevent
             // injection of <a>, <b>, <code> and other Telegram-allowed tags.
             formatted = formatted.replace("&", "&amp;")
@@ -1121,7 +1119,9 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
 
         // B1.6: Thread reply mode — off/all/first
         String replyMode = properties.getReplyToMode();
-        List<String> chunks = MessageSplitter.split(formatted);
+        List<String> chunks = "MarkdownV2".equalsIgnoreCase(parseMode)
+            ? MessageSplitter.splitAndFormat(formatted, parseMode)
+            : MessageSplitter.split(formatted);
         sendFormattedChunks(chatId, chunks, 0, parseMode, replyMode, userMessageId, messageThreadId,
             text.equals(textForDisplay) ? retries : -1);
     }

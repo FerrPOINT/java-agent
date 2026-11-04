@@ -534,6 +534,21 @@ class BotMessageProcessorTest {
     }
 
     @Test
+    void fallbackMarkdownEscapingDoesNotLoseCharacters() {
+        String response = "_".repeat(3000);
+        stubStreamingResult(response, false);
+        when(telegramClient.sendMessage(eq(100L), anyString(), eq("MarkdownV2"), any(), any()))
+            .thenReturn(Optional.of(42L));
+        processor.accept(textEvent(1, 100L, "Hello"));
+        var sent = ArgumentCaptor.forClass(String.class);
+        verify(telegramClient, atLeast(2)).sendMessage(eq(100L), sent.capture(), eq("MarkdownV2"), any(), any());
+        String restored = sent.getAllValues().stream()
+            .map(chunk -> chunk.replaceFirst("^\\\\\\(\\d+/\\d+\\\\\\) ", ""))
+            .collect(java.util.stream.Collectors.joining()).replace("\\_", "_");
+        assertThat(restored).isEqualTo(response);
+    }
+
+    @Test
     void reviewPartialFailureDoesNotClaimSuccessfulReceipt() {
         when(telegramClient.sendMessage(eq(100L), anyString(), eq("MarkdownV2"), any(), any()))
             .thenReturn(Optional.of(1L), Optional.empty(), Optional.of(3L));
@@ -611,10 +626,11 @@ class BotMessageProcessorTest {
             .thenReturn(Optional.of(41L), Optional.empty(), Optional.of(42L), Optional.of(43L));
         when(telegramClient.takeLastRetryAfterSeconds()).thenReturn(1);
         processor.accept(textEvent(1, 100L, "Hello"));
-        verify(telegramClient, timeout(8000).times(4))
+        int expectedCalls = com.azhukov.agent.bot.formatting.MessageSplitter.splitAndFormat(response, "MarkdownV2").size() + 1;
+        verify(telegramClient, timeout(8000).times(expectedCalls))
             .sendMessage(eq(100L), anyString(), anyString(), any(), any());
         var chunks = ArgumentCaptor.forClass(String.class);
-        verify(telegramClient, times(4)).sendMessage(eq(100L), chunks.capture(), anyString(), any(), any());
+        verify(telegramClient, times(expectedCalls)).sendMessage(eq(100L), chunks.capture(), anyString(), any(), any());
         assertThat(chunks.getAllValues().get(1)).isEqualTo(chunks.getAllValues().get(2));
         assertThat(chunks.getAllValues().get(0)).isNotEqualTo(chunks.getAllValues().get(1));
     }
