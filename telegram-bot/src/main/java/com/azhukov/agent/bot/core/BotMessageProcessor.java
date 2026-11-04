@@ -1140,7 +1140,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                     telegramClient.sendMessage(chatId, "⚠️ Media file not found: " + desc.path());
                     return;
                 }
-                byte[] data = Files.readAllBytes(file.toPath());
+                byte[] data = SecureMediaReader.read(file.toPath());
                 String fileName = file.getName();
                 java.util.Optional<Long> sent = telegramClient.sendPhoto(chatId, data, null, null);
                 markArtifactDelivered(artifactIdForPath(desc.path()), sent);
@@ -1167,7 +1167,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                         telegramClient.sendMessage(chatId, "⚠️ Media file not found: " + desc.path());
                         continue;
                     }
-                    byte[] data = Files.readAllBytes(file.toPath());
+                    byte[] data = SecureMediaReader.read(file.toPath());
                     String fileName = file.getName();
                     // First photo in the group gets the caption (if any)
                     String caption = (photoInputs.isEmpty()) ? null : null;
@@ -1212,7 +1212,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                 telegramClient.sendMessage(chatId, "⚠️ Media file not found: " + desc.path());
                 return;
             }
-            byte[] data = Files.readAllBytes(file.toPath());
+            byte[] data = SecureMediaReader.read(file.toPath());
             String fileName = file.getName();
             String parseMode = properties.getParseMode();
 
