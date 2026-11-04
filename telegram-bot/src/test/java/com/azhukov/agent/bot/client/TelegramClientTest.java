@@ -74,6 +74,21 @@ class TelegramClientTest {
     }
 
     @Test
+    void checkedSendDoesNotTreatTransportErrorContaining409AsKnownRefusal() {
+        when(restClient.post()).thenThrow(new org.springframework.web.client.ResourceAccessException("timeout after 409 Conflict bytes"));
+        assertThat(client.sendMessageChecked(1L, "text", null, null, null, null, false)).isEmpty();
+    }
+
+    @Test
+    void actualHttp409StillMarksPollingConflict() {
+        when(restClient.post()).thenThrow(org.springframework.web.client.HttpClientErrorException.create(
+            org.springframework.http.HttpStatus.CONFLICT, "Conflict", org.springframework.http.HttpHeaders.EMPTY, new byte[0], null));
+        assertThatThrownBy(() -> client.callApi("getUpdates", Map.of()))
+            .isInstanceOfSatisfying(TelegramApiException.class, e -> assertThat(e.getErrorCode()).isEqualTo(409));
+        assertThat(client.isLastCallConflict()).isTrue();
+    }
+
+    @Test
     void checkedSendTreatsServerFailureAsAmbiguous() {
         stubPostChain(errorResponse(500, "Internal Server Error"));
         assertThat(client.sendMessageChecked(1L, "text", null, null, null, null, false)).isEmpty();

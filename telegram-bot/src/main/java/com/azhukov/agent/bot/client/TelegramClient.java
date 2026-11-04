@@ -888,7 +888,8 @@ public class TelegramClient {
         } catch (Exception e) {
             // Check for HTTP 409 conflict from RestClient (comes as HttpStatusCodeException)
             String msg = e.getMessage();
-            if (msg != null && msg.contains("409 Conflict")) {
+            if (e instanceof org.springframework.web.client.HttpClientErrorException httpError
+                    && httpError.getStatusCode().value() == 409) {
                 lastCallConflict = true;
                 lastApiErrorCode = 409;
                 log.warn("Telegram {} returned 409 Conflict: {}", method, msg);
