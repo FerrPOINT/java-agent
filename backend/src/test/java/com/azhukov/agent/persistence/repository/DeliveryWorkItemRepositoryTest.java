@@ -29,6 +29,9 @@ class DeliveryWorkItemRepositoryTest extends PostgresTestContainer {
     @Autowired
     private TransactionTemplate transactionTemplate;
 
+    @Autowired
+    private org.springframework.test.web.servlet.MockMvc mvc;
+
     @Test
     void duplicateSourceAndTargetIsRejectedByUniqueConstraint() {
         DeliveryWorkItemEntity first = pendingItem("default", "cron_execution", "job-1", "telegram:100");
@@ -111,6 +114,36 @@ class DeliveryWorkItemRepositoryTest extends PostgresTestContainer {
         assertThat(terminal.getState()).isEqualTo("unknown");
         assertThat(terminal.getUnknownAt()).isNotNull();
         assertThat(terminal.getClaimToken()).isNull();
+    }
+
+    @Test
+    void unknownOutcomeHttpPersistsAndPreventsRetry() throws Exception {
+        DeliveryWorkItemEntity item = repository.saveAndFlush(
+            pendingItem("default", "cron_execution", "outcome-" + UUID.randomUUID(), "telegram:100"));
+        assertThat(repository.claimPending(item.getId(), "owner-token", Instant.now())).isEqualTo(1);
+        String payload = "{\"id\":\"" + item.getId() + "\",\"claim_token\":\"owner-token\",\"category\":\"partial_chunk_failure\"}";
+        com.azhukov.agent.core.security.UserContext.set("admin-test", com.azhukov.agent.core.security.UserContext.ROLE_ADMIN);
+        try {
+            String foreignPayload = payload.replace("owner-token", "wrong-token");
+            mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/v1/agent/delivery/unknown")
+                    .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content(foreignPayload))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isConflict());
+            assertThat(repository.findById(item.getId()).orElseThrow().getState()).isEqualTo("claimed");
+            mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/v1/agent/delivery/unknown")
+                    .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content(payload))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.marked").value(true));
+            mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/v1/agent/delivery/unknown")
+                    .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content(payload))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isConflict());
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+        }
+        DeliveryWorkItemEntity result = repository.findById(item.getId()).orElseThrow();
+        assertThat(result.getState()).isEqualTo("unknown");
+        assertThat(result.getErrorCategory()).isEqualTo("partial_chunk_failure");
+        assertThat(result.getClaimToken()).isNull();
+        assertThat(repository.claimPending(item.getId(), "other-token", Instant.now().plusSeconds(600))).isZero();
     }
 
     @Test
