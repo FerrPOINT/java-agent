@@ -336,6 +336,16 @@ class BotMessageProcessorMediaDeliveryTest {
     }
 
     @Test
+    void symlinkWorkspaceRootStillAllowsOrdinaryFiles(@TempDir Path rootParent) throws Exception {
+        Path link = Files.createSymbolicLink(rootParent.resolve("workspace"), tempDir);
+        properties.setWorkingDirectory(link.toString());
+        Path file = createTempFile("report.pdf");
+        processor.deliverMedia(100L, List.of(new MediaDeliveryService.MediaDescriptor(
+            link.resolve(file.getFileName()).toString(), ".pdf", false, false)), null);
+        verify(telegramClient).sendDocument(eq(100L), any(byte[].class), eq("report.pdf"), nullable(String.class), nullable(String.class));
+    }
+
+    @Test
     void invalidMediaPathsDoNotPreventDeliveryOfLaterValidFiles() throws Exception {
         Path document = createTempFile("valid.pdf");
         processor.deliverMedia(100L, List.of(
