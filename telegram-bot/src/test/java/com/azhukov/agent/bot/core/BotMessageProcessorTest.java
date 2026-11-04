@@ -549,6 +549,29 @@ class BotMessageProcessorTest {
     }
 
     @Test
+    void pendingReviewDoesNotResendAcceptedPartAfterAnUnknownMiddlePart() {
+        String sessionId = UUID.randomUUID().toString();
+        String deliveryId = UUID.randomUUID().toString();
+        String review = "x".repeat(9000);
+        var pending = new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode()
+            .put("pending", true).put("summary", review).put("deliveryId", deliveryId);
+        when(backendClient.getPendingReview(sessionId)).thenReturn(pending);
+        when(telegramClient.sendMessage(eq(100L), anyString(), eq("MarkdownV2"), any(), any()))
+            .thenReturn(Optional.of(1L), Optional.empty(), Optional.of(3L));
+        var orchestrator = new StreamingOrchestrator(backendClient, streamEditor, busyHandler, runtimeFooter,
+            properties, mediaDeliveryService, telegramClient, sessionStoreMock,
+            mock(com.azhukov.agent.bot.keyboard.ClarifyInteractionRenderer.class));
+        try {
+            assertThat(orchestrator.deliverPendingReview(sessionId, 100L, 1L, 0L, processor)).isFalse();
+            assertThat(orchestrator.deliverPendingReview(sessionId, 100L, 1L, 0L, processor)).isFalse();
+            verify(telegramClient, times(2)).sendMessage(eq(100L), anyString(), eq("MarkdownV2"), any(), any());
+            verify(backendClient, never()).acknowledgePendingReview(anyString(), anyString());
+        } finally {
+            orchestrator.shutdownReviewPollScheduler();
+        }
+    }
+
+    @Test
     void reviewPartialFailureDoesNotClaimSuccessfulReceipt() {
         when(telegramClient.sendMessage(eq(100L), anyString(), eq("MarkdownV2"), any(), any()))
             .thenReturn(Optional.of(1L), Optional.empty(), Optional.of(3L));
