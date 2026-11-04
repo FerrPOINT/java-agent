@@ -311,6 +311,17 @@ class BotMessageProcessorMediaDeliveryTest {
     }
 
     @Test
+    void unopenedWorkspaceCanAppearAfterStartup() throws Exception {
+        Path missing = tempDir.resolve("created-later");
+        properties.setWorkingDirectory(missing.toString());
+        processor.init();
+        Files.createDirectories(missing);
+        Path file = Files.writeString(missing.resolve("report.pdf"), "safe");
+        processor.deliverMedia(100L, List.of(new MediaDeliveryService.MediaDescriptor(file.toString(), ".pdf", false, false)), null);
+        verify(telegramClient).sendDocument(eq(100L), org.mockito.AdditionalMatchers.aryEq("safe".getBytes(java.nio.charset.StandardCharsets.UTF_8)), anyString(), nullable(String.class), nullable(String.class));
+    }
+
+    @Test
     void symlinkWorkspaceRootStillAllowsOrdinaryFiles(@TempDir Path rootParent) throws Exception {
         Path link = Files.createSymbolicLink(rootParent.resolve("workspace"), tempDir);
         properties.setWorkingDirectory(link.toString());
