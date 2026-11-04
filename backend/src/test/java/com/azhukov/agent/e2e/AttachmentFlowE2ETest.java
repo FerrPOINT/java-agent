@@ -62,6 +62,77 @@ class AttachmentFlowE2ETest extends PostgresTestContainer {
     }
 
     @Test
+    void firstTurnDoesNotInjectOtherOwnersAttachment() throws Exception {
+        String owner = "owner-" + UUID.randomUUID();
+        String other = "other-" + UUID.randomUUID();
+        String payload = "private-" + UUID.randomUUID();
+        String foreignId = uploadTextArtifact("private.txt", payload, other);
+        String ownId = uploadTextArtifact("own.txt", "owner-content", owner);
+        var response = mockMvc.perform(post("/api/v1/agent/chat")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"message":"inspect","userId":"%s","attachments":[{"artifactId":"%s"},{"artifactId":"%s"}]}
+                    """.formatted(owner, foreignId, ownId)))
+            .andExpect(status().isOk()).andReturn();
+        UUID sessionId = UUID.fromString(com.fasterxml.jackson.databind.json.JsonMapper.builder().build()
+            .readTree(response.getResponse().getContentAsString()).path("sessionId").asText());
+        String persisted = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).stream()
+            .filter(m -> "user".equals(m.getRole())).findFirst().orElseThrow().getContent();
+        assertThat(persisted).contains("owner-content", "[unavailable: " + foreignId + "]").doesNotContain(payload);
+    }
+
+    @Test
+    void repeatTurnUsesSessionOwnerForAttachmentEvenWhenRequestNamesAnother() throws Exception {
+        String owner = "repeat-owner-" + UUID.randomUUID();
+        String other = "repeat-other-" + UUID.randomUUID();
+        String secret = "private-" + UUID.randomUUID();
+        String foreign = uploadTextArtifact("private.txt", secret, other);
+        String own = uploadTextArtifact("own.txt", "owner-repeat-content", owner);
+        var session = new com.azhukov.agent.persistence.entity.SessionEntity();
+        session.setUserId(owner);
+        session.setModelProvider("noop");
+        session.setModelName("noop");
+        session = sessionRepository.saveAndFlush(session);
+        var result = mockMvc.perform(post("/api/v1/agent/chat")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"sessionId":"%s","message":"inspect repeat","userId":"%s","attachments":[{"artifactId":"%s"},{"artifactId":"%s"}]}
+                    """.formatted(session.getId(), other, foreign, own)))
+            .andExpect(status().isOk()).andReturn();
+        assertThat(com.fasterxml.jackson.databind.json.JsonMapper.builder().build()
+            .readTree(result.getResponse().getContentAsString()).path("sessionId").asText()).isEqualTo(session.getId().toString());
+        String persisted = messageRepository.findBySessionIdOrderByCreatedAtAsc(session.getId()).stream()
+            .filter(m -> "user".equals(m.getRole())).findFirst().orElseThrow().getContent();
+        assertThat(persisted).contains("owner-repeat-content", "[unavailable: " + foreign + "]").doesNotContain(secret);
+    }
+
+    @Test
+    void streamingFirstTurnScopesAttachmentsBeforePersisting() throws Exception {
+        String owner = "stream-owner-" + UUID.randomUUID();
+        String other = "stream-other-" + UUID.randomUUID();
+        String secret = "private-" + UUID.randomUUID();
+        String foreign = uploadTextArtifact("private.txt", secret, other);
+        String own = uploadTextArtifact("own.txt", "own-stream-content", owner);
+        var started = mockMvc.perform(post("/api/v1/agent/chat/stream")
+                .contentType(MediaType.APPLICATION_JSON).accept(MediaType.TEXT_EVENT_STREAM)
+                .content("""
+                    {"message":"inspect","userId":"%s","attachments":[{"artifactId":"%s"},{"artifactId":"%s"}]}
+                    """.formatted(owner, foreign, own)))
+            .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.request().asyncStarted())
+            .andReturn();
+        started.getAsyncResult(30_000);
+        var completed = mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch(started))
+            .andExpect(status().isOk()).andReturn();
+        String events = completed.getResponse().getContentAsString();
+        var sessions = sessionRepository.findAllByUserId(owner, org.springframework.data.domain.PageRequest.of(0, 10));
+        assertThat(sessions).hasSize(1);
+        String persisted = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessions.getContent().get(0).getId()).stream()
+            .filter(m -> "user".equals(m.getRole())).findFirst().orElseThrow().getContent();
+        assertThat(persisted).contains("own-stream-content", "[unavailable: " + foreign + "]").doesNotContain(secret);
+        assertThat(events).doesNotContain(secret);
+    }
+
+    @Test
     void apiKeyFilterCannotImpersonatePersistedSessionOwner() throws Exception {
         String authenticatedUser = "http-owner-" + UUID.randomUUID();
         String requestedUser = "different-owner-" + UUID.randomUUID();
@@ -80,6 +151,37 @@ class AttachmentFlowE2ETest extends PostgresTestContainer {
         UUID sessionId = UUID.fromString(com.fasterxml.jackson.databind.json.JsonMapper.builder().build()
             .readTree(result.getResponse().getContentAsString()).path("sessionId").asText());
         assertThat(sessionRepository.findById(sessionId).orElseThrow().getUserId()).isEqualTo(authenticatedUser);
+        assertThat(com.azhukov.agent.core.security.UserContext.getUserId()).isNull();
+    }
+
+    @Test
+    void authenticatedUserCannotUseForeignSessionToReadAttachments() throws Exception {
+        String owner = "session-owner-" + UUID.randomUUID();
+        String attacker = "caller-" + UUID.randomUUID();
+        String payload = "secret-" + UUID.randomUUID();
+        String artifact = uploadTextArtifact("private.txt", payload, owner);
+        var session = new com.azhukov.agent.persistence.entity.SessionEntity();
+        session.setUserId(owner);
+        session.setModelProvider("noop");
+        session.setModelName("noop");
+        session = sessionRepository.saveAndFlush(session);
+        var users = org.mockito.Mockito.mock(com.azhukov.agent.service.UserAccessService.class);
+        org.mockito.Mockito.when(users.authenticate("fixture-user-key")).thenReturn(
+            new com.azhukov.agent.service.UserAccessService.AuthenticatedUser(attacker, "user"));
+        var properties = new com.azhukov.agent.config.AgentProperties();
+        properties.getSecurity().setApiKey("fixture-global-key");
+        var filter = new com.azhukov.agent.api.filter.ApiKeyAuthFilter(properties, users);
+        var mvc = org.springframework.test.web.servlet.setup.MockMvcBuilders
+            .webAppContextSetup(webApplicationContext).addFilters(filter).build();
+        var response = mvc.perform(post("/api/v1/agent/chat").header("X-API-Key", "fixture-user-key")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"sessionId":"%s","message":"inspect","userId":"%s","attachments":[{"artifactId":"%s"}]}
+                    """.formatted(session.getId(), owner, artifact)))
+            .andReturn().getResponse();
+        assertThat(response.getStatus()).isIn(403, 404);
+        assertThat(response.getContentAsString()).doesNotContain(payload);
+        assertThat(messageRepository.findBySessionIdOrderByCreatedAtAsc(session.getId())).isEmpty();
         assertThat(com.azhukov.agent.core.security.UserContext.getUserId()).isNull();
     }
 
