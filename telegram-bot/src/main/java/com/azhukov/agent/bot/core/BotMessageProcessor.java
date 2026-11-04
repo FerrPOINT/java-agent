@@ -1200,9 +1200,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                     }
                     byte[] data = readMedia(file.toPath(), roots);
                     String fileName = file.getName();
-                    // First photo in the group gets the caption (if any)
-                    String caption = (photoInputs.isEmpty()) ? null : null;
-                    photoInputs.add(new TelegramClient.PhotoInput(data, fileName, caption));
+                    photoInputs.add(new TelegramClient.PhotoInput(data, fileName, null));
                     included.add(desc);
                 } catch (Exception e) {
                     log.warn("Failed to read media file {}: {}", desc.path(), e.getMessage());
