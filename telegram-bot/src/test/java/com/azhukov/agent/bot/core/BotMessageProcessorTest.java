@@ -1097,12 +1097,17 @@ class BotMessageProcessorTest {
     }
 
     @Test
-    void resolveModelUsedFallsBackToDefaultModel() {
+    void unknownResultModelDoesNotInventBotDefaultWhenBackendChooses() {
+        BotSessionEntity session = new BotSessionEntity();
+        assertThat(processor.resolveModelUsed(session, null)).isEqualTo("backend default");
+    }
+
+    @Test
+    void resolveModelUsedFallsBackToBackendDefault() {
         stubStreamingResultWithMetadata("response", false, null, 100, 1000, false);
-        when(runtimeFooter.format(anyString(), anyInt(), anyInt(), anyString())).thenReturn("\n\nmodel: test-model");
-        when(runtimeFooter.format(anyString(), anyInt(), anyInt(), anyString(), anyLong(), anyBoolean())).thenReturn("\n\nmodel: test-model");
+        when(runtimeFooter.format(anyString(), anyInt(), anyInt(), anyString(), anyLong(), anyBoolean())).thenReturn("\n\nmodel: backend default");
         processor.accept(textEvent(1, 100L, "hello"));
-        verify(runtimeFooter).format(eq("test-model"), anyInt(), anyInt(), anyString(), anyLong(), anyBoolean());
+        verify(runtimeFooter).format(eq("backend default"), anyInt(), anyInt(), anyString(), anyLong(), anyBoolean());
     }
 
     // ─── Voice mode ──────────────────────────────────────────────
