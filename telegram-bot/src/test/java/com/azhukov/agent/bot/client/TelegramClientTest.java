@@ -80,6 +80,36 @@ class TelegramClientTest {
     }
 
     @Test
+    void checkedSendSurfacesHttp429RetryAfter() {
+        byte[] body = "{\"ok\":false,\"error_code\":429,\"description\":\"Too Many Requests\",\"parameters\":{\"retry_after\":37}}"
+            .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        when(restClient.post()).thenThrow(org.springframework.web.client.HttpClientErrorException.create(
+            org.springframework.http.HttpStatus.TOO_MANY_REQUESTS, "Too Many Requests",
+            org.springframework.http.HttpHeaders.EMPTY, body, java.nio.charset.StandardCharsets.UTF_8));
+        assertThatThrownBy(() -> client.sendMessageChecked(1L, "text", null, null, null, null, false))
+            .isInstanceOfSatisfying(TelegramClient.SendRefusalException.class,
+                ex -> assertThat(ex.getRetryAfterSeconds()).isEqualTo(37));
+    }
+
+    @Test
+    void malformedHttp429RemainsAmbiguous() {
+        when(restClient.post()).thenThrow(org.springframework.web.client.HttpClientErrorException.create(
+            org.springframework.http.HttpStatus.TOO_MANY_REQUESTS, "Too Many Requests",
+            org.springframework.http.HttpHeaders.EMPTY, "not-json".getBytes(java.nio.charset.StandardCharsets.UTF_8),
+            java.nio.charset.StandardCharsets.UTF_8));
+        assertThat(client.sendMessageChecked(1L, "text", null, null, null, null, false)).isEmpty();
+    }
+
+    @Test
+    void http429WithNullBodyRemainsAmbiguous() {
+        when(restClient.post()).thenThrow(org.springframework.web.client.HttpClientErrorException.create(
+            org.springframework.http.HttpStatus.TOO_MANY_REQUESTS, "Too Many Requests",
+            org.springframework.http.HttpHeaders.EMPTY, "null".getBytes(java.nio.charset.StandardCharsets.UTF_8),
+            java.nio.charset.StandardCharsets.UTF_8));
+        assertThat(client.sendMessageChecked(1L, "text", null, null, null, null, false)).isEmpty();
+    }
+
+    @Test
     void actualHttp409StillMarksPollingConflict() {
         when(restClient.post()).thenThrow(org.springframework.web.client.HttpClientErrorException.create(
             org.springframework.http.HttpStatus.CONFLICT, "Conflict", org.springframework.http.HttpHeaders.EMPTY, new byte[0], null));

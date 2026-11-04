@@ -889,6 +889,20 @@ public class TelegramClient {
             // Check for HTTP 409 conflict from RestClient (comes as HttpStatusCodeException)
             String msg = e.getMessage();
             if (e instanceof org.springframework.web.client.HttpClientErrorException httpError
+                    && httpError.getStatusCode().value() == 429) {
+                try {
+                    TelegramResponse error = objectMapper.readValue(httpError.getResponseBodyAsByteArray(), TelegramResponse.class);
+                    if (error != null && !error.isSuccess() && Integer.valueOf(429).equals(error.errorCode())) {
+                        int retryAfter = error.parameters() == null || !error.parameters().containsKey("retry_after")
+                            ? -1 : error.parameters().get("retry_after").asInt(-1);
+                        if (retryAfter > 0) applyFloodCooldown(retryAfter);
+                        throw new TelegramApiException(429, error.description(), retryAfter);
+                    }
+                } catch (java.io.IOException ignored) {
+                    // Unparseable HTTP error remains an ambiguous transport result.
+                }
+            }
+            if (e instanceof org.springframework.web.client.HttpClientErrorException httpError
                     && httpError.getStatusCode().value() == 409) {
                 lastCallConflict = true;
                 lastApiErrorCode = 409;
