@@ -264,7 +264,7 @@ class BotMessageProcessorMediaDeliveryTest {
             new MediaDeliveryService.MediaDescriptor(first.toString(), ".png", false, false),
             new MediaDeliveryService.MediaDescriptor(second.toString(), ".png", false, false)), null);
         verify(api).markDelivered("att_abcdef", "123");
-        verify(api).markDelivered("att_123456", "123");
+        verify(api).markDelivered("att_123456", "124");
     }
 
     @Test
@@ -301,6 +301,37 @@ class BotMessageProcessorMediaDeliveryTest {
         when(telegramClient.sendDocument(eq(100L), any(byte[].class), anyString(), nullable(String.class), nullable(String.class)))
             .thenReturn(Optional.empty());
         processor.deliverMedia(100L, List.of(new MediaDeliveryService.MediaDescriptor(file.toString(), ".pdf", false, false)), null);
+        verify(api, never()).markDelivered(anyString(), nullable(String.class));
+    }
+
+    @Test
+    void imageBatchUsesEachCorrespondingTelegramMessageReceipt() throws Exception {
+        Path first = createTempFile("att_abcdef.png");
+        Path second = createTempFile("att_123456.png");
+        var field = BotMessageProcessor.class.getDeclaredField("attachmentApiClient");
+        field.setAccessible(true);
+        AttachmentApiClient api = (AttachmentApiClient) field.get(processor);
+        when(api.find(anyString())).thenReturn(Optional.empty());
+        when(telegramClient.sendMediaGroup(eq(100L), any())).thenReturn(List.of(123L, 124L));
+        processor.deliverMedia(100L, List.of(
+            new MediaDeliveryService.MediaDescriptor(first.toString(), ".png", false, false),
+            new MediaDeliveryService.MediaDescriptor(second.toString(), ".png", false, false)), null);
+        verify(api).markDelivered("att_abcdef", "123");
+        verify(api).markDelivered("att_123456", "124");
+    }
+
+    @Test
+    void incompleteAlbumResponseDoesNotGuessWhichFileReceivedId() throws Exception {
+        Path first = createTempFile("att_abcdef.png");
+        Path second = createTempFile("att_123456.png");
+        var field = BotMessageProcessor.class.getDeclaredField("attachmentApiClient");
+        field.setAccessible(true);
+        AttachmentApiClient api = (AttachmentApiClient) field.get(processor);
+        when(api.find(anyString())).thenReturn(Optional.empty());
+        when(telegramClient.sendMediaGroup(eq(100L), any())).thenReturn(List.of(124L));
+        processor.deliverMedia(100L, List.of(
+            new MediaDeliveryService.MediaDescriptor(first.toString(), ".png", false, false),
+            new MediaDeliveryService.MediaDescriptor(second.toString(), ".png", false, false)), null);
         verify(api, never()).markDelivered(anyString(), nullable(String.class));
     }
 

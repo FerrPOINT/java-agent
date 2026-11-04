@@ -1180,14 +1180,13 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
 
             if (!photoInputs.isEmpty()) {
                 List<Long> messageIds = telegramClient.sendMediaGroup(chatId, photoInputs);
-                // WP-11: mark every artifact in the group delivered with the first
-                // platform message id of the album.
-                if (messageIds != null && !messageIds.isEmpty() && messageIds.getFirst() != null) {
-                    String firstMsgId = String.valueOf(messageIds.getFirst());
-                    for (MediaDeliveryService.MediaDescriptor desc : included) {
-                        String artifactId = artifactIdForPath(desc.path());
+                // Only a complete response preserves a reliable input-to-message mapping.
+                if (messageIds != null && messageIds.size() == included.size()
+                        && messageIds.stream().allMatch(java.util.Objects::nonNull)) {
+                    for (int j = 0; j < included.size(); j++) {
+                        String artifactId = artifactIdForPath(included.get(j).path());
                         if (artifactId != null) {
-                            attachmentApiClient.markDelivered(artifactId, firstMsgId);
+                            attachmentApiClient.markDelivered(artifactId, String.valueOf(messageIds.get(j)));
                         }
                     }
                 }
