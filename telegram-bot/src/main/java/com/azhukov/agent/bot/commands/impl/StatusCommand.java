@@ -36,12 +36,9 @@ public class StatusCommand implements CommandHandler {
             return "No active session.";
         }
 
-        String model = session.getModelOverride();
+        String model = com.azhukov.agent.bot.config.ModelSelection.forRequest(properties, session.getModelOverride());
         if (model == null || model.isBlank()) {
-            model = properties.getDefaultModel();
-        }
-        if (model == null || model.isBlank()) {
-            model = "default";
+            model = "backend default";
         }
 
         String contextFill = "unknown";

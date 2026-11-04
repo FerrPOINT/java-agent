@@ -46,10 +46,7 @@ public class ModelCommand implements CommandHandler {
             // Hermes parity: bare /model shows the current model AND the selection
             // keyboard immediately — the model choice must be one tap away, not
             // hidden behind a "list" subcommand.
-            String current = session.getModelOverride();
-            if (current == null || current.isBlank()) {
-                current = properties.getDefaultModel();
-            }
+            String current = com.azhukov.agent.bot.config.ModelSelection.resolve(properties, session.getModelOverride());
             if (current == null || current.isBlank()) {
                 current = "default";
             }
@@ -62,6 +59,9 @@ public class ModelCommand implements CommandHandler {
         if ("default".equalsIgnoreCase(trimmed) || "reset".equalsIgnoreCase(trimmed)) {
             store.setModelOverride(session.getId(), null);
             return "Model reset to default.";
+        }
+        if (!properties.getAvailableModels().isEmpty() && !properties.getAvailableModels().contains(trimmed)) {
+            return "Model not available: " + trimmed;
         }
         store.setModelOverride(session.getId(), trimmed);
         return "Model set to: " + trimmed;
