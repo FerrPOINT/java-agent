@@ -1026,15 +1026,12 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         }
         String parseMode = properties.getParseMode();
         String formatted = StreamEditor.stripThinkTagsRegex(textForDisplay);
-        if ("HTML".equalsIgnoreCase(parseMode)) {
-            formatted = formatted.replace("&", "&amp;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;");
-        }
         boolean sentAny = false;
         List<String> chunks = "MarkdownV2".equalsIgnoreCase(parseMode)
             ? MessageSplitter.splitAndFormat(formatted, parseMode)
-            : MessageSplitter.split(formatted);
+            : "HTML".equalsIgnoreCase(parseMode)
+                ? MessageSplitter.splitEscapedHtmlText(formatted)
+                : MessageSplitter.split(formatted);
         for (int i = 0; i < chunks.size(); i++) {
             String chunk = chunks.get(i);
             if (chunk.isBlank()) {
@@ -1109,19 +1106,13 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         // StreamEditor strips them during streaming, but sendFormatted is used
         // when streaming didn't finalize — without this, raw think tags reach the user.
         formatted = StreamEditor.stripThinkTagsRegex(formatted);
-        if ("HTML".equalsIgnoreCase(parseMode)) {
-            // Audit M20: escape HTML-special characters in LLM output to prevent
-            // injection of <a>, <b>, <code> and other Telegram-allowed tags.
-            formatted = formatted.replace("&", "&amp;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;");
-        }
-
         // B1.6: Thread reply mode — off/all/first
         String replyMode = properties.getReplyToMode();
         List<String> chunks = "MarkdownV2".equalsIgnoreCase(parseMode)
             ? MessageSplitter.splitAndFormat(formatted, parseMode)
-            : MessageSplitter.split(formatted);
+            : "HTML".equalsIgnoreCase(parseMode)
+                ? MessageSplitter.splitEscapedHtmlText(formatted)
+                : MessageSplitter.split(formatted);
         sendFormattedChunks(chatId, chunks, 0, parseMode, replyMode, userMessageId, messageThreadId,
             text.equals(textForDisplay) ? retries : -1);
     }

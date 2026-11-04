@@ -123,6 +123,23 @@ public final class MessageSplitter {
         return chunks;
     }
 
+    public static List<String> splitEscapedHtmlText(String text) {
+        if (text == null || text.isEmpty()) return List.of("");
+        String escaped = escapeHtml(text);
+        if (escaped.length() <= TELEGRAM_MAX_LENGTH) return List.of(escaped);
+        // Reserve the index and the worst-case five-character entity per UTF-16 unit.
+        List<String> raw = splitPreservingBoundaries(text, (TELEGRAM_MAX_LENGTH - 24) / 5);
+        List<String> result = new ArrayList<>(raw.size());
+        for (int i = 0; i < raw.size(); i++) {
+            result.add("(" + (i + 1) + "/" + raw.size() + ") " + escapeHtml(raw.get(i)));
+        }
+        return result;
+    }
+
+    private static String escapeHtml(String text) {
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+    }
+
     /**
      * Split text and format each chunk for the given parse mode.
      *

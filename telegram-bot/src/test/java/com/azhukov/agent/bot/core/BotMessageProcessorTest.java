@@ -572,6 +572,47 @@ class BotMessageProcessorTest {
     }
 
     @Test
+    void reviewHtmlPartsMustNotCutEscapedEntities() {
+        properties.setParseMode("HTML");
+        String review = "&".repeat(3000);
+        when(telegramClient.sendMessage(eq(100L), anyString(), eq("HTML"), any(), any()))
+            .thenReturn(Optional.of(42L));
+        assertThat(processor.sendReviewMessage(100L, review, 1L, 0L)).isTrue();
+        var sent = ArgumentCaptor.forClass(String.class);
+        verify(telegramClient, atLeast(2)).sendMessage(eq(100L), sent.capture(), eq("HTML"), any(), any());
+        StringBuilder restored = new StringBuilder();
+        for (String chunk : sent.getAllValues()) {
+            assertThat(chunk.length()).isLessThanOrEqualTo(4096);
+            assertThat(chunk.replace("&amp;", "")).doesNotContain("&");
+            restored.append(chunk.replaceFirst("^\\(\\d+/\\d+\\) ", "").replace("&amp;", "&"));
+        }
+        assertThat(restored.toString()).isEqualTo(review);
+    }
+
+    @Test
+    void fallbackHtmlPartsPreserveEscapingAndUnicode() {
+        properties.setParseMode("HTML");
+        String response = "<&😀>".repeat(1800);
+        stubStreamingResult(response, false);
+        when(telegramClient.sendMessage(eq(100L), anyString(), eq("HTML"), any(), any()))
+            .thenReturn(Optional.of(42L));
+        processor.accept(textEvent(1, 100L, "Hello"));
+        var sent = ArgumentCaptor.forClass(String.class);
+        verify(telegramClient, atLeast(2)).sendMessage(eq(100L), sent.capture(), eq("HTML"), any(), any());
+        StringBuilder restored = new StringBuilder();
+        for (String chunk : sent.getAllValues()) {
+            assertThat(chunk.length()).isLessThanOrEqualTo(4096);
+            String payload = chunk.replaceFirst("^\\(\\d+/\\d+\\) ", "");
+            assertThat(payload.replace("&amp;", "").replace("&lt;", "").replace("&gt;", ""))
+                .doesNotContain("&", "<", ">");
+            assertThat(Character.isHighSurrogate(payload.charAt(payload.length() - 1))).isFalse();
+            assertThat(Character.isLowSurrogate(payload.charAt(0))).isFalse();
+            restored.append(payload.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&"));
+        }
+        assertThat(restored.toString()).isEqualTo(response);
+    }
+
+    @Test
     void reviewPartialFailureDoesNotClaimSuccessfulReceipt() {
         when(telegramClient.sendMessage(eq(100L), anyString(), eq("MarkdownV2"), any(), any()))
             .thenReturn(Optional.of(1L), Optional.empty(), Optional.of(3L));
