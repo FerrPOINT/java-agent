@@ -219,8 +219,8 @@ public class TelegramClient {
             if (e.isRateLimit()) {
                 lastRetryAfterSeconds.set(e.getRetryAfter());
                 // A long Telegram FloodWait must not pin the stream/debouncer
-                // thread. Preserve the visible draft and let the durable
-                // delivery/retry path own recovery instead.
+                // thread. Preserve the visible draft; the current retry queue
+                // is in-memory and does not survive a restart.
                 int retryAfter = e.getRetryAfter();
                 if (retryAfter > MAX_INLINE_RATE_LIMIT_RETRY_SECONDS) {
                     log.warn("sendMessage 429 retry_after={}s exceeds inline cap {}s; not blocking delivery thread",
