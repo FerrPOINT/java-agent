@@ -80,6 +80,28 @@ class TelegramClientTest {
     }
 
     @Test
+    void realRestClientHttp429CarriesRetryAfter() throws Exception {
+        var server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", exchange -> {
+            exchange.getRequestBody().readAllBytes();
+            byte[] body = "{\"ok\":false,\"error_code\":429,\"description\":\"Too Many Requests\",\"parameters\":{\"retry_after\":37}}"
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(429, body.length);
+            try (var out = exchange.getResponseBody()) { out.write(body); }
+        });
+        server.start();
+        try {
+            var rest = RestClient.builder().baseUrl("http://127.0.0.1:" + server.getAddress().getPort()).build();
+            var actualClient = new TelegramClient(rest, objectMapper, "test-token", 0);
+            assertThatThrownBy(() -> actualClient.sendMessageChecked(1L, "text", null, null, null, null, false))
+                .isInstanceOfSatisfying(TelegramClient.SendRefusalException.class,
+                    ex -> assertThat(ex.getRetryAfterSeconds()).isEqualTo(37));
+            assertThat(actualClient.getLastApiErrorCode()).isEqualTo(429);
+        } finally { server.stop(0); }
+    }
+
+    @Test
     void checkedSendSurfacesHttp429RetryAfter() {
         byte[] body = "{\"ok\":false,\"error_code\":429,\"description\":\"Too Many Requests\",\"parameters\":{\"retry_after\":37}}"
             .getBytes(java.nio.charset.StandardCharsets.UTF_8);
@@ -90,6 +112,10 @@ class TelegramClientTest {
             .isInstanceOfSatisfying(TelegramClient.SendRefusalException.class,
                 ex -> assertThat(ex.getRetryAfterSeconds()).isEqualTo(37));
         assertThat(client.getLastApiErrorCode()).isEqualTo(429);
+        assertThatThrownBy(() -> client.sendMessageChecked(1L, "again", null, null, null, null, false))
+            .isInstanceOfSatisfying(TelegramClient.SendRefusalException.class,
+                ex -> assertThat(ex.getRetryAfterSeconds()).isPositive());
+        verify(restClient, times(1)).post();
     }
 
     @Test
