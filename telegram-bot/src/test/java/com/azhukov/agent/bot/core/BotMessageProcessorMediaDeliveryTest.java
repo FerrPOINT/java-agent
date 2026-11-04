@@ -219,6 +219,23 @@ class BotMessageProcessorMediaDeliveryTest {
     }
 
     @Test
+    void replacingValidatedFileWithSymlinkDoesNotDeliverOutsideContent(@TempDir Path outsideDir) throws Exception {
+        Path local = Files.writeString(tempDir.resolve("att_abcdef.pdf"), "safe");
+        Path outside = Files.writeString(outsideDir.resolve("private.pdf"), "private test data");
+        var field = BotMessageProcessor.class.getDeclaredField("attachmentApiClient");
+        field.setAccessible(true);
+        AttachmentApiClient api = (AttachmentApiClient) field.get(processor);
+        when(api.find("att_abcdef")).thenAnswer(invocation -> {
+            Files.delete(local);
+            Files.createSymbolicLink(local, outside);
+            return Optional.empty();
+        });
+        processor.deliverMedia(100L, List.of(
+            new MediaDeliveryService.MediaDescriptor(local.toString(), "pdf", false, false)), null);
+        verify(telegramClient, never()).sendDocument(anyLong(), any(byte[].class), anyString(), nullable(String.class), nullable(String.class));
+    }
+
+    @Test
     void invalidMediaPathsDoNotPreventDeliveryOfLaterValidFiles() throws Exception {
         Path document = createTempFile("valid.pdf");
         processor.deliverMedia(100L, List.of(
