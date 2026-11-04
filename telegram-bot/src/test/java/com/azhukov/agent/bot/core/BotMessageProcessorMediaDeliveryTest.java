@@ -346,6 +346,30 @@ class BotMessageProcessorMediaDeliveryTest {
     }
 
     @Test
+    void replacingConfiguredWorkspaceWithSymlinkDoesNotDeliverOutsideFile(@TempDir Path outsideDir) throws Exception {
+        Path file = Files.writeString(tempDir.resolve("att_abcdef.pdf"), "safe");
+        Files.writeString(outsideDir.resolve("att_abcdef.pdf"), "outside");
+        var field = BotMessageProcessor.class.getDeclaredField("attachmentApiClient");
+        field.setAccessible(true);
+        AttachmentApiClient api = (AttachmentApiClient) field.get(processor);
+        when(api.find("att_abcdef")).thenAnswer(invocation -> {
+            Path moved = tempDir.resolveSibling(tempDir.getFileName() + "-moved");
+            Files.move(tempDir, moved);
+            Files.createSymbolicLink(tempDir, outsideDir);
+            return Optional.empty();
+        });
+        try {
+            processor.deliverMedia(100L, List.of(new MediaDeliveryService.MediaDescriptor(file.toString(), ".pdf", false, false)), null);
+            verify(telegramClient, never()).sendDocument(anyLong(), any(byte[].class), anyString(), nullable(String.class), nullable(String.class));
+        } finally {
+            if (Files.isSymbolicLink(tempDir)) {
+                Files.delete(tempDir);
+                Files.move(tempDir.resolveSibling(tempDir.getFileName() + "-moved"), tempDir);
+            }
+        }
+    }
+
+    @Test
     void invalidMediaPathsDoNotPreventDeliveryOfLaterValidFiles() throws Exception {
         Path document = createTempFile("valid.pdf");
         processor.deliverMedia(100L, List.of(
