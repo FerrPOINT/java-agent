@@ -8,13 +8,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class AuthorizationServiceTest {
     @Test
-    void onlyConfiguredIdsGrantAccessEvenWithLegacySettings() {
+    void onlyConfiguredIdsGrantAccess() {
         var properties = new BotProperties();
-        properties.getAuth().setAllowByDefault(true);
-        properties.getAuth().getAllowedUsernames().add("other");
-        properties.getAuth().getAllowedChatIds().add("456");
         properties.getAuth().getAllowedUserIds().add("*");
-        properties.getAuth().getPairing().setEnabled(true);
         var service = new AuthorizationService(properties);
         assertThat(service.isAuthorized(123, "other", 456)).isFalse();
         properties.getAuth().getAllowedUserIds().add("123");
@@ -25,6 +21,18 @@ class AuthorizationServiceTest {
         assertThat(service.isAuthorized(123, "other", 456)).isFalse();
         properties.getAuth().getAllowedUserIds().add("123");
         assertThat(service.isAuthorized(123, null, 456)).isTrue();
+    }
+
+    @Test
+    void legacyAuthPropertiesCannotGrantAccess() {
+        var source = new org.springframework.boot.context.properties.source.MapConfigurationPropertySource(java.util.Map.of(
+            "bot.auth.allow-by-default", "true",
+            "bot.auth.allowed-usernames[0]", "other",
+            "bot.auth.allowed-chat-ids[0]", "456",
+            "bot.auth.pairing.enabled", "true"));
+        var properties = new BotProperties();
+        new org.springframework.boot.context.properties.bind.Binder(source).bind("bot", org.springframework.boot.context.properties.bind.Bindable.ofInstance(properties));
+        assertThat(new AuthorizationService(properties).isAuthorized(123, "other", 456)).isFalse();
     }
 
     @Test

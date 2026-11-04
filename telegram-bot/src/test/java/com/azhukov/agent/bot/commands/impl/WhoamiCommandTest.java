@@ -47,10 +47,9 @@ class WhoamiCommandTest {
     }
 
     @Test
-    void obsoleteAllowByDefaultDoesNotClaimUserIsAuthorized() {
+    void emptyAllowlistDoesNotClaimUserIsAuthorized() {
         var properties = new BotProperties();
         properties.getAuth().getAllowedUserIds().clear();
-        properties.getAuth().setAllowByDefault(true);
         var cmd = new WhoamiCommand(new com.azhukov.agent.bot.auth.AuthorizationService(properties), mock(SlashAccessPolicy.class));
         assertThat(cmd.handle(makeEvent(""), null)).contains("Authorized: false");
     }
