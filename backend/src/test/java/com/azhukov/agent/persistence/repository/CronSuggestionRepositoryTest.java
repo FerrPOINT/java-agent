@@ -312,6 +312,42 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
 
     @Test
     @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void createdThenPausedInOneTransactionDoesNotSchedule() {
+        var tx = new org.springframework.transaction.support.TransactionTemplate(transactionManager);
+        var properties = (com.azhukov.agent.config.AgentProperties) org.springframework.test.util.ReflectionTestUtils.getField(cronJobService, "properties");
+        boolean previous = properties.getCron().isEnabled();
+        String owner = "accept-pause-" + java.util.UUID.randomUUID();
+        var suggestionId = tx.execute(s -> cronSuggestionRepository.saveAndFlush(newSuggestion(owner, "key")).getId());
+        java.util.UUID jobId = null;
+        try {
+            properties.getCron().setEnabled(true);
+            com.azhukov.agent.core.security.UserContext.set(owner, com.azhukov.agent.core.security.UserContext.ROLE_USER);
+            jobId = tx.execute(status -> {
+                var created = suggestionService.acceptSuggestion(suggestionId.toString());
+                cronJobService.pause(created.getId());
+                return created.getId();
+            });
+            assertThat(cronJobRepository.findById(jobId).orElseThrow().isEnabled()).isFalse();
+            @SuppressWarnings("unchecked")
+            var tasks = (java.util.Map<java.util.UUID, java.util.concurrent.ScheduledFuture<?>>) org.springframework.test.util.ReflectionTestUtils.getField(cronJobService, "scheduledTasks");
+            assertThat(tasks).doesNotContainKey(jobId);
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+            properties.getCron().setEnabled(previous);
+            @SuppressWarnings("unchecked")
+            var tasks = (java.util.Map<java.util.UUID, java.util.concurrent.ScheduledFuture<?>>) org.springframework.test.util.ReflectionTestUtils.getField(cronJobService, "scheduledTasks");
+            if (jobId != null) {
+                var future = tasks.remove(jobId);
+                if (future != null) future.cancel(false);
+                var cleanupJobId = jobId;
+                tx.executeWithoutResult(s -> cronJobRepository.deleteById(cleanupJobId));
+            }
+            tx.executeWithoutResult(s -> cronSuggestionRepository.deleteById(suggestionId));
+        }
+    }
+
+    @Test
+    @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     void committedResumeSchedulesJob() {
         var tx = new org.springframework.transaction.support.TransactionTemplate(transactionManager);
         var properties = (com.azhukov.agent.config.AgentProperties) org.springframework.test.util.ReflectionTestUtils.getField(cronJobService, "properties");

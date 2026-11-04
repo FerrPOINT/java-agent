@@ -458,7 +458,8 @@ private static final String CRON_EXECUTION_HINT = """
                         @Override public void afterCommit() {
                             var newTransaction = new org.springframework.transaction.support.TransactionTemplate(transactionTemplate.getTransactionManager());
                             newTransaction.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-                            newTransaction.executeWithoutResult(status -> scheduleJob(scheduled));
+                            newTransaction.executeWithoutResult(status -> cronJobRepository.findById(scheduled.getId())
+                                .filter(CronJobEntity::isEnabled).ifPresent(CronJobService.this::scheduleJob));
                         }
                     });
             } else {
