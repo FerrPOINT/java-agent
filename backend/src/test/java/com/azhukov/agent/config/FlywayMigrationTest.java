@@ -38,7 +38,7 @@ class FlywayMigrationTest extends PostgresTestContainer {
         List<String> versions = jdbcTemplate.queryForList(
             "SELECT version FROM flyway_schema_history WHERE success = TRUE ORDER BY version", String.class);
 
-        assertThat(versions).contains("1", "2", "3", "4", "5", "35", "69", "70", "71");
+        assertThat(versions).contains("1", "2", "3", "4", "5", "35", "69", "70", "71", "72");
     }
 
     @Test
@@ -78,6 +78,6 @@ class FlywayMigrationTest extends PostgresTestContainer {
 
         assertThat(tables)
             .contains("sessions", "messages", "memory", "skills", "todos", "audit_log",
-                "memory_write_audit", "pending_review_summaries");
+                "memory_write_audit", "pending_review_summaries", "cron_suggestions");
     }
 }

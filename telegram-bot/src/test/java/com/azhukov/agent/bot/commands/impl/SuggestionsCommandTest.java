@@ -73,6 +73,20 @@ class SuggestionsCommandTest {
     }
 
     @Test
+    void acceptedButUnscheduledIsNotReportedAsScheduled() {
+        ObjectNode response = mapper.createObjectNode();
+        response.put("accepted", true);
+        response.put("name", "review");
+        response.put("schedulingStatus", "failed");
+        var pending = mapper.createArrayNode();
+        pending.addObject().put("id", "id");
+        when(backendClient.listSuggestions()).thenReturn(pending);
+        when(backendClient.suggestionPost("/api/v1/agent/cron/suggestions/id/accept")).thenReturn(response);
+        String result = cmd.handle(textEvent("/suggestions accept id"), null);
+        assertThat(result).containsIgnoringCase("scheduling").containsIgnoringCase("failed");
+    }
+
+    @Test
     void acceptCreatesCronJob() {
         ArrayNode pending = mapper.createArrayNode();
         ObjectNode s = mapper.createObjectNode();

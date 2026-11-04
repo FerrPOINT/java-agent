@@ -63,9 +63,17 @@ public class SuggestionsCommand implements CommandHandler {
                 String id = resolveRef(ref);
                 if (id == null) yield "No such suggestion: " + ref;
                 JsonNode resp = backendClient.suggestionPost("/api/v1/agent/cron/suggestions/" + id + "/accept");
-                yield resp != null && resp.path("accepted").asBoolean(false)
-                    ? "✅ Created cron job: " + resp.path("name").asText("?")
-                    : "Could not accept (not found or already decided): " + ref;
+                if (resp == null || !resp.path("accepted").asBoolean(false)) {
+                    yield "Could not accept (not found or already decided): " + ref;
+                }
+                String scheduling = resp.path("schedulingStatus").asText("");
+                if ("failed".equals(scheduling)) {
+                    yield "Created cron job: " + resp.path("name").asText("?") + ", but scheduling failed; check the cron job status.";
+                }
+                if ("not_scheduled".equals(scheduling) || "unknown".equals(scheduling)) {
+                    yield "Created cron job: " + resp.path("name").asText("?") + ", but scheduling is not confirmed; check the cron job status.";
+                }
+                yield "✅ Created cron job: " + resp.path("name").asText("?");
             }
             case "dismiss" -> {
                 if (ref.isEmpty()) yield "Usage: /suggestions dismiss <N|id>";

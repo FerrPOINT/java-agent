@@ -78,8 +78,12 @@ public class CronJobController {
         if (entity == null) {
             return java.util.Map.of("accepted", false, "reason", "not found or already decided");
         }
+        var persisted = cronJobService.findById(entity.getId()).orElse(null);
+        String schedulingStatus = persisted == null ? "unknown"
+            : "error".equals(persisted.getLastStatus()) ? "failed"
+            : persisted.getNextRunAt() != null ? "scheduled" : "not_scheduled";
         return java.util.Map.of("accepted", true,
-            "jobId", entity.getId().toString(), "name", entity.getName());
+            "jobId", entity.getId().toString(), "name", entity.getName(), "schedulingStatus", schedulingStatus);
     }
 
     @PostMapping("/suggestions/{id}/dismiss")
