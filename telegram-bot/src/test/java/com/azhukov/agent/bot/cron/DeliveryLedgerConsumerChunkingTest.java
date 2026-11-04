@@ -12,6 +12,8 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
@@ -49,13 +51,14 @@ class DeliveryLedgerConsumerChunkingTest {
             sb.append("Строка #").append(i).append(" 🚀🎯 — данные długie текст.\n");
         }
         String payload = sb.toString();
-        when(telegram.sendMessage(anyLong(), anyString())).thenReturn(Optional.of(1L));
+        when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean()))
+            .thenReturn(Optional.of(1L));
 
-        consumer().deliverForTest(item(payload));
+        consumer().deliverBatchForTest(List.of(item(payload)));
 
         ArgumentCaptor<String> sent = ArgumentCaptor.forClass(String.class);
         verify(telegram, times(MessageSplitter.split(payload).size()))
-            .sendMessage(anyLong(), sent.capture());
+            .sendMessageChecked(anyLong(), sent.capture(), any(), any(), any(), any(), anyBoolean());
         List<String> chunks = sent.getAllValues();
         assertThat(chunks.size()).isGreaterThan(1);
         for (String chunk : chunks) {
@@ -70,14 +73,13 @@ class DeliveryLedgerConsumerChunkingTest {
 
     @Test
     void firstChunkFailureFencesItemAsUnknownNotRetried() {
-        when(telegram.sendMessage(anyLong(), anyString())).thenReturn(Optional.empty());
+        when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean()))
+            .thenReturn(Optional.empty());
 
-        consumer().deliverForTest(item("short payload"));
+        consumer().deliverBatchForTest(List.of(item("short payload")));
 
-        // Nothing was sent — but sendMessage conflates failure modes into
-        // empty, so the outcome must be unknown (Hermes: never auto-retry a
-        // possibly-sent message). No second chunk attempt.
-        verify(telegram, times(1)).sendMessage(anyLong(), anyString());
+        // An empty result may mean a timeout after acceptance; do not retry blindly.
+        verify(telegram, times(1)).sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean());
     }
 
     @Test
@@ -86,8 +88,8 @@ class DeliveryLedgerConsumerChunkingTest {
             new DeliveryLedgerConsumer.ClaimedItem("id-1", "token-1", "cron_execution", "42",
                 "discord", "123", "", "payload", 1);
 
-        consumer().deliverForTest(local);
+        consumer().deliverBatchForTest(List.of(local));
 
-        verify(telegram, never()).sendMessage(anyLong(), anyString());
+        verify(telegram, never()).sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean());
     }
 }
