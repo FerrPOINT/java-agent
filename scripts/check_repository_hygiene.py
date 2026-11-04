@@ -21,6 +21,13 @@ DISPOSABLE_DIRECTORIES = frozenset(
         "node_modules",
         ".pnpm-store",
         ".venv",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".mypy_cache",
+        ".gradle",
+        "playwright-report",
+        "test-results",
+        "htmlcov",
         ".local",
         ".worktree",
         ".worktrees",
@@ -34,6 +41,10 @@ RUST_OUTPUT = re.compile(r"target(?:-cache[0-9]*|-stage|-stable)?\Z")
 def violation(path: str) -> str | None:
     """Match directory boundaries, preserving intentional evidence and assets."""
     parts = PurePosixPath(path).parts
+    if len(parts) >= 2 and parts[0] == "handoff" and parts[1].startswith("workspace-recovery"):
+        return "retired_recovery_packet"
+    if parts and parts[0] == "docs" and parts[-1].endswith(".log"):
+        return "raw_documentation_log"
     for directory in parts[:-1]:
         if directory in DISPOSABLE_DIRECTORIES:
             return "disposable_directory"
