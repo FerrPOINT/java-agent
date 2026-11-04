@@ -77,6 +77,22 @@ class CodexRuntimeCommandTest {
     }
 
     @Test
+    void resetWithoutModelPolicyReportsBackendDefault() {
+        properties.getAvailableModels().clear();
+        String result = cmd.handle(textEvent("/codex_runtime", "reset"), session);
+        assertThat(result).contains("backend default").doesNotContain("kimi-k2.6");
+        verify(store).setModelOverride(session.getId(), null);
+    }
+
+    @Test
+    void resetReportsFirstAllowedModelWhenDefaultIsUnavailable() {
+        properties.setDefaultModel("retired");
+        String result = cmd.handle(textEvent("/codex_runtime", "reset"), session);
+        assertThat(result).contains("kimi-k2.6").doesNotContain("retired");
+        verify(store).setModelOverride(session.getId(), null);
+    }
+
+    @Test
     void resetModel() {
         session.setModelOverride("gpt-4o");
         String result = cmd.handle(textEvent("/codex_runtime", "reset"), session);

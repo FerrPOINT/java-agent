@@ -52,7 +52,8 @@ public class CodexRuntimeCommand implements CommandHandler {
 		if (sub.equals("reset") || sub.equals("default")) {
 			if (session != null && session.getId() != null) {
 				store.setModelOverride(session.getId(), null);
-				return "Model reset to default: " + properties.getDefaultModel();
+				String fallback = com.azhukov.agent.bot.config.ModelSelection.forRequest(properties, null);
+				return "Model reset to default: " + (fallback == null || fallback.isBlank() ? "backend default" : fallback);
 			}
 			return "No active session.";
 		}
