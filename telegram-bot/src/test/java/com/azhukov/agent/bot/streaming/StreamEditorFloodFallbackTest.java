@@ -124,6 +124,18 @@ class StreamEditorFloodFallbackTest {
     }
 
     @Test
+    void draftFinalSplitsWhenMarkdownEscapingExceedsTelegramLimit() {
+        var session = editor.sessionFor(123L);
+        session.useDraftStreaming = true;
+        when(client.sendMessage(eq(123L), anyString(), any(), any(), any(), anyBoolean()))
+            .thenReturn(Optional.of(42L));
+        assertThat(editor.finalizeStream(123L, -1L, "_".repeat(3000))).isTrue();
+        var sent = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(client, atLeast(2)).sendMessage(eq(123L), sent.capture(), any(), any(), any(), anyBoolean());
+        assertThat(sent.getAllValues()).allSatisfy(chunk -> assertThat(chunk.length()).isLessThanOrEqualTo(4096));
+    }
+
+    @Test
     void finalMultiChunkSendStopsAtFirstUnacceptedChunk() {
         String text = "a".repeat(9000);
         when(client.sendMessage(eq(123L), anyString(), any(), any(), any(), anyBoolean()))

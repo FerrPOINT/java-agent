@@ -142,9 +142,10 @@ public final class MessageSplitter {
         // For MarkdownV2: split raw text first, then format each chunk, then add escaped indicator.
         // MarkdownV2 escaping can double each char (every special char gets a '\' prefix),
         // so we split the raw text at maxLength / maxExpansionFactor to leave room for escaping.
-        if (utf16Length(text) <= TELEGRAM_MAX_LENGTH) {
-            // Single chunk — format and return without indicator
-            return List.of(MarkdownConverter.convert(text));
+        String converted = MarkdownConverter.convert(text);
+        if (utf16Length(converted) <= TELEGRAM_MAX_LENGTH) {
+            // Escaping may expand a short raw message beyond the transport limit.
+            return List.of(converted);
         }
 
         // Worst case: every character is a MarkdownV2 special char and gets escaped (doubled).

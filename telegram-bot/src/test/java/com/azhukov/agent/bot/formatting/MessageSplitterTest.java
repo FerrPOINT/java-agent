@@ -72,6 +72,16 @@ class MessageSplitterTest {
     }
 
     @Test
+    void escapedMarkdownUnderRawLimitStillFitsTelegramLimit() {
+        String input = "_".repeat(3000);
+        var chunks = MessageSplitter.splitAndFormat(input, "MarkdownV2");
+        assertThat(chunks).allSatisfy(chunk -> assertThat(chunk.length()).isLessThanOrEqualTo(4096));
+        String restored = chunks.stream().map(chunk -> chunk.replaceFirst("^\\\\\\(\\d+/\\d+\\\\\\) ", ""))
+            .collect(java.util.stream.Collectors.joining()).replace("\\_", "_");
+        assertThat(restored).isEqualTo(input);
+    }
+
+    @Test
     void multiChunkHasContinuationIndicator() {
         // Create text > 4096 chars
         StringBuilder sb = new StringBuilder();
