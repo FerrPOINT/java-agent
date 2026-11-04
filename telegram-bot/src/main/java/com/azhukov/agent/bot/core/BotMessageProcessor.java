@@ -1182,12 +1182,13 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                 List<Long> messageIds = telegramClient.sendMediaGroup(chatId, photoInputs);
                 // WP-11: mark every artifact in the group delivered with the first
                 // platform message id of the album.
-                String firstMsgId = messageIds == null || messageIds.isEmpty()
-                    ? null : String.valueOf(messageIds.get(0));
-                for (MediaDeliveryService.MediaDescriptor desc : included) {
-                    String artifactId = artifactIdForPath(desc.path());
-                    if (artifactId != null) {
-                        attachmentApiClient.markDelivered(artifactId, firstMsgId);
+                if (messageIds != null && !messageIds.isEmpty() && messageIds.getFirst() != null) {
+                    String firstMsgId = String.valueOf(messageIds.getFirst());
+                    for (MediaDeliveryService.MediaDescriptor desc : included) {
+                        String artifactId = artifactIdForPath(desc.path());
+                        if (artifactId != null) {
+                            attachmentApiClient.markDelivered(artifactId, firstMsgId);
+                        }
                     }
                 }
                 log.debug("Sent media group of {} to chat {} (messageIds: {})",
@@ -1265,10 +1266,8 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
 
     /** WP-11: record the outbound receipt (platform message id) after a successful send. */
     private void markArtifactDelivered(String artifactId, java.util.Optional<Long> platformMessageId) {
-        if (artifactId == null) return;
-        attachmentApiClient.markDelivered(artifactId,
-            platformMessageId == null ? null
-                : platformMessageId.map(String::valueOf).orElse(null));
+        if (artifactId == null || platformMessageId == null || platformMessageId.isEmpty()) return;
+        attachmentApiClient.markDelivered(artifactId, String.valueOf(platformMessageId.get()));
     }
 
     @PostConstruct
