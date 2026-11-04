@@ -82,6 +82,15 @@ class MessageSplitterTest {
     }
 
     @Test
+    void markdownParagraphBoundariesRetainEveryNewline() {
+        String input = "a".repeat(2036) + "\n\n" + "b".repeat(3000);
+        var chunks = MessageSplitter.splitAndFormat(input, "MarkdownV2");
+        String restored = chunks.stream().map(chunk -> chunk.replaceFirst("^\\\\\\(\\d+/\\d+\\\\\\) ", ""))
+            .collect(java.util.stream.Collectors.joining());
+        assertThat(restored).isEqualTo(input);
+    }
+
+    @Test
     void multiChunkHasContinuationIndicator() {
         // Create text > 4096 chars
         StringBuilder sb = new StringBuilder();
