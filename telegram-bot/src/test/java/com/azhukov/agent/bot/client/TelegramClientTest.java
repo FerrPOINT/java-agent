@@ -512,6 +512,46 @@ class TelegramClientTest {
         }
 
         @Test
+        void actualHttpConflictMarksPollingConflict() {
+            stubPostChain(null);
+            when(responseSpec.body(TelegramResponse.class)).thenThrow(
+                org.springframework.web.client.HttpClientErrorException.create(
+                    org.springframework.http.HttpStatus.CONFLICT, "Conflict",
+                    org.springframework.http.HttpHeaders.EMPTY, new byte[0], null));
+            assertThatThrownBy(() -> client.callApi("getUpdates", Map.of()))
+                .isInstanceOf(TelegramApiException.class);
+            assertThat(client.isLastCallConflict()).isTrue();
+        }
+
+        @Test
+        void malformedHttp429IsNotDefiniteRefusal() {
+            stubPostChain(null);
+            when(responseSpec.body(TelegramResponse.class)).thenThrow(
+                org.springframework.web.client.HttpClientErrorException.create(
+                    org.springframework.http.HttpStatus.TOO_MANY_REQUESTS, "Too Many Requests",
+                    org.springframework.http.HttpHeaders.EMPTY, "not-json".getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                    java.nio.charset.StandardCharsets.UTF_8));
+            assertThat(client.sendMessageChecked(1L, "text", null, null, null, null, false)).isEmpty();
+        }
+
+        @Test
+        void conflictingHttpStatusAndBodyRemainAmbiguous() {
+            stubPostChain(null);
+            String body = "{\"ok\":false,\"error_code\":400,\"description\":\"bad\"}";
+            when(responseSpec.body(TelegramResponse.class)).thenThrow(new RestClientResponseException(
+                "429", 429, "Too Many Requests", null, body.getBytes(java.nio.charset.StandardCharsets.UTF_8), null));
+            assertThat(client.sendMessageChecked(1L, "text", null, null, null, null, false)).isEmpty();
+        }
+
+        @Test
+        void nullHttpBodyRemainsAmbiguous() {
+            stubPostChain(null);
+            when(responseSpec.body(TelegramResponse.class)).thenThrow(new RestClientResponseException(
+                "429", 429, "Too Many Requests", null, "null".getBytes(java.nio.charset.StandardCharsets.UTF_8), null));
+            assertThat(client.sendMessageChecked(1L, "text", null, null, null, null, false)).isEmpty();
+        }
+
+        @Test
         @DisplayName("HTTP 429 response preserves retry_after for the caller")
         void http429ResponsePreservesRetryAfter() {
             stubPostChain(null);

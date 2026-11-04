@@ -908,19 +908,14 @@ public class TelegramClient {
         } catch (RestClientResponseException e) {
             TelegramApiException telegram = telegramApiExceptionFromHttp(e);
             lastApiErrorCode = telegram.getErrorCode();
+            lastCallConflict = telegram.getErrorCode() == 409;
             if (telegram.isRateLimit()) {
                 applyFloodCooldown(telegram.getRetryAfter());
             }
             throw telegram;
         } catch (Exception e) {
-            // Check for HTTP 409 conflict from RestClient (comes as HttpStatusCodeException)
+            // Untyped transport errors are not proof of an HTTP conflict.
             String msg = e.getMessage();
-            if (msg != null && msg.contains("409 Conflict")) {
-                lastCallConflict = true;
-                lastApiErrorCode = 409;
-                log.warn("Telegram {} returned 409 Conflict: {}", method, msg);
-                throw new TelegramApiException(409, msg, -1);
-            }
             log.warn("Telegram {} exception: {}", method, msg);
             lastApiErrorCode = -1; // Indicate exception (not a Telegram API error code)
             throw new TelegramApiException(-1, msg, -1);
@@ -931,13 +926,15 @@ public class TelegramClient {
 
     private TelegramApiException telegramApiExceptionFromHttp(RestClientResponseException e) {
         int status = e.getStatusCode().value();
+        if (status == 409) return new TelegramApiException(409, e.getStatusText(), -1);
         String body = e.getResponseBodyAsString();
         String description = e.getStatusText();
         int retryAfter = -1;
         try {
             TelegramResponse response = objectMapper.readValue(body, TelegramResponse.class);
-            if (response.errorCode() != null) {
-                status = response.errorCode();
+            if (response == null || response.isSuccess() || response.errorCode() == null
+                    || response.errorCode() != status) {
+                return new TelegramApiException(-1, "Unrecognized HTTP response", -1);
             }
             if (response.description() != null && !response.description().isBlank()) {
                 description = response.description();
@@ -945,10 +942,8 @@ public class TelegramClient {
             if (response.parameters() != null && response.parameters().containsKey("retry_after")) {
                 retryAfter = response.parameters().get("retry_after").asInt(-1);
             }
-        } catch (Exception parseFailure) {
-            if (body != null && !body.isBlank()) {
-                description = body;
-            }
+        } catch (java.io.IOException parseFailure) {
+            return new TelegramApiException(-1, "Unrecognized HTTP response", -1);
         }
         log.warn("Telegram HTTP {} response: {}", status, description);
         return new TelegramApiException(status, description, retryAfter);
