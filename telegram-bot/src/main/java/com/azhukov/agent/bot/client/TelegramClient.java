@@ -233,6 +233,7 @@ public class TelegramClient {
                     try {
                         Thread.sleep(retryAfter * 1000L);
                     } catch (InterruptedException ie) {
+                        lastRetryAfterSeconds.remove();
                         Thread.currentThread().interrupt();
                         return Optional.empty();
                     }

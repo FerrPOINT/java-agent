@@ -364,6 +364,20 @@ class TelegramClientTest {
         }
 
         @Test
+        void interruptedFloodWaitDoesNotExposeRetryAfter() {
+            stubPostChain(errorResponseWithParams(429, "Too Many Requests",
+                Map.of("retry_after", IntNode.valueOf(1))));
+            Thread.currentThread().interrupt();
+            try {
+                assertThat(client.sendMessage(1L, "text")).isEmpty();
+                assertThat(Thread.currentThread().isInterrupted()).isTrue();
+                assertThat(client.takeLastRetryAfterSeconds()).isEqualTo(-1);
+            } finally {
+                Thread.interrupted();
+            }
+        }
+
+        @Test
         @DisplayName("long Telegram FloodWait does not block the delivery thread")
         void sendMessageLongRateLimitReturnsImmediatelyWithoutRetry() {
             stubPostChain(errorResponseWithParams(429, "Too Many Requests",
