@@ -1178,7 +1178,11 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                 }
             }
 
-            if (!photoInputs.isEmpty()) {
+            if (photoInputs.size() == 1) {
+                TelegramClient.PhotoInput photo = photoInputs.getFirst();
+                Optional<Long> sent = telegramClient.sendPhoto(chatId, photo.data(), photo.caption(), null);
+                markArtifactDelivered(artifactIdForPath(included.getFirst().path()), sent);
+            } else if (!photoInputs.isEmpty()) {
                 List<Long> messageIds = telegramClient.sendMediaGroup(chatId, photoInputs);
                 // Only a complete response preserves a reliable input-to-message mapping.
                 if (messageIds != null && messageIds.size() == included.size()

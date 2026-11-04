@@ -243,11 +243,12 @@ class BotMessageProcessorMediaDeliveryTest {
         field.setAccessible(true);
         AttachmentApiClient api = (AttachmentApiClient) field.get(processor);
         when(api.find("att_abcdef")).thenReturn(Optional.empty());
-        when(telegramClient.sendMediaGroup(eq(100L), any())).thenReturn(List.of(123L));
+        when(telegramClient.sendPhoto(eq(100L), any(byte[].class), nullable(String.class), nullable(String.class)))
+            .thenReturn(Optional.of(123L));
         processor.deliverMedia(100L, List.of(
             new MediaDeliveryService.MediaDescriptor(safe.toString(), ".png", false, false),
             new MediaDeliveryService.MediaDescriptor(link.toString(), ".png", false, false)), null);
-        verify(telegramClient).sendMediaGroup(eq(100L), any());
+        verify(telegramClient).sendPhoto(eq(100L), any(byte[].class), nullable(String.class), nullable(String.class));
         verify(api, never()).markDelivered(eq("att_abcdef"), nullable(String.class));
     }
 
@@ -367,6 +368,19 @@ class BotMessageProcessorMediaDeliveryTest {
                 Files.move(tempDir.resolveSibling(tempDir.getFileName() + "-moved"), tempDir);
             }
         }
+    }
+
+    @Test
+    void albumWithOneReadableImageUsesSinglePhotoApi() throws Exception {
+        Path safe = createTempFile("safe.png");
+        Path missing = tempDir.resolve("missing.png");
+        when(telegramClient.sendPhoto(eq(100L), any(byte[].class), nullable(String.class), nullable(String.class)))
+            .thenReturn(Optional.of(123L));
+        processor.deliverMedia(100L, List.of(
+            new MediaDeliveryService.MediaDescriptor(safe.toString(), ".png", false, false),
+            new MediaDeliveryService.MediaDescriptor(missing.toString(), ".png", false, false)), null);
+        verify(telegramClient).sendPhoto(eq(100L), any(byte[].class), nullable(String.class), nullable(String.class));
+        verify(telegramClient, never()).sendMediaGroup(anyLong(), anyList());
     }
 
     @Test
