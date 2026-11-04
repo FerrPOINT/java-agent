@@ -740,9 +740,25 @@ private static final String CRON_EXECUTION_HINT = """
         if (entity != null) {
             requireOwnership(entity);
         }
-        cancelJob(id);
         cronJobRepository.deleteById(id);
-        jobLocks.remove(id);
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()) {
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                new org.springframework.transaction.support.TransactionSynchronization() {
+                    @Override public void afterCommit() {
+                        var tx = new org.springframework.transaction.support.TransactionTemplate(transactionTemplate.getTransactionManager());
+                        tx.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+                        tx.executeWithoutResult(status -> {
+                            if (!cronJobRepository.existsById(id)) {
+                                cancelJob(id);
+                                jobLocks.remove(id);
+                            }
+                        });
+                    }
+                });
+        } else {
+            cancelJob(id);
+            jobLocks.remove(id);
+        }
         log.info("Removed cron job: {}", id);
     }
 
