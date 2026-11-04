@@ -136,6 +136,39 @@ class DeliveryLedgerConsumerRefusalTest {
     }
 
     @Test
+    void malformedThreadIdDropsEveryClaimWithoutSending() {
+        spec();
+        var item = new DeliveryLedgerConsumer.ClaimedItem("id-42", "token-42", "cron_execution", "42",
+            "telegram", "100200300", "not-an-integer", "payload", 1);
+        consumer().deliverBatchForTest(List.of(item));
+        verify(restClient.post()).uri("/api/v1/agent/delivery/drop");
+        verify(telegram, org.mockito.Mockito.never()).sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean());
+    }
+
+    @Test
+    void oversizedThreadIdDoesNotAbortBatch() {
+        spec();
+        var item = new DeliveryLedgerConsumer.ClaimedItem("id-42", "token-42", "cron_execution", "42",
+            "telegram", "100200300", "999999999999999999999999", "payload", 1);
+        consumer().deliverBatchForTest(List.of(item));
+        verify(restClient.post()).uri("/api/v1/agent/delivery/drop");
+        verify(telegram, org.mockito.Mockito.never()).sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean());
+    }
+
+    @Test
+    void validThreadIdIsForwardedToTelegram() {
+        spec();
+        var item = new DeliveryLedgerConsumer.ClaimedItem("id-42", "token-42", "cron_execution", "42",
+            "telegram", "100200300", "77", "payload", 1);
+        when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), org.mockito.ArgumentMatchers.eq(77), any(), anyBoolean()))
+            .thenReturn(Optional.of(123L));
+        consumer().deliverBatchForTest(List.of(item));
+        verify(telegram).sendMessageChecked(org.mockito.ArgumentMatchers.eq(100200300L), anyString(), any(), any(),
+            org.mockito.ArgumentMatchers.eq(77), any(), anyBoolean());
+        verify(restClient.post()).uri("/api/v1/agent/delivery/ack");
+    }
+
+    @Test
     void definiteApiRefusalReleasesAsSendRefused() {
         spec();
         when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean()))

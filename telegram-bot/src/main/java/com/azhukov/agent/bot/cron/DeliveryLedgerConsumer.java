@@ -171,7 +171,13 @@ public class DeliveryLedgerConsumer {
             return;
         }
         long chatId;
-        Integer threadId = first.threadId().isBlank() ? null : Integer.valueOf(first.threadId());
+        Integer threadId;
+        try {
+            threadId = first.threadId().isBlank() ? null : Integer.valueOf(first.threadId());
+        } catch (NumberFormatException e) {
+            for (ClaimedItem item : batch) outcome(item, "drop", "invalid_thread_id", null);
+            return;
+        }
         try {
             chatId = Long.parseLong(first.chatId());
         } catch (NumberFormatException e) {
