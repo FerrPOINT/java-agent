@@ -210,6 +210,15 @@ class BotMessageProcessorMediaDeliveryTest {
     // ═══════════════════════════════════════════════════════════════════
 
     @Test
+    void mediaSymlinkToOutsideWorkspaceIsNotDelivered(@TempDir Path outsideDir) throws Exception {
+        Path outside = Files.writeString(outsideDir.resolve("private.pdf"), "private test data");
+        Path link = Files.createSymbolicLink(tempDir.resolve("linked.pdf"), outside);
+        processor.deliverMedia(100L, List.of(
+            new MediaDeliveryService.MediaDescriptor(link.toString(), "pdf", false, false)), null);
+        verify(telegramClient, never()).sendDocument(anyLong(), any(byte[].class), anyString(), nullable(String.class), nullable(String.class));
+    }
+
+    @Test
     void invalidMediaPathsDoNotPreventDeliveryOfLaterValidFiles() throws Exception {
         Path document = createTempFile("valid.pdf");
         processor.deliverMedia(100L, List.of(
