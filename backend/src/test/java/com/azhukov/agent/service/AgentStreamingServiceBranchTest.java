@@ -189,6 +189,264 @@ class AgentStreamingServiceBranchTest {
             new CliStateApplier(null), null, null, new com.azhukov.agent.core.metadata.ModelMetadataService(), null);
     }
 
+    @Test
+    void truncatedStreamingRetryHonorsExhaustedModelBudget() throws Exception {
+        var calls = new AtomicInteger();
+        var snapshot = mock(IterationBudget.TurnSnapshot.class);
+        when(iterationBudget.startTurn(any())).thenReturn(snapshot);
+        when(iterationBudget.recordModelCall(any(), anyInt(), anyInt())).thenReturn(snapshot);
+        when(iterationBudget.isExhausted(any())).thenAnswer(inv -> calls.get() >= 1);
+        when(iterationBudget.status(any())).thenReturn(new IterationBudget.BudgetStatus(false, 0, 0, 0, 0, "limit"));
+        doAnswer(inv -> {
+            calls.incrementAndGet();
+            StreamingResponseHandler handler = inv.getArgument(3);
+            handler.onToolCalls(List.of(new ToolCall("c1", "weather", "{}")));
+            handler.onComplete("length", 1L);
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+        var emitter = new CollectingEmitter(30_000L);
+        streamingService.streamTurn(ChatRequest.simple(SESSION_ID, "hello", null, 10_000L), emitter);
+        emitter.awaitDone();
+        assertThat(calls.get()).isEqualTo(1);
+        verify(toolExecutionService, never()).execute(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void streamingEmptyAfterToolSendsRecoveryNudge() throws Exception {
+        var requests = new CopyOnWriteArrayList<List<Message>>();
+        var calls = new AtomicInteger();
+        when(toolExecutionService.enforceToolResultBudget(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(toolExecutionService.execute(any(), any(), any(), any(), any(), any())).thenReturn(ToolResult.ok("ok"));
+        doAnswer(inv -> {
+            requests.add(List.copyOf(inv.getArgument(0)));
+            var handler = (StreamingResponseHandler) inv.getArgument(3);
+            switch (calls.incrementAndGet()) {
+                case 1 -> { handler.onToolCalls(List.of(new ToolCall("c1", "weather", "{}"))); handler.onComplete("tool_calls", 2L); }
+                case 2 -> handler.onComplete("stop", 1L);
+                default -> { handler.onToken("done"); handler.onComplete("stop", 2L); }
+            }
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+        var emitter = new CollectingEmitter(30_000L);
+        streamingService.streamTurn(ChatRequest.simple(SESSION_ID, "hello", null, 10_000L), emitter);
+        emitter.awaitDone();
+        assertThat(requests).hasSize(3);
+        assertThat(requests.get(2)).anySatisfy(m -> assertThat(m.content()).contains(
+            com.azhukov.agent.core.agent.ResponseRecoveryPolicy.EMPTY_AFTER_TOOLS_NUDGE));
+    }
+
+    @Test
+    void secondStreamingLengthContinuationRetainsAllPriorFragments() throws Exception {
+        var requests = new CopyOnWriteArrayList<List<Message>>();
+        var attempts = new AtomicInteger();
+        doAnswer(inv -> {
+            requests.add(List.copyOf(inv.getArgument(0)));
+            var handler = (StreamingResponseHandler) inv.getArgument(3);
+            int n = attempts.incrementAndGet();
+            handler.onToken(n == 1 ? "first fragment" : n == 2 ? "second fragment" : "final");
+            handler.onComplete(n < 3 ? "length" : "stop", 1L);
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+        var emitter = new CollectingEmitter(30_000L);
+        streamingService.streamTurn(ChatRequest.simple(SESSION_ID, "hello", null, 10_000L), emitter);
+        emitter.awaitDone();
+        assertThat(attempts.get()).isEqualTo(3);
+        assertThat(requests.get(2)).anySatisfy(message -> assertThat(message.content()).contains("first fragment"));
+        assertThat(requests.get(2)).anySatisfy(message -> assertThat(message.content()).contains("second fragment"));
+    }
+
+    @Test
+    void boostedRetryContentFilterDoesNotTriggerEmptyRetry() throws Exception {
+        var attempts = new AtomicInteger();
+        doAnswer(inv -> {
+            StreamingResponseHandler handler = inv.getArgument(3);
+            if (attempts.incrementAndGet() == 1) {
+                handler.onToolCalls(List.of(new ToolCall("c1", "weather", "{}")));
+                handler.onComplete("length", 1L);
+            } else {
+                handler.onComplete("content_filter", 0L);
+            }
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+        var emitter = new CollectingEmitter(30_000L);
+        streamingService.streamTurn(ChatRequest.simple(SESSION_ID, "hello", null, 10_000L), emitter);
+        emitter.awaitDone();
+        assertThat(attempts.get()).isEqualTo(2);
+        assertThat(emitter.events).anySatisfy(event -> {
+            assertThat(event.name).isEqualTo("token");
+            assertThat(event.data).contains(com.azhukov.agent.core.agent.ResponseRecoveryPolicy.CONTENT_POLICY_RECOVERY_HINT);
+        });
+    }
+
+    @Test
+    void boostedRetryThrowingExceptionEmitsRetryErrorWithoutExecutingTool() throws Exception {
+        var attempts = new AtomicInteger();
+        doAnswer(inv -> {
+            StreamingResponseHandler handler = inv.getArgument(3);
+            if (attempts.incrementAndGet() == 1) {
+                handler.onToolCalls(List.of(new ToolCall("c1", "weather", "{}")));
+                handler.onComplete("length", 1L);
+            } else {
+                throw new IllegalStateException("retry transport failure");
+            }
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+        var emitter = new CollectingEmitter(30_000L);
+        streamingService.streamTurn(ChatRequest.simple(SESSION_ID, "hello", null, 10_000L), emitter);
+        emitter.awaitDone();
+        assertThat(attempts.get()).isEqualTo(2);
+        assertThat(emitter.events).anySatisfy(event -> {
+            assertThat(event.name).isEqualTo("error");
+            assertThat(event.data).contains("truncated tool call retry");
+        });
+        assertThat(emitter.events.stream().filter(e -> "done".equals(e.name))).isEmpty();
+        verify(toolExecutionService, never()).execute(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void cancellationDuringBoostedRetryDoesNotDeliverFinalAnswer() throws Exception {
+        var attempts = new AtomicInteger();
+        doAnswer(inv -> {
+            int n = attempts.incrementAndGet();
+            StreamingResponseHandler handler = inv.getArgument(3);
+            if (n == 1) {
+                handler.onToolCalls(List.of(new ToolCall("c1", "weather", "{}")));
+                handler.onComplete("length", 1L);
+            } else {
+                interruptToken.cancel(SESSION_ID);
+                handler.onToken("must not deliver");
+                handler.onComplete("stop", 1L);
+            }
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+        var emitter = new CollectingEmitter(30_000L);
+        streamingService.streamTurn(ChatRequest.simple(SESSION_ID, "hello", null, 10_000L), emitter);
+        emitter.awaitDone();
+        assertThat(emitter.events.stream().filter(e -> "interrupted".equals(e.name))).isNotEmpty();
+        assertThat(emitter.events.stream().filter(e -> e.data != null && e.data.contains("must not deliver"))).isEmpty();
+    }
+
+    @Test
+    void cancellationDuringBoostedRetryDoesNotExecuteTool() throws Exception {
+        var attempts = new AtomicInteger();
+        when(toolExecutionService.enforceToolResultBudget(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(toolExecutionService.execute(any(), any(), any(), any(), any(), any())).thenReturn(ToolResult.ok("executed"));
+        doAnswer(inv -> {
+            int n = attempts.incrementAndGet();
+            StreamingResponseHandler handler = inv.getArgument(3);
+            if (n == 2) interruptToken.cancel(SESSION_ID);
+            handler.onToolCalls(List.of(new ToolCall("c" + n, "weather", "{}")));
+            handler.onComplete(n == 1 ? "length" : "tool_calls", 1L);
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+        var emitter = new CollectingEmitter(30_000L);
+        streamingService.streamTurn(ChatRequest.simple(SESSION_ID, "hello", null, 10_000L), emitter);
+        emitter.awaitDone();
+        assertThat(attempts.get()).isEqualTo(2);
+        verify(toolExecutionService, never()).execute(any(), any(), any(), any(), any(), any());
+        assertThat(emitter.events.stream().filter(e -> "interrupted".equals(e.name))).isNotEmpty();
+    }
+
+    @Test
+    void boostedTruncatedRetryUsesIncreasingOutputBudgets() throws Exception {
+        var attempts = new AtomicInteger();
+        var limits = new java.util.concurrent.CopyOnWriteArrayList<Integer>();
+        properties.getModel().setMaxTokens(1000);
+        doAnswer(inv -> {
+            int n = attempts.incrementAndGet();
+            ModelRequestOptions opts = inv.getArgument(2);
+            limits.add(opts == null || opts.maxCompletionTokens() == null ? 0 : opts.maxCompletionTokens());
+            StreamingResponseHandler handler = inv.getArgument(3);
+            if (n <= 4) {
+                handler.onToolCalls(List.of(new ToolCall("c" + n, "weather", "{}")));
+                handler.onComplete("length", 1L);
+            } else {
+                handler.onToken("done");
+                handler.onComplete("stop", 1L);
+            }
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+        var emitter = new CollectingEmitter(30_000L);
+        streamingService.streamTurn(ChatRequest.simple(SESSION_ID, "hello", null, 10_000L), emitter);
+        emitter.awaitDone();
+        assertThat(emitter.error.get()).isNull();
+        assertThat(limits).containsExactly(0, 2000, 4000, 8000, 16000);
+    }
+
+    @Test
+    void boostedRetryWithoutFinishMetadataMustNotReuseTruncatedFinishReason() throws Exception {
+        var attempts = new AtomicInteger();
+        doAnswer(inv -> {
+            StreamingResponseHandler handler = inv.getArgument(3);
+            if (attempts.incrementAndGet() == 1) {
+                handler.onToolCalls(List.of(new ToolCall("first", "weather", "{}")));
+                handler.onComplete("length", 1L);
+            } else {
+                handler.onToken("recovered answer");
+                handler.onComplete();
+            }
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+        var emitter = new CollectingEmitter(30_000L);
+        streamingService.streamTurn(ChatRequest.simple(SESSION_ID, "hello", null, 10_000L), emitter);
+        emitter.awaitDone();
+        assertThat(emitter.error.get()).isNull();
+        assertThat(attempts.get()).isEqualTo(2);
+        assertThat(emitter.events.stream().filter(e -> "continuation".equals(e.name))).isEmpty();
+    }
+
+    @Test
+    void streamedToolRetryContentIsDelivered() throws Exception {
+        var attempts = new AtomicInteger();
+        doAnswer(inv -> {
+            StreamingResponseHandler handler = inv.getArgument(3);
+            if (attempts.incrementAndGet() == 1) {
+                handler.onToolCalls(List.of(new ToolCall("truncated", "weather", "{}")));
+                handler.onComplete("length", 1L);
+            } else {
+                handler.onToken("recovered answer");
+                handler.onComplete("stop", 2L);
+            }
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+        var emitter = new CollectingEmitter(30_000L);
+        streamingService.streamTurn(ChatRequest.simple(SESSION_ID, "hello", null, 10_000L), emitter);
+        emitter.awaitDone();
+        assertThat(emitter.error.get()).isNull();
+        assertThat(attempts.get()).isEqualTo(2);
+        verify(iterationBudget, times(2)).recordModelCall(any(), anyInt(), anyInt());
+        verify(usageTracker, times(2)).recordTurn(any(), any(), any(), anyInt(), anyInt());
+        assertThat(emitter.events).anySatisfy(event -> {
+            assertThat(event.name).isEqualTo("token");
+            assertThat(event.data).contains("recovered answer");
+        });
+    }
+
+    @Test
+    void repeatedTruncatedStreamingToolCallsNeverExecute() throws Exception {
+        var attempts = new AtomicInteger();
+        when(toolExecutionService.enforceToolResultBudget(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(toolExecutionService.execute(any(), any(), any(), any(), any(), any())).thenReturn(ToolResult.ok("executed"));
+        doAnswer(inv -> {
+            int attempt = attempts.incrementAndGet();
+            StreamingResponseHandler handler = inv.getArgument(3);
+            if (attempt <= 3) {
+                handler.onToolCalls(List.of(new ToolCall("call-" + attempt, "weather", "{\"city\":\"valid-but-incomplete-response\"}")));
+                handler.onComplete("length", 10L);
+            } else {
+                handler.onToken("finished");
+                handler.onComplete("stop", 1L);
+            }
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+        var emitter = new CollectingEmitter(30_000L);
+        streamingService.streamTurn(ChatRequest.simple(SESSION_ID, "hello", null, 10_000L), emitter);
+        emitter.awaitDone();
+        assertThat(emitter.error.get()).isNull();
+        assertThat(attempts.get()).isGreaterThanOrEqualTo(4);
+        verify(toolExecutionService, never()).execute(any(), any(), any(), any(), any(), any());
+    }
+
     // ── selectTools: disabledTools filtering ──
 
     @Test

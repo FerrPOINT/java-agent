@@ -609,7 +609,8 @@ public class AgentStreamingService {
         // active/fallback client the inner stream loop switched to.
         final java.util.concurrent.atomic.AtomicReference<ModelClient> activeStreamClientRef =
             new java.util.concurrent.atomic.AtomicReference<>(modelClient);
-        for (int i = 0; i < maxTurns; i++) {
+        boolean lastResponseHadToolCalls = false;
+        agentLoop: for (int i = 0; i < maxTurns; i++) {
           try {
             // Check for interrupt at the top of each agentic-loop iteration
             if (interruptToken != null && interruptToken.isCancelled(session.id())) {
@@ -679,7 +680,6 @@ public class AgentStreamingService {
             int compressionAttempts = 0;
             final int MAX_COMPRESSION_ATTEMPTS = 3;
             StringBuilder truncatedParts = new StringBuilder();
-            boolean lastResponseHadToolCalls = false;
             // R3/R4 (Hermes 7728-7760 + empty_response_guard): per-turn fallback chain
             // and deterministic-empty tracker for the streaming path too.
             com.azhukov.agent.core.agent.FallbackManager streamFallbackManager =
@@ -1057,8 +1057,10 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                 // mid-tool-call JSON. The arguments are truncated/incomplete and must
                 // NOT be executed. Re-run the same API call with a boosted max_tokens
                 // (2^attempt × base, capped at 32768) giving the model room to finish.
-                if (com.azhukov.agent.core.agent.ResponseRecoveryPolicy.isTruncatedToolCall(finishReason, hasToolCalls)
+                while (com.azhukov.agent.core.agent.ResponseRecoveryPolicy.isTruncatedToolCall(finishReason, hasToolCalls)
                         && truncatedToolCallRetries < MAX_TRUNCATED_TOOL_CALL_RETRIES) {
+                    if (interruptToken != null && interruptToken.isCancelled(session.id())) continue agentLoop;
+                    if (iterationBudget.isExhausted(budget)) continue agentLoop;
                     truncatedToolCallRetries++;
                     int boostedMax = com.azhukov.agent.core.agent.ResponseRecoveryPolicy.boostedMaxTokens(
                         properties.getModel().getMaxTokens(), truncatedToolCallRetries);
@@ -1071,6 +1073,9 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     // with a boosted max_tokens so the model has room to complete the JSON.
                     contentBuilder.setLength(0);
                     collectedToolCalls.clear();
+                    capturedFinishReason.set(null);
+                    capturedOutputTokens.set(null);
+                    capturedReasoning.set(null);
                     scrubber.reset();
                     com.azhukov.agent.core.client.ModelRequestOptions boostedOptions =
                         com.azhukov.agent.core.agent.TurnExecutorUtils.withBoostedMaxTokens(streamOptions, boostedMax);
@@ -1078,6 +1083,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     context = HistorySanitizer.sanitizeForModelRequest(context);
                     session = resolveRotatedSession(session);
                     // Re-issue the stream call with boosted max_tokens
+                    try {
                     activeStreamClient.stream(context, tools, boostedOptions, new StreamingResponseHandler() {
                         @Override
                         public void onToken(String token) {
@@ -1094,13 +1100,24 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
 
                         @Override
                         public void onComplete() {
-                            // No-op — finish_reason + outputTokens come via the 2-arg overload
+                            String remaining = scrubber.flush();
+                            if (remaining != null && !remaining.isEmpty()) {
+                                remaining = ctxScrubber.feed(remaining);
+                                if (!remaining.isEmpty()) contentBuilder.append(remaining);
+                            }
                         }
 
                         @Override
                         public void onComplete(String finishReason2, Long outputTokens2) {
                             capturedFinishReason.set(finishReason2);
                             capturedOutputTokens.set(outputTokens2);
+                            onComplete();
+                        }
+
+                        @Override
+                        public void onComplete(String finishReason2, Long outputTokens2, String reasoning) {
+                            capturedReasoning.set(reasoning);
+                            onComplete(finishReason2, outputTokens2);
                         }
 
                         @Override
@@ -1108,6 +1125,19 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                             capturedError.set(error);
                         }
                     });
+                    } catch (Exception retryException) {
+                        capturedError.set(retryException);
+                    }
+                    budget = iterationBudget.recordModelCall(budget,
+                        tokenEstimator.estimateTokens(context), estimateResponseTokens(contentBuilder.toString(), collectedToolCalls));
+                    if (capturedError.get() == null) {
+                        try {
+                            usageTracker.recordTurn(session.id(), session.userId(), properties.getModel().getModelName(),
+                                tokenEstimator.estimateTokens(context), estimateResponseTokens(contentBuilder.toString(), collectedToolCalls));
+                        } catch (Exception usageEx) {
+                            log.debug("Failed to record streaming usage: {}", usageEx.getMessage());
+                        }
+                    }
                     // Re-stream completed (blocking call) — check for error first,
                     // then re-read routing flags and fall through to finish_reason
                     // routing in THIS iteration. Do NOT 'continue' back to while(true)
@@ -1125,13 +1155,33 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                             midTurnPersistenceCallback != null ? persistedUpTo : 0);
                         return;
                     }
+                    if (interruptToken != null && interruptToken.isCancelled(session.id())) continue agentLoop;
                     // Re-read routing flags from the re-streamed response
                     finishReason = capturedFinishReason.get();
                     hasContent = contentBuilder.length() > 0;
                     hasToolCalls = !collectedToolCalls.isEmpty();
+                    // Retry another truncated response directly with its next boosted limit.
+                    // Only publish the final retry response; intermediate attempts were rejected.
+                    if (com.azhukov.agent.core.agent.ResponseRecoveryPolicy.isTruncatedToolCall(finishReason, hasToolCalls)
+                            && iterationBudget.isExhausted(budget)) continue agentLoop;
+                    if (hasContent && !"content_filter".equalsIgnoreCase(finishReason)
+                            && !com.azhukov.agent.core.agent.ResponseRecoveryPolicy.isTruncatedToolCall(finishReason, hasToolCalls)) {
+                        eventHelper().send(emitter, new StreamEvent("token", contentBuilder.toString(), null, null), streamCtx);
+                    }
+                    if (hasToolCalls && !com.azhukov.agent.core.agent.ResponseRecoveryPolicy.isTruncatedToolCall(finishReason, true)) {
+                        eventHelper().send(emitter, new StreamEvent("tool_calls", null, List.copyOf(collectedToolCalls), null), streamCtx);
+                    }
                     log.info("Re-stream finish_reason={} for session {} (content={} chars, toolCalls={})",
                         finishReason, session.id(), contentBuilder.length(), collectedToolCalls.size());
-                    // Fall through to ceiling check + normal finish_reason routing below
+                }
+
+                // A retry may itself produce a terminal provider refusal.
+                if ("content_filter".equalsIgnoreCase(finishReason) && !hasToolCalls) {
+                    String filterMsg = (contentBuilder.length() > 0 ? contentBuilder.toString().strip() + "\n\n" : "")
+                        + ResponseRecoveryPolicy.CONTENT_POLICY_RECOVERY_HINT;
+                    eventHelper().send(emitter, new StreamEvent("token", filterMsg, null, null), streamCtx);
+                    response = ChatResponse.text(filterMsg);
+                    break;
                 }
 
                 // Truncated tool call ceiling reached — refuse to execute incomplete arguments.
@@ -1184,7 +1234,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     contentBuilder.setLength(0);
                     collectedToolCalls.clear();
                     List<Message> lengthContext = new ArrayList<>(turnMessages);
-                    lengthContext.add(Message.assistant(partialContent, turnIndex));
+                    lengthContext.add(Message.assistant(truncatedParts.toString(), turnIndex));
                     lengthContext.add(Message.user(com.azhukov.agent.core.agent.ResponseRecoveryPolicy.LENGTH_NUDGE));
                     context = contextEngine.prepareContext(session, lengthContext);
                     context = HistorySanitizer.sanitizeForModelRequest(context);
