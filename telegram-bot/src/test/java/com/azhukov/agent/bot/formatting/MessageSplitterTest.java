@@ -66,6 +66,46 @@ class MessageSplitterTest {
     }
 
     @Test
+    void plainLongMessageRetainsParagraphSeparators() {
+        String original = "a".repeat(4050) + "\n\n" + "b".repeat(4050) + "\n\n";
+        var chunks = MessageSplitter.split(original);
+        String restored = chunks.stream().map(chunk -> chunk.replaceFirst("^\\(\\d+/\\d+\\) ", ""))
+            .collect(java.util.stream.Collectors.joining());
+        assertThat(restored).isEqualTo(original);
+    }
+
+    @Test
+    void plainFenceMessageRetainsParagraphSeparators() {
+        String original = "a".repeat(4050) + "\n\n```java\nshort\n```\n\n" + "b".repeat(4050) + "\n\n";
+        var chunks = MessageSplitter.split(original);
+        String restored = chunks.stream().map(chunk -> chunk.replaceFirst("^\\(\\d+/\\d+\\) ", ""))
+            .collect(java.util.stream.Collectors.joining());
+        assertThat(restored).isEqualTo(original);
+    }
+
+    @Test
+    void plainLongFencePreservesContentAfterRemovingBalancing() {
+        String original = "```java\n" + "x".repeat(5000) + "\n```";
+        var chunks = MessageSplitter.split(original);
+        String restored = chunks.stream().map(chunk -> chunk.replaceFirst("^\\(\\d+/\\d+\\) ", ""))
+            .collect(java.util.stream.Collectors.joining())
+            .replace("\n``````java\n", "");
+        assertThat(restored).isEqualTo(original);
+    }
+
+    @Test
+    void mixedUnicodeAndNewlinesRoundTripWhenPlainSplit() {
+        for (int length : new int[]{10, 35, 100, 4096}) {
+            String original = ("a😀\n\nxyz\n").repeat(1000);
+            var chunks = MessageSplitter.split(original, length);
+            String restored = chunks.stream().map(chunk -> chunk.replaceFirst("^\\(\\d+/\\d+\\) ", ""))
+                .collect(java.util.stream.Collectors.joining());
+            assertThat(restored).as("limit %s", length).isEqualTo(original);
+            assertThat(chunks).allSatisfy(chunk -> assertThat(chunk.length()).isLessThanOrEqualTo(length));
+        }
+    }
+
+    @Test
     void tinyLimitPreservesNewlinesVerbatim() {
         String original = "a\n\nb\n\nc";
         assertThat(String.join("", MessageSplitter.split(original, 2))).isEqualTo(original);
