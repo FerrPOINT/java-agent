@@ -91,6 +91,14 @@ class MessageSplitterTest {
     }
 
     @Test
+    void markdownCodeFenceIsBalancedAcrossChunks() {
+        String input = "```python\n" + "x = 1\n".repeat(1000) + "```";
+        var chunks = MessageSplitter.splitAndFormat(input, "MarkdownV2");
+        assertThat(chunks).hasSizeGreaterThan(1);
+        assertThat(chunks).allSatisfy(chunk -> assertThat(countOccurrences(chunk, "```")).isEqualTo(2));
+    }
+
+    @Test
     void multiChunkHasContinuationIndicator() {
         // Create text > 4096 chars
         StringBuilder sb = new StringBuilder();
