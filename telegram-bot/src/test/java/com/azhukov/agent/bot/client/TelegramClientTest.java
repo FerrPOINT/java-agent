@@ -89,6 +89,19 @@ class TelegramClientTest {
         assertThatThrownBy(() -> client.sendMessageChecked(1L, "text", null, null, null, null, false))
             .isInstanceOfSatisfying(TelegramClient.SendRefusalException.class,
                 ex -> assertThat(ex.getRetryAfterSeconds()).isEqualTo(37));
+        assertThat(client.getLastApiErrorCode()).isEqualTo(429);
+    }
+
+    @Test
+    void validHttp429IsVisibleToEditErrorConsumers() {
+        byte[] body = "{\"ok\":false,\"error_code\":429,\"description\":\"Too Many Requests\",\"parameters\":{\"retry_after\":37}}"
+            .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        when(restClient.post()).thenThrow(org.springframework.web.client.HttpClientErrorException.create(
+            org.springframework.http.HttpStatus.TOO_MANY_REQUESTS, "Too Many Requests",
+            org.springframework.http.HttpHeaders.EMPTY, body, java.nio.charset.StandardCharsets.UTF_8));
+        assertThatThrownBy(() -> client.editMessageText(1L, 2L, "text", null))
+            .isInstanceOfSatisfying(TelegramApiException.class, e -> assertThat(e.getRetryAfter()).isEqualTo(37));
+        assertThat(client.getLastApiErrorCode()).isEqualTo(429);
     }
 
     @Test

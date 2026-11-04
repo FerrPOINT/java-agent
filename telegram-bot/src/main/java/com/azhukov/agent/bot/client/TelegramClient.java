@@ -893,6 +893,7 @@ public class TelegramClient {
                 try {
                     TelegramResponse error = objectMapper.readValue(httpError.getResponseBodyAsByteArray(), TelegramResponse.class);
                     if (error != null && !error.isSuccess() && Integer.valueOf(429).equals(error.errorCode())) {
+                        lastApiErrorCode = 429;
                         int retryAfter = error.parameters() == null || !error.parameters().containsKey("retry_after")
                             ? -1 : error.parameters().get("retry_after").asInt(-1);
                         if (retryAfter > 0) applyFloodCooldown(retryAfter);
