@@ -164,6 +164,7 @@ public class MessageApiClient extends BaseBackendClient {
 
         StringBuilder accumulated = new StringBuilder();
         AgentBackendClient.ChatResult[] metadataHolder = new AgentBackendClient.ChatResult[1];
+        boolean errorNotified = false;
 
         try {
             // --- Initial connection with retry on connection errors ---
@@ -203,6 +204,7 @@ public class MessageApiClient extends BaseBackendClient {
             }
 
             if (is == null) {
+                errorNotified = true;
                 onError.accept(new IllegalStateException("Backend stream returned null input stream after retries"));
                 return new AgentBackendClient.ChatResult("");
             }
@@ -248,6 +250,7 @@ public class MessageApiClient extends BaseBackendClient {
                                 if ("error".equalsIgnoreCase(type)) {
                                     String errorMsg = event.path("error").asText(
                                         event.path("message").asText("Unknown stream error"));
+                                    errorNotified = true;
                                     onError.accept(new RuntimeException(errorMsg));
                                     // Preserve metadata received before the error
                                     // (model, context) so the bot can still resolve
@@ -393,6 +396,10 @@ public class MessageApiClient extends BaseBackendClient {
                 return result;
             }
         } catch (Exception e) {
+            if (errorNotified) {
+                if (e instanceof RuntimeException callbackFailure) throw callbackFailure;
+                throw new IllegalStateException("Stream error callback failed", e);
+            }
             log.warn("chatStream failed for sessionId={}: {}", sessionId, e.getMessage());
             onError.accept(e);
             return new AgentBackendClient.ChatResult(accumulated.toString());

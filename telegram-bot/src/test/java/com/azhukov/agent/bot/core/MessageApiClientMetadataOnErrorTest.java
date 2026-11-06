@@ -143,6 +143,18 @@ class MessageApiClientMetadataOnErrorTest {
     }
 
     @Test
+    void errorCallbackFailureDoesNotInvokeErrorCallbackTwice() {
+        serveSse("{\"type\":\"error\",\"error\":\"backend failed\"}");
+        var calls = new java.util.concurrent.atomic.AtomicInteger();
+        MessageApiClient client = new MessageApiClient(restClient, mapper, new com.azhukov.agent.bot.config.BotProperties());
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> client.chatStream("hi", null, null,
+            token -> { }, tool -> { }, (name, preview) -> { }, retry -> { }, review -> { }, clarify -> { },
+            result -> { }, error -> { calls.incrementAndGet(); throw new IllegalStateException("error callback failed"); }))
+            .isInstanceOf(IllegalStateException.class).hasMessageContaining("error callback failed");
+        assertThat(calls.get()).isEqualTo(1);
+    }
+
+    @Test
     void malformedSseDoesNotPreventFollowingValidCompletion() {
         serveSse("{invalid", "{\"type\":\"done\"}");
         var completed = new java.util.concurrent.atomic.AtomicBoolean();
