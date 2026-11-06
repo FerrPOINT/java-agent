@@ -232,6 +232,9 @@ public class StreamEditor {
     }
 
     Optional<Long> startStream(long chatId, String initialText, String chatType, StreamSession session) {
+        session.pendingFinalText = null;
+        session.pendingFinalRetryAfterSeconds = -1;
+        session.partialFinalDelivery = false;
         // S5: "off" transport — no streaming, just record start time and return.
         // Content will be buffered by the caller and sent on finalizeStream.
         if ("off".equals(streamingTransport)) {

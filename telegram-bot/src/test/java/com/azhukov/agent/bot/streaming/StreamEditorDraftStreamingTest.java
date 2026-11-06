@@ -60,6 +60,18 @@ class StreamEditorDraftStreamingTest {
     // ─── Transport config tests ──────────────────────────────────
 
     @Test
+    void startingNewDraftResetsPriorDeliveryOutcome() {
+        editor.startStream(123L, "first", "dm");
+        when(client.sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), eq(false)))
+            .thenReturn(Optional.empty());
+        when(client.takeLastRetryAfterSeconds()).thenReturn(-1);
+        assertThat(editor.finalizeStream(123L, -1L, "first answer")).isFalse();
+        editor.startStream(123L, "second", "dm");
+        assertThat(editor.takePartialFinalDelivery(123L)).isFalse();
+        assertThat(editor.takePendingFinalRetryAfterSeconds(123L)).isEqualTo(-1);
+    }
+
+    @Test
     void supportsDraftStreaming_dmReturnsTrue() {
         // Call on the real method (not the mock) — create a real TelegramClient
         // with a dummy token to test the chat type logic
