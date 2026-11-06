@@ -546,6 +546,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
 
             // P0: Standing goal auto-continuation
             if (properties.getGoalAutoContinue().isEnabled()
+                && result.content() != null && !result.content().isBlank()
                 && GoalCommand.getActiveGoal(session) != null
                 && !busyHandler.isInterrupted(chatId)) {
                 final long chatIdForLambda = chatId;

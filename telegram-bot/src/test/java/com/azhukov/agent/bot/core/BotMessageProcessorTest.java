@@ -1692,6 +1692,21 @@ class BotMessageProcessorTest {
     }
 
     @Test
+    void emptyStreamDoesNotStartGoalAutoContinuation() {
+        properties.getGoalAutoContinue().setEnabled(true);
+        BotSessionEntity session = new BotSessionEntity();
+        session.setId(UUID.randomUUID());
+        session.setMetadata("_standingGoal", "Complete the task");
+        when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), any())).thenReturn(session);
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+            .thenReturn(new AgentBackendClient.ChatResult("", "model", 1, 10, false, false));
+
+        processor.accept(textEvent(1, 100L, "hello"));
+
+        verify(goalAutoContinueService, never()).runAutoContinue(any(), any(), any());
+    }
+
+    @Test
     void goalAutoContinueEnabledButNoActiveGoalDoesNotContinue() {
         properties.getGoalAutoContinue().setEnabled(true);
         stubStreamingWithTokensAndFinalize("response", "test-model", false);
