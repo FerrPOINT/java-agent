@@ -246,11 +246,14 @@ public class MessageApiClient extends BaseBackendClient {
                                     continue;
                                 }
                                 String type = event.path("type").asText("");
-                                if ("error".equalsIgnoreCase(type)) {
+                                if ("error".equalsIgnoreCase(type) || "interrupted".equalsIgnoreCase(type)) {
                                     String errorMsg = event.path("error").asText(
                                         event.path("message").asText("Unknown stream error"));
+                                    Throwable failure = "interrupted".equalsIgnoreCase(type)
+                                        ? new java.util.concurrent.CancellationException(errorMsg)
+                                        : new RuntimeException(errorMsg);
                                     errorNotified = true;
-                                    onError.accept(new RuntimeException(errorMsg));
+                                    onError.accept(failure);
                                     // Preserve metadata received before the error
                                     // (model, context) so the bot can still resolve
                                     // the footer model on failed turns.

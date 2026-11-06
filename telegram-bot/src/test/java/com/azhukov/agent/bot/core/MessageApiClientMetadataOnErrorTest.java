@@ -104,6 +104,22 @@ class MessageApiClientMetadataOnErrorTest {
     }
 
     @Test
+    void interruptedStreamIsNotSuccessfulEvenWhenDoneFollows() {
+        serveSse("{\"type\":\"token\",\"token\":\"partial\"}",
+            "{\"type\":\"interrupted\",\"error\":\"Turn cancelled by user.\"}",
+            "{\"type\":\"done\"}");
+        var completed = new java.util.concurrent.atomic.AtomicInteger();
+        var errors = new java.util.concurrent.atomic.AtomicInteger();
+        var client = new MessageApiClient(restClient, mapper, new com.azhukov.agent.bot.config.BotProperties());
+        var result = client.chatStream("hi", null, null, token -> { }, tool -> { }, (name, preview) -> { },
+            retry -> { }, review -> { }, clarify -> { }, value -> completed.incrementAndGet(), error -> errors.incrementAndGet());
+        assertThat(result.content()).isEqualTo("partial");
+        assertThat(result.turnSucceeded()).isFalse();
+        assertThat(completed).hasValue(0);
+        assertThat(errors).hasValue(1);
+    }
+
+    @Test
     void truncatedStreamReportsErrorInsteadOfCompletion() {
         serveSse("{\"type\":\"metadata\",\"modelUsed\":\"model\"}",
             "{\"type\":\"token\",\"token\":\"partial\"}");

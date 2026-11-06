@@ -506,7 +506,7 @@ public class StreamingOrchestrator {
                 // onError
                 error -> {
                     turnFailed[0] = true;
-                    if (error instanceof StreamInterruptedException) {
+                    if (error instanceof StreamInterruptedException || error instanceof java.util.concurrent.CancellationException) {
                         // Interrupted — finalize with accumulated content (no raw error text)
                         if (messageId[0] >= 0 && accumulated.length() > 0) {
                             finalized[0] = streamEditor.finalizeStream(chatId, messageId[0],
