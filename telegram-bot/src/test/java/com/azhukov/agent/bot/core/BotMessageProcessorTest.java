@@ -1689,6 +1689,7 @@ class BotMessageProcessorTest {
         processor.accept(textEvent(1, 100L, "hello"));
         verify(telegramClient).sendMessage(eq(100L), contains("Continuation 1"), anyString(), any(), any());
         verify(telegramClient).sendMessage(eq(100L), contains("Continuation 2"), anyString(), any(), any());
+        verify(reactionManager).onProcessingComplete(100L, 101L, true);
     }
 
     @Test
@@ -1728,6 +1729,7 @@ class BotMessageProcessorTest {
             });
         processor.accept(textEvent(1, 100L, "hello"));
         verify(goalAutoContinueService, never()).runAutoContinue(any(), any(), any());
+        verify(reactionManager).onProcessingComplete(100L, 101L, false);
     }
 
     @Test

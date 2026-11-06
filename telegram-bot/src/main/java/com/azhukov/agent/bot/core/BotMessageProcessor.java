@@ -564,7 +564,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
             if (busyHandler.isInterrupted(chatId)) {
                 reactionManager.onCancel(chatId, event.messageId());
             } else {
-                reactionManager.onProcessingComplete(chatId, event.messageId(), true);
+                reactionManager.onProcessingComplete(chatId, event.messageId(), result.turnSucceeded());
             }
             typingManager.stopTyping(chatId);
         } catch (Exception e) {
