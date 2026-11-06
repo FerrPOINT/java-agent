@@ -122,6 +122,19 @@ class MessageSplitterTest {
     }
 
     @Test
+    void tableExpansionMustNotTruncateCells() {
+        String input = "| A | " + "H".repeat(800) + " |\n| --- | --- |\n"
+            + "| x | 1 |\n".repeat(100) + "\n" + "z".repeat(5000);
+        var chunks = MessageSplitter.splitAndFormat(input, "MarkdownV2");
+        long expected = MarkdownConverter.convert(input).chars().filter(c -> c == '1').count();
+        long actual = chunks.stream()
+            .map(chunk -> chunk.replaceFirst("^\\\\\\(\\d+/\\d+\\\\\\) ", ""))
+            .flatMapToInt(String::chars).filter(c -> c == '1').count();
+        assertThat(actual).isEqualTo(expected);
+        assertThat(chunks).allSatisfy(chunk -> assertThat(chunk.length()).isLessThanOrEqualTo(4096));
+    }
+
+    @Test
     void markdownParagraphBoundariesRetainEveryNewline() {
         String input = "a".repeat(2036) + "\n\n" + "b".repeat(3000);
         var chunks = MessageSplitter.splitAndFormat(input, "MarkdownV2");

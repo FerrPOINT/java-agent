@@ -187,6 +187,9 @@ public final class MessageSplitter {
             rawMaxLen = 1; // ensure at least 1 char per chunk
         }
 
+        // Table rendering can repeat headers and exceed the 2x escaping budget.
+        // Render before splitting so expanded rows are never silently truncated.
+        text = MarkdownConverter.convertTables(text);
         int longestTag = text.lines().map(String::strip).filter(line -> line.startsWith("```"))
             .map(line -> line.substring(3).strip())
             .map(tag -> tag.isEmpty() ? "" : tag.split("\\s+", 2)[0])
