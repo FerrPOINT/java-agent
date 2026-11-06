@@ -145,6 +145,22 @@ class MessageSplitterTest {
     }
 
     @Test
+    void markdownInlineBackticksAtChunkBoundaryPreserveAllText() {
+        String original = "a".repeat(2028) + "```" + "x".repeat(8000);
+        var chunks = MessageSplitter.splitAndFormat(original, "MarkdownV2");
+        assertThat(chunks).allSatisfy(chunk -> assertThat(chunk.length()).isLessThanOrEqualTo(4096));
+        String restored = chunks.stream().map(chunk -> chunk.replaceFirst("^\\\\\\(\\d+/\\d+\\\\\\) ", ""))
+            .collect(java.util.stream.Collectors.joining());
+        StringBuilder decoded = new StringBuilder();
+        for (int i = 0; i < restored.length(); i++) {
+            char c = restored.charAt(i);
+            if (c == '\\' && i + 1 < restored.length()) c = restored.charAt(++i);
+            decoded.append(c);
+        }
+        assertThat(decoded.toString()).isEqualTo(original);
+    }
+
+    @Test
     void markdownParagraphBoundariesRetainEveryNewline() {
         String input = "a".repeat(2036) + "\n\n" + "b".repeat(3000);
         var chunks = MessageSplitter.splitAndFormat(input, "MarkdownV2");

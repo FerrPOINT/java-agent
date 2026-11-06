@@ -189,45 +189,47 @@ public final class MessageSplitter {
             .mapToInt(String::length).max().orElse(0);
         int fenceReserve = text.contains("```") ? longestTag + 8 : 0;
         if (rawMaxLen - fenceReserve < 64) {
-            // Treat pathological fence labels as literal text. This keeps every
-            // source character without manufacturing oversized code fences.
-            List<String> literalChunks = splitPreservingBoundaries(text, rawMaxLen);
-            List<String> literal = new ArrayList<>(literalChunks.size());
-            for (int i = 0; i < literalChunks.size(); i++) {
-                String indicator = "(" + (i + 1) + "/" + literalChunks.size() + ") ";
-                literal.add(MarkdownConverter.escapeMarkdownV2(indicator)
-                    + escapeLiteralMarkdown(literalChunks.get(i)));
-            }
-            return literal;
+            // A pathological fence label cannot be balanced within one chunk.
+            return splitLiteralMarkdown(text, rawMaxLen);
         }
-        List<String> rawChunks = balanceFencesAcrossChunks(
-            splitPreservingBoundaries(text, rawMaxLen - fenceReserve), rawMaxLen);
+        List<String> unbalanced = splitPreservingBoundaries(text, rawMaxLen - fenceReserve);
+        List<String> rawChunks = balanceFencesAcrossChunks(unbalanced, rawMaxLen);
+        for (int i = 0; i < rawChunks.size(); i++) {
+            if (rawChunks.get(i).length() > unbalanced.get(i).length() + fenceReserve) {
+                return splitLiteralMarkdown(text, rawMaxLen);
+            }
+        }
         int total = rawChunks.size();
         List<String> result = new ArrayList<>(total);
 
         for (int i = 0; i < total; i++) {
             String formatted = MarkdownConverter.convert(rawChunks.get(i));
             if (total > 1) {
-                // Build the indicator and escape it for MarkdownV2
                 String indicator = "(" + (i + 1) + "/" + total + ") ";
                 String escapedIndicator = MarkdownConverter.escapeMarkdownV2(indicator);
-                // Truncate formatted text if it still exceeds the limit with the prefix
-                int remaining = TELEGRAM_MAX_LENGTH - escapedIndicator.length();
-                if (formatted.length() > remaining) {
-                    // BUG FIX (audit H15): avoid splitting a surrogate pair at the
-                    // cut point — a lone high surrogate breaks the emoji.
-                    int cut = remaining;
-                    if (cut > 0 && Character.isHighSurrogate(formatted.charAt(cut - 1))) {
-                        cut--;
-                    }
-                    formatted = formatted.substring(0, cut);
+                if (formatted.length() + escapedIndicator.length() > TELEGRAM_MAX_LENGTH) {
+                    // Formatting or a false fence expanded unexpectedly. Render
+                    // the original text literally rather than losing characters.
+                    return splitLiteralMarkdown(text, rawMaxLen);
                 }
                 result.add(escapedIndicator + formatted);
+            } else if (formatted.length() > TELEGRAM_MAX_LENGTH) {
+                return splitLiteralMarkdown(text, rawMaxLen);
             } else {
                 result.add(formatted);
             }
         }
 
+        return result;
+    }
+
+    private static List<String> splitLiteralMarkdown(String text, int rawMaxLen) {
+        List<String> chunks = splitPreservingBoundaries(text, rawMaxLen);
+        List<String> result = new ArrayList<>(chunks.size());
+        for (int i = 0; i < chunks.size(); i++) {
+            String indicator = "(" + (i + 1) + "/" + chunks.size() + ") ";
+            result.add(MarkdownConverter.escapeMarkdownV2(indicator) + escapeLiteralMarkdown(chunks.get(i)));
+        }
         return result;
     }
 
