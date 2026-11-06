@@ -232,6 +232,30 @@ class StreamEditorDraftStreamingTest {
     }
 
     @Test
+    void ambiguousPreviousDraftSegmentDoesNotMarkLaterRateLimitedFinalAsPartial() {
+        editor.startStream(123L, "First", "dm");
+        when(client.sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), eq(false)))
+            .thenReturn(Optional.empty(), Optional.empty());
+        when(client.takeLastRetryAfterSeconds()).thenReturn(-1, 12, -1);
+        editor.onSegmentBreak(123L, -1L, "First segment");
+        assertThat(editor.finalizeStream(123L, -1L, "Final segment")).isFalse();
+        assertThat(editor.takePartialFinalDelivery(123L)).isFalse();
+        assertThat(editor.takePendingFinalRetryAfterSeconds(123L)).isEqualTo(12);
+    }
+
+    @Test
+    void rejectedPreviousDraftSegmentDoesNotCarryCooldownIntoFinalFailure() {
+        editor.startStream(123L, "First", "dm");
+        when(client.sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), eq(false)))
+            .thenReturn(Optional.empty(), Optional.empty());
+        when(client.takeLastRetryAfterSeconds()).thenReturn(12, -1, -1);
+        editor.onSegmentBreak(123L, -1L, "First segment");
+        assertThat(editor.finalizeStream(123L, -1L, "Final segment")).isFalse();
+        assertThat(editor.takePartialFinalDelivery(123L)).isTrue();
+        assertThat(editor.takePendingFinalRetryAfterSeconds(123L)).isEqualTo(-1);
+    }
+
+    @Test
     void onSegmentBreak_withDraftStreaming_commitsDraftAndBumpsId() {
         editor.startStream(123L, "First segment text", "dm");
 

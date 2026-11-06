@@ -1037,7 +1037,13 @@ public class StreamEditor {
         if (session.useDraftStreaming) {
             // Send the accumulated text as a real message (committing the draft)
             String scrubbed = scrubThink(session, accumulatedText);
-            sendFormattedFinalMessage(chatId, scrubbed, session.messageThreadId);
+            try {
+                sendFormattedFinalMessage(chatId, scrubbed, session.messageThreadId);
+            } finally {
+                // Segment receipts must not affect recovery of the later final answer.
+                session.partialFinalDelivery = false;
+                session.pendingFinalRetryAfterSeconds = -1;
+            }
             // Bump draftId for the next segment
             int newDraftId = draftIdCounter.incrementAndGet();
             session.draftId = newDraftId;
