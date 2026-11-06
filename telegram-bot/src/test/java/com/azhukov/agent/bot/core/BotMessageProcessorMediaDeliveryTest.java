@@ -84,6 +84,7 @@ class BotMessageProcessorMediaDeliveryTest {
     private GoalAutoContinueService goalAutoContinueService;
     private EditCaptureService editCaptureService;
 
+    private AttachmentApiClient attachmentApiClient;
     private BotMessageProcessor processor;
     private final com.azhukov.agent.bot.session.BotSessionStore sessionStoreMock = org.mockito.Mockito.mock(com.azhukov.agent.bot.session.BotSessionStore.class);
 
@@ -161,10 +162,11 @@ class BotMessageProcessorMediaDeliveryTest {
             mock(com.azhukov.agent.bot.client.TelegramClient.class), sessionStoreMock,
             mock(com.azhukov.agent.bot.keyboard.ClarifyInteractionRenderer.class));
 
+        attachmentApiClient = mock(AttachmentApiClient.class);
         processor = new BotMessageProcessor(
             telegramClient, authorizationService, sessionStore, busyHandler,
             typingManager, backendClient, commandRegistry, callbackQueryHandler,
-            properties, streamEditor, inboundMediaHandler, mediaDeliveryService, org.mockito.Mockito.mock(com.azhukov.agent.bot.core.AttachmentApiClient.class),
+            properties, streamEditor, inboundMediaHandler, mediaDeliveryService, attachmentApiClient,
             runtimeFooter, reactionManager, textBatchDebouncer, photoBatchDebouncer,
             groupMessageFilter, slashAccessPolicy, responseFilter, goalAutoContinueService,
             editCaptureService, updateDispatcher, streamingOrchestrator);
@@ -208,6 +210,241 @@ class BotMessageProcessorMediaDeliveryTest {
     // ═══════════════════════════════════════════════════════════════════
     //  Media delivery routing tests
     // ═══════════════════════════════════════════════════════════════════
+
+    @Test
+    void mediaSymlinkToOutsideWorkspaceIsNotDelivered(@TempDir Path outsideDir) throws Exception {
+        Path outside = Files.writeString(outsideDir.resolve("private.pdf"), "private test data");
+        Path link = Files.createSymbolicLink(tempDir.resolve("linked.pdf"), outside);
+        processor.deliverMedia(100L, List.of(
+            new MediaDeliveryService.MediaDescriptor(link.toString(), "pdf", false, false)), null);
+        verify(telegramClient, never()).sendDocument(anyLong(), any(byte[].class), anyString(), nullable(String.class), nullable(String.class));
+    }
+
+    @Test
+    void replacingValidatedFileWithSymlinkDoesNotDeliverOutsideContent(@TempDir Path outsideDir) throws Exception {
+        Path local = Files.writeString(tempDir.resolve("att_abcdef.pdf"), "safe");
+        Path outside = Files.writeString(outsideDir.resolve("private.pdf"), "private test data");
+        AttachmentApiClient api = attachmentApiClient;
+        when(api.find("att_abcdef")).thenAnswer(invocation -> {
+            Files.delete(local);
+            Files.createSymbolicLink(local, outside);
+            return Optional.empty();
+        });
+        processor.deliverMedia(100L, List.of(
+            new MediaDeliveryService.MediaDescriptor(local.toString(), "pdf", false, false)), null);
+        verify(telegramClient, never()).sendDocument(anyLong(), any(byte[].class), anyString(), nullable(String.class), nullable(String.class));
+    }
+
+    @Test
+    void imageBatchDoesNotRecordReceiptForMissingFile() throws Exception {
+        Path safe = createTempFile("safe.png");
+        Path link = tempDir.resolve("att_abcdef.png");
+        AttachmentApiClient api = attachmentApiClient;
+        when(api.find("att_abcdef")).thenReturn(Optional.empty());
+        when(telegramClient.sendPhoto(eq(100L), any(byte[].class), nullable(String.class), nullable(String.class)))
+            .thenReturn(Optional.of(123L));
+        processor.deliverMedia(100L, List.of(
+            new MediaDeliveryService.MediaDescriptor(safe.toString(), ".png", false, false),
+            new MediaDeliveryService.MediaDescriptor(link.toString(), ".png", false, false)), null);
+        verify(telegramClient).sendPhoto(eq(100L), any(byte[].class), nullable(String.class), nullable(String.class));
+        verify(api, never()).markDelivered(eq("att_abcdef"), nullable(String.class));
+    }
+
+    @Test
+    void imageBatchRecordsReceiptsOnlyForAcceptedFiles() throws Exception {
+        Path first = createTempFile("att_abcdef.png");
+        Path second = createTempFile("att_123456.png");
+        AttachmentApiClient api = attachmentApiClient;
+        when(api.find(anyString())).thenReturn(Optional.empty());
+        when(telegramClient.sendMediaGroup(eq(100L), any())).thenReturn(List.of(123L, 124L));
+        processor.deliverMedia(100L, List.of(
+            new MediaDeliveryService.MediaDescriptor(first.toString(), ".png", false, false),
+            new MediaDeliveryService.MediaDescriptor(second.toString(), ".png", false, false)), null);
+        verify(api).markDelivered("att_abcdef", "123");
+        verify(api).markDelivered("att_123456", "124");
+    }
+
+    @Test
+    void intermediateDirectorySymlinkIsNotDelivered(@TempDir Path outsideDir) throws Exception {
+        Files.writeString(outsideDir.resolve("private.pdf"), "private");
+        Path link = Files.createSymbolicLink(tempDir.resolve("linked-dir"), outsideDir);
+        processor.deliverMedia(100L, List.of(
+            new MediaDeliveryService.MediaDescriptor(link.resolve("private.pdf").toString(), ".pdf", false, false)), null);
+        verify(telegramClient, never()).sendDocument(anyLong(), any(byte[].class), anyString(), nullable(String.class), nullable(String.class));
+    }
+
+    @Test
+    void imageBatchWithoutTelegramReceiptDoesNotMarkArtifactsDelivered() throws Exception {
+        Path first = createTempFile("att_abcdef.png");
+        Path second = createTempFile("att_123456.png");
+        AttachmentApiClient api = attachmentApiClient;
+        when(api.find(anyString())).thenReturn(Optional.empty());
+        when(telegramClient.sendMediaGroup(eq(100L), any())).thenReturn(List.of());
+        processor.deliverMedia(100L, List.of(
+            new MediaDeliveryService.MediaDescriptor(first.toString(), ".png", false, false),
+            new MediaDeliveryService.MediaDescriptor(second.toString(), ".png", false, false)), null);
+        verify(api, never()).markDelivered(anyString(), nullable(String.class));
+    }
+
+    @Test
+    void documentWithoutTelegramReceiptDoesNotMarkArtifactDelivered() throws Exception {
+        Path file = createTempFile("att_abcdef.pdf");
+        AttachmentApiClient api = attachmentApiClient;
+        when(api.find("att_abcdef")).thenReturn(Optional.empty());
+        when(telegramClient.sendDocument(eq(100L), any(byte[].class), anyString(), nullable(String.class), nullable(String.class)))
+            .thenReturn(Optional.empty());
+        processor.deliverMedia(100L, List.of(new MediaDeliveryService.MediaDescriptor(file.toString(), ".pdf", false, false)), null);
+        verify(api, never()).markDelivered(anyString(), nullable(String.class));
+    }
+
+    @Test
+    void incompleteAlbumResponseDoesNotGuessWhichFileReceivedId() throws Exception {
+        Path first = createTempFile("att_abcdef.png");
+        Path second = createTempFile("att_123456.png");
+        AttachmentApiClient api = attachmentApiClient;
+        when(api.find(anyString())).thenReturn(Optional.empty());
+        when(telegramClient.sendMediaGroup(eq(100L), any())).thenReturn(List.of(124L));
+        processor.deliverMedia(100L, List.of(
+            new MediaDeliveryService.MediaDescriptor(first.toString(), ".png", false, false),
+            new MediaDeliveryService.MediaDescriptor(second.toString(), ".png", false, false)), null);
+        verify(api, never()).markDelivered(anyString(), nullable(String.class));
+    }
+
+    @Test
+    void unopenedWorkspaceCanAppearAfterStartup() throws Exception {
+        Path missing = tempDir.resolve("created-later");
+        properties.setWorkingDirectory(missing.toString());
+        processor.init();
+        Files.createDirectories(missing);
+        Path file = Files.writeString(missing.resolve("report.pdf"), "safe");
+        processor.deliverMedia(100L, List.of(new MediaDeliveryService.MediaDescriptor(file.toString(), ".pdf", false, false)), null);
+        verify(telegramClient).sendDocument(eq(100L), org.mockito.AdditionalMatchers.aryEq("safe".getBytes(java.nio.charset.StandardCharsets.UTF_8)), anyString(), nullable(String.class), nullable(String.class));
+    }
+
+    @Test
+    void symlinkWorkspaceRootStillAllowsOrdinaryFiles(@TempDir Path rootParent) throws Exception {
+        Path link = Files.createSymbolicLink(rootParent.resolve("workspace"), tempDir);
+        properties.setWorkingDirectory(link.toString());
+        Path file = createTempFile("report.pdf");
+        processor.deliverMedia(100L, List.of(new MediaDeliveryService.MediaDescriptor(
+            link.resolve(file.getFileName()).toString(), ".pdf", false, false)), null);
+        verify(telegramClient).sendDocument(eq(100L), any(byte[].class), eq("report.pdf"), nullable(String.class), nullable(String.class));
+    }
+
+    @Test
+    void replacingConfiguredWorkspaceWithSymlinkDoesNotDeliverOutsideFile(@TempDir Path outsideDir) throws Exception {
+        Path file = Files.writeString(tempDir.resolve("att_abcdef.pdf"), "safe");
+        Files.writeString(outsideDir.resolve("att_abcdef.pdf"), "outside");
+        AttachmentApiClient api = attachmentApiClient;
+        when(api.find("att_abcdef")).thenAnswer(invocation -> {
+            Path moved = tempDir.resolveSibling(tempDir.getFileName() + "-moved");
+            Files.move(tempDir, moved);
+            Files.createSymbolicLink(tempDir, outsideDir);
+            return Optional.empty();
+        });
+        try {
+            processor.deliverMedia(100L, List.of(new MediaDeliveryService.MediaDescriptor(file.toString(), ".pdf", false, false)), null);
+            verify(telegramClient).sendDocument(eq(100L), org.mockito.AdditionalMatchers.aryEq("safe".getBytes(java.nio.charset.StandardCharsets.UTF_8)), anyString(), nullable(String.class), nullable(String.class));
+        } finally {
+            if (Files.isSymbolicLink(tempDir)) {
+                Files.delete(tempDir);
+                Files.move(tempDir.resolveSibling(tempDir.getFileName() + "-moved"), tempDir);
+            }
+        }
+    }
+
+    @Test
+    void albumWithOneReadableImageUsesSinglePhotoApi() throws Exception {
+        Path safe = createTempFile("safe.png");
+        Path missing = tempDir.resolve("missing.png");
+        when(telegramClient.sendPhoto(eq(100L), any(byte[].class), nullable(String.class), nullable(String.class)))
+            .thenReturn(Optional.of(123L));
+        processor.deliverMedia(100L, List.of(
+            new MediaDeliveryService.MediaDescriptor(safe.toString(), ".png", false, false),
+            new MediaDeliveryService.MediaDescriptor(missing.toString(), ".png", false, false)), null);
+        verify(telegramClient).sendPhoto(eq(100L), any(byte[].class), nullable(String.class), nullable(String.class));
+        verify(telegramClient, never()).sendMediaGroup(anyLong(), anyList());
+    }
+
+    @Test
+    void mediaRootReplacedWithDirectoryDoesNotDeliverOutsideFile(@TempDir Path outsideDir) throws Exception {
+        Path file = Files.writeString(tempDir.resolve("att_abcdef.pdf"), "safe");
+        Files.writeString(outsideDir.resolve("att_abcdef.pdf"), "outside");
+        AttachmentApiClient api = attachmentApiClient;
+        when(api.find("att_abcdef")).thenAnswer(invocation -> {
+            Files.move(tempDir, tempDir.resolveSibling(tempDir.getFileName() + "-moved"));
+            Files.move(outsideDir, tempDir);
+            return Optional.empty();
+        });
+        try {
+            processor.deliverMedia(100L, List.of(new MediaDeliveryService.MediaDescriptor(file.toString(), ".pdf", false, false)), null);
+            verify(telegramClient).sendDocument(eq(100L), org.mockito.AdditionalMatchers.aryEq("safe".getBytes(java.nio.charset.StandardCharsets.UTF_8)), anyString(), nullable(String.class), nullable(String.class));
+        } finally {
+            Path moved = tempDir.resolveSibling(tempDir.getFileName() + "-moved");
+            if (Files.exists(moved)) {
+                Files.move(tempDir, outsideDir);
+                Files.move(moved, tempDir);
+            }
+        }
+    }
+
+    @Test
+    void configuredWorkspaceReplacedBeforeDeliveryDoesNotExposeExternalFile(@TempDir Path outsideDir) throws Exception {
+        Path file = Files.writeString(tempDir.resolve("report.pdf"), "safe");
+        Files.writeString(outsideDir.resolve("report.pdf"), "outside");
+        processor.init();
+        Path moved = tempDir.resolveSibling(tempDir.getFileName() + "-moved");
+        try {
+            Files.move(tempDir, moved);
+            Files.move(outsideDir, tempDir);
+            processor.deliverMedia(100L, List.of(new MediaDeliveryService.MediaDescriptor(file.toString(), ".pdf", false, false)), null);
+            verify(telegramClient, never()).sendDocument(eq(100L), org.mockito.AdditionalMatchers.aryEq("outside".getBytes(java.nio.charset.StandardCharsets.UTF_8)), anyString(), nullable(String.class), nullable(String.class));
+        } finally {
+            if (Files.exists(moved)) {
+                Files.move(tempDir, outsideDir);
+                Files.move(moved, tempDir);
+            }
+        }
+    }
+
+    @Test
+    void workspaceReplacedBySymlinkBeforeDeliveryMustNotExposeExternalFile(@TempDir Path outsideDir) throws Exception {
+        Path file = Files.writeString(tempDir.resolve("report.pdf"), "safe");
+        Files.writeString(outsideDir.resolve("report.pdf"), "outside");
+        processor.init();
+        Path moved = tempDir.resolveSibling(tempDir.getFileName() + "-moved");
+        try {
+            Files.move(tempDir, moved);
+            Files.createSymbolicLink(tempDir, outsideDir);
+            processor.deliverMedia(100L, List.of(new MediaDeliveryService.MediaDescriptor(file.toString(), ".pdf", false, false)), null);
+            verify(telegramClient, never()).sendDocument(eq(100L),
+                org.mockito.AdditionalMatchers.aryEq("outside".getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                anyString(), nullable(String.class), nullable(String.class));
+        } finally {
+            if (Files.isSymbolicLink(tempDir)) Files.delete(tempDir);
+            if (Files.exists(moved)) Files.move(moved, tempDir);
+        }
+    }
+
+    @Test
+    void repeatedIdenticalMediaDescriptorIsSentOnce() throws Exception {
+        Path file = createTempFile("report.pdf");
+        var item = new MediaDeliveryService.MediaDescriptor(file.toString(), ".pdf", false, false);
+        processor.deliverMedia(100L, List.of(item, item), null);
+        verify(telegramClient, times(1)).sendDocument(eq(100L), any(byte[].class), anyString(), nullable(String.class), nullable(String.class));
+    }
+
+    @Test
+    void sameFilenameInDifferentDirectoriesIsNotDeduplicated() throws Exception {
+        Path firstDir = Files.createDirectory(tempDir.resolve("first"));
+        Path secondDir = Files.createDirectory(tempDir.resolve("second"));
+        Path first = Files.writeString(firstDir.resolve("report.pdf"), "first");
+        Path second = Files.writeString(secondDir.resolve("report.pdf"), "second");
+        processor.deliverMedia(100L, List.of(
+            new MediaDeliveryService.MediaDescriptor(first.toString(), ".pdf", false, false),
+            new MediaDeliveryService.MediaDescriptor(second.toString(), ".pdf", false, false)), null);
+        verify(telegramClient, times(2)).sendDocument(eq(100L), any(byte[].class), anyString(), nullable(String.class), nullable(String.class));
+    }
 
     @Test
     void invalidMediaPathsDoNotPreventDeliveryOfLaterValidFiles() throws Exception {
