@@ -328,11 +328,10 @@ public class StreamingOrchestrator {
                         toolName = toolCall.substring(0, sep);
                         toolArgs = toolCall.substring(sep + 1);
                     }
-                    // The editor can create its first message after startStream returns
-                    // (delayed-start/draft transport). It owns the authoritative message id,
-                    // so always commit the text segment before rendering tool progress.
+                    // With streaming off, keep all text for the eventual final send.
+                    // Otherwise the editor owns segment commits, even after delayed start.
                     boolean contentStreamedBeforeTool = accumulated.length() > 0;
-                    if (contentStreamedBeforeTool) {
+                    if (contentStreamedBeforeTool && !"off".equalsIgnoreCase(properties.getStreamingTransport())) {
                         streamEditor.onSegmentBreak(chatId, messageId[0], accumulated.toString());
                         accumulated.setLength(0);
                     }

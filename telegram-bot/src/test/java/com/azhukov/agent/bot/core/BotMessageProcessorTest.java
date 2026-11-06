@@ -540,6 +540,29 @@ class BotMessageProcessorTest {
         return new DeliveryFixture(editor, actual, actualProcessor);
     }
 
+    @SuppressWarnings("unchecked")
+    @Test
+    void streamingOffPreservesAnswerBeforeToolAndFinalAnswer() {
+        properties.setStreamingTransport("off");
+        properties.getDisplay().setToolProgress("off");
+        when(telegramClient.sendMessage(eq(100L), anyString(), eq("MarkdownV2"), any(), any(), eq(false)))
+            .thenReturn(Optional.of(41L));
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+            .thenAnswer(inv -> {
+                ((Consumer<String>) inv.getArgument(4)).accept("Before tool ");
+                ((Consumer<String>) inv.getArgument(5)).accept("search");
+                ((Consumer<String>) inv.getArgument(4)).accept("after tool");
+                var result = new AgentBackendClient.ChatResult("Before tool after tool", "model", 1, 10, true);
+                ((Consumer<AgentBackendClient.ChatResult>) inv.getArgument(10)).accept(result);
+                return result;
+            });
+        try (DeliveryFixture fixture = realDeliveryFixture()) {
+            fixture.processor().accept(textEvent(1, 100L, "Hello"));
+            verify(telegramClient).sendMessage(eq(100L), eq("Before tool after tool"), eq("MarkdownV2"), any(), any(), eq(false));
+            verify(telegramClient, never()).editMessageText(eq(100L), eq(-1L), anyString(), any(), anyBoolean());
+        }
+    }
+
     @Test
     void mediaOnlyAnswerDeliversAttachmentWithStreamingOff() throws Exception {
         properties.setStreamingTransport("off");
