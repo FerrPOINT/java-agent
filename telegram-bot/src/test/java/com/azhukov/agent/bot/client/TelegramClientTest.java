@@ -524,6 +524,43 @@ class TelegramClientTest {
         }
 
         @Test
+        void checkedSendPreservesPlainFallbackOnExplicitParseRejection() {
+            stubPostChain(errorResponse(400, "can't parse entities"));
+            when(responseSpec.body(TelegramResponse.class))
+                .thenReturn(errorResponse(400, "can't parse entities"))
+                .thenReturn(successResponseWithResult(Map.of("message_id", 42)));
+            assertThat(client.sendMessageChecked(1L, "text", "MarkdownV2", 7L, 8, null, false))
+                .contains(42L);
+            var params = org.mockito.ArgumentCaptor.forClass(Map.class);
+            verify(bodySpec, times(2)).body(params.capture());
+            assertThat(params.getAllValues().get(0)).containsEntry("parse_mode", "MarkdownV2");
+            assertThat(params.getAllValues().get(1)).doesNotContainKey("parse_mode")
+                .containsEntry("reply_to_message_id", 7L).containsEntry("message_thread_id", 8);
+        }
+
+        @Test
+        void checkedPlainFallbackAmbiguityDoesNotRetryAgain() {
+            stubPostChain(errorResponse(400, "can't parse entities"));
+            when(responseSpec.body(TelegramResponse.class))
+                .thenReturn(errorResponse(400, "can't parse entities"))
+                .thenThrow(new org.springframework.web.client.ResourceAccessException("timeout"));
+            assertThat(client.sendMessageChecked(1L, "text", "MarkdownV2", null, null, null, false)).isEmpty();
+            verify(restClient, times(2)).post();
+        }
+
+        @Test
+        void checkedPlainFallbackPropagatesFloodRefusal() {
+            stubPostChain(errorResponse(400, "can't parse entities"));
+            when(responseSpec.body(TelegramResponse.class))
+                .thenReturn(errorResponse(400, "can't parse entities"))
+                .thenReturn(errorResponseWithParams(429, "Too Many Requests", Map.of("retry_after", IntNode.valueOf(37))));
+            assertThatThrownBy(() -> client.sendMessageChecked(1L, "text", "MarkdownV2", null, null, null, false))
+                .isInstanceOf(TelegramClient.SendRefusalException.class)
+                .satisfies(e -> assertThat(((TelegramClient.SendRefusalException) e).getRetryAfterSeconds()).isEqualTo(37));
+            verify(restClient, times(2)).post();
+        }
+
+        @Test
         void malformedHttp429IsNotDefiniteRefusal() {
             stubPostChain(null);
             when(responseSpec.body(TelegramResponse.class)).thenThrow(

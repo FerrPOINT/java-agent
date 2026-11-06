@@ -301,19 +301,31 @@ public class TelegramClient {
             Optional<TelegramResponse> response = callApi("sendMessage", params);
             return response.flatMap(r -> Optional.ofNullable(r.resultMessageIdAsLong()));
         } catch (TelegramApiException e) {
-            if (e.isRateLimit()) {
-                // The platform REFUSED the send (429) — nothing was delivered.
-                // Return a known failure; the ledger's flood handling keeps the
-                // platform's own retry_after wait (Hermes flood_not_before).
-                throw new SendRefusalException(e.getRetryAfter(), e.getMessage());
+            if (e.getErrorCode() == 400 && e.isParseError() && params.containsKey("parse_mode")) {
+                Map<String, Object> plainParams = new LinkedHashMap<>(params);
+                plainParams.remove("parse_mode");
+                return sendMessageCheckedParams(plainParams);
             }
-            if (e.getErrorCode() > 0) {
-                // Definite Telegram API refusal (4xx/5xx with a code): the
-                // message was NOT accepted. Retrying may succeed later.
-                throw new SendRefusalException(-1, e.getMessage());
-            }
-            return Optional.empty();  // ambiguous transport outcome
+            return classifyCheckedSendFailure(e);
         }
+    }
+
+    private Optional<Long> sendMessageCheckedParams(Map<String, Object> params) {
+        try {
+            return callApi("sendMessage", params).flatMap(r -> Optional.ofNullable(r.resultMessageIdAsLong()));
+        } catch (TelegramApiException e) {
+            return classifyCheckedSendFailure(e);
+        }
+    }
+
+    private Optional<Long> classifyCheckedSendFailure(TelegramApiException e) {
+        if (e.isRateLimit()) {
+            throw new SendRefusalException(e.getRetryAfter(), e.getMessage());
+        }
+        if (e.getErrorCode() > 0) {
+            throw new SendRefusalException(-1, e.getMessage());
+        }
+        return Optional.empty(); // ambiguous transport outcome
     }
 
     /** Typed known-refusal signal for durable delivery (never ambiguous). */
