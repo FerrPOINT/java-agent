@@ -270,6 +270,7 @@ public class StreamingOrchestrator {
         final boolean[] finalized = {false};
         final boolean[] failedFinalDelivery = {false};
         final boolean[] toolObserved = {false};
+        final boolean[] turnFailed = {false};
         // Review notifications are read from the durable pending queue only
         // after finalizing the primary response; the SSE callback is ignored.
 
@@ -504,6 +505,7 @@ public class StreamingOrchestrator {
                 },
                 // onError
                 error -> {
+                    turnFailed[0] = true;
                     if (error instanceof StreamInterruptedException) {
                         // Interrupted — finalize with accumulated content (no raw error text)
                         if (messageId[0] >= 0 && accumulated.length() > 0) {
@@ -558,7 +560,8 @@ public class StreamingOrchestrator {
                     finalized[0],
                     streamResult.memoryUpdated(),
                     streamResult.backendSessionId(),
-                    streamResult.lastReasoning()
+                    streamResult.lastReasoning(),
+                    !turnFailed[0]
                 );
             }
             // Do not replay a request after a tool event: its side effects may

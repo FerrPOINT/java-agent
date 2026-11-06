@@ -1692,6 +1692,25 @@ class BotMessageProcessorTest {
     }
 
     @Test
+    void failedPartialStreamDoesNotStartGoalAutoContinuation() {
+        properties.getGoalAutoContinue().setEnabled(true);
+        BotSessionEntity session = new BotSessionEntity();
+        session.setId(UUID.randomUUID());
+        session.setMetadata("_standingGoal", "Complete the task");
+        when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), any())).thenReturn(session);
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+            .thenAnswer(inv -> {
+                Consumer<String> token = inv.getArgument(4);
+                Consumer<Throwable> error = inv.getArgument(11);
+                token.accept("Partial response");
+                error.accept(new RuntimeException("stream failed"));
+                return new AgentBackendClient.ChatResult("Partial response", "model", 1, 10, false, false);
+            });
+        processor.accept(textEvent(1, 100L, "hello"));
+        verify(goalAutoContinueService, never()).runAutoContinue(any(), any(), any());
+    }
+
+    @Test
     void emptyStreamDoesNotStartGoalAutoContinuation() {
         properties.getGoalAutoContinue().setEnabled(true);
         BotSessionEntity session = new BotSessionEntity();
