@@ -401,27 +401,8 @@ public class StreamingOrchestrator {
                 },
                 // onComplete
                 result -> {
-                    // A native draft stream intentionally has no message id. Its final
-                    // regular message must be sent by finalizeStream so it can cancel the
-                    // heartbeat and remove the draft session. Sending directly here leaked
-                    // the StreamSession indefinitely after a successful response.
-                    if (messageId[0] < 0 && accumulated.length() > 0) {
-                        boolean delivered;
-                        try {
-                            delivered = streamEditor.finalizeStream(chatId, -1L, accumulated.toString());
-                        } catch (TelegramApiException e) {
-                            streamEditor.recordFinalDeliveryFailure(chatId, accumulated.toString(), e.getRetryAfter());
-                            failedFinalDelivery[0] = true;
-                            finalized[0] = false;
-                            return;
-                        }
-                        if (!delivered) {
-                            streamEditor.recordFinalDeliveryFailure(chatId, accumulated.toString());
-                            failedFinalDelivery[0] = true;
-                        }
-                        finalized[0] = delivered;
-                    }
-                    if (messageId[0] >= 0 && accumulated.length() > 0) {
+                    // Native drafts use message ID -1; finalizeStream handles both paths.
+                    if (accumulated.length() > 0) {
                         // Append footer to the streaming message before finalizing
                         String footer = runtimeFooter.format(
                             hooks.resolveModelUsed(session, result),

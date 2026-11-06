@@ -403,6 +403,42 @@ class StreamingOrchestratorTest {
     }
 
     @Test
+    void draftCompletionExtractsAndDeliversMediaAfterFinalText() {
+        properties.setMediaDeliveryEnabled(true);
+        when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong()))
+            .thenReturn(Optional.empty());
+        String response = "answer\nMEDIA:/workspace/report.pdf";
+        stubChatStream(ctx -> {
+            ctx.tokenConsumer.accept(response);
+            ctx.onComplete.accept(new AgentBackendClient.ChatResult(response, "model", 1, 10, true));
+            ctx.returnResult = new AgentBackendClient.ChatResult(response, "model", 1, 10, true, false, null);
+        });
+        var result = orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
+        assertThat(result.streamFinalized()).isTrue();
+        InOrder order = inOrder(streamEditor, hooks);
+        order.verify(streamEditor).finalizeStream(eq(100L), eq(-1L), argThat(text -> !text.contains("MEDIA:")));
+        order.verify(hooks).deliverMedia(eq(100L), argThat(media -> media.size() == 1), isNull());
+    }
+
+    @Test
+    void draftMediaIsRetainedForFallbackWhenFinalTextFails() {
+        properties.setMediaDeliveryEnabled(true);
+        when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong()))
+            .thenReturn(Optional.empty());
+        when(streamEditor.finalizeStream(eq(100L), eq(-1L), anyString())).thenReturn(false);
+        String response = "answer\nMEDIA:/workspace/report.pdf";
+        stubChatStream(ctx -> {
+            ctx.tokenConsumer.accept(response);
+            ctx.onComplete.accept(new AgentBackendClient.ChatResult(response, "model", 1, 10, true));
+            ctx.returnResult = new AgentBackendClient.ChatResult(response, "model", 1, 10, true, false, null);
+        });
+        var result = orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
+        assertThat(result.streamFinalized()).isFalse();
+        verify(streamEditor).recordFinalDeliveryFailure(eq(100L), contains("MEDIA:/workspace/report.pdf"));
+        verify(hooks, never()).deliverMedia(anyLong(), anyList(), any());
+    }
+
+    @Test
     void draftFloodWaitRetainsFinalTextAndCooldown() {
         when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong())).thenReturn(Optional.empty());
         when(streamEditor.finalizeStream(100L, -1L, "draft answer"))
