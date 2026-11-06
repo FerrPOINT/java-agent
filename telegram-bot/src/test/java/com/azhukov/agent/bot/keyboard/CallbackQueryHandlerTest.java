@@ -71,6 +71,15 @@ class CallbackQueryHandlerTest {
     }
 
     @Test
+    void forgedModelCallbackCannotSelectOutsideConfiguredList() {
+        properties.getAvailableModels().add("app-test");
+        assertThat(handler.handle(callbackEvent("cq-deny", "mp:unavailable")))
+            .contains("Model not available");
+        verify(sessionStore, never()).setModelOverride(any(), any());
+        verify(sessionStore, never()).resolveOrCreate(anyString(), anyString(), anyString());
+    }
+
+    @Test
     void handle_mpCallback_noSession_returnsError() {
         when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(null);
 

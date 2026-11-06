@@ -14,7 +14,6 @@ import com.azhukov.agent.service.ImageShrinkerService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
-import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.net.URI;
 import java.nio.file.Files;
@@ -60,20 +59,35 @@ public class VisionAnalyzeTool implements ToolHandler {
     private String loadImageBase64(String source) throws Exception {
         byte[] bytes;
         if (source.startsWith("http://") || source.startsWith("https://")) {
-            // Hermes parity (image_source._http_block_reason): refuse unsafe or
-            // private URLs BEFORE any network I/O — raw openStream() allowed
-            // SSRF probes against internal networks.
-            String blockReason = urlSafety.checkUrl(source);
-            if (blockReason != null) {
-                throw new IllegalArgumentException("blocked: " + blockReason);
-            }
-            var connection = URI.create(source).toURL().openConnection();
-            connection.setConnectTimeout(FETCH_TIMEOUT_MS);
-            connection.setReadTimeout(FETCH_TIMEOUT_MS);
-            try (InputStream in = connection.getInputStream();
-                 ByteArrayOutputStream out = new ByteArrayOutputStream()) {
-                in.transferTo(out);
-                bytes = out.toByteArray();
+            URI current = URI.create(source);
+            for (int redirects = 0; ; redirects++) {
+                String scheme = current.getScheme();
+                if (scheme == null || !(scheme.equalsIgnoreCase("http") || scheme.equalsIgnoreCase("https"))) {
+                    throw new IllegalArgumentException("Unsupported image URL scheme");
+                }
+                String blockReason = urlSafety.checkUrl(current.toString());
+                if (blockReason != null) throw new IllegalArgumentException("blocked: " + blockReason);
+                var connection = (java.net.HttpURLConnection) current.toURL().openConnection();
+                connection.setInstanceFollowRedirects(false);
+                connection.setConnectTimeout(FETCH_TIMEOUT_MS);
+                connection.setReadTimeout(FETCH_TIMEOUT_MS);
+                try {
+                    int status = connection.getResponseCode();
+                    if (status >= 300 && status < 400) {
+                        String location = connection.getHeaderField("Location");
+                        if (location == null || location.isBlank() || redirects == 5) {
+                            throw new IllegalArgumentException("Invalid or excessive image redirects");
+                        }
+                        current = current.resolve(location);
+                        continue;
+                    }
+                    try (InputStream in = connection.getInputStream()) {
+                        bytes = in.readNBytes((int) MAX_IMAGE_BYTES + 1);
+                    }
+                    break;
+                } finally {
+                    connection.disconnect();
+                }
             }
             // Hermes parity: 50MB stream cap (image_source.SourceTooLarge)
             if (bytes.length > MAX_IMAGE_BYTES) {

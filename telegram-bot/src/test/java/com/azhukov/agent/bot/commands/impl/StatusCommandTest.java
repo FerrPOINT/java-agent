@@ -17,6 +17,28 @@ import static org.mockito.Mockito.*;
 class StatusCommandTest {
 
     @Test
+    void staleOverrideShowsEffectiveAllowedModel() {
+        BotProperties props = new BotProperties();
+        props.getAvailableModels().add("app-test");
+        props.setDefaultModel("app-test");
+        var cmd = new StatusCommand(props, mock(AgentBackendClient.class));
+        var session = newSession(UUID.randomUUID());
+        session.setModelOverride("obsolete");
+        assertThat(cmd.handle(makeEvent(""), session)).contains("Model: app-test").doesNotContain("obsolete");
+    }
+
+    @Test
+    void unrestrictedWithoutOverrideShowsBackendDefaultRatherThanBotDefault() {
+        BotProperties props = new BotProperties();
+        props.setDefaultModel("bot-configured-model");
+        var cmd = new StatusCommand(props, mock(AgentBackendClient.class));
+        var session = newSession(UUID.randomUUID());
+        assertThat(cmd.handle(makeEvent(""), session))
+            .contains("Model: backend default")
+            .doesNotContain("bot-configured-model");
+    }
+
+    @Test
     void nameAndDescription() {
         var cmd = new StatusCommand(mock(BotProperties.class), mock(AgentBackendClient.class));
         assertThat(cmd.name()).isEqualTo("status");
@@ -63,7 +85,7 @@ class StatusCommandTest {
     }
 
     @Test
-    void usesDefaultModelWhenOverrideBlank() {
+    void usesBackendDefaultWhenNoOverrideAndModelListEmpty() {
         BotProperties props = mock(BotProperties.class);
         when(props.getAgentName()).thenReturn("Agent");
         when(props.getWorkingDirectory()).thenReturn("/wd");
@@ -76,7 +98,7 @@ class StatusCommandTest {
         var cmd = new StatusCommand(props, client);
         BotSessionEntity session = newSession(sessionId);
         String result = cmd.handle(makeEvent(""), session);
-        assertThat(result).contains("default-model");
+        assertThat(result).contains("Model: backend default").doesNotContain("default-model");
         assertThat(result).contains("unknown");
     }
 

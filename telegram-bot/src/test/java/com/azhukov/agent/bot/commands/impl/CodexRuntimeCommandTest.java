@@ -46,6 +46,13 @@ class CodexRuntimeCommandTest {
     }
 
     @Test
+    void unrestrictedWithoutOverrideShowsBackendDefault() {
+        properties.getAvailableModels().clear();
+        String result = cmd.handle(textEvent("/codex_runtime", null), session);
+        assertThat(result).contains("Model: backend default").doesNotContain("kimi-k2.6");
+    }
+
+    @Test
     void listModels() {
         String result = cmd.handle(textEvent("/codex_runtime", "list"), session);
         assertThat(result).contains("kimi-k2.6");
@@ -67,6 +74,22 @@ class CodexRuntimeCommandTest {
         String result = cmd.handle(textEvent("/codex_runtime", "nonexistent"), session);
         assertThat(result).contains("not in available models");
         verifyNoInteractions(store);
+    }
+
+    @Test
+    void resetWithoutModelPolicyReportsBackendDefault() {
+        properties.getAvailableModels().clear();
+        String result = cmd.handle(textEvent("/codex_runtime", "reset"), session);
+        assertThat(result).contains("backend default").doesNotContain("kimi-k2.6");
+        verify(store).setModelOverride(session.getId(), null);
+    }
+
+    @Test
+    void resetReportsFirstAllowedModelWhenDefaultIsUnavailable() {
+        properties.setDefaultModel("retired");
+        String result = cmd.handle(textEvent("/codex_runtime", "reset"), session);
+        assertThat(result).contains("kimi-k2.6").doesNotContain("retired");
+        verify(store).setModelOverride(session.getId(), null);
     }
 
     @Test

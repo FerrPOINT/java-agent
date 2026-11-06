@@ -78,7 +78,7 @@ class AgentBackendClientTest {
         // then wrap them in the facade. ModelApiClient.init() is invoked so the
         // base URL is populated (mirrors the @PostConstruct lifecycle).
         SessionApiClient sessions = new SessionApiClient(restClient, objectMapper);
-        MessageApiClient messages = new MessageApiClient(restClient, objectMapper);
+        MessageApiClient messages = new MessageApiClient(restClient, objectMapper, properties);
         ToolApiClient tools = new ToolApiClient(restClient, objectMapper);
         SkillApiClient skillClient = new SkillApiClient(restClient, objectMapper);
         MemoryApiClient memoryClient = new MemoryApiClient(restClient, objectMapper);
@@ -100,6 +100,48 @@ class AgentBackendClientTest {
     // ═══════════════════════════════════════════════════════════════
     // chat()
     // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    void chatWithoutAllowedListAndOverrideLeavesModelToBackend() {
+        properties.getAvailableModels().clear();
+        properties.setDefaultModel("bot-display-default");
+        when(responseSpec.body(String.class)).thenReturn("{\"response\":\"OK\"}");
+        client.chat("hello", "session", new BotSessionEntity());
+        verify(postSpec).body(argThat((Object body) -> body instanceof java.util.Map<?, ?> map
+            && !map.containsKey("model")));
+    }
+
+    @Test
+    void streamWithoutAllowedListAndOverrideLeavesModelToBackend() {
+        properties.getAvailableModels().clear();
+        properties.setDefaultModel("bot-display-default");
+        when(responseSpec.body(InputStream.class)).thenReturn(sseStream("data:{\"type\":\"done\"}"));
+        client.chatStream("hello", "s1", new BotSessionEntity(), t -> {}, t -> {}, (n, r) -> {}, t -> {}, r -> {}, e -> {});
+        verify(postSpec).body(argThat((Object body) -> body instanceof java.util.Map<?, ?> map && !map.containsKey("model")));
+    }
+
+    @Test
+    void chatWithoutAllowedListRetainsExplicitModelOverride() {
+        properties.getAvailableModels().clear();
+        when(responseSpec.body(String.class)).thenReturn("{\"response\":\"OK\"}");
+        var runtime = new BotSessionEntity();
+        runtime.setModelOverride("custom-model");
+        client.chat("hello", "session", runtime);
+        verify(postSpec).body(argThat((Object body) -> body instanceof java.util.Map<?, ?> map
+            && "custom-model".equals(map.get("model"))));
+    }
+
+    @Test
+    void chatReplacesStaleSessionModelWithConfiguredAllowedModel() {
+        properties.getAvailableModels().add("app-test");
+        properties.setDefaultModel("app-test");
+        when(responseSpec.body(String.class)).thenReturn("{\"response\":\"OK\"}");
+        BotSessionEntity runtime = new BotSessionEntity();
+        runtime.setModelOverride("old-unavailable");
+        client.chat("hello", "session", runtime);
+        verify(postSpec).body(argThat((Object body) -> body instanceof java.util.Map<?, ?> map
+            && "app-test".equals(map.get("model"))));
+    }
 
     @Test
     void chat_success_returnsResponseField() {
@@ -301,6 +343,18 @@ class AgentBackendClientTest {
     // ═══════════════════════════════════════════════════════════════
     // chatStream()
     // ═══════════════════════════════════════════════════════════════
+
+    @Test
+    void streamingReplacesStaleSessionModelWithAllowedModel() {
+        properties.getAvailableModels().add("app-test");
+        properties.setDefaultModel("app-test");
+        BotSessionEntity runtime = new BotSessionEntity();
+        runtime.setModelOverride("old-unavailable");
+        when(responseSpec.body(InputStream.class)).thenReturn(sseStream("data:{\"type\":\"done\"}"));
+        client.chatStream("hello", "s1", runtime, t -> {}, t -> {}, (n, r) -> {}, t -> {}, r -> {}, e -> {});
+        verify(postSpec).body(argThat((Object body) -> body instanceof java.util.Map<?, ?> map
+            && "app-test".equals(map.get("model"))));
+    }
 
     @Test
     void chatStream_tokensAndDone_returnsAccumulatedContent() {

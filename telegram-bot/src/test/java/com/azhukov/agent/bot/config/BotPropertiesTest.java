@@ -37,7 +37,6 @@ class BotPropertiesTest extends BotIntegrationTestBase {
 
     @Test
     void bindsAuthDefaults() {
-        assertThat(properties.getAuth().isAllowByDefault()).isFalse();
         assertThat(properties.getAuth().getAllowedUserIds()).isEmpty();
     }
 

@@ -96,6 +96,28 @@ class ParallelApprovalGateParityTest {
     }
 
     @Test
+    void sessionWorkdirRelativeAndAbsoluteSameTargetAreNotParallel(@org.junit.jupiter.api.io.TempDir java.nio.file.Path workdir) throws Exception {
+        var active = new AtomicInteger();
+        var maxActive = new AtomicInteger();
+        var svc = mock(ToolExecutionService.class);
+        when(svc.enforceToolResultBudget(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(svc.execute(anyString(), anyString(), anyString(), any(), any(), any())).thenAnswer(inv -> {
+            int now = active.incrementAndGet();
+            maxActive.accumulateAndGet(now, Math::max);
+            try { Thread.sleep(80); return ToolResult.ok("done"); }
+            finally { active.decrementAndGet(); }
+        });
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        var calls = List.of(new ToolCall("a", "write_file", mapper.writeValueAsString(java.util.Map.of("path", "file"))),
+            new ToolCall("b", "write_file", mapper.writeValueAsString(java.util.Map.of("path", workdir.resolve("file").toString()))));
+        var session = Session.create("user", "noop", "noop")
+            .withMetadata(com.azhukov.agent.tools.terminal.TerminalTool.META_WORKDIR, workdir.toString());
+        executor(new AgentProperties(), null, null, svc).executeToolBatch(calls, Set.of("write_file"),
+            session, mock(TurnState.class), 1, false, null);
+        assertThat(maxActive.get()).isEqualTo(1);
+    }
+
+    @Test
     @DisplayName("Without approval-requiring tools the parallel path still applies")
     void nonApprovalBatchStillParallelizes() {
         AgentProperties props = new AgentProperties();

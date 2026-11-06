@@ -46,6 +46,46 @@ class IterationBudgetRefundTest {
     }
 
     @Test
+    void refundRetainsExhaustionWhenToolDurationLimitStillExceeded() {
+        AgentProperties properties = new AgentProperties();
+        properties.getBudget().setMaxToolDurationMsPerTurn(5);
+        DefaultIterationBudget b = new DefaultIterationBudget(properties);
+        var snap = b.recordToolExecution(b.startTurn(UUID.randomUUID()), "execute_code", 5);
+        var refunded = b.refundToolExecution(snap);
+        assertThat(refunded.toolExecutions()).isZero();
+        assertThat(refunded.totalToolDurationMs()).isEqualTo(5);
+        assertThat(refunded.exhausted()).isTrue();
+        assertThat(b.status(refunded).allowed()).isFalse();
+        assertThat(b.status(refunded).reason()).isEqualTo("max tool duration reached");
+    }
+
+    @Test
+    void refundDoesNotClearOtherBudgetReasons() {
+        AgentProperties properties = new AgentProperties();
+        properties.getBudget().setMaxTokensPerTurn(10);
+        DefaultIterationBudget b = new DefaultIterationBudget(properties);
+        var snap = b.recordToolExecution(b.startTurn(UUID.randomUUID()), "terminal", 1);
+        snap = b.recordModelCall(snap, 8, 2);
+        var refunded = b.refundToolExecution(snap);
+        assertThat(refunded.exhausted()).isTrue();
+        assertThat(refunded.reason()).isEqualTo("max tokens reached");
+        assertThat(b.isExhausted(refunded)).isTrue();
+    }
+
+    @Test
+    void refundedExecutionAfterExhaustedBatchDoesNotRefundEarlierExecution() {
+        AgentProperties properties = new AgentProperties();
+        properties.getBudget().setMaxToolExecutionsPerTurn(1);
+        DefaultIterationBudget b = new DefaultIterationBudget(properties);
+        var snapshot = b.recordToolExecution(b.startTurn(UUID.randomUUID()), "first", 3);
+        snapshot = b.recordToolExecution(snapshot, "refunded", 4);
+        snapshot = b.refundToolExecution(snapshot);
+        assertThat(snapshot.toolExecutions()).isEqualTo(1);
+        assertThat(snapshot.totalToolDurationMs()).isEqualTo(7);
+        assertThat(b.isExhausted(snapshot)).isTrue();
+    }
+
+    @Test
     void refundAtZeroIsNoop() {
         DefaultIterationBudget b = budget();
         var snap = b.startTurn(UUID.randomUUID());

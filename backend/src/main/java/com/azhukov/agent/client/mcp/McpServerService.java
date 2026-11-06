@@ -70,7 +70,8 @@ public class McpServerService {
      * Starts the MCP server if {@code agent.mcp.server.enabled} is true.
      * Registers all tools from the {@link ToolRegistry} as MCP tool specifications.
      */
-    public void start() {
+    public synchronized void start() {
+        if (mcpServer != null) return;
         AgentProperties.McpProperties.Server config = properties.getMcp().getServer();
         if (!config.isEnabled()) {
             log.debug("MCP server mode is disabled");
@@ -88,7 +89,7 @@ public class McpServerService {
                 .tools(true)
                 .build();
 
-            transportProvider = createTransportProvider(config);
+            if (transportProvider == null) transportProvider = createTransportProvider(config);
 
             mcpServer = McpServer.sync(transportProvider)
                 .serverInfo(serverInfo)
@@ -115,7 +116,7 @@ public class McpServerService {
 
             McpServerFeatures.SyncToolSpecification spec = McpServerFeatures.SyncToolSpecification.builder()
                 .tool(tool)
-                .callHandler((exchange, request) -> handleToolCall(def.name(), request))
+                .callHandler((exchange, request) -> handleToolCall(def.name(), request, exchange.sessionId(), exchange.transportContext()))
                 .build();
 
             specs.add(spec);
@@ -126,12 +127,51 @@ public class McpServerService {
     /**
      * Handles an MCP tool call by delegating to the agent's {@link ToolRegistry}.
      */
-    private McpSchema.CallToolResult handleToolCall(String toolName, McpSchema.CallToolRequest request) {
+    private static final String MCP_USER = "agent.user";
+    private static final String MCP_ROLE = "agent.role";
+    private static final String MCP_ACCESS = "agent.access";
+
+    private McpSchema.CallToolResult handleToolCall(String toolName, McpSchema.CallToolRequest request, String mcpSessionId,
+                                                     io.modelcontextprotocol.common.McpTransportContext transportContext) {
         try {
+            if (mcpSessionId == null || mcpSessionId.isBlank()) {
+                return McpSchema.CallToolResult.builder().addTextContent("MCP session is required").isError(true).build();
+            }
             String argumentsJson = objectMapper.writeValueAsString(request.arguments());
-            Session session = Session.create("mcp-client", "mcp", "mcp");
-            ToolResult result = toolRegistry.execute(toolName, "mcp-" + System.nanoTime(),
-                argumentsJson, Message.user(""), session);
+            String owner = transportContext == null ? null : (String) transportContext.get(MCP_USER);
+            String role = transportContext == null ? null : (String) transportContext.get(MCP_ROLE);
+            if (owner == null || owner.isBlank()) {
+                if ("sse".equalsIgnoreCase(properties.getMcp().getServer().getTransport())) {
+                    return McpSchema.CallToolResult.builder().addTextContent("Authenticated identity is required").isError(true).build();
+                }
+                owner = "mcp-client";
+            }
+            // Length-prefix the authenticated owner to prevent ambiguous identities.
+            var sessionId = java.util.UUID.nameUUIDFromBytes(
+                ("mcp-session:" + owner.length() + ":" + owner + mcpSessionId)
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            Session session = new Session(sessionId, owner, null, "mcp", "mcp", null, java.util.Map.of());
+            String priorUser = com.azhukov.agent.core.security.UserContext.getUserId();
+            String priorRole = com.azhukov.agent.core.security.UserContext.getRole();
+            var priorAccess = com.azhukov.agent.core.security.UserContext.centralAccess();
+            var access = transportContext == null ? null : (com.pdlc.auth.HumanApplicationAccess) transportContext.get(MCP_ACCESS);
+            ToolResult result;
+            try {
+                if (access != null) {
+                    if (!access.subject().equals(owner) || !access.role().equals(role)) {
+                        throw new org.springframework.security.access.AccessDeniedException("MCP authority mismatch");
+                    }
+                    com.azhukov.agent.core.security.UserContext.setCentral(access);
+                    com.azhukov.agent.core.security.UserContext.requireCurrentAccess();
+                } else {
+                    com.azhukov.agent.core.security.UserContext.set(owner, role);
+                }
+                result = toolRegistry.execute(toolName, "mcp-" + System.nanoTime(), argumentsJson, Message.user(""), session);
+            } finally {
+                if (priorAccess != null) com.azhukov.agent.core.security.UserContext.setCentral(priorAccess);
+                else if (priorUser == null) com.azhukov.agent.core.security.UserContext.clear();
+                else com.azhukov.agent.core.security.UserContext.set(priorUser, priorRole);
+            }
 
             McpSchema.CallToolResult.Builder builder = McpSchema.CallToolResult.builder()
                 .addTextContent(modelVisibleResult(result));
@@ -170,16 +210,36 @@ public class McpServerService {
         JacksonMcpJsonMapper jsonMapper = new JacksonMcpJsonMapper(objectMapper);
 
         if ("sse".equalsIgnoreCase(config.getTransport())) {
+            var keepAlive = config.getSseKeepAliveInterval();
+            if (keepAlive == null || keepAlive.isZero() || keepAlive.isNegative()) {
+                throw new IllegalArgumentException("MCP SSE keep-alive interval must be positive");
+            }
             HttpServletSseServerTransportProvider sseProvider = HttpServletSseServerTransportProvider.builder()
                 .jsonMapper(jsonMapper)
                 .sseEndpoint(config.getSseEndpoint())
                 .messageEndpoint(config.getMessageEndpoint())
+                .keepAliveInterval(keepAlive)
+                .contextExtractor(request -> {
+                    String user = com.azhukov.agent.core.security.UserContext.getUserId();
+                    String role = com.azhukov.agent.core.security.UserContext.getRole();
+                    if (user == null) return io.modelcontextprotocol.common.McpTransportContext.EMPTY;
+                    var context = new java.util.HashMap<String, Object>();
+                    context.put(MCP_USER, user);
+                    context.put(MCP_ROLE, role == null ? com.azhukov.agent.core.security.UserContext.ROLE_USER : role);
+                    var access = com.azhukov.agent.core.security.UserContext.centralAccess();
+                    if (access != null) context.put(MCP_ACCESS, access);
+                    return io.modelcontextprotocol.common.McpTransportContext.create(context);
+                })
                 .build();
 
             // Register the SSE servlet with Spring Boot's embedded servlet container
-            servletRegistration = new ServletRegistrationBean<>(sseProvider,
-                config.getSseEndpoint(), config.getMessageEndpoint());
-            servletRegistration.setLoadOnStartup(1);
+            if (servletRegistration == null) {
+                servletRegistration = new ServletRegistrationBean<>(new OwnedMcpSseServlet(sseProvider),
+                    config.getSseEndpoint(), config.getMessageEndpoint());
+                servletRegistration.setLoadOnStartup(1);
+            } else {
+                ((OwnedMcpSseServlet) servletRegistration.getServlet()).replaceDelegate(sseProvider);
+            }
 
             log.info("MCP SSE transport: sse={}, message={}", config.getSseEndpoint(), config.getMessageEndpoint());
             return sseProvider;
@@ -190,10 +250,14 @@ public class McpServerService {
         return new StdioServerTransportProvider(jsonMapper);
     }
 
-    /**
-     * Returns the servlet registration bean for SSE transport, or null if stdio.
-     * This is used by a configuration class to register the servlet.
-     */
+    /** Prepare the servlet before the web server starts; tool registration remains deferred. */
+    public synchronized ServletRegistrationBean<?> prepareSseServletRegistration() {
+        if (servletRegistration == null) {
+            transportProvider = createTransportProvider(properties.getMcp().getServer());
+        }
+        return servletRegistration;
+    }
+
     public ServletRegistrationBean<?> getServletRegistration() {
         return servletRegistration;
     }
@@ -218,7 +282,7 @@ public class McpServerService {
     }
 
     @PreDestroy
-    public void stop() {
+    public synchronized void stop() {
         if (mcpServer != null) {
             try {
                 mcpServer.closeGracefully();

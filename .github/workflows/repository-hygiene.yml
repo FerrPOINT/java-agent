@@ -1,0 +1,26 @@
+name: Repository hygiene
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  hygiene:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          persist-credentials: false
+      - name: Checker regression tests
+        run: python3 -B scripts/tests/test_repository_hygiene.py
+      - name: Exact candidate paths
+        run: python3 -B scripts/check_repository_hygiene.py --ref "$CANDIDATE_SHA"

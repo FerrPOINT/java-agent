@@ -70,6 +70,78 @@ class ToolExecutionServiceTest {
     }
 
     @Test
+    void sessionCancellationInterruptsSequentialToolWorker() throws Exception {
+        var token = new InterruptToken();
+        service.setInterruptToken(token);
+        var started = new java.util.concurrent.CountDownLatch(1);
+        var stopped = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var result = new java.util.concurrent.atomic.AtomicReference<ToolResult>();
+        when(guardrail.beforeCall("read_file", "{}")).thenReturn(GuardrailDecision.allow("read_file"));
+        when(guardrail.afterCall(eq("read_file"), eq("{}"), any(), anyBoolean())).thenReturn(GuardrailDecision.allow("read_file"));
+        when(redactor.redact(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(toolResultClassifier.classify(any())).thenReturn(ToolResultClassifier.ResultType.FAILURE);
+        when(toolOutputLimiter.truncate(any(), anyString())).thenAnswer(inv -> inv.getArgument(0));
+        when(toolRegistry.execute(eq("read_file"), eq("c1"), eq("{}"), any(), any())).thenAnswer(inv -> {
+            started.countDown();
+            try { release.await(); }
+            catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            finally { stopped.countDown(); }
+            return ToolResult.ok("done");
+        });
+        var caller = new Thread(() -> result.set(service.execute("read_file", "c1", "{}", LAST_MSG, SESSION)));
+        caller.start();
+        try {
+            assertThat(started.await(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            token.cancel(SESSION.id());
+            caller.join(1200);
+            assertThat(caller.isAlive()).isFalse();
+            assertThat(stopped.await(1, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(result.get().success()).isFalse();
+            token.reset(SESSION.id());
+            when(toolRegistry.execute(eq("read_file"), eq("c1"), eq("{}"), any(), any())).thenReturn(ToolResult.ok("again"));
+            assertThat(service.execute("read_file", "c1", "{}", LAST_MSG, SESSION).success()).isTrue();
+        } finally {
+            release.countDown();
+            caller.join(2000);
+            stopped.await(2, java.util.concurrent.TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    void interruptedCallerCancelsWorkerBeforeSideEffect() throws Exception {
+        var entered = new java.util.concurrent.CountDownLatch(1);
+        var interrupted = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var finished = new java.util.concurrent.CountDownLatch(1);
+        var sideEffect = new java.util.concurrent.atomic.AtomicBoolean();
+        when(guardrail.beforeCall("read_file", "{}")).thenReturn(GuardrailDecision.allow("read_file"));
+        when(guardrail.afterCall(eq("read_file"), eq("{}"), any(), anyBoolean())).thenReturn(GuardrailDecision.allow("read_file"));
+        when(redactor.redact(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(toolResultClassifier.classify(any())).thenReturn(ToolResultClassifier.ResultType.FAILURE);
+        when(toolOutputLimiter.truncate(any(), anyString())).thenAnswer(inv -> inv.getArgument(0));
+        when(toolRegistry.execute(eq("read_file"), eq("c1"), eq("{}"), any(), any())).thenAnswer(inv -> {
+            entered.countDown();
+            try { release.await(); sideEffect.set(true); }
+            catch (InterruptedException ex) { interrupted.countDown(); Thread.currentThread().interrupt(); }
+            finally { finished.countDown(); }
+            return ToolResult.ok("done");
+        });
+        var caller = new Thread(() -> service.execute("read_file", "c1", "{}", LAST_MSG, SESSION));
+        caller.start();
+        try {
+            assertThat(entered.await(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            caller.interrupt();
+            caller.join(2000);
+            assertThat(interrupted.await(500, java.util.concurrent.TimeUnit.MILLISECONDS)).isTrue();
+        } finally {
+            release.countDown();
+            finished.await(2, java.util.concurrent.TimeUnit.SECONDS);
+        }
+        assertThat(sideEffect.get()).isFalse();
+    }
+
+    @Test
     @DisplayName("Should execute tool successfully and return redacted, truncated result")
     void shouldExecuteToolSuccessfully() {
         String toolName = "web_search";

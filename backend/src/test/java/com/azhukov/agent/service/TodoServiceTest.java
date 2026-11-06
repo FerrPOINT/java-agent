@@ -129,7 +129,8 @@ class TodoServiceTest {
         entity.setPriority("medium");
         entity.setCreatedAt(Instant.now());
 
-        when(todoRepository.findById(id)).thenReturn(Optional.of(entity));
+        when(todoRepository.findOwnerId(id)).thenReturn(Optional.of("user-1"));
+        when(todoRepository.findOwnedForUpdate(id, "user-1")).thenReturn(Optional.of(entity));
         when(todoRepository.save(any(TodoEntity.class))).thenAnswer(inv -> inv.getArgument(0));
 
         Optional<TodoDto> result = todoService.markDone(id);
@@ -141,7 +142,7 @@ class TodoServiceTest {
     @Test
     void markDone_nonExistentReturnsEmpty() {
         UUID id = UUID.randomUUID();
-        when(todoRepository.findById(id)).thenReturn(Optional.empty());
+        when(todoRepository.findOwnerId(id)).thenReturn(Optional.empty());
 
         Optional<TodoDto> result = todoService.markDone(id);
 
@@ -159,7 +160,7 @@ class TodoServiceTest {
         entity.setPriority("medium");
         entity.setCreatedAt(Instant.now());
 
-        when(todoRepository.findById(id)).thenReturn(Optional.of(entity));
+        when(todoRepository.findOwnedForUpdate(id, "default")).thenReturn(Optional.empty());
 
         Optional<TodoDto> result = todoService.markDoneForUser(id, "default");
 

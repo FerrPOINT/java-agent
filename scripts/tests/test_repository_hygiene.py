@@ -80,14 +80,35 @@ class RepositoryHygieneTests(unittest.TestCase):
         self.assertEqual({f["path"] for f in json.loads(result.stdout)["findings"]}, set(forbidden))
         self.assertNotIn("SYNTHETIC_CONTENT_MUST_NOT_BE_PRINTED", result.stdout + result.stderr)
 
+    def test_recovery_packets_and_raw_results_are_not_repository_inputs(self) -> None:
+        forbidden = [
+            "handoff/workspace-recovery-20261020/sources/file.source",
+            "handoff/workspace-recovery-20300101/index.json",
+            "docs/assets/screens/qa/browser.log",
+            "docs/reports/run.log",
+            "frontend/playwright-report/index.html",
+            "frontend/test-results/run.json",
+            "htmlcov/index.html",
+            ".pytest_cache/v/cache/nodeids",
+            ".ruff_cache/result",
+            ".mypy_cache/result",
+            ".gradle/cache/result",
+        ]
+        for name in forbidden:
+            self.add(name)
+        result = self.run_check("--index")
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertEqual({f["path"] for f in json.loads(result.stdout)["findings"]}, set(forbidden))
+
     def test_untracked_caches_and_intentional_assets_pass(self) -> None:
         for name in [
             "gradle/wrapper/gradle-wrapper.jar",
             "api/openapi.json",
             "frontend/src/generated/api.ts",
             "docs/screenshots/test.png",
-            "docs/assets/screens/qa/run.log",
-            "handoff/workspace-recovery/payload.source",
+            "tests/fixtures/execution/run.log",
+            "tests/fixtures/recovery/payload.source",
+            "docs/workspace-recovery-guide.md",
             "plugins/dashboard/dist/app.js",
             "src/workspace-navigation.tsx",
             "src/targeting.py",

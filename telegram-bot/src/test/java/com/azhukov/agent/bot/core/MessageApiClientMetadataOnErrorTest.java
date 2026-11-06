@@ -78,7 +78,7 @@ class MessageApiClientMetadataOnErrorTest {
 
         AtomicReference<Throwable> errorRef = new AtomicReference<>();
 
-        MessageApiClient client = new MessageApiClient(restClient, mapper);
+        MessageApiClient client = new MessageApiClient(restClient, mapper, new com.azhukov.agent.bot.config.BotProperties());
         AgentBackendClient.ChatResult result = client.chatStream(
             "hi", null, null,
             token -> { },              // tokenConsumer
@@ -117,7 +117,7 @@ class MessageApiClientMetadataOnErrorTest {
         );
         AtomicReference<String> review = new AtomicReference<>();
 
-        MessageApiClient client = new MessageApiClient(restClient, mapper);
+        MessageApiClient client = new MessageApiClient(restClient, mapper, new com.azhukov.agent.bot.config.BotProperties());
         client.chatStream("hi", null, null, token -> { }, toolCall -> { }, (name, preview) -> { },
             retry -> { }, review::set, clarify -> { }, complete -> { }, error -> { });
 
@@ -134,7 +134,7 @@ class MessageApiClientMetadataOnErrorTest {
         );
         AtomicReference<String> clarify = new AtomicReference<>();
 
-        MessageApiClient client = new MessageApiClient(restClient, mapper);
+        MessageApiClient client = new MessageApiClient(restClient, mapper, new com.azhukov.agent.bot.config.BotProperties());
         client.chatStream("hi", null, null, token -> { }, toolCall -> { }, (name, preview) -> { },
             retry -> { }, review -> { }, clarify::set, complete -> { }, error -> { });
 
@@ -150,7 +150,7 @@ class MessageApiClientMetadataOnErrorTest {
 
         AtomicReference<Throwable> errorRef = new AtomicReference<>();
 
-        MessageApiClient client = new MessageApiClient(restClient, mapper);
+        MessageApiClient client = new MessageApiClient(restClient, mapper, new com.azhukov.agent.bot.config.BotProperties());
         AgentBackendClient.ChatResult result = client.chatStream(
             "hi", null, null,
             token -> { }, toolCall -> { }, (name, preview) -> { }, retry -> { },
