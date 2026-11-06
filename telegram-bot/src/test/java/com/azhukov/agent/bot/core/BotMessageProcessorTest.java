@@ -517,6 +517,7 @@ class BotMessageProcessorTest {
                                    BotMessageProcessor processor) implements AutoCloseable {
         @Override public void close() {
             orchestrator.shutdownReviewPollScheduler();
+            processor.stopDeferredFinalDeliveryExecutor();
             editor.clearStream(100L);
             org.springframework.test.util.ReflectionTestUtils.invokeMethod(editor, "destroy");
         }
@@ -768,6 +769,35 @@ class BotMessageProcessorTest {
             .map(chunk -> chunk.replaceFirst("^\\\\\\(\\d+/\\d+\\\\\\) ", ""))
             .collect(java.util.stream.Collectors.joining()).replace("\\_", "_");
         assertThat(restored).isEqualTo(review);
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void previousAmbiguousDraftSegmentDoesNotPreventDeferredFinalDelivery() {
+        properties.setStreamingTransport("draft");
+        properties.setHeartbeatIntervalSeconds(0);
+        properties.getDisplay().setToolProgress("off");
+        when(telegramClient.supportsDraftStreaming(anyString())).thenReturn(true);
+        when(telegramClient.sendDraft(anyLong(), anyString(), anyInt())).thenReturn(true);
+        when(telegramClient.sendMessage(eq(100L), anyString(), eq("MarkdownV2"), any(), any(), eq(false)))
+            .thenReturn(Optional.empty(), Optional.empty());
+        when(telegramClient.takeLastRetryAfterSeconds()).thenReturn(-1, 1, -1);
+        when(telegramClient.sendMessage(eq(100L), eq("Final answer"), eq("MarkdownV2"), any(), any()))
+            .thenReturn(Optional.of(42L));
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+            .thenAnswer(inv -> {
+                ((Consumer<String>) inv.getArgument(4)).accept("Previous segment");
+                ((Consumer<String>) inv.getArgument(5)).accept("search");
+                ((Consumer<String>) inv.getArgument(4)).accept("Final answer");
+                var result = new AgentBackendClient.ChatResult("Final answer", "model", 1, 10, true);
+                ((Consumer<AgentBackendClient.ChatResult>) inv.getArgument(10)).accept(result);
+                return result;
+            });
+        try (DeliveryFixture fixture = realDeliveryFixture()) {
+            fixture.processor().accept(textEvent(1, 100L, "Hello"));
+            verify(telegramClient, timeout(5000)).sendMessage(eq(100L), eq("Final answer"), eq("MarkdownV2"), any(), any());
+            verify(telegramClient, times(1)).sendMessage(eq(100L), eq("Previous segment"), eq("MarkdownV2"), any(), any(), eq(false));
+        }
     }
 
     @Test
