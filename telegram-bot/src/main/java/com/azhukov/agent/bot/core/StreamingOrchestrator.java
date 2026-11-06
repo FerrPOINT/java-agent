@@ -561,7 +561,7 @@ public class StreamingOrchestrator {
                     streamResult.memoryUpdated(),
                     streamResult.backendSessionId(),
                     streamResult.lastReasoning(),
-                    !turnFailed[0]
+                    !turnFailed[0] && streamResult.turnSucceeded()
                 );
             }
             // Do not replay a request after a tool event: its side effects may
@@ -571,7 +571,8 @@ public class StreamingOrchestrator {
                 streamEditor.clearStream(chatId);
                 return new AgentBackendClient.ChatResult("", streamResult.modelUsed(),
                     streamResult.contextTokens(), streamResult.contextLength(), false,
-                    streamResult.memoryUpdated(), streamResult.backendSessionId(), streamResult.lastReasoning());
+                    streamResult.memoryUpdated(), streamResult.backendSessionId(), streamResult.lastReasoning(),
+                    !turnFailed[0] && streamResult.turnSucceeded());
             }
             // Once the streaming request was sent, an empty response does not
             // prove the backend skipped side effects. Never issue a second turn.
@@ -579,11 +580,12 @@ public class StreamingOrchestrator {
             streamEditor.discardStreamPreview(chatId);
             return new AgentBackendClient.ChatResult(accumulated.toString(),
                 streamResult.modelUsed(), streamResult.contextTokens(), streamResult.contextLength(), false,
-                streamResult.memoryUpdated(), streamResult.backendSessionId(), streamResult.lastReasoning());
+                streamResult.memoryUpdated(), streamResult.backendSessionId(), streamResult.lastReasoning(),
+                !turnFailed[0] && streamResult.turnSucceeded());
         } catch (StreamInterruptedException e) {
             // Already handled in onError callback
             progressBubbles.remove(chatId);
-            return new AgentBackendClient.ChatResult(accumulated.toString(), null, null, null, finalized[0], false);
+            return new AgentBackendClient.ChatResult(accumulated.toString(), null, null, null, finalized[0], false, null, null, false);
         } catch (Exception e) {
             progressBubbles.remove(chatId);
             log.warn("Streaming failed for chat {}: {}", chatId, e.getMessage());

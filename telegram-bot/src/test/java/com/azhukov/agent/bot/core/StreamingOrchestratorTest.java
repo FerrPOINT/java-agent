@@ -613,6 +613,29 @@ class StreamingOrchestratorTest {
     }
 
     @Test
+    void cancelledBeforeAnyTokenDoesNotReportSuccess() {
+        stubChatStream(ctx -> {
+            ctx.onError.accept(new java.util.concurrent.CancellationException("cancelled"));
+            ctx.returnResult = new AgentBackendClient.ChatResult("", "model", 1, 10, false, false, null, null, false);
+        });
+        var result = orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
+        assertThat(result.turnSucceeded()).isFalse();
+        verify(backendClient, never()).chat(anyString(), nullable(String.class), any());
+    }
+
+    @Test
+    void cancelledAfterToolWithoutFinalTextDoesNotReportSuccess() {
+        stubChatStream(ctx -> {
+            ctx.toolCallConsumer.accept("search");
+            ctx.onError.accept(new java.util.concurrent.CancellationException("cancelled"));
+            ctx.returnResult = new AgentBackendClient.ChatResult("", "model", 1, 10, false, false, null, null, false);
+        });
+        var result = orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
+        assertThat(result.turnSucceeded()).isFalse();
+        verify(backendClient, never()).chat(anyString(), nullable(String.class), any());
+    }
+
+    @Test
     void metadataOnlyStreamDoesNotRepeatAcceptedRequest() {
         stubChatStream(ctx -> {
             ctx.returnResult = new AgentBackendClient.ChatResult("", "model", 1, 10, false, false, null);
