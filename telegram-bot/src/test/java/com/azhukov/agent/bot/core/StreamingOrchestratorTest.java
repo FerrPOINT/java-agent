@@ -706,6 +706,35 @@ class StreamingOrchestratorTest {
     }
 
     @Test
+    void completedStreamWithOnlyToolEventDoesNotRunRequestAgain() {
+        when(backendClient.chat(anyString(), any(), any()))
+            .thenReturn(new AgentBackendClient.ChatResult("duplicate response"));
+        stubChatStream(ctx -> {
+            ctx.toolCallConsumer.accept("search");
+            var result = new AgentBackendClient.ChatResult("", "model", 1, 10, true);
+            ctx.onComplete.accept(result);
+            ctx.returnResult = result;
+        });
+        orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
+        verify(backendClient, never()).chat(anyString(), any(), any());
+    }
+
+    @Test
+    void completedStreamAfterToolDoesNotRunTheUserRequestAgain() {
+        when(backendClient.chat(anyString(), any(), any()))
+            .thenReturn(new AgentBackendClient.ChatResult("duplicate response"));
+        stubChatStream(ctx -> {
+            ctx.tokenConsumer.accept("preface");
+            ctx.toolCallConsumer.accept("search");
+            var result = new AgentBackendClient.ChatResult("preface", "model", 1, 10, true);
+            ctx.onComplete.accept(result);
+            ctx.returnResult = result;
+        });
+        orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
+        verify(backendClient, never()).chat(anyString(), any(), any());
+    }
+
+    @Test
     void streamChat_delayedStartCommitsTextBeforeToolProgress() {
         when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong()))
             .thenReturn(Optional.empty());

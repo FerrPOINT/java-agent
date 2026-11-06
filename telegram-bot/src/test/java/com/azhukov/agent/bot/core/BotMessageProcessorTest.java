@@ -542,6 +542,33 @@ class BotMessageProcessorTest {
 
     @SuppressWarnings("unchecked")
     @Test
+    void completedToolAfterDraftTextDoesNotRestartBackendOrSendEmptyFallback() {
+        properties.setStreamingTransport("draft");
+        properties.getDisplay().setToolProgress("off");
+        when(telegramClient.supportsDraftStreaming(anyString())).thenReturn(true);
+        when(telegramClient.sendDraft(anyLong(), anyString(), anyInt())).thenReturn(true);
+        when(telegramClient.sendMessage(eq(100L), anyString(), eq("MarkdownV2"), any(), any(), eq(false)))
+            .thenReturn(Optional.of(41L));
+        when(backendClient.chat(anyString(), any(), any())).thenReturn(new AgentBackendClient.ChatResult("duplicate"));
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+            .thenAnswer(inv -> {
+                ((Consumer<String>) inv.getArgument(4)).accept("Before tool");
+                ((Consumer<String>) inv.getArgument(5)).accept("search");
+                var result = new AgentBackendClient.ChatResult("Before tool", "model", 1, 10, true);
+                ((Consumer<AgentBackendClient.ChatResult>) inv.getArgument(10)).accept(result);
+                return result;
+            });
+        try (DeliveryFixture fixture = realDeliveryFixture()) {
+            fixture.processor().accept(textEvent(1, 100L, "Hello"));
+            verify(backendClient, never()).chat(anyString(), any(), any());
+            verify(telegramClient).sendMessage(eq(100L), eq("Before tool"), eq("MarkdownV2"), any(), any(), eq(false));
+            verify(telegramClient, never()).sendMessage(eq(100L), eq("duplicate"), any(), any(), any());
+            verify(telegramClient, never()).sendMessage(eq(100L), eq(""), any(), any(), any());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
     void streamingOffPreservesAnswerBeforeToolAndFinalAnswer() {
         properties.setStreamingTransport("off");
         properties.getDisplay().setToolProgress("off");

@@ -269,6 +269,7 @@ public class StreamingOrchestrator {
         final long[] messageId = {-1};
         final boolean[] finalized = {false};
         final boolean[] failedFinalDelivery = {false};
+        final boolean[] toolObserved = {false};
         // Review notifications are read from the durable pending queue only
         // after finalizing the primary response; the SSE callback is ignored.
 
@@ -320,6 +321,7 @@ public class StreamingOrchestrator {
                         log.debug("Stream interrupted during tool call for chat {}", chatId);
                         throw new StreamInterruptedException();
                     }
+                    toolObserved[0] = true;
                     // Parse "toolName\u0001args" format from MessageApiClient
                     String toolName = toolCall;
                     String toolArgs = null;
@@ -558,6 +560,15 @@ public class StreamingOrchestrator {
                     streamResult.backendSessionId(),
                     streamResult.lastReasoning()
                 );
+            }
+            // Do not replay a request after a tool event: its side effects may
+            // already have occurred, even when no final text was streamed.
+            if (toolObserved[0]) {
+                progressBubbles.remove(chatId);
+                streamEditor.clearStream(chatId);
+                return new AgentBackendClient.ChatResult("", streamResult.modelUsed(),
+                    streamResult.contextTokens(), streamResult.contextLength(), false,
+                    streamResult.memoryUpdated(), streamResult.backendSessionId(), streamResult.lastReasoning());
             }
             // If streaming produced no visible tokens but has metadata, prefer the sync fallback to get content
             if (streamResult.modelUsed() != null || streamResult.contextTokens() != null) {
