@@ -122,6 +122,25 @@ class StreamEditorTest {
     // --- Basic start/edit/finalize tests ---
 
     @Test
+    void discardPreviewDeletesOnlyUncommittedMessageAfterToolBoundary() {
+        when(client.sendMessage(eq(123L), eq("Waiting"), isNull(), isNull(), isNull(), anyBoolean()))
+            .thenReturn(Optional.of(42L));
+        assertThat(editor.startStream(123L, "Waiting")).contains(42L);
+        editor.discardStreamPreview(123L);
+        verify(client).deleteMessage(123L, 42L);
+
+        when(client.sendMessage(eq(124L), eq("Waiting"), isNull(), isNull(), isNull(), anyBoolean()))
+            .thenReturn(Optional.of(43L));
+        when(client.editMessageText(eq(124L), eq(43L), anyString(), eq("MarkdownV2"), eq(false)))
+            .thenReturn(true);
+        assertThat(editor.startStream(124L, "Waiting")).contains(43L);
+        editor.onSegmentBreak(124L, 43L, "Already committed");
+        editor.discardStreamPreview(124L);
+        verify(client).editMessageText(eq(124L), eq(43L), contains("Already committed"), eq("MarkdownV2"), eq(false));
+        verify(client, never()).deleteMessage(124L, 43L);
+    }
+
+    @Test
     void startStream_sendsMessageAndReturnsId() {
         // Hermes: startStream sends raw text (null parse_mode) during streaming
         when(client.sendMessage(eq(123L), eq("Hello"), isNull(), isNull(), isNull(), anyBoolean()))
