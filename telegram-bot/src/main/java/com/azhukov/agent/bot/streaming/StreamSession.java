@@ -124,6 +124,7 @@ public class StreamSession {
         currentMessageId.set(-1L);
         pendingFinalText = null;
         pendingFinalRetryAfterSeconds = -1;
+        partialFinalDelivery = false;
         heartbeatMessageId.set(-1L);
         replyToMessageId = 0L;
         useDraftStreaming = false;
