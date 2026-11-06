@@ -384,15 +384,8 @@ public class MessageApiClient extends BaseBackendClient {
                     watchdogTask.cancel(false);
                     watchdog.shutdownNow();
                 }
-                // Stream ended without explicit "done" event
-                AgentBackendClient.ChatResult result = metadataHolder[0] != null
-                    ? new AgentBackendClient.ChatResult(accumulated.toString(), metadataHolder[0].modelUsed(),
-                    metadataHolder[0].contextTokens(), metadataHolder[0].contextLength(), false,
-                    metadataHolder[0].memoryUpdated(), metadataHolder[0].backendSessionId(),
-                metadataHolder[0].lastReasoning())
-                    : new AgentBackendClient.ChatResult(accumulated.toString());
-                onComplete.accept(result);
-                return result;
+                // EOF is not the backend's terminal event: the response may be partial.
+                throw new java.io.EOFException("Backend stream ended before completion");
             }
         } catch (Exception e) {
             if (errorNotified) {
@@ -401,7 +394,11 @@ public class MessageApiClient extends BaseBackendClient {
             }
             log.warn("chatStream failed for sessionId={}: {}", sessionId, e.getMessage());
             onError.accept(e);
-            return new AgentBackendClient.ChatResult(accumulated.toString());
+            return metadataHolder[0] != null
+                ? new AgentBackendClient.ChatResult(accumulated.toString(), metadataHolder[0].modelUsed(),
+                    metadataHolder[0].contextTokens(), metadataHolder[0].contextLength(), false,
+                    metadataHolder[0].memoryUpdated(), metadataHolder[0].backendSessionId(), metadataHolder[0].lastReasoning(), false)
+                : new AgentBackendClient.ChatResult(accumulated.toString(), null, null, null, false, false, null, null, false);
         }
     }
 

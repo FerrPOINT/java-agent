@@ -103,6 +103,23 @@ class MessageApiClientMetadataOnErrorTest {
     }
 
     @Test
+    void truncatedStreamReportsErrorInsteadOfCompletion() {
+        serveSse("{\"type\":\"metadata\",\"modelUsed\":\"model\"}",
+            "{\"type\":\"token\",\"token\":\"partial\"}");
+        var tokens = new StringBuilder();
+        var completed = new java.util.concurrent.atomic.AtomicInteger();
+        var errors = new java.util.concurrent.atomic.AtomicInteger();
+        var client = new MessageApiClient(restClient, mapper, new com.azhukov.agent.bot.config.BotProperties());
+        var result = client.chatStream("hi", null, null, tokens::append, tool -> { }, (name, preview) -> { },
+            retry -> { }, review -> { }, clarify -> { }, value -> completed.incrementAndGet(), error -> errors.incrementAndGet());
+        assertThat(tokens.toString()).isEqualTo("partial");
+        assertThat(result.modelUsed()).isEqualTo("model");
+        assertThat(result.turnSucceeded()).isFalse();
+        assertThat(completed).hasValue(0);
+        assertThat(errors).hasValue(1);
+    }
+
+    @Test
     void streamingIdleTimeoutOutlivesTheRecommendedClarifyWindow() {
         assertThat(MessageApiClient.STREAM_IDLE_TIMEOUT_MS)
             .isGreaterThan(Duration.ofDays(7).toMillis());
