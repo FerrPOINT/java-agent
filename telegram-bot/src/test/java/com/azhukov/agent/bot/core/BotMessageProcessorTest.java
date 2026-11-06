@@ -541,6 +541,24 @@ class BotMessageProcessorTest {
     }
 
     @Test
+    void mediaOnlyAnswerDeliversAttachmentWithStreamingOff() throws Exception {
+        properties.setStreamingTransport("off");
+        properties.setMediaDeliveryEnabled(true);
+        java.nio.file.Path document = java.nio.file.Files.createTempFile("answer-", ".pdf");
+        properties.setWorkingDirectory(document.getParent().toString());
+        when(telegramClient.sendDocument(eq(100L), any(byte[].class), anyString(), any(), any()))
+            .thenReturn(Optional.of(43L));
+        stubStreamingWithTokensAndFinalize("MEDIA:" + document, "test-model", false);
+        try (DeliveryFixture fixture = realDeliveryFixture()) {
+            fixture.processor().accept(textEvent(1, 100L, "Hello"));
+            verify(telegramClient).sendDocument(eq(100L), any(byte[].class), eq(document.getFileName().toString()), any(), any());
+            verify(telegramClient, never()).sendMessage(eq(100L), eq(""), any(), any(), any(), anyBoolean());
+        } finally {
+            java.nio.file.Files.deleteIfExists(document);
+        }
+    }
+
+    @Test
     void floodFallbackProcessorSendsCleanFinalTextAndAttachment() throws Exception {
         properties.setStreamingTransport("off");
         properties.setMediaDeliveryEnabled(true);

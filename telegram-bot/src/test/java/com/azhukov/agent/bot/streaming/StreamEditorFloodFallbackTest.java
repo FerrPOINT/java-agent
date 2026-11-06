@@ -55,6 +55,16 @@ class StreamEditorFloodFallbackTest {
     // ─── 4a: Flood strikes fallback mode tests ─────────────────────
 
     @Test
+    void discardStreamPreviewUsesCurrentMessageAndCleansSessionOnFailure() {
+        var session = editor.sessionFor(123L);
+        session.currentMessageId.set(42L);
+        when(client.deleteMessage(123L, 42L)).thenThrow(new RuntimeException("unavailable"));
+        editor.discardStreamPreview(123L);
+        verify(client).deleteMessage(123L, 42L);
+        assertThat(editor.sessionFor(123L)).isNotSameAs(session);
+    }
+
+    @Test
     void floodFallbackUsesFinalTextRatherThanStaleFormattedBuffer() {
         var session = editor.sessionFor(123L);
         session.currentMessageId.set(42L);

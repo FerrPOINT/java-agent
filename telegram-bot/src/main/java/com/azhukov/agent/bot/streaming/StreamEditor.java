@@ -814,11 +814,22 @@ public class StreamEditor {
         return success;
     }
 
-    /**
-     * Clears throttle state for a chat (e.g. after an error or session reset).
-     *
-     * @param chatId target chat id
-     */
+    /** Remove the current preview without creating an empty Telegram message. */
+    public void discardStreamPreview(long chatId) {
+        StreamSession session = sessions.get(chatId);
+        if (session == null) return;
+        stopHeartbeat(session);
+        long messageId = session.currentMessageId.get();
+        try {
+            if (messageId > 0) telegramClient.deleteMessage(chatId, messageId);
+        } catch (RuntimeException e) {
+            log.debug("Failed to remove streaming preview for chat {}: {}", chatId, e.getMessage());
+        } finally {
+            removeSession(chatId);
+        }
+    }
+
+    /** Clears streaming state after an error or session reset. */
     public void clearStream(long chatId) {
         removeSession(chatId);
     }

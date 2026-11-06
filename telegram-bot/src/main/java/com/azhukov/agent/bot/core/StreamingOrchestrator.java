@@ -457,10 +457,16 @@ public class StreamingOrchestrator {
                             String fallbackText = finalText;
                             MediaDeliveryService.ExtractionResult extraction = mediaDeliveryService.extractMediaTags(finalText);
                             finalText = extraction.cleanedText();
-                            // Finalize the stream with cleaned text
+                            // A media-only response has no Telegram text to finalize.
+                            // Clear its preview without attempting to send empty text.
                             boolean delivered;
                             try {
-                                delivered = streamEditor.finalizeStream(chatId, messageId[0], finalText);
+                                if (finalText.isBlank() && !extraction.media().isEmpty()) {
+                                    streamEditor.discardStreamPreview(chatId);
+                                    delivered = true;
+                                } else {
+                                    delivered = streamEditor.finalizeStream(chatId, messageId[0], finalText);
+                                }
                             } catch (TelegramApiException e) {
                                 streamEditor.recordFinalDeliveryFailure(chatId, fallbackText, e.getRetryAfter());
                                 failedFinalDelivery[0] = true;
