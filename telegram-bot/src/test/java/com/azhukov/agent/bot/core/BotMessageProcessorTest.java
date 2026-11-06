@@ -1710,6 +1710,8 @@ class BotMessageProcessorTest {
         processor.accept(textEvent(1, 100L, "hello"));
         verify(goalAutoContinueService, never()).runAutoContinue(any(), any(), any());
         verify(streamEditor).finalizeStream(eq(100L), anyLong(), eq("Partial response"));
+        verify(reactionManager).onCancel(100L, 101L);
+        verify(reactionManager, never()).onProcessingComplete(eq(100L), eq(101L), anyBoolean());
     }
 
     @Test

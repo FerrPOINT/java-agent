@@ -561,7 +561,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
             }
 
             // B1.2: Reaction — processing complete (success or cancelled)
-            if (busyHandler.isInterrupted(chatId)) {
+            if (busyHandler.isInterrupted(chatId) || result.turnCancelled()) {
                 reactionManager.onCancel(chatId, event.messageId());
             } else {
                 reactionManager.onProcessingComplete(chatId, event.messageId(), result.turnSucceeded());

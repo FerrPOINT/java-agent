@@ -271,6 +271,7 @@ public class StreamingOrchestrator {
         final boolean[] failedFinalDelivery = {false};
         final boolean[] toolObserved = {false};
         final boolean[] turnFailed = {false};
+        final boolean[] turnCancelled = {false};
         // Review notifications are read from the durable pending queue only
         // after finalizing the primary response; the SSE callback is ignored.
 
@@ -507,6 +508,7 @@ public class StreamingOrchestrator {
                 error -> {
                     turnFailed[0] = true;
                     if (error instanceof StreamInterruptedException || error instanceof java.util.concurrent.CancellationException) {
+                        turnCancelled[0] = true;
                         // Interrupted — finalize with accumulated content (no raw error text)
                         if (messageId[0] >= 0 && accumulated.length() > 0) {
                             finalized[0] = streamEditor.finalizeStream(chatId, messageId[0],
@@ -561,7 +563,7 @@ public class StreamingOrchestrator {
                     streamResult.memoryUpdated(),
                     streamResult.backendSessionId(),
                     streamResult.lastReasoning(),
-                    !turnFailed[0] && streamResult.turnSucceeded()
+                    !turnFailed[0] && streamResult.turnSucceeded(), turnCancelled[0]
                 );
             }
             // Do not replay a request after a tool event: its side effects may
@@ -572,7 +574,7 @@ public class StreamingOrchestrator {
                 return new AgentBackendClient.ChatResult("", streamResult.modelUsed(),
                     streamResult.contextTokens(), streamResult.contextLength(), false,
                     streamResult.memoryUpdated(), streamResult.backendSessionId(), streamResult.lastReasoning(),
-                    !turnFailed[0] && streamResult.turnSucceeded());
+                    !turnFailed[0] && streamResult.turnSucceeded(), turnCancelled[0]);
             }
             // Once the streaming request was sent, an empty response does not
             // prove the backend skipped side effects. Never issue a second turn.
@@ -581,11 +583,11 @@ public class StreamingOrchestrator {
             return new AgentBackendClient.ChatResult(accumulated.toString(),
                 streamResult.modelUsed(), streamResult.contextTokens(), streamResult.contextLength(), false,
                 streamResult.memoryUpdated(), streamResult.backendSessionId(), streamResult.lastReasoning(),
-                !turnFailed[0] && streamResult.turnSucceeded());
+                !turnFailed[0] && streamResult.turnSucceeded(), turnCancelled[0]);
         } catch (StreamInterruptedException e) {
             // Already handled in onError callback
             progressBubbles.remove(chatId);
-            return new AgentBackendClient.ChatResult(accumulated.toString(), null, null, null, finalized[0], false, null, null, false);
+            return new AgentBackendClient.ChatResult(accumulated.toString(), null, null, null, finalized[0], false, null, null, false, true);
         } catch (Exception e) {
             progressBubbles.remove(chatId);
             log.warn("Streaming failed for chat {}: {}", chatId, e.getMessage());
