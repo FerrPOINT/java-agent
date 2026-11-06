@@ -541,6 +541,27 @@ class BotMessageProcessorTest {
     }
 
     @Test
+    void floodFallbackProcessorSendsCleanFinalTextAndAttachment() throws Exception {
+        properties.setStreamingTransport("off");
+        properties.setMediaDeliveryEnabled(true);
+        java.nio.file.Path document = java.nio.file.Files.createTempFile("flood-response-", ".pdf");
+        properties.setWorkingDirectory(document.getParent().toString());
+        String response = "value_with_underscore\nMEDIA:" + document;
+        when(telegramClient.sendMessage(eq(100L), anyString(), eq("MarkdownV2"), any(), any(), eq(false)))
+            .thenReturn(Optional.of(42L));
+        when(telegramClient.sendDocument(eq(100L), any(byte[].class), anyString(), any(), any()))
+            .thenReturn(Optional.of(43L));
+        stubStreamingWithTokensAndFinalize(response, "test-model", false);
+        try (DeliveryFixture fixture = realDeliveryFixture()) {
+            fixture.processor().accept(textEvent(1, 100L, "Hello"));
+            verify(telegramClient).sendMessage(eq(100L), eq("value\\_with\\_underscore"), eq("MarkdownV2"), any(), any(), eq(false));
+            verify(telegramClient).sendDocument(eq(100L), any(byte[].class), eq(document.getFileName().toString()), any(), any());
+        } finally {
+            java.nio.file.Files.deleteIfExists(document);
+        }
+    }
+
+    @Test
     void realEditorPartialFallbackDoesNotResendTheWholeAnswer() {
         String content = "x".repeat(9000);
         when(telegramClient.sendMessage(eq(100L), anyString(), any(), any(), any(), anyBoolean()))
