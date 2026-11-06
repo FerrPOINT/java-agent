@@ -570,11 +570,10 @@ public class StreamingOrchestrator {
                     streamResult.contextTokens(), streamResult.contextLength(), false,
                     streamResult.memoryUpdated(), streamResult.backendSessionId(), streamResult.lastReasoning());
             }
-            // If streaming produced no visible tokens but has metadata, prefer the sync fallback to get content
-            if (streamResult.modelUsed() != null || streamResult.contextTokens() != null) {
-                return fallbackSyncWithMetadata(fullMessage, sessionId, session, streamResult);
-            }
-            // Stream finished but produced no content and no metadata
+            // Once the streaming request was sent, an empty response does not
+            // prove the backend skipped side effects. Never issue a second turn.
+            progressBubbles.remove(chatId);
+            streamEditor.discardStreamPreview(chatId);
             return new AgentBackendClient.ChatResult(accumulated.toString(),
                 streamResult.modelUsed(), streamResult.contextTokens(), streamResult.contextLength(), false,
                 streamResult.memoryUpdated(), streamResult.backendSessionId(), streamResult.lastReasoning());
@@ -601,22 +600,6 @@ public class StreamingOrchestrator {
                 }
             }
         }
-    }
-
-    private AgentBackendClient.ChatResult fallbackSyncWithMetadata(String messageText, String sessionId,
-                                                                    BotSessionEntity session,
-                                                                    AgentBackendClient.ChatResult streamResult) {
-        AgentBackendClient.ChatResult syncResult = backendClient.chat(messageText, sessionId, session);
-        return new AgentBackendClient.ChatResult(
-            syncResult.content(),
-            syncResult.modelUsed() != null ? syncResult.modelUsed() : streamResult.modelUsed(),
-            syncResult.contextTokens() != null ? syncResult.contextTokens() : streamResult.contextTokens(),
-            syncResult.contextLength() != null ? syncResult.contextLength() : streamResult.contextLength(),
-            false,
-            syncResult.memoryUpdated() || streamResult.memoryUpdated(),
-            syncResult.backendSessionId() != null ? syncResult.backendSessionId() : streamResult.backendSessionId(),
-            syncResult.lastReasoning() != null ? syncResult.lastReasoning() : streamResult.lastReasoning()
-        );
     }
 
     /**

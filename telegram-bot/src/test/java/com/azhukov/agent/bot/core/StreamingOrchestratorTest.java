@@ -30,8 +30,7 @@ import static org.mockito.Mockito.*;
  *
  * <p>Verifies that the orchestrator wires the SSE callbacks (token, tool-call,
  * tool-result, retry, complete, error) to {@link StreamEditor} correctly, appends
- * the footer, extracts MEDIA: tags before finalize, and falls back to sync chat
- * when the stream produced no visible tokens.
+ * the footer, extracts MEDIA: tags before finalize, and avoids replaying a turn when the stream produces no visible tokens.
  */
 class StreamingOrchestratorTest {
 
@@ -574,26 +573,27 @@ class StreamingOrchestratorTest {
     }
 
     @Test
-    void streamChat_noContentWithMetadata_fallsBackToSync() {
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(),
-            any(), any(), any(), any(), any(), any(), any(), any()))
-            .thenAnswer(inv -> {
-                // No tokens, no complete — just metadata
-                return new AgentBackendClient.ChatResult("", "model", 1, 10, false, false, null,
-                    "stream reasoning");
-            });
+    void metadataOnlyStreamDoesNotRepeatAcceptedRequest() {
+        stubChatStream(ctx -> {
+            ctx.returnResult = new AgentBackendClient.ChatResult("", "model", 1, 10, false, false, null);
+            ctx.onComplete.accept(ctx.returnResult);
+        });
         when(backendClient.chat(anyString(), nullable(String.class), any()))
-            .thenReturn(new AgentBackendClient.ChatResult("sync answer", "model", 1, 10, false, false, null));
+            .thenReturn(new AgentBackendClient.ChatResult("duplicate"));
 
-        AgentBackendClient.ChatResult result = orchestrator.streamChat(100L, "hi", null, session(),
-            5L, 0L, hooks);
+        orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
 
-        // Should fall back to sync chat
-        verify(backendClient).chat(anyString(), nullable(String.class), any());
-        assertThat(result.content()).isEqualTo("sync answer");
-        assertThat(result.lastReasoning()).isEqualTo("stream reasoning");
-        // finalizeStream NOT called (no streaming message)
-        verify(streamEditor, never()).finalizeStream(anyLong(), anyLong(), anyString());
+        verify(backendClient, never()).chat(anyString(), nullable(String.class), any());
+    }
+
+    @Test
+    void streamChat_noContentRetainsMetadataAndDiscardsPreview() {
+        stubChatStream(ctx -> ctx.returnResult = new AgentBackendClient.ChatResult("", "model", 1, 10, false, false, null, "reasoning"));
+        var result = orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
+        verify(backendClient, never()).chat(anyString(), nullable(String.class), any());
+        verify(streamEditor).discardStreamPreview(100L);
+        assertThat(result.modelUsed()).isEqualTo("model");
+        assertThat(result.lastReasoning()).isEqualTo("reasoning");
     }
 
     @Test

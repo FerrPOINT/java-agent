@@ -1447,20 +1447,12 @@ class BotMessageProcessorTest {
     // ─── Streaming fallback ─────────────────────────────────────
 
     @Test
-    void streamingFailsToStartFallsBackToSyncChat() {
-        when(streamEditor.startStream(anyLong(), anyString())).thenReturn(Optional.empty());
-        when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong())).thenReturn(Optional.empty());
+    void streamingPreviewUnavailableDoesNotRepeatBackendRequest() {
         when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong())).thenReturn(Optional.empty());
-        // When startStream returns empty, messageId stays -1, so no tokens are delivered,
-        // accumulated is empty, and the code falls through to sync fallback
         when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenReturn(new AgentBackendClient.ChatResult("", "test-model", 100, 1000, false, false));
-        when(backendClient.chat(anyString(), nullable(String.class), any()))
-            .thenReturn(new AgentBackendClient.ChatResult("Sync response", "sync-model", 50, 500, false, false));
-
         processor.accept(textEvent(1, 100L, "hello"));
-        verify(backendClient).chat(anyString(), nullable(String.class), any());
-        verify(telegramClient).sendMessage(eq(100L), contains("Sync response"), anyString(), any(), any());
+        verify(backendClient, never()).chat(anyString(), nullable(String.class), any());
     }
 
     @Test
@@ -1482,15 +1474,12 @@ class BotMessageProcessorTest {
     }
 
     @Test
-    void streamingNoContentButHasMetadataFallsBackToSync() {
+    void streamingNoContentWithMetadataDoesNotRepeatRequest() {
         when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenReturn(new AgentBackendClient.ChatResult("", "test-model", 100, 1000, false, false));
-        when(backendClient.chat(anyString(), nullable(String.class), any()))
-            .thenReturn(new AgentBackendClient.ChatResult("Sync fallback", "sync-model", 50, 500, false, false));
-
         processor.accept(textEvent(1, 100L, "hello"));
-        verify(backendClient).chat(anyString(), nullable(String.class), any());
-        verify(telegramClient).sendMessage(eq(100L), contains("Sync fallback"), anyString(), any(), any());
+        verify(backendClient, never()).chat(anyString(), nullable(String.class), any());
+        verify(runtimeFooter).format(eq("test-model"), eq(100), eq(1000), anyString(), anyLong(), anyBoolean());
     }
 
     @Test
@@ -2214,11 +2203,8 @@ class BotMessageProcessorTest {
         when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
                 callOrder.add("chatStream");
-                return new AgentBackendClient.ChatResult("reply", null, 100, 1000, false);
-            });
-        when(backendClient.chat(anyString(), nullable(String.class), any()))
-            .thenAnswer(inv -> {
-                callOrder.add("chat");
+                Consumer<String> tokenConsumer = inv.getArgument(4);
+                tokenConsumer.accept("reply");
                 return new AgentBackendClient.ChatResult("reply", "test-model", 100, 1000, false);
             });
 
@@ -2316,58 +2302,21 @@ class BotMessageProcessorTest {
     // ─── StreamEditor startStream returns empty ─────────────────
 
     @Test
-    void startStreamReturnsEmptyUsesSyncFallback() {
-        when(streamEditor.startStream(anyLong(), anyString())).thenReturn(Optional.empty());
-        when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong())).thenReturn(Optional.empty());
-        when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong())).thenReturn(Optional.empty());
+    void emptyStreamDiscardsPreviewWithoutSyncFallback() {
         when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenReturn(new AgentBackendClient.ChatResult("", "test-model", 100, 1000, false, false));
-        when(backendClient.chat(anyString(), nullable(String.class), any()))
-            .thenReturn(new AgentBackendClient.ChatResult("sync response", "sync-model", 100, 1000, false, false));
-
         processor.accept(textEvent(1, 100L, "hello"));
-        verify(backendClient).chat(anyString(), nullable(String.class), any());
-        verify(telegramClient).sendMessage(eq(100L), contains("sync response"), anyString(), any(), any());
+        verify(streamEditor).discardStreamPreview(100L);
+        verify(backendClient, never()).chat(anyString(), nullable(String.class), any());
     }
 
     // ─── Sync fallback with metadata merge ───────────────────────
 
-    @Test
-    void syncFallbackMergesMetadataFromStreamAndSync() {
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
-            .thenReturn(new AgentBackendClient.ChatResult("", "stream-model", 200, 2000, false, true));
-        when(backendClient.chat(anyString(), nullable(String.class), any()))
-            .thenReturn(new AgentBackendClient.ChatResult("sync content", null, 100, 1000, false, false));
 
-        processor.accept(textEvent(1, 100L, "hello"));
-        // Should prefer sync content but merge metadata
-        verify(telegramClient).sendMessage(eq(100L), contains("sync content"), anyString(), any(), any());
-        // Footer should use stream-model (since sync modelUsed is null, stream model is used)
-        verify(runtimeFooter).format(eq("stream-model"), eq(100), eq(1000), anyString(), anyLong(), anyBoolean());
-    }
 
-    @Test
-    void syncFallbackPrefersSyncMetadata() {
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
-            .thenReturn(new AgentBackendClient.ChatResult("", "stream-model", 200, 2000, false, false));
-        when(backendClient.chat(anyString(), nullable(String.class), any()))
-            .thenReturn(new AgentBackendClient.ChatResult("sync content", "sync-model", 100, 1000, false, true));
 
-        processor.accept(textEvent(1, 100L, "hello"));
-        verify(runtimeFooter).format(eq("sync-model"), eq(100), eq(1000), anyString(), anyLong(), anyBoolean());
-    }
 
-    @Test
-    void syncFallbackMergesMemoryUpdated() {
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
-            .thenReturn(new AgentBackendClient.ChatResult("", "stream-model", 200, 2000, false, true));
-        when(backendClient.chat(anyString(), nullable(String.class), any()))
-            .thenReturn(new AgentBackendClient.ChatResult("sync content", "sync-model", 100, 1000, false, false));
 
-        processor.accept(textEvent(1, 100L, "hello"));
-        // memoryUpdated should be true (stream) || false (sync) = true
-        verify(telegramClient).sendMessage(eq(100L), contains("Memory updated"), anyString(), any(), any());
-    }
 
     // ─── MarkdownV2 conversion in sendFormatted ──────────────────
 
