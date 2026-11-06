@@ -143,6 +143,31 @@ class MessageApiClientMetadataOnErrorTest {
     }
 
     @Test
+    void malformedSseDoesNotPreventFollowingValidCompletion() {
+        serveSse("{invalid", "{\"type\":\"done\"}");
+        var completed = new java.util.concurrent.atomic.AtomicBoolean();
+        AtomicReference<Throwable> error = new AtomicReference<>();
+        MessageApiClient client = new MessageApiClient(restClient, mapper, new com.azhukov.agent.bot.config.BotProperties());
+        client.chatStream("hi", null, null, token -> { }, tool -> { }, (name, preview) -> { },
+            retry -> { }, review -> { }, clarify -> { }, result -> completed.set(true), error::set);
+        assertThat(completed).isTrue();
+        assertThat(error.get()).isNull();
+    }
+
+    @Test
+    void exceptionFromToolCallbackIsNotSwallowedAsMalformedSse() {
+        serveSse("{\"type\":\"tool_start\",\"toolName\":\"search\"}", "{\"type\":\"done\"}");
+        AtomicReference<Throwable> error = new AtomicReference<>();
+        var completed = new java.util.concurrent.atomic.AtomicBoolean();
+        MessageApiClient client = new MessageApiClient(restClient, mapper, new com.azhukov.agent.bot.config.BotProperties());
+        client.chatStream("hi", null, null, token -> { }, tool -> { throw new IllegalStateException("callback failure"); },
+            (name, preview) -> { }, retry -> { }, review -> { }, clarify -> { },
+            result -> completed.set(true), error::set);
+        assertThat(error.get()).isNotNull().hasMessageContaining("callback failure");
+        assertThat(completed).isFalse();
+    }
+
+    @Test
     void chatStream_errorWithoutMetadata_returnsEmptyMetadata() {
         serveSse(
             "{\"type\":\"error\",\"error\":\"Model call failed: boom\"}"

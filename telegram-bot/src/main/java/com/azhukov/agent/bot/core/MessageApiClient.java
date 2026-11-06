@@ -237,137 +237,139 @@ public class MessageApiClient extends BaseBackendClient {
                         if (line.startsWith("data:")) {
                             String data = line.substring(5).strip();
                             if (!data.isEmpty()) {
+                                JsonNode event;
                                 try {
-                                    JsonNode event = objectMapper.readTree(data);
-                                    String type = event.path("type").asText("");
-                                    if ("error".equalsIgnoreCase(type)) {
-                                        String errorMsg = event.path("error").asText(
-                                            event.path("message").asText("Unknown stream error"));
-                                        onError.accept(new RuntimeException(errorMsg));
-                                        // Preserve metadata received before the error
-                                        // (model, context) so the bot can still resolve
-                                        // the footer model on failed turns.
-                                        return metadataHolder[0] != null
-                                            ? new AgentBackendClient.ChatResult(accumulated.toString(),
-                                                metadataHolder[0].modelUsed(),
-                                                metadataHolder[0].contextTokens(),
-                                                metadataHolder[0].contextLength(),
-                                                false,
-                                                metadataHolder[0].memoryUpdated(),
-                                                metadataHolder[0].backendSessionId(),
-                                                metadataHolder[0].lastReasoning())
-                                            : new AgentBackendClient.ChatResult(accumulated.toString());
-                                    }
-                                    if ("metadata".equalsIgnoreCase(type)) {
-                                        metadataHolder[0] = extractMetadata(event);
-                                        continue;
-                                    }
-                                    // tool_calls event — LLM decided to call tools.
-                                    // Do NOT send a progress bubble here; the tool_start event
-                                    // (fired per-tool right before execution) will send the bubble.
-                                    // Sending here causes duplicate bubbles in Telegram.
-                                    if ("tool_calls".equalsIgnoreCase(type)) {
-                                        continue;
-                                    }
-                                    // tool_start event — notify tool call consumer
-                                    if ("tool_start".equalsIgnoreCase(type)) {
-                                        String toolName = event.path("toolName").asText("");
-                                        if (!toolName.isEmpty()) {
-                                            // Extract arguments from toolCalls array (added in AgentStreamingService)
-                                            String toolArgs = "";
-                                            JsonNode toolCallsNode = event.get("toolCalls");
-                                            if (toolCallsNode != null && toolCallsNode.isArray() && toolCallsNode.size() > 0) {
-                                                JsonNode tc = toolCallsNode.get(0);
-                                                toolArgs = tc.path("arguments").asText("");
-                                                if (toolArgs.isEmpty()) {
-                                                    JsonNode argsNode = tc.path("arguments");
-                                                    if (argsNode != null && !argsNode.isNull()) {
-                                                        toolArgs = argsNode.toString();
-                                                    }
+                                    event = objectMapper.readTree(data);
+                                } catch (com.fasterxml.jackson.core.JsonProcessingException parseEx) {
+                                    log.warn("Failed to parse SSE data line", parseEx);
+                                    continue;
+                                }
+                                String type = event.path("type").asText("");
+                                if ("error".equalsIgnoreCase(type)) {
+                                    String errorMsg = event.path("error").asText(
+                                        event.path("message").asText("Unknown stream error"));
+                                    onError.accept(new RuntimeException(errorMsg));
+                                    // Preserve metadata received before the error
+                                    // (model, context) so the bot can still resolve
+                                    // the footer model on failed turns.
+                                    return metadataHolder[0] != null
+                                        ? new AgentBackendClient.ChatResult(accumulated.toString(),
+                                            metadataHolder[0].modelUsed(),
+                                            metadataHolder[0].contextTokens(),
+                                            metadataHolder[0].contextLength(),
+                                            false,
+                                            metadataHolder[0].memoryUpdated(),
+                                            metadataHolder[0].backendSessionId(),
+                                            metadataHolder[0].lastReasoning())
+                                        : new AgentBackendClient.ChatResult(accumulated.toString());
+                                }
+                                if ("metadata".equalsIgnoreCase(type)) {
+                                    metadataHolder[0] = extractMetadata(event);
+                                    continue;
+                                }
+                                // tool_calls event — LLM decided to call tools.
+                                // Do NOT send a progress bubble here; the tool_start event
+                                // (fired per-tool right before execution) will send the bubble.
+                                // Sending here causes duplicate bubbles in Telegram.
+                                if ("tool_calls".equalsIgnoreCase(type)) {
+                                    continue;
+                                }
+                                // tool_start event — notify tool call consumer
+                                if ("tool_start".equalsIgnoreCase(type)) {
+                                    String toolName = event.path("toolName").asText("");
+                                    if (!toolName.isEmpty()) {
+                                        // Extract arguments from toolCalls array (added in AgentStreamingService)
+                                        String toolArgs = "";
+                                        JsonNode toolCallsNode = event.get("toolCalls");
+                                        if (toolCallsNode != null && toolCallsNode.isArray() && toolCallsNode.size() > 0) {
+                                            JsonNode tc = toolCallsNode.get(0);
+                                            toolArgs = tc.path("arguments").asText("");
+                                            if (toolArgs.isEmpty()) {
+                                                JsonNode argsNode = tc.path("arguments");
+                                                if (argsNode != null && !argsNode.isNull()) {
+                                                    toolArgs = argsNode.toString();
                                                 }
                                             }
-                                            toolCallConsumer.accept(toolName + "\u0001" + toolArgs);
                                         }
-                                        continue;
+                                        toolCallConsumer.accept(toolName + "\u0001" + toolArgs);
                                     }
-                                    // tool_result event — notify tool result consumer
-                                    if ("tool_result".equalsIgnoreCase(type)) {
-                                        String toolName = event.path("toolName").asText("");
-                                        String toolResult = event.path("toolResult").asText("");
-                                        if (!toolName.isEmpty()) {
-                                            toolResultConsumer.accept(toolName, toolResult);
-                                        }
-                                        continue;
+                                    continue;
+                                }
+                                // tool_result event — notify tool result consumer
+                                if ("tool_result".equalsIgnoreCase(type)) {
+                                    String toolName = event.path("toolName").asText("");
+                                    String toolResult = event.path("toolResult").asText("");
+                                    if (!toolName.isEmpty()) {
+                                        toolResultConsumer.accept(toolName, toolResult);
                                     }
-                                    // retry event — notify retry consumer so the bot can show retry status
-                                    if ("retry".equalsIgnoreCase(type)) {
-                                        String retryMsg = event.path("error").asText(
-                                            event.path("message").asText("Retrying..."));
-                                        retryConsumer.accept(retryMsg);
-                                        continue;
+                                    continue;
+                                }
+                                // retry event — notify retry consumer so the bot can show retry status
+                                if ("retry".equalsIgnoreCase(type)) {
+                                    String retryMsg = event.path("error").asText(
+                                        event.path("message").asText("Retrying..."));
+                                    retryConsumer.accept(retryMsg);
+                                    continue;
+                                }
+                                // continuation event — also surface as retry status
+                                if ("continuation".equalsIgnoreCase(type)) {
+                                    String contMsg = event.path("error").asText(
+                                        event.path("message").asText("Continuing..."));
+                                    retryConsumer.accept(contMsg);
+                                    continue;
+                                }
+                                // commentary event — the text was already streamed via token events,
+                                // so skip it to avoid duplicating the text in the output.
+                                if ("commentary".equalsIgnoreCase(type)) {
+                                    continue;
+                                }
+                                // review event (Hermes parity: background_review_callback)
+                                // — "💾 Self-improvement review: …" summary from an
+                                // earlier turn's background review. Delivered to the
+                                // chat AFTER the main response (pending-release).
+                                if ("review".equalsIgnoreCase(type)) {
+                                    String reviewMsg = event.path("review").asText(null);
+                                    if (reviewMsg == null || reviewMsg.isBlank()) {
+                                        reviewMsg = event.path("summary").asText(null);
                                     }
-                                    // continuation event — also surface as retry status
-                                    if ("continuation".equalsIgnoreCase(type)) {
-                                        String contMsg = event.path("error").asText(
-                                            event.path("message").asText("Continuing..."));
-                                        retryConsumer.accept(contMsg);
-                                        continue;
+                                    if (reviewMsg == null || reviewMsg.isBlank()) {
+                                        reviewMsg = event.path("message").asText(null);
                                     }
-                                    // commentary event — the text was already streamed via token events,
-                                    // so skip it to avoid duplicating the text in the output.
-                                    if ("commentary".equalsIgnoreCase(type)) {
-                                        continue;
+                                    if (reviewMsg == null || reviewMsg.isBlank()) {
+                                        reviewMsg = event.path("error").asText(null);
                                     }
-                                    // review event (Hermes parity: background_review_callback)
-                                    // — "💾 Self-improvement review: …" summary from an
-                                    // earlier turn's background review. Delivered to the
-                                    // chat AFTER the main response (pending-release).
-                                    if ("review".equalsIgnoreCase(type)) {
-                                        String reviewMsg = event.path("review").asText(null);
-                                        if (reviewMsg == null || reviewMsg.isBlank()) {
-                                            reviewMsg = event.path("summary").asText(null);
-                                        }
-                                        if (reviewMsg == null || reviewMsg.isBlank()) {
-                                            reviewMsg = event.path("message").asText(null);
-                                        }
-                                        if (reviewMsg == null || reviewMsg.isBlank()) {
-                                            reviewMsg = event.path("error").asText(null);
-                                        }
-                                        if (reviewMsg != null && !reviewMsg.isBlank() && reviewConsumer != null) {
-                                            reviewConsumer.accept(reviewMsg);
-                                        }
-                                        continue;
+                                    if (reviewMsg != null && !reviewMsg.isBlank() && reviewConsumer != null) {
+                                        reviewConsumer.accept(reviewMsg);
                                     }
-                                    // clarify event (Hermes clarify_gateway parity): blocking
-                                    // clarify prompt from the backend — payload JSON in `error`.
-                                    if ("clarify".equalsIgnoreCase(type)) {
-                                        String payload = event.path("error").asText(null);
-                                        String clarifySessionId = event.path("sessionId").asText(sessionId);
-                                        if (payload != null && !payload.isEmpty() && clarifyConsumer != null) {
-                                            log.info("clarify_sse_received requestSession={} clarifySession={} payloadBytes={}",
-                                                sessionId, clarifySessionId, payload.length());
-                                            clarifyConsumer.accept(clarifySessionId + "\u0001" + payload);
-                                        }
-                                        continue;
+                                    continue;
+                                }
+                                // clarify event (Hermes clarify_gateway parity): blocking
+                                // clarify prompt from the backend — payload JSON in `error`.
+                                if ("clarify".equalsIgnoreCase(type)) {
+                                    String payload = event.path("error").asText(null);
+                                    String clarifySessionId = event.path("sessionId").asText(sessionId);
+                                    if (payload != null && !payload.isEmpty() && clarifyConsumer != null) {
+                                        log.info("clarify_sse_received requestSession={} clarifySession={} payloadBytes={}",
+                                            sessionId, clarifySessionId, payload.length());
+                                        clarifyConsumer.accept(clarifySessionId + "\u0001" + payload);
                                     }
-                                    JsonNode tokenNode = event.get("token");
-                                    if (tokenNode != null && !tokenNode.isNull() && tokenNode.isTextual()) {
-                                        String token = tokenNode.asText();
-                                        accumulated.append(token);
-                                        tokenConsumer.accept(token);
-                                    }
-                                    if ("done".equalsIgnoreCase(type)) {
-                                        AgentBackendClient.ChatResult result = metadataHolder[0] != null
-                                            ? new AgentBackendClient.ChatResult(accumulated.toString(), metadataHolder[0].modelUsed(),
-                                            metadataHolder[0].contextTokens(), metadataHolder[0].contextLength(),
-                                            metadataHolder[0].streamFinalized(), metadataHolder[0].memoryUpdated(),
-                                            metadataHolder[0].backendSessionId(), metadataHolder[0].lastReasoning())
-                                            : new AgentBackendClient.ChatResult(accumulated.toString());
-                                        onComplete.accept(result);
-                                        return result;
-                                    }
-                                } catch (Exception parseEx) {
-                                    log.warn("Failed to parse SSE data line: {}", data, parseEx);
+                                    continue;
+                                }
+                                JsonNode tokenNode = event.get("token");
+                                if (tokenNode != null && !tokenNode.isNull() && tokenNode.isTextual()) {
+                                    String token = tokenNode.asText();
+                                    accumulated.append(token);
+                                    tokenConsumer.accept(token);
+                                }
+                                if ("done".equalsIgnoreCase(type)) {
+                                    AgentBackendClient.ChatResult result = metadataHolder[0] != null
+                                        ? new AgentBackendClient.ChatResult(accumulated.toString(), metadataHolder[0].modelUsed(),
+                                        metadataHolder[0].contextTokens(), metadataHolder[0].contextLength(),
+                                        metadataHolder[0].streamFinalized(), metadataHolder[0].memoryUpdated(),
+                                        metadataHolder[0].backendSessionId(), metadataHolder[0].lastReasoning())
+                                        : new AgentBackendClient.ChatResult(accumulated.toString());
+                                    onComplete.accept(result);
+                                    return result;
                                 }
                             }
                         }
