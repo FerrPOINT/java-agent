@@ -68,7 +68,13 @@ public final class MessageSplitter {
             return splitVerbatim(text, maxLength);
         }
         int splitLimit = maxLength - prefixReserve - fenceReserve;
-        List<String> chunks = balanceFencesAcrossChunks(splitPreservingBoundaries(text, splitLimit), maxLength);
+        List<String> unbalanced = splitPreservingBoundaries(text, splitLimit);
+        List<String> chunks = balanceFencesAcrossChunks(unbalanced, maxLength);
+        // A hard boundary may turn inline backticks into a false fence and
+        // manufacture an oversized language tag. Preserve the original chunks.
+        if (chunks.stream().anyMatch(chunk -> chunk.length() + prefixReserve > maxLength)) {
+            chunks = unbalanced;
+        }
 
         // Add "(1/N)" continuation indicator when splitting into multiple chunks.
         // The indicator is NOT escaped here — callers using MarkdownV2 should use
@@ -78,20 +84,7 @@ public final class MessageSplitter {
             List<String> indexed = new ArrayList<>(total);
             for (int i = 0; i < total; i++) {
                 String prefix = "(" + (i + 1) + "/" + total + ") ";
-                int prefixLen = prefix.length();
-                String chunk = chunks.get(i);
-                // Shrink chunk so that prefix + chunk fits within maxLength.
-                // BUG FIX (audit H15): back off one char when the cut point would
-                // split a surrogate pair — otherwise the chunk ends with a lone
-                // high surrogate and the emoji renders broken in Telegram.
-                if (chunk.length() > maxLength - prefixLen) {
-                    int cut = maxLength - prefixLen;
-                    if (cut > 0 && Character.isHighSurrogate(chunk.charAt(cut - 1))) {
-                        cut--;
-                    }
-                    chunk = chunk.substring(0, cut);
-                }
-                indexed.add(prefix + chunk);
+                indexed.add(prefix + chunks.get(i));
             }
             return indexed;
         }

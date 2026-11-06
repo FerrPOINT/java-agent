@@ -28,6 +28,16 @@ class MessageSplitterTest {
     }
 
     @Test
+    void fenceLikeTextAtHardBoundaryDoesNotLoseCharacters() {
+        String original = "a".repeat(82) + "```" + "x".repeat(320);
+        var chunks = MessageSplitter.split(original, 100);
+        assertThat(chunks).allSatisfy(chunk -> assertThat(chunk.length()).isLessThanOrEqualTo(100));
+        String restored = chunks.stream().map(chunk -> chunk.replaceFirst("^\\(\\d+/\\d+\\) ", ""))
+            .collect(java.util.stream.Collectors.joining());
+        assertThat(restored).isEqualTo(original);
+    }
+
+    @Test
     void continuationPrefixesPreserveSurrogatePairsAcrossChunks() {
         String original = "a".repeat(4084) + "🐟".repeat(2400) + "end";
         List<String> chunks = MessageSplitter.split(original);
