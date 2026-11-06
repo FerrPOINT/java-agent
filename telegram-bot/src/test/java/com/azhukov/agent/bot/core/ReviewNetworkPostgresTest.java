@@ -26,7 +26,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @Tag("slow")
 class ReviewNetworkPostgresTest {
     @Test
-    void claimBeforeNotificationIsPersistentAndNotReplayedAfterRefusal() throws Exception {
+    void claimBeforeNotificationIsPersistentAndNotReplayedAfterRefusal(@org.junit.jupiter.api.io.TempDir java.nio.file.Path sandbox) throws Exception {
         try (var db = new PostgreSQLContainer<>(DockerImageName.parse("postgres:16-alpine"))) {
             db.start();
             int port;
@@ -34,11 +34,16 @@ class ReviewNetworkPostgresTest {
                 port = socket.getLocalPort();
             }
             var log = Files.createTempFile("review-network-backend-", ".log");
-            var builder = new ProcessBuilder(System.getProperty("java.home") + "/bin/java", "-jar",
+            var builder = new ProcessBuilder(System.getProperty("java.home") + "/bin/java",
+                "-Duser.home=" + sandbox, "-Djava.io.tmpdir=" + sandbox, "-jar",
                 System.getProperty("backend.jar"), "--server.address=127.0.0.1", "--server.port=" + port,
                 "--management.server.port=" + port, "--agent.chromium.auto-start=false", "--agent.chromium.auto-install=false");
             builder.redirectErrorStream(true).redirectOutput(log.toFile());
             var env = builder.environment();
+            env.clear();
+            env.put("HOME", sandbox.toString());
+            env.put("TMPDIR", sandbox.toString());
+            builder.directory(sandbox.toFile());
             env.put("SPRING_DATASOURCE_URL", db.getJdbcUrl());
             env.put("SPRING_DATASOURCE_USERNAME", db.getUsername());
             env.put("SPRING_DATASOURCE_PASSWORD", db.getPassword());
