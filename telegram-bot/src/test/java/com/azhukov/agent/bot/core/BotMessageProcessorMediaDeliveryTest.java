@@ -304,6 +304,31 @@ class BotMessageProcessorMediaDeliveryTest {
     }
 
     @Test
+    void nativeDraftRoutesDocumentAfterCleanFinalization() throws Exception {
+        Path document = createTempFile("report.pdf");
+        when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong()))
+            .thenReturn(Optional.empty());
+        stubStreamingResult("Here is the document\nMEDIA:" + document, true);
+        processor.accept(textEvent(1, 100L, "show me a document"));
+        var order = inOrder(streamEditor, telegramClient);
+        order.verify(streamEditor).finalizeStream(eq(100L), eq(-1L), argThat(text -> !text.contains("MEDIA:")));
+        order.verify(telegramClient).sendDocument(eq(100L), any(byte[].class), eq("report.pdf"), isNull(), isNull());
+    }
+
+    @Test
+    void nativeDraftPartialFinalizationDoesNotReplayDocument() throws Exception {
+        Path document = createTempFile("report.pdf");
+        when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong()))
+            .thenReturn(Optional.empty());
+        when(streamEditor.finalizeStream(eq(100L), eq(-1L), anyString())).thenReturn(false);
+        when(streamEditor.takePartialFinalDelivery(100L)).thenReturn(true);
+        stubStreamingResult("Here is the document\nMEDIA:" + document, true);
+        processor.accept(textEvent(1, 100L, "show me a document"));
+        verify(streamEditor).recordFinalDeliveryFailure(eq(100L), contains("MEDIA:"));
+        verify(telegramClient, never()).sendDocument(anyLong(), any(byte[].class), anyString(), any(), any());
+    }
+
+    @Test
     @DisplayName("1. Single image → sendPhoto is called")
     void singleImageRoutesToSendPhoto() throws Exception {
         Path imageFile = createTempFile("test-image.png");
