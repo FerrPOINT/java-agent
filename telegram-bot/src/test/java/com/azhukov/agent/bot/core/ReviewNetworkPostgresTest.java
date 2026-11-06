@@ -89,6 +89,16 @@ class ReviewNetworkPostgresTest {
                     public boolean sendReviewMessage(long chat, String text, long message, long thread) {
                         assertThat(chat).isEqualTo(100L);
                         assertThat(text).isEqualTo("test review");
+                        try (var connection = DriverManager.getConnection(db.getJdbcUrl(), db.getUsername(), db.getPassword());
+                             var query = connection.prepareStatement("SELECT count(*) FROM pending_review_summaries WHERE delivery_id=?")) {
+                            query.setObject(1, delivery);
+                            try (var rows = query.executeQuery()) {
+                                rows.next();
+                                assertThat(rows.getInt(1)).as("claim committed before notification").isZero();
+                            }
+                        } catch (java.sql.SQLException e) {
+                            throw new AssertionError("Cannot verify claim before notification", e);
+                        }
                         sends.incrementAndGet();
                         return false;
                     }
