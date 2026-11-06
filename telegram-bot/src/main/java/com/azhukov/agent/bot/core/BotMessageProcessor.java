@@ -534,7 +534,11 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                 }
 
                 typingManager.flushTyping(chatId);
-                if (retryAfterSeconds > 0) {
+                boolean partialFinal = streamEditor.takePartialFinalDelivery(chatId);
+                streamEditor.clearStream(chatId);
+                if (partialFinal) {
+                    log.warn("Final Telegram delivery was partial for chat {}; not replaying the complete answer", chatId);
+                } else if (retryAfterSeconds > 0) {
                     String deferredResponse = backendResponse;
                     long delaySeconds = (long) retryAfterSeconds + 1L;
                     log.warn("Deferring final Telegram delivery for chat {} by {}s after FloodWait", chatId, delaySeconds);
@@ -842,7 +846,12 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
 
     @Override
     public void deliverMedia(long chatId, List<MediaDeliveryService.MediaDescriptor> media, Integer threadId) {
-        if (media == null || media.isEmpty()) return;
+        deliverMediaWithReceipt(chatId, media, threadId);
+    }
+
+    private boolean deliverMediaWithReceipt(long chatId, List<MediaDeliveryService.MediaDescriptor> media, Integer threadId) {
+        if (media == null || media.isEmpty()) return true;
+        boolean delivered = true;
 
         // Partition: images (not as_document) go to batch, everything else goes individually
         List<MediaDeliveryService.MediaDescriptor> imageBatch = new ArrayList<>();
@@ -852,6 +861,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
             // Security: validate path against allowed base directories
             if (!isMediaPathAllowed(desc.path())) {
                 log.warn("media_delivery_rejected reason=outside_allowed_root file={}", mediaFileName(desc));
+                delivered = false;
                 continue;
             }
             // WP-11: skip artifacts that were already delivered — a retry after
@@ -870,13 +880,14 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
 
         // Deliver image batch via sendMediaGroup (up to 10 per call)
         if (!imageBatch.isEmpty()) {
-            deliverImageBatch(chatId, imageBatch);
+            delivered &= deliverImageBatch(chatId, imageBatch);
         }
 
         // Deliver individual files
         for (MediaDeliveryService.MediaDescriptor desc : individualFiles) {
-            deliverSingleMedia(chatId, desc);
+            delivered &= deliverSingleMedia(chatId, desc);
         }
+        return delivered;
     }
 
     /**
@@ -1014,15 +1025,18 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         }
         Integer threadId = messageThreadId > 0 ? (int) messageThreadId : null;
         String textForDisplay = text;
+        boolean mediaAttempted = false;
+        boolean mediaDelivered = true;
         if (properties.isMediaDeliveryEnabled()) {
             MediaDeliveryService.ExtractionResult extraction = mediaDeliveryService.extractMediaTags(text);
             textForDisplay = extraction.cleanedText();
             if (!extraction.media().isEmpty()) {
-                deliverMedia(chatId, extraction.media(), threadId);
+                mediaAttempted = true;
+                mediaDelivered = deliverMediaWithReceipt(chatId, extraction.media(), threadId);
             }
         }
         if (textForDisplay == null || textForDisplay.isBlank()) {
-            return false;
+            return mediaAttempted && mediaDelivered;
         }
         String parseMode = properties.getParseMode();
         String formatted = StreamEditor.stripThinkTagsRegex(textForDisplay);
@@ -1040,15 +1054,18 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
             Long replyToMessageId = "all".equalsIgnoreCase(properties.getReplyToMode()) && userMessageId > 0
                 || "first".equalsIgnoreCase(properties.getReplyToMode()) && i == 0 && userMessageId > 0
                 ? userMessageId : null;
-            Optional<Long> sent = threadId == null
-                ? telegramClient.sendMessage(chatId, chunk, parseMode, replyToMessageId, null)
-                : telegramClient.sendMessage(chatId, chunk, parseMode, replyToMessageId, threadId, false);
+            Optional<Long> sent;
+            try {
+                sent = telegramClient.sendMessageChecked(chatId, chunk, parseMode, replyToMessageId, threadId, null, false);
+            } catch (com.azhukov.agent.bot.client.TelegramClient.SendRefusalException refusal) {
+                return false;
+            }
             if (sent.isEmpty()) {
                 return false;
             }
             sentAny = true;
         }
-        return sentAny;
+        return sentAny && mediaDelivered;
     }
 
     /**
@@ -1179,7 +1196,8 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
      * Deliver a batch of images via sendMediaGroup (up to 10 per call).
      * For a single image, uses sendPhoto instead.
      */
-    private void deliverImageBatch(long chatId, List<MediaDeliveryService.MediaDescriptor> images) {
+    private boolean deliverImageBatch(long chatId, List<MediaDeliveryService.MediaDescriptor> images) {
+        boolean delivered = true;
         if (images.size() == 1) {
             // Single image — use sendPhoto
             MediaDeliveryService.MediaDescriptor desc = images.get(0);
@@ -1189,17 +1207,18 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                     log.warn("Media file not found: {}", desc.path());
                     // M2: Notify user that the referenced file doesn't exist
                     telegramClient.sendMessage(chatId, "⚠️ Media file not found: " + desc.path());
-                    return;
+                    return false;
                 }
                 byte[] data = Files.readAllBytes(file.toPath());
                 String fileName = file.getName();
                 java.util.Optional<Long> sent = telegramClient.sendPhoto(chatId, data, null, null);
                 markArtifactDelivered(artifactIdForPath(desc.path()), sent);
                 log.debug("Sent photo {} to chat {}", desc.path(), chatId);
+                return sent.isPresent();
             } catch (Exception e) {
                 log.error("Failed to send photo {} to chat {}: {}", desc.path(), chatId, e.getMessage());
+                return false;
             }
-            return;
         }
 
         // Multiple images — chunk into groups of 10
@@ -1208,6 +1227,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
             List<MediaDeliveryService.MediaDescriptor> chunk = images.subList(i, end);
 
             List<TelegramClient.PhotoInput> photoInputs = new ArrayList<>();
+            List<MediaDeliveryService.MediaDescriptor> included = new ArrayList<>();
             for (MediaDeliveryService.MediaDescriptor desc : chunk) {
                 try {
                     File file = new File(desc.path());
@@ -1215,6 +1235,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                         log.warn("Media file not found, skipping: {}", desc.path());
                         // M2: Notify user that the referenced file doesn't exist
                         telegramClient.sendMessage(chatId, "⚠️ Media file not found: " + desc.path());
+                        delivered = false;
                         continue;
                     }
                     byte[] data = Files.readAllBytes(file.toPath());
@@ -1222,27 +1243,33 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                     // First photo in the group gets the caption (if any)
                     String caption = (photoInputs.isEmpty()) ? null : null;
                     photoInputs.add(new TelegramClient.PhotoInput(data, fileName, caption));
+                    included.add(desc);
                 } catch (Exception e) {
                     log.warn("Failed to read media file {}: {}", desc.path(), e.getMessage());
+                    delivered = false;
                 }
             }
 
-            if (!photoInputs.isEmpty()) {
+            if (photoInputs.size() == 1) {
+                Optional<Long> sent = telegramClient.sendPhoto(chatId, photoInputs.get(0).data(), null, null);
+                markArtifactDelivered(artifactIdForPath(included.get(0).path()), sent);
+                delivered &= sent.isPresent();
+            } else if (!photoInputs.isEmpty()) {
                 List<Long> messageIds = telegramClient.sendMediaGroup(chatId, photoInputs);
-                // WP-11: mark every artifact in the group delivered with the first
-                // platform message id of the album.
-                String firstMsgId = messageIds == null || messageIds.isEmpty()
-                    ? null : String.valueOf(messageIds.get(0));
-                for (MediaDeliveryService.MediaDescriptor desc : chunk) {
-                    String artifactId = artifactIdForPath(desc.path());
-                    if (artifactId != null) {
-                        attachmentApiClient.markDelivered(artifactId, firstMsgId);
+                boolean complete = messageIds != null && messageIds.size() == photoInputs.size()
+                    && messageIds.stream().allMatch(java.util.Objects::nonNull);
+                delivered &= complete;
+                if (complete) {
+                    for (int item = 0; item < included.size(); item++) {
+                        String artifactId = artifactIdForPath(included.get(item).path());
+                        if (artifactId != null) attachmentApiClient.markDelivered(artifactId, String.valueOf(messageIds.get(item)));
                     }
                 }
                 log.debug("Sent media group of {} to chat {} (messageIds: {})",
                     photoInputs.size(), chatId, messageIds);
             }
         }
+        return delivered;
     }
 
     /**
@@ -1252,14 +1279,14 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
      * - Image with [[as_document]] → sendDocument
      * - Everything else → sendDocument
      */
-    private void deliverSingleMedia(long chatId, MediaDeliveryService.MediaDescriptor desc) {
+    private boolean deliverSingleMedia(long chatId, MediaDeliveryService.MediaDescriptor desc) {
         try {
             File file = new File(desc.path());
             if (!file.exists() || !file.isFile()) {
                 log.warn("media_delivery_rejected reason=file_missing file={}", mediaFileName(desc));
                 // M2: Notify user that the referenced file doesn't exist
                 telegramClient.sendMessage(chatId, "⚠️ Media file not found: " + desc.path());
-                return;
+                return false;
             }
             byte[] data = Files.readAllBytes(file.toPath());
             String fileName = file.getName();
@@ -1270,19 +1297,23 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                 java.util.Optional<Long> sent = telegramClient.sendVideo(chatId, data, fileName, null, null);
                 logMediaDelivery("video", desc, data.length, sent);
                 markArtifactDelivered(artifactId, sent);
+                return sent.isPresent();
             } else if (desc.isAudio() && desc.asVoice()) {
                 java.util.Optional<Long> sent = telegramClient.sendAudioAsVoice(chatId, data, fileName, null);
                 logMediaDelivery("voice", desc, data.length, sent);
                 markArtifactDelivered(artifactId, sent);
+                return sent.isPresent();
             } else {
                 // Document (covers as_document images, audio without voice, PDFs, etc.)
                 java.util.Optional<Long> sent = telegramClient.sendDocument(chatId, data, fileName, null, null);
                 logMediaDelivery("document", desc, data.length, sent);
                 markArtifactDelivered(artifactId, sent);
+                return sent.isPresent();
             }
         } catch (Exception e) {
             log.error("media_delivery_failed type={} file={} error={}", mediaType(desc), mediaFileName(desc),
                 e.getClass().getSimpleName());
+            return false;
         }
     }
 

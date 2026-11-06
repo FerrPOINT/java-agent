@@ -52,7 +52,6 @@ public class StreamingOrchestrator {
     private final com.azhukov.agent.bot.session.BotSessionStore sessionStore;
     private final com.azhukov.agent.bot.keyboard.ClarifyInteractionRenderer clarificationInteraction;
     private final ReviewDeliveryReceiptRepository reviewDeliveryReceiptRepository;
-
     public StreamingOrchestrator(AgentBackendClient backendClient, StreamEditor streamEditor,
                                  BusySessionHandler busyHandler, RuntimeFooter runtimeFooter,
                                  BotProperties properties, MediaDeliveryService mediaDeliveryService,
@@ -82,7 +81,6 @@ public class StreamingOrchestrator {
         this.clarificationInteraction = clarificationInteraction;
         this.reviewDeliveryReceiptRepository = reviewDeliveryReceiptRepository;
     }
-
 
     /**
      * Hermes parity: tool progress renders as one accumulating bubble per turn.
@@ -124,39 +122,19 @@ public class StreamingOrchestrator {
             return false;
         }
 
-        if (reviewDeliveryReceiptRepository != null) {
-            Optional<ReviewDeliveryReceiptEntity> delivered = reviewDeliveryReceiptRepository
+        // V10 receipts are already-confirmed messages from older versions: never resend them.
+        Optional<ReviewDeliveryReceiptEntity> legacyReceipt = reviewDeliveryReceiptRepository == null
+            ? Optional.empty() : reviewDeliveryReceiptRepository
                 .findByBackendSessionIdAndBackendDeliveryId(backendSessionId, backendDeliveryId);
-            if (delivered.isPresent()) {
-                boolean acknowledged = backendClient.acknowledgePendingReview(sessionId, deliveryId);
-                if (acknowledged) {
-                    reviewDeliveryReceiptRepository.delete(delivered.get());
-                } else {
-                    log.warn("Review acknowledgement failed for chat {}; receipt retained for retry", chatId);
-                }
-                return acknowledged;
-            }
+        // The backend's conditional delete claims this delivery across bot instances. As in
+        // Hermes, a crash or transport failure after this point may lose the notification.
+        if (!backendClient.acknowledgePendingReview(sessionId, deliveryId)) return false;
+        if (legacyReceipt.isPresent()) {
+            reviewDeliveryReceiptRepository.delete(legacyReceipt.get());
+            return true;
         }
-
         if (!hooks.sendReviewMessage(chatId, summary, userMessageId, messageThreadId)) {
-            return false;
-        }
-        if (reviewDeliveryReceiptRepository != null) {
-            ReviewDeliveryReceiptEntity receipt = new ReviewDeliveryReceiptEntity();
-            receipt.setId(java.util.UUID.randomUUID());
-            receipt.setBackendSessionId(backendSessionId);
-            receipt.setBackendDeliveryId(backendDeliveryId);
-            receipt.setDeliveredAt(java.time.Instant.now());
-            reviewDeliveryReceiptRepository.save(receipt);
-        }
-        boolean acknowledged = backendClient.acknowledgePendingReview(sessionId, deliveryId);
-        if (!acknowledged) {
-            log.warn("Review delivery acknowledgement failed for chat {}; receipt retained for acknowledgement retry", chatId);
-            return false;
-        }
-        if (reviewDeliveryReceiptRepository != null) {
-            reviewDeliveryReceiptRepository.findByBackendSessionIdAndBackendDeliveryId(backendSessionId, backendDeliveryId)
-                .ifPresent(reviewDeliveryReceiptRepository::delete);
+            log.warn("Best-effort review notification failed for chat {}", chatId);
         }
         return true;
     }
@@ -566,7 +544,7 @@ public class StreamingOrchestrator {
                             // the user is never left in silence. clearStream drops the
                             // draft StreamSession and its heartbeat.
                             delivered = streamEditor.sendFormattedFinalMessage(chatId, errorText).isPresent();
-                            streamEditor.clearStream(chatId);
+                            if (delivered) streamEditor.clearStream(chatId);
                         }
                         finalized[0] = delivered;
                         if (!delivered) {

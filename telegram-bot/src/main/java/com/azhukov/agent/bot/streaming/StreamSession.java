@@ -91,6 +91,8 @@ public class StreamSession {
      */
     public volatile String pendingFinalText = null;
     public volatile int pendingFinalRetryAfterSeconds = -1;
+    /** A final part may already be visible; never replay the whole response. */
+    public volatile boolean partialFinalDelivery = false;
 
     // ─── S5: Native draft streaming state ────────────────────────
     /** True when draft streaming is active for this chat (else edit-based). */

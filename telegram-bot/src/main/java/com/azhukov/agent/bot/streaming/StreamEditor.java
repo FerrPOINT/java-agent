@@ -845,6 +845,14 @@ public class StreamEditor {
     }
 
     /** Consume the full response retained after a terminal stream-delivery failure. */
+    public boolean takePartialFinalDelivery(long chatId) {
+        StreamSession session = sessions.get(chatId);
+        if (session == null) return false;
+        boolean partial = session.partialFinalDelivery;
+        session.partialFinalDelivery = false;
+        return partial;
+    }
+
     public String takePendingFinalText(long chatId) {
         StreamSession session = sessions.get(chatId);
         if (session == null) {
@@ -1293,6 +1301,7 @@ public class StreamEditor {
             for (String chunk : chunks) {
                 if (chunk.isBlank()) continue;
                 last = telegramClient.sendMessage(chatId, chunk, null, null, null, false);
+                if (last.isEmpty()) return Optional.empty();
             }
             return last;
         }
@@ -1318,11 +1327,42 @@ public class StreamEditor {
             Optional<Long> last = Optional.empty();
             for (String chunk : chunks) {
                 if (chunk.isBlank()) continue;
-                last = telegramClient.sendMessage(chatId, chunk, parseMode, null, messageThreadId, false);
+                Optional<Long> sent;
+                try {
+                    sent = telegramClient.sendMessage(chatId, chunk, parseMode, null, messageThreadId, false);
+                } catch (RuntimeException e) {
+                    if (last.isPresent() || !(e instanceof TelegramApiException apiError && apiError.isRateLimit())) {
+                        sessionFor(chatId).partialFinalDelivery = true;
+                    }
+                    throw e;
+                }
+                if (sent.isEmpty()) {
+                    int retryAfter = telegramClient.takeLastRetryAfterSeconds();
+                    StreamSession session = sessionFor(chatId);
+                    if (retryAfter > 0) session.pendingFinalRetryAfterSeconds = retryAfter;
+                    if (last.isPresent() || retryAfter <= 0) session.partialFinalDelivery = true;
+                    return Optional.empty();
+                }
+                last = sent;
             }
             return last;
         }
-        return telegramClient.sendMessage(chatId, formatted, parseMode, null, messageThreadId, false);
+        Optional<Long> sent;
+        try {
+            sent = telegramClient.sendMessage(chatId, formatted, parseMode, null, messageThreadId, false);
+        } catch (RuntimeException e) {
+            if (!(e instanceof TelegramApiException apiError && apiError.isRateLimit())) {
+                sessionFor(chatId).partialFinalDelivery = true;
+            }
+            throw e;
+        }
+        if (sent.isEmpty()) {
+            int retryAfter = telegramClient.takeLastRetryAfterSeconds();
+            StreamSession session = sessionFor(chatId);
+            if (retryAfter > 0) session.pendingFinalRetryAfterSeconds = retryAfter;
+            else session.partialFinalDelivery = true;
+        }
+        return sent;
     }
 
     /**
@@ -1339,6 +1379,7 @@ public class StreamEditor {
             for (String chunk : chunks) {
                 if (chunk.isBlank()) continue;
                 last = telegramClient.sendMessage(chatId, chunk, parseMode, null, null);
+                if (last.isEmpty()) return Optional.empty();
             }
             return last;
         }

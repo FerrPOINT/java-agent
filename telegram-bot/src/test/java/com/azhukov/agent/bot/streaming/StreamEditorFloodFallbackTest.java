@@ -155,8 +155,34 @@ class StreamEditorFloodFallbackTest {
         when(client.takeLastRetryAfterSeconds()).thenReturn(270);
         assertThat(editor.finalizeStream(123L, -1L, text)).isFalse();
         verify(client, times(2)).sendMessage(eq(123L), anyString(), any(), any(), any(), anyBoolean());
+        assertThat(editor.takePartialFinalDelivery(123L)).isTrue();
+        assertThat(editor.takePartialFinalDelivery(123L)).isFalse();
         editor.recordFinalDeliveryFailure(123L, text);
         assertThat(editor.takePendingFinalRetryAfterSeconds(123L)).isEqualTo(270);
+    }
+
+    @Test
+    void partialFinalThenFloodExceptionKeepsUnknownOutcome() {
+        var session = editor.sessionFor(123L);
+        session.useDraftStreaming = true;
+        when(client.sendMessage(eq(123L), anyString(), any(), any(), any(), anyBoolean()))
+            .thenReturn(Optional.of(41L))
+            .thenThrow(new com.azhukov.agent.bot.client.TelegramApiException(429, "rate limit", 270));
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> editor.finalizeStream(123L, -1L, "x".repeat(9000)))
+            .isInstanceOf(com.azhukov.agent.bot.client.TelegramApiException.class);
+        assertThat(editor.takePartialFinalDelivery(123L)).isTrue();
+        verify(client, times(2)).sendMessage(eq(123L), anyString(), any(), any(), any(), anyBoolean());
+    }
+
+    @Test
+    void unknownExceptionDuringShortFinalMarksOutcomeUncertain() {
+        var session = editor.sessionFor(123L);
+        session.useDraftStreaming = true;
+        when(client.sendMessage(eq(123L), anyString(), any(), any(), any(), anyBoolean()))
+            .thenThrow(new com.azhukov.agent.bot.client.TelegramApiException(500, "server error"));
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> editor.finalizeStream(123L, -1L, "answer"))
+            .isInstanceOf(com.azhukov.agent.bot.client.TelegramApiException.class);
+        assertThat(editor.takePartialFinalDelivery(123L)).isTrue();
     }
 
     @Test

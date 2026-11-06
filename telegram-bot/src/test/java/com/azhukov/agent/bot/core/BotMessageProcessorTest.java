@@ -513,6 +513,119 @@ class BotMessageProcessorTest {
         verify(telegramClient, never()).sendMessage(eq(100L), contains("Response"), anyString(), any(), any());
     }
 
+    private record DeliveryFixture(StreamEditor editor, StreamingOrchestrator orchestrator,
+                                   BotMessageProcessor processor) implements AutoCloseable {
+        @Override public void close() {
+            orchestrator.shutdownReviewPollScheduler();
+            editor.clearStream(100L);
+            org.springframework.test.util.ReflectionTestUtils.invokeMethod(editor, "destroy");
+        }
+    }
+
+    private DeliveryFixture realDeliveryFixture() {
+        StreamEditor editor = new StreamEditor(telegramClient, properties, mediaDeliveryService,
+            mock(com.azhukov.agent.bot.rich.RichMessageSupport.class));
+        org.springframework.test.util.ReflectionTestUtils.invokeMethod(editor, "init");
+        StreamingOrchestrator actual = new StreamingOrchestrator(backendClient, editor, busyHandler,
+            runtimeFooter, properties, mediaDeliveryService, telegramClient, sessionStoreMock,
+            mock(com.azhukov.agent.bot.keyboard.ClarifyInteractionRenderer.class));
+        BotMessageProcessor actualProcessor = new BotMessageProcessor(
+            telegramClient, authorizationService, sessionStore, busyHandler, typingManager, backendClient,
+            commandRegistry, callbackQueryHandler, properties, editor, inboundMediaHandler, mediaDeliveryService,
+            mock(com.azhukov.agent.bot.core.AttachmentApiClient.class), runtimeFooter, reactionManager,
+            textBatchDebouncer, photoBatchDebouncer, groupMessageFilter, slashAccessPolicy, responseFilter,
+            goalAutoContinueService, editCaptureService,
+            new UpdateDispatcher(properties, editCaptureService, textBatchDebouncer, photoBatchDebouncer), actual);
+        return new DeliveryFixture(editor, actual, actualProcessor);
+    }
+
+    @Test
+    void realEditorPartialFallbackDoesNotResendTheWholeAnswer() {
+        String content = "x".repeat(9000);
+        when(telegramClient.sendMessage(eq(100L), anyString(), any(), any(), any(), anyBoolean()))
+            .thenReturn(Optional.of(10L), Optional.of(41L), Optional.empty(), Optional.of(42L));
+        when(telegramClient.takeLastRetryAfterSeconds()).thenReturn(270);
+        stubStreamingWithTokensAndFinalize(content, "test-model", false);
+        try (DeliveryFixture fixture = realDeliveryFixture()) {
+            fixture.processor().accept(textEvent(1, 100L, "Hello"));
+            verify(telegramClient, times(3)).sendMessage(eq(100L), anyString(), any(), any(), any(), anyBoolean());
+            verify(telegramClient, never()).sendMessage(eq(100L), anyString(), any(), any(), any());
+            verify(telegramClient, never()).deleteMessage(100L, 10L);
+        }
+    }
+
+    @Test
+    void firstUnknownFinalPartDoesNotTriggerWholeResponseFallback() {
+        String content = "x".repeat(9000);
+        when(telegramClient.sendMessage(eq(100L), anyString(), any(), any(), any(), anyBoolean()))
+            .thenReturn(Optional.of(10L), Optional.empty(), Optional.of(42L));
+        when(telegramClient.takeLastRetryAfterSeconds()).thenReturn(-1);
+        stubStreamingWithTokensAndFinalize(content, "test-model", false);
+        try (DeliveryFixture fixture = realDeliveryFixture()) {
+            fixture.processor().accept(textEvent(1, 100L, "Hello"));
+            verify(telegramClient, times(2)).sendMessage(eq(100L), anyString(), any(), any(), any(), anyBoolean());
+            verify(telegramClient, never()).sendMessage(eq(100L), anyString(), any(), any(), any());
+            verify(telegramClient, never()).deleteMessage(100L, 10L);
+        }
+    }
+
+    @Test
+    void firstUnknownShortFinalDoesNotTriggerWholeResponseFallback() {
+        String content = "short response";
+        when(telegramClient.sendMessage(eq(100L), anyString(), any(), any(), any(), anyBoolean()))
+            .thenReturn(Optional.of(10L), Optional.empty());
+        when(telegramClient.takeLastRetryAfterSeconds()).thenReturn(-1);
+        stubStreamingWithTokensAndFinalize(content, "test-model", false);
+        try (DeliveryFixture fixture = realDeliveryFixture()) {
+            fixture.processor().accept(textEvent(1, 100L, "Hello"));
+            verify(telegramClient, never()).sendMessage(eq(100L), anyString(), any(), any(), any());
+        }
+    }
+
+    @Test
+    void exceptionAfterAcceptedPartDoesNotReplayWholeAnswer() {
+        String content = "x".repeat(9000);
+        when(telegramClient.sendMessage(eq(100L), anyString(), any(), any(), any(), anyBoolean()))
+            .thenReturn(Optional.of(10L), Optional.of(41L))
+            .thenThrow(new com.azhukov.agent.bot.client.TelegramApiException(500, "server error"));
+        stubStreamingWithTokensAndFinalize(content, "test-model", false);
+        try (DeliveryFixture fixture = realDeliveryFixture()) {
+            fixture.processor().accept(textEvent(1, 100L, "Hello"));
+            verify(telegramClient, times(3)).sendMessage(eq(100L), anyString(), any(), any(), any(), anyBoolean());
+            verify(telegramClient, never()).sendMessage(eq(100L), anyString(), any(), any(), any());
+            verify(telegramClient, never()).deleteMessage(100L, 10L);
+        }
+    }
+
+    @Test
+    void laterTurnDoesNotInheritPriorUncertainDelivery() {
+        String first = "x".repeat(9000);
+        when(telegramClient.sendMessage(eq(100L), anyString(), any(), any(), any(), anyBoolean()))
+            .thenReturn(Optional.of(10L), Optional.of(41L), Optional.empty(), Optional.of(11L));
+        when(telegramClient.takeLastRetryAfterSeconds()).thenReturn(-1);
+        stubStreamingWithTokensAndFinalize(first, "test-model", false);
+        try (DeliveryFixture fixture = realDeliveryFixture()) {
+            fixture.processor().accept(textEvent(1, 100L, "First"));
+            reset(telegramClient);
+            when(telegramClient.sendMessage(eq(100L), anyString(), any(), any(), any(), anyBoolean()))
+                .thenReturn(Optional.of(11L), Optional.of(12L));
+            when(telegramClient.editMessageText(eq(100L), anyLong(), anyString(), any(), anyBoolean()))
+                .thenReturn(false);
+            reset(backendClient);
+            stubStreamingWithTokensAndFinalize("second response", "test-model", false);
+            fixture.processor().accept(textEvent(2, 100L, "Second"));
+            verify(telegramClient).sendMessage(eq(100L), eq("second response"), any(), any(), any(), anyBoolean());
+        }
+    }
+
+    @Test
+    void partialStreamFinalMustNotReplayTheWholeAnswer() {
+        stubStreamingResult("Long response", false);
+        when(streamEditor.takePartialFinalDelivery(100L)).thenReturn(true);
+        processor.accept(textEvent(1, 100L, "Hello"));
+        verify(telegramClient, never()).sendMessage(eq(100L), contains("Long response"), anyString(), any(), any());
+    }
+
     @Test
     void textMessageStreamNotFinalizedSendsFormatted() {
         stubStreamingResult("Response text", false);
@@ -556,16 +669,17 @@ class BotMessageProcessorTest {
         var pending = new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode()
             .put("pending", true).put("summary", review).put("deliveryId", deliveryId);
         when(backendClient.getPendingReview(sessionId)).thenReturn(pending);
-        when(telegramClient.sendMessage(eq(100L), anyString(), eq("MarkdownV2"), any(), any()))
+        when(telegramClient.sendMessageChecked(eq(100L), anyString(), eq("MarkdownV2"), any(), any(), any(), eq(false)))
             .thenReturn(Optional.of(1L), Optional.empty(), Optional.of(3L));
+        when(backendClient.acknowledgePendingReview(sessionId, deliveryId)).thenReturn(true, false);
         var orchestrator = new StreamingOrchestrator(backendClient, streamEditor, busyHandler, runtimeFooter,
             properties, mediaDeliveryService, telegramClient, sessionStoreMock,
             mock(com.azhukov.agent.bot.keyboard.ClarifyInteractionRenderer.class));
         try {
+            assertThat(orchestrator.deliverPendingReview(sessionId, 100L, 1L, 0L, processor)).isTrue();
             assertThat(orchestrator.deliverPendingReview(sessionId, 100L, 1L, 0L, processor)).isFalse();
-            assertThat(orchestrator.deliverPendingReview(sessionId, 100L, 1L, 0L, processor)).isFalse();
-            verify(telegramClient, times(2)).sendMessage(eq(100L), anyString(), eq("MarkdownV2"), any(), any());
-            verify(backendClient, never()).acknowledgePendingReview(anyString(), anyString());
+            verify(telegramClient, times(2)).sendMessageChecked(eq(100L), anyString(), eq("MarkdownV2"), any(), any(), any(), eq(false));
+            verify(backendClient, times(2)).acknowledgePendingReview(sessionId, deliveryId);
         } finally {
             orchestrator.shutdownReviewPollScheduler();
         }
@@ -575,11 +689,11 @@ class BotMessageProcessorTest {
     void reviewHtmlPartsMustNotCutEscapedEntities() {
         properties.setParseMode("HTML");
         String review = "&".repeat(3000);
-        when(telegramClient.sendMessage(eq(100L), anyString(), eq("HTML"), any(), any()))
+        when(telegramClient.sendMessageChecked(eq(100L), anyString(), eq("HTML"), any(), any(), any(), eq(false)))
             .thenReturn(Optional.of(42L));
         assertThat(processor.sendReviewMessage(100L, review, 1L, 0L)).isTrue();
         var sent = ArgumentCaptor.forClass(String.class);
-        verify(telegramClient, atLeast(2)).sendMessage(eq(100L), sent.capture(), eq("HTML"), any(), any());
+        verify(telegramClient, atLeast(2)).sendMessageChecked(eq(100L), sent.capture(), eq("HTML"), any(), any(), any(), eq(false));
         StringBuilder restored = new StringBuilder();
         for (String chunk : sent.getAllValues()) {
             assertThat(chunk.length()).isLessThanOrEqualTo(4096);
@@ -613,21 +727,42 @@ class BotMessageProcessorTest {
     }
 
     @Test
+    void mediaReviewFailureMustNotClaimCompleteDelivery() {
+        properties.setMediaDeliveryEnabled(true);
+        String review = "report MEDIA:/workspace/report.pdf";
+        when(telegramClient.sendMessageChecked(eq(100L), anyString(), eq("MarkdownV2"), any(), any(), any(), eq(false)))
+            .thenReturn(Optional.of(42L));
+        assertThat(processor.sendReviewMessage(100L, review, 1L, 0L)).isFalse();
+    }
+
+    @Test
+    void reviewFloodRefusalsStopSending() {
+        when(telegramClient.sendMessageChecked(eq(100L), anyString(), eq("MarkdownV2"), any(), any(), any(), eq(false)))
+            .thenThrow(new TelegramClient.SendRefusalException(30, "rate limit"));
+        assertThat(processor.sendReviewMessage(100L, "review", 1L, 0L)).isFalse();
+        reset(telegramClient);
+        when(telegramClient.sendMessageChecked(eq(100L), anyString(), eq("MarkdownV2"), any(), any(), any(), eq(false)))
+            .thenReturn(Optional.of(1L)).thenThrow(new TelegramClient.SendRefusalException(30, "rate limit"));
+        assertThat(processor.sendReviewMessage(100L, "x".repeat(9000), 1L, 0L)).isFalse();
+        verify(telegramClient, times(2)).sendMessageChecked(eq(100L), anyString(), eq("MarkdownV2"), any(), any(), any(), eq(false));
+    }
+
+    @Test
     void reviewPartialFailureDoesNotClaimSuccessfulReceipt() {
-        when(telegramClient.sendMessage(eq(100L), anyString(), eq("MarkdownV2"), any(), any()))
+        when(telegramClient.sendMessageChecked(eq(100L), anyString(), eq("MarkdownV2"), any(), any(), any(), eq(false)))
             .thenReturn(Optional.of(1L), Optional.empty(), Optional.of(3L));
         assertThat(processor.sendReviewMessage(100L, "x".repeat(9000), 1L, 0L)).isFalse();
-        verify(telegramClient, times(2)).sendMessage(eq(100L), anyString(), eq("MarkdownV2"), any(), any());
+        verify(telegramClient, times(2)).sendMessageChecked(eq(100L), anyString(), eq("MarkdownV2"), any(), any(), any(), eq(false));
     }
 
     @Test
     void reviewWithMarkdownExpansionIsSplitWithinTelegramLimit() {
         String review = "_".repeat(3000);
-        when(telegramClient.sendMessage(eq(100L), anyString(), eq("MarkdownV2"), any(), any()))
+        when(telegramClient.sendMessageChecked(eq(100L), anyString(), eq("MarkdownV2"), any(), any(), any(), eq(false)))
             .thenReturn(Optional.of(42L));
         assertThat(processor.sendReviewMessage(100L, review, 1L, 0L)).isTrue();
         var sent = ArgumentCaptor.forClass(String.class);
-        verify(telegramClient, atLeast(2)).sendMessage(eq(100L), sent.capture(), eq("MarkdownV2"), any(), any());
+        verify(telegramClient, atLeast(2)).sendMessageChecked(eq(100L), sent.capture(), eq("MarkdownV2"), any(), any(), any(), eq(false));
         assertThat(sent.getAllValues()).allSatisfy(part -> assertThat(part.length()).isLessThanOrEqualTo(4096));
         String restored = sent.getAllValues().stream()
             .map(chunk -> chunk.replaceFirst("^\\\\\\(\\d+/\\d+\\\\\\) ", ""))

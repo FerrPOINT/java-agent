@@ -281,42 +281,46 @@ class StreamingOrchestratorTest {
     }
 
     @Test
-    void failedReviewIsSentAgainOnNextPollEvenWhenOutcomeIsUnknown() {
-        UUID backendSessionId = UUID.randomUUID();
-        UUID deliveryId = UUID.randomUUID();
-        String review = "x".repeat(9000);
-        when(backendClient.getPendingReview(backendSessionId.toString())).thenReturn(
+    void reviewIsClaimedBeforeBestEffortNotificationLikeHermes() {
+        UUID session = UUID.randomUUID();
+        UUID delivery = UUID.randomUUID();
+        when(backendClient.getPendingReview(session.toString())).thenReturn(
             new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode()
-                .put("pending", true).put("summary", review).put("deliveryId", deliveryId.toString()));
-        when(hooks.sendReviewMessage(100L, review, 5L, 0L)).thenReturn(false);
-        assertThat(orchestrator.deliverPendingReview(backendSessionId.toString(), 100L, 5L, 0L, hooks)).isFalse();
-        assertThat(orchestrator.deliverPendingReview(backendSessionId.toString(), 100L, 5L, 0L, hooks)).isFalse();
-        verify(hooks, times(1)).sendReviewMessage(100L, review, 5L, 0L);
-        verify(backendClient, never()).acknowledgePendingReview(anyString(), anyString());
+                .put("pending", true).put("summary", "review").put("deliveryId", delivery.toString()));
+        when(backendClient.acknowledgePendingReview(session.toString(), delivery.toString())).thenReturn(true);
+        when(hooks.sendReviewMessage(100L, "review", 0L, 0L)).thenReturn(false);
+
+        orchestrator.deliverPendingReview(session.toString(), 100L, 0L, 0L, hooks);
+
+        var order = inOrder(backendClient, hooks);
+        order.verify(backendClient).acknowledgePendingReview(session.toString(), delivery.toString());
+        order.verify(hooks).sendReviewMessage(100L, "review", 0L, 0L);
     }
 
     @Test
-    void streamReviewAckFailureRetainsReceiptAndDoesNotResendOnRetry() {
-        UUID backendSessionId = UUID.randomUUID();
-        UUID deliveryId = UUID.randomUUID();
-        String review = "Self-improvement review: Memory updated";
-        when(backendClient.getPendingReview(backendSessionId.toString())).thenReturn(
+    void claimFailureDoesNotSendReview() {
+        UUID session = UUID.randomUUID();
+        UUID delivery = UUID.randomUUID();
+        when(backendClient.getPendingReview(session.toString())).thenReturn(
             new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode()
-                .put("pending", true).put("summary", review).put("deliveryId", deliveryId.toString()));
-        when(backendClient.acknowledgePendingReview(backendSessionId.toString(), deliveryId.toString()))
-            .thenReturn(false, true);
+                .put("pending", true).put("summary", "review").put("deliveryId", delivery.toString()));
+        when(backendClient.acknowledgePendingReview(session.toString(), delivery.toString())).thenReturn(false);
+        assertThat(orchestrator.deliverPendingReview(session.toString(), 100L, 0L, 0L, hooks)).isFalse();
+        verify(hooks, never()).sendReviewMessage(anyLong(), anyString(), anyLong(), anyLong());
+    }
 
-        invokePendingReviewPoll(backendSessionId, hooks);
-        var saved = org.mockito.ArgumentCaptor.forClass(com.azhukov.agent.bot.session.ReviewDeliveryReceiptEntity.class);
-        verify(reviewReceiptRepository).save(saved.capture());
-        when(reviewReceiptRepository.findByBackendSessionIdAndBackendDeliveryId(backendSessionId, deliveryId))
-            .thenReturn(Optional.of(saved.getValue()));
-
-        invokePendingReviewPoll(backendSessionId, hooks);
-
-        verify(hooks, times(1)).sendReviewMessage(100L, review, 5L, 0L);
-        verify(backendClient, times(2)).acknowledgePendingReview(backendSessionId.toString(), deliveryId.toString());
-        verify(reviewReceiptRepository).delete(saved.getValue());
+    @Test
+    void legacyConfirmedReceiptIsAcknowledgedWithoutResending() {
+        UUID session = UUID.randomUUID();
+        UUID delivery = UUID.randomUUID();
+        var receipt = new com.azhukov.agent.bot.session.ReviewDeliveryReceiptEntity();
+        when(backendClient.getPendingReview(session.toString())).thenReturn(
+            new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode()
+                .put("pending", true).put("summary", "review").put("deliveryId", delivery.toString()));
+        when(reviewReceiptRepository.findByBackendSessionIdAndBackendDeliveryId(session, delivery)).thenReturn(Optional.of(receipt));
+        assertThat(orchestrator.deliverPendingReview(session.toString(), 100L, 0L, 0L, hooks)).isTrue();
+        verify(reviewReceiptRepository).delete(receipt);
+        verify(hooks, never()).sendReviewMessage(anyLong(), anyString(), anyLong(), anyLong());
     }
 
     private void invokePendingReviewPoll(UUID backendSessionId, StreamingOrchestrator.ProcessorHooks hooks) {
@@ -779,9 +783,8 @@ class StreamingOrchestratorTest {
         var response = orchestrator.streamChat(100L, "hi", "existing-session", session(), 5L, 0L, hooks);
 
         assertThat(response.streamFinalized()).isFalse();
-        InOrder cleanupAndRetention = inOrder(streamEditor);
-        cleanupAndRetention.verify(streamEditor).clearStream(100L);
-        cleanupAndRetention.verify(streamEditor).recordFinalDeliveryFailure(100L,
+        verify(streamEditor, never()).clearStream(100L);
+        verify(streamEditor).recordFinalDeliveryFailure(100L,
             "Temporary issue. Please try again.");
         verify(backendClient, never()).chat(anyString(), nullable(String.class), any());
     }
