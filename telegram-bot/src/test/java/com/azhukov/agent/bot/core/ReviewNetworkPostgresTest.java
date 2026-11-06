@@ -120,7 +120,28 @@ class ReviewNetworkPostgresTest {
                         insert.setString(3, "test review");
                         insert.executeUpdate();
                     }
-                    var second = new StreamingOrchestrator(client, null, null, null, new BotProperties(),
+                    var bothRead = new java.util.concurrent.CountDownLatch(2);
+                    var racingApi = new SessionApiClient(RestClient.builder().baseUrl(base).build(), new ObjectMapper()) {
+                        @Override public com.fasterxml.jackson.databind.JsonNode getPendingReview(String id) {
+                            var pending = super.getPendingReview(id);
+                            if (id.equals(concurrentSession.toString())) {
+                                assertThat(pending).isNotNull();
+                                assertThat(pending.path("pending").asBoolean()).isTrue();
+                                bothRead.countDown();
+                                try {
+                                    if (!bothRead.await(10, TimeUnit.SECONDS)) throw new AssertionError("both reads timed out");
+                                } catch (InterruptedException e) {
+                                    Thread.currentThread().interrupt();
+                                    throw new AssertionError(e);
+                                }
+                            }
+                            return pending;
+                        }
+                    };
+                    var racingClient = new AgentBackendClient(racingApi, null, null, null, null, null, null, null);
+                    var first = new StreamingOrchestrator(racingClient, null, null, null, new BotProperties(),
+                        new MediaDeliveryService(), null, null, null);
+                    var second = new StreamingOrchestrator(racingClient, null, null, null, new BotProperties(),
                         new MediaDeliveryService(), null, null, null);
                     var start = new java.util.concurrent.CountDownLatch(1);
                     var callersReady = new java.util.concurrent.CountDownLatch(2);
@@ -139,7 +160,7 @@ class ReviewNetworkPostgresTest {
                         java.util.concurrent.Callable<Boolean> firstCall = () -> {
                             callersReady.countDown();
                             if (!start.await(10, TimeUnit.SECONDS)) throw new AssertionError("start timed out");
-                            return orchestrator.deliverPendingReview(concurrentSession.toString(), 100L, 0L, 0L, concurrentHooks);
+                            return first.deliverPendingReview(concurrentSession.toString(), 100L, 0L, 0L, concurrentHooks);
                         };
                         java.util.concurrent.Callable<Boolean> secondCall = () -> {
                             callersReady.countDown();
@@ -157,6 +178,7 @@ class ReviewNetworkPostgresTest {
                     } finally {
                         start.countDown();
                         executor.shutdownNow();
+                        first.shutdownReviewPollScheduler();
                         second.shutdownReviewPollScheduler();
                     }
                 } finally {
