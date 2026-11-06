@@ -684,14 +684,13 @@ public class StreamEditor {
         StringBuffer buffer = session.floodFallbackBuffer;
         if (buffer.length() > 0) {
             log.info("Flood fallback mode: sending buffered content ({} chars) as new message for chat {}", buffer.length(), chatId);
-            String bufferedContent = buffer.toString();
             // CRITICAL: delivery is a two-phase replacement. The old draft is
             // the user's only visible copy until Telegram accepts the final send.
             // Deleting it first turns a 429/transport failure into total response
             // loss (incident 2026-09-15: Telegram retry_after=269).
             long currentMsg = session.currentMessageId.get();
             long oldMsgId = currentMsg >= 0 ? currentMsg : messageId;
-            Optional<Long> newMsgId = sendFormattedFinalMessage(chatId, bufferedContent, session.messageThreadId);
+            Optional<Long> newMsgId = sendFormattedFinalMessage(chatId, finalText, session.messageThreadId);
             if (newMsgId.isPresent()) {
                 session.floodFallbackBuffer.setLength(0);
                 if (oldMsgId > 0) {

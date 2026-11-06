@@ -55,6 +55,29 @@ class StreamEditorFloodFallbackTest {
     // ─── 4a: Flood strikes fallback mode tests ─────────────────────
 
     @Test
+    void floodFallbackUsesFinalTextRatherThanStaleFormattedBuffer() {
+        var session = editor.sessionFor(123L);
+        session.currentMessageId.set(42L);
+        session.floodFallbackBuffer.append("raw\\_buffer");
+        when(client.sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), eq(false)))
+            .thenReturn(Optional.of(99L));
+        assertThat(editor.finalizeStream(123L, 42L, "final answer with footer")).isTrue();
+        verify(client).sendMessage(eq(123L), eq("final answer with footer"), eq("MarkdownV2"), any(), any(), eq(false));
+    }
+
+    @Test
+    void floodFallbackFormatsFinalMarkdownOnlyOnce() {
+        var session = editor.sessionFor(123L);
+        session.currentMessageId.set(42L);
+        session.streamingDisabled = true;
+        editor.editStream(123L, 42L, "value_with_underscore");
+        when(client.sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), eq(false)))
+            .thenReturn(Optional.of(99L));
+        assertThat(editor.finalizeStream(123L, 42L, "value_with_underscore")).isTrue();
+        verify(client).sendMessage(eq(123L), eq("value\\_with\\_underscore"), eq("MarkdownV2"), any(), any(), eq(false));
+    }
+
+    @Test
     void failedEditFallbackPreservesForumThread() {
         editor.sessionFor(123L).messageThreadId = 77L;
         when(client.editMessageText(eq(123L), eq(42L), anyString(), eq("MarkdownV2"), eq(false))).thenReturn(false);
