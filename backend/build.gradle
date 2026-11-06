@@ -55,7 +55,7 @@ dependencies {
     implementation 'io.micrometer:micrometer-registry-prometheus'
 
     // LLM (latest stable, not in Spring Boot BOM)
-    implementation 'dev.langchain4j:langchain4j:1.22.0'
+    implementation 'dev.langchain4j:langchain4j:1.23.0'
     implementation 'dev.langchain4j:langchain4j-open-ai:1.22.0'
     implementation 'dev.langchain4j:langchain4j-http-client-jdk:1.22.0'
 
