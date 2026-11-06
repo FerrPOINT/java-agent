@@ -112,6 +112,53 @@ class ReviewNetworkPostgresTest {
                         query.setObject(1, delivery);
                         try (var rows = query.executeQuery()) { rows.next(); assertThat(rows.getInt(1)).isZero(); }
                     }
+                    UUID concurrentSession = UUID.randomUUID(), concurrentDelivery = UUID.randomUUID();
+                    try (var connection = DriverManager.getConnection(db.getJdbcUrl(), db.getUsername(), db.getPassword());
+                         var insert = connection.prepareStatement("INSERT INTO pending_review_summaries(delivery_id,session_id,summary) VALUES (?,?,?)")) {
+                        insert.setObject(1, concurrentDelivery);
+                        insert.setObject(2, concurrentSession);
+                        insert.setString(3, "test review");
+                        insert.executeUpdate();
+                    }
+                    var second = new StreamingOrchestrator(client, null, null, null, new BotProperties(),
+                        new MediaDeliveryService(), null, null, null);
+                    var start = new java.util.concurrent.CountDownLatch(1);
+                    var callersReady = new java.util.concurrent.CountDownLatch(2);
+                    var executor = java.util.concurrent.Executors.newFixedThreadPool(2);
+                    AtomicInteger concurrentSends = new AtomicInteger();
+                    var concurrentHooks = new StreamingOrchestrator.ProcessorHooks() {
+                        public String resolveModelUsed(BotSessionEntity s, AgentBackendClient.ChatResult r) { return null; }
+                        public void deliverMedia(long chat, List<MediaDeliveryService.MediaDescriptor> media, Integer thread) { }
+                        public String buildMessageWithContext(String text, BotSessionEntity s, long chat) { return text; }
+                        public boolean sendReviewMessage(long chat, String text, long message, long thread) {
+                            concurrentSends.incrementAndGet();
+                            return true;
+                        }
+                    };
+                    try {
+                        java.util.concurrent.Callable<Boolean> firstCall = () -> {
+                            callersReady.countDown();
+                            if (!start.await(10, TimeUnit.SECONDS)) throw new AssertionError("start timed out");
+                            return orchestrator.deliverPendingReview(concurrentSession.toString(), 100L, 0L, 0L, concurrentHooks);
+                        };
+                        java.util.concurrent.Callable<Boolean> secondCall = () -> {
+                            callersReady.countDown();
+                            if (!start.await(10, TimeUnit.SECONDS)) throw new AssertionError("start timed out");
+                            return second.deliverPendingReview(concurrentSession.toString(), 100L, 0L, 0L, concurrentHooks);
+                        };
+                        var firstResult = executor.submit(firstCall);
+                        var secondResult = executor.submit(secondCall);
+                        assertThat(callersReady.await(10, TimeUnit.SECONDS)).isTrue();
+                        start.countDown();
+                        assertThat(List.of(firstResult.get(15, TimeUnit.SECONDS), secondResult.get(15, TimeUnit.SECONDS)))
+                            .containsExactlyInAnyOrder(true, false);
+                        assertThat(concurrentSends).hasValue(1);
+                        assertThat(api.getPendingReview(concurrentSession.toString()).path("pending").asBoolean()).isFalse();
+                    } finally {
+                        start.countDown();
+                        executor.shutdownNow();
+                        second.shutdownReviewPollScheduler();
+                    }
                 } finally {
                     orchestrator.shutdownReviewPollScheduler();
                 }
