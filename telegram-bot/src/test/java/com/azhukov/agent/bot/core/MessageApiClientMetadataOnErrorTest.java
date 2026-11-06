@@ -143,6 +143,47 @@ class MessageApiClientMetadataOnErrorTest {
     }
 
     @Test
+    void refusedConnectionIsRetriedAndLaterSucceeds() throws Exception {
+        var connects = new java.util.concurrent.atomic.AtomicInteger();
+        var requestFactory = new org.springframework.http.client.SimpleClientHttpRequestFactory() {
+            @Override public org.springframework.http.client.ClientHttpRequest createRequest(java.net.URI uri, org.springframework.http.HttpMethod method) throws IOException {
+                if (connects.incrementAndGet() == 1) throw new java.net.ConnectException("refused");
+                return super.createRequest(uri, method);
+            }
+        };
+        serveSse("{\"type\":\"done\"}");
+        var client = new MessageApiClient(RestClient.builder()
+            .baseUrl("http://127.0.0.1:" + server.getAddress().getPort())
+            .requestFactory(requestFactory).build(), mapper, new com.azhukov.agent.bot.config.BotProperties());
+        var completed = new java.util.concurrent.atomic.AtomicBoolean();
+        AtomicReference<Throwable> error = new AtomicReference<>();
+        client.chatStream("hi", null, null, token -> { }, tool -> { }, (name, preview) -> { },
+            retry -> { }, review -> { }, clarify -> { }, result -> completed.set(true), error::set);
+        assertThat(connects).hasValue(2);
+        assertThat(completed).isTrue();
+        assertThat(error.get()).isNull();
+    }
+
+    @Test
+    void acceptedPostWithLostResponseIsNotReplayed() {
+        var accepted = new java.util.concurrent.atomic.AtomicInteger();
+        server.createContext("/api/v1/agent/chat/stream", exchange -> {
+            exchange.getRequestBody().readAllBytes();
+            accepted.incrementAndGet();
+            exchange.close();
+        });
+        server.start();
+        var errors = new java.util.concurrent.atomic.AtomicInteger();
+        var streamingClient = com.azhukov.agent.shared.http.BackendRestClientFactory.createStreaming(
+            "http://127.0.0.1:" + server.getAddress().getPort(), "");
+        MessageApiClient client = new MessageApiClient(streamingClient, mapper, new com.azhukov.agent.bot.config.BotProperties());
+        client.chatStream("hi", null, null, token -> { }, tool -> { }, (name, preview) -> { },
+            retry -> { }, review -> { }, clarify -> { }, result -> { }, error -> errors.incrementAndGet());
+        assertThat(errors).hasValue(1);
+        assertThat(accepted).as("POST accepted by backend").hasValue(1);
+    }
+
+    @Test
     void errorCallbackFailureDoesNotInvokeErrorCallbackTwice() {
         serveSse("{\"type\":\"error\",\"error\":\"backend failed\"}");
         var calls = new java.util.concurrent.atomic.AtomicInteger();

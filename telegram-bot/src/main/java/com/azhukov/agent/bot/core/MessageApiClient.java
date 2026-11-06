@@ -184,8 +184,8 @@ public class MessageApiClient extends BaseBackendClient {
                     }
                 } catch (Exception ce) {
                     lastConnectError = ce;
-                    // Only retry on connection errors (IOException, ConnectException),
-                    // NOT on HTTP errors (4xx/5xx responses from the backend)
+                    // A lost response may follow an accepted POST. Retry only
+                    // explicit connection establishment or DNS failures.
                     if (isConnectionError(ce) && attempt < MAX_CONNECT_RETRIES) {
                         long backoff = CONNECT_BACKOFF_MS[attempt];
                         log.warn("SSE connection attempt {}/{} failed (connection error), retrying in {}ms: {}",
@@ -422,22 +422,10 @@ public class MessageApiClient extends BaseBackendClient {
     // Helpers
     // ------------------------------------------------------------------
 
-    /**
-     * Determine if an exception represents a connection-level failure
-     * (as opposed to an HTTP error response from the backend).
-     * Only connection errors are retried during initial SSE connection.
-     */
+    /** Retry only failures that explicitly indicate the connection was not established. */
     private static boolean isConnectionError(Throwable e) {
-        if (e == null) return false;
-        Throwable current = e;
-        while (current != null) {
-            if (current instanceof java.net.ConnectException) return true;
-            if (current instanceof java.io.IOException) return true;
-            // Spring RestClient wraps connection errors in ResourceAccessException
-            String className = current.getClass().getName();
-            if (className.contains("ResourceAccessException")) return true;
-            if (className.contains("ConnectException")) return true;
-            current = current.getCause();
+        for (Throwable current = e; current != null; current = current.getCause()) {
+            if (current instanceof java.net.ConnectException || current instanceof java.net.UnknownHostException) return true;
         }
         return false;
     }
