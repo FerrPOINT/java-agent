@@ -632,6 +632,8 @@ class StreamingOrchestratorTest {
         });
         var result = orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
         assertThat(result.turnSucceeded()).isFalse();
+        assertThat(result.turnCancelled()).isTrue();
+        verify(streamEditor).discardStreamPreview(100L);
         verify(backendClient, never()).chat(anyString(), nullable(String.class), any());
     }
 

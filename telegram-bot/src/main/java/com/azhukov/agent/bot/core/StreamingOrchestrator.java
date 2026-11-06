@@ -570,7 +570,7 @@ public class StreamingOrchestrator {
             // already have occurred, even when no final text was streamed.
             if (toolObserved[0]) {
                 progressBubbles.remove(chatId);
-                streamEditor.clearStream(chatId);
+                streamEditor.discardStreamPreview(chatId);
                 return new AgentBackendClient.ChatResult("", streamResult.modelUsed(),
                     streamResult.contextTokens(), streamResult.contextLength(), false,
                     streamResult.memoryUpdated(), streamResult.backendSessionId(), streamResult.lastReasoning(),
