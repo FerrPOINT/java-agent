@@ -179,9 +179,8 @@ public class MessageApiClient extends BaseBackendClient {
                         .body(body)
                         .retrieve()
                         .body(InputStream.class);
-                    if (is != null) {
-                        break; // connection established
-                    }
+                    // An empty response can follow an accepted POST; never replay it.
+                    break;
                 } catch (Exception ce) {
                     lastConnectError = ce;
                     // A lost response may follow an accepted POST. Retry only
@@ -205,7 +204,7 @@ public class MessageApiClient extends BaseBackendClient {
 
             if (is == null) {
                 errorNotified = true;
-                onError.accept(new IllegalStateException("Backend stream returned null input stream after retries"));
+                onError.accept(new IllegalStateException("Backend stream returned empty response"));
                 return new AgentBackendClient.ChatResult("");
             }
 

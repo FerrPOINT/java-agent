@@ -165,6 +165,26 @@ class MessageApiClientMetadataOnErrorTest {
     }
 
     @Test
+    void acceptedPostWithEmptyResponseIsNotReplayed() {
+        var accepted = new java.util.concurrent.atomic.AtomicInteger();
+        server.createContext("/api/v1/agent/chat/stream", exchange -> {
+            exchange.getRequestBody().readAllBytes();
+            accepted.incrementAndGet();
+            exchange.sendResponseHeaders(204, -1);
+            exchange.close();
+        });
+        server.start();
+        var streamingClient = com.azhukov.agent.shared.http.BackendRestClientFactory.createStreaming(
+            "http://127.0.0.1:" + server.getAddress().getPort(), "");
+        var errors = new java.util.concurrent.atomic.AtomicInteger();
+        var client = new MessageApiClient(streamingClient, mapper, new com.azhukov.agent.bot.config.BotProperties());
+        client.chatStream("hi", null, null, token -> { }, tool -> { }, (name, preview) -> { },
+            retry -> { }, review -> { }, clarify -> { }, result -> { }, error -> errors.incrementAndGet());
+        assertThat(accepted).as("POST accepted by backend").hasValue(1);
+        assertThat(errors).hasValue(1);
+    }
+
+    @Test
     void acceptedPostWithLostResponseIsNotReplayed() {
         var accepted = new java.util.concurrent.atomic.AtomicInteger();
         server.createContext("/api/v1/agent/chat/stream", exchange -> {
