@@ -306,6 +306,12 @@ public class TelegramClient {
                 plainParams.remove("parse_mode");
                 return sendMessageCheckedParams(plainParams);
             }
+            if (e.getErrorCode() == 400 && params.containsKey("reply_to_message_id")
+                    && shouldRetryWithoutReply(e.getErrorDescription())) {
+                Map<String, Object> withoutReply = new LinkedHashMap<>(params);
+                withoutReply.remove("reply_to_message_id");
+                return sendMessageCheckedParams(withoutReply);
+            }
             return classifyCheckedSendFailure(e);
         }
     }

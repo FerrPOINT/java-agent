@@ -539,6 +539,37 @@ class TelegramClientTest {
         }
 
         @Test
+        void checkedSendRetriesWithoutMissingReplyTarget() {
+            stubPostChain(errorResponse(400, "reply message not found"));
+            when(responseSpec.body(TelegramResponse.class))
+                .thenReturn(errorResponse(400, "reply message not found"))
+                .thenReturn(successResponseWithResult(Map.of("message_id", 42)));
+            assertThat(client.sendMessageChecked(1L, "text", "MarkdownV2", 7L, 8, null, false)).contains(42L);
+            var params = org.mockito.ArgumentCaptor.forClass(Map.class);
+            verify(bodySpec, times(2)).body(params.capture());
+            assertThat(params.getAllValues().get(1)).doesNotContainKey("reply_to_message_id")
+                .containsEntry("parse_mode", "MarkdownV2").containsEntry("message_thread_id", 8);
+        }
+
+        @Test
+        void checkedReplyFallbackAmbiguityIsNotRetriedAgain() {
+            stubPostChain(errorResponse(400, "reply message not found"));
+            when(responseSpec.body(TelegramResponse.class))
+                .thenReturn(errorResponse(400, "reply message not found"))
+                .thenThrow(new org.springframework.web.client.ResourceAccessException("timeout"));
+            assertThat(client.sendMessageChecked(1L, "text", null, 7L, null, null, false)).isEmpty();
+            verify(restClient, times(2)).post();
+        }
+
+        @Test
+        void checkedOtherRejectionDoesNotRemoveReplyTarget() {
+            stubPostChain(errorResponse(403, "bot blocked"));
+            assertThatThrownBy(() -> client.sendMessageChecked(1L, "text", null, 7L, null, null, false))
+                .isInstanceOf(TelegramClient.SendRefusalException.class);
+            verify(restClient).post();
+        }
+
+        @Test
         void checkedPlainFallbackAmbiguityDoesNotRetryAgain() {
             stubPostChain(errorResponse(400, "can't parse entities"));
             when(responseSpec.body(TelegramResponse.class))
