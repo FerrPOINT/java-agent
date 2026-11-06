@@ -364,7 +364,7 @@ public class StreamingOrchestrator {
                 // Calling onSegmentBreak here with stale messageId would edit the wrong
                 // (already-finalized) message. Hermes does not break on tool_result either.
                 (toolName, toolResultPreview) -> {
-                    // Just clear accumulated text — the next tokens will start a new segment
+                    toolObserved[0] = true;
                 },
                 // retryConsumer — called when backend emits retry/continuation events.
                 // TRANSIENT status only (Hermes parity: gateway shows retry status, it never
