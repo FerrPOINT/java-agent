@@ -205,7 +205,7 @@ public class MessageApiClient extends BaseBackendClient {
             if (is == null) {
                 errorNotified = true;
                 onError.accept(new IllegalStateException("Backend stream returned empty response"));
-                return new AgentBackendClient.ChatResult("");
+                return new AgentBackendClient.ChatResult("", null, null, null, false, false, null, null, false);
             }
 
             try (BufferedReader reader = new BufferedReader(
@@ -262,8 +262,9 @@ public class MessageApiClient extends BaseBackendClient {
                                             false,
                                             metadataHolder[0].memoryUpdated(),
                                             metadataHolder[0].backendSessionId(),
-                                            metadataHolder[0].lastReasoning())
-                                        : new AgentBackendClient.ChatResult(accumulated.toString());
+                                            metadataHolder[0].lastReasoning(), false)
+                                        : new AgentBackendClient.ChatResult(accumulated.toString(), null, null, null,
+                                            false, false, null, null, false);
                                 }
                                 if ("metadata".equalsIgnoreCase(type)) {
                                     metadataHolder[0] = extractMetadata(event);

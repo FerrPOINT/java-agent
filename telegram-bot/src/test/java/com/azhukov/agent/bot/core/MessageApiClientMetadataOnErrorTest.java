@@ -94,6 +94,7 @@ class MessageApiClientMetadataOnErrorTest {
         // The error must be surfaced to the consumer
         assertThat(errorRef.get()).isNotNull();
         assertThat(errorRef.get().getMessage()).contains("usage limit");
+        assertThat(result.turnSucceeded()).isFalse();
         // ...AND the pre-error metadata must survive into the result
         assertThat(result.modelUsed()).isEqualTo("kimi-k2.6");
         assertThat(result.contextTokens()).isEqualTo(1200);
@@ -174,8 +175,9 @@ class MessageApiClientMetadataOnErrorTest {
             .requestFactory(requestFactory).build(), mapper, new com.azhukov.agent.bot.config.BotProperties());
         var completed = new java.util.concurrent.atomic.AtomicBoolean();
         AtomicReference<Throwable> error = new AtomicReference<>();
-        client.chatStream("hi", null, null, token -> { }, tool -> { }, (name, preview) -> { },
-            retry -> { }, review -> { }, clarify -> { }, result -> completed.set(true), error::set);
+        var result = client.chatStream("hi", null, null, token -> { }, tool -> { }, (name, preview) -> { },
+            retry -> { }, review -> { }, clarify -> { }, value -> completed.set(true), error::set);
+        assertThat(result.turnSucceeded()).isTrue();
         assertThat(connects).hasValue(2);
         assertThat(completed).isTrue();
         assertThat(error.get()).isNull();

@@ -561,6 +561,7 @@ class AgentBackendClientTest {
 
         assertThat(errorRef.get()).isInstanceOf(IllegalStateException.class);
         assertThat(result.content()).isEmpty();
+        assertThat(result.turnSucceeded()).isFalse();
     }
 
     @Test
