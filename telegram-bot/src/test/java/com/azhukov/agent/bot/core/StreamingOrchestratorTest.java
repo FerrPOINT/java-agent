@@ -403,6 +403,43 @@ class StreamingOrchestratorTest {
     }
 
     @Test
+    void mediaOnlyResponseDiscardsPreviewBeforeDeliveringToForumThread() {
+        properties.setMediaDeliveryEnabled(true);
+        String response = "MEDIA:/workspace/report.pdf";
+        stubChatStream(ctx -> {
+            ctx.tokenConsumer.accept(response);
+            var result = new AgentBackendClient.ChatResult(response, "model", 1, 10, true);
+            ctx.onComplete.accept(result);
+            ctx.returnResult = result;
+        });
+        var result = orchestrator.streamChat(100L, "hi", null, session(), 5L, 77L, hooks);
+        assertThat(result.streamFinalized()).isTrue();
+        var order = inOrder(streamEditor, hooks);
+        order.verify(streamEditor).discardStreamPreview(100L);
+        order.verify(hooks).deliverMedia(eq(100L), argThat(media -> media.size() == 1), eq(77));
+        verify(streamEditor, never()).finalizeStream(anyLong(), anyLong(), anyString());
+    }
+
+    @Test
+    void mediaOnlyResponseWithFooterFinalizesFooterAndDeliversAttachment() {
+        properties.setMediaDeliveryEnabled(true);
+        when(runtimeFooter.format(anyString(), anyInt(), anyInt(), anyString(), anyLong(), anyBoolean()))
+            .thenReturn("\n[footer]");
+        String response = "MEDIA:/workspace/report.pdf";
+        stubChatStream(ctx -> {
+            ctx.tokenConsumer.accept(response);
+            var result = new AgentBackendClient.ChatResult(response, "model", 1, 10, true);
+            ctx.onComplete.accept(result);
+            ctx.returnResult = result;
+        });
+        var result = orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
+        assertThat(result.streamFinalized()).isTrue();
+        verify(streamEditor).finalizeStream(eq(100L), eq(1L), contains("[footer]"));
+        verify(hooks).deliverMedia(eq(100L), argThat(media -> media.size() == 1), isNull());
+        verify(streamEditor, never()).discardStreamPreview(anyLong());
+    }
+
+    @Test
     void draftCompletionExtractsAndDeliversMediaAfterFinalText() {
         properties.setMediaDeliveryEnabled(true);
         when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong()))
