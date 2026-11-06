@@ -573,6 +573,46 @@ class StreamingOrchestratorTest {
     }
 
     @Test
+    void realSseMetadataOnlyDoesNotTriggerSyncPost() throws Exception {
+        var http = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        try {
+            var streamPosts = new java.util.concurrent.atomic.AtomicInteger();
+            var syncPosts = new java.util.concurrent.atomic.AtomicInteger();
+            http.createContext("/api/v1/agent/chat/stream", exchange -> {
+                exchange.getRequestBody().readAllBytes();
+                streamPosts.incrementAndGet();
+                var response = ("data:{\"type\":\"metadata\",\"modelUsed\":\"test-model\",\"contextTokens\":3}\n\n"
+                    + "data:{\"type\":\"done\"}\n\n").getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
+                exchange.sendResponseHeaders(200, response.length);
+                try (var output = exchange.getResponseBody()) { output.write(response); }
+            });
+            http.createContext("/api/v1/agent/chat", exchange -> {
+                syncPosts.incrementAndGet();
+                exchange.sendResponseHeaders(500, -1);
+                exchange.close();
+            });
+            http.start();
+            var client = com.azhukov.agent.shared.http.BackendRestClientFactory.createStreaming(
+                "http://127.0.0.1:" + http.getAddress().getPort(), "");
+            var messages = new MessageApiClient(client, new com.fasterxml.jackson.databind.ObjectMapper(), properties);
+            var realBackend = new AgentBackendClient(null, messages, null, null, null, null, null, null);
+            orchestrator.shutdownReviewPollScheduler();
+            orchestrator = new StreamingOrchestrator(realBackend, streamEditor, busyHandler, runtimeFooter,
+                properties, mediaDeliveryService, telegramClient, sessionStoreMock,
+                mock(com.azhukov.agent.bot.keyboard.ClarifyInteractionRenderer.class), reviewReceiptRepository);
+            var result = orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
+            assertThat(streamPosts).hasValue(1);
+            assertThat(syncPosts).hasValue(0);
+            assertThat(result.modelUsed()).isEqualTo("test-model");
+            assertThat(result.content()).isEmpty();
+            verify(streamEditor).discardStreamPreview(100L);
+        } finally {
+            http.stop(0);
+        }
+    }
+
+    @Test
     void metadataOnlyStreamDoesNotRepeatAcceptedRequest() {
         stubChatStream(ctx -> {
             ctx.returnResult = new AgentBackendClient.ChatResult("", "model", 1, 10, false, false, null);
