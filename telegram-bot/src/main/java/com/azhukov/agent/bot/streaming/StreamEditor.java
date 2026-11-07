@@ -1358,7 +1358,7 @@ public class StreamEditor {
         try {
             if (telegramClient.deleteMessage(chatId, preview)) return;
         } catch (RuntimeException error) {
-            log.debug("Telegram preview removal failed", error);
+            log.debug("Telegram preview removal failed ({})", error.getClass().getSimpleName());
         }
         log.warn("Could not remove replaced Telegram preview {} for chat {}", preview, chatId);
     }
