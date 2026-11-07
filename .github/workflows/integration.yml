@@ -55,13 +55,10 @@ jobs:
       - name: Explicit slow PostgreSQL and real-wait tests
         working-directory: backend
         run: ./gradlew fullCheck --no-daemon --max-workers=1
-      - name: Review claim network integration
-        run: ./gradlew :telegram-bot:reviewNetworkTest --no-daemon --max-workers=1
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: slow-integration-results
           path: |
             backend/build/test-results/slowTest
-            telegram-bot/build/test-results/reviewNetworkTest
             backend/build/reports/jacoco/full

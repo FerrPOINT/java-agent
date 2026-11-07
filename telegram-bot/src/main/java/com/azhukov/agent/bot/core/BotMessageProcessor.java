@@ -317,14 +317,17 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
 
     private void scheduleFinalDelivery(long chatId, String response, long userMessageId,
                                        long messageThreadId, long delaySeconds) {
-        scheduleFinalDelivery(chatId, response, userMessageId, messageThreadId, delaySeconds, 0);
-    }
-
-    private void scheduleFinalDelivery(long chatId, String response, long userMessageId,
-                                       long messageThreadId, long delaySeconds, int retries) {
-        deferredFinalDeliveryExecutor.schedule(
-            () -> sendFormatted(chatId, response, userMessageId, messageThreadId, retries),
-            delaySeconds, TimeUnit.SECONDS);
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(StreamEditor.FLOOD_DELIVERY_WINDOW_SECONDS);
+        long wait = TimeUnit.SECONDS.toNanos(delaySeconds);
+        if (wait >= deadline - System.nanoTime()) {
+            log.warn("Telegram FloodWait exceeded the response delivery deadline for chat {}", chatId);
+            return;
+        }
+        deferredFinalDeliveryExecutor.schedule(() -> {
+            if (System.nanoTime() < deadline) {
+                sendFormatted(chatId, response, userMessageId, messageThreadId, 0, deadline);
+            }
+        }, delaySeconds, TimeUnit.SECONDS);
     }
 
     // ─── Text / Media ──────────────────────────────────────────────
@@ -832,12 +835,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
 
     @Override
     public void deliverMedia(long chatId, List<MediaDeliveryService.MediaDescriptor> media, Integer threadId) {
-        deliverMediaWithReceipt(chatId, media, threadId);
-    }
-
-    private boolean deliverMediaWithReceipt(long chatId, List<MediaDeliveryService.MediaDescriptor> media, Integer threadId) {
-        if (media == null || media.isEmpty()) return true;
-        boolean delivered = true;
+        if (media == null || media.isEmpty()) return;
 
         // Partition: images (not as_document) go to batch, everything else goes individually
         List<MediaDeliveryService.MediaDescriptor> imageBatch = new ArrayList<>();
@@ -847,7 +845,6 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
             // Security: validate path against allowed base directories
             if (!isMediaPathAllowed(desc.path())) {
                 log.warn("media_delivery_rejected reason=outside_allowed_root file={}", mediaFileName(desc));
-                delivered = false;
                 continue;
             }
             // WP-11: skip artifacts that were already delivered — a retry after
@@ -866,14 +863,13 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
 
         // Deliver image batch via sendMediaGroup (up to 10 per call)
         if (!imageBatch.isEmpty()) {
-            delivered &= deliverImageBatch(chatId, imageBatch);
+            deliverImageBatch(chatId, imageBatch);
         }
 
         // Deliver individual files
         for (MediaDeliveryService.MediaDescriptor desc : individualFiles) {
-            delivered &= deliverSingleMedia(chatId, desc);
+            deliverSingleMedia(chatId, desc);
         }
-        return delivered;
     }
 
     /**
@@ -1011,27 +1007,27 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         }
         Integer threadId = messageThreadId > 0 ? (int) messageThreadId : null;
         String textForDisplay = text;
-        boolean mediaAttempted = false;
-        boolean mediaDelivered = true;
         if (properties.isMediaDeliveryEnabled()) {
             MediaDeliveryService.ExtractionResult extraction = mediaDeliveryService.extractMediaTags(text);
             textForDisplay = extraction.cleanedText();
             if (!extraction.media().isEmpty()) {
-                mediaAttempted = true;
-                mediaDelivered = deliverMediaWithReceipt(chatId, extraction.media(), threadId);
+                deliverMedia(chatId, extraction.media(), threadId);
             }
         }
         if (textForDisplay == null || textForDisplay.isBlank()) {
-            return mediaAttempted && mediaDelivered;
+            return false;
         }
         String parseMode = properties.getParseMode();
         String formatted = StreamEditor.stripThinkTagsRegex(textForDisplay);
+        if ("MarkdownV2".equalsIgnoreCase(parseMode)) {
+            formatted = MarkdownConverter.convert(formatted);
+        } else if ("HTML".equalsIgnoreCase(parseMode)) {
+            formatted = formatted.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;");
+        }
         boolean sentAny = false;
-        List<String> chunks = "MarkdownV2".equalsIgnoreCase(parseMode)
-            ? MessageSplitter.splitAndFormat(formatted, parseMode)
-            : "HTML".equalsIgnoreCase(parseMode)
-                ? MessageSplitter.splitEscapedHtmlText(formatted)
-                : MessageSplitter.split(formatted);
+        List<String> chunks = MessageSplitter.split(formatted);
         for (int i = 0; i < chunks.size(); i++) {
             String chunk = chunks.get(i);
             if (chunk.isBlank()) {
@@ -1040,18 +1036,15 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
             Long replyToMessageId = "all".equalsIgnoreCase(properties.getReplyToMode()) && userMessageId > 0
                 || "first".equalsIgnoreCase(properties.getReplyToMode()) && i == 0 && userMessageId > 0
                 ? userMessageId : null;
-            Optional<Long> sent;
-            try {
-                sent = telegramClient.sendMessageChecked(chatId, chunk, parseMode, replyToMessageId, threadId, null, false);
-            } catch (com.azhukov.agent.bot.client.TelegramClient.SendRefusalException refusal) {
-                return false;
-            }
+            Optional<Long> sent = threadId == null
+                ? telegramClient.sendMessage(chatId, chunk, parseMode, replyToMessageId, null)
+                : telegramClient.sendMessage(chatId, chunk, parseMode, replyToMessageId, threadId, false);
             if (sent.isEmpty()) {
                 return false;
             }
             sentAny = true;
         }
-        return sentAny && mediaDelivered;
+        return sentAny;
     }
 
     /**
@@ -1076,10 +1069,10 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
      * @param messageThreadId the Telegram forum thread ID (0 = no thread routing)
      */
     private void sendFormatted(long chatId, String text, long userMessageId, long messageThreadId) {
-        sendFormatted(chatId, text, userMessageId, messageThreadId, -1);
+        sendFormatted(chatId, text, userMessageId, messageThreadId, -1, 0L);
     }
 
-    private void sendFormatted(long chatId, String text, long userMessageId, long messageThreadId, int retries) {
+    private void sendFormatted(long chatId, String text, long userMessageId, long messageThreadId, int retries, long deadline) {
         // B2.8: Response filter — filter silent/empty responses
         if (responseFilter.shouldFilter(text)) {
             log.debug("Response filtered (silent or empty) for chat {}", chatId);
@@ -1117,13 +1110,14 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                 ? MessageSplitter.splitEscapedHtmlText(formatted)
                 : MessageSplitter.split(formatted);
         sendFormattedChunks(chatId, chunks, 0, parseMode, replyMode, userMessageId, messageThreadId,
-            text.equals(textForDisplay) ? retries : -1);
+            text.equals(textForDisplay) ? retries : -1, deadline);
     }
 
     private void sendFormattedChunks(long chatId, List<String> chunks, int start, String parseMode,
-                                     String replyMode, long userMessageId, long messageThreadId, int retries) {
+                                     String replyMode, long userMessageId, long messageThreadId, int retries, long deadline) {
         Integer threadId = messageThreadId > 0 ? (int) messageThreadId : null;
         Long replyToMessageId;
+        if (retries >= 0 && System.nanoTime() >= deadline) return;
         for (int i = start; i < chunks.size(); i++) {
             String chunk = chunks.get(i);
             if (!chunk.isBlank()) {
@@ -1145,12 +1139,13 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                 if (sent.isEmpty()) {
                     if (retryable) {
                         int retryAfter = telegramClient.takeLastRetryAfterSeconds();
-                        if (retryAfter > 0) {
+                        long delay = (long) retryAfter + 1L;
+                        if (retryAfter > 0 && TimeUnit.SECONDS.toNanos(delay) < deadline - System.nanoTime()) {
                             int failedIndex = i;
                             deferredFinalDeliveryExecutor.schedule(
                                 () -> sendFormattedChunks(chatId, chunks, failedIndex, parseMode, replyMode,
-                                    userMessageId, messageThreadId, retries + 1),
-                                (long) retryAfter + 1L, TimeUnit.SECONDS);
+                                    userMessageId, messageThreadId, retries + 1, deadline),
+                                delay, TimeUnit.SECONDS);
                         }
                     }
                     // Do not send later chunks after a missing or ambiguous receipt.
@@ -1182,8 +1177,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
      * Deliver a batch of images via sendMediaGroup (up to 10 per call).
      * For a single image, uses sendPhoto instead.
      */
-    private boolean deliverImageBatch(long chatId, List<MediaDeliveryService.MediaDescriptor> images) {
-        boolean delivered = true;
+    private void deliverImageBatch(long chatId, List<MediaDeliveryService.MediaDescriptor> images) {
         if (images.size() == 1) {
             // Single image — use sendPhoto
             MediaDeliveryService.MediaDescriptor desc = images.get(0);
@@ -1193,18 +1187,17 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                     log.warn("Media file not found: {}", desc.path());
                     // M2: Notify user that the referenced file doesn't exist
                     telegramClient.sendMessage(chatId, "⚠️ Media file not found: " + desc.path());
-                    return false;
+                    return;
                 }
                 byte[] data = Files.readAllBytes(file.toPath());
                 String fileName = file.getName();
                 java.util.Optional<Long> sent = telegramClient.sendPhoto(chatId, data, null, null);
                 markArtifactDelivered(artifactIdForPath(desc.path()), sent);
                 log.debug("Sent photo {} to chat {}", desc.path(), chatId);
-                return sent.isPresent();
             } catch (Exception e) {
                 log.error("Failed to send photo {} to chat {}: {}", desc.path(), chatId, e.getMessage());
-                return false;
             }
+            return;
         }
 
         // Multiple images — chunk into groups of 10
@@ -1213,7 +1206,6 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
             List<MediaDeliveryService.MediaDescriptor> chunk = images.subList(i, end);
 
             List<TelegramClient.PhotoInput> photoInputs = new ArrayList<>();
-            List<MediaDeliveryService.MediaDescriptor> included = new ArrayList<>();
             for (MediaDeliveryService.MediaDescriptor desc : chunk) {
                 try {
                     File file = new File(desc.path());
@@ -1221,7 +1213,6 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                         log.warn("Media file not found, skipping: {}", desc.path());
                         // M2: Notify user that the referenced file doesn't exist
                         telegramClient.sendMessage(chatId, "⚠️ Media file not found: " + desc.path());
-                        delivered = false;
                         continue;
                     }
                     byte[] data = Files.readAllBytes(file.toPath());
@@ -1229,33 +1220,27 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                     // First photo in the group gets the caption (if any)
                     String caption = (photoInputs.isEmpty()) ? null : null;
                     photoInputs.add(new TelegramClient.PhotoInput(data, fileName, caption));
-                    included.add(desc);
                 } catch (Exception e) {
                     log.warn("Failed to read media file {}: {}", desc.path(), e.getMessage());
-                    delivered = false;
                 }
             }
 
-            if (photoInputs.size() == 1) {
-                Optional<Long> sent = telegramClient.sendPhoto(chatId, photoInputs.get(0).data(), null, null);
-                markArtifactDelivered(artifactIdForPath(included.get(0).path()), sent);
-                delivered &= sent.isPresent();
-            } else if (!photoInputs.isEmpty()) {
+            if (!photoInputs.isEmpty()) {
                 List<Long> messageIds = telegramClient.sendMediaGroup(chatId, photoInputs);
-                boolean complete = messageIds != null && messageIds.size() == photoInputs.size()
-                    && messageIds.stream().allMatch(java.util.Objects::nonNull);
-                delivered &= complete;
-                if (complete) {
-                    for (int item = 0; item < included.size(); item++) {
-                        String artifactId = artifactIdForPath(included.get(item).path());
-                        if (artifactId != null) attachmentApiClient.markDelivered(artifactId, String.valueOf(messageIds.get(item)));
+                // WP-11: mark every artifact in the group delivered with the first
+                // platform message id of the album.
+                String firstMsgId = messageIds == null || messageIds.isEmpty()
+                    ? null : String.valueOf(messageIds.get(0));
+                for (MediaDeliveryService.MediaDescriptor desc : chunk) {
+                    String artifactId = artifactIdForPath(desc.path());
+                    if (artifactId != null) {
+                        attachmentApiClient.markDelivered(artifactId, firstMsgId);
                     }
                 }
                 log.debug("Sent media group of {} to chat {} (messageIds: {})",
                     photoInputs.size(), chatId, messageIds);
             }
         }
-        return delivered;
     }
 
     /**
@@ -1265,14 +1250,14 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
      * - Image with [[as_document]] → sendDocument
      * - Everything else → sendDocument
      */
-    private boolean deliverSingleMedia(long chatId, MediaDeliveryService.MediaDescriptor desc) {
+    private void deliverSingleMedia(long chatId, MediaDeliveryService.MediaDescriptor desc) {
         try {
             File file = new File(desc.path());
             if (!file.exists() || !file.isFile()) {
                 log.warn("media_delivery_rejected reason=file_missing file={}", mediaFileName(desc));
                 // M2: Notify user that the referenced file doesn't exist
                 telegramClient.sendMessage(chatId, "⚠️ Media file not found: " + desc.path());
-                return false;
+                return;
             }
             byte[] data = Files.readAllBytes(file.toPath());
             String fileName = file.getName();
@@ -1283,23 +1268,19 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                 java.util.Optional<Long> sent = telegramClient.sendVideo(chatId, data, fileName, null, null);
                 logMediaDelivery("video", desc, data.length, sent);
                 markArtifactDelivered(artifactId, sent);
-                return sent.isPresent();
             } else if (desc.isAudio() && desc.asVoice()) {
                 java.util.Optional<Long> sent = telegramClient.sendAudioAsVoice(chatId, data, fileName, null);
                 logMediaDelivery("voice", desc, data.length, sent);
                 markArtifactDelivered(artifactId, sent);
-                return sent.isPresent();
             } else {
                 // Document (covers as_document images, audio without voice, PDFs, etc.)
                 java.util.Optional<Long> sent = telegramClient.sendDocument(chatId, data, fileName, null, null);
                 logMediaDelivery("document", desc, data.length, sent);
                 markArtifactDelivered(artifactId, sent);
-                return sent.isPresent();
             }
         } catch (Exception e) {
             log.error("media_delivery_failed type={} file={} error={}", mediaType(desc), mediaFileName(desc),
                 e.getClass().getSimpleName());
-            return false;
         }
     }
 

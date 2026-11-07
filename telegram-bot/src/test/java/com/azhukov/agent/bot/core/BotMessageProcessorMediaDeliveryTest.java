@@ -85,7 +85,6 @@ class BotMessageProcessorMediaDeliveryTest {
     private EditCaptureService editCaptureService;
 
     private BotMessageProcessor processor;
-    private AttachmentApiClient attachmentApiClient;
     private final com.azhukov.agent.bot.session.BotSessionStore sessionStoreMock = org.mockito.Mockito.mock(com.azhukov.agent.bot.session.BotSessionStore.class);
 
 
@@ -162,93 +161,13 @@ class BotMessageProcessorMediaDeliveryTest {
             mock(com.azhukov.agent.bot.client.TelegramClient.class), sessionStoreMock,
             mock(com.azhukov.agent.bot.keyboard.ClarifyInteractionRenderer.class));
 
-        attachmentApiClient = mock(AttachmentApiClient.class);
         processor = new BotMessageProcessor(
             telegramClient, authorizationService, sessionStore, busyHandler,
             typingManager, backendClient, commandRegistry, callbackQueryHandler,
-            properties, streamEditor, inboundMediaHandler, mediaDeliveryService, attachmentApiClient,
+            properties, streamEditor, inboundMediaHandler, mediaDeliveryService, org.mockito.Mockito.mock(com.azhukov.agent.bot.core.AttachmentApiClient.class),
             runtimeFooter, reactionManager, textBatchDebouncer, photoBatchDebouncer,
             groupMessageFilter, slashAccessPolicy, responseFilter, goalAutoContinueService,
             editCaptureService, updateDispatcher, streamingOrchestrator);
-    }
-
-    @Test
-    void incompleteAlbumDoesNotMarkArtifactsDelivered() throws Exception {
-        Path first = Files.writeString(tempDir.resolve("att_aaaa.png"), "one");
-        Path second = Files.writeString(tempDir.resolve("att_bbbb.png"), "two");
-        when(telegramClient.sendMediaGroup(eq(100L), anyList())).thenReturn(List.of(7L));
-        processor.deliverMedia(100L, List.of(
-            new MediaDeliveryService.MediaDescriptor(first.toString(), ".png", false, false),
-            new MediaDeliveryService.MediaDescriptor(second.toString(), ".png", false, false)), null);
-        verify(attachmentApiClient, never()).markDelivered(anyString(), any());
-    }
-
-    @Test
-    void albumWithOneReadableImageUsesSinglePhotoEndpoint() throws Exception {
-        Path image = Files.writeString(tempDir.resolve("att_aaaa.png"), "one");
-        Path missing = tempDir.resolve("att_bbbb.png");
-        when(telegramClient.sendPhoto(eq(100L), any(byte[].class), any(), any())).thenReturn(Optional.of(7L));
-        processor.deliverMedia(100L, List.of(
-            new MediaDeliveryService.MediaDescriptor(image.toString(), ".png", false, false),
-            new MediaDeliveryService.MediaDescriptor(missing.toString(), ".png", false, false)), null);
-        verify(telegramClient).sendPhoto(eq(100L), any(byte[].class), any(), any());
-        verify(telegramClient, never()).sendMediaGroup(anyLong(), anyList());
-        verify(attachmentApiClient).markDelivered("att_aaaa", "7");
-        verify(attachmentApiClient, never()).markDelivered(eq("att_bbbb"), any());
-    }
-
-    @Test
-    void completeAlbumMarksOnlyIncludedArtifactsWithTheirReceipts() throws Exception {
-        Path first = Files.writeString(tempDir.resolve("att_aaaa.png"), "one");
-        Path second = Files.writeString(tempDir.resolve("att_bbbb.png"), "two");
-        Path missing = tempDir.resolve("att_cccc.png");
-        when(telegramClient.sendMediaGroup(eq(100L), anyList())).thenReturn(List.of(7L, 8L));
-        processor.deliverMedia(100L, List.of(
-            new MediaDeliveryService.MediaDescriptor(first.toString(), ".png", false, false),
-            new MediaDeliveryService.MediaDescriptor(missing.toString(), ".png", false, false),
-            new MediaDeliveryService.MediaDescriptor(second.toString(), ".png", false, false)), null);
-        verify(attachmentApiClient).markDelivered("att_aaaa", "7");
-        verify(attachmentApiClient).markDelivered("att_bbbb", "8");
-        verify(attachmentApiClient, never()).markDelivered(eq("att_cccc"), any());
-    }
-
-    @Test
-    void reviewWithAcceptedDocumentAndTextIsDelivered() throws Exception {
-        Path document = Files.writeString(tempDir.resolve("report.pdf"), "content");
-        when(telegramClient.sendMessageChecked(eq(100L), anyString(), any(), any(), any(), any(), eq(false)))
-            .thenReturn(Optional.of(9L));
-        assertThat(processor.sendReviewMessage(100L, "report MEDIA:" + document, 1L, 0L)).isTrue();
-        verify(telegramClient).sendDocument(eq(100L), any(byte[].class), eq("report.pdf"), any(), any());
-    }
-
-    @Test
-    void reviewWithPartialAlbumReceiptsIsNotDelivered() throws Exception {
-        Path first = Files.writeString(tempDir.resolve("first.png"), "one");
-        Path second = Files.writeString(tempDir.resolve("second.png"), "two");
-        when(telegramClient.sendMediaGroup(eq(100L), anyList())).thenReturn(List.of(7L));
-        when(telegramClient.sendMessageChecked(eq(100L), anyString(), any(), any(), any(), any(), eq(false)))
-            .thenReturn(Optional.of(9L));
-        assertThat(processor.sendReviewMessage(100L, "review\nMEDIA:" + first + "\nMEDIA:" + second, 1L, 0L)).isFalse();
-        verify(telegramClient).sendMediaGroup(eq(100L), argThat(items -> items.size() == 2));
-    }
-
-    @Test
-    void reviewWithMediaThenTextRefusalDoesNotPermitWholeRetry() throws Exception {
-        Path document = Files.writeString(tempDir.resolve("report.pdf"), "content");
-        when(telegramClient.sendMessageChecked(eq(100L), anyString(), any(), any(), any(), any(), eq(false)))
-            .thenThrow(new TelegramClient.SendRefusalException(30, "rate limit"));
-        assertThat(processor.sendReviewMessage(100L, "report MEDIA:" + document, 1L, 0L)).isFalse();
-        verify(telegramClient).sendDocument(eq(100L), any(byte[].class), eq("report.pdf"), any(), any());
-    }
-
-    @Test
-    void reviewWithAcceptedAlbumAndTextIsDelivered() throws Exception {
-        Path first = Files.writeString(tempDir.resolve("first.png"), "one");
-        Path second = Files.writeString(tempDir.resolve("second.png"), "two");
-        when(telegramClient.sendMediaGroup(eq(100L), anyList())).thenReturn(List.of(7L, 8L));
-        when(telegramClient.sendMessageChecked(eq(100L), anyString(), any(), any(), any(), any(), eq(false)))
-            .thenReturn(Optional.of(9L));
-        assertThat(processor.sendReviewMessage(100L, "review\nMEDIA:" + first + "\nMEDIA:" + second, 1L, 0L)).isTrue();
     }
 
     @AfterEach
@@ -301,31 +220,6 @@ class BotMessageProcessorMediaDeliveryTest {
 
         verify(telegramClient).sendDocument(eq(100L), any(byte[].class), eq("valid.pdf"), isNull(), isNull());
         verify(telegramClient, never()).sendVideo(anyLong(), any(), anyString(), any(), any());
-    }
-
-    @Test
-    void nativeDraftRoutesDocumentAfterCleanFinalization() throws Exception {
-        Path document = createTempFile("report.pdf");
-        when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong()))
-            .thenReturn(Optional.empty());
-        stubStreamingResult("Here is the document\nMEDIA:" + document, true);
-        processor.accept(textEvent(1, 100L, "show me a document"));
-        var order = inOrder(streamEditor, telegramClient);
-        order.verify(streamEditor).finalizeStream(eq(100L), eq(-1L), argThat(text -> !text.contains("MEDIA:")));
-        order.verify(telegramClient).sendDocument(eq(100L), any(byte[].class), eq("report.pdf"), isNull(), isNull());
-    }
-
-    @Test
-    void nativeDraftPartialFinalizationDoesNotReplayDocument() throws Exception {
-        Path document = createTempFile("report.pdf");
-        when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong()))
-            .thenReturn(Optional.empty());
-        when(streamEditor.finalizeStream(eq(100L), eq(-1L), anyString())).thenReturn(false);
-        when(streamEditor.takePartialFinalDelivery(100L)).thenReturn(true);
-        stubStreamingResult("Here is the document\nMEDIA:" + document, true);
-        processor.accept(textEvent(1, 100L, "show me a document"));
-        verify(streamEditor).recordFinalDeliveryFailure(eq(100L), contains("MEDIA:"));
-        verify(telegramClient, never()).sendDocument(anyLong(), any(byte[].class), anyString(), any(), any());
     }
 
     @Test

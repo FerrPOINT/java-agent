@@ -122,19 +122,39 @@ public class StreamingOrchestrator {
             return false;
         }
 
-        // V10 receipts are already-confirmed messages from older versions: never resend them.
-        Optional<ReviewDeliveryReceiptEntity> legacyReceipt = reviewDeliveryReceiptRepository == null
-            ? Optional.empty() : reviewDeliveryReceiptRepository
+        if (reviewDeliveryReceiptRepository != null) {
+            Optional<ReviewDeliveryReceiptEntity> delivered = reviewDeliveryReceiptRepository
                 .findByBackendSessionIdAndBackendDeliveryId(backendSessionId, backendDeliveryId);
-        // The backend's conditional delete claims this delivery across bot instances. As in
-        // Hermes, a crash or transport failure after this point may lose the notification.
-        if (!backendClient.acknowledgePendingReview(sessionId, deliveryId)) return false;
-        if (legacyReceipt.isPresent()) {
-            reviewDeliveryReceiptRepository.delete(legacyReceipt.get());
-            return true;
+            if (delivered.isPresent()) {
+                boolean acknowledged = backendClient.acknowledgePendingReview(sessionId, deliveryId);
+                if (acknowledged) {
+                    reviewDeliveryReceiptRepository.delete(delivered.get());
+                } else {
+                    log.warn("Review acknowledgement failed for chat {}; receipt retained for retry", chatId);
+                }
+                return acknowledged;
+            }
         }
+
         if (!hooks.sendReviewMessage(chatId, summary, userMessageId, messageThreadId)) {
-            log.warn("Best-effort review notification failed for chat {}", chatId);
+            return false;
+        }
+        if (reviewDeliveryReceiptRepository != null) {
+            ReviewDeliveryReceiptEntity receipt = new ReviewDeliveryReceiptEntity();
+            receipt.setId(java.util.UUID.randomUUID());
+            receipt.setBackendSessionId(backendSessionId);
+            receipt.setBackendDeliveryId(backendDeliveryId);
+            receipt.setDeliveredAt(java.time.Instant.now());
+            reviewDeliveryReceiptRepository.save(receipt);
+        }
+        boolean acknowledged = backendClient.acknowledgePendingReview(sessionId, deliveryId);
+        if (!acknowledged) {
+            log.warn("Review delivery acknowledgement failed for chat {}; receipt retained for acknowledgement retry", chatId);
+            return false;
+        }
+        if (reviewDeliveryReceiptRepository != null) {
+            reviewDeliveryReceiptRepository.findByBackendSessionIdAndBackendDeliveryId(backendSessionId, backendDeliveryId)
+                .ifPresent(reviewDeliveryReceiptRepository::delete);
         }
         return true;
     }
@@ -312,7 +332,9 @@ public class StreamingOrchestrator {
                     }
                     // Edit the message with accumulated text (throttled by StreamEditor)
                     // editStream handles both edit-based and draft streaming internally
-                    streamEditor.editStream(chatId, Math.max(0, messageId[0]), accumulated.toString());
+                    if (!streamEditor.hasUnconfirmedDelivery(chatId)) {
+                        streamEditor.editStream(chatId, Math.max(0, messageId[0]), accumulated.toString());
+                    }
                 },
                 // toolCallConsumer — called when backend emits tool_calls event
                 // Hermes parity: send tool call as a separate short message (progress bubble),
@@ -339,6 +361,7 @@ public class StreamingOrchestrator {
                         streamEditor.onSegmentBreak(chatId, messageId[0], accumulated.toString());
                         accumulated.setLength(0);
                     }
+                    if (streamEditor.hasUnconfirmedDelivery(chatId)) return;
                     streamEditor.setCurrentToolName(chatId, toolName);
                     // Hermes parity (display.tool_progress=all, grouping=accumulate):
                     // tool lines accumulate in ONE bubble — first tool sends it,
@@ -404,6 +427,11 @@ public class StreamingOrchestrator {
                 },
                 // onComplete
                 result -> {
+                    if (streamEditor.hasUnconfirmedDelivery(chatId)) {
+                        failedFinalDelivery[0] = true;
+                        turnFailed[0] = true;
+                        return;
+                    }
                     // Native drafts use message ID -1; finalizeStream handles both paths.
                     if (accumulated.length() > 0) {
                         // Append footer to the streaming message before finalizing
@@ -460,16 +488,9 @@ public class StreamingOrchestrator {
                             String fallbackText = finalText;
                             MediaDeliveryService.ExtractionResult extraction = mediaDeliveryService.extractMediaTags(finalText);
                             finalText = extraction.cleanedText();
-                            // A media-only response has no Telegram text to finalize.
-                            // Clear its preview without attempting to send empty text.
                             boolean delivered;
                             try {
-                                if (finalText.isBlank() && !extraction.media().isEmpty()) {
-                                    streamEditor.discardStreamPreview(chatId);
-                                    delivered = true;
-                                } else {
-                                    delivered = streamEditor.finalizeStream(chatId, messageId[0], finalText);
-                                }
+                                delivered = streamEditor.finalizeStream(chatId, messageId[0], finalText);
                             } catch (TelegramApiException e) {
                                 streamEditor.recordFinalDeliveryFailure(chatId, fallbackText, e.getRetryAfter());
                                 failedFinalDelivery[0] = true;
@@ -507,6 +528,10 @@ public class StreamingOrchestrator {
                 // onError
                 error -> {
                     turnFailed[0] = true;
+                    if (streamEditor.hasUnconfirmedDelivery(chatId)) {
+                        failedFinalDelivery[0] = true;
+                        return;
+                    }
                     if (error instanceof StreamInterruptedException || error instanceof java.util.concurrent.CancellationException) {
                         turnCancelled[0] = true;
                         // Interrupted — finalize with accumulated content (no raw error text)

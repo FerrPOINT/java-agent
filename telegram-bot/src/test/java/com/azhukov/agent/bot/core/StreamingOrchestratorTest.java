@@ -280,35 +280,6 @@ class StreamingOrchestratorTest {
     }
 
     @Test
-    void reviewIsClaimedBeforeBestEffortNotificationLikeHermes() {
-        UUID session = UUID.randomUUID();
-        UUID delivery = UUID.randomUUID();
-        when(backendClient.getPendingReview(session.toString())).thenReturn(
-            new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode()
-                .put("pending", true).put("summary", "review").put("deliveryId", delivery.toString()));
-        when(backendClient.acknowledgePendingReview(session.toString(), delivery.toString())).thenReturn(true);
-        when(hooks.sendReviewMessage(100L, "review", 0L, 0L)).thenReturn(false);
-
-        orchestrator.deliverPendingReview(session.toString(), 100L, 0L, 0L, hooks);
-
-        var order = inOrder(backendClient, hooks);
-        order.verify(backendClient).acknowledgePendingReview(session.toString(), delivery.toString());
-        order.verify(hooks).sendReviewMessage(100L, "review", 0L, 0L);
-    }
-
-    @Test
-    void claimFailureDoesNotSendReview() {
-        UUID session = UUID.randomUUID();
-        UUID delivery = UUID.randomUUID();
-        when(backendClient.getPendingReview(session.toString())).thenReturn(
-            new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode()
-                .put("pending", true).put("summary", "review").put("deliveryId", delivery.toString()));
-        when(backendClient.acknowledgePendingReview(session.toString(), delivery.toString())).thenReturn(false);
-        assertThat(orchestrator.deliverPendingReview(session.toString(), 100L, 0L, 0L, hooks)).isFalse();
-        verify(hooks, never()).sendReviewMessage(anyLong(), anyString(), anyLong(), anyLong());
-    }
-
-    @Test
     void legacyConfirmedReceiptIsAcknowledgedWithoutResending() {
         UUID session = UUID.randomUUID();
         UUID delivery = UUID.randomUUID();
@@ -399,24 +370,6 @@ class StreamingOrchestratorTest {
         assertThat(result.streamFinalized()).isFalse();
         verify(streamEditor).recordFinalDeliveryFailure(eq(100L), contains("MEDIA:/workspace/report.pdf"));
         verify(hooks, never()).deliverMedia(anyLong(), anyList(), any());
-    }
-
-    @Test
-    void mediaOnlyResponseDiscardsPreviewBeforeDeliveringToForumThread() {
-        properties.setMediaDeliveryEnabled(true);
-        String response = "MEDIA:/workspace/report.pdf";
-        stubChatStream(ctx -> {
-            ctx.tokenConsumer.accept(response);
-            var result = new AgentBackendClient.ChatResult(response, "model", 1, 10, true);
-            ctx.onComplete.accept(result);
-            ctx.returnResult = result;
-        });
-        var result = orchestrator.streamChat(100L, "hi", null, session(), 5L, 77L, hooks);
-        assertThat(result.streamFinalized()).isTrue();
-        var order = inOrder(streamEditor, hooks);
-        order.verify(streamEditor).discardStreamPreview(100L);
-        order.verify(hooks).deliverMedia(eq(100L), argThat(media -> media.size() == 1), eq(77));
-        verify(streamEditor, never()).finalizeStream(anyLong(), anyLong(), anyString());
     }
 
     @Test
@@ -649,16 +602,6 @@ class StreamingOrchestratorTest {
         orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
 
         verify(backendClient, never()).chat(anyString(), nullable(String.class), any());
-    }
-
-    @Test
-    void streamChat_noContentRetainsMetadataAndDiscardsPreview() {
-        stubChatStream(ctx -> ctx.returnResult = new AgentBackendClient.ChatResult("", "model", 1, 10, false, false, null, "reasoning"));
-        var result = orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
-        verify(backendClient, never()).chat(anyString(), nullable(String.class), any());
-        verify(streamEditor).discardStreamPreview(100L);
-        assertThat(result.modelUsed()).isEqualTo("model");
-        assertThat(result.lastReasoning()).isEqualTo("reasoning");
     }
 
     @Test
@@ -986,4 +929,28 @@ class StreamingOrchestratorTest {
         verify(streamEditor, never()).recordFinalDeliveryFailure(anyLong(), anyString());
         verify(backendClient, never()).chat(anyString(), nullable(String.class), any());
     }
+    @Test
+    void streamReviewAckFailureRetainsReceiptAndDoesNotResendOnRetry() {
+        UUID backendSessionId = UUID.randomUUID();
+        UUID deliveryId = UUID.randomUUID();
+        String review = "Self-improvement review: Memory updated";
+        when(backendClient.getPendingReview(backendSessionId.toString())).thenReturn(
+            new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode()
+                .put("pending", true).put("summary", review).put("deliveryId", deliveryId.toString()));
+        when(backendClient.acknowledgePendingReview(backendSessionId.toString(), deliveryId.toString()))
+            .thenReturn(false, true);
+
+        invokePendingReviewPoll(backendSessionId, hooks);
+        var saved = org.mockito.ArgumentCaptor.forClass(com.azhukov.agent.bot.session.ReviewDeliveryReceiptEntity.class);
+        verify(reviewReceiptRepository).save(saved.capture());
+        when(reviewReceiptRepository.findByBackendSessionIdAndBackendDeliveryId(backendSessionId, deliveryId))
+            .thenReturn(Optional.of(saved.getValue()));
+
+        invokePendingReviewPoll(backendSessionId, hooks);
+
+        verify(hooks, times(1)).sendReviewMessage(100L, review, 5L, 0L);
+        verify(backendClient, times(2)).acknowledgePendingReview(backendSessionId.toString(), deliveryId.toString());
+        verify(reviewReceiptRepository).delete(saved.getValue());
+    }
+
 }

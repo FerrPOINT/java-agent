@@ -188,9 +188,9 @@ public class MemoryNudgeManager {
     }
 
     /**
-     * Atomically remove the pending summary only when its delivery ID matches.
-     * The caller owns the delivery policy: removal alone does not prove that a
-     * notification reached the user.
+     * Consume the summary only after the owning delivery channel confirms it
+     * reached the user. Requiring the expected text prevents a stale retry from
+     * clearing a newer review for the same session.
      */
     public boolean acknowledgeReviewSummary(UUID sessionId, UUID deliveryId) {
         if (deliveryId == null) {

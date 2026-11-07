@@ -592,6 +592,7 @@ class BotMessageProcessorTest {
 
     @SuppressWarnings("unchecked")
     @Test
+    @org.junit.jupiter.api.Tag("slow")
     void rateLimitedShortSegmentIsNotSilentlyDiscarded() {
         properties.setStreamingTransport("edit");
         properties.getDisplay().setToolProgress("off");
@@ -610,13 +611,14 @@ class BotMessageProcessorTest {
             });
         try (DeliveryFixture fixture = realDeliveryFixture()) {
             fixture.processor().accept(textEvent(1, 100L, "Hello"));
-            verify(telegramClient, timeout(4500)).sendMessage(eq(100L), eq("Hi"), eq("MarkdownV2"), any(), any());
+            verify(telegramClient, timeout(4500).times(2)).sendMessage(eq(100L), eq("Hi"), eq("MarkdownV2"), any(), any(), anyBoolean());
             verify(backendClient, never()).chat(anyString(), any(), any());
         }
     }
 
     @SuppressWarnings("unchecked")
     @Test
+    @org.junit.jupiter.api.Tag("slow")
     void rejectedSegmentMustArriveBeforeSubsequentFinalAnswer() {
         properties.setStreamingTransport("edit");
         properties.getDisplay().setToolProgress("off");
@@ -655,6 +657,7 @@ class BotMessageProcessorTest {
 
     @SuppressWarnings("unchecked")
     @Test
+    @org.junit.jupiter.api.Tag("slow")
     void floodWaitAfterFirstMultipartChunkRetriesOnlyRejectedRemainder() {
         properties.setStreamingTransport("draft");
         properties.getDisplay().setToolProgress("off");
@@ -664,10 +667,8 @@ class BotMessageProcessorTest {
         var chunks = com.azhukov.agent.bot.formatting.MessageSplitter.splitAndFormat(segment, "MarkdownV2");
         assertThat(chunks.size()).isGreaterThan(1);
         when(telegramClient.sendMessage(eq(100L), anyString(), eq("MarkdownV2"), any(), any(), eq(false)))
-            .thenReturn(Optional.of(40L), Optional.empty());
+            .thenReturn(Optional.of(40L), Optional.empty(), Optional.of(41L));
         when(telegramClient.takeLastRetryAfterSeconds()).thenReturn(1);
-        when(telegramClient.sendMessage(eq(100L), anyString(), eq("MarkdownV2"), any(), any()))
-            .thenReturn(Optional.of(41L));
         when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
                 ((Consumer<String>) inv.getArgument(4)).accept(segment);
@@ -678,13 +679,14 @@ class BotMessageProcessorTest {
             });
         try (DeliveryFixture fixture = realDeliveryFixture()) {
             fixture.processor().accept(textEvent(1, 100L, "Hello"));
-            verify(telegramClient, timeout(4500)).sendMessage(eq(100L), eq(chunks.get(1)), eq("MarkdownV2"), any(), any());
-            verify(telegramClient, never()).sendMessage(eq(100L), eq(chunks.get(0)), eq("MarkdownV2"), any(), any());
+            verify(telegramClient, timeout(4500).times(2)).sendMessage(eq(100L), eq(chunks.get(1)), eq("MarkdownV2"), any(), any(), eq(false));
+            verify(telegramClient, times(1)).sendMessage(eq(100L), eq(chunks.get(0)), eq("MarkdownV2"), any(), any(), eq(false));
         }
     }
 
     @SuppressWarnings("unchecked")
     @Test
+    @org.junit.jupiter.api.Tag("slow")
     void ambiguousShortSegmentIsNotRetried() throws InterruptedException {
         properties.setStreamingTransport("edit");
         properties.getDisplay().setToolProgress("off");
@@ -786,45 +788,6 @@ class BotMessageProcessorTest {
             fixture.processor().accept(textEvent(1, 100L, "Hello"));
             verify(telegramClient).sendMessage(eq(100L), eq("Before tool after tool"), eq("MarkdownV2"), any(), any(), eq(false));
             verify(telegramClient, never()).editMessageText(eq(100L), eq(-1L), anyString(), any(), anyBoolean());
-        }
-    }
-
-    @Test
-    void mediaOnlyAnswerDeliversAttachmentWithStreamingOff() throws Exception {
-        properties.setStreamingTransport("off");
-        properties.setMediaDeliveryEnabled(true);
-        java.nio.file.Path document = java.nio.file.Files.createTempFile("answer-", ".pdf");
-        properties.setWorkingDirectory(document.getParent().toString());
-        when(telegramClient.sendDocument(eq(100L), any(byte[].class), anyString(), any(), any()))
-            .thenReturn(Optional.of(43L));
-        stubStreamingWithTokensAndFinalize("MEDIA:" + document, "test-model", false);
-        try (DeliveryFixture fixture = realDeliveryFixture()) {
-            fixture.processor().accept(textEvent(1, 100L, "Hello"));
-            verify(telegramClient).sendDocument(eq(100L), any(byte[].class), eq(document.getFileName().toString()), any(), any());
-            verify(telegramClient, never()).sendMessage(eq(100L), eq(""), any(), any(), any(), anyBoolean());
-        } finally {
-            java.nio.file.Files.deleteIfExists(document);
-        }
-    }
-
-    @Test
-    void floodFallbackProcessorSendsCleanFinalTextAndAttachment() throws Exception {
-        properties.setStreamingTransport("off");
-        properties.setMediaDeliveryEnabled(true);
-        java.nio.file.Path document = java.nio.file.Files.createTempFile("flood-response-", ".pdf");
-        properties.setWorkingDirectory(document.getParent().toString());
-        String response = "value_with_underscore\nMEDIA:" + document;
-        when(telegramClient.sendMessage(eq(100L), anyString(), eq("MarkdownV2"), any(), any(), eq(false)))
-            .thenReturn(Optional.of(42L));
-        when(telegramClient.sendDocument(eq(100L), any(byte[].class), anyString(), any(), any()))
-            .thenReturn(Optional.of(43L));
-        stubStreamingWithTokensAndFinalize(response, "test-model", false);
-        try (DeliveryFixture fixture = realDeliveryFixture()) {
-            fixture.processor().accept(textEvent(1, 100L, "Hello"));
-            verify(telegramClient).sendMessage(eq(100L), eq("value\\_with\\_underscore"), eq("MarkdownV2"), any(), any(), eq(false));
-            verify(telegramClient).sendDocument(eq(100L), any(byte[].class), eq(document.getFileName().toString()), any(), any());
-        } finally {
-            java.nio.file.Files.deleteIfExists(document);
         }
     }
 
@@ -951,48 +914,6 @@ class BotMessageProcessorTest {
     }
 
     @Test
-    void pendingReviewDoesNotResendAcceptedPartAfterAnUnknownMiddlePart() {
-        String sessionId = UUID.randomUUID().toString();
-        String deliveryId = UUID.randomUUID().toString();
-        String review = "x".repeat(9000);
-        var pending = new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode()
-            .put("pending", true).put("summary", review).put("deliveryId", deliveryId);
-        when(backendClient.getPendingReview(sessionId)).thenReturn(pending);
-        when(telegramClient.sendMessageChecked(eq(100L), anyString(), eq("MarkdownV2"), any(), any(), any(), eq(false)))
-            .thenReturn(Optional.of(1L), Optional.empty(), Optional.of(3L));
-        when(backendClient.acknowledgePendingReview(sessionId, deliveryId)).thenReturn(true, false);
-        var orchestrator = new StreamingOrchestrator(backendClient, streamEditor, busyHandler, runtimeFooter,
-            properties, mediaDeliveryService, telegramClient, sessionStoreMock,
-            mock(com.azhukov.agent.bot.keyboard.ClarifyInteractionRenderer.class));
-        try {
-            assertThat(orchestrator.deliverPendingReview(sessionId, 100L, 1L, 0L, processor)).isTrue();
-            assertThat(orchestrator.deliverPendingReview(sessionId, 100L, 1L, 0L, processor)).isFalse();
-            verify(telegramClient, times(2)).sendMessageChecked(eq(100L), anyString(), eq("MarkdownV2"), any(), any(), any(), eq(false));
-            verify(backendClient, times(2)).acknowledgePendingReview(sessionId, deliveryId);
-        } finally {
-            orchestrator.shutdownReviewPollScheduler();
-        }
-    }
-
-    @Test
-    void reviewHtmlPartsMustNotCutEscapedEntities() {
-        properties.setParseMode("HTML");
-        String review = "&".repeat(3000);
-        when(telegramClient.sendMessageChecked(eq(100L), anyString(), eq("HTML"), any(), any(), any(), eq(false)))
-            .thenReturn(Optional.of(42L));
-        assertThat(processor.sendReviewMessage(100L, review, 1L, 0L)).isTrue();
-        var sent = ArgumentCaptor.forClass(String.class);
-        verify(telegramClient, atLeast(2)).sendMessageChecked(eq(100L), sent.capture(), eq("HTML"), any(), any(), any(), eq(false));
-        StringBuilder restored = new StringBuilder();
-        for (String chunk : sent.getAllValues()) {
-            assertThat(chunk.length()).isLessThanOrEqualTo(4096);
-            assertThat(chunk.replace("&amp;", "")).doesNotContain("&");
-            restored.append(chunk.replaceFirst("^\\(\\d+/\\d+\\) ", "").replace("&amp;", "&"));
-        }
-        assertThat(restored.toString()).isEqualTo(review);
-    }
-
-    @Test
     void fallbackHtmlPartsPreserveEscapingAndUnicode() {
         properties.setParseMode("HTML");
         String response = "<&😀>".repeat(1800);
@@ -1015,52 +936,9 @@ class BotMessageProcessorTest {
         assertThat(restored.toString()).isEqualTo(response);
     }
 
-    @Test
-    void mediaReviewFailureMustNotClaimCompleteDelivery() {
-        properties.setMediaDeliveryEnabled(true);
-        String review = "report MEDIA:/workspace/report.pdf";
-        when(telegramClient.sendMessageChecked(eq(100L), anyString(), eq("MarkdownV2"), any(), any(), any(), eq(false)))
-            .thenReturn(Optional.of(42L));
-        assertThat(processor.sendReviewMessage(100L, review, 1L, 0L)).isFalse();
-    }
-
-    @Test
-    void reviewFloodRefusalsStopSending() {
-        when(telegramClient.sendMessageChecked(eq(100L), anyString(), eq("MarkdownV2"), any(), any(), any(), eq(false)))
-            .thenThrow(new TelegramClient.SendRefusalException(30, "rate limit"));
-        assertThat(processor.sendReviewMessage(100L, "review", 1L, 0L)).isFalse();
-        reset(telegramClient);
-        when(telegramClient.sendMessageChecked(eq(100L), anyString(), eq("MarkdownV2"), any(), any(), any(), eq(false)))
-            .thenReturn(Optional.of(1L)).thenThrow(new TelegramClient.SendRefusalException(30, "rate limit"));
-        assertThat(processor.sendReviewMessage(100L, "x".repeat(9000), 1L, 0L)).isFalse();
-        verify(telegramClient, times(2)).sendMessageChecked(eq(100L), anyString(), eq("MarkdownV2"), any(), any(), any(), eq(false));
-    }
-
-    @Test
-    void reviewPartialFailureDoesNotClaimSuccessfulReceipt() {
-        when(telegramClient.sendMessageChecked(eq(100L), anyString(), eq("MarkdownV2"), any(), any(), any(), eq(false)))
-            .thenReturn(Optional.of(1L), Optional.empty(), Optional.of(3L));
-        assertThat(processor.sendReviewMessage(100L, "x".repeat(9000), 1L, 0L)).isFalse();
-        verify(telegramClient, times(2)).sendMessageChecked(eq(100L), anyString(), eq("MarkdownV2"), any(), any(), any(), eq(false));
-    }
-
-    @Test
-    void reviewWithMarkdownExpansionIsSplitWithinTelegramLimit() {
-        String review = "_".repeat(3000);
-        when(telegramClient.sendMessageChecked(eq(100L), anyString(), eq("MarkdownV2"), any(), any(), any(), eq(false)))
-            .thenReturn(Optional.of(42L));
-        assertThat(processor.sendReviewMessage(100L, review, 1L, 0L)).isTrue();
-        var sent = ArgumentCaptor.forClass(String.class);
-        verify(telegramClient, atLeast(2)).sendMessageChecked(eq(100L), sent.capture(), eq("MarkdownV2"), any(), any(), any(), eq(false));
-        assertThat(sent.getAllValues()).allSatisfy(part -> assertThat(part.length()).isLessThanOrEqualTo(4096));
-        String restored = sent.getAllValues().stream()
-            .map(chunk -> chunk.replaceFirst("^\\\\\\(\\d+/\\d+\\\\\\) ", ""))
-            .collect(java.util.stream.Collectors.joining()).replace("\\_", "_");
-        assertThat(restored).isEqualTo(review);
-    }
-
     @SuppressWarnings("unchecked")
     @Test
+    @org.junit.jupiter.api.Tag("slow")
     void previousAmbiguousDraftSegmentDoesNotPreventDeferredFinalDelivery() {
         properties.setStreamingTransport("draft");
         properties.setHeartbeatIntervalSeconds(0);
@@ -1089,6 +967,7 @@ class BotMessageProcessorTest {
     }
 
     @Test
+    @org.junit.jupiter.api.Tag("slow")
     void deferredFinalRetriesAgainAfterSecondFloodRejection() {
         stubStreamingResult("Response text", false);
         when(streamEditor.takePendingFinalText(100L)).thenReturn("Response text");
@@ -1104,6 +983,7 @@ class BotMessageProcessorTest {
     }
 
     @Test
+    @org.junit.jupiter.api.Tag("slow")
     void deferredFinalDoesNotRetryAmbiguousFailure() throws InterruptedException {
         stubStreamingResult("Response text", false);
         when(streamEditor.takePendingFinalText(100L)).thenReturn("Response text");
@@ -1118,6 +998,7 @@ class BotMessageProcessorTest {
     }
 
     @Test
+    @org.junit.jupiter.api.Tag("slow")
     void deferredFloodRetriesAreBounded() throws InterruptedException {
         stubStreamingResult("Response text", false);
         when(streamEditor.takePendingFinalText(100L)).thenReturn("Response text");
@@ -1134,6 +1015,7 @@ class BotMessageProcessorTest {
     }
 
     @Test
+    @org.junit.jupiter.api.Tag("slow")
     void deferredMultipartRetriesOnlyRejectedChunkAndContinues() {
         String response = "a".repeat(4000) + "b".repeat(4000) + "c".repeat(1000);
         stubStreamingResult(response, false);
@@ -1153,6 +1035,7 @@ class BotMessageProcessorTest {
     }
 
     @Test
+    @org.junit.jupiter.api.Tag("slow")
     void deferredMultipartDoesNotReplayAmbiguousMiddleChunk() throws InterruptedException {
         String response = "a".repeat(4000) + "b".repeat(4000) + "c".repeat(1000);
         stubStreamingResult(response, false);

@@ -8,9 +8,12 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
- * Polls backend review summaries that have not yet been claimed.
- * Claiming happens before best-effort notification, so a crash after the claim
- * can lose the notification; it must not be replayed as a confirmed delivery.
+ * Restarts delivery of durable review summaries after a bot restart.
+ *
+ * The backend owns the pending queue while StreamingOrchestrator owns the
+ * idempotent Telegram send and acknowledgement transition. Scanning known
+ * backend sessions means a review completed while the bot was down is not
+ * stranded until the user sends another message.
  */
 @Component
 @RequiredArgsConstructor

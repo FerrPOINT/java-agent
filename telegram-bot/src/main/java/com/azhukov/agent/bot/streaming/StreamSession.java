@@ -1,5 +1,6 @@
 package com.azhukov.agent.bot.streaming;
 
+import java.util.List;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -93,6 +94,9 @@ public class StreamSession {
     public volatile int pendingFinalRetryAfterSeconds = -1;
     /** A final part may already be visible; never replay the whole response. */
     public volatile boolean partialFinalDelivery = false;
+    /** Remaining formatted chunks while an explicit FloodWait is being honored. */
+    volatile List<String> pendingStreamChunks = List.of();
+    long floodDeliveryDeadlineNanos;
 
     // ─── S5: Native draft streaming state ────────────────────────
     /** True when draft streaming is active for this chat (else edit-based). */
@@ -125,6 +129,8 @@ public class StreamSession {
         pendingFinalText = null;
         pendingFinalRetryAfterSeconds = -1;
         partialFinalDelivery = false;
+        pendingStreamChunks = List.of();
+        floodDeliveryDeadlineNanos = 0;
         heartbeatMessageId.set(-1L);
         replyToMessageId = 0L;
         useDraftStreaming = false;
