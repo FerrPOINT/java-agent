@@ -23,7 +23,7 @@ class FlywayConfigTest {
             } catch (java.sql.SQLException e) { throw new AssertionError(e); }
             var path = java.nio.file.Path.of("src/main/resources/db/migration").toAbsolutePath();
             var flyway = Flyway.configure().dataSource(dataSource)
-                .locations("filesystem:" + path).baselineOnMigrate(true).baselineVersion("72").load();
+                .locations("filesystem:" + path).baselineOnMigrate(true).baselineVersion("72").target("74").load();
             flyway.baseline();
             flyway.migrate();
             try (var connection = dataSource.getConnection(); var statement = connection.createStatement();
