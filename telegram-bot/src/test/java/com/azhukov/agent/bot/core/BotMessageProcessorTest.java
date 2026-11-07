@@ -901,14 +901,12 @@ class BotMessageProcessorTest {
             reset(telegramClient);
             when(telegramClient.sendMessage(eq(100L), anyString(), any(), any(), any(), anyBoolean()))
                 .thenReturn(Optional.of(11L), Optional.of(12L));
-            when(telegramClient.editMessageText(eq(100L), anyLong(), anyString(), any(), anyBoolean()))
-                .thenReturn(false);
-            when(telegramClient.sendMessageChecked(eq(100L), eq("second response"), any(), any(), any(), isNull(), anyBoolean()))
-                .thenReturn(Optional.of(12L));
+            when(telegramClient.editMessageText(100L, 11L, "second response", "MarkdownV2", false))
+                .thenReturn(true);
             reset(backendClient);
             stubStreamingWithTokensAndFinalize("second response", "test-model", false);
             fixture.processor().accept(textEvent(2, 100L, "Second"));
-            verify(telegramClient).sendMessageChecked(eq(100L), eq("second response"), any(), any(), any(), isNull(), anyBoolean());
+            verify(telegramClient).editMessageText(100L, 11L, "second response", "MarkdownV2", false);
         }
     }
 

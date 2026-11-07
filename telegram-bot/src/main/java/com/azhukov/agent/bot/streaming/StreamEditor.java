@@ -738,9 +738,9 @@ public class StreamEditor {
             && startTime != 0
             && (System.currentTimeMillis() - startTime) > freshFinalTimeoutMs;
 
-        if (freshFinal) {
-            log.debug("Fresh-final for chat {} (stream exceeded {}ms), replacing old msg {} after the new delivery succeeds",
-                chatId, freshFinalTimeoutMs, effectiveMessageId);
+        String formatted = formatForTelegramDelegate(scrubbed);
+        if (freshFinal || formatted.length() > MessageSplitter.TELEGRAM_MAX_LENGTH) {
+            log.debug("Replacing preview {} for chat {} after the final delivery succeeds", effectiveMessageId, chatId);
             // P1: Try rich message delivery first. Never delete the current visible answer first:
             // an API failure must leave the streamed draft available.
             if (richMessageSupport != null && richMessageSupport.shouldAttemptRich(scrubbed)) {
@@ -776,8 +776,6 @@ public class StreamEditor {
             log.debug("Rich message delivery failed for chat {}, falling back to MarkdownV2", chatId);
         }
 
-        // Hermes: on finalize, apply MarkdownConverter formatting (raw during streaming, formatted final)
-        String formatted = formatForTelegramDelegate(scrubbed);
         // B7: Final message — NOT silent (push notification enabled)
         boolean success;
         try {
