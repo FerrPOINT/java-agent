@@ -240,32 +240,18 @@ class StreamEditorTest {
     }
 
     @Test
-    void finalizeStream_returnsFalseOnFailure() {
-        when(client.editMessageText(anyLong(), anyLong(), anyString(), anyString(), anyBoolean()))
+    void finalizeStreamDoesNotResendWhenEditIsUnconfirmed() {
+        StreamSession session = editor.sessionFor(123L);
+        session.currentMessageId.set(42L);
+        when(client.editMessageText(123L, 42L, "Final text", "MarkdownV2", false))
             .thenReturn(false);
-        when(client.sendMessage(anyLong(), anyString(), anyString(), any(), any()))
-            .thenReturn(Optional.empty());
 
-        boolean result = editor.finalizeStream(123L, 42L, "Final text");
+        assertThat(editor.finalizeStream(123L, 42L, "Final text")).isFalse();
 
-        assertThat(result).isFalse();
-    }
-
-    // --- finalizeStream fallback test ---
-
-    @Test
-    void finalizeStream_fallsBackToSendMessageOnEditFailure() {
-        when(client.editMessageText(anyLong(), anyLong(), anyString(), anyString(), anyBoolean()))
-            .thenReturn(false);
-        when(client.sendMessageChecked(anyLong(), anyString(), anyString(), any(), any(), isNull(), eq(false)))
-            .thenReturn(Optional.of(99L));
-
-        boolean result = editor.finalizeStream(123L, 42L, "Final text");
-
-        assertThat(result).isTrue();
-        verify(client).editMessageText(eq(123L), eq(42L), anyString(), eq("MarkdownV2"), eq(false));
-        verify(client).sendMessageChecked(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), isNull(), eq(false));
-        verify(client).deleteMessage(123L, 42L);
+        assertThat(editor.hasUnconfirmedDelivery(123L)).isTrue();
+        assertThat(editor.getSession(123L)).isSameAs(session);
+        verify(client).editMessageText(123L, 42L, "Final text", "MarkdownV2", false);
+        verifyNoMoreInteractions(client);
     }
 
     @Test

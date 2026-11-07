@@ -72,8 +72,7 @@ import jakarta.annotation.PreDestroy;
  * <p>400 vs 429: distinguishes "message too long" (400) from rate limit (429).
  * 400 does NOT increment flood strikes — just truncates and retries.
  *
- * <p>finalizeStream fallback: if editMessageText returns false, tries
- * sendMessage as a new message.
+ * <p>An unconfirmed final edit leaves the existing preview in place.
  *
  * <p>ThinkScrubber: stores partial closing tags across chunks and prepends
  * to the next chunk. Supports {@code <reasoning_scratchpad>} tags.
@@ -615,7 +614,7 @@ public class StreamEditor {
      * old streaming message and sends a NEW one with the final content
      * (fresh timestamp).
      *
-     * <p>Fallback: if editMessageText returns false, tries sendMessage.
+     * <p>An unconfirmed edit preserves the existing preview without another send.
      *
      * @param chatId    target chat id
      * @param messageId the message id returned by {@link #startStream}
@@ -797,23 +796,11 @@ public class StreamEditor {
             }
         }
 
-        // Fallback: if edit failed, try sendMessage as a new message
-        if (!success) {
-            log.warn("Final edit failed for chat {}, messageId={}, trying sendMessage fallback", chatId, effectiveMessageId);
-            Optional<Long> fallbackMsgId = sendFormattedFinalMessage(chatId, scrubbed, session.messageThreadId);
-            if (fallbackMsgId.isPresent()) {
-                // Optionally delete the old stale message
-                telegramClient.deleteMessage(chatId, effectiveMessageId);
-                removeSession(chatId);
-                log.debug("Finalize fallback succeeded for chat {}, new messageId={}", chatId, fallbackMsgId.get());
-                return true;
-            }
-        }
-
         if (success) {
             removeSession(chatId);
             log.debug("Finalized stream for chat {}, messageId={}", chatId, effectiveMessageId);
         } else {
+            session.partialFinalDelivery = true;
             log.warn("Failed to finalize stream for chat {}, messageId={}; preserving visible draft", chatId, effectiveMessageId);
         }
         return success;
