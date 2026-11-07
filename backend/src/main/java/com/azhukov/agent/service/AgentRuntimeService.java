@@ -135,7 +135,9 @@ public class AgentRuntimeService {
             requireSessionOwnership(request.sessionId());
         }
         ChatRequest applied = applyCliState(request);
-        String sessionUserId = UserContext.effectiveUserId(AgentProperties.DEFAULT_USER_ID);
+        String sessionUserId = UserContext.effectiveUserId(
+            applied.userId() != null && !applied.userId().isBlank()
+                ? applied.userId() : AgentProperties.DEFAULT_USER_ID);
         var resolved = sessionResolver.resolveOrCreate(
             applied.sessionId(), sessionUserId, properties.getModel().getModelName());
         boolean isNew = resolved.isNew();

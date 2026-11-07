@@ -89,6 +89,110 @@ class TerminalToolTest {
     }
 
     @Test
+    void cancellationBeforeCallbackRegistrationTerminatesProcess() throws Exception {
+        var token = new InterruptToken() {
+            @Override public void registerCancellationCallback(UUID id, Runnable callback) {
+                cancel(id);
+                super.registerCancellationCallback(id, callback);
+            }
+        };
+        var tool = new TerminalTool(processTool, properties(), redactor, checkpointManager, token);
+        var current = session();
+        var result = new java.util.concurrent.atomic.AtomicReference<ToolResult>();
+        var thread = new Thread(() -> result.set(tool.execute("{\"command\":\"exec sleep 60\"}", null, current)));
+        thread.start();
+        try {
+            thread.join(1500);
+            assertThat(thread.isAlive()).isFalse();
+            assertThat(result.get().success()).isFalse();
+        } finally {
+            thread.interrupt();
+            thread.join(3000);
+        }
+    }
+
+    @Test
+    void cancellingSessionTerminatesForegroundChildProcess(@org.junit.jupiter.api.io.TempDir java.nio.file.Path directory) throws Exception {
+        var token = new InterruptToken();
+        var tool = new TerminalTool(processTool, properties(), redactor, checkpointManager, token);
+        var current = session();
+        var pidFile = directory.resolve("child-pid");
+        String command = "sh -c 'echo $$ > \"" + pidFile + "\"; exec sleep 60'";
+        String arguments = JSON.writeValueAsString(Map.of("command", command));
+        var result = new java.util.concurrent.atomic.AtomicReference<ToolResult>();
+        var thread = new Thread(() -> result.set(tool.execute(arguments, null, current)));
+        long pid = -1;
+        thread.start();
+        try {
+            org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(5))
+                .until(() -> java.nio.file.Files.exists(pidFile) && !java.nio.file.Files.readString(pidFile).isBlank());
+            pid = Long.parseLong(java.nio.file.Files.readString(pidFile).trim());
+            assertThat(ProcessHandle.of(pid).map(ProcessHandle::isAlive)).contains(true);
+            token.cancel(current.id());
+            thread.join(5000);
+            assertThat(thread.isAlive()).isFalse();
+            assertThat(result.get().success()).isFalse();
+            final long childPid = pid;
+            org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(3))
+                .until(() -> ProcessHandle.of(childPid).map(p -> !p.isAlive()).orElse(true));
+        } finally {
+            if (pid > 0) ProcessHandle.of(pid).ifPresent(ProcessHandle::destroyForcibly);
+            thread.interrupt();
+            thread.join(3000);
+        }
+    }
+
+    @Test
+    void timeoutTerminatesForegroundChildProcess(@org.junit.jupiter.api.io.TempDir java.nio.file.Path directory) throws Exception {
+        var pidFile = directory.resolve("child-pid");
+        String command = "sh -c 'echo $$ > \"" + pidFile + "\"; exec sleep 60'";
+        String arguments = JSON.writeValueAsString(Map.of("command", command, "timeout", 1));
+        long pid = -1;
+        try {
+            ToolResult result = newTool(properties()).execute(arguments, null, session());
+            assertThat(result.success()).isFalse();
+            assertThat(java.nio.file.Files.exists(pidFile)).isTrue();
+            pid = Long.parseLong(java.nio.file.Files.readString(pidFile).trim());
+            final long childPid = pid;
+            org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(3))
+                .until(() -> ProcessHandle.of(childPid).map(p -> !p.isAlive()).orElse(true));
+        } finally {
+            if (pid > 0) ProcessHandle.of(pid).ifPresent(ProcessHandle::destroyForcibly);
+        }
+    }
+
+    @Test
+    void cancellingSessionTerminatesRealForegroundProcess(@org.junit.jupiter.api.io.TempDir java.nio.file.Path directory) throws Exception {
+        var token = new InterruptToken();
+        var tool = new TerminalTool(processTool, properties(), redactor, checkpointManager, token);
+        var current = session();
+        var pidFile = directory.resolve("pid");
+        String command = "echo $$ > '" + pidFile + "'; exec sleep 60";
+        String arguments = JSON.writeValueAsString(Map.of("command", command));
+        var result = new java.util.concurrent.atomic.AtomicReference<ToolResult>();
+        var thread = new Thread(() -> result.set(tool.execute(arguments, null, current)));
+        thread.start();
+        long pid = -1;
+        try {
+            org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(5))
+                .until(() -> java.nio.file.Files.exists(pidFile) && !java.nio.file.Files.readString(pidFile).isBlank());
+            pid = Long.parseLong(java.nio.file.Files.readString(pidFile).trim());
+            assertThat(ProcessHandle.of(pid).map(ProcessHandle::isAlive)).contains(true);
+            token.cancel(current.id());
+            thread.join(5000);
+            assertThat(thread.isAlive()).isFalse();
+            assertThat(result.get().success()).isFalse();
+            final long childPid = pid;
+            org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(3))
+                .until(() -> ProcessHandle.of(childPid).map(p -> !p.isAlive()).orElse(true));
+        } finally {
+            if (pid > 0) ProcessHandle.of(pid).ifPresent(ProcessHandle::destroyForcibly);
+            thread.interrupt();
+            thread.join(3000);
+        }
+    }
+
+    @Test
     void malformedToolArgumentsReturnStructuredError() throws Exception {
         AgentProperties p = properties();
         TerminalTool tool = newTool(p);

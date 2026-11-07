@@ -560,6 +560,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
         // If the JVM crashes mid-turn, all progress up to the last batch is preserved.
         int persistedUpTo = turnMessages.size();
 
+        List<Message> pendingRecoveryContext = null;
         for (int i = 0; i < maxTurns; i++) {
           try {
             // M10: Increment skill iteration counter at the TOP of the loop
@@ -571,6 +572,13 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 itersSinceSkill.computeIfAbsent(session.id(), k -> new AtomicInteger(0)).incrementAndGet();
             }
 
+            if (interruptToken != null && interruptToken.isCancelled(session.id())) {
+                turnMessages.add(Message.assistant("Turn cancelled by user.", turnIndex));
+                if (turnFinalizer != null) {
+                    turnFinalizer.finalize(session.id(), turnMessages, false, TurnExitReason.INTERRUPTED);
+                }
+                return new TurnResult(turnMessages, true, null);
+            }
             if (guardrail.isHalted(session.id())) {
                 turnMessages.add(Message.assistant(guardrail.haltMessage(session.id()), turnIndex));
                 if (turnFinalizer != null) {
@@ -606,7 +614,9 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 return new TurnResult(turnMessages, true, null);
             }
 
-            List<Message> context = contextEngine.prepareContext(session, turnMessages);
+            List<Message> context = contextEngine.prepareContext(session,
+                pendingRecoveryContext != null ? pendingRecoveryContext : turnMessages);
+            pendingRecoveryContext = null;
             session = resolveRotatedSession(session);
             // Hermes parity: pre-API-call /steer drain (conversation_loop.py:2104-2153).
             // c2: shared owner in TurnExecutorUtils — previously a verbatim copy
@@ -681,27 +691,15 @@ public class DefaultAgentRuntime implements AgentRuntime {
             // Reset incomplete scratchpad counter on clean response
             incompleteScratchpadRetries = 0;
 
-            // Hermes parity (conversation_loop.py:3606-3692): a successful HTTP
-            // response may still carry a content_filter finish reason. Treat it
-            // as a terminal policy refusal, preserving any provider refusal text
-            // and adding the shared actionable recovery hint.
-            if ("CONTENT_FILTER".equals(response.finishReason()) && !response.hasToolCalls()) {
-                String policyMsg = (response.hasContent() ? response.content().strip() + "\n\n" : "")
-                    + ResponseRecoveryPolicy.CONTENT_POLICY_RECOVERY_HINT;
-                turnMessages.add(Message.assistant(policyMsg, turnIndex));
-                if (turnFinalizer != null) {
-                    turnFinalizer.finalize(session.id(), turnMessages, false, TurnExitReason.CONTENT_POLICY);
-                }
-                return new TurnResult(turnMessages, true, null);
-            }
-
             // ── Truncated tool call recovery (Hermes parity: conversation_loop.py:3829-3860) ──
             // LENGTH finish_reason WITH tool calls: the model hit the output cap
             // mid-tool-call JSON. The arguments are truncated/incomplete and must
             // NOT be executed. Re-run the same API call with a boosted max_tokens
             // (2^attempt × base, capped at 32768) giving the model room to finish.
-            if (ResponseRecoveryPolicy.isTruncatedToolCall(response.finishReason(), response.hasToolCalls())
+            while (ResponseRecoveryPolicy.isTruncatedToolCall(response.finishReason(), response.hasToolCalls())
                     && truncatedToolCallRetries < ResponseRecoveryPolicy.MAX_TRUNCATED_TOOL_CALL_RETRIES) {
+                if (interruptToken != null && interruptToken.isCancelled(session.id())) break;
+                if (iterationBudget.isExhausted(budget)) break;
                 truncatedToolCallRetries++;
                 int boostedMax = ResponseRecoveryPolicy.boostedMaxTokens(
                     properties.getModel().getMaxTokens(), truncatedToolCallRetries);
@@ -713,6 +711,30 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 context = contextEngine.prepareContext(session, turnMessages);
                 session = resolveRotatedSession(session);
                 response = callModelWithRetry(context, tools, session, boostedOptions);
+                budget = iterationBudget.recordModelCall(budget,
+                    tokenEstimator.estimateTokens(context), estimateResponseTokens(response));
+                turnState.recordModelCall();
+            }
+
+            if (interruptToken != null && interruptToken.isCancelled(session.id())) {
+                turnMessages.add(Message.assistant("Turn cancelled by user.", turnIndex));
+                if (turnFinalizer != null) {
+                    turnFinalizer.finalize(session.id(), turnMessages, false, TurnExitReason.INTERRUPTED);
+                }
+                return new TurnResult(turnMessages, true, null);
+            }
+            // Process policy refusals from both the initial call and boosted retries.
+            if ("CONTENT_FILTER".equalsIgnoreCase(response.finishReason()) && !response.hasToolCalls()) {
+                String policyMsg = (response.hasContent() ? response.content().strip() + "\n\n" : "")
+                    + ResponseRecoveryPolicy.CONTENT_POLICY_RECOVERY_HINT;
+                turnMessages.add(Message.assistant(policyMsg, turnIndex));
+                if (turnFinalizer != null) {
+                    turnFinalizer.finalize(session.id(), turnMessages, false, TurnExitReason.CONTENT_POLICY);
+                }
+                return new TurnResult(turnMessages, true, null);
+            }
+            if (ResponseRecoveryPolicy.isTruncatedToolCall(response.finishReason(), response.hasToolCalls())
+                    && iterationBudget.isExhausted(budget)) {
                 continue;
             }
 
@@ -732,9 +754,8 @@ public class DefaultAgentRuntime implements AgentRuntime {
                         turnIndex));
                 }
                 turnIndex++;
-                context = contextEngine.prepareContext(session, turnMessages);
-                session = resolveRotatedSession(session);
-                response = callModelWithRetry(context, tools, session, options);
+                // The next outer iteration issues the recovery request using
+                // the persisted tool-result stub; do not discard a separate call.
                 continue;
             }
 
@@ -789,8 +810,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 }
                 droppedContext.add(Message.user(ResponseRecoveryPolicy.DROPPED_TOOLCALL_NUDGE));
                 turnIndex++;
-                context = contextEngine.prepareContext(session, droppedContext);
-                session = resolveRotatedSession(session);
+                pendingRecoveryContext = droppedContext;
                 continue;
             }
 
@@ -913,8 +933,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                         }
                         // Plain-empty: Hermes adds NO synthetic message — backoff + fresh call only.
                         turnIndex++;
-                        context = contextEngine.prepareContext(session, retryContext);
-                        session = resolveRotatedSession(session);
+                        pendingRecoveryContext = retryContext;
                         continue;
                     }
                     // ── Exhausted (Hermes 7728-7760): fallback attempt BEFORE terminal ──

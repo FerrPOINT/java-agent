@@ -37,6 +37,115 @@ class VisionAnalyzeToolTest {
     }
 
     @Test
+    void redirectLoopStopsAfterBoundedAttempts() throws Exception {
+        var server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        var hits = new java.util.concurrent.atomic.AtomicInteger();
+        server.createContext("/loop", exchange -> {
+            hits.incrementAndGet();
+            exchange.getResponseHeaders().add("Location", "/loop");
+            exchange.sendResponseHeaders(302, -1);
+            exchange.close();
+        });
+        server.start();
+        try {
+            String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/loop";
+            var result = tool.execute("{\"image_url\":\"" + url + "\"}", null, null);
+            assertThat(result.success()).isFalse();
+            assertThat(hits.get()).isEqualTo(6);
+            verifyNoInteractions(modelClient);
+        } finally { server.stop(0); }
+    }
+
+    @Test
+    void remoteRedirectToAllowedAddressReachesModel() throws Exception {
+        var server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/start", exchange -> {
+            exchange.getResponseHeaders().add("Location", "/image");
+            exchange.sendResponseHeaders(302, -1);
+            exchange.close();
+        });
+        server.createContext("/image", exchange -> {
+            byte[] data = {1, 2, 3};
+            exchange.sendResponseHeaders(200, data.length);
+            try (var out = exchange.getResponseBody()) { out.write(data); }
+        });
+        server.start();
+        try {
+            when(modelClient.analyzeImage(eq("AQID"), anyString())).thenReturn("ok");
+            String base = "http://127.0.0.1:" + server.getAddress().getPort();
+            assertThat(tool.execute("{\"image_url\":\"" + base + "/start\"}", null, null).success()).isTrue();
+            verify(urlSafety).checkUrl(base + "/start");
+            verify(urlSafety).checkUrl(base + "/image");
+            verify(modelClient).analyzeImage(eq("AQID"), anyString());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void remoteRedirectToBlockedAddressDoesNotFetchTarget() throws Exception {
+        var server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        var targetHits = new java.util.concurrent.atomic.AtomicInteger();
+        server.createContext("/start", exchange -> {
+            exchange.getResponseHeaders().add("Location", "/blocked");
+            exchange.sendResponseHeaders(302, -1);
+            exchange.close();
+        });
+        server.createContext("/blocked", exchange -> {
+            targetHits.incrementAndGet();
+            exchange.sendResponseHeaders(200, 3);
+            try (var out = exchange.getResponseBody()) { out.write(new byte[]{1, 2, 3}); }
+        });
+        server.start();
+        try {
+            String base = "http://127.0.0.1:" + server.getAddress().getPort();
+            when(urlSafety.checkUrl(base + "/blocked")).thenReturn("unsafe or private URL");
+            var result = tool.execute("{\"image_url\":\"" + base + "/start\"}", null, null);
+            assertThat(result.success()).isFalse();
+            assertThat(targetHits.get()).isZero();
+            verifyNoInteractions(modelClient);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void remoteImageReadStopsAtSizeLimit() throws Exception {
+        var server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        var sent = new java.util.concurrent.atomic.AtomicLong();
+        var done = new java.util.concurrent.CountDownLatch(1);
+        server.createContext("/image", exchange -> {
+            try {
+                exchange.sendResponseHeaders(200, 0);
+                byte[] chunk = new byte[8192];
+                try (var out = exchange.getResponseBody()) {
+                    for (int i = 0; i < 8192; i++) {
+                        out.write(chunk);
+                        sent.addAndGet(chunk.length);
+                    }
+                }
+            } catch (java.io.IOException ignored) {
+                // Closing after the limit interrupts the producer.
+            } finally {
+                exchange.close();
+                done.countDown();
+            }
+        });
+        server.start();
+        try {
+            String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/image";
+            var result = tool.execute("{\"image_url\":\"" + url + "\"}", null, null);
+            assertThat(result.success()).isFalse();
+            assertThat(result.error()).contains("50MB");
+            assertThat(done.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(sent.get()).isLessThan(64L * 1024 * 1024);
+            verifyNoInteractions(modelClient);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void execute_withNullImage_returnsFail() {
         ToolResult result = tool.execute("{\"image_url\":null}", Message.assistant("test", 0), Session.create("test", "noop", "noop"));
         assertThat(result.success()).isFalse();

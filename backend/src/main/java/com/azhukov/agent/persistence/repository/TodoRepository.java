@@ -14,6 +14,23 @@ import java.util.UUID;
 @Repository
 public interface TodoRepository extends JpaRepository<TodoEntity, UUID> {
 
+    /** Serialize tool list mutations per user, including when the list is empty. */
+    @org.springframework.data.jpa.repository.Query(value = "SELECT 1 FROM (SELECT pg_advisory_xact_lock(hashtextextended(CONCAT('agent:todo:', :userId), 0))) locked", nativeQuery = true)
+    int lockUserList(@org.springframework.data.repository.query.Param("userId") String userId);
+
+    /** Lock parent before todo rows, matching FK/cascade order and preventing deadlocks. */
+    @org.springframework.data.jpa.repository.Query(value = "SELECT id FROM sessions WHERE id = :sessionId FOR KEY SHARE", nativeQuery = true)
+    java.util.Optional<UUID> lockTodoSession(@org.springframework.data.repository.query.Param("sessionId") UUID sessionId);
+
+    /** Scalar owner lookup avoids retaining a managed entity while waiting for the user lock. */
+    @org.springframework.data.jpa.repository.Query("select t.userId from TodoEntity t where t.id = :id")
+    java.util.Optional<String> findOwnerId(@org.springframework.data.repository.query.Param("id") UUID id);
+
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @org.springframework.data.jpa.repository.Query("select t from TodoEntity t where t.id = :id and t.userId = :userId")
+    java.util.Optional<TodoEntity> findOwnedForUpdate(@org.springframework.data.repository.query.Param("id") UUID id,
+        @org.springframework.data.repository.query.Param("userId") String userId);
+
     List<TodoEntity> findByUserId(String userId);
 
     List<TodoEntity> findByUserIdOrderByCreatedAtAsc(String userId);
@@ -32,9 +49,10 @@ public interface TodoRepository extends JpaRepository<TodoEntity, UUID> {
     @Transactional
     void deleteByUserIdAndStatus(String userId, String status);
 
-    @Modifying
+    @Modifying(flushAutomatically = true)
+    @org.springframework.data.jpa.repository.Query("delete from TodoEntity t where t.userId = :userId")
     @Transactional
-    void deleteByUserId(String userId);
+    void deleteByUserId(@org.springframework.data.repository.query.Param("userId") String userId);
 
     @Modifying
     @Transactional

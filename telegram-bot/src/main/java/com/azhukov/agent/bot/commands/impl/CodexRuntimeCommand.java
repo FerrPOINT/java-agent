@@ -52,7 +52,8 @@ public class CodexRuntimeCommand implements CommandHandler {
 		if (sub.equals("reset") || sub.equals("default")) {
 			if (session != null && session.getId() != null) {
 				store.setModelOverride(session.getId(), null);
-				return "Model reset to default: " + properties.getDefaultModel();
+				String fallback = com.azhukov.agent.bot.config.ModelSelection.forRequest(properties, null);
+				return "Model reset to default: " + (fallback == null || fallback.isBlank() ? "backend default" : fallback);
 			}
 			return "No active session.";
 		}
@@ -74,10 +75,11 @@ public class CodexRuntimeCommand implements CommandHandler {
 	}
 
 	private String showCurrent(BotSessionEntity session) {
-		String model = properties.getDefaultModel();
 		String sessionModel = session != null ? session.getModelOverride() : null;
-		if (sessionModel != null && !sessionModel.isBlank()) {
-			model = sessionModel;
+		String model = com.azhukov.agent.bot.config.ModelSelection.forRequest(properties, sessionModel);
+		if (model == null || model.isBlank()) model = "backend default";
+		if (!properties.getAvailableModels().isEmpty() && !properties.getAvailableModels().contains(sessionModel)) {
+			sessionModel = null;
 		}
 
 		StringBuilder sb = new StringBuilder("Current runtime:\n");

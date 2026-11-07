@@ -16,6 +16,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ProcessToolBranchTest {
 
     private ProcessTool processTool;
+    private final Session session = Session.create("u", "noop", "");
+
+    private ProcessTool.ManagedProcess spawnOwned(String command, int timeout) throws Exception {
+        var process = processTool.spawn(command, timeout);
+        processTool.claimProcess(process, session.id());
+        return process;
+    }
 
     @AfterEach
     void cleanup() {
@@ -30,7 +37,7 @@ class ProcessToolBranchTest {
     void execute_unknownAction_returnsError() {
         processTool = new ProcessTool();
         ToolResult result = processTool.execute(
-            "{\"action\":\"unknown_action\"}", null, Session.create("u", "noop", ""));
+            "{\"action\":\"unknown_action\"}", null, session);
         assertThat(result.success()).isFalse();
         assertThat(result.error()).contains("Unknown process action");
     }
@@ -39,7 +46,7 @@ class ProcessToolBranchTest {
     void execute_nullAction_returnsError() {
         processTool = new ProcessTool();
         ToolResult result = processTool.execute(
-            "{}", null, Session.create("u", "noop", ""));
+            "{}", null, session);
         assertThat(result.success()).isFalse();
         assertThat(result.error()).contains("Unknown process action");
     }
@@ -50,16 +57,16 @@ class ProcessToolBranchTest {
     void list_empty_returnsOk() {
         processTool = new ProcessTool();
         ToolResult result = processTool.execute(
-            "{\"action\":\"list\"}", null, Session.create("u", "noop", ""));
+            "{\"action\":\"list\"}", null, session);
         assertThat(result.success()).isTrue();
     }
 
     @Test
     void list_withProcesses_showsRunningProcess() throws Exception {
         processTool = new ProcessTool();
-        processTool.spawn("echo hello", 5);
+        spawnOwned("echo hello", 5);
         ToolResult result = processTool.execute(
-            "{\"action\":\"list\"}", null, Session.create("u", "noop", ""));
+            "{\"action\":\"list\"}", null, session);
         assertThat(result.success()).isTrue();
         assertThat(result.content()).contains("proc_");
     }
@@ -70,7 +77,7 @@ class ProcessToolBranchTest {
     void poll_nonExistentSession_returnsError() {
         processTool = new ProcessTool();
         ToolResult result = processTool.execute(
-            "{\"action\":\"poll\",\"session_id\":\"nonexistent\"}", null, Session.create("u", "noop", ""));
+            "{\"action\":\"poll\",\"session_id\":\"nonexistent\"}", null, session);
         assertThat(result.success()).isTrue();
         assertThat(result.content()).contains("\"status\":\"not_found\"");
     }
@@ -78,11 +85,11 @@ class ProcessToolBranchTest {
     @Test
     void poll_existingProcess_returnsStatus() throws Exception {
         processTool = new ProcessTool();
-        ProcessTool.ManagedProcess mp = processTool.spawn("echo hello", 5);
+        ProcessTool.ManagedProcess mp = spawnOwned("echo hello", 5);
         // Wait for the reader thread to drain process output (deterministic sync)
         waitForReaderThread(mp);
         ToolResult result = processTool.execute(
-            "{\"action\":\"poll\",\"session_id\":\"" + mp.id + "\"}", null, Session.create("u", "noop", ""));
+            "{\"action\":\"poll\",\"session_id\":\"" + mp.id + "\"}", null, session);
         assertThat(result.success()).isTrue();
         assertThat(result.content()).contains("session_id:");
     }
@@ -93,7 +100,7 @@ class ProcessToolBranchTest {
     void log_nonExistentSession_returnsError() {
         processTool = new ProcessTool();
         ToolResult result = processTool.execute(
-            "{\"action\":\"log\",\"session_id\":\"nonexistent\"}", null, Session.create("u", "noop", ""));
+            "{\"action\":\"log\",\"session_id\":\"nonexistent\"}", null, session);
         assertThat(result.success()).isTrue();
         assertThat(result.content()).contains("\"status\":\"not_found\"");
     }
@@ -101,22 +108,22 @@ class ProcessToolBranchTest {
     @Test
     void log_existingProcess_withOffsetAndLimit() throws Exception {
         processTool = new ProcessTool();
-        ProcessTool.ManagedProcess mp = processTool.spawn("echo line1\necho line2\necho line3", 5);
+        ProcessTool.ManagedProcess mp = spawnOwned("echo line1\necho line2\necho line3", 5);
         waitForReaderThread(mp);
         ToolResult result = processTool.execute(
             "{\"action\":\"log\",\"session_id\":\"" + mp.id + "\",\"offset\":0,\"limit\":2}",
-            null, Session.create("u", "noop", ""));
+            null, session);
         assertThat(result.success()).isTrue();
     }
 
     @Test
     void log_existingProcess_defaultLimit() throws Exception {
         processTool = new ProcessTool();
-        ProcessTool.ManagedProcess mp = processTool.spawn("echo test", 5);
+        ProcessTool.ManagedProcess mp = spawnOwned("echo test", 5);
         waitForReaderThread(mp);
         ToolResult result = processTool.execute(
             "{\"action\":\"log\",\"session_id\":\"" + mp.id + "\"}",
-            null, Session.create("u", "noop", ""));
+            null, session);
         assertThat(result.success()).isTrue();
     }
 
@@ -126,7 +133,7 @@ class ProcessToolBranchTest {
     void wait_nonExistentSession_returnsError() {
         processTool = new ProcessTool();
         ToolResult result = processTool.execute(
-            "{\"action\":\"wait\",\"session_id\":\"nonexistent\"}", null, Session.create("u", "noop", ""));
+            "{\"action\":\"wait\",\"session_id\":\"nonexistent\"}", null, session);
         assertThat(result.success()).isTrue();
         assertThat(result.content()).contains("\"status\":\"not_found\"");
     }
@@ -134,21 +141,21 @@ class ProcessToolBranchTest {
     @Test
     void wait_completedProcess_returnsOk() throws Exception {
         processTool = new ProcessTool();
-        ProcessTool.ManagedProcess mp = processTool.spawn("echo hello", 5);
+        ProcessTool.ManagedProcess mp = spawnOwned("echo hello", 5);
         waitForReaderThread(mp);
         ToolResult result = processTool.execute(
             "{\"action\":\"wait\",\"session_id\":\"" + mp.id + "\",\"timeout\":2}",
-            null, Session.create("u", "noop", ""));
+            null, session);
         assertThat(result.success()).isTrue();
     }
 
     @Test
     void wait_runningProcess_timesOut() throws Exception {
         processTool = new ProcessTool();
-        ProcessTool.ManagedProcess mp = processTool.spawn("sleep 30", 60);
+        ProcessTool.ManagedProcess mp = spawnOwned("sleep 30", 60);
         ToolResult result = processTool.execute(
             "{\"action\":\"wait\",\"session_id\":\"" + mp.id + "\",\"timeout\":1}",
-            null, Session.create("u", "noop", ""));
+            null, session);
         assertThat(result.success()).isTrue();
         assertThat(result.content()).contains("wait timed out");
     }
@@ -156,11 +163,11 @@ class ProcessToolBranchTest {
     @Test
     void wait_defaultTimeout_used() throws Exception {
         processTool = new ProcessTool();
-        ProcessTool.ManagedProcess mp = processTool.spawn("echo quick", 5);
+        ProcessTool.ManagedProcess mp = spawnOwned("echo quick", 5);
         waitForReaderThread(mp);
         ToolResult result = processTool.execute(
             "{\"action\":\"wait\",\"session_id\":\"" + mp.id + "\"}",
-            null, Session.create("u", "noop", ""));
+            null, session);
         assertThat(result.success()).isTrue();
     }
 
@@ -170,7 +177,7 @@ class ProcessToolBranchTest {
     void kill_nonExistentSession_returnsError() {
         processTool = new ProcessTool();
         ToolResult result = processTool.execute(
-            "{\"action\":\"kill\",\"session_id\":\"nonexistent\"}", null, Session.create("u", "noop", ""));
+            "{\"action\":\"kill\",\"session_id\":\"nonexistent\"}", null, session);
         assertThat(result.success()).isTrue();
         assertThat(result.content()).contains("\"status\":\"not_found\"");
     }
@@ -178,9 +185,9 @@ class ProcessToolBranchTest {
     @Test
     void kill_existingProcess_returnsOk() throws Exception {
         processTool = new ProcessTool();
-        ProcessTool.ManagedProcess mp = processTool.spawn("sleep 30", 60);
+        ProcessTool.ManagedProcess mp = spawnOwned("sleep 30", 60);
         ToolResult result = processTool.execute(
-            "{\"action\":\"kill\",\"session_id\":\"" + mp.id + "\"}", null, Session.create("u", "noop", ""));
+            "{\"action\":\"kill\",\"session_id\":\"" + mp.id + "\"}", null, session);
         assertThat(result.success()).isTrue();
         assertThat(result.content()).contains("Killed process");
     }
@@ -192,7 +199,7 @@ class ProcessToolBranchTest {
         processTool = new ProcessTool();
         ToolResult result = processTool.execute(
             "{\"action\":\"write\",\"session_id\":\"nonexistent\",\"data\":\"hello\"}",
-            null, Session.create("u", "noop", ""));
+            null, session);
         assertThat(result.success()).isTrue();
         assertThat(result.content()).contains("\"status\":\"not_found\"");
     }
@@ -200,10 +207,10 @@ class ProcessToolBranchTest {
     @Test
     void write_nullData_writesEmptyString() throws Exception {
         processTool = new ProcessTool();
-        ProcessTool.ManagedProcess mp = processTool.spawn("cat", 10);
+        ProcessTool.ManagedProcess mp = spawnOwned("cat", 10);
         ToolResult result = processTool.execute(
             "{\"action\":\"write\",\"session_id\":\"" + mp.id + "\"}",
-            null, Session.create("u", "noop", ""));
+            null, session);
         assertThat(result.success()).isTrue();
     }
 
@@ -214,7 +221,7 @@ class ProcessToolBranchTest {
         processTool = new ProcessTool();
         ToolResult result = processTool.execute(
             "{\"action\":\"submit\",\"session_id\":\"nonexistent\",\"data\":\"hello\"}",
-            null, Session.create("u", "noop", ""));
+            null, session);
         assertThat(result.success()).isTrue();
         assertThat(result.content()).contains("\"status\":\"not_found\"");
     }
@@ -222,10 +229,10 @@ class ProcessToolBranchTest {
     @Test
     void submit_nullData_appendsNewline() throws Exception {
         processTool = new ProcessTool();
-        ProcessTool.ManagedProcess mp = processTool.spawn("cat", 10);
+        ProcessTool.ManagedProcess mp = spawnOwned("cat", 10);
         ToolResult result = processTool.execute(
             "{\"action\":\"submit\",\"session_id\":\"" + mp.id + "\"}",
-            null, Session.create("u", "noop", ""));
+            null, session);
         assertThat(result.success()).isTrue();
     }
 
@@ -235,7 +242,7 @@ class ProcessToolBranchTest {
     void close_nonExistentSession_returnsError() {
         processTool = new ProcessTool();
         ToolResult result = processTool.execute(
-            "{\"action\":\"close\",\"session_id\":\"nonexistent\"}", null, Session.create("u", "noop", ""));
+            "{\"action\":\"close\",\"session_id\":\"nonexistent\"}", null, session);
         assertThat(result.success()).isTrue();
         assertThat(result.content()).contains("\"status\":\"not_found\"");
     }
@@ -243,9 +250,9 @@ class ProcessToolBranchTest {
     @Test
     void close_existingProcess_returnsOk() throws Exception {
         processTool = new ProcessTool();
-        ProcessTool.ManagedProcess mp = processTool.spawn("cat", 10);
+        ProcessTool.ManagedProcess mp = spawnOwned("cat", 10);
         ToolResult result = processTool.execute(
-            "{\"action\":\"close\",\"session_id\":\"" + mp.id + "\"}", null, Session.create("u", "noop", ""));
+            "{\"action\":\"close\",\"session_id\":\"" + mp.id + "\"}", null, session);
         assertThat(result.success()).isTrue();
     }
 
@@ -254,7 +261,7 @@ class ProcessToolBranchTest {
     @Test
     void managedProcess_getOutput_returnsAllOutput() throws Exception {
         processTool = new ProcessTool();
-        ProcessTool.ManagedProcess mp = processTool.spawn("echo hello", 5);
+        ProcessTool.ManagedProcess mp = spawnOwned("echo hello", 5);
         waitForReaderThread(mp);
         assertThat(mp.getOutput()).contains("hello");
     }
@@ -262,7 +269,7 @@ class ProcessToolBranchTest {
     @Test
     void managedProcess_getRecentOutput_returnsLastNLines() throws Exception {
         processTool = new ProcessTool();
-        ProcessTool.ManagedProcess mp = processTool.spawn("echo a\necho b\necho c", 5);
+        ProcessTool.ManagedProcess mp = spawnOwned("echo a\necho b\necho c", 5);
         waitForReaderThread(mp);
         String recent = mp.getRecentOutput(2);
         assertThat(recent).isNotNull();
@@ -271,7 +278,7 @@ class ProcessToolBranchTest {
     @Test
     void managedProcess_getOutputLines_returnsCopy() throws Exception {
         processTool = new ProcessTool();
-        ProcessTool.ManagedProcess mp = processTool.spawn("echo test", 5);
+        ProcessTool.ManagedProcess mp = spawnOwned("echo test", 5);
         waitForReaderThread(mp);
         var lines = mp.getOutputLines();
         assertThat(lines).isNotNull();
@@ -280,7 +287,7 @@ class ProcessToolBranchTest {
     @Test
     void managedProcess_closeStdin_doesNotThrow() throws Exception {
         processTool = new ProcessTool();
-        ProcessTool.ManagedProcess mp = processTool.spawn("cat", 5);
+        ProcessTool.ManagedProcess mp = spawnOwned("cat", 5);
         mp.closeStdin(); // should not throw
     }
 
@@ -289,12 +296,12 @@ class ProcessToolBranchTest {
     @Test
     void cleanup_clearsAllProcesses() throws Exception {
         processTool = new ProcessTool();
-        processTool.spawn("sleep 30", 60);
-        processTool.spawn("sleep 30", 60);
+        spawnOwned("sleep 30", 60);
+        spawnOwned("sleep 30", 60);
         processTool.cleanup();
         // After cleanup, list should be empty
         ToolResult result = processTool.execute(
-            "{\"action\":\"list\"}", null, Session.create("u", "noop", ""));
+            "{\"action\":\"list\"}", null, session);
         assertThat(result.success()).isTrue();
     }
 

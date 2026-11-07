@@ -29,6 +29,6 @@ public class McpServerAutoConfiguration {
     @Bean
     @ConditionalOnProperty(prefix = "agent.mcp.server", name = "transport", havingValue = "sse")
     public ServletRegistrationBean<?> mcpSseServletRegistration() {
-        return mcpServerService.getServletRegistration();
+        return mcpServerService.prepareSseServletRegistration();
     }
 }

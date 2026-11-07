@@ -135,6 +135,9 @@ public class CallbackQueryHandler {
         if (model == null || model.isBlank()) {
             return "No model specified";
         }
+        if (!properties.getAvailableModels().isEmpty() && !properties.getAvailableModels().contains(model)) {
+            return "Model not available: " + model;
+        }
         BotSessionEntity session = sessionStore.resolveOrCreate(String.valueOf(userId), String.valueOf(chatId), "");
         if (session == null || session.getId() == null) {
             return "No active session";

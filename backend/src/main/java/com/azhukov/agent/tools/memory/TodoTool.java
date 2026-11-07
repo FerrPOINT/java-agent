@@ -74,6 +74,7 @@ public class TodoTool implements ToolHandler {
     private final TodoRepository todoRepository;
 
     @Override
+    @org.springframework.transaction.annotation.Transactional
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
         TodoArgs args = ToolHandler.parseJson(arguments, TodoArgs.class);
 
@@ -94,7 +95,7 @@ public class TodoTool implements ToolHandler {
 
         // Validate each item
         for (TodoItem item : items) {
-            if (item.content() == null || item.content().isBlank()) {
+            if (item == null || item.content() == null || item.content().isBlank()) {
                 return ToolResult.fail("Each todo item must have 'content'.");
             }
             if (item.content().length() > MAX_CONTENT_CHARS) {
@@ -107,6 +108,11 @@ public class TodoTool implements ToolHandler {
             }
         }
 
+        if (session.id() == null || todoRepository.lockTodoSession(session.id()).isEmpty()) {
+            return ToolResult.fail("Session no longer exists.");
+        }
+        // PostgreSQL transaction-scoped lock covers empty lists and multiple application instances.
+        todoRepository.lockUserList(session.userId());
         boolean merge = args.merge() != null && args.merge();
 
         if (!merge) {
@@ -121,7 +127,7 @@ public class TodoTool implements ToolHandler {
             if (merge && item.id() != null && !item.id().isBlank()) {
                 UUID itemId = resolveTodoId(item.id(), session);
                 if (itemId != null) {
-                    entity = todoRepository.findById(itemId).orElse(null);
+                    entity = todoRepository.findOwnedForUpdate(itemId, session.userId()).orElse(null);
                 }
                 if (entity == null || !entity.getUserId().equals(session.userId())) {
                     entity = null;

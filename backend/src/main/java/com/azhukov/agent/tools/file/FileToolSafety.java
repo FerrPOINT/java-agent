@@ -16,7 +16,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
-final class FileToolSafety {
+public final class FileToolSafety {
 
     private static final Set<String> OPAQUE_DOCUMENT_EXTENSIONS = Set.of(
         ".doc", ".docx", ".docm",
@@ -67,7 +67,7 @@ final class FileToolSafety {
         return new DefaultFileSafety(properties);
     }
 
-    static Path resolvePath(String rawPath, Session session) {
+    public static Path resolvePath(String rawPath, Session session) {
         Path path = Path.of(expandTilde(rawPath));
         if (path.isAbsolute()) {
             return path.toAbsolutePath().normalize();
