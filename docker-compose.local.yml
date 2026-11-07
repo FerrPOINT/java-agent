@@ -111,7 +111,6 @@ services:
       BOT_AGENT_NAME: ${BOT_AGENT_NAME:-Джава агент}
       BOT_ALLOWED_USER_IDS: ${BOT_ALLOWED_USER_IDS:-}
       BOT_WORKING_DIRECTORY: /workspace
-      AGENT_ATTACHMENTS_CACHE_ROOT: /artifacts
       HERMES_HOME: /home/agent/.java-agent
     ports:
       - "127.0.0.1:1182:1182"
@@ -123,7 +122,6 @@ services:
       start_period: 30s
     volumes:
       - agent_local_workspace:/workspace
-      - agent_local_artifacts:/artifacts
       - agent_local_state:/home/agent/.java-agent
 
   cli:

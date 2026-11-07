@@ -31,7 +31,8 @@ class ProviderToolGateRegistryTest {
     }
 
     private static com.azhukov.agent.tools.tts.TtsTool ttsTool(java.util.List<com.azhukov.agent.service.tts.TtsProvider> providers) {
-        return new com.azhukov.agent.tools.tts.TtsTool(providers, new AgentProperties());
+        return new com.azhukov.agent.tools.tts.TtsTool(providers, new AgentProperties(),
+            org.mockito.Mockito.mock(com.azhukov.agent.service.AttachmentArtifactService.class));
     }
 
     @Test
