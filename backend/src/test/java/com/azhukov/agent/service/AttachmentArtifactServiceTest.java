@@ -59,6 +59,25 @@ class AttachmentArtifactServiceTest {
     }
 
     @Test
+    void scopedOutboundContentDoesNotServeModifiedBytes() throws Exception {
+        var service = service();
+        var session = UUID.randomUUID();
+        byte[] bytes = {1, 2, 3};
+        var registration = service.register("u1", "default", session, null,
+            "internal", "document", "application/octet-stream", "example.bin", bytes);
+        var stored = org.mockito.ArgumentCaptor.forClass(AttachmentArtifactEntity.class);
+        verify(repository).save(stored.capture());
+        when(repository.findById(registration.id())).thenReturn(Optional.of(stored.getValue()));
+        assertThat(service.isAvailableInSession(registration.id(), "u1", session)).isTrue();
+        assertThat(service.isAvailableInSession(registration.id(), "u1", UUID.randomUUID())).isFalse();
+        assertThat(service.isAvailableInSession(registration.id(), "u2", session)).isFalse();
+        assertThat(service.verifiedContent(registration.id(), "u1")).hasValueSatisfying(
+            content -> assertThat(content).isEqualTo(bytes));
+        Files.write(tempDir.resolve(registration.cachePath()), new byte[]{3, 2, 1});
+        assertThat(service.verifiedContent(registration.id(), "u1")).isEmpty();
+    }
+
+    @Test
     void registerWritesBlobAndMetadata() {
         byte[] data = "hello attachment".getBytes();
         var result = service().register("u1", "default", UUID.randomUUID(), "m1",
