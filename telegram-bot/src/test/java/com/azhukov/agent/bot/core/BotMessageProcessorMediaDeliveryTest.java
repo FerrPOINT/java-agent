@@ -225,6 +225,35 @@ class BotMessageProcessorMediaDeliveryTest {
     }
 
     @Test
+    void albumDocumentAndVoiceRecordTheirOwnReceipts() {
+        UUID sessionId = UUID.randomUUID();
+        byte[] bytes = {1, 2};
+        for (String id : List.of("first", "second", "document", "voice")) {
+            String mime = switch (id) {
+                case "document" -> "application/pdf";
+                case "voice" -> "audio/ogg";
+                default -> "image/png";
+            };
+            when(attachmentApiClient.loadOutbound(id, "101", sessionId))
+                .thenReturn(Optional.of(new AttachmentApiClient.Outbound(id, id, mime, bytes)));
+        }
+        when(telegramClient.sendMediaGroup(eq(100L), anyList())).thenReturn(List.of(20L, 21L));
+        when(telegramClient.sendDocument(100L, bytes, "document", null, null)).thenReturn(Optional.of(22L));
+        when(telegramClient.sendAudioAsVoice(100L, bytes, "voice", null)).thenReturn(Optional.of(23L));
+
+        processor.deliverMedia(100L, List.of(new MediaDeliveryService.MediaDescriptor("first", false, false),
+            new MediaDeliveryService.MediaDescriptor("second", false, false),
+            new MediaDeliveryService.MediaDescriptor("document", false, true),
+            new MediaDeliveryService.MediaDescriptor("voice", true, false)), null, "101", sessionId);
+
+        verify(telegramClient).sendMediaGroup(eq(100L), argThat(photos -> photos.size() == 2));
+        verify(attachmentApiClient).markOutboundDelivered("first", "101", sessionId, 20L);
+        verify(attachmentApiClient).markOutboundDelivered("second", "101", sessionId, 21L);
+        verify(attachmentApiClient).markOutboundDelivered("document", "101", sessionId, 22L);
+        verify(attachmentApiClient).markOutboundDelivered("voice", "101", sessionId, 23L);
+    }
+
+    @Test
     void missingOrUnscopedArtifactsDoNotReachTelegram() {
         UUID sessionId = UUID.randomUUID();
         var media = List.of(new MediaDeliveryService.MediaDescriptor("missing", false, false));

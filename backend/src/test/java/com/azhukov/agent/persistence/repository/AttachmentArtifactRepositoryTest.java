@@ -57,6 +57,26 @@ class AttachmentArtifactRepositoryTest extends PostgresTestContainer {
     }
 
     @Test
+    void identicalContentDeduplicatesOnlyWithinOneSession() {
+        UUID firstSession = UUID.randomUUID();
+        UUID secondSession = UUID.randomUUID();
+        var first = entity("alice", "same", "photo");
+        first.setSessionId(firstSession);
+        var second = entity("alice", "same", "photo");
+        second.setSessionId(secondSession);
+        repository.saveAndFlush(first);
+        repository.saveAndFlush(second);
+        assertThat(repository.findFirstByOwnerIdAndContentHashAndDispositionAndSessionId("alice", "same", "photo", firstSession))
+            .get().extracting(AttachmentArtifactEntity::getId).isEqualTo(first.getId());
+        assertThat(repository.findFirstByOwnerIdAndContentHashAndDispositionAndSessionId("alice", "same", "photo", secondSession))
+            .get().extracting(AttachmentArtifactEntity::getId).isEqualTo(second.getId());
+        var duplicate = entity("alice", "same", "photo");
+        duplicate.setSessionId(firstSession);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> repository.saveAndFlush(duplicate))
+            .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+    }
+
+    @Test
     void sessionLinkageOrdersByCreation() {
         UUID sessionId = UUID.randomUUID();
         AttachmentArtifactEntity first = entity("alice", "h1", "document");
