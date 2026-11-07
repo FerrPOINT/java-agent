@@ -60,6 +60,8 @@ class CronJobServiceReEnableTest {
             jobs.add(job);
         }
         when(cronJobRepository.findByEnabledTrue()).thenReturn(jobs);
+        when(cronJobRepository.findById(any(UUID.class))).thenAnswer(invocation ->
+            jobs.stream().filter(job -> job.getId().equals(invocation.getArgument(0))).findFirst());
         when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(inv -> inv.getArgument(0));
 
         service.init();

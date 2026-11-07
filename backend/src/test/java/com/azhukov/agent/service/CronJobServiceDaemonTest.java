@@ -74,7 +74,6 @@ class CronJobServiceDaemonTest {
         job.setCreatedAt(Instant.now());
 
         when(cronJobRepository.findById(jobId)).thenReturn(java.util.Optional.of(job));
-        when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(agentRuntimeService.runBackground(any(), any(), org.mockito.ArgumentMatchers.anyBoolean())).thenReturn("session-id");
 
         // Execute job — should work without error

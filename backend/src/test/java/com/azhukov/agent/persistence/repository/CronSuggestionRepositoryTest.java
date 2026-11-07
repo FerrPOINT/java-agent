@@ -25,6 +25,9 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
     @Autowired
     private javax.sql.DataSource dataSource;
 
+    @org.springframework.test.context.bean.override.mockito.MockitoSpyBean
+    private com.azhukov.agent.service.AgentRuntimeService runtime;
+
     @Test
     void cronSuggestionsAreRegisteredAsIdentityReferences() {
         var jdbc = new org.springframework.jdbc.core.JdbcTemplate(dataSource);
@@ -751,6 +754,65 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
 
         assertThatThrownBy(() -> cronSuggestionRepository.saveAndFlush(newSuggestion("alice", "daily-briefing")))
             .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"pause", "update", "remove"})
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void completingRunDoesNotUndoCommittedChange(String change) throws Exception {
+        var entered = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        org.mockito.Mockito.doAnswer(call -> {
+            entered.countDown();
+            if (!release.await(10, java.util.concurrent.TimeUnit.SECONDS)) {
+                throw new IllegalStateException("test did not release the run");
+            }
+            return null;
+        }).when(runtime).runBackground(org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.nullable(String.class), org.mockito.ArgumentMatchers.eq(true));
+        var scheduler = org.mockito.Mockito.mock(java.util.concurrent.ScheduledExecutorService.class);
+        var callbacks = new java.util.ArrayList<Runnable>();
+        org.mockito.Mockito.doAnswer(call -> {
+            callbacks.add(call.getArgument(0));
+            return org.mockito.Mockito.mock(java.util.concurrent.ScheduledFuture.class);
+        }).when(scheduler).schedule(org.mockito.ArgumentMatchers.any(Runnable.class),
+            org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.any(java.util.concurrent.TimeUnit.class));
+        var properties = (com.azhukov.agent.config.AgentProperties) org.springframework.test.util.ReflectionTestUtils
+            .getField(cronJobService, "properties");
+        var originalScheduler = org.springframework.test.util.ReflectionTestUtils.getField(cronJobService, "scheduler");
+        boolean enabled = properties.getCron().isEnabled();
+        properties.getCron().setEnabled(true);
+        org.springframework.test.util.ReflectionTestUtils.setField(cronJobService, "scheduler", scheduler);
+        var job = cronJobService.create("schedule-race-" + java.util.UUID.randomUUID(), "every 1h", "work", "local");
+        var executor = java.util.concurrent.Executors.newSingleThreadExecutor();
+        try {
+            var running = executor.submit(callbacks.getFirst());
+            assertThat(entered.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            switch (change) {
+                case "pause" -> cronJobService.pause(job.getId());
+                case "update" -> cronJobService.update(job.getId(), null, "every 2h", null, null, null);
+                case "remove" -> cronJobService.remove(job.getId());
+                default -> throw new AssertionError(change);
+            }
+            int scheduledAfterChange = callbacks.size();
+            release.countDown();
+            running.get(10, java.util.concurrent.TimeUnit.SECONDS);
+
+            var persisted = cronJobRepository.findById(job.getId());
+            switch (change) {
+                case "pause" -> assertThat(persisted.orElseThrow().isEnabled()).isFalse();
+                case "update" -> assertThat(persisted.orElseThrow().getSchedule()).isEqualTo("every 2h");
+                case "remove" -> assertThat(persisted).isEmpty();
+            }
+            assertThat(callbacks).hasSize(scheduledAfterChange);
+        } finally {
+            release.countDown();
+            executor.shutdownNow();
+            assertThat(executor.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            cronJobService.remove(job.getId());
+            properties.getCron().setEnabled(enabled);
+            org.springframework.test.util.ReflectionTestUtils.setField(cronJobService, "scheduler", originalScheduler);
+        }
     }
 
     private static CronSuggestionEntity newSuggestion(String userId, String dedupKey) {

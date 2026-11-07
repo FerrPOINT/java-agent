@@ -66,7 +66,6 @@ class CronJobServiceDeliveryProducerTest {
 
     private void prepareFailingRun(CronJobEntity job) {
         when(cronJobRepository.findById(job.getId())).thenReturn(Optional.of(job));
-        when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(inv -> inv.getArgument(0));
         when(agentRuntimeServiceProvider.getIfAvailable()).thenReturn(runtime);
         // Default-profile jobs run the 3-arg overload (metadata empty); non-default
         // profiles stamp "profile" into metadata and run the 4-arg one.

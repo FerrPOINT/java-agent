@@ -12,6 +12,7 @@ import java.time.Instant;
 import java.util.UUID;
 
 @Entity
+@org.hibernate.annotations.DynamicUpdate
 @Table(name = "cron_jobs")
 @Data
 public class CronJobEntity {

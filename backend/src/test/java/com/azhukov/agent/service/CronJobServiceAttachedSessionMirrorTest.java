@@ -82,7 +82,6 @@ class CronJobServiceAttachedSessionMirrorTest {
 
     private void prepareFailingRun(CronJobEntity job, UUID attachedSessionId) {
         when(cronJobRepository.findById(job.getId())).thenReturn(Optional.of(job));
-        when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(inv -> inv.getArgument(0));
         when(agentRuntimeServiceProvider.getIfAvailable()).thenReturn(runtime);
         when(runtime.runBackground(any(), any(), anyBoolean()))
             .thenThrow(new IllegalStateException("provider timed out"));
