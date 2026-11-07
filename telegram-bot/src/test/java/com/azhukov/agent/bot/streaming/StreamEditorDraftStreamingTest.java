@@ -60,6 +60,18 @@ class StreamEditorDraftStreamingTest {
     // ─── Transport config tests ──────────────────────────────────
 
     @Test
+    void startingNewDraftResetsPriorDeliveryOutcome() {
+        editor.startStream(123L, "first", "dm");
+        when(client.sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), eq(false)))
+            .thenReturn(Optional.empty());
+        when(client.takeLastRetryAfterSeconds()).thenReturn(-1);
+        assertThat(editor.finalizeStream(123L, -1L, "first answer")).isFalse();
+        editor.startStream(123L, "second", "dm");
+        assertThat(editor.takePartialFinalDelivery(123L)).isFalse();
+        assertThat(editor.takePendingFinalRetryAfterSeconds(123L)).isEqualTo(-1);
+    }
+
+    @Test
     void supportsDraftStreaming_dmReturnsTrue() {
         // Call on the real method (not the mock) — create a real TelegramClient
         // with a dummy token to test the chat type logic
@@ -208,17 +220,91 @@ class StreamEditorDraftStreamingTest {
     // ─── Segment break tests ─────────────────────────────────────
 
     @Test
+    void draftSegmentLongMarkdownIsConvertedOnce() {
+        editor.startStream(123L, "First", "forum", 77L);
+        String text = "prefix_".repeat(700);
+        when(client.sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), eq(77), eq(false)))
+            .thenReturn(Optional.of(50L));
+        editor.onSegmentBreak(123L, -1, text);
+        var sent = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(client, atLeast(2)).sendMessage(eq(123L), sent.capture(), eq("MarkdownV2"), any(), eq(77), eq(false));
+        String restored = sent.getAllValues().stream()
+            .map(chunk -> chunk.replaceFirst("^\\\\\\(\\d+/\\d+\\\\\\) ", ""))
+            .collect(java.util.stream.Collectors.joining()).replace("\\_", "_");
+        assertThat(restored).isEqualTo(text);
+    }
+
+    @Test
+    void draftSegmentPreservesForumTopic() {
+        editor.startStream(123L, "First", "forum", 77L);
+        when(client.sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), eq(77), eq(false)))
+            .thenReturn(Optional.of(50L));
+        editor.onSegmentBreak(123L, -1, "First segment");
+        verify(client).sendMessage(eq(123L), eq("First segment"), eq("MarkdownV2"), any(), eq(77), eq(false));
+    }
+
+    @Test
+    void ambiguousPreviousDraftSegmentDoesNotMarkLaterRateLimitedFinalAsPartial() {
+        editor.startStream(123L, "First", "dm");
+        when(client.sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), eq(false)))
+            .thenReturn(Optional.empty(), Optional.empty());
+        when(client.takeLastRetryAfterSeconds()).thenReturn(-1, 12, -1);
+        editor.onSegmentBreak(123L, -1L, "First segment");
+        assertThat(editor.finalizeStream(123L, -1L, "Final segment")).isFalse();
+        assertThat(editor.takePartialFinalDelivery(123L)).isFalse();
+        assertThat(editor.takePendingFinalRetryAfterSeconds(123L)).isEqualTo(12);
+    }
+
+    @Test
+    void partiallyDeliveredMultipartSegmentDoesNotSuppressLaterFinalRetry() {
+        editor.startStream(123L, "First", "dm");
+        when(client.sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), eq(false)))
+            .thenReturn(Optional.of(50L), Optional.empty(), Optional.empty());
+        when(client.takeLastRetryAfterSeconds()).thenReturn(12, 12, -1);
+        editor.onSegmentBreak(123L, -1L, "segment ".repeat(1200));
+        assertThat(editor.finalizeStream(123L, -1L, "Final segment")).isFalse();
+        assertThat(editor.takePartialFinalDelivery(123L)).isFalse();
+        assertThat(editor.takePendingFinalRetryAfterSeconds(123L)).isEqualTo(12);
+        verify(client, times(3)).sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), eq(false));
+    }
+
+    @Test
+    void multipartFinalPartialDeliveryIsStillReportedAfterSuccessfulSegment() {
+        editor.startStream(123L, "First", "dm");
+        when(client.sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), eq(false)))
+            .thenReturn(Optional.of(40L), Optional.of(50L), Optional.empty());
+        when(client.takeLastRetryAfterSeconds()).thenReturn(12, -1);
+        editor.onSegmentBreak(123L, -1L, "First segment");
+        assertThat(editor.finalizeStream(123L, -1L, "Final content ".repeat(800))).isFalse();
+        assertThat(editor.takePartialFinalDelivery(123L)).isTrue();
+        assertThat(editor.takePendingFinalRetryAfterSeconds(123L)).isEqualTo(12);
+        verify(client, times(3)).sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), eq(false));
+    }
+
+    @Test
+    void rejectedPreviousDraftSegmentDoesNotCarryCooldownIntoFinalFailure() {
+        editor.startStream(123L, "First", "dm");
+        when(client.sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), eq(false)))
+            .thenReturn(Optional.empty(), Optional.empty());
+        when(client.takeLastRetryAfterSeconds()).thenReturn(12, -1, -1);
+        editor.onSegmentBreak(123L, -1L, "First segment");
+        assertThat(editor.finalizeStream(123L, -1L, "Final segment")).isFalse();
+        assertThat(editor.takePartialFinalDelivery(123L)).isTrue();
+        assertThat(editor.takePendingFinalRetryAfterSeconds(123L)).isEqualTo(-1);
+    }
+
+    @Test
     void onSegmentBreak_withDraftStreaming_commitsDraftAndBumpsId() {
         editor.startStream(123L, "First segment text", "dm");
 
         // Send a segment break — should commit the draft as a real message
-        when(client.sendMessage(anyLong(), anyString(), anyString(), any(), any()))
+        when(client.sendMessage(anyLong(), anyString(), anyString(), any(), any(), eq(false)))
             .thenReturn(Optional.of(50L));
 
         editor.onSegmentBreak(123L, -1, "First segment text accumulated");
 
         // Should have sent the accumulated text as a real message
-        verify(client).sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any());
+        verify(client).sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), eq(false));
         // Draft streaming should still be active (segment break doesn't disable it)
         assertThat(editor.isDraftStreamingActive(123L)).isTrue();
     }

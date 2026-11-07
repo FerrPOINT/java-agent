@@ -57,6 +57,8 @@ class StreamSessionTest {
         s.charsSinceLastEdit = 50;
         s.currentToolName = "WebSearch";
         s.currentMessageId.set(42L);
+        s.partialFinalDelivery = true;
+        s.pendingFinalRetryAfterSeconds = 12;
         s.heartbeatMessageId.set(99L);
         s.useDraftStreaming = true;
         s.draftId = 7;
@@ -74,6 +76,8 @@ class StreamSessionTest {
         assertThat(s.thinkScrubber).isNull();
         assertThat(s.currentToolName).isNull();
         assertThat(s.currentMessageId.get()).isEqualTo(-1L);
+        assertThat(s.partialFinalDelivery).isFalse();
+        assertThat(s.pendingFinalRetryAfterSeconds).isEqualTo(-1);
         assertThat(s.heartbeatMessageId.get()).isEqualTo(-1L);
         assertThat(s.useDraftStreaming).isFalse();
         assertThat(s.draftId).isZero();

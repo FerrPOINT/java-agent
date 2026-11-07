@@ -30,8 +30,7 @@ import static org.mockito.Mockito.*;
  *
  * <p>Verifies that the orchestrator wires the SSE callbacks (token, tool-call,
  * tool-result, retry, complete, error) to {@link StreamEditor} correctly, appends
- * the footer, extracts MEDIA: tags before finalize, and falls back to sync chat
- * when the stream produced no visible tokens.
+ * the footer, extracts MEDIA: tags before finalize, and avoids replaying a turn when the stream produces no visible tokens.
  */
 class StreamingOrchestratorTest {
 
@@ -281,27 +280,46 @@ class StreamingOrchestratorTest {
     }
 
     @Test
-    void streamReviewAckFailureRetainsReceiptAndDoesNotResendOnRetry() {
-        UUID backendSessionId = UUID.randomUUID();
-        UUID deliveryId = UUID.randomUUID();
-        String review = "Self-improvement review: Memory updated";
-        when(backendClient.getPendingReview(backendSessionId.toString())).thenReturn(
+    void reviewIsClaimedBeforeBestEffortNotificationLikeHermes() {
+        UUID session = UUID.randomUUID();
+        UUID delivery = UUID.randomUUID();
+        when(backendClient.getPendingReview(session.toString())).thenReturn(
             new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode()
-                .put("pending", true).put("summary", review).put("deliveryId", deliveryId.toString()));
-        when(backendClient.acknowledgePendingReview(backendSessionId.toString(), deliveryId.toString()))
-            .thenReturn(false, true);
+                .put("pending", true).put("summary", "review").put("deliveryId", delivery.toString()));
+        when(backendClient.acknowledgePendingReview(session.toString(), delivery.toString())).thenReturn(true);
+        when(hooks.sendReviewMessage(100L, "review", 0L, 0L)).thenReturn(false);
 
-        invokePendingReviewPoll(backendSessionId, hooks);
-        var saved = org.mockito.ArgumentCaptor.forClass(com.azhukov.agent.bot.session.ReviewDeliveryReceiptEntity.class);
-        verify(reviewReceiptRepository).save(saved.capture());
-        when(reviewReceiptRepository.findByBackendSessionIdAndBackendDeliveryId(backendSessionId, deliveryId))
-            .thenReturn(Optional.of(saved.getValue()));
+        orchestrator.deliverPendingReview(session.toString(), 100L, 0L, 0L, hooks);
 
-        invokePendingReviewPoll(backendSessionId, hooks);
+        var order = inOrder(backendClient, hooks);
+        order.verify(backendClient).acknowledgePendingReview(session.toString(), delivery.toString());
+        order.verify(hooks).sendReviewMessage(100L, "review", 0L, 0L);
+    }
 
-        verify(hooks, times(1)).sendReviewMessage(100L, review, 5L, 0L);
-        verify(backendClient, times(2)).acknowledgePendingReview(backendSessionId.toString(), deliveryId.toString());
-        verify(reviewReceiptRepository).delete(saved.getValue());
+    @Test
+    void claimFailureDoesNotSendReview() {
+        UUID session = UUID.randomUUID();
+        UUID delivery = UUID.randomUUID();
+        when(backendClient.getPendingReview(session.toString())).thenReturn(
+            new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode()
+                .put("pending", true).put("summary", "review").put("deliveryId", delivery.toString()));
+        when(backendClient.acknowledgePendingReview(session.toString(), delivery.toString())).thenReturn(false);
+        assertThat(orchestrator.deliverPendingReview(session.toString(), 100L, 0L, 0L, hooks)).isFalse();
+        verify(hooks, never()).sendReviewMessage(anyLong(), anyString(), anyLong(), anyLong());
+    }
+
+    @Test
+    void legacyConfirmedReceiptIsAcknowledgedWithoutResending() {
+        UUID session = UUID.randomUUID();
+        UUID delivery = UUID.randomUUID();
+        var receipt = new com.azhukov.agent.bot.session.ReviewDeliveryReceiptEntity();
+        when(backendClient.getPendingReview(session.toString())).thenReturn(
+            new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode()
+                .put("pending", true).put("summary", "review").put("deliveryId", delivery.toString()));
+        when(reviewReceiptRepository.findByBackendSessionIdAndBackendDeliveryId(session, delivery)).thenReturn(Optional.of(receipt));
+        assertThat(orchestrator.deliverPendingReview(session.toString(), 100L, 0L, 0L, hooks)).isTrue();
+        verify(reviewReceiptRepository).delete(receipt);
+        verify(hooks, never()).sendReviewMessage(anyLong(), anyString(), anyLong(), anyLong());
     }
 
     private void invokePendingReviewPoll(UUID backendSessionId, StreamingOrchestrator.ProcessorHooks hooks) {
@@ -365,6 +383,110 @@ class StreamingOrchestratorTest {
 
         // finalText passed to finalizeStream should include the footer
         verify(streamEditor).finalizeStream(eq(100L), eq(1L), argThat(t -> t.endsWith("[footer]")));
+    }
+
+    @Test
+    void failedFinalizationPreservesMediaReferenceForFallback() {
+        properties.setMediaDeliveryEnabled(true);
+        String response = "answer\nMEDIA:/workspace/report.pdf";
+        when(streamEditor.finalizeStream(eq(100L), eq(1L), anyString())).thenReturn(false);
+        stubChatStream(ctx -> {
+            ctx.tokenConsumer.accept(response);
+            ctx.onComplete.accept(new AgentBackendClient.ChatResult(response, "model", 1, 10, true));
+            ctx.returnResult = new AgentBackendClient.ChatResult(response, "model", 1, 10, true, false, null);
+        });
+        var result = orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
+        assertThat(result.streamFinalized()).isFalse();
+        verify(streamEditor).recordFinalDeliveryFailure(eq(100L), contains("MEDIA:/workspace/report.pdf"));
+        verify(hooks, never()).deliverMedia(anyLong(), anyList(), any());
+    }
+
+    @Test
+    void mediaOnlyResponseDiscardsPreviewBeforeDeliveringToForumThread() {
+        properties.setMediaDeliveryEnabled(true);
+        String response = "MEDIA:/workspace/report.pdf";
+        stubChatStream(ctx -> {
+            ctx.tokenConsumer.accept(response);
+            var result = new AgentBackendClient.ChatResult(response, "model", 1, 10, true);
+            ctx.onComplete.accept(result);
+            ctx.returnResult = result;
+        });
+        var result = orchestrator.streamChat(100L, "hi", null, session(), 5L, 77L, hooks);
+        assertThat(result.streamFinalized()).isTrue();
+        var order = inOrder(streamEditor, hooks);
+        order.verify(streamEditor).discardStreamPreview(100L);
+        order.verify(hooks).deliverMedia(eq(100L), argThat(media -> media.size() == 1), eq(77));
+        verify(streamEditor, never()).finalizeStream(anyLong(), anyLong(), anyString());
+    }
+
+    @Test
+    void mediaOnlyResponseWithFooterFinalizesFooterAndDeliversAttachment() {
+        properties.setMediaDeliveryEnabled(true);
+        when(runtimeFooter.format(anyString(), anyInt(), anyInt(), anyString(), anyLong(), anyBoolean()))
+            .thenReturn("\n[footer]");
+        String response = "MEDIA:/workspace/report.pdf";
+        stubChatStream(ctx -> {
+            ctx.tokenConsumer.accept(response);
+            var result = new AgentBackendClient.ChatResult(response, "model", 1, 10, true);
+            ctx.onComplete.accept(result);
+            ctx.returnResult = result;
+        });
+        var result = orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
+        assertThat(result.streamFinalized()).isTrue();
+        verify(streamEditor).finalizeStream(eq(100L), eq(1L), contains("[footer]"));
+        verify(hooks).deliverMedia(eq(100L), argThat(media -> media.size() == 1), isNull());
+        verify(streamEditor, never()).discardStreamPreview(anyLong());
+    }
+
+    @Test
+    void draftCompletionExtractsAndDeliversMediaAfterFinalText() {
+        properties.setMediaDeliveryEnabled(true);
+        when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong()))
+            .thenReturn(Optional.empty());
+        String response = "answer\nMEDIA:/workspace/report.pdf";
+        stubChatStream(ctx -> {
+            ctx.tokenConsumer.accept(response);
+            ctx.onComplete.accept(new AgentBackendClient.ChatResult(response, "model", 1, 10, true));
+            ctx.returnResult = new AgentBackendClient.ChatResult(response, "model", 1, 10, true, false, null);
+        });
+        var result = orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
+        assertThat(result.streamFinalized()).isTrue();
+        InOrder order = inOrder(streamEditor, hooks);
+        order.verify(streamEditor).finalizeStream(eq(100L), eq(-1L), argThat(text -> !text.contains("MEDIA:")));
+        order.verify(hooks).deliverMedia(eq(100L), argThat(media -> media.size() == 1), isNull());
+    }
+
+    @Test
+    void draftMediaIsRetainedForFallbackWhenFinalTextFails() {
+        properties.setMediaDeliveryEnabled(true);
+        when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong()))
+            .thenReturn(Optional.empty());
+        when(streamEditor.finalizeStream(eq(100L), eq(-1L), anyString())).thenReturn(false);
+        String response = "answer\nMEDIA:/workspace/report.pdf";
+        stubChatStream(ctx -> {
+            ctx.tokenConsumer.accept(response);
+            ctx.onComplete.accept(new AgentBackendClient.ChatResult(response, "model", 1, 10, true));
+            ctx.returnResult = new AgentBackendClient.ChatResult(response, "model", 1, 10, true, false, null);
+        });
+        var result = orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
+        assertThat(result.streamFinalized()).isFalse();
+        verify(streamEditor).recordFinalDeliveryFailure(eq(100L), contains("MEDIA:/workspace/report.pdf"));
+        verify(hooks, never()).deliverMedia(anyLong(), anyList(), any());
+    }
+
+    @Test
+    void draftFloodWaitRetainsFinalTextAndCooldown() {
+        when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong())).thenReturn(Optional.empty());
+        when(streamEditor.finalizeStream(100L, -1L, "draft answer"))
+            .thenThrow(new com.azhukov.agent.bot.client.TelegramApiException(429, "flood", 17));
+        stubChatStream(ctx -> {
+            ctx.tokenConsumer.accept("draft answer");
+            ctx.onComplete.accept(new AgentBackendClient.ChatResult("draft answer", "model", 1, 10, true));
+            ctx.returnResult = new AgentBackendClient.ChatResult("draft answer", "model", 1, 10, true, false, null);
+        });
+        var result = orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
+        assertThat(result.streamFinalized()).isFalse();
+        verify(streamEditor).recordFinalDeliveryFailure(100L, "draft answer", 17);
     }
 
     @Test
@@ -451,26 +573,92 @@ class StreamingOrchestratorTest {
     }
 
     @Test
-    void streamChat_noContentWithMetadata_fallsBackToSync() {
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(),
-            any(), any(), any(), any(), any(), any(), any(), any()))
-            .thenAnswer(inv -> {
-                // No tokens, no complete — just metadata
-                return new AgentBackendClient.ChatResult("", "model", 1, 10, false, false, null,
-                    "stream reasoning");
+    void realSseMetadataOnlyDoesNotTriggerSyncPost() throws Exception {
+        var http = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        try {
+            var streamPosts = new java.util.concurrent.atomic.AtomicInteger();
+            var syncPosts = new java.util.concurrent.atomic.AtomicInteger();
+            http.createContext("/api/v1/agent/chat/stream", exchange -> {
+                exchange.getRequestBody().readAllBytes();
+                streamPosts.incrementAndGet();
+                var response = ("data:{\"type\":\"metadata\",\"modelUsed\":\"test-model\",\"contextTokens\":3}\n\n"
+                    + "data:{\"type\":\"done\"}\n\n").getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
+                exchange.sendResponseHeaders(200, response.length);
+                try (var output = exchange.getResponseBody()) { output.write(response); }
             });
+            http.createContext("/api/v1/agent/chat", exchange -> {
+                syncPosts.incrementAndGet();
+                exchange.sendResponseHeaders(500, -1);
+                exchange.close();
+            });
+            http.start();
+            var client = com.azhukov.agent.shared.http.BackendRestClientFactory.createStreaming(
+                "http://127.0.0.1:" + http.getAddress().getPort(), "");
+            var messages = new MessageApiClient(client, new com.fasterxml.jackson.databind.ObjectMapper(), properties);
+            var realBackend = new AgentBackendClient(null, messages, null, null, null, null, null, null);
+            orchestrator.shutdownReviewPollScheduler();
+            orchestrator = new StreamingOrchestrator(realBackend, streamEditor, busyHandler, runtimeFooter,
+                properties, mediaDeliveryService, telegramClient, sessionStoreMock,
+                mock(com.azhukov.agent.bot.keyboard.ClarifyInteractionRenderer.class), reviewReceiptRepository);
+            var result = orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
+            assertThat(streamPosts).hasValue(1);
+            assertThat(syncPosts).hasValue(0);
+            assertThat(result.modelUsed()).isEqualTo("test-model");
+            assertThat(result.content()).isEmpty();
+            verify(streamEditor).discardStreamPreview(100L);
+        } finally {
+            http.stop(0);
+        }
+    }
+
+    @Test
+    void cancelledBeforeAnyTokenDoesNotReportSuccess() {
+        stubChatStream(ctx -> {
+            ctx.onError.accept(new java.util.concurrent.CancellationException("cancelled"));
+            ctx.returnResult = new AgentBackendClient.ChatResult("", "model", 1, 10, false, false, null, null, false);
+        });
+        var result = orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
+        assertThat(result.turnSucceeded()).isFalse();
+        verify(backendClient, never()).chat(anyString(), nullable(String.class), any());
+    }
+
+    @Test
+    void cancelledAfterToolWithoutFinalTextDoesNotReportSuccess() {
+        stubChatStream(ctx -> {
+            ctx.toolCallConsumer.accept("search");
+            ctx.onError.accept(new java.util.concurrent.CancellationException("cancelled"));
+            ctx.returnResult = new AgentBackendClient.ChatResult("", "model", 1, 10, false, false, null, null, false);
+        });
+        var result = orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
+        assertThat(result.turnSucceeded()).isFalse();
+        assertThat(result.turnCancelled()).isTrue();
+        verify(streamEditor).discardStreamPreview(100L);
+        verify(backendClient, never()).chat(anyString(), nullable(String.class), any());
+    }
+
+    @Test
+    void metadataOnlyStreamDoesNotRepeatAcceptedRequest() {
+        stubChatStream(ctx -> {
+            ctx.returnResult = new AgentBackendClient.ChatResult("", "model", 1, 10, false, false, null);
+            ctx.onComplete.accept(ctx.returnResult);
+        });
         when(backendClient.chat(anyString(), nullable(String.class), any()))
-            .thenReturn(new AgentBackendClient.ChatResult("sync answer", "model", 1, 10, false, false, null));
+            .thenReturn(new AgentBackendClient.ChatResult("duplicate"));
 
-        AgentBackendClient.ChatResult result = orchestrator.streamChat(100L, "hi", null, session(),
-            5L, 0L, hooks);
+        orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
 
-        // Should fall back to sync chat
-        verify(backendClient).chat(anyString(), nullable(String.class), any());
-        assertThat(result.content()).isEqualTo("sync answer");
-        assertThat(result.lastReasoning()).isEqualTo("stream reasoning");
-        // finalizeStream NOT called (no streaming message)
-        verify(streamEditor, never()).finalizeStream(anyLong(), anyLong(), anyString());
+        verify(backendClient, never()).chat(anyString(), nullable(String.class), any());
+    }
+
+    @Test
+    void streamChat_noContentRetainsMetadataAndDiscardsPreview() {
+        stubChatStream(ctx -> ctx.returnResult = new AgentBackendClient.ChatResult("", "model", 1, 10, false, false, null, "reasoning"));
+        var result = orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
+        verify(backendClient, never()).chat(anyString(), nullable(String.class), any());
+        verify(streamEditor).discardStreamPreview(100L);
+        assertThat(result.modelUsed()).isEqualTo("model");
+        assertThat(result.lastReasoning()).isEqualTo("reasoning");
     }
 
     @Test
@@ -580,6 +768,49 @@ class StreamingOrchestratorTest {
         orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
 
         verify(telegramClient, never()).sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean());
+    }
+
+    @Test
+    void completedStreamWithOnlyToolResultDoesNotRunRequestAgain() {
+        when(backendClient.chat(anyString(), any(), any()))
+            .thenReturn(new AgentBackendClient.ChatResult("duplicate response"));
+        stubChatStream(ctx -> {
+            ctx.toolResultConsumer.accept("search", "result");
+            var result = new AgentBackendClient.ChatResult("", "model", 1, 10, true);
+            ctx.onComplete.accept(result);
+            ctx.returnResult = result;
+        });
+        orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
+        verify(backendClient, never()).chat(anyString(), any(), any());
+    }
+
+    @Test
+    void completedStreamWithOnlyToolEventDoesNotRunRequestAgain() {
+        when(backendClient.chat(anyString(), any(), any()))
+            .thenReturn(new AgentBackendClient.ChatResult("duplicate response"));
+        stubChatStream(ctx -> {
+            ctx.toolCallConsumer.accept("search");
+            var result = new AgentBackendClient.ChatResult("", "model", 1, 10, true);
+            ctx.onComplete.accept(result);
+            ctx.returnResult = result;
+        });
+        orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
+        verify(backendClient, never()).chat(anyString(), any(), any());
+    }
+
+    @Test
+    void completedStreamAfterToolDoesNotRunTheUserRequestAgain() {
+        when(backendClient.chat(anyString(), any(), any()))
+            .thenReturn(new AgentBackendClient.ChatResult("duplicate response"));
+        stubChatStream(ctx -> {
+            ctx.tokenConsumer.accept("preface");
+            ctx.toolCallConsumer.accept("search");
+            var result = new AgentBackendClient.ChatResult("preface", "model", 1, 10, true);
+            ctx.onComplete.accept(result);
+            ctx.returnResult = result;
+        });
+        orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
+        verify(backendClient, never()).chat(anyString(), any(), any());
     }
 
     @Test
@@ -733,9 +964,8 @@ class StreamingOrchestratorTest {
         var response = orchestrator.streamChat(100L, "hi", "existing-session", session(), 5L, 0L, hooks);
 
         assertThat(response.streamFinalized()).isFalse();
-        InOrder cleanupAndRetention = inOrder(streamEditor);
-        cleanupAndRetention.verify(streamEditor).clearStream(100L);
-        cleanupAndRetention.verify(streamEditor).recordFinalDeliveryFailure(100L,
+        verify(streamEditor, never()).clearStream(100L);
+        verify(streamEditor).recordFinalDeliveryFailure(100L,
             "Temporary issue. Please try again.");
         verify(backendClient, never()).chat(anyString(), nullable(String.class), any());
     }

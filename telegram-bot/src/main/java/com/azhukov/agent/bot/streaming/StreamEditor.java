@@ -232,6 +232,9 @@ public class StreamEditor {
     }
 
     Optional<Long> startStream(long chatId, String initialText, String chatType, StreamSession session) {
+        session.pendingFinalText = null;
+        session.pendingFinalRetryAfterSeconds = -1;
+        session.partialFinalDelivery = false;
         // S5: "off" transport — no streaming, just record start time and return.
         // Content will be buffered by the caller and sent on finalizeStream.
         if ("off".equals(streamingTransport)) {
@@ -651,7 +654,8 @@ public class StreamEditor {
 
             // P1: Try rich message delivery first
             if (richMessageSupport != null && richMessageSupport.shouldAttemptRich(scrubbed)) {
-                Optional<Long> richMsgId = richMessageSupport.sendRichMessage(chatId, scrubbed, null, null);
+                Optional<Long> richMsgId = richMessageSupport.sendRichMessage(chatId, scrubbed, null,
+                    session.messageThreadId > 0 ? session.messageThreadId : null);
                 if (richMsgId.isPresent()) {
                     log.debug("Draft finalized via rich message for chat {}", chatId);
                     removeSession(chatId);
@@ -662,12 +666,14 @@ public class StreamEditor {
 
             // Send the final text as a formatted message (commits the draft)
             // Hermes parity: apply MarkdownConverter before delivery, not raw markdown
-            Optional<Long> finalMsgId = sendFormattedFinalMessage(chatId, scrubbed);
-            removeSession(chatId);
+            Optional<Long> finalMsgId = sendFormattedFinalMessage(chatId, scrubbed, session.messageThreadId);
             if (finalMsgId.isPresent()) {
+                removeSession(chatId);
                 log.debug("Draft finalized for chat {}, messageId={}", chatId, finalMsgId.get());
                 return true;
             } else {
+                int retryAfter = telegramClient.takeLastRetryAfterSeconds();
+                if (retryAfter > 0) session.pendingFinalRetryAfterSeconds = retryAfter;
                 log.warn("Draft finalize sendMessage failed for chat {}", chatId);
                 return false;
             }
@@ -678,14 +684,13 @@ public class StreamEditor {
         StringBuffer buffer = session.floodFallbackBuffer;
         if (buffer.length() > 0) {
             log.info("Flood fallback mode: sending buffered content ({} chars) as new message for chat {}", buffer.length(), chatId);
-            String bufferedContent = buffer.toString();
             // CRITICAL: delivery is a two-phase replacement. The old draft is
             // the user's only visible copy until Telegram accepts the final send.
             // Deleting it first turns a 429/transport failure into total response
             // loss (incident 2026-09-15: Telegram retry_after=269).
             long currentMsg = session.currentMessageId.get();
             long oldMsgId = currentMsg >= 0 ? currentMsg : messageId;
-            Optional<Long> newMsgId = sendFormattedFinalMessage(chatId, bufferedContent, session.messageThreadId);
+            Optional<Long> newMsgId = sendFormattedFinalMessage(chatId, finalText, session.messageThreadId);
             if (newMsgId.isPresent()) {
                 session.floodFallbackBuffer.setLength(0);
                 if (oldMsgId > 0) {
@@ -694,6 +699,12 @@ public class StreamEditor {
                 removeSession(chatId);
                 log.debug("Flood fallback sent for chat {}, new messageId={}", chatId, newMsgId.get());
                 return true;
+            }
+            int retryAfter = telegramClient.takeLastRetryAfterSeconds();
+            if (retryAfter > 0) {
+                // The next generic fallback must wait for Telegram's explicit
+                // cooldown instead of sending the same completed answer again.
+                session.pendingFinalRetryAfterSeconds = retryAfter;
             }
             // Preserve the stream session and original draft. A later completion
             // retry / user retry can still recover it; never erase visible output
@@ -740,6 +751,8 @@ public class StreamEditor {
                 log.debug("Fresh-final sent for chat {}, new messageId={}", chatId, newMsgId.get());
                 return true;
             }
+            int retryAfter = telegramClient.takeLastRetryAfterSeconds();
+            if (retryAfter > 0) session.pendingFinalRetryAfterSeconds = retryAfter;
             log.warn("Fresh-final sendMessage failed for chat {}; preserving draft message {}", chatId, effectiveMessageId);
             return false;
         }
@@ -782,7 +795,7 @@ public class StreamEditor {
         // Fallback: if edit failed, try sendMessage as a new message
         if (!success) {
             log.warn("Final edit failed for chat {}, messageId={}, trying sendMessage fallback", chatId, effectiveMessageId);
-            Optional<Long> fallbackMsgId = sendFormattedMessage(chatId, formatted);
+            Optional<Long> fallbackMsgId = sendFormattedFinalMessage(chatId, scrubbed, session.messageThreadId);
             if (fallbackMsgId.isPresent()) {
                 // Optionally delete the old stale message
                 telegramClient.deleteMessage(chatId, effectiveMessageId);
@@ -801,11 +814,22 @@ public class StreamEditor {
         return success;
     }
 
-    /**
-     * Clears throttle state for a chat (e.g. after an error or session reset).
-     *
-     * @param chatId target chat id
-     */
+    /** Remove the current preview without creating an empty Telegram message. */
+    public void discardStreamPreview(long chatId) {
+        StreamSession session = sessions.get(chatId);
+        if (session == null) return;
+        stopHeartbeat(session);
+        long messageId = session.currentMessageId.get();
+        try {
+            if (messageId > 0) telegramClient.deleteMessage(chatId, messageId);
+        } catch (RuntimeException e) {
+            log.debug("Failed to remove streaming preview for chat {}: {}", chatId, e.getMessage());
+        } finally {
+            removeSession(chatId);
+        }
+    }
+
+    /** Clears streaming state after an error or session reset. */
     public void clearStream(long chatId) {
         removeSession(chatId);
     }
@@ -817,12 +841,31 @@ public class StreamEditor {
      */
     public void recordFinalDeliveryFailure(long chatId, String finalText) {
         StreamSession session = sessionFor(chatId);
+        recordFinalDeliveryFailure(chatId, finalText, session.pendingFinalRetryAfterSeconds);
+    }
+
+    /**
+     * Retain the complete final response plus a server-provided FloodWait, if
+     * Telegram rejected the terminal send. Callers must defer recovery rather
+     * than sending the same payload again inside that cooldown.
+     */
+    public void recordFinalDeliveryFailure(long chatId, String finalText, int retryAfterSeconds) {
+        StreamSession session = sessionFor(chatId);
         session.pendingFinalText = finalText;
-        log.warn("final_delivery_pending chat={} chars={}", chatId,
-            finalText == null ? 0 : finalText.length());
+        session.pendingFinalRetryAfterSeconds = retryAfterSeconds;
+        log.warn("final_delivery_pending chat={} chars={} retryAfterSeconds={}", chatId,
+            finalText == null ? 0 : finalText.length(), retryAfterSeconds);
     }
 
     /** Consume the full response retained after a terminal stream-delivery failure. */
+    public boolean takePartialFinalDelivery(long chatId) {
+        StreamSession session = sessions.get(chatId);
+        if (session == null) return false;
+        boolean partial = session.partialFinalDelivery;
+        session.partialFinalDelivery = false;
+        return partial;
+    }
+
     public String takePendingFinalText(long chatId) {
         StreamSession session = sessions.get(chatId);
         if (session == null) {
@@ -831,6 +874,17 @@ public class StreamEditor {
         String pending = session.pendingFinalText;
         session.pendingFinalText = null;
         return pending;
+    }
+
+    /** Return and clear the FloodWait paired with the pending final response. */
+    public int takePendingFinalRetryAfterSeconds(long chatId) {
+        StreamSession session = sessions.get(chatId);
+        if (session == null) {
+            return -1;
+        }
+        int retryAfter = session.pendingFinalRetryAfterSeconds;
+        session.pendingFinalRetryAfterSeconds = -1;
+        return retryAfter;
     }
 
     // ─── S5: Native draft streaming ───────────────────────────────
@@ -996,8 +1050,13 @@ public class StreamEditor {
         if (session.useDraftStreaming) {
             // Send the accumulated text as a real message (committing the draft)
             String scrubbed = scrubThink(session, accumulatedText);
-            String formatted = formatForTelegramDelegate(scrubbed);
-            sendFormattedMessage(chatId, formatted);
+            try {
+                sendFormattedFinalMessage(chatId, scrubbed, session.messageThreadId);
+            } finally {
+                // Segment receipts must not affect recovery of the later final answer.
+                session.partialFinalDelivery = false;
+                session.pendingFinalRetryAfterSeconds = -1;
+            }
             // Bump draftId for the next segment
             int newDraftId = draftIdCounter.incrementAndGet();
             session.draftId = newDraftId;
@@ -1010,25 +1069,27 @@ public class StreamEditor {
             return;
         }
 
-        // Use session.currentMessageId (may differ from messageId parameter after
-        // a previous segment break created a new message). The caller's messageId
-        // is stale once onSegmentBreak resets currentMessageId to -1.
+        // The caller's original ID may refer to an earlier committed segment.
+        // If no current preview exists, send this segment rather than edit a stale ID.
         long effectiveMessageId = session.currentMessageId.get();
-        if (effectiveMessageId < 0) {
-            effectiveMessageId = messageId;
-        }
-
-        // Finalize the current message with MarkdownV2 formatting (Hermes parity).
-        // Hermes sends segment breaks with finalize=True (MarkdownV2 formatted).
         String scrubbed = scrubThink(session, accumulatedText);
-        String formatted = formatForTelegramDelegate(scrubbed);
-        try {
-            telegramClient.editMessageText(chatId, effectiveMessageId, formatted, "MarkdownV2", false);
-        } catch (TelegramApiException e) {
-            if (!e.isRateLimit()) {
-                throw e;
+        if (effectiveMessageId <= 0) {
+            try {
+                sendFormattedFinalMessage(chatId, scrubbed, session.messageThreadId);
+            } finally {
+                session.partialFinalDelivery = false;
+                session.pendingFinalRetryAfterSeconds = -1;
             }
-            log.debug("Segment break edit 429 rate limited for chat {}, skipping", chatId);
+        } else {
+            String formatted = formatForTelegramDelegate(scrubbed);
+            try {
+                telegramClient.editMessageText(chatId, effectiveMessageId, formatted, "MarkdownV2", false);
+            } catch (TelegramApiException e) {
+                if (!e.isRateLimit()) {
+                    throw e;
+                }
+                log.debug("Segment break edit 429 rate limited for chat {}, skipping", chatId);
+            }
         }
         // Clear the tool name since the tool is done
         session.currentToolName = null;
@@ -1261,6 +1322,7 @@ public class StreamEditor {
             for (String chunk : chunks) {
                 if (chunk.isBlank()) continue;
                 last = telegramClient.sendMessage(chatId, chunk, null, null, null, false);
+                if (last.isEmpty()) return Optional.empty();
             }
             return last;
         }
@@ -1286,11 +1348,42 @@ public class StreamEditor {
             Optional<Long> last = Optional.empty();
             for (String chunk : chunks) {
                 if (chunk.isBlank()) continue;
-                last = telegramClient.sendMessage(chatId, chunk, parseMode, null, messageThreadId, false);
+                Optional<Long> sent;
+                try {
+                    sent = telegramClient.sendMessage(chatId, chunk, parseMode, null, messageThreadId, false);
+                } catch (RuntimeException e) {
+                    if (last.isPresent() || !(e instanceof TelegramApiException apiError && apiError.isRateLimit())) {
+                        sessionFor(chatId).partialFinalDelivery = true;
+                    }
+                    throw e;
+                }
+                if (sent.isEmpty()) {
+                    int retryAfter = telegramClient.takeLastRetryAfterSeconds();
+                    StreamSession session = sessionFor(chatId);
+                    if (retryAfter > 0) session.pendingFinalRetryAfterSeconds = retryAfter;
+                    if (last.isPresent() || retryAfter <= 0) session.partialFinalDelivery = true;
+                    return Optional.empty();
+                }
+                last = sent;
             }
             return last;
         }
-        return telegramClient.sendMessage(chatId, formatted, parseMode, null, messageThreadId, false);
+        Optional<Long> sent;
+        try {
+            sent = telegramClient.sendMessage(chatId, formatted, parseMode, null, messageThreadId, false);
+        } catch (RuntimeException e) {
+            if (!(e instanceof TelegramApiException apiError && apiError.isRateLimit())) {
+                sessionFor(chatId).partialFinalDelivery = true;
+            }
+            throw e;
+        }
+        if (sent.isEmpty()) {
+            int retryAfter = telegramClient.takeLastRetryAfterSeconds();
+            StreamSession session = sessionFor(chatId);
+            if (retryAfter > 0) session.pendingFinalRetryAfterSeconds = retryAfter;
+            else session.partialFinalDelivery = true;
+        }
+        return sent;
     }
 
     /**
@@ -1307,6 +1400,7 @@ public class StreamEditor {
             for (String chunk : chunks) {
                 if (chunk.isBlank()) continue;
                 last = telegramClient.sendMessage(chatId, chunk, parseMode, null, null);
+                if (last.isEmpty()) return Optional.empty();
             }
             return last;
         }
