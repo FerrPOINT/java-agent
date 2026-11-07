@@ -88,21 +88,20 @@ class StreamEditorFloodFallbackTest {
     }
 
     @Test
-    void failedEditFallbackPreservesForumThread() {
+    void oversizedFinalPreservesForumThread() {
         editor.sessionFor(123L).messageThreadId = 77L;
-        when(client.editMessageText(eq(123L), eq(42L), anyString(), eq("MarkdownV2"), eq(false))).thenReturn(false);
         when(client.sendMessageChecked(eq(123L), anyString(), eq("MarkdownV2"), any(), eq(77), isNull(), eq(false)))
             .thenReturn(Optional.of(1L));
-        assertThat(editor.finalizeStream(123L, 42L, "answer")).isTrue();
-        verify(client).sendMessageChecked(eq(123L), eq("answer"), eq("MarkdownV2"), any(), eq(77), isNull(), eq(false));
+        assertThat(editor.finalizeStream(123L, 42L, "answer".repeat(900))).isTrue();
+        verify(client, atLeastOnce()).sendMessageChecked(eq(123L), contains("answer"), eq("MarkdownV2"), any(), eq(77), isNull(), eq(false));
+        verify(client, never()).editMessageText(eq(123L), eq(42L), anyString(), any(), anyBoolean());
     }
 
     @Test
-    void fallbackMultipartDoesNotConvertAlreadyFormattedMarkdownTwice() {
+    void multipartFinalDoesNotConvertAlreadyFormattedMarkdownTwice() {
         var session = editor.sessionFor(123L);
         session.currentMessageId.set(42L);
         String text = "prefix_".repeat(700);
-        when(client.editMessageText(eq(123L), eq(42L), anyString(), eq("MarkdownV2"), eq(false))).thenReturn(false);
         when(client.sendMessageChecked(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), isNull(), eq(false)))
             .thenReturn(Optional.of(1L));
         assertThat(editor.finalizeStream(123L, 42L, text)).isTrue();
