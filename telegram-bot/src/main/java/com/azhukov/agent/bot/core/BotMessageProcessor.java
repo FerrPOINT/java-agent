@@ -186,6 +186,12 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
             telegramClient.sendMessage(event.chatId(), "⛔ You don't have access to /" + commandName);
             return;
         }
+        if ("stop".equals(commandName) && streamEditor.isFinishingDelivery(event.chatId())) {
+            busyHandler.interrupt(event.chatId());
+            streamEditor.cancelDeferredDelivery(event.chatId());
+            sendFormatted(event.chatId(), "Stopped local stream (no active backend turn).");
+            return;
+        }
         CommandHandler handler = commandRegistry.get(commandName);
         if (handler == null) {
             sendError(event.chatId(), "Command /" + commandName + " is unavailable.");

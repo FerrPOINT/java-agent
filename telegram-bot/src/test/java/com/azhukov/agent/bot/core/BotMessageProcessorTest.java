@@ -659,10 +659,11 @@ class BotMessageProcessorTest {
     }
 
     @SuppressWarnings("unchecked")
-    @Test
-    void floodWaitAllowsAnotherChatAndQueuesTheSameChat() {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"queue", "steer", "interrupt"})
+    void floodWaitAllowsAnotherChatAndPreservesBusyInputMode(String mode) {
         properties.setStreamingTransport("draft");
-        properties.setBusyMode("queue");
+        properties.setBusyMode(mode);
         properties.getDisplay().setToolProgress("off");
         when(telegramClient.supportsDraftStreaming(anyString())).thenReturn(true);
         when(telegramClient.sendDraft(anyLong(), anyString(), anyInt())).thenReturn(true);
@@ -685,14 +686,16 @@ class BotMessageProcessorTest {
         try (DeliveryFixture fixture = realDeliveryFixture()) {
             fixture.processor().accept(textEvent(1, 100L, "first"));
             assertThat(busyHandler.isBusy(100L)).isTrue();
-            fixture.processor().accept(textEvent(2, 100L, "queued"));
-            assertThat(busyHandler.hasQueued(100L)).isTrue();
-            assertThat(queuedRuns.get()).isZero();
-
             fixture.processor().accept(textEvent(3, 200L, "independent"));
             verify(telegramClient).sendMessageChecked(eq(200L), eq("independent"), any(), any(), any(), isNull(), anyBoolean());
 
-            fixture.editor().cancelDeferredDelivery(100L);
+            fixture.processor().accept(textEvent(2, 100L, "queued"));
+            if (!"interrupt".equals(mode)) {
+                assertThat(busyHandler.hasQueued(100L)).isTrue();
+                assertThat(queuedRuns.get()).isZero();
+                fixture.processor().accept(commandEvent(4, 100L, "stop", ""));
+            }
+            verify(backendClient, never()).steer(anyString(), anyString());
             verify(telegramClient, timeout(2000)).sendMessageChecked(eq(100L), eq("queued"), any(), any(), any(), isNull(), anyBoolean());
             verify(telegramClient).sendMessageChecked(eq(100L), eq("first"), any(), any(), any(), isNull(), anyBoolean());
         }
