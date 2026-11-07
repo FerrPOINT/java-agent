@@ -592,6 +592,56 @@ class BotMessageProcessorTest {
 
     @SuppressWarnings("unchecked")
     @Test
+    void rateLimitedShortSegmentIsNotSilentlyDiscarded() {
+        properties.setStreamingTransport("edit");
+        properties.getDisplay().setToolProgress("off");
+        when(telegramClient.sendMessage(eq(100L), eq("Hi"), eq("MarkdownV2"), any(), any(), anyBoolean()))
+            .thenReturn(Optional.empty(), Optional.of(41L));
+        when(telegramClient.sendMessage(eq(100L), eq("Hi"), eq("MarkdownV2"), any(), any()))
+            .thenReturn(Optional.of(41L));
+        when(telegramClient.takeLastRetryAfterSeconds()).thenReturn(1);
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+            .thenAnswer(inv -> {
+                ((Consumer<String>) inv.getArgument(4)).accept("Hi");
+                ((Consumer<String>) inv.getArgument(5)).accept("search");
+                var result = new AgentBackendClient.ChatResult("Hi", "model", 1, 10, true);
+                ((Consumer<AgentBackendClient.ChatResult>) inv.getArgument(10)).accept(result);
+                return result;
+            });
+        try (DeliveryFixture fixture = realDeliveryFixture()) {
+            fixture.processor().accept(textEvent(1, 100L, "Hello"));
+            verify(telegramClient, timeout(4500)).sendMessage(eq(100L), eq("Hi"), eq("MarkdownV2"), any(), any());
+            verify(backendClient, never()).chat(anyString(), any(), any());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void ambiguousShortSegmentIsNotRetried() throws InterruptedException {
+        properties.setStreamingTransport("edit");
+        properties.getDisplay().setToolProgress("off");
+        when(telegramClient.sendMessage(eq(100L), eq("Hi"), eq("MarkdownV2"), any(), any(), anyBoolean()))
+            .thenReturn(Optional.empty());
+        when(telegramClient.takeLastRetryAfterSeconds()).thenReturn(-1);
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+            .thenAnswer(inv -> {
+                ((Consumer<String>) inv.getArgument(4)).accept("Hi");
+                ((Consumer<String>) inv.getArgument(5)).accept("search");
+                var result = new AgentBackendClient.ChatResult("Hi", "model", 1, 10, true);
+                ((Consumer<AgentBackendClient.ChatResult>) inv.getArgument(10)).accept(result);
+                return result;
+            });
+        try (DeliveryFixture fixture = realDeliveryFixture()) {
+            fixture.processor().accept(textEvent(1, 100L, "Hello"));
+            Thread.sleep(2300);
+            verify(telegramClient, times(1)).sendMessage(eq(100L), eq("Hi"), eq("MarkdownV2"), any(), any(), anyBoolean());
+            verify(telegramClient, never()).sendMessage(eq(100L), eq("Hi"), eq("MarkdownV2"), any(), any());
+            verify(backendClient, never()).chat(anyString(), any(), any());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
     void shortSecondSegmentDoesNotOverwriteFirstSegment() {
         properties.setStreamingTransport("edit");
         properties.getDisplay().setToolProgress("off");
