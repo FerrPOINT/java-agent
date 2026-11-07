@@ -789,9 +789,11 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
             var running = executor.submit(callbacks.getFirst());
             assertThat(entered.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
             switch (change) {
-                case "pause" -> cronJobService.pause(job.getId());
-                case "update" -> cronJobService.update(job.getId(), null, "every 2h", null, null, null);
-                case "remove" -> cronJobService.remove(job.getId());
+                case "pause" -> assertThat(cronController.pause(job.getId()).enabled()).isFalse();
+                case "update" -> assertThat(cronController.update(job.getId(),
+                    new com.azhukov.agent.api.CronJobController.UpdateCronRequest(job.getName(), "every 2h",
+                        null, null, null, null, null, null)).schedule()).isEqualTo("every 2h");
+                case "remove" -> assertThat(cronController.delete(job.getId()).getStatusCode().is2xxSuccessful()).isTrue();
                 default -> throw new AssertionError(change);
             }
             int scheduledAfterChange = callbacks.size();
