@@ -171,7 +171,13 @@ public class DeliveryLedgerConsumer {
             return;
         }
         long chatId;
-        Integer threadId = first.threadId().isBlank() ? null : Integer.valueOf(first.threadId());
+        Integer threadId;
+        try {
+            threadId = first.threadId().isBlank() ? null : Integer.valueOf(first.threadId());
+        } catch (NumberFormatException e) {
+            for (ClaimedItem item : batch) outcome(item, "drop", "invalid_thread_id", null);
+            return;
+        }
         try {
             chatId = Long.parseLong(first.chatId());
         } catch (NumberFormatException e) {
@@ -184,9 +190,9 @@ public class DeliveryLedgerConsumer {
         log.info("delivery_batch_started items={} sourceIds={} chat={} attempts={}", batch.size(),
             batch.stream().map(ClaimedItem::sourceId).toList(), chatId,
             batch.stream().map(ClaimedItem::attempts).toList());
+        Long lastMessageId = null;
         try {
             List<String> chunks = com.azhukov.agent.bot.formatting.MessageSplitter.split(text);
-            Long lastMessageId = null;
             boolean sendFailed = false;
             for (String chunk : chunks) {
                 Optional<Long> sent = threadId == null
@@ -218,6 +224,10 @@ public class DeliveryLedgerConsumer {
                 batch.stream().map(ClaimedItem::sourceId).toList(), chatId,
                 lastMessageId != null ? "partial_chunk_failure" : "empty_send_result");
         } catch (TelegramClient.SendRefusalException e) {
+            if (lastMessageId != null) {
+                for (ClaimedItem item : batch) outcome(item, "unknown", "partial_chunk_failure", null);
+                return;
+            }
             // Hermes delivery.py parity: the platform REFUSED the send — a
             // known failure (never ambiguous). A flood refusal (429) keeps the
             // platform's own retry_after wait; any other definite refusal
@@ -236,110 +246,20 @@ public class DeliveryLedgerConsumer {
                 category, e.getRetryAfterSeconds());
         } catch (Exception e) {
             for (ClaimedItem item : batch) {
-                outcome(item, "release", "transport_error", e.getMessage());
+                outcome(item, "unknown", lastMessageId != null ? "partial_chunk_failure" : "transport_error", null);
             }
-            log.warn("delivery_batch_released items={} sourceIds={} chat={} error={}", batch.size(),
-                batch.stream().map(ClaimedItem::sourceId).toList(), chatId, e.getMessage());
+            log.warn("delivery_batch_unresolved items={} sourceIds={} chat={} category={}", batch.size(),
+                batch.stream().map(ClaimedItem::sourceId).toList(), chatId,
+                lastMessageId != null ? "partial_chunk_failure" : "transport_error");
         }
     }
 
     record ClaimedItem(String id, String claimToken, String sourceType, String sourceId,
                        String platform, String chatId, String threadId, String payload, int attempts) {}
 
-    /** Package-private delivery bridge for tests (no HTTP claim round-trip). */
-    void deliverForTest(ClaimedItem item) {
-        deliver(item);
-    }
-
     /** Package-private batch bridge for tests. */
     void deliverBatchForTest(List<ClaimedItem> batch) {
         deliverBatch(batch);
-    }
-
-    private Optional<ClaimedItem> claimNext() {
-        try {
-            String body = objectMapper.writeValueAsString(Map.of(
-                "consumerId", consumerId(),
-                "profiles", List.of(profile())));
-            String json = restClient.post()
-                .uri("/api/v1/agent/delivery/claim")
-                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                .body(body)
-                .retrieve()
-                .body(String.class);
-            JsonNode parsed = json == null ? null : objectMapper.readTree(json);
-            if (parsed == null || !parsed.path("claimed").asBoolean(false)) {
-                return Optional.empty();
-            }
-            return Optional.of(new ClaimedItem(
-                parsed.path("id").asText(),
-                parsed.path("claim_token").asText(),
-                parsed.path("source_type").asText(),
-                parsed.path("source_id").asText(),
-                parsed.path("platform").asText(""),
-                parsed.path("chat_id").asText(""),
-                parsed.path("thread_id").asText(""),
-                parsed.path("payload").asText(""),
-                parsed.path("attempts").asInt(0)));
-        } catch (Exception e) {
-            log.debug("Delivery claim failed: {}", e.getMessage());
-            return Optional.empty();
-        }
-    }
-
-    private void deliver(ClaimedItem item) {
-        if (!"telegram".equals(item.platform()) || item.chatId().isBlank()) {
-            // Unsupported platform for this consumer — release without send.
-            outcome(item, "drop", "unsupported_platform",
-                "platform=" + item.platform() + " chat=" + item.chatId());
-            return;
-        }
-        long chatId;
-        Integer threadId = item.threadId().isBlank() ? null : Integer.valueOf(item.threadId());
-        try {
-            chatId = Long.parseLong(item.chatId());
-        } catch (NumberFormatException e) {
-            outcome(item, "drop", "invalid_chat_id", item.chatId());
-            return;
-        }
-        try {
-            List<String> chunks = com.azhukov.agent.bot.formatting.MessageSplitter.split(item.payload());
-            Long lastMessageId = null;
-            boolean sendFailed = false;
-            for (String chunk : chunks) {
-                Optional<Long> sent = threadId == null
-                    ? telegramClient.sendMessage(chatId, chunk)
-                    : telegramClient.sendMessage(chatId, chunk, null, null, threadId, false);
-                if (sent.isEmpty()) {
-                    sendFailed = true;
-                    break;
-                }
-                lastMessageId = sent.get();
-            }
-            if (!sendFailed) {
-                // P-03 (Hermes delivery.py): Telegram is chunking-capable, so the
-                // FULL output is sent (MessageSplitter, UTF-16-safe); the receipt
-                // names the LAST chunk's message id.
-                ack(item, lastMessageId == null ? null : lastMessageId.toString());
-                log.info("Delivered {} item {} to chat {} ({} chunks, last msg {})",
-                    item.sourceType(), item.sourceId(), chatId, chunks.size(), lastMessageId);
-                return;
-            }
-            if (lastMessageId != null) {
-                // A chunk sent, a later chunk failed — PARTIAL delivery, the
-                // outcome is ambiguous (Hermes: unknown, never auto-retry).
-                outcome(item, "unknown", "partial_chunk_failure", null);
-            } else {
-                // First chunk returned empty — sendMessage conflates "chat not
-                // found" with "timeout after Telegram accepted" into empty, so
-                // the outcome is ambiguous (Hermes: unknown, never auto-retry
-                // a possibly-sent message).
-                outcome(item, "unknown", "empty_send_result", null);
-            }
-        } catch (Exception e) {
-            // Transport raised BEFORE Telegram accepted anything — known failure.
-            outcome(item, "release", "transport_error", e.getMessage());
-        }
     }
 
     private void ack(ClaimedItem item, String messageId) {

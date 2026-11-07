@@ -287,7 +287,7 @@ public class TelegramClient {
 
     /**
      * Send a text message, surfacing a KNOWN Telegram refusal as
-     * {@link SendFailure} (Hermes delivery.py parity: the platform rejected the
+     * {@link SendRefusalException} (Hermes delivery.py parity: the platform rejected the
      * send before accepting anything — retryable). An empty Optional keeps its
      * old meaning: the outcome is ambiguous (timeout after accept, collapsed
      * transport error) and must not be blindly retried.
@@ -328,7 +328,7 @@ public class TelegramClient {
         if (e.isRateLimit()) {
             throw new SendRefusalException(e.getRetryAfter(), e.getMessage());
         }
-        if (e.getErrorCode() > 0) {
+        if (e.getErrorCode() >= 400 && e.getErrorCode() < 500) {
             throw new SendRefusalException(-1, e.getMessage());
         }
         return Optional.empty(); // ambiguous transport outcome

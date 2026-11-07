@@ -30,9 +30,9 @@ public class DeliveryLedgerSweeper {
         try {
             DeliveryWorkItemService.SweepResult result =
                 deliveryService.sweepStaleClaims(Instant.now(), LEASE_CUTOFF);
-            if (result.recovered() > 0 || result.abandoned() > 0) {
-                log.info("Delivery ledger sweep: {} claims recovered, {} abandoned",
-                    result.recovered(), result.abandoned());
+            if (result.recovered() > 0 || result.abandoned() > 0 || result.unknown() > 0) {
+                log.info("Delivery ledger sweep: {} claims recovered, {} abandoned, {} unknown",
+                    result.recovered(), result.abandoned(), result.unknown());
             }
         } catch (Exception e) {
             log.debug("Delivery ledger sweep failed: {}", e.getMessage());
