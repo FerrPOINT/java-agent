@@ -818,6 +818,94 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
         }
     }
 
+    @Test
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void scheduleUpdatesCannotPublishAnOlderDueTime() throws Exception {
+        var scheduler = org.mockito.Mockito.mock(java.util.concurrent.ScheduledExecutorService.class);
+        var callbacks = new java.util.concurrent.CopyOnWriteArrayList<Runnable>();
+        var olderReconcilerEntered = new java.util.concurrent.CountDownLatch(1);
+        var releaseOlderReconciler = new java.util.concurrent.CountDownLatch(1);
+        var newerStarted = new java.util.concurrent.CountDownLatch(1);
+        org.mockito.Mockito.doAnswer(call -> {
+            callbacks.add(call.getArgument(0));
+            if (callbacks.size() == 2) {
+                olderReconcilerEntered.countDown();
+                if (!releaseOlderReconciler.await(10, java.util.concurrent.TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("test did not release reconciliation");
+                }
+            }
+            return org.mockito.Mockito.mock(java.util.concurrent.ScheduledFuture.class);
+        }).when(scheduler).schedule(org.mockito.ArgumentMatchers.any(Runnable.class),
+            org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.any(java.util.concurrent.TimeUnit.class));
+        var props = (com.azhukov.agent.config.AgentProperties) org.springframework.test.util.ReflectionTestUtils
+            .getField(cronJobService, "properties");
+        var previous = org.springframework.test.util.ReflectionTestUtils.getField(cronJobService, "scheduler");
+        boolean wasEnabled = props.getCron().isEnabled();
+        props.getCron().setEnabled(true);
+        org.springframework.test.util.ReflectionTestUtils.setField(cronJobService, "scheduler", scheduler);
+        var job = cronJobService.create("review-race", "every 1h", "work", "local");
+        try (var executor = java.util.concurrent.Executors.newFixedThreadPool(2)) {
+            try {
+                var older = executor.submit(() -> cronJobService.update(job.getId(), null, "every 2h", null, null, null));
+                assertThat(olderReconcilerEntered.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                var newer = executor.submit(() -> {
+                    newerStarted.countDown();
+                    cronJobService.update(job.getId(), null, "every 3h", null, null, null);
+                });
+                assertThat(newerStarted.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                assertThatThrownBy(() -> newer.get(250, java.util.concurrent.TimeUnit.MILLISECONDS))
+                    .isInstanceOf(java.util.concurrent.TimeoutException.class);
+                assertThat(cronJobRepository.findById(job.getId()).orElseThrow().getSchedule()).isEqualTo("every 2h");
+                releaseOlderReconciler.countDown();
+                older.get(10, java.util.concurrent.TimeUnit.SECONDS);
+                newer.get(10, java.util.concurrent.TimeUnit.SECONDS);
+                var actual = cronJobRepository.findById(job.getId()).orElseThrow();
+                assertThat(actual.getSchedule()).isEqualTo("every 3h");
+                assertThat(actual.getNextRunAt()).isAfter(Instant.now().plusSeconds(10_700));
+                int count = callbacks.size();
+                callbacks.get(1).run();
+                assertThat(callbacks).hasSize(count);
+            } finally {
+                releaseOlderReconciler.countDown();
+            }
+        } finally {
+            cronJobService.remove(job.getId());
+            props.getCron().setEnabled(wasEnabled);
+            org.springframework.test.util.ReflectionTestUtils.setField(cronJobService, "scheduler", previous);
+        }
+    }
+
+    @Test
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void gatewayOwnerScopeIsRequiredAndIsolatesSuggestions() throws Exception {
+        var props = new com.azhukov.agent.config.AgentProperties();
+        props.getSecurity().setApiKey("isolated-review-test-key");
+        var filter = new com.azhukov.agent.api.filter.ApiKeyAuthFilter(props);
+        var mvc = org.springframework.test.web.servlet.setup.MockMvcBuilders.standaloneSetup(cronController)
+            .addFilters(filter).build();
+        String first = "701938001";
+        String second = "701938002";
+        var tx = new org.springframework.transaction.support.TransactionTemplate(transactionManager);
+        var id = tx.execute(s -> cronSuggestionRepository.saveAndFlush(newSuggestion(first, "gateway-owner")).getId());
+        try {
+            mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/v1/agent/cron/suggestions")
+                    .header("X-API-Key", "isolated-review-test-key"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isBadRequest());
+            for (String owner : java.util.List.of(first, second)) {
+                mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/v1/agent/cron/suggestions")
+                        .header("X-API-Key", "isolated-review-test-key").param("ownerId", owner))
+                    .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.length()")
+                        .value(owner.equals(first) ? 1 : 0));
+            }
+            mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                    .post("/api/v1/agent/cron/suggestions/{id}/dismiss", id)
+                    .header("X-API-Key", "isolated-review-test-key").param("ownerId", second))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.dismissed").value(false));
+        } finally {
+            tx.executeWithoutResult(s -> cronSuggestionRepository.deleteById(id));
+        }
+    }
+
     private static CronSuggestionEntity newSuggestion(String userId, String dedupKey) {
         CronSuggestionEntity entity = new CronSuggestionEntity();
         entity.setUserId(userId);

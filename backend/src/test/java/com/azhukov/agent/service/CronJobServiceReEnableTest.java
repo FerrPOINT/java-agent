@@ -39,10 +39,13 @@ class CronJobServiceReEnableTest {
 
     @BeforeEach
     void setUp() {
+        org.mockito.Mockito.lenient().when(cronJobRepository.findByIdForUpdate(
+                org.mockito.ArgumentMatchers.any(java.util.UUID.class)))
+            .thenAnswer(call -> cronJobRepository.findById(call.getArgument(0)));
         properties = new AgentProperties();
         properties.getCron().setEnabled(true);
         lenient().when(agentRuntimeServiceProvider.getIfAvailable()).thenReturn(agentRuntimeService);
-        service = new CronJobService(cronJobRepository, agentRuntimeServiceProvider, properties, skillManager, cronExecutionLogRepository, messageRepository, new org.springframework.transaction.support.TransactionTemplate(), new CronScheduleParser());
+        service = new CronJobService(cronJobRepository, agentRuntimeServiceProvider, properties, skillManager, cronExecutionLogRepository, messageRepository, CronJobServiceTest.unitTransaction(), new CronScheduleParser());
     }
 
     @Test
