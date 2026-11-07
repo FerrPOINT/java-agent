@@ -1359,6 +1359,10 @@ public class StreamEditor {
                 if (e.isRateLimit()) scheduleDelivery(chatId, session, e.getRetryAfter());
                 else failDelivery(session);
                 return Optional.empty();
+            } catch (RuntimeException e) {
+                log.warn("Could not confirm Telegram delivery for chat {}", chatId, e);
+                failDelivery(session);
+                return Optional.empty();
             }
             if (last.isEmpty()) {
                 failDelivery(session);
@@ -1366,7 +1370,7 @@ public class StreamEditor {
             }
             session.delivery.removeFirst();
         }
-        if (session.deliveryCancelled) failDelivery(session);
+        if (session.deliveryCancelled || sessions.get(chatId) != session) failDelivery(session);
         else if (session.deliverySealed) session.deferredDelivery.complete(true);
         return last;
     }
@@ -1382,12 +1386,16 @@ public class StreamEditor {
             failDelivery(session);
             return;
         }
-        session.deliveryRetry = deliveryExecutor.schedule(() -> {
-            synchronized (session) {
-                session.deliveryRetry = null;
-                if (sessions.get(chatId) == session) deliverQueued(chatId, session);
-            }
-        }, delay, TimeUnit.NANOSECONDS);
+        try {
+            session.deliveryRetry = deliveryExecutor.schedule(() -> {
+                synchronized (session) {
+                    session.deliveryRetry = null;
+                    if (sessions.get(chatId) == session) deliverQueued(chatId, session);
+                }
+            }, delay, TimeUnit.NANOSECONDS);
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            failDelivery(session);
+        }
     }
 
     private void failDelivery(StreamSession session) {
