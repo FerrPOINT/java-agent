@@ -88,7 +88,13 @@ class BotMessageProcessorTest {
 
     @BeforeEach
     void setUp() {
-        telegramClient = mock(TelegramClient.class);
+        telegramClient = mock(TelegramClient.class, call -> {
+            if ("sendMessageChecked".equals(call.getMethod().getName())) {
+                return ((TelegramClient) call.getMock()).sendMessage(call.<Long>getArgument(0), call.getArgument(1),
+                    call.getArgument(2), call.getArgument(3), call.getArgument(4), call.<Boolean>getArgument(6));
+            }
+            return RETURNS_DEFAULTS.answer(call);
+        });
         authorizationService = mock(AuthorizationService.class);
         sessionStore = mock(BotSessionStore.class);
         properties = new BotProperties();
@@ -523,9 +529,6 @@ class BotMessageProcessorTest {
     }
 
     private DeliveryFixture realDeliveryFixture() {
-        lenient().when(telegramClient.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean()))
-            .thenAnswer(call -> telegramClient.sendMessage(call.<Long>getArgument(0), call.getArgument(1),
-                call.getArgument(2), call.getArgument(3), call.getArgument(4), call.<Boolean>getArgument(6)));
         StreamEditor editor = new StreamEditor(telegramClient, properties, mediaDeliveryService,
             mock(com.azhukov.agent.bot.rich.RichMessageSupport.class));
         org.springframework.test.util.ReflectionTestUtils.invokeMethod(editor, "init");
