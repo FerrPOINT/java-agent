@@ -123,12 +123,17 @@ public class RichMessageSupport {
  }
 
  return telegramClient.callApi("sendRichMessage", payload)
+     .filter(TelegramResponse::isSuccess)
      .flatMap(response -> Optional.ofNullable(response.resultMessageIdAsLong()));
  }
 
  public boolean formatWasRejected(com.azhukov.agent.bot.client.TelegramApiException error) {
-     return (error.getErrorCode() == 400 || error.getErrorCode() == 404)
-         && (isRichCapabilityError(error.getMessage()) || error.isParseError());
+     if (error.getErrorCode() != 400 && error.getErrorCode() != 404) return false;
+     if (isRichCapabilityError(error.getMessage())) {
+         richSendDisabled = true;
+         return true;
+     }
+     return error.isParseError();
  }
 
  /**

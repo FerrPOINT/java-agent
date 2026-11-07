@@ -98,7 +98,10 @@ tasks.register('streamDeliveryTest', Test) {
     testClassesDirs = sourceSets.test.output.classesDirs
     classpath = sourceSets.test.runtimeClasspath
     useJUnitPlatform { includeTags 'slow' }
-    filter { includeTestsMatching 'com.azhukov.agent.bot.core.BotMessageProcessorTest' }
+    filter {
+        includeTestsMatching 'com.azhukov.agent.bot.core.BotMessageProcessorTest'
+        includeTestsMatching 'com.azhukov.agent.bot.streaming.StreamDeliveryRegressionTest'
+    }
     jvmArgs '-XX:+EnableDynamicAgentLoading'
     maxHeapSize = '2g'
 }

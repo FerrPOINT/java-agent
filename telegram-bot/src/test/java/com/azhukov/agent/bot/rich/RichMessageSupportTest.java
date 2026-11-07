@@ -138,14 +138,11 @@ class RichMessageSupportTest {
         when(meResponse.resultAsMap()).thenReturn(meResult);
         when(client.callApi("getMe", Map.of())).thenReturn(Optional.of(meResponse));
 
-        // Set up sendRichMessage capability failure
-        TelegramResponse failResponse = mock(TelegramResponse.class);
-        when(failResponse.isSuccess()).thenReturn(false);
-        when(failResponse.errorMessage()).thenReturn("method not found");
-        when(client.callApi(eq("sendRichMessage"), any())).thenReturn(Optional.of(failResponse));
-
-        Optional<Long> msgId = support.sendRichMessage(123L, "content", null, null);
-        assertThat(msgId).isEmpty();
+        var rejection = new com.azhukov.agent.bot.client.TelegramApiException(404, "method not found");
+        when(client.callApi(eq("sendRichMessage"), any())).thenThrow(rejection);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> support.sendRichMessage(123L, "content", null, null))
+            .isSameAs(rejection);
+        assertThat(support.formatWasRejected(rejection)).isTrue();
         assertThat(support.isRichSendDisabled()).isTrue();
 
         // Second call should skip rich entirely
