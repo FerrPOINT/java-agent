@@ -106,13 +106,13 @@ class CronJobControllerTest {
     void acceptSuggestionReturnsNotFoundWithoutCreatingJobForForeignSuggestion() throws Exception {
         UserContext.set("user-b", UserContext.ROLE_USER);
         try {
-            when(cronSuggestionService.acceptSuggestion(anyString())).thenReturn(null);
+            when(cronSuggestionService.acceptSuggestion(anyString(), eq("user-b"))).thenReturn(null);
 
             mockMvc.perform(post("/api/v1/agent/cron/suggestions/{id}/accept", UUID.randomUUID()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.accepted").value(false));
 
-            verify(cronSuggestionService).acceptSuggestion(anyString());
+            verify(cronSuggestionService).acceptSuggestion(anyString(), eq("user-b"));
             verify(cronJobService, never()).create(
                 any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any());
         } finally {
@@ -124,13 +124,13 @@ class CronJobControllerTest {
     void dismissSuggestionReturnsFalseForForeignSuggestion() throws Exception {
         UserContext.set("user-b", UserContext.ROLE_USER);
         try {
-            when(cronSuggestionService.dismissSuggestion(anyString())).thenReturn(false);
+            when(cronSuggestionService.dismissSuggestion(anyString(), eq("user-b"))).thenReturn(false);
 
             mockMvc.perform(post("/api/v1/agent/cron/suggestions/{id}/dismiss", UUID.randomUUID()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.dismissed").value(false));
 
-            verify(cronSuggestionService).dismissSuggestion(anyString());
+            verify(cronSuggestionService).dismissSuggestion(anyString(), eq("user-b"));
         } finally {
             UserContext.clear();
         }

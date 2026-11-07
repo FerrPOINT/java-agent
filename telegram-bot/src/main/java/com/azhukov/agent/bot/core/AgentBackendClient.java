@@ -398,8 +398,12 @@ public class AgentBackendClient {
         return cron.listCronJobs();
     }
 
-    public JsonNode listSuggestions() {
-        return cron.listSuggestions();
+    public JsonNode listSuggestions(String ownerId) {
+        return cron.listSuggestions(ownerId);
+    }
+
+    public JsonNode suggestionPost(String path, String ownerId) {
+        return cron.suggestionPost(path, ownerId);
     }
 
     public JsonNode suggestionPost(String path) {

@@ -552,7 +552,7 @@ private static final String CRON_EXECUTION_HINT = """
         String modelProvider, String modelName, String baseUrl,
         String monitor, Boolean continuityEnabled, Boolean attachToSession, UUID currentSessionId
     ) {
-        CronJobEntity entity = cronJobRepository.findById(id)
+        CronJobEntity entity = lockedSchedule(id)
             .orElseThrow(() -> new IllegalArgumentException("Cron job not found: " + id));
         requireOwnership(entity);
 
@@ -652,7 +652,7 @@ private static final String CRON_EXECUTION_HINT = """
         // run-time payload check fires in executeJob instead. Hermes update_job
         // allows disabling a job to a stub and re-editing later.
 
-        if (TransactionSynchronizationManager.isActualTransactionActive()) entity.setNextRunAt(null);
+        entity.setNextRunAt(null);
         entity = cronJobRepository.save(entity);
         entity = reconcileScheduleAfterCommit(id, entity).orElse(entity);
         log.info("Updated cron job: {}", id);
@@ -661,11 +661,11 @@ private static final String CRON_EXECUTION_HINT = """
 
     @org.springframework.transaction.annotation.Transactional
     public CronJobEntity pause(UUID id) {
-        CronJobEntity entity = cronJobRepository.findById(id)
+        CronJobEntity entity = lockedSchedule(id)
             .orElseThrow(() -> new IllegalArgumentException("Cron job not found: " + id));
         requireOwnership(entity);
         entity.setEnabled(false);
-        if (TransactionSynchronizationManager.isActualTransactionActive()) entity.setNextRunAt(null);
+        entity.setNextRunAt(null);
         entity = cronJobRepository.save(entity);
         entity = reconcileScheduleAfterCommit(id, entity).orElse(entity);
         log.info("Paused cron job: {}", id);
@@ -674,11 +674,11 @@ private static final String CRON_EXECUTION_HINT = """
 
     @org.springframework.transaction.annotation.Transactional
     public CronJobEntity resume(UUID id) {
-        CronJobEntity entity = cronJobRepository.findById(id)
+        CronJobEntity entity = lockedSchedule(id)
             .orElseThrow(() -> new IllegalArgumentException("Cron job not found: " + id));
         requireOwnership(entity);
         entity.setEnabled(true);
-        if (TransactionSynchronizationManager.isActualTransactionActive()) entity.setNextRunAt(null);
+        entity.setNextRunAt(null);
         entity = cronJobRepository.save(entity);
         entity = reconcileScheduleAfterCommit(id, entity).orElse(entity);
         log.info("Resumed cron job: {}", id);
@@ -691,7 +691,7 @@ private static final String CRON_EXECUTION_HINT = """
 
     @org.springframework.transaction.annotation.Transactional
     public void remove(UUID id) {
-        CronJobEntity entity = cronJobRepository.findById(id).orElse(null);
+        CronJobEntity entity = lockedSchedule(id).orElse(null);
         if (entity != null) {
             requireOwnership(entity);
         }
@@ -803,11 +803,18 @@ private static final String CRON_EXECUTION_HINT = """
     }
 
     private synchronized Optional<CronJobEntity> reconcileSchedule(UUID id) {
-        return reconcileSchedule(id, null);
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            return reconcileSchedule(id, null);
+        }
+        return transactionTemplate.execute(status -> reconcileSchedule(id, null));
+    }
+
+    private Optional<CronJobEntity> lockedSchedule(UUID id) {
+        return cronJobRepository.findByIdForUpdate(id);
     }
 
     private Optional<CronJobEntity> reconcileSchedule(UUID id, CronExecutionOutcome outcome) {
-        var persisted = cronJobRepository.findById(id);
+        var persisted = lockedSchedule(id);
         cancelJob(id);
         if (persisted.isEmpty()) {
             jobLocks.remove(id);

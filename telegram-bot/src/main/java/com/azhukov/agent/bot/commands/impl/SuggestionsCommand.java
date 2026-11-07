@@ -39,9 +39,10 @@ public class SuggestionsCommand implements CommandHandler {
 
     @Override
     public String handle(UpdateEvent event, BotSessionEntity session) {
+        String ownerId = Long.toString(event.userId());
         String args = event.commandArgs();
         if (args == null || args.isBlank()) {
-            return listSuggestions();
+            return listSuggestions(ownerId);
         }
 
         String[] parts = args.trim().split("\\s+", 2);
@@ -50,7 +51,7 @@ public class SuggestionsCommand implements CommandHandler {
 
         return switch (sub) {
             case "catalog" -> {
-                JsonNode resp = backendClient.suggestionPost("/api/v1/agent/cron/suggestions/catalog");
+                JsonNode resp = backendClient.suggestionPost("/api/v1/agent/cron/suggestions/catalog", ownerId);
                 int added = resp == null ? -1 : resp.path("added").asInt(-1);
                 yield added < 0
                     ? "Failed to seed the catalog."
@@ -60,9 +61,9 @@ public class SuggestionsCommand implements CommandHandler {
             }
             case "accept" -> {
                 if (ref.isEmpty()) yield "Usage: /suggestions accept <N|id>";
-                String id = resolveRef(ref);
+                String id = resolveRef(ref, ownerId);
                 if (id == null) yield "No such suggestion: " + ref;
-                JsonNode resp = backendClient.suggestionPost("/api/v1/agent/cron/suggestions/" + id + "/accept");
+                JsonNode resp = backendClient.suggestionPost("/api/v1/agent/cron/suggestions/" + id + "/accept", ownerId);
                 if (resp == null || !resp.path("accepted").asBoolean(false)) {
                     yield "Could not accept (not found or already decided): " + ref;
                 }
@@ -77,26 +78,26 @@ public class SuggestionsCommand implements CommandHandler {
             }
             case "dismiss" -> {
                 if (ref.isEmpty()) yield "Usage: /suggestions dismiss <N|id>";
-                String id = resolveRef(ref);
+                String id = resolveRef(ref, ownerId);
                 if (id == null) yield "No such suggestion: " + ref;
-                JsonNode resp = backendClient.suggestionPost("/api/v1/agent/cron/suggestions/" + id + "/dismiss");
+                JsonNode resp = backendClient.suggestionPost("/api/v1/agent/cron/suggestions/" + id + "/dismiss", ownerId);
                 yield resp != null && resp.path("dismissed").asBoolean(false)
                     ? "Dismissed — it won't be suggested again."
                     : "Could not dismiss: " + ref;
             }
             case "clear" -> {
-                JsonNode resp = backendClient.suggestionPost("/api/v1/agent/cron/suggestions/clear");
+                JsonNode resp = backendClient.suggestionPost("/api/v1/agent/cron/suggestions/clear", ownerId);
                 yield "Cleared " + (resp == null ? 0 : resp.path("cleared").asInt(0)) + " accepted records.";
             }
-            case "list" -> listSuggestions();
+            case "list" -> listSuggestions(ownerId);
             default -> "Unknown subcommand: " + sub + "\n"
                 + "Usage: /suggestions [catalog | accept <N> | dismiss <N> | clear]";
         };
     }
 
     /** Resolve a numbered reference ("2") or raw id to the suggestion id. */
-    private String resolveRef(String ref) {
-        JsonNode pending = backendClient.listSuggestions();
+    private String resolveRef(String ref, String ownerId) {
+        JsonNode pending = backendClient.listSuggestions(ownerId);
         if (pending == null || !pending.isArray()) return null;
         int n = 1;
         for (JsonNode s : pending) {
@@ -108,8 +109,8 @@ public class SuggestionsCommand implements CommandHandler {
         return null;
     }
 
-    private String listSuggestions() {
-        JsonNode pending = backendClient.listSuggestions();
+    private String listSuggestions(String ownerId) {
+        JsonNode pending = backendClient.listSuggestions(ownerId);
         if (pending == null || !pending.isArray() || pending.isEmpty()) {
             return "No suggested automations.\n"
                 + "Try `/suggestions catalog` to see the curated starter set, or `/cron` to create one.";

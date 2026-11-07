@@ -47,6 +47,11 @@ public class CronSuggestionService {
  @Transactional
  public SuggestionRecord addSuggestion(String title, String description,
  String source, JobSpec jobSpec, String dedupKey) {
+     return addSuggestion(title, description, source, jobSpec, dedupKey, currentUserId());
+ }
+
+ private SuggestionRecord addSuggestion(String title, String description, String source,
+                                       JobSpec jobSpec, String dedupKey, String userId) {
  if (title == null || title.isBlank()) {
  throw new IllegalArgumentException("title is required");
  }
@@ -57,7 +62,6 @@ public class CronSuggestionService {
  throw new IllegalArgumentException("job_spec is required");
  }
 
- String userId = currentUserId();
  lockCreation(userId);
  String normalizedDedupKey = dedupKey.strip();
  if (cronSuggestionRepository.findByUserIdAndDedupKey(userId, normalizedDedupKey).isPresent()) {
@@ -104,7 +108,12 @@ public class CronSuggestionService {
  /** List the current owner's pending suggestions in creation order. */
  @Transactional(readOnly = true)
  public List<SuggestionRecord> listPending() {
- return cronSuggestionRepository.findByUserIdAndStatusOrderByCreatedAtAsc(currentUserId(), STATUS_PENDING)
+     return listPending(currentUserId());
+ }
+
+ @Transactional(readOnly = true)
+ public List<SuggestionRecord> listPending(String userId) {
+ return cronSuggestionRepository.findByUserIdAndStatusOrderByCreatedAtAsc(userId, STATUS_PENDING)
  .stream().map(CronSuggestionService::toRecord).toList();
  }
 
@@ -127,7 +136,11 @@ public class CronSuggestionService {
  */
  @Transactional
  public CronJobEntity acceptSuggestion(String ref) {
- String userId = currentUserId();
+     return acceptSuggestion(ref, currentUserId());
+ }
+
+ @Transactional
+ public CronJobEntity acceptSuggestion(String ref, String userId) {
  CronSuggestionEntity suggestion = resolveForUpdate(ref, userId);
  if (suggestion == null || !STATUS_PENDING.equals(suggestion.getStatus())) {
  return null;
@@ -147,7 +160,12 @@ public class CronSuggestionService {
  /** Dismiss a current-owner suggestion and retain its dedup latch. */
  @Transactional
  public boolean dismissSuggestion(String ref) {
- CronSuggestionEntity suggestion = resolveForUpdate(ref, currentUserId());
+     return dismissSuggestion(ref, currentUserId());
+ }
+
+ @Transactional
+ public boolean dismissSuggestion(String ref, String userId) {
+ CronSuggestionEntity suggestion = resolveForUpdate(ref, userId);
  if (suggestion == null || !STATUS_PENDING.equals(suggestion.getStatus())) {
  return false;
  }
@@ -160,7 +178,11 @@ public class CronSuggestionService {
  /** Remove only accepted current-owner records; dismissed records keep the dedup latch. */
  @Transactional
  public int clearAccepted() {
- String userId = currentUserId();
+     return clearAccepted(currentUserId());
+ }
+
+ @Transactional
+ public int clearAccepted(String userId) {
  List<CronSuggestionEntity> accepted = cronSuggestionRepository
  .findByUserIdAndStatusOrderByCreatedAtAsc(userId, STATUS_ACCEPTED);
  cronSuggestionRepository.deleteAll(accepted);
@@ -262,6 +284,11 @@ public class CronSuggestionService {
   */
  @Transactional
  public int seedCatalogSuggestions() {
+     return seedCatalogSuggestions(currentUserId());
+ }
+
+ @Transactional
+ public int seedCatalogSuggestions(String userId) {
      int added = 0;
      for (Object[] e : CATALOG) {
          String key = (String) e[0];
@@ -271,7 +298,7 @@ public class CronSuggestionService {
          String schedule = (String) e[4];
          String name = (String) e[5];
          SuggestionRecord rec = addSuggestion(title, description, "catalog",
-             new JobSpec(name, schedule, prompt, "origin", null), key);
+             new JobSpec(name, schedule, prompt, "origin", null), key, userId);
          if (rec != null) {
              added++;
          }

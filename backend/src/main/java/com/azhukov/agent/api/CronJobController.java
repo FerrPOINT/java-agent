@@ -59,13 +59,13 @@ public class CronJobController {
     // ── Suggestions (Hermes /suggestions parity) ──
 
     @GetMapping("/suggestions")
-    public List<CronSuggestionService.SuggestionRecord> suggestions() {
-        return cronSuggestionService.listPending();
+    public List<CronSuggestionService.SuggestionRecord> suggestions(@RequestParam(name = "ownerId", required = false) String ownerId) {
+        return cronSuggestionService.listPending(UserContext.requireRequestOwner(ownerId));
     }
 
     @PostMapping("/suggestions/catalog")
-    public java.util.Map<String, Object> seedCatalog() {
-        int added = cronSuggestionService.seedCatalogSuggestions();
+    public java.util.Map<String, Object> seedCatalog(@RequestParam(name = "ownerId", required = false) String ownerId) {
+        int added = cronSuggestionService.seedCatalogSuggestions(UserContext.requireRequestOwner(ownerId));
         return java.util.Map.of("added", added,
             "message", added > 0
                 ? "Seeded " + added + " curated starter suggestions."
@@ -73,8 +73,8 @@ public class CronJobController {
     }
 
     @PostMapping("/suggestions/{id}/accept")
-    public java.util.Map<String, Object> acceptSuggestion(@PathVariable String id) {
-        var entity = cronSuggestionService.acceptSuggestion(id);
+    public java.util.Map<String, Object> acceptSuggestion(@PathVariable String id, @RequestParam(name = "ownerId", required = false) String ownerId) {
+        var entity = cronSuggestionService.acceptSuggestion(id, UserContext.requireRequestOwner(ownerId));
         if (entity == null) {
             return java.util.Map.of("accepted", false, "reason", "not found or already decided");
         }
@@ -87,14 +87,14 @@ public class CronJobController {
     }
 
     @PostMapping("/suggestions/{id}/dismiss")
-    public java.util.Map<String, Object> dismissSuggestion(@PathVariable String id) {
-        boolean ok = cronSuggestionService.dismissSuggestion(id);
+    public java.util.Map<String, Object> dismissSuggestion(@PathVariable String id, @RequestParam(name = "ownerId", required = false) String ownerId) {
+        boolean ok = cronSuggestionService.dismissSuggestion(id, UserContext.requireRequestOwner(ownerId));
         return java.util.Map.of("dismissed", ok);
     }
 
     @PostMapping("/suggestions/clear")
-    public java.util.Map<String, Object> clearSuggestions() {
-        return java.util.Map.of("cleared", cronSuggestionService.clearAccepted());
+    public java.util.Map<String, Object> clearSuggestions(@RequestParam(name = "ownerId", required = false) String ownerId) {
+        return java.util.Map.of("cleared", cronSuggestionService.clearAccepted(UserContext.requireRequestOwner(ownerId)));
     }
 
     // ── Heartbeat (Hermes /heartbeat parity) ──
