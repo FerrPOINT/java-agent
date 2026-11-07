@@ -257,14 +257,14 @@ class StreamEditorTest {
     void finalizeStream_fallsBackToSendMessageOnEditFailure() {
         when(client.editMessageText(anyLong(), anyLong(), anyString(), anyString(), anyBoolean()))
             .thenReturn(false);
-        when(client.sendMessage(anyLong(), anyString(), anyString(), any(), any(), eq(false)))
+        when(client.sendMessageChecked(anyLong(), anyString(), anyString(), any(), any(), isNull(), eq(false)))
             .thenReturn(Optional.of(99L));
 
         boolean result = editor.finalizeStream(123L, 42L, "Final text");
 
         assertThat(result).isTrue();
         verify(client).editMessageText(eq(123L), eq(42L), anyString(), eq("MarkdownV2"), eq(false));
-        verify(client).sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), eq(false));
+        verify(client).sendMessageChecked(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), isNull(), eq(false));
         verify(client).deleteMessage(123L, 42L);
     }
 
@@ -285,7 +285,7 @@ class StreamEditorTest {
         assertThat(result).isTrue();
         verify(client).editMessageText(123L, 42L, "Final text", "MarkdownV2", false);
         verify(client, never()).deleteMessage(123L, 42L);
-        verify(client, never()).sendMessage(eq(123L), eq("Final text"), any(), any(), any(), anyBoolean());
+        verify(client, never()).sendMessageChecked(eq(123L), eq("Final text"), any(), any(), any(), isNull(), anyBoolean());
     }
 
     @Test
@@ -337,7 +337,7 @@ class StreamEditorTest {
         StreamSession streamSession = freshEditor.sessionFor(123L);
         streamSession.streamStartTime = System.currentTimeMillis() - 1_000L;
         streamSession.currentMessageId.set(42L);
-        when(client.sendMessage(anyLong(), anyString(), anyString(), any(), any(), anyBoolean()))
+        when(client.sendMessageChecked(anyLong(), anyString(), anyString(), any(), any(), isNull(), anyBoolean()))
             .thenReturn(Optional.of(99L));
 
         boolean result = freshEditor.finalizeStream(123L, 42L, "Final text");
