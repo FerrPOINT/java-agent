@@ -114,12 +114,19 @@ public class AttachmentController {
         String owner = checkedArtifactOwner(id, ownerId, sessionId);
         AttachmentArtifact artifact = service().find(id, owner)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "unknown artifact " + id));
-        Path path = service().contentPath(id, owner)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "artifact content is gone " + id));
-        if (!Files.isReadable(path)) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "artifact content is gone " + id);
+        Resource resource;
+        if (sessionId != null) {
+            byte[] bytes = service().verifiedContent(id, owner)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Artifact content is unavailable"));
+            resource = new org.springframework.core.io.ByteArrayResource(bytes);
+        } else {
+            Path path = service().contentPath(id, owner)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "artifact content is gone " + id));
+            if (!Files.isReadable(path)) {
+                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "artifact content is gone " + id);
+            }
+            resource = new FileSystemResource(path);
         }
-        Resource resource = new FileSystemResource(path);
         String fileName = artifact.fileName() != null ? artifact.fileName() : "artifact.bin";
         String contentType = artifact.mimeType() != null ? artifact.mimeType()
             : URLConnection.guessContentTypeFromName(fileName);
