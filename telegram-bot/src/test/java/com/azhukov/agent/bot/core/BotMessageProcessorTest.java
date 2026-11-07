@@ -617,6 +617,44 @@ class BotMessageProcessorTest {
 
     @SuppressWarnings("unchecked")
     @Test
+    void rejectedSegmentMustArriveBeforeSubsequentFinalAnswer() {
+        properties.setStreamingTransport("edit");
+        properties.getDisplay().setToolProgress("off");
+        var accepted = new java.util.concurrent.CopyOnWriteArrayList<String>();
+        var attempts = new java.util.concurrent.atomic.AtomicInteger();
+        when(telegramClient.sendMessage(eq(100L), eq("Hi"), eq("MarkdownV2"), any(), any(), anyBoolean()))
+            .thenAnswer(inv -> { if (attempts.incrementAndGet() == 1) return Optional.empty(); accepted.add("Hi"); return Optional.of(41L); });
+        when(telegramClient.takeLastRetryAfterSeconds()).thenReturn(1);
+        when(telegramClient.sendMessage(eq(100L), eq("Hi"), eq("MarkdownV2"), any(), any()))
+            .thenAnswer(inv -> { accepted.add("Hi"); return Optional.of(41L); });
+        when(telegramClient.sendMessage(eq(100L), startsWith("Final answer"), isNull(), any(), any(), anyBoolean()))
+            .thenAnswer(inv -> { accepted.add("Final answer"); return Optional.of(42L); });
+        when(telegramClient.sendMessage(eq(100L), eq("Final answer"), eq("MarkdownV2"), any(), any()))
+            .thenAnswer(inv -> { accepted.add("Final answer"); return Optional.of(42L); });
+        when(telegramClient.sendMessage(eq(100L), eq("Final answer"), eq("MarkdownV2"), any(), any(), anyBoolean()))
+            .thenAnswer(inv -> { accepted.add("Final answer"); return Optional.of(42L); });
+        when(telegramClient.editMessageText(eq(100L), eq(42L), anyString(), eq("MarkdownV2"), eq(false)))
+            .thenReturn(true);
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+            .thenAnswer(inv -> {
+                Consumer<String> token = inv.getArgument(4);
+                token.accept("Hi");
+                ((Consumer<String>) inv.getArgument(5)).accept("search");
+                token.accept("Final answer");
+                var result = new AgentBackendClient.ChatResult("HiFinal answer", "model", 1, 10, true);
+                ((Consumer<AgentBackendClient.ChatResult>) inv.getArgument(10)).accept(result);
+                return result;
+            });
+        try (DeliveryFixture fixture = realDeliveryFixture()) {
+            fixture.processor().accept(textEvent(1, 100L, "Hello"));
+            org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(5))
+                .untilAsserted(() -> assertThat(accepted).containsExactly("Hi", "Final answer"));
+            verify(backendClient, never()).chat(anyString(), any(), any());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
     void floodWaitAfterFirstMultipartChunkRetriesOnlyRejectedRemainder() {
         properties.setStreamingTransport("draft");
         properties.getDisplay().setToolProgress("off");
