@@ -641,19 +641,21 @@ class McpLifecycleManagerNewFeaturesTest {
             new McpSchema.AudioContent(null, Base64.getEncoder().encodeToString(wav), "audio/wav"),
             new McpSchema.EmbeddedResource(null, new McpSchema.BlobResourceContents(
                 "slack://files/F123/report.pdf", "application/pdf", Base64.getEncoder().encodeToString(pdf)))
-        ), false, null, null), "slack");
+        ), false, null, null), "slack", (disposition, mime, file, bytes) -> {
+            assertThat(disposition).isEqualTo("audio");
+            assertThat(mime).isEqualTo("audio/wav");
+            assertThat(bytes).isEqualTo(wav);
+            return "MEDIA:artifact:att_0123456789abcdef0123456789abcdef";
+        });
         String text = objectMapper.readTree(payload).get("result").asText();
-        Path audioPath = mediaPathFromText(text);
         Path resourcePath = resourcePathFromRendered(text);
 
         try {
             assertThat(text).startsWith("File ID: F123");
             assertThat(text.indexOf("MEDIA:")).isGreaterThan(text.indexOf("File ID: F123"));
             assertThat(text.indexOf("[MCP resource saved to")).isGreaterThan(text.indexOf("MEDIA:"));
-            assertThat(Files.readAllBytes(audioPath)).isEqualTo(wav);
             assertThat(Files.readAllBytes(resourcePath)).isEqualTo(pdf);
         } finally {
-            Files.deleteIfExists(audioPath);
             Files.deleteIfExists(resourcePath);
         }
     }

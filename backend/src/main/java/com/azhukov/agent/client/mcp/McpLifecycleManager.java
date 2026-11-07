@@ -1438,7 +1438,7 @@ public class McpLifecycleManager {
         return formatCallToolResult(result, serverName, null);
     }
 
-    private String formatCallToolResult(McpSchema.CallToolResult result, String serverName, MediaPublisher publisher) {
+    String formatCallToolResult(McpSchema.CallToolResult result, String serverName, MediaPublisher publisher) {
         String text = renderContentBlocks(result == null ? null : result.content(), serverName, publisher);
         text = truncateMcpTextResult(text);
         Object structuredContent = result == null ? null : result.structuredContent();
