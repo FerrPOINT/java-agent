@@ -85,7 +85,7 @@ class AttachmentArtifactServiceTest {
         Files.createDirectories(tempDir.resolve("u1"));
         Files.write(tempDir.resolve("u1/att_existing.png"), data);
         when(repository.findFirstByOwnerIdAndContentHashAndDispositionAndSessionId(
-            org.mockito.ArgumentMatchers.eq("u1"), any(), org.mockito.ArgumentMatchers.eq("photo")))
+            org.mockito.ArgumentMatchers.eq("u1"), any(), org.mockito.ArgumentMatchers.eq("photo"), org.mockito.ArgumentMatchers.isNull()))
             .thenReturn(Optional.of(existing));
 
         var result = service().register("u1", "default", null, null,
