@@ -592,6 +592,39 @@ class BotMessageProcessorTest {
 
     @SuppressWarnings("unchecked")
     @Test
+    void shortSecondSegmentDoesNotOverwriteFirstSegment() {
+        properties.setStreamingTransport("edit");
+        properties.getDisplay().setToolProgress("off");
+        when(telegramClient.sendMessage(eq(100L), startsWith("First segment"), isNull(), any(), any(), anyBoolean()))
+            .thenReturn(Optional.of(41L));
+        when(telegramClient.editMessageText(eq(100L), eq(41L), anyString(), eq("MarkdownV2"), eq(false)))
+            .thenReturn(true);
+        when(telegramClient.sendMessage(eq(100L), eq("Hi"), eq("MarkdownV2"), any(), any(), anyBoolean()))
+            .thenReturn(Optional.of(42L));
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+            .thenAnswer(inv -> {
+                Consumer<String> token = inv.getArgument(4);
+                Consumer<String> tool = inv.getArgument(5);
+                token.accept("First segment");
+                tool.accept("first");
+                token.accept("Hi");
+                tool.accept("second");
+                var result = new AgentBackendClient.ChatResult("", "model", 1, 10, true);
+                ((Consumer<AgentBackendClient.ChatResult>) inv.getArgument(10)).accept(result);
+                return result;
+            });
+        try (DeliveryFixture fixture = realDeliveryFixture()) {
+            fixture.processor().accept(textEvent(1, 100L, "Hello"));
+            verify(telegramClient).editMessageText(eq(100L), eq(41L), eq("First segment"), eq("MarkdownV2"), eq(false));
+            verify(telegramClient, never()).editMessageText(eq(100L), eq(41L), eq("Hi"), any(), anyBoolean());
+            verify(telegramClient).sendMessage(eq(100L), eq("Hi"), eq("MarkdownV2"), any(), any(), anyBoolean());
+            verify(telegramClient, never()).deleteMessage(100L, 41L);
+            verify(backendClient, never()).chat(anyString(), any(), any());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
     void cancelledAfterToolKeepsCommittedSegmentAndClearsReaction() {
         properties.setStreamingTransport("edit");
         properties.getDisplay().setToolProgress("off");
