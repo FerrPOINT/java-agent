@@ -54,20 +54,25 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
         }
     }
 
-    @Test
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"71", "72"})
     @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
-    void upgradesMainSchemaFromV72ToCronSuggestionsV73() {
+    void upgradesPopulatedMainSchema(String previousVersion) {
         String schema = "cron_upgrade_" + java.util.UUID.randomUUID().toString().replace("-", "");
         var jdbc = new org.springframework.jdbc.core.JdbcTemplate(dataSource);
         try {
             org.flywaydb.core.Flyway.configure().dataSource(dataSource).schemas(schema).defaultSchema(schema)
-                .locations("classpath:db/migration", "classpath:db/postgresql").target("72").load().migrate();
-            assertThat(jdbc.queryForObject("select count(*) from " + schema + ".flyway_schema_history where version='72' and success", Integer.class)).isEqualTo(1);
+                .locations("classpath:db/migration", "classpath:db/postgresql").target(previousVersion).load().migrate();
+            var id = java.util.UUID.randomUUID();
+            jdbc.update("insert into " + schema + ".cron_jobs (id, name, schedule, prompt) values (?, ?, ?, ?)",
+                id, "existing job", "every 1h", "keep this prompt");
             org.flywaydb.core.Flyway.configure().dataSource(dataSource).schemas(schema).defaultSchema(schema)
                 .locations("classpath:db/migration", "classpath:db/postgresql").load().migrate();
             assertThat(jdbc.queryForObject("select count(*) from " + schema + ".flyway_schema_history where version='73' and success", Integer.class)).isEqualTo(1);
             assertThat(jdbc.queryForObject("select count(*) from " + schema + ".flyway_schema_history where version='74' and success", Integer.class)).isEqualTo(1);
             assertThat(jdbc.queryForObject("select count(*) from " + schema + ".cron_suggestions", Integer.class)).isZero();
+            assertThat(jdbc.queryForObject("select prompt from " + schema + ".cron_jobs where id=?", String.class, id))
+                .isEqualTo("keep this prompt");
         } finally {
             jdbc.execute("drop schema if exists " + schema + " cascade");
         }

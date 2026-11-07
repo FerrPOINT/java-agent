@@ -24,6 +24,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
+
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
@@ -56,6 +61,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.HexFormat;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -93,7 +99,7 @@ private static final String CRON_EXECUTION_HINT = """
     // (@Transactional would be bypassed here because executeAndReschedule is a
     // self-invocation from the scheduler lambda).
     private final com.azhukov.agent.persistence.repository.MessageRepository messageRepository;
-    private final org.springframework.transaction.support.TransactionTemplate transactionTemplate;
+    private final TransactionTemplate transactionTemplate;
     private final CronScheduleParser scheduleParser;
     private final ObjectProvider<DeliveryWorkItemService> deliveryWorkItemServiceProvider;
     private final ObjectProvider<com.azhukov.agent.persistence.repository.SessionRepository> sessionRepositoryProvider;
@@ -112,7 +118,7 @@ private static final String CRON_EXECUTION_HINT = """
         SkillManager skillManager,
         CronExecutionLogRepository cronExecutionLogRepository,
         com.azhukov.agent.persistence.repository.MessageRepository messageRepository,
-        org.springframework.transaction.support.TransactionTemplate transactionTemplate,
+        TransactionTemplate transactionTemplate,
         CronScheduleParser scheduleParser
     ) {
         this(cronJobRepository, agentRuntimeServiceProvider, properties, skillManager,
@@ -127,7 +133,7 @@ private static final String CRON_EXECUTION_HINT = """
         SkillManager skillManager,
         CronExecutionLogRepository cronExecutionLogRepository,
         com.azhukov.agent.persistence.repository.MessageRepository messageRepository,
-        org.springframework.transaction.support.TransactionTemplate transactionTemplate,
+        TransactionTemplate transactionTemplate,
         CronScheduleParser scheduleParser,
         ObjectProvider<DeliveryWorkItemService> deliveryWorkItemServiceProvider,
         ObjectProvider<com.azhukov.agent.persistence.repository.SessionRepository> sessionRepositoryProvider,
@@ -451,20 +457,7 @@ private static final String CRON_EXECUTION_HINT = """
 
         entity = cronJobRepository.save(entity);
         if (properties.getCron().isEnabled()) {
-            CronJobEntity scheduled = entity;
-            if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()) {
-                org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
-                    new org.springframework.transaction.support.TransactionSynchronization() {
-                        @Override public void afterCommit() {
-                            var newTransaction = new org.springframework.transaction.support.TransactionTemplate(transactionTemplate.getTransactionManager());
-                            newTransaction.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-                            newTransaction.executeWithoutResult(status -> cronJobRepository.findById(scheduled.getId())
-                                .filter(CronJobEntity::isEnabled).ifPresent(CronJobService.this::scheduleJob));
-                        }
-                    });
-            } else {
-                scheduleJob(scheduled);
-            }
+            entity = reconcileScheduleAfterCommit(entity.getId()).orElse(entity);
         }
         log.info("Created cron job: {} (profile: {}, schedule: {}, skills: {}, context_from: {}, repeat: {}, noAgent: {}, script: {})",
             name, normalizedProfile, schedule, skills, contextFrom, effectiveRepeat, noAgent, normalizedScript);
@@ -657,26 +650,7 @@ private static final String CRON_EXECUTION_HINT = """
         // allows disabling a job to a stub and re-editing later.
 
         entity = cronJobRepository.save(entity);
-        // Reconcile the scheduler only after the enclosing transaction commits.
-        if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()) {
-            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
-                new org.springframework.transaction.support.TransactionSynchronization() {
-                    @Override public void afterCommit() {
-                        var tx = new org.springframework.transaction.support.TransactionTemplate(transactionTemplate.getTransactionManager());
-                        tx.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-                        tx.executeWithoutResult(status -> {
-                            cancelJob(id);
-                            cronJobRepository.findById(id)
-                                .filter(CronJobEntity::isEnabled)
-                                .filter(job -> properties.getCron().isEnabled())
-                                .ifPresent(CronJobService.this::scheduleJob);
-                        });
-                    }
-                });
-        } else {
-            cancelJob(id);
-            if (entity.isEnabled() && properties.getCron().isEnabled()) scheduleJob(entity);
-        }
+        entity = reconcileScheduleAfterCommit(id).orElse(entity);
         log.info("Updated cron job: {}", id);
         return entity;
     }
@@ -687,21 +661,7 @@ private static final String CRON_EXECUTION_HINT = """
         requireOwnership(entity);
         entity.setEnabled(false);
         entity = cronJobRepository.save(entity);
-        if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()) {
-            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
-                new org.springframework.transaction.support.TransactionSynchronization() {
-                    @Override public void afterCommit() {
-                        var tx = new org.springframework.transaction.support.TransactionTemplate(transactionTemplate.getTransactionManager());
-                        tx.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-                        tx.executeWithoutResult(status -> {
-                            var persisted = cronJobRepository.findById(id);
-                            if (persisted.isEmpty() || !persisted.get().isEnabled()) cancelJob(id);
-                        });
-                    }
-                });
-        } else {
-            cancelJob(id);
-        }
+        entity = reconcileScheduleAfterCommit(id).orElse(entity);
         log.info("Paused cron job: {}", id);
         return entity;
     }
@@ -712,21 +672,7 @@ private static final String CRON_EXECUTION_HINT = """
         requireOwnership(entity);
         entity.setEnabled(true);
         entity = cronJobRepository.save(entity);
-        if (properties.getCron().isEnabled()) {
-            if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()) {
-                org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
-                    new org.springframework.transaction.support.TransactionSynchronization() {
-                        @Override public void afterCommit() {
-                            var newTransaction = new org.springframework.transaction.support.TransactionTemplate(transactionTemplate.getTransactionManager());
-                            newTransaction.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-                            newTransaction.executeWithoutResult(status -> cronJobRepository.findById(id)
-                                .filter(CronJobEntity::isEnabled).ifPresent(CronJobService.this::scheduleJob));
-                        }
-                    });
-            } else {
-                scheduleJob(entity);
-            }
-        }
+        entity = reconcileScheduleAfterCommit(id).orElse(entity);
         log.info("Resumed cron job: {}", id);
         return entity;
     }
@@ -741,24 +687,7 @@ private static final String CRON_EXECUTION_HINT = """
             requireOwnership(entity);
         }
         cronJobRepository.deleteById(id);
-        if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()) {
-            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
-                new org.springframework.transaction.support.TransactionSynchronization() {
-                    @Override public void afterCommit() {
-                        var tx = new org.springframework.transaction.support.TransactionTemplate(transactionTemplate.getTransactionManager());
-                        tx.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-                        tx.executeWithoutResult(status -> {
-                            if (!cronJobRepository.existsById(id)) {
-                                cancelJob(id);
-                                jobLocks.remove(id);
-                            }
-                        });
-                    }
-                });
-        } else {
-            cancelJob(id);
-            jobLocks.remove(id);
-        }
+        reconcileScheduleAfterCommit(id);
         log.info("Removed cron job: {}", id);
     }
 
@@ -822,6 +751,47 @@ private static final String CRON_EXECUTION_HINT = """
 
     // ── Scheduling ──
 
+    private Optional<CronJobEntity> reconcileScheduleAfterCommit(UUID id) {
+        if (!TransactionSynchronizationManager.isActualTransactionActive()) {
+            return reconcileSchedule(id);
+        }
+        boolean alreadyRegistered = TransactionSynchronizationManager.getSynchronizations().stream()
+            .anyMatch(sync -> sync instanceof ScheduleReconciliation pending && pending.id.equals(id));
+        if (!alreadyRegistered) {
+            TransactionSynchronizationManager.registerSynchronization(new ScheduleReconciliation(id));
+        }
+        return Optional.empty();
+    }
+
+    private final class ScheduleReconciliation implements TransactionSynchronization {
+        private final UUID id;
+
+        private ScheduleReconciliation(UUID id) {
+            this.id = id;
+        }
+
+        @Override
+        public void afterCommit() {
+            var transaction = new TransactionTemplate(transactionTemplate.getTransactionManager());
+            transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+            synchronized (CronJobService.this) {
+                transaction.executeWithoutResult(status -> reconcileSchedule(id));
+            }
+        }
+    }
+
+    private synchronized Optional<CronJobEntity> reconcileSchedule(UUID id) {
+        var persisted = cronJobRepository.findById(id);
+        cancelJob(id);
+        if (persisted.isEmpty()) {
+            jobLocks.remove(id);
+        } else if (persisted.get().isEnabled() && properties.getCron().isEnabled()) {
+            CronJobEntity job = persisted.get();
+            scheduleJob(job, calculateDelaySeconds(job.getSchedule()));
+        }
+        return persisted;
+    }
+
     private void scheduleJob(CronJobEntity job) {
         try {
             long delaySeconds = calculateDelaySeconds(job.getSchedule());
@@ -832,9 +802,18 @@ private static final String CRON_EXECUTION_HINT = """
     }
 
     private void scheduleJob(CronJobEntity job, long delaySeconds) {
+        var persisted = new CompletableFuture<Boolean>();
         ScheduledFuture<?> future;
         try {
-            future = scheduler.schedule(() -> executeAndReschedule(job.getId()), delaySeconds, TimeUnit.SECONDS);
+            future = scheduler.schedule(() -> {
+                if (persisted.isDone()) {
+                    if (persisted.join()) executeAndReschedule(job.getId());
+                } else {
+                    persisted.thenAcceptAsync(armed -> {
+                        if (armed) executeAndReschedule(job.getId());
+                    }, scheduler);
+                }
+            }, delaySeconds, TimeUnit.SECONDS);
         } catch (java.util.concurrent.RejectedExecutionException rejected) {
             job.setLastStatus("error");
             job.setLastError("Failed to schedule cron job");
@@ -842,9 +821,31 @@ private static final String CRON_EXECUTION_HINT = """
             cronJobRepository.save(job);
             return;
         }
-        scheduledTasks.put(job.getId(), future);
-        job.setNextRunAt(Instant.now().plusSeconds(delaySeconds));
-        cronJobRepository.save(job);
+        try {
+            job.setNextRunAt(Instant.now().plusSeconds(delaySeconds));
+            cronJobRepository.save(job);
+            var previous = scheduledTasks.put(job.getId(), future);
+            if (previous != null) previous.cancel(false);
+            if (TransactionSynchronizationManager.isActualTransactionActive()) {
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCompletion(int status) {
+                        if (status != STATUS_COMMITTED) {
+                            scheduledTasks.remove(job.getId(), future);
+                            future.cancel(false);
+                        }
+                        persisted.complete(status == STATUS_COMMITTED);
+                    }
+                });
+            } else {
+                persisted.complete(true);
+            }
+        } catch (RuntimeException e) {
+            scheduledTasks.remove(job.getId(), future);
+            future.cancel(false);
+            persisted.complete(false);
+            throw e;
+        }
         log.debug("Scheduled cron job '{}' to run in {} seconds", job.getName(), delaySeconds);
     }
 

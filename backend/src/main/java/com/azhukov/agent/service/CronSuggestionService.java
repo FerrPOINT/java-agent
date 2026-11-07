@@ -7,12 +7,16 @@ import com.azhukov.agent.persistence.entity.CronSuggestionEntity;
 import com.azhukov.agent.persistence.repository.CronSuggestionRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Consent-first, durable cron suggestions. Suggestions are isolated by owner so a restart
@@ -31,6 +35,10 @@ public class CronSuggestionService {
  private final CronJobService cronJobService;
  private final CronSuggestionRepository cronSuggestionRepository;
  private final jakarta.persistence.EntityManager entityManager;
+ private final ReentrantLock noopCreationLock = new ReentrantLock();
+
+ @Value("${spring.datasource.driver-class-name}")
+ private String driverClassName;
 
  /**
  * Add a pending suggestion for the authenticated owner, or return null if it was
@@ -50,7 +58,7 @@ public class CronSuggestionService {
  }
 
  String userId = currentUserId();
- cronSuggestionRepository.lockOwner(userId);
+ lockCreation(userId);
  String normalizedDedupKey = dedupKey.strip();
  if (cronSuggestionRepository.findByUserIdAndDedupKey(userId, normalizedDedupKey).isPresent()) {
  return null;
@@ -70,6 +78,27 @@ public class CronSuggestionService {
  entity.setStatus(STATUS_PENDING);
  entity.setCreatedAt(Instant.now());
  return toRecord(cronSuggestionRepository.save(entity));
+ }
+
+ private void lockCreation(String userId) {
+     if (!"org.h2.Driver".equals(driverClassName)) {
+         cronSuggestionRepository.lockOwner(userId);
+         return;
+     }
+     // The noop H2 database belongs to this process. Hold the lock through
+     // commit, including when a catalog seed adds several rows in one transaction.
+     noopCreationLock.lock();
+     try {
+         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+             @Override
+             public void afterCompletion(int status) {
+                 noopCreationLock.unlock();
+             }
+         });
+     } catch (RuntimeException e) {
+         noopCreationLock.unlock();
+         throw e;
+     }
  }
 
  /** List the current owner's pending suggestions in creation order. */
@@ -231,7 +260,8 @@ public class CronSuggestionService {
   * {@link #addSuggestion}'s dedup — the dismiss latch is never re-offered.
   * Returns the number of NEW suggestions added.
   */
- public synchronized int seedCatalogSuggestions() {
+ @Transactional
+ public int seedCatalogSuggestions() {
      int added = 0;
      for (Object[] e : CATALOG) {
          String key = (String) e[0];

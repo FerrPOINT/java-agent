@@ -80,8 +80,8 @@ public class CronJobController {
         }
         var persisted = cronJobService.findById(entity.getId()).orElse(null);
         String schedulingStatus = persisted == null ? "unknown"
-            : "error".equals(persisted.getLastStatus()) ? "failed"
-            : persisted.getNextRunAt() != null ? "scheduled" : "not_scheduled";
+            : persisted.getNextRunAt() != null ? "scheduled"
+            : "error".equals(persisted.getLastStatus()) ? "failed" : "not_scheduled";
         return java.util.Map.of("accepted", true,
             "jobId", entity.getId().toString(), "name", entity.getName(), "schedulingStatus", schedulingStatus);
     }
