@@ -273,6 +273,43 @@ class AttachmentFlowE2ETest extends PostgresTestContainer {
     }
 
     @Test
+    void gatewayCanClaimExactSessionOnlyOnceAndRecordReceipt() throws Exception {
+        String owner = "701938011";
+        UUID session = UUID.randomUUID();
+        String payload = "outbound fixture " + session;
+        String id = uploadTextArtifactWithSession("report.txt", payload, owner, session);
+        var properties = new com.azhukov.agent.config.AgentProperties();
+        properties.getSecurity().setApiKey("fixture-gateway-key");
+        var gateway = org.springframework.test.web.servlet.setup.MockMvcBuilders.webAppContextSetup(webApplicationContext)
+            .addFilters(new com.azhukov.agent.api.filter.ApiKeyAuthFilter(properties)).build();
+
+        gateway.perform(post("/api/v1/attachments/{id}/outbound", id)
+                .header("X-API-Key", "fixture-gateway-key").param("ownerId", "701938012")
+                .param("sessionId", session.toString()))
+            .andExpect(status().isNotFound());
+        gateway.perform(post("/api/v1/attachments/{id}/outbound", id)
+                .header("X-API-Key", "fixture-gateway-key").param("ownerId", owner)
+                .param("sessionId", UUID.randomUUID().toString()))
+            .andExpect(status().isNotFound());
+        var response = gateway.perform(post("/api/v1/attachments/{id}/outbound", id)
+                .header("X-API-Key", "fixture-gateway-key").param("ownerId", owner).param("sessionId", session.toString()))
+            .andExpect(status().isOk()).andReturn().getResponse();
+        assertThat(response.getContentAsByteArray()).isEqualTo(payload.getBytes(StandardCharsets.UTF_8));
+
+        gateway.perform(post("/api/v1/attachments/{id}/outbound", id)
+                .header("X-API-Key", "fixture-gateway-key").param("ownerId", owner).param("sessionId", session.toString()))
+            .andExpect(status().isConflict());
+        gateway.perform(post("/api/v1/attachments/{id}/delivered", id)
+                .header("X-API-Key", "fixture-gateway-key").param("ownerId", owner).param("sessionId", session.toString())
+                .param("messageId", "420"))
+            .andExpect(status().isOk());
+        gateway.perform(get("/api/v1/attachments/{id}", id)
+                .header("X-API-Key", "fixture-gateway-key").param("ownerId", owner).param("sessionId", session.toString()))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.deliveredMessageId").value("420"));
+    }
+
+    @Test
     void duplicateUploadDedupesByOwnerHashDisposition() throws Exception {
         String ownerId = "e2e-" + UUID.randomUUID().toString().substring(0, 8);
         String first = uploadTextArtifact("same.txt", "identical", ownerId);
