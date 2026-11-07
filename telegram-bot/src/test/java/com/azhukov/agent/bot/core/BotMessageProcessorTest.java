@@ -569,6 +569,31 @@ class BotMessageProcessorTest {
 
     @SuppressWarnings("unchecked")
     @Test
+    void cancelledAfterToolKeepsCommittedSegmentAndClearsReaction() {
+        properties.setStreamingTransport("edit");
+        properties.getDisplay().setToolProgress("off");
+        when(telegramClient.sendMessage(eq(100L), startsWith("Before tool"), isNull(), any(), any(), anyBoolean()))
+            .thenReturn(Optional.of(41L));
+        when(telegramClient.editMessageText(eq(100L), eq(41L), anyString(), eq("MarkdownV2"), eq(false)))
+            .thenReturn(true);
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+            .thenAnswer(inv -> {
+                ((Consumer<String>) inv.getArgument(4)).accept("Before tool");
+                ((Consumer<String>) inv.getArgument(5)).accept("search");
+                ((Consumer<Throwable>) inv.getArgument(11)).accept(new java.util.concurrent.CancellationException("cancelled"));
+                return new AgentBackendClient.ChatResult("Before tool", "model", 1, 10, false, false, null, null, false);
+            });
+        try (DeliveryFixture fixture = realDeliveryFixture()) {
+            fixture.processor().accept(textEvent(1, 100L, "Hello"));
+            verify(telegramClient).editMessageText(eq(100L), eq(41L), contains("Before tool"), eq("MarkdownV2"), eq(false));
+            verify(telegramClient, never()).deleteMessage(100L, 41L);
+            verify(reactionManager).onCancel(100L, 101L);
+            verify(backendClient, never()).chat(anyString(), any(), any());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
     void streamingOffPreservesAnswerBeforeToolAndFinalAnswer() {
         properties.setStreamingTransport("off");
         properties.getDisplay().setToolProgress("off");
