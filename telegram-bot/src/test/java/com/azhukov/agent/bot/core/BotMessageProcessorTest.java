@@ -93,6 +93,11 @@ class BotMessageProcessorTest {
                 return ((TelegramClient) call.getMock()).sendMessage(call.<Long>getArgument(0), call.getArgument(1),
                     call.getArgument(2), call.getArgument(3), call.getArgument(4), call.<Boolean>getArgument(6));
             }
+            if ("editFinalMessage".equals(call.getMethod().getName())) {
+                long id = call.getArgument(1);
+                return ((TelegramClient) call.getMock()).editMessageText(call.<Long>getArgument(0), id,
+                    call.getArgument(2), call.getArgument(3), false) ? Optional.of(id) : Optional.empty();
+            }
             return RETURNS_DEFAULTS.answer(call);
         });
         authorizationService = mock(AuthorizationService.class);
@@ -134,6 +139,26 @@ class BotMessageProcessorTest {
         when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong())).thenReturn(Optional.of(1L));
         when(streamEditor.editStream(anyLong(), anyLong(), anyString())).thenReturn(true);
         when(streamEditor.finalizeStream(anyLong(), anyLong(), anyString())).thenReturn(true);
+        when(streamEditor.finalizeTurn(anyLong(), anyString(), anyLong(), anyLong())).thenAnswer(call -> {
+            var finalClient = mock(TelegramClient.class, request -> {
+                if (!"sendMessageChecked".equals(request.getMethod().getName())) return RETURNS_DEFAULTS.answer(request);
+                long chat = request.getArgument(0);
+                String text = request.getArgument(1);
+                String mode = request.getArgument(2);
+                Long reply = request.getArgument(3);
+                Integer topic = request.getArgument(4);
+                return topic == null ? telegramClient.sendMessage(chat, text, mode, reply, null)
+                    : telegramClient.sendMessage(chat, text, mode, reply, topic, false);
+            });
+            var finalEditor = new StreamEditor(finalClient, properties, mediaDeliveryService,
+                mock(com.azhukov.agent.bot.rich.RichMessageSupport.class));
+            org.springframework.test.util.ReflectionTestUtils.invokeMethod(finalEditor, "init");
+            try {
+                return finalEditor.finalizeTurn(call.getArgument(0), call.getArgument(1), call.getArgument(2), call.getArgument(3));
+            } finally {
+                org.springframework.test.util.ReflectionTestUtils.invokeMethod(finalEditor, "destroy");
+            }
+        });
         doNothing().when(streamEditor).clearStream(anyLong());
         when(responseFilter.shouldFilter(anyString())).thenReturn(false);
         when(slashAccessPolicy.canRun(anyLong(), anyString())).thenReturn(true);

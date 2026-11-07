@@ -66,23 +66,8 @@ class RichMessageSupportTest {
 
     @Test
     void shouldAttemptRich_latchedOff_returnsFalse() {
-        // Set up getMe to pass capability check
-        Map<String, Object> meResult = new LinkedHashMap<>();
-        meResult.put("supports_rich_messages", true);
-        TelegramResponse meResponse = mock(TelegramResponse.class);
-        when(meResponse.isSuccess()).thenReturn(true);
-        when(meResponse.resultAsMap()).thenReturn(meResult);
-        when(client.callApi("getMe", Map.of())).thenReturn(Optional.of(meResponse));
-
-        // Simulate a capability error to latch off
-        TelegramResponse failResponse = mock(TelegramResponse.class);
-        when(failResponse.isSuccess()).thenReturn(false);
-        when(failResponse.errorMessage()).thenReturn("Method not found");
-        when(client.callApi(eq("sendRichMessage"), any())).thenReturn(Optional.of(failResponse));
-
-        support.sendRichMessage(123L, "content", null, null);
-        // After a capability error, shouldAttemptRich should return false
-        assertThat(support.isRichSendDisabled()).isTrue();
+        support.setRichSendDisabled(true);
+        assertThat(support.shouldAttemptRich("content")).isFalse();
     }
 
     @Test

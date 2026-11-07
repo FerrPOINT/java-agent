@@ -36,7 +36,14 @@ class StreamEditorTest {
 
     @BeforeEach
     void setUp() {
-        client = mock(TelegramClient.class);
+        client = mock(TelegramClient.class, call -> {
+            if ("editFinalMessage".equals(call.getMethod().getName())) {
+                long id = call.getArgument(1);
+                return ((TelegramClient) call.getMock()).editMessageText(call.<Long>getArgument(0), id,
+                    call.getArgument(2), call.getArgument(3), false) ? Optional.of(id) : Optional.empty();
+            }
+            return RETURNS_DEFAULTS.answer(call);
+        });
         BotProperties props = new BotProperties();
         props.setStreamEditInterval(Duration.ofMillis(100));
         props.setParseMode("MarkdownV2");
@@ -243,14 +250,14 @@ class StreamEditorTest {
     void finalizeStreamDoesNotResendWhenEditIsUnconfirmed() {
         StreamSession session = editor.sessionFor(123L);
         session.currentMessageId.set(42L);
-        when(client.editMessageText(123L, 42L, "Final text", "MarkdownV2", false))
-            .thenReturn(false);
+        when(client.editFinalMessage(123L, 42L, "Final text", "MarkdownV2"))
+            .thenReturn(Optional.empty());
 
         assertThat(editor.finalizeStream(123L, 42L, "Final text")).isFalse();
 
         assertThat(editor.hasUnconfirmedDelivery(123L)).isTrue();
         assertThat(editor.getSession(123L)).isSameAs(session);
-        verify(client).editMessageText(123L, 42L, "Final text", "MarkdownV2", false);
+        verify(client).editFinalMessage(123L, 42L, "Final text", "MarkdownV2");
         verifyNoMoreInteractions(client);
     }
 
