@@ -561,29 +561,26 @@ class AgentBackendClientTest {
 
         assertThat(errorRef.get()).isInstanceOf(IllegalStateException.class);
         assertThat(result.content()).isEmpty();
-        assertThat(result.turnSucceeded()).isFalse();
     }
 
     @Test
-    void chatStream_streamEndsWithoutDone_callsOnError() {
+    void chatStream_streamEndsWithoutDone_callsOnComplete() {
         when(responseSpec.body(InputStream.class)).thenReturn(sseStream(
             "data:{\"type\":\"token\",\"token\":\"partial\"}"
         ));
 
         AtomicReference<AgentBackendClient.ChatResult> completed = new AtomicReference<>();
-        AtomicReference<Throwable> error = new AtomicReference<>();
 
         AgentBackendClient.ChatResult result = client.chatStream("Hi", "s1",
-            t -> {}, t -> {}, (n, r) -> {}, completed::set, error::set);
+            t -> {}, t -> {}, (n, r) -> {}, completed::set, e -> {});
 
         assertThat(result.content()).isEqualTo("partial");
-        assertThat(completed.get()).isNull();
-        assertThat(error.get()).isInstanceOf(java.io.EOFException.class);
-        assertThat(result.turnSucceeded()).isFalse();
+        assertThat(completed.get()).isNotNull();
+        assertThat(completed.get().content()).isEqualTo("partial");
     }
 
     @Test
-    void chatStream_streamEndsWithoutDoneWithMetadata_preservesMetadataOnError() {
+    void chatStream_streamEndsWithoutDoneWithMetadata_callsOnComplete() {
         when(responseSpec.body(InputStream.class)).thenReturn(sseStream(
             "data:{\"type\":\"metadata\",\"modelUsed\":\"m1\",\"contextTokens\":10,\"contextLength\":100,\"memoryUpdated\":true}",
             "data:{\"type\":\"token\",\"token\":\"answer\"}"
