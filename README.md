@@ -124,7 +124,8 @@ fallback на global key. Настройки и ограничения — [об
 
 - **Global key** (`agent.security.api-key`, env `API_SERVER_KEY`) — админ-доступ; когда пуст — auth выключен (dev-режим).
 - **Per-user ключи** (`agk_…`) выдаются админом через `/api/v1/admin/users/{id}/keys`, хранится только SHA-256 fingerprint. Держатель ключа получает свою userId-область: сессии, память, cron, чекпойнты, usage; приватные скиллы других юзеров недоступны.
-- **CLI**: ключ задаётся env `AGENT_API_KEY` (или `CLI_API_KEY`) и уходит заголовком `X-API-Key` на каждый запрос.
+- **CLI**: для `/suggestions` используйте личный ключ через `CLI_API_KEY`. В локальном Compose он задаётся отдельно от ключа Telegram. При запуске без авторизации CLI работает от локального пользователя.
+- **Telegram**: если задан `TELEGRAM_BOT_TOKEN`, настройте общий ключ `AGENT_SECURITY_API_KEY` у backend и тот же ключ через `BOT_BACKEND_API_KEY` у бота. Ключ Telegram не передаётся в CLI.
 - Порядок включения: задать `API_SERVER_KEY` → создать админа/юзеров через REST (глобальным ключом) → выдать per-user ключи → раздать юзерам.
 
 ### Доступ пользователей Telegram-бота

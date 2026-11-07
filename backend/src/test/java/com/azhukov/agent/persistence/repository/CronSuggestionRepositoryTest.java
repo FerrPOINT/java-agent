@@ -855,7 +855,7 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
                 assertThat(newerStarted.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
                 assertThatThrownBy(() -> newer.get(250, java.util.concurrent.TimeUnit.MILLISECONDS))
                     .isInstanceOf(java.util.concurrent.TimeoutException.class);
-                assertThat(cronJobRepository.findById(job.getId()).orElseThrow().getSchedule()).isEqualTo("every 2h");
+                assertThat(cronJobRepository.findById(job.getId()).orElseThrow().getSchedule()).isEqualTo("every 1h");
                 releaseOlderReconciler.countDown();
                 older.get(10, java.util.concurrent.TimeUnit.SECONDS);
                 newer.get(10, java.util.concurrent.TimeUnit.SECONDS);
@@ -877,20 +877,101 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
 
     @Test
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void delayedCommitCallbackCannotReplaceNewerTimer() throws Exception {
+        var props = (com.azhukov.agent.config.AgentProperties) org.springframework.test.util.ReflectionTestUtils
+            .getField(cronJobService, "properties");
+        boolean enabled = props.getCron().isEnabled();
+        props.getCron().setEnabled(true);
+        var tx = new org.springframework.transaction.support.TransactionTemplate(transactionManager);
+        var olderCommitted = new java.util.concurrent.CountDownLatch(1);
+        var releaseOlder = new java.util.concurrent.CountDownLatch(1);
+        var job = cronJobService.create("publication-race", "every 1h", "work", "local");
+        var timers = (java.util.Map<?, ?>) org.springframework.test.util.ReflectionTestUtils
+            .getField(cronJobService, "scheduledTasks");
+        try (var executor = java.util.concurrent.Executors.newSingleThreadExecutor()) {
+            try {
+                var older = executor.submit(() -> tx.executeWithoutResult(status -> {
+                    org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                        new org.springframework.transaction.support.TransactionSynchronization() {
+                            @Override
+                            public void afterCompletion(int completionStatus) {
+                                olderCommitted.countDown();
+                                try {
+                                    releaseOlder.await(10, java.util.concurrent.TimeUnit.SECONDS);
+                                } catch (InterruptedException e) {
+                                    Thread.currentThread().interrupt();
+                                }
+                            }
+                        });
+                    cronJobService.update(job.getId(), null, "every 2h", null, null, null);
+                }));
+                assertThat(olderCommitted.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                cronJobService.update(job.getId(), null, "every 3h", null, null, null);
+                Object newerTimer = timers.get(job.getId());
+                assertThat(newerTimer).isNotNull();
+                releaseOlder.countDown();
+                older.get(10, java.util.concurrent.TimeUnit.SECONDS);
+                assertThat(timers.get(job.getId())).isSameAs(newerTimer);
+                assertThat(cronJobRepository.findById(job.getId()).orElseThrow().getSchedule()).isEqualTo("every 3h");
+            } finally {
+                releaseOlder.countDown();
+            }
+        } finally {
+            cronJobService.remove(job.getId());
+            props.getCron().setEnabled(enabled);
+        }
+    }
+
+    @Test
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void updateSchedulesWithOnlyOneConnectionAvailable() throws Exception {
+        var pool = dataSource.unwrap(com.zaxxer.hikari.HikariDataSource.class);
+        var properties = (com.azhukov.agent.config.AgentProperties) org.springframework.test.util.ReflectionTestUtils
+            .getField(cronJobService, "properties");
+        boolean enabled = properties.getCron().isEnabled();
+        long timeout = pool.getConnectionTimeout();
+        var job = cronJobService.create("pool-test", "every 1h", "work", "local");
+        var held = new java.util.ArrayList<java.sql.Connection>();
+        try {
+            for (int i = 1; i < pool.getMaximumPoolSize(); i++) held.add(dataSource.getConnection());
+            pool.setConnectionTimeout(500);
+            properties.getCron().setEnabled(true);
+
+            var updated = cronJobService.update(job.getId(), null, "every 2h", null, null, null);
+            assertThat(updated.getNextRunAt()).isAfter(Instant.now().plusSeconds(7100));
+            assertThat(cronJobRepository.findById(job.getId()).orElseThrow().getNextRunAt())
+                .isEqualTo(updated.getNextRunAt());
+        } finally {
+            pool.setConnectionTimeout(timeout);
+            for (var connection : held) connection.close();
+            properties.getCron().setEnabled(enabled);
+            cronJobService.remove(job.getId());
+        }
+    }
+
+    @Test
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     void gatewayOwnerScopeIsRequiredAndIsolatesSuggestions() throws Exception {
         var props = new com.azhukov.agent.config.AgentProperties();
         props.getSecurity().setApiKey("isolated-review-test-key");
-        var filter = new com.azhukov.agent.api.filter.ApiKeyAuthFilter(props);
+        var users = org.mockito.Mockito.mock(com.azhukov.agent.service.UserAccessService.class);
+        var filter = new com.azhukov.agent.api.filter.ApiKeyAuthFilter(props, users);
         var mvc = org.springframework.test.web.servlet.setup.MockMvcBuilders.standaloneSetup(cronController)
             .addFilters(filter).build();
         String first = "701938001";
         String second = "701938002";
+        org.mockito.Mockito.when(users.authenticate("cli-user-key")).thenReturn(
+            new com.azhukov.agent.service.UserAccessService.AuthenticatedUser(first, "user"));
         var tx = new org.springframework.transaction.support.TransactionTemplate(transactionManager);
         var id = tx.execute(s -> cronSuggestionRepository.saveAndFlush(newSuggestion(first, "gateway-owner")).getId());
         try {
             mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/v1/agent/cron/suggestions")
                     .header("X-API-Key", "isolated-review-test-key"))
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isBadRequest());
+            mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/v1/agent/cron/suggestions")
+                    .header("X-API-Key", "cli-user-key"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.length()").value(1));
             for (String owner : java.util.List.of(first, second)) {
                 mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/v1/agent/cron/suggestions")
                         .header("X-API-Key", "isolated-review-test-key").param("ownerId", owner))

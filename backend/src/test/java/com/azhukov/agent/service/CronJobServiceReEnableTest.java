@@ -118,7 +118,7 @@ class CronJobServiceReEnableTest {
         CronJobEntity result = service.resume(id);
 
         assertThat(result.isEnabled()).isTrue();
-        // scheduleJob saves the entity with nextRunAt
-        verify(cronJobRepository, atLeast(2)).save(any(CronJobEntity.class));
+        assertThat(result.getNextRunAt()).isNotNull();
+        verify(cronJobRepository).save(result);
     }
 }
