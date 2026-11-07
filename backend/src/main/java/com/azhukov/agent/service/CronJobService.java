@@ -815,18 +815,23 @@ private static final String CRON_EXECUTION_HINT = """
 
     private Optional<CronJobEntity> reconcileSchedule(UUID id, CronExecutionOutcome outcome) {
         var persisted = lockedSchedule(id);
-        cancelJob(id);
         if (persisted.isEmpty()) {
-            jobLocks.remove(id);
+            publishAfterCommit(() -> {
+                cancelJob(id);
+                jobLocks.remove(id);
+            }, () -> {});
         } else {
             CronJobEntity job = persisted.get();
             if (job.isEnabled() && properties.getCron().isEnabled()) {
                 long delay = calculateDelaySeconds(job.getSchedule());
                 if (outcome != null) delay = delayAfterExecution(job, outcome, delay);
                 scheduleJob(job, delay);
-            } else if (job.getNextRunAt() != null) {
-                job.setNextRunAt(null);
-                cronJobRepository.save(job);
+            } else {
+                if (job.getNextRunAt() != null) {
+                    job.setNextRunAt(null);
+                    cronJobRepository.save(job);
+                }
+                publishAfterCommit(() -> cancelJob(id), () -> {});
             }
         }
         return persisted;
@@ -852,27 +857,20 @@ private static final String CRON_EXECUTION_HINT = """
             job.setLastError("Failed to schedule cron job");
             job.setNextRunAt(null);
             cronJobRepository.save(job);
+            publishAfterCommit(() -> cancelJob(job.getId()), () -> {});
             return;
         }
         try {
             job.setNextRunAt(due);
             cronJobRepository.save(job);
-            var previous = scheduledTasks.put(job.getId(), future);
-            if (previous != null) previous.cancel(false);
-            if (TransactionSynchronizationManager.isActualTransactionActive()) {
-                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                    @Override
-                    public void afterCompletion(int status) {
-                        if (status != STATUS_COMMITTED) {
-                            scheduledTasks.remove(job.getId(), future);
-                            future.cancel(false);
-                        }
-                        persisted.complete(status == STATUS_COMMITTED ? future : null);
-                    }
-                });
-            } else {
+            publishAfterCommit(() -> {
+                var previous = scheduledTasks.put(job.getId(), future);
+                if (previous != null) previous.cancel(false);
                 persisted.complete(future);
-            }
+            }, () -> {
+                future.cancel(false);
+                persisted.complete(null);
+            });
         } catch (RuntimeException e) {
             scheduledTasks.remove(job.getId(), future);
             future.cancel(false);
@@ -880,6 +878,20 @@ private static final String CRON_EXECUTION_HINT = """
             throw e;
         }
         log.debug("Scheduled cron job '{}' to run in {} seconds", job.getName(), delaySeconds);
+    }
+
+    private static void publishAfterCommit(Runnable publish, Runnable rollback) {
+        if (!TransactionSynchronizationManager.isActualTransactionActive()) {
+            publish.run();
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCompletion(int status) {
+                if (status == STATUS_COMMITTED) publish.run();
+                else rollback.run();
+            }
+        });
     }
 
     private void executeAndReschedule(UUID jobId, ScheduledFuture<?> expected, Instant due) {
