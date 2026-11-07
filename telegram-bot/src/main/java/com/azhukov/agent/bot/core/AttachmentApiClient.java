@@ -119,6 +119,38 @@ public class AttachmentApiClient extends BaseBackendClient {
         }
     }
 
+    public record Outbound(String id, String fileName, String mimeType, byte[] bytes) {}
+
+    public java.util.Optional<Outbound> loadOutbound(String id, String owner, UUID sessionId) {
+        try {
+            String path = "/api/v1/attachments/{id}";
+            String json = restClient.get().uri(uri -> uri.path(path).queryParam("ownerId", owner)
+                .queryParam("sessionId", sessionId).build(id)).retrieve().body(String.class);
+            JsonNode metadata = readTree(json);
+            if (metadata == null || !"received".equals(metadata.path("state").asText())) {
+                return java.util.Optional.empty();
+            }
+            byte[] bytes = restClient.get().uri(uri -> uri.path(path + "/content").queryParam("ownerId", owner)
+                .queryParam("sessionId", sessionId).build(id)).retrieve().body(byte[].class);
+            if (bytes == null || bytes.length == 0) return java.util.Optional.empty();
+            return java.util.Optional.of(new Outbound(id, sanitize(metadata.path("fileName").asText("file.bin")),
+                metadata.path("mimeType").asText("application/octet-stream"), bytes));
+        } catch (Exception e) {
+            log.warn("Outbound artifact {} unavailable ({})", id, e.getClass().getSimpleName());
+            return java.util.Optional.empty();
+        }
+    }
+
+    public void markOutboundDelivered(String id, String owner, UUID sessionId, long messageId) {
+        try {
+            restClient.post().uri(uri -> uri.path("/api/v1/attachments/{id}/delivered")
+                .queryParam("ownerId", owner).queryParam("sessionId", sessionId).queryParam("messageId", messageId)
+                .build(id)).retrieve().toBodilessEntity();
+        } catch (Exception e) {
+            log.warn("Could not record outbound artifact {} receipt ({})", id, e.getClass().getSimpleName());
+        }
+    }
+
     /**
      * Fetch artifact metadata by id (null on any failure) — the outbound lane
      * uses this to learn whether an artifact was already delivered.

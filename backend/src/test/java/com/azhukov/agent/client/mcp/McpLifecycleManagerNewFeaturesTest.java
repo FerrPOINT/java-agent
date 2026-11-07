@@ -509,38 +509,31 @@ class McpLifecycleManagerNewFeaturesTest {
         String png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
         byte[] expected = Base64.getDecoder().decode(png);
 
-        String tag = McpLifecycleManager.cacheMcpImageContent(new McpSchema.ImageContent(null, png, "image/png"));
+        String tag = McpLifecycleManager.publishMcpImageContent(new McpSchema.ImageContent(null, png, "image/png"), (d, m, n, bytes) -> "MEDIA:artifact:" + n);
 
-        assertThat(tag).startsWith("MEDIA:");
-        Path path = Path.of(tag.substring("MEDIA:".length()));
-        try {
-            assertThat(path.getFileName().toString()).endsWith(".png");
-            assertThat(Files.readAllBytes(path)).isEqualTo(expected);
-        } finally {
-            Files.deleteIfExists(path);
-        }
+        assertThat(tag).startsWith("MEDIA:artifact:");
     }
 
     @Test
     void cacheMcpImageContentRejectsNonImageMime() {
         String png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
-        assertThat(McpLifecycleManager.cacheMcpImageContent(
-            new McpSchema.ImageContent(null, png, "text/html"))).isEmpty();
+        assertThat(McpLifecycleManager.publishMcpImageContent(
+            new McpSchema.ImageContent(null, png, "text/html"), (d, m, n, bytes) -> "MEDIA:artifact:" + n)).isEmpty();
     }
 
     @Test
     void cacheMcpImageContentRejectsMissingData() {
-        assertThat(McpLifecycleManager.cacheMcpImageContent(
-            new McpSchema.ImageContent(null, "", "image/png"))).isEmpty();
+        assertThat(McpLifecycleManager.publishMcpImageContent(
+            new McpSchema.ImageContent(null, "", "image/png"), (d, m, n, bytes) -> "MEDIA:artifact:" + n)).isEmpty();
     }
 
     @Test
     void cacheMcpImageContentRejectsHtmlMasqueradingAsImage() {
         String html = Base64.getEncoder().encodeToString("<html></html>".getBytes(java.nio.charset.StandardCharsets.UTF_8));
 
-        assertThat(McpLifecycleManager.cacheMcpImageContent(
-            new McpSchema.ImageContent(null, html, "image/png"))).isEmpty();
+        assertThat(McpLifecycleManager.publishMcpImageContent(
+            new McpSchema.ImageContent(null, html, "image/png"), (d, m, n, bytes) -> "MEDIA:artifact:" + n)).isEmpty();
     }
 
     @Test
@@ -548,16 +541,9 @@ class McpLifecycleManagerNewFeaturesTest {
         byte[] jpeg = new byte[] {(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, 0x00, 0x01, (byte) 0xFF, (byte) 0xD9};
         String data = Base64.getEncoder().encodeToString(jpeg);
 
-        String tag = McpLifecycleManager.cacheMcpImageContent(new McpSchema.ImageContent(null, data, "image/jpeg"));
+        String tag = McpLifecycleManager.publishMcpImageContent(new McpSchema.ImageContent(null, data, "image/jpeg"), (d, m, n, bytes) -> "MEDIA:artifact:" + n);
 
-        assertThat(tag).startsWith("MEDIA:");
-        Path path = Path.of(tag.substring("MEDIA:".length()));
-        try {
-            assertThat(path.getFileName().toString()).endsWith(".jpg");
-            assertThat(Files.readAllBytes(path)).isEqualTo(jpeg);
-        } finally {
-            Files.deleteIfExists(path);
-        }
+        assertThat(tag).startsWith("MEDIA:artifact:");
     }
 
     @Test
@@ -623,8 +609,8 @@ class McpLifecycleManagerNewFeaturesTest {
     void cacheMcpAudioContentRejectsNonAudioMime() {
         String data = Base64.getEncoder().encodeToString("x".getBytes(StandardCharsets.US_ASCII));
 
-        assertThat(McpLifecycleManager.cacheMcpAudioContent(
-            new McpSchema.AudioContent(null, data, "application/pdf"))).isEmpty();
+        assertThat(McpLifecycleManager.publishMcpAudioContent(
+            new McpSchema.AudioContent(null, data, "application/pdf"), (d, m, n, bytes) -> "MEDIA:artifact:" + n)).isEmpty();
     }
 
     @Test
@@ -632,16 +618,9 @@ class McpLifecycleManagerNewFeaturesTest {
         byte[] wav = "RIFFfakewav".getBytes(StandardCharsets.US_ASCII);
         String data = Base64.getEncoder().encodeToString(wav);
 
-        String tag = McpLifecycleManager.cacheMcpAudioContent(new McpSchema.AudioContent(null, data, "audio/wav"));
+        String tag = McpLifecycleManager.publishMcpAudioContent(new McpSchema.AudioContent(null, data, "audio/wav"), (d, m, n, bytes) -> "MEDIA:artifact:" + n);
 
-        assertThat(tag).startsWith("MEDIA:");
-        Path path = Path.of(tag.substring("MEDIA:".length()));
-        try {
-            assertThat(path.getFileName().toString()).endsWith(".wav");
-            assertThat(Files.readAllBytes(path)).isEqualTo(wav);
-        } finally {
-            Files.deleteIfExists(path);
-        }
+        assertThat(tag).startsWith("MEDIA:artifact:");
     }
 
     @Test

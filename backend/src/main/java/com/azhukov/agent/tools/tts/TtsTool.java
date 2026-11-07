@@ -28,11 +28,11 @@ import java.util.UUID;
 
 /**
  * Agent tool for text-to-speech synthesis.
- * Saves generated audio to /tmp/ and returns the file path as MEDIA: path.
+ * Saves generated audio to /tmp/ and returns the file path as published MEDIA:artifact reference.
  */
 @AgentTool(
     name = "text_to_speech",
-    description = "Convert text to speech audio. Returns a MEDIA: path that the platform delivers as native audio. Compatible providers render as a voice bubble on Telegram; otherwise audio is sent as a regular attachment. In CLI mode, saves to ~/voice-memos/. Voice and provider are user-configured (built-in providers like edge/openai or custom command providers under tts.providers.<name>), not model-selected.",
+    description = "Convert text to speech audio. Returns a published MEDIA:artifact reference that the platform delivers as native audio. Compatible providers render as a voice bubble on Telegram; otherwise audio is sent as a regular attachment. In CLI mode, saves to ~/voice-memos/. Voice and provider are user-configured (built-in providers like edge/openai or custom command providers under tts.providers.<name>), not model-selected.",
     toolset = "tts"
 )
 @Component
@@ -58,6 +58,7 @@ public class TtsTool implements ToolHandler {
 
     private final List<TtsProvider> providers;
     private final AgentProperties properties;
+    private final com.azhukov.agent.service.AttachmentArtifactService artifacts;
 
 
     /**
@@ -110,6 +111,7 @@ public class TtsTool implements ToolHandler {
 
         Path baseOutputPath = resolveOutputPath(args.outputPath());
         List<Path> writtenPaths = new ArrayList<>();
+        List<String> mediaTags = new ArrayList<>();
         try {
             for (int i = 0; i < chunks.size(); i++) {
                 Path outputPath = chunks.size() == 1
@@ -126,10 +128,14 @@ public class TtsTool implements ToolHandler {
                 }
                 Files.write(outputPath, audio);
                 writtenPaths.add(outputPath);
+                if (session != null) {
+                    String name = outputPath.getFileName().toString().replaceAll("[^A-Za-z0-9._-]", "_");
+                    mediaTags.add(artifacts.publishGenerated(session, "audio", "audio/mpeg", name, audio));
+                }
             }
 
             log.debug("TTS generated {} file(s) for provider={}", writtenPaths.size(), provider.name());
-            return ToolResult.ok(jsonSuccessResponse(writtenPaths, provider.name(), chunks.size()));
+            return ToolResult.ok(jsonSuccessResponse(writtenPaths, mediaTags, provider.name(), chunks.size()));
         } catch (Exception e) {
             for (Path path : writtenPaths) {
                 try {
@@ -165,7 +171,7 @@ public class TtsTool implements ToolHandler {
         return new ToolResult(false, response.toString(), error);
     }
 
-    private String jsonSuccessResponse(List<Path> paths, String provider, int chunkCount) {
+    private String jsonSuccessResponse(List<Path> paths, List<String> tags, String provider, int chunkCount) {
         ObjectNode response = MAPPER.createObjectNode();
         response.put("success", true);
         response.put("file_path", paths.getFirst().toString());
@@ -173,7 +179,7 @@ public class TtsTool implements ToolHandler {
         for (Path path : paths) {
             filePaths.add(path.toString());
         }
-        response.put("media_tag", mediaTag(paths));
+        response.put("media_tag", String.join("\n", tags));
         response.put("provider", provider);
         response.put("voice_compatible", false);
         response.put("chunk_count", chunkCount);
@@ -182,12 +188,7 @@ public class TtsTool implements ToolHandler {
         return response.toString();
     }
 
-    private String mediaTag(List<Path> paths) {
-        return paths.stream()
-            .map(path -> "MEDIA:" + path)
-            .reduce((left, right) -> left + "\n" + right)
-            .orElse("");
-    }
+
 
     private String errorMessage(Exception e) {
         return e.getMessage() == null || e.getMessage().isBlank()

@@ -283,7 +283,6 @@ class BrowserServiceUnitTest {
             assertThat(screenshot.success()).isTrue();
             assertThat(screenshot.dataUrl()).isEqualTo("data:image/png;base64," + data);
             assertThat(screenshot.screenshotPath()).contains(home.resolve("state").toString());
-            assertThat(screenshot.mediaTag()).isEqualTo("MEDIA:" + screenshot.screenshotPath());
             assertThat(screenshot.mimeType()).isEqualTo("image/png");
             Path path = Path.of(screenshot.screenshotPath());
             try {

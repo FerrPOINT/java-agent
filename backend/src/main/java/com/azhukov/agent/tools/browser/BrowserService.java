@@ -862,16 +862,15 @@ public class BrowserService {
     public record BrowserScreenshot(boolean success,
                                     String dataUrl,
                                     String screenshotPath,
-                                    String mediaTag,
-                                    String mimeType,
+                                                                        String mimeType,
                                     String error) {
         static BrowserScreenshot success(String dataUrl, Path path) {
             String normalizedPath = path.toAbsolutePath().normalize().toString();
-            return new BrowserScreenshot(true, dataUrl, normalizedPath, "MEDIA:" + normalizedPath, "image/png", null);
+            return new BrowserScreenshot(true, dataUrl, normalizedPath, "image/png", null);
         }
 
         static BrowserScreenshot failure(String error) {
-            return new BrowserScreenshot(false, null, null, null, null, error);
+            return new BrowserScreenshot(false, null, null, null, error);
         }
     }
 }

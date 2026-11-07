@@ -81,6 +81,14 @@ public class McpLifecycleManager {
     private final ToolFingerprintStore fingerprintStore;
     private final SlidingWindowRateLimiter rateLimiter;
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.azhukov.agent.service.AttachmentArtifactService artifacts;
+
+    @FunctionalInterface
+    interface MediaPublisher {
+        String publish(String disposition, String mimeType, String name, byte[] bytes);
+    }
+
     /**
      * Lazy startup seam (Hermes #56832 / tools/mcp_schema_cache.py parity):
      * the durable schema cache turns a cold boot into a no-spawn registration.
@@ -1427,7 +1435,11 @@ public class McpLifecycleManager {
     }
 
     public String formatCallToolResult(McpSchema.CallToolResult result, String serverName) {
-        String text = renderContentBlocks(result == null ? null : result.content(), serverName);
+        return formatCallToolResult(result, serverName, null);
+    }
+
+    private String formatCallToolResult(McpSchema.CallToolResult result, String serverName, MediaPublisher publisher) {
+        String text = renderContentBlocks(result == null ? null : result.content(), serverName, publisher);
         text = truncateMcpTextResult(text);
         Object structuredContent = result == null ? null : result.structuredContent();
         structuredContent = capStructuredContent(structuredContent);
@@ -2142,9 +2154,9 @@ public class McpLifecycleManager {
         return false;
     }
 
-    private static String renderContentBlocks(List<McpSchema.Content> contents, String serverName) {
+    private static String renderContentBlocks(List<McpSchema.Content> contents, String serverName, MediaPublisher publisher) {
         return safeList(contents).stream()
-            .map(content -> contentText(content, serverName))
+            .map(content -> contentText(content, serverName, publisher))
             .filter(text -> text != null && !text.isBlank())
             .collect(Collectors.joining("\n"));
     }
@@ -2192,10 +2204,10 @@ public class McpLifecycleManager {
     }
 
     private static String contentText(McpSchema.Content content) {
-        return contentText(content, "");
+        return contentText(content, "", null);
     }
 
-    private static String contentText(McpSchema.Content content, String serverName) {
+    private static String contentText(McpSchema.Content content, String serverName, MediaPublisher publisher) {
         if (content == null) {
             return "";
         }
@@ -2203,10 +2215,10 @@ public class McpLifecycleManager {
             return stripUnicodeTags(text.text());
         }
         if (content instanceof McpSchema.ImageContent image) {
-            return cacheMcpImageContent(image);
+            return publishMcpImageContent(image, publisher);
         }
         if (content instanceof McpSchema.AudioContent audio) {
-            return cacheMcpAudioContent(audio);
+            return publishMcpAudioContent(audio, publisher);
         }
         if (content instanceof McpSchema.ResourceLink link) {
             return resourceLinkText(link, serverName);
@@ -2228,7 +2240,7 @@ public class McpLifecycleManager {
         };
     }
 
-    static String cacheMcpImageContent(McpSchema.ImageContent image) {
+    static String publishMcpImageContent(McpSchema.ImageContent image, MediaPublisher publisher) {
         if (image == null || image.data() == null || image.data().isBlank()) {
             return "";
         }
@@ -2253,17 +2265,8 @@ public class McpLifecycleManager {
         if (!looksLikeImage(bytes)) {
             return "";
         }
-        try {
-            Path cacheDir = Path.of(System.getProperty("java.io.tmpdir"), "java-agent", "mcp-media", "images");
-            Files.createDirectories(cacheDir);
-            String filename = "mcp-" + UUID.randomUUID() + mcpImageExtensionForMimeType(normalizedMime);
-            Path output = cacheDir.resolve(filename).toAbsolutePath().normalize();
-            Files.write(output, bytes, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
-            return "MEDIA:" + output;
-        } catch (Exception e) {
-            log.warn("MCP image block cache failed: {}", e.toString());
-            return "";
-        }
+        if (publisher == null) return "[MCP image requires an active session]";
+        return publisher.publish("photo", normalizedMime, "mcp" + mcpImageExtensionForMimeType(normalizedMime), bytes);
     }
 
     static String mcpAudioExtensionForMimeType(String mimeType) {
@@ -2279,7 +2282,7 @@ public class McpLifecycleManager {
         };
     }
 
-    static String cacheMcpAudioContent(McpSchema.AudioContent audio) {
+    static String publishMcpAudioContent(McpSchema.AudioContent audio, MediaPublisher publisher) {
         if (audio == null || audio.data() == null || audio.data().isBlank()) {
             return "";
         }
@@ -2298,13 +2301,8 @@ public class McpLifecycleManager {
         if (bytes.length > MCP_RESOURCE_MAX_BYTES) {
             return "[MCP audio resource too large to cache: " + bytes.length + " bytes]";
         }
-        try {
-            Path output = cacheMcpBytes(bytes, "audio", "mcp-" + UUID.randomUUID() + mcpAudioExtensionForMimeType(normalizedMime));
-            return "MEDIA:" + output;
-        } catch (Exception e) {
-            log.warn("MCP audio block cache failed: {}", e.toString());
-            return "";
-        }
+        if (publisher == null) return "[MCP audio requires an active session]";
+        return publisher.publish("audio", normalizedMime, "mcp" + mcpAudioExtensionForMimeType(normalizedMime), bytes);
     }
 
     private static String normalizedMimeType(String mimeType) {
@@ -2604,12 +2602,14 @@ public class McpLifecycleManager {
                 var result = executeTool(serverName, toolName, arguments);
                 // ── Response security scan ──
                 String output;
+                MediaPublisher publisher = session == null ? null
+                    : (kind, mime, name, bytes) -> artifacts.publishGenerated(session, kind, mime, name, bytes);
                 if (Boolean.TRUE.equals(result.isError())) {
-                    output = renderContentBlocks(result.content(), serverName);
+                    output = renderContentBlocks(result.content(), serverName, publisher);
                     // H-SYNC: Strip invisible Unicode TAG characters from MCP tool output
                     output = com.azhukov.agent.core.security.UnicodeTagStripper.stripUnicodeTags(output);
                 } else {
-                    output = formatCallToolResult(result, serverName);
+                    output = formatCallToolResult(result, serverName, publisher);
                 }
                 String safeOutput = output;
                 if (responseScanner != null) {

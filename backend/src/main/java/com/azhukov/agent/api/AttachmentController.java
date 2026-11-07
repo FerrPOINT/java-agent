@@ -98,17 +98,23 @@ public class AttachmentController {
     }
 
     @GetMapping("/{id}")
-    public AttachmentArtifact get(@PathVariable("id") String id) {
-        return service().find(id, scopedOwner())
+    public AttachmentArtifact get(@PathVariable("id") String id,
+            @RequestParam(name = "ownerId", required = false) String ownerId,
+            @RequestParam(name = "sessionId", required = false) UUID sessionId) {
+        String owner = checkedArtifactOwner(id, ownerId, sessionId);
+        return service().find(id, owner)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "unknown artifact " + id));
     }
 
     /** Attachment block injected into the turn (bounded text preview or path reference). */
     @GetMapping("/{id}/content")
-    public ResponseEntity<Resource> content(@PathVariable("id") String id) {
-        AttachmentArtifact artifact = service().find(id, scopedOwner())
+    public ResponseEntity<Resource> content(@PathVariable("id") String id,
+            @RequestParam(name = "ownerId", required = false) String ownerId,
+            @RequestParam(name = "sessionId", required = false) UUID sessionId) {
+        String owner = checkedArtifactOwner(id, ownerId, sessionId);
+        AttachmentArtifact artifact = service().find(id, owner)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "unknown artifact " + id));
-        Path path = service().contentPath(id, scopedOwner())
+        Path path = service().contentPath(id, owner)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "artifact content is gone " + id));
         if (!Files.isReadable(path)) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "artifact content is gone " + id);
@@ -132,8 +138,11 @@ public class AttachmentController {
      */
     @PostMapping("/{id}/delivered")
     public Map<String, Object> delivered(@PathVariable("id") String id,
+            @RequestParam(name = "ownerId", required = false) String ownerId,
+            @RequestParam(name = "sessionId", required = false) UUID sessionId,
             @RequestParam(value = "messageId", required = false) String messageId) {
-        boolean ok = service().markDelivered(id, scopedOwner(), messageId);
+        String owner = checkedArtifactOwner(id, ownerId, sessionId);
+        boolean ok = service().markDelivered(id, owner, messageId);
         if (!ok) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "unknown artifact " + id);
         }
@@ -143,6 +152,18 @@ public class AttachmentController {
     @GetMapping("/session/{sessionId}")
     public List<AttachmentArtifact> bySession(@PathVariable("sessionId") UUID sessionId) {
         return service().bySession(sessionId, scopedOwner());
+    }
+
+    private String checkedArtifactOwner(String id, String ownerId, UUID sessionId) {
+        if (ownerId == null && sessionId == null) return scopedOwner();
+        if (sessionId == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Artifact session ID required");
+        }
+        String owner = UserContext.requireRequestOwner(ownerId);
+        if (!service().isAvailableInSession(id, owner, sessionId)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Unknown artifact");
+        }
+        return owner;
     }
 
     private static String scopedOwner() {

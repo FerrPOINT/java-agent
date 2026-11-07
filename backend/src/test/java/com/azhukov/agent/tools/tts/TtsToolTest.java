@@ -37,18 +37,24 @@ class TtsToolTest {
     @Mock
     private TtsProvider alternateProvider;
 
+    @Mock
+    private com.azhukov.agent.service.AttachmentArtifactService artifacts;
+    private final com.azhukov.agent.core.model.Session session =
+        com.azhukov.agent.core.model.Session.create("owner", "provider", "model");
+    private static final String ARTIFACT = "MEDIA:artifact:att_0123456789abcdef0123456789abcdef";
     private TtsTool tool;
 
     @BeforeEach
     void setUp() {
         AgentProperties properties = new AgentProperties();
+        lenient().when(artifacts.publishGenerated(eq(session), eq("audio"), anyString(), anyString(), any())).thenReturn(ARTIFACT);
         lenient().when(provider.name()).thenReturn("edge");
-        tool = new TtsTool(List.of(provider), properties);
+        tool = new TtsTool(List.of(provider), properties, artifacts);
     }
 
     @Test
     void synthesize_malformedToolArgumentsReturnsStructuredError() throws Exception {
-        ToolResult result = tool.execute("{", null, null);
+        ToolResult result = tool.execute("{", null, session);
 
         assertThat(result.success()).isFalse();
         JsonNode response = json(result);
@@ -66,7 +72,7 @@ class TtsToolTest {
         String args = """
             {"text":"Hello world"}
             """;
-        ToolResult result = tool.execute(args, null, null);
+        ToolResult result = tool.execute(args, null, session);
 
         assertThat(result.success()).isTrue();
         JsonNode response = json(result);
@@ -81,7 +87,7 @@ class TtsToolTest {
         assertThat(savedPath.getFileName().toString()).startsWith("tts_");
         assertThat(Files.exists(savedPath)).isTrue();
         assertThat(Files.readAllBytes(savedPath)).isEqualTo(audioBytes);
-        assertThat(response.get("media_tag").asText()).isEqualTo("MEDIA:" + savedPath);
+        assertThat(response.get("media_tag").asText()).isEqualTo(ARTIFACT);
 
         Files.deleteIfExists(savedPath);
     }
@@ -93,7 +99,7 @@ class TtsToolTest {
 
         ToolResult result = tool.execute("""
             {"text":"<think>hidden chain</think> **Hello** [world](https://example.com)"}
-            """, null, null);
+            """, null, session);
 
         assertThat(result.success()).isTrue();
         verify(provider).synthesize(eq("Hello world"), any(), any(), any());
@@ -105,7 +111,7 @@ class TtsToolTest {
     void synthesize_rejectsTextThatBecomesEmptyAfterCleanup() throws Exception {
         ToolResult result = tool.execute("""
             {"text":"<think>hidden chain</think>"}
-            """, null, null);
+            """, null, session);
 
         assertThat(result.success()).isFalse();
         JsonNode response = json(result);
@@ -121,13 +127,13 @@ class TtsToolTest {
         when(provider.synthesize(eq("Hello"), any(), any(), any())).thenReturn(audioBytes);
         Path requested = Files.createTempDirectory("tts-output-").resolve("nested/custom.mp3");
 
-        ToolResult result = tool.execute("{\"text\":\"Hello\",\"output_path\":\"" + jsonPath(requested) + "\"}", null, null);
+        ToolResult result = tool.execute("{\"text\":\"Hello\",\"output_path\":\"" + jsonPath(requested) + "\"}", null, session);
 
         assertThat(result.success()).isTrue();
         JsonNode response = json(result);
         Path actualPath = Path.of(response.get("file_path").asText());
         assertThat(actualPath).isEqualTo(requested.toAbsolutePath().normalize());
-        assertThat(response.get("media_tag").asText()).isEqualTo("MEDIA:" + requested.toAbsolutePath().normalize());
+        assertThat(response.get("media_tag").asText()).isEqualTo(ARTIFACT);
         assertThat(Files.readAllBytes(requested)).isEqualTo(audioBytes);
         Files.deleteIfExists(requested);
         Files.deleteIfExists(requested.getParent());
@@ -137,10 +143,10 @@ class TtsToolTest {
     @Test
     void synthesize_usesRequestedProviderAndClampsSpeed() throws Exception {
         lenient().when(alternateProvider.name()).thenReturn("openai");
-        tool = new TtsTool(List.of(provider, alternateProvider), new AgentProperties());
+        tool = new TtsTool(List.of(provider, alternateProvider), new AgentProperties(), artifacts);
         when(alternateProvider.synthesize(eq("Hello"), any(), eq(4.0), any())).thenReturn("audio".getBytes());
 
-        ToolResult result = tool.execute("{\"text\":\"Hello\",\"provider\":\"openai\",\"speed\":99}", null, null);
+        ToolResult result = tool.execute("{\"text\":\"Hello\",\"provider\":\"openai\",\"speed\":99}", null, session);
 
         assertThat(result.success()).isTrue();
         verify(alternateProvider).synthesize(eq("Hello"), any(), eq(4.0), any());
@@ -154,10 +160,10 @@ class TtsToolTest {
         properties.getTts().setProvider("openai");
         when(provider.name()).thenReturn("openai");
         when(provider.synthesize(any(), any(), any(), any())).thenReturn("audio".getBytes());
-        tool = new TtsTool(List.of(provider), properties);
+        tool = new TtsTool(List.of(provider), properties, artifacts);
 
         String longText = "hello ".repeat(900);
-        ToolResult result = tool.execute("{\"text\":\"" + longText + "\"}", null, null);
+        ToolResult result = tool.execute("{\"text\":\"" + longText + "\"}", null, session);
 
         assertThat(result.success()).isTrue();
         JsonNode response = json(result);
@@ -184,11 +190,11 @@ class TtsToolTest {
         when(provider.synthesize(any(), any(), any(), any()))
             .thenReturn("chunk-one".getBytes())
             .thenThrow(new RuntimeException("boom"));
-        tool = new TtsTool(List.of(provider), properties);
+        tool = new TtsTool(List.of(provider), properties, artifacts);
 
         Path requested = dir.resolve("voice.mp3");
         String longText = "hello ".repeat(900);
-        ToolResult result = tool.execute("{\"text\":\"" + longText + "\",\"output_path\":\"" + jsonPath(requested) + "\"}", null, null);
+        ToolResult result = tool.execute("{\"text\":\"" + longText + "\",\"output_path\":\"" + jsonPath(requested) + "\"}", null, session);
 
         assertThat(result.success()).isFalse();
         JsonNode response = json(result);
@@ -201,7 +207,7 @@ class TtsToolTest {
 
     @Test
     void synthesize_rejectsTraversalOutputPath() throws Exception {
-        ToolResult result = tool.execute("{\"text\":\"Hello\",\"output_path\":\"tmp/../secret.mp3\"}", null, null);
+        ToolResult result = tool.execute("{\"text\":\"Hello\",\"output_path\":\"tmp/../secret.mp3\"}", null, session);
 
         assertThat(result.success()).isFalse();
         JsonNode response = json(result);
@@ -212,12 +218,12 @@ class TtsToolTest {
 
     @Test
     void synthesize_noProvider_returnsFailureJson() throws Exception {
-        tool = new TtsTool(List.of(), new AgentProperties());
+        tool = new TtsTool(List.of(), new AgentProperties(), artifacts);
 
         String args = """
             {"text":"Hello"}
             """;
-        ToolResult result = tool.execute(args, null, null);
+        ToolResult result = tool.execute(args, null, session);
 
         assertThat(result.success()).isFalse();
         JsonNode response = json(result);
@@ -231,7 +237,7 @@ class TtsToolTest {
         String args = """
             {"text":""}
             """;
-        ToolResult result = tool.execute(args, null, null);
+        ToolResult result = tool.execute(args, null, session);
 
         assertThat(result.success()).isFalse();
         JsonNode response = json(result);

@@ -87,11 +87,6 @@ class BotMessageProcessorTest {
     private final com.azhukov.agent.bot.session.BotSessionStore sessionStoreMock = org.mockito.Mockito.mock(com.azhukov.agent.bot.session.BotSessionStore.class);
 
 
-    @AfterEach
-    void closeMediaRoots() {
-        processor.closeMediaRoots();
-    }
-
     @BeforeEach
     void setUp() {
         telegramClient = mock(TelegramClient.class);
