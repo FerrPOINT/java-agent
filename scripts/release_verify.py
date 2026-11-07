@@ -181,8 +181,10 @@ def main() -> int:
     ))
     if args.run_slow:
         record(run_command("slow-postgresql-integration", gradle + [":backend:fullCheck"], args.timeout))
+        record(run_command("slow-telegram-delivery", gradle + [":telegram-bot:streamDeliveryTest"], args.timeout))
     else:
         record(not_run("slow-postgresql-integration", "manual only; pass --run-slow"))
+        record(not_run("slow-telegram-delivery", "manual only; pass --run-slow"))
     if args.skip_boot_jars:
         record(not_run("boot-jars", "disabled by --skip-boot-jars"))
     else:

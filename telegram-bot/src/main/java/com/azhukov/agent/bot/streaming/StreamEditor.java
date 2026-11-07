@@ -638,11 +638,6 @@ public class StreamEditor {
 
     boolean finalizeStream(long chatId, long messageId, String finalText, StreamSession session) {
         if (session.partialFinalDelivery) return false;
-        if (session.deferredDelivery != null) {
-            stopHeartbeat(session);
-            sendFormattedFinalMessage(chatId, scrubThinkFinal(session, finalText));
-            return false;
-        }
         // R8: close orphaned code fences BEFORE delivery (Hermes ensure_closed_code_fences)
         finalText = ensureClosedCodeFences(finalText);
         // Stop heartbeat
@@ -658,6 +653,7 @@ public class StreamEditor {
         // If the final text is a silence marker, retract the streaming message instead
         // of showing NO_REPLY/[SILENT]/*** to the user.
         if (finalText.isBlank() || SilenceMarkerUtils.isSilenceMarker(finalText)) {
+            if (session.deferredDelivery != null) return false;
             log.debug("Silence marker detected for chat {}, retracting streaming message", chatId);
             try {
                 if (messageId > 0) telegramClient.deleteMessage(chatId, messageId);
@@ -670,6 +666,10 @@ public class StreamEditor {
 
         long current = session.currentMessageId.get();
         long preview = current > 0 ? current : messageId;
+        if (session.deferredDelivery != null) {
+            enqueueDelivery(chatId, session, formattedOperations(chatId, finalText, session, preview));
+            return false;
+        }
         String formatted = formatForTelegramDelegate(finalText);
         boolean fresh = freshFinalTimeoutMs > 0 && session.streamStartTime != 0
             && System.currentTimeMillis() - session.streamStartTime > freshFinalTimeoutMs;
@@ -934,7 +934,10 @@ public class StreamEditor {
             sendFormattedFinalMessage(chatId, scrubbed);
         } else {
             String formatted = formatForTelegramDelegate(scrubbed);
-            enqueueDelivery(chatId, session, List.of(editOperation(chatId, effectiveMessageId, scrubbed, formatted, parseMode)));
+            var operations = formatted.length() > MessageSplitter.TELEGRAM_MAX_LENGTH
+                ? formattedOperations(chatId, scrubbed, session, effectiveMessageId)
+                : List.of(editOperation(chatId, effectiveMessageId, scrubbed, formatted, parseMode));
+            enqueueDelivery(chatId, session, operations);
         }
         // Clear the tool name since the tool is done
         session.currentToolName = null;
@@ -1261,7 +1264,9 @@ public class StreamEditor {
                         return Optional.empty();
                     }
                     session.delivery.removeFirst();
-                    if (operation.replacedPreview() > 0) session.replacedPreviewId = operation.replacedPreview();
+                }
+                if (operation.replacedPreview() > 0) {
+                    removeReplacedPreview(chatId, operation.replacedPreview());
                 }
             } catch (TelegramClient.SendRefusalException refusal) {
                 synchronized (session) { scheduleDelivery(chatId, session, refusal.getRetryAfterSeconds()); }
@@ -1341,18 +1346,21 @@ public class StreamEditor {
     public void afterConfirmedDelivery(long chatId) {
         StreamSession session = sessions.get(chatId);
         if (session == null) return;
-        long preview;
         List<Runnable> after;
         synchronized (session) {
-            preview = session.replacedPreviewId;
-            session.replacedPreviewId = 0;
             after = List.copyOf(session.afterDelivery);
             session.afterDelivery.clear();
         }
-        if (preview > 0 && !telegramClient.deleteMessage(chatId, preview)) {
-            log.warn("Could not remove replaced Telegram preview {} for chat {}", preview, chatId);
-        }
         after.forEach(Runnable::run);
+    }
+
+    private void removeReplacedPreview(long chatId, long preview) {
+        try {
+            if (telegramClient.deleteMessage(chatId, preview)) return;
+        } catch (RuntimeException error) {
+            log.debug("Telegram preview removal failed", error);
+        }
+        log.warn("Could not remove replaced Telegram preview {} for chat {}", preview, chatId);
     }
 
     public boolean isFinishingDelivery(long chatId) {

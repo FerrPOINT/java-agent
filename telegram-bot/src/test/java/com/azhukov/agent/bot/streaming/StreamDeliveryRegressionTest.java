@@ -51,6 +51,46 @@ class StreamDeliveryRegressionTest {
 
     @Test
     @Tag("slow")
+    void silentFinalLeavesEarlierDeferredSegmentQueued() throws Exception {
+        when(client.sendMessageChecked(eq(101L), eq("earlier"), any(), any(), any(), isNull(), anyBoolean()))
+            .thenThrow(new TelegramClient.SendRefusalException(1, "rate limit")).thenReturn(Optional.of(1L));
+        var editor = editor(false, 0);
+        try {
+            editor.sendFormattedFinalMessage(101L, "earlier");
+            assertThat(editor.finalizeStream(101L, -1L, "<think>hidden</think>NO_REPLY")).isFalse();
+            assertThat(editor.sealDeferredDelivery(101L).get(5, SECONDS)).isTrue();
+            verify(client, times(2)).sendMessageChecked(
+                eq(101L), eq("earlier"), any(), any(), any(), isNull(), anyBoolean());
+            verifyNoMoreInteractions(client);
+        } finally {
+            editor.destroy();
+        }
+    }
+
+    @Test
+    void oversizedToolSegmentIsSplitBeforeFinalDelivery() {
+        when(client.sendMessageChecked(eq(101L), anyString(), any(), any(), any(), isNull(), anyBoolean()))
+            .thenReturn(Optional.of(17L));
+        var editor = editor(false, 0);
+        try {
+            var session = editor.sessionFor(101L);
+            session.currentMessageId.set(42L);
+            editor.onSegmentBreak(101L, 42L, "word ".repeat(1000), session);
+            assertThat(editor.finalizeStream(101L, -1L, "final")).isTrue();
+
+            var messages = org.mockito.ArgumentCaptor.forClass(String.class);
+            verify(client, atLeast(3)).sendMessageChecked(
+                eq(101L), messages.capture(), any(), any(), any(), isNull(), anyBoolean());
+            assertThat(messages.getAllValues()).allMatch(message -> message.length() <= 4096);
+            assertThat(messages.getAllValues().getLast()).isEqualTo("final");
+            verify(client).deleteMessage(101L, 42L);
+        } finally {
+            editor.destroy();
+        }
+    }
+
+    @Test
+    @Tag("slow")
     void slowRetryDoesNotBlockAnotherDueRetry() throws Exception {
         var editor = editor(false, 0);
         var firstStarted = new CountDownLatch(1);

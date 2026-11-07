@@ -97,7 +97,6 @@ public class StreamSession {
     java.util.concurrent.ScheduledFuture<?> deliveryRetry;
     long floodDeliveryDeadlineNanos;
     boolean deliveryDraining;
-    long replacedPreviewId;
     volatile boolean deliverySealed;
     volatile boolean deliveryCancelled;
     final java.util.List<Runnable> afterDelivery = new java.util.ArrayList<>();
