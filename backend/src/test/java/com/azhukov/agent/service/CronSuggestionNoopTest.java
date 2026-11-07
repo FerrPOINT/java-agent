@@ -26,13 +26,17 @@ class CronSuggestionNoopTest extends NoopSpringIntegrationTest {
             var second = workers.submit(() -> seed(owner, start));
             start.countDown();
 
-            assertThat(first.get(15, TimeUnit.SECONDS) + second.get(15, TimeUnit.SECONDS)).isEqualTo(5);
+            assertThat(first.get(15, TimeUnit.SECONDS) + second.get(15, TimeUnit.SECONDS)).isEqualTo(4);
         }
 
         UserContext.set(owner, UserContext.ROLE_USER);
         try {
-            assertThat(suggestions.listPending()).hasSize(5);
+            assertThat(suggestions.listPending()).hasSize(4);
             assertThat(suggestions.seedCatalogSuggestions()).isZero();
+            var job = new CronSuggestionService.JobSpec("extra", "every 1h", "prompt", "local", null);
+            assertThat(suggestions.addSuggestion("fifth", "", "test", job, "fifth")).isNotNull();
+            assertThat(suggestions.addSuggestion("sixth", "", "test", job, "sixth")).isNull();
+            assertThat(suggestions.listPending()).hasSize(5);
         } finally {
             UserContext.clear();
         }
