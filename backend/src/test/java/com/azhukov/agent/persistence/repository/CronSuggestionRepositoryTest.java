@@ -805,6 +805,7 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
                 case "remove" -> assertThat(persisted).isEmpty();
             }
             assertThat(callbacks).hasSize(scheduledAfterChange);
+            persisted.ifPresent(current -> assertThat(current.getLastStatus()).isNull());
         } finally {
             release.countDown();
             executor.shutdownNow();

@@ -47,6 +47,7 @@ public interface CronJobRepository extends JpaRepository<CronJobEntity, UUID> {
             j.monitorLastOutput = :#{#run.monitorLastOutput},
             j.monitorLastChangedAt = :#{#run.monitorLastChangedAt}
         where j.id = :#{#run.id}
+          and j.nextRunAt is not distinct from :#{#run.nextRunAt}
         """)
     int recordRun(@org.springframework.data.repository.query.Param("run") CronJobEntity run);
 
