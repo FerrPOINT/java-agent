@@ -162,6 +162,30 @@ class ReadFileToolTest {
         assertThat(r.content()).doesNotContain("4|d");
     }
 
+    @Test
+    void largePaginationDoesNotOverflow(@TempDir Path dir) throws Exception {
+        Path file = dir.resolve("lines.txt");
+        Files.writeString(file, "a\nb");
+        ToolResult result = newTool().execute("{\"path\":\"" + jsonPath(file)
+            + "\",\"offset\":2147483647,\"limit\":2147483647}", null, session);
+        assertThat(result.success()).isTrue();
+        var response = new com.fasterxml.jackson.databind.ObjectMapper().readTree(result.content());
+        assertThat(response.path("hint").asText()).contains("beyond the end");
+        assertThat(response.path("truncated").asBoolean()).isFalse();
+    }
+
+    @Test
+    void inRangeOffsetWithMaximumLimitReturnsAllRemainingLines(@TempDir Path dir) throws Exception {
+        Path file = dir.resolve("lines.txt");
+        Files.writeString(file, "a\nb\nc");
+        ToolResult result = newTool().execute("{\"path\":\"" + jsonPath(file)
+            + "\",\"offset\":2,\"limit\":2147483647}", null, session);
+        assertThat(result.success()).isTrue();
+        var response = new com.fasterxml.jackson.databind.ObjectMapper().readTree(result.content());
+        assertThat(response.path("content").asText()).isEqualTo("2|b\n3|c");
+        assertThat(response.path("truncated").asBoolean()).isFalse();
+    }
+
     // ── Binary file detection ──────────────────────────────────────────
 
     @Test

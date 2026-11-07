@@ -57,6 +57,13 @@ public class ToolExecutionService {
     // hook): pattern-matched warnings appended to write_file/patch results.
     // Non-blocking — the write already happened; the model self-corrects.
     private com.azhukov.agent.core.security.SecurityGuidanceScanner securityGuidanceScanner;
+    private com.azhukov.agent.core.agent.InterruptToken interruptToken;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setInterruptToken(com.azhukov.agent.core.agent.InterruptToken interruptToken) {
+        this.interruptToken = interruptToken;
+    }
+
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
     /** P10 parity (tool_executor.py:708,726): mutating tools are dispatched once —
      *  no automatic retry. A RuntimeException after the side effect (file written,
@@ -149,7 +156,21 @@ public class ToolExecutionService {
                 long timeout = NO_TOOL_TIMEOUT.contains(toolName)
                     ? java.lang.Long.MAX_VALUE / 2 // effectively unbounded (await handles its own TTL)
                     : properties.getToolOutput().getTimeoutSecondsOrDefault(120);
-                return future.get(timeout, TimeUnit.SECONDS);
+                long started = System.nanoTime();
+                long timeoutNanos = TimeUnit.SECONDS.toNanos(timeout);
+                while (true) {
+                    if (interruptToken != null && session != null && interruptToken.isCancelled(session.id())) {
+                        future.cancel(true);
+                        return failureResult("Interrupted: " + toolName);
+                    }
+                    long remaining = timeoutNanos - (System.nanoTime() - started);
+                    if (remaining <= 0) throw new TimeoutException();
+                    try {
+                        return future.get(Math.min(remaining, TimeUnit.MILLISECONDS.toNanos(100)), TimeUnit.NANOSECONDS);
+                    } catch (TimeoutException poll) {
+                        if (System.nanoTime() - started >= timeoutNanos) throw poll;
+                    }
+                }
             } catch (TimeoutException e) {
                 // P11 parity (tool_executor.py:957,966): cancel AND interrupt the
                 // worker so a timed-out tool cannot perform late side effects after
@@ -159,6 +180,7 @@ public class ToolExecutionService {
                     properties.getToolOutput().getTimeoutSecondsOrDefault(120));
                 return failureResult("Tool timed out: " + toolName);
             } catch (InterruptedException e) {
+                future.cancel(true);
                 Thread.currentThread().interrupt();
                 return failureResult("Interrupted: " + toolName);
             } catch (ExecutionException e) {

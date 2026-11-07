@@ -36,8 +36,12 @@ public class MessageApiClient extends BaseBackendClient {
     private static final int MAX_CONNECT_RETRIES = 3;
     private static final long[] CONNECT_BACKOFF_MS = {2_000, 4_000, 8_000};
 
-    public MessageApiClient(@Qualifier("streamingBackendRestClient") RestClient restClient, ObjectMapper objectMapper) {
+    private final com.azhukov.agent.bot.config.BotProperties properties;
+
+    public MessageApiClient(@Qualifier("streamingBackendRestClient") RestClient restClient, ObjectMapper objectMapper,
+                            com.azhukov.agent.bot.config.BotProperties properties) {
         super(restClient, objectMapper);
+        this.properties = properties;
     }
 
     // ------------------------------------------------------------------
@@ -498,8 +502,9 @@ public class MessageApiClient extends BaseBackendClient {
         }
         // Per-session model override (/model command) — the backend threads it
         // through ModelRequestOptions so every model call in the turn uses it.
-        if (runtime.getModelOverride() != null && !runtime.getModelOverride().isBlank()) {
-            body.put("model", runtime.getModelOverride());
+        String model = com.azhukov.agent.bot.config.ModelSelection.forRequest(properties, runtime.getModelOverride());
+        if (model != null && !model.isBlank()) {
+            body.put("model", model);
         }
         if (runtime.getReasoningLevel() != null && !runtime.getReasoningLevel().isBlank()) {
             body.put("reasoningEffort", runtime.getReasoningLevel());

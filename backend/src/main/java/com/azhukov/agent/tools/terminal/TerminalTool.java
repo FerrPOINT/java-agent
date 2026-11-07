@@ -459,6 +459,8 @@ public class TerminalTool implements ToolHandler {
                     }
                 };
                 interruptToken.registerCancellationCallback(sessionId, callback);
+                // Cancellation may have arrived between process start and registration.
+                if (interruptToken.isCancelled(sessionId)) callback.run();
             }
 
             boolean finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
@@ -473,6 +475,7 @@ public class TerminalTool implements ToolHandler {
             }
 
             if (!finished) {
+                process.descendants().forEach(ProcessHandle::destroyForcibly);
                 process.destroyForcibly();
                 // Wait briefly for the output reader to drain any remaining output
                 if (outputReader != null) {

@@ -754,31 +754,8 @@ class BotMessageProcessorTest {
     @Test
     void unauthorizedMessageSendsNotAuthorized() {
         when(authorizationService.isAuthorized(any(UpdateEvent.class))).thenReturn(false);
-        when(authorizationService.isPairingEnabled()).thenReturn(false);
         processor.accept(textEvent(1, 100L, "hello"));
         verify(telegramClient).sendMessage(eq(100L), contains("not authorized"));
-        verifyNoInteractions(backendClient);
-    }
-
-    @Test
-    void unauthorizedMessageWithPairingEnabledAndCodePresent() {
-        when(authorizationService.isAuthorized(any(UpdateEvent.class))).thenReturn(false);
-        when(authorizationService.isPairingEnabled()).thenReturn(true);
-        when(authorizationService.generatePairingCode(anyLong(), anyString(), anyLong()))
-            .thenReturn(Optional.of("PAIR123"));
-        processor.accept(textEvent(1, 100L, "hello"));
-        verify(telegramClient).sendMessage(eq(100L), contains("PAIR123"));
-        verifyNoInteractions(backendClient);
-    }
-
-    @Test
-    void unauthorizedMessageWithPairingEnabledButCodeEmpty() {
-        when(authorizationService.isAuthorized(any(UpdateEvent.class))).thenReturn(false);
-        when(authorizationService.isPairingEnabled()).thenReturn(true);
-        when(authorizationService.generatePairingCode(anyLong(), anyString(), anyLong()))
-            .thenReturn(Optional.empty());
-        processor.accept(textEvent(1, 100L, "hello"));
-        verify(telegramClient).sendMessage(eq(100L), contains("Pairing code limit reached"));
         verifyNoInteractions(backendClient);
     }
 
@@ -1097,12 +1074,17 @@ class BotMessageProcessorTest {
     }
 
     @Test
-    void resolveModelUsedFallsBackToDefaultModel() {
+    void unknownResultModelDoesNotInventBotDefaultWhenBackendChooses() {
+        BotSessionEntity session = new BotSessionEntity();
+        assertThat(processor.resolveModelUsed(session, null)).isEqualTo("backend default");
+    }
+
+    @Test
+    void resolveModelUsedFallsBackToBackendDefault() {
         stubStreamingResultWithMetadata("response", false, null, 100, 1000, false);
-        when(runtimeFooter.format(anyString(), anyInt(), anyInt(), anyString())).thenReturn("\n\nmodel: test-model");
-        when(runtimeFooter.format(anyString(), anyInt(), anyInt(), anyString(), anyLong(), anyBoolean())).thenReturn("\n\nmodel: test-model");
+        when(runtimeFooter.format(anyString(), anyInt(), anyInt(), anyString(), anyLong(), anyBoolean())).thenReturn("\n\nmodel: backend default");
         processor.accept(textEvent(1, 100L, "hello"));
-        verify(runtimeFooter).format(eq("test-model"), anyInt(), anyInt(), anyString(), anyLong(), anyBoolean());
+        verify(runtimeFooter).format(eq("backend default"), anyInt(), anyInt(), anyString(), anyLong(), anyBoolean());
     }
 
     // ─── Voice mode ──────────────────────────────────────────────

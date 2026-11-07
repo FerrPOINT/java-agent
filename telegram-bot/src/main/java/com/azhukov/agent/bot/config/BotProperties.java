@@ -152,20 +152,8 @@ public class BotProperties {
     @Setter
     public static class Auth {
         private final List<String> allowedUserIds = new ArrayList<>();
-        private final List<String> allowedUsernames = new ArrayList<>();
-        private final List<String> allowedChatIds = new ArrayList<>();
-        private boolean allowByDefault = false;
         private final List<String> adminUserIds = new ArrayList<>();
         private final List<String> userAllowedCommands = new ArrayList<>();
-        private final Pairing pairing = new Pairing();
-    }
-
-    @Getter
-    @Setter
-    public static class Pairing {
-        private boolean enabled = false;
-        private int codeExpiryHours = 1;
-        private int maxPending = 3;
     }
 
     @Getter

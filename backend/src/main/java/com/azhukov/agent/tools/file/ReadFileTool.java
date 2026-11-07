@@ -158,7 +158,7 @@ public class ReadFileTool implements ToolHandler {
             int offset = Math.max(1, args.offset());
             int start = offset - 1;
             int limit = args.limit() > 0 ? args.limit() : 2000;
-            int end = Math.min(lines.size(), start + limit);
+            int end = (int) Math.min((long) lines.size(), (long) start + limit);
 
             StringBuilder sb = new StringBuilder();
             if (start < lines.size()) {

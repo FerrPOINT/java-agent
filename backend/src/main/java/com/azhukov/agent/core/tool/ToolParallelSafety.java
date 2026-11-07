@@ -82,6 +82,11 @@ public final class ToolParallelSafety {
      */
     public static boolean shouldParallelize(List<ToolCall> calls,
                                             Set<String> registeredToolNames) {
+        return shouldParallelize(calls, registeredToolNames, null);
+    }
+
+    public static boolean shouldParallelize(List<ToolCall> calls, Set<String> registeredToolNames,
+                                            com.azhukov.agent.core.model.Session session) {
         if (calls == null || calls.size() <= 1) {
             return false;
         }
@@ -117,7 +122,16 @@ public final class ToolParallelSafety {
 
             // Path-scoped tools: check for overlapping paths
             if (PATH_SCOPED_TOOLS.contains(toolName)) {
-                Path scopedPath = extractScopePath(toolName, args);
+                Path scopedPath;
+                try {
+                    JsonNode pathArg = args.get("path");
+                    String rawPath = pathArg != null && pathArg.isTextual() ? pathArg.asText() : null;
+                    if ((rawPath == null || rawPath.isBlank()) && "search_files".equals(toolName)) rawPath = ".";
+                    scopedPath = rawPath == null || rawPath.isBlank() ? null : canonicalise(
+                        com.azhukov.agent.tools.file.FileToolSafety.resolvePath(rawPath, session));
+                } catch (RuntimeException e) {
+                    return false;
+                }
                 if (scopedPath == null) {
                     return false;
                 }
@@ -214,9 +228,7 @@ public final class ToolParallelSafety {
         String expanded = expandUserHome(rawPath);
 
         // h69: Canonicalise paths to detect and prevent same-file concurrent mutation.
-        // Use Path.normalize() first (removes . and .. without filesystem access),
-        // then try Path.toRealPath() for full canonicalisation (resolves symlinks).
-        // If toRealPath() fails (file doesn't exist), fall back to normalize().
+        // Resolve the nearest existing ancestor before appending missing components.
         Path path = Path.of(expanded);
         if (path.isAbsolute()) {
             return canonicalise(path.toAbsolutePath());
@@ -229,20 +241,32 @@ public final class ToolParallelSafety {
 
     /**
      * h69: Canonicalise a path to its real filesystem path to detect
-     * same-file concurrent mutation. Tries {@link Path#toRealPath()} first
-     * (resolves symlinks, requires file to exist), falls back to
-     * {@link Path#normalize()} for non-existent paths.
+     * same-file concurrent mutation. Resolves the nearest existing ancestor
+     * and returns null when the filesystem cannot be resolved safely.
      *
      * @param path the absolute path to canonicalise
      * @return the canonicalised path
      */
     static Path canonicalise(Path path) {
-        try {
-            return path.toRealPath();
-        } catch (java.io.IOException e) {
-            // File doesn't exist yet or symlink can't be resolved — use normalize
-            return path.normalize();
+        Path candidate = path.toAbsolutePath();
+        java.util.ArrayDeque<Path> missing = new java.util.ArrayDeque<>();
+        while (candidate != null) {
+            try {
+                Path resolved = candidate.toRealPath();
+                for (Path part : missing) resolved = resolved.resolve(part);
+                return resolved.normalize();
+            } catch (java.nio.file.NoSuchFileException e) {
+                // A dangling symlink cannot be resolved safely as a new path.
+                if (java.nio.file.Files.isSymbolicLink(candidate)) return null;
+                Path name = candidate.getFileName();
+                if (name == null) return null;
+                missing.addFirst(name);
+                candidate = candidate.getParent();
+            } catch (java.io.IOException | SecurityException e) {
+                return null;
+            }
         }
+        return null;
     }
 
     /**
@@ -252,18 +276,15 @@ public final class ToolParallelSafety {
      * Mirrors Hermes' {@code _paths_overlap}.
      */
     static boolean pathsOverlap(Path left, Path right) {
-        int leftLen = left.getNameCount();
-        int rightLen = right.getNameCount();
-        if (leftLen == 0 || rightLen == 0) {
-            return leftLen == rightLen && leftLen > 0;
+        if (left.startsWith(right) || right.startsWith(left)) return true;
+        try {
+            return java.nio.file.Files.isSameFile(left, right);
+        } catch (java.nio.file.NoSuchFileException e) {
+            return false;
+        } catch (java.io.IOException | SecurityException e) {
+            // An unresolved identity is unsafe to treat as independent.
+            return true;
         }
-        int commonLen = Math.min(leftLen, rightLen);
-        for (int i = 0; i < commonLen; i++) {
-            if (!left.getName(i).equals(right.getName(i))) {
-                return false;
-            }
-        }
-        return true;
     }
 
     private static String expandUserHome(String path) {
