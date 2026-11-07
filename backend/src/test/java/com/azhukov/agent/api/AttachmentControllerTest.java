@@ -80,6 +80,21 @@ class AttachmentControllerTest {
     }
 
     @Test
+    void duplicateOutboundClaimReturnsConflictWithoutReadingContent() throws Exception {
+        UUID sessionId = UUID.randomUUID();
+        UserContext.set("alice", UserContext.ROLE_USER);
+        try {
+            when(service.isAvailableInSession("att_1", "alice", sessionId)).thenReturn(true);
+            when(service.claimOutbound("att_1", "alice", sessionId)).thenReturn(false);
+            mockMvc.perform(post("/api/v1/attachments/att_1/outbound").param("sessionId", sessionId.toString()))
+                .andExpect(status().isConflict());
+            org.mockito.Mockito.verify(service, org.mockito.Mockito.never()).verifiedContent(anyString(), anyString());
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
     void uploadRegistersArtifactAndReturnsId() throws Exception {
         when(service.register(any(), any(), any(), any(), anyString(), anyString(),
             any(), any(), any())).thenReturn(

@@ -172,6 +172,10 @@ public class AttachmentArtifactService {
             .isPresent();
     }
 
+    public boolean claimOutbound(String id, String owner, UUID sessionId) {
+        return repository().claimOutbound(id, owner, sessionId, Instant.now()) == 1;
+    }
+
     /** Read the exact registered payload before serving it to an outbound consumer. */
     public Optional<byte[]> verifiedContent(String artifactId, String ownerId) {
         return findEntity(artifactId, ownerId).flatMap(artifact -> {

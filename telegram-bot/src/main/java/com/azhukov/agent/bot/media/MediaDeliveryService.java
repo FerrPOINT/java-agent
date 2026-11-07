@@ -12,6 +12,7 @@ import java.util.regex.Pattern;
 @Service
 public class MediaDeliveryService {
     public static final int MAX_MEDIA_GROUP_SIZE = 10;
+    public static final int MAX_MEDIA_GROUP_BYTES = 20 * 1024 * 1024;
     private static final Pattern REFERENCE = Pattern.compile("(?<![A-Za-z0-9_])MEDIA:artifact:(att_[a-f0-9]{32})(?![A-Za-z0-9_])");
     private static final Pattern FENCED_CODE_BLOCK_RE = Pattern.compile("(?s)```.*?```");
     private static final Pattern INLINE_CODE_RE = Pattern.compile("`[^`\\n]+`");

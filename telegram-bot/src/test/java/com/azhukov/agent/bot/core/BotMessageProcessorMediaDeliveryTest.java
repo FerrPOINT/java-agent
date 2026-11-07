@@ -210,16 +210,16 @@ class BotMessageProcessorMediaDeliveryTest {
     void validArtifactsReachTelegramAndOnlyAcceptedItemsGetReceipts() {
         UUID sessionId = UUID.randomUUID();
         byte[] bytes = {1, 2};
-        when(attachmentApiClient.loadOutbound("photo", "101", sessionId))
+        when(attachmentApiClient.claimOutbound("photo", "101", sessionId))
             .thenReturn(Optional.of(new AttachmentApiClient.Outbound("photo", "photo.png", "image/png", bytes)));
-        when(attachmentApiClient.loadOutbound("voice", "101", sessionId))
+        when(attachmentApiClient.claimOutbound("voice", "101", sessionId))
             .thenReturn(Optional.of(new AttachmentApiClient.Outbound("voice", "voice.ogg", "audio/ogg", bytes)));
-        when(telegramClient.sendPhoto(100L, bytes, null, null)).thenReturn(Optional.of(17L));
-        when(telegramClient.sendAudioAsVoice(100L, bytes, "voice.ogg", null)).thenReturn(Optional.empty());
+        when(telegramClient.sendPhoto(100L, bytes, null, null, 55)).thenReturn(Optional.of(17L));
+        when(telegramClient.sendAudioAsVoice(100L, bytes, "voice.ogg", null, 55)).thenReturn(Optional.empty());
         processor.deliverMedia(100L, List.of(new MediaDeliveryService.MediaDescriptor("photo", false, false),
-            new MediaDeliveryService.MediaDescriptor("voice", true, false)), null, "101", sessionId);
-        verify(telegramClient).sendPhoto(100L, bytes, null, null);
-        verify(telegramClient).sendAudioAsVoice(100L, bytes, "voice.ogg", null);
+            new MediaDeliveryService.MediaDescriptor("voice", true, false)), 55, "101", sessionId);
+        verify(telegramClient).sendPhoto(100L, bytes, null, null, 55);
+        verify(telegramClient).sendAudioAsVoice(100L, bytes, "voice.ogg", null, 55);
         verify(attachmentApiClient).markOutboundDelivered("photo", "101", sessionId, 17L);
         verify(attachmentApiClient, never()).markOutboundDelivered(eq("voice"), anyString(), any(), anyLong());
     }
@@ -234,23 +234,41 @@ class BotMessageProcessorMediaDeliveryTest {
                 case "voice" -> "audio/ogg";
                 default -> "image/png";
             };
-            when(attachmentApiClient.loadOutbound(id, "101", sessionId))
+            when(attachmentApiClient.claimOutbound(id, "101", sessionId))
                 .thenReturn(Optional.of(new AttachmentApiClient.Outbound(id, id, mime, bytes)));
         }
-        when(telegramClient.sendMediaGroup(eq(100L), anyList())).thenReturn(List.of(20L, 21L));
-        when(telegramClient.sendDocument(100L, bytes, "document", null, null)).thenReturn(Optional.of(22L));
-        when(telegramClient.sendAudioAsVoice(100L, bytes, "voice", null)).thenReturn(Optional.of(23L));
+        when(telegramClient.sendMediaGroup(eq(100L), anyList(), eq(55))).thenReturn(List.of(20L, 21L));
+        when(telegramClient.sendDocument(100L, bytes, "document", null, null, 55)).thenReturn(Optional.of(22L));
+        when(telegramClient.sendAudioAsVoice(100L, bytes, "voice", null, 55)).thenReturn(Optional.of(23L));
 
         processor.deliverMedia(100L, List.of(new MediaDeliveryService.MediaDescriptor("first", false, false),
             new MediaDeliveryService.MediaDescriptor("second", false, false),
             new MediaDeliveryService.MediaDescriptor("document", false, true),
-            new MediaDeliveryService.MediaDescriptor("voice", true, false)), null, "101", sessionId);
+            new MediaDeliveryService.MediaDescriptor("voice", true, false)), 55, "101", sessionId);
 
-        verify(telegramClient).sendMediaGroup(eq(100L), argThat(photos -> photos.size() == 2));
+        verify(telegramClient).sendMediaGroup(eq(100L), argThat(photos -> photos.size() == 2), eq(55));
         verify(attachmentApiClient).markOutboundDelivered("first", "101", sessionId, 20L);
         verify(attachmentApiClient).markOutboundDelivered("second", "101", sessionId, 21L);
         verify(attachmentApiClient).markOutboundDelivered("document", "101", sessionId, 22L);
         verify(attachmentApiClient).markOutboundDelivered("voice", "101", sessionId, 23L);
+    }
+
+    @Test
+    void uncertainDeliveryHasNoReceiptAndClaimPreventsAnotherSend() {
+        UUID sessionId = UUID.randomUUID();
+        byte[] bytes = {1, 2};
+        when(attachmentApiClient.claimOutbound("document", "101", sessionId))
+            .thenReturn(Optional.of(new AttachmentApiClient.Outbound("document", "report.pdf", "application/pdf", bytes)))
+            .thenReturn(Optional.empty());
+        when(telegramClient.sendDocument(100L, bytes, "report.pdf", null, null, 55))
+            .thenReturn(Optional.empty());
+
+        var media = List.of(new MediaDeliveryService.MediaDescriptor("document", false, true));
+        processor.deliverMedia(100L, media, 55, "101", sessionId);
+        processor.deliverMedia(100L, media, 55, "101", sessionId);
+
+        verify(telegramClient).sendDocument(100L, bytes, "report.pdf", null, null, 55);
+        verify(attachmentApiClient, never()).markOutboundDelivered(anyString(), anyString(), any(), anyLong());
     }
 
     @Test
@@ -260,7 +278,7 @@ class BotMessageProcessorMediaDeliveryTest {
         processor.deliverMedia(100L, media, null, "101", null);
         verifyNoInteractions(attachmentApiClient);
         processor.deliverMedia(100L, media, null, "101", sessionId);
-        verify(attachmentApiClient).loadOutbound("missing", "101", sessionId);
+        verify(attachmentApiClient).claimOutbound("missing", "101", sessionId);
         verifyNoInteractions(telegramClient);
     }
 }

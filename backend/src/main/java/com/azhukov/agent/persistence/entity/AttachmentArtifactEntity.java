@@ -59,6 +59,10 @@ public class AttachmentArtifactEntity {
     @Column(name = "state", nullable = false, length = 16)
     private String state = "received";
 
+    /** Once claimed for outbound delivery, an unknown outcome is never retried. */
+    @Column(name = "outbound_claimed_at")
+    private Instant outboundClaimedAt;
+
     /** V65: platform message id of the successful outbound delivery, if any. */
     @Column(name = "delivered_message_id", length = 128)
     private String deliveredMessageId;

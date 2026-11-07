@@ -1351,6 +1351,10 @@ public class McpLifecycleManager {
     }
 
     public String readResource(String serverName, String uri) {
+        return readResource(serverName, uri, null);
+    }
+
+    private String readResource(String serverName, String uri, MediaPublisher publisher) {
         var state = clients.get(serverName);
         if (state == null) {
             throw new IllegalStateException("MCP server not connected: " + serverName);
@@ -1359,11 +1363,16 @@ public class McpLifecycleManager {
             var result = callMcpWithTimeout(state, "read_resource '" + uri + "'",
                 () -> state.client().readResource(new McpSchema.ReadResourceRequest(uri)));
             return safeList(result.contents()).stream()
-                .map(McpLifecycleManager::resourceContentsText)
+                .map(contents -> resourceContentsText(contents, publisher))
                 .collect(Collectors.joining("\n"));
         } catch (Exception e) {
             throw new RuntimeException("MCP read resource failed: " + sanitizeError(e.getMessage()), e);
         }
+    }
+
+    private MediaPublisher publisherFor(Session session) {
+        return session == null ? null
+            : (kind, mime, name, bytes) -> artifacts.publishGenerated(session, kind, mime, name, bytes);
     }
 
     String listResourcesForTool(String serverName) {
@@ -1382,13 +1391,13 @@ public class McpLifecycleManager {
         }
     }
 
-    String readResourceForTool(String serverName, String arguments) {
+    private String readResourceForTool(String serverName, String arguments, Session session) {
         Map<String, Object> args = parseObjectArguments(arguments);
         Object uri = args.get("uri");
         if (uri == null || uri.toString().isBlank()) {
             throw new IllegalArgumentException("Missing required parameter 'uri'");
         }
-        return writeJson(Map.of("result", readResource(serverName, uri.toString())));
+        return writeJson(Map.of("result", readResource(serverName, uri.toString(), publisherFor(session))));
     }
 
     String listPromptsForTool(String serverName) {
@@ -2224,7 +2233,7 @@ public class McpLifecycleManager {
             return resourceLinkText(link, serverName);
         }
         if (content instanceof McpSchema.EmbeddedResource embedded) {
-            return resourceContentsText(embedded.resource());
+            return resourceContentsText(embedded.resource(), publisher);
         }
         return stripUnicodeTags(content.toString());
     }
@@ -2363,7 +2372,7 @@ public class McpLifecycleManager {
         return "[MCP resource link: " + details + " - fetch it with " + reader + "]";
     }
 
-    private static String resourceContentsText(McpSchema.ResourceContents contents) {
+    private static String resourceContentsText(McpSchema.ResourceContents contents, MediaPublisher publisher) {
         if (contents == null) {
             return "";
         }
@@ -2371,12 +2380,12 @@ public class McpLifecycleManager {
             return stripUnicodeTags(text.text());
         }
         if (contents instanceof McpSchema.BlobResourceContents blob) {
-            return renderMcpBlobResourceContents(blob);
+            return renderMcpBlobResourceContents(blob, publisher);
         }
         return stripUnicodeTags(contents.toString());
     }
 
-    static String renderMcpBlobResourceContents(McpSchema.BlobResourceContents blob) {
+    static String renderMcpBlobResourceContents(McpSchema.BlobResourceContents blob, MediaPublisher publisher) {
         if (blob == null || blob.blob() == null || blob.blob().isBlank()) {
             return "";
         }
@@ -2393,8 +2402,12 @@ public class McpLifecycleManager {
         if (bytes.length > MCP_RESOURCE_MAX_BYTES) {
             return "[MCP embedded resource too large to cache: " + bytes.length + " bytes, uri=" + uri + "]";
         }
+        String fileName = mcpResourceFilename(uri, mimeType);
+        if (publisher != null) {
+            return publisher.publish("document", mimeType.isBlank() ? "application/octet-stream" : mimeType,
+                fileName, bytes);
+        }
         try {
-            String fileName = mcpResourceFilename(uri, mimeType);
             Path output = cacheMcpBytes(bytes, "resources", "mcp-" + UUID.randomUUID() + "-" + fileName);
             String detail = mimeType.isBlank() ? "unknown type" : mimeType;
             return "[MCP resource saved to " + output + " (" + detail + ", " + bytes.length
@@ -2531,7 +2544,7 @@ public class McpLifecycleManager {
             try {
                 return switch (action) {
                     case LIST_RESOURCES -> ToolResult.ok(listResourcesForTool(serverName));
-                    case READ_RESOURCE -> ToolResult.ok(readResourceForTool(serverName, arguments));
+                    case READ_RESOURCE -> ToolResult.ok(readResourceForTool(serverName, arguments, session));
                     case LIST_PROMPTS -> ToolResult.ok(listPromptsForTool(serverName));
                     case GET_PROMPT -> ToolResult.ok(getPromptForTool(serverName, arguments));
                 };
@@ -2602,8 +2615,7 @@ public class McpLifecycleManager {
                 var result = executeTool(serverName, toolName, arguments);
                 // ── Response security scan ──
                 String output;
-                MediaPublisher publisher = session == null ? null
-                    : (kind, mime, name, bytes) -> artifacts.publishGenerated(session, kind, mime, name, bytes);
+                MediaPublisher publisher = publisherFor(session);
                 if (Boolean.TRUE.equals(result.isError())) {
                     output = renderContentBlocks(result.content(), serverName, publisher);
                     // H-SYNC: Strip invisible Unicode TAG characters from MCP tool output

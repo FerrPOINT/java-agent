@@ -543,12 +543,21 @@ public class TelegramClient {
     // on text/chat operations. Public signatures are preserved as delegates.
 
     public Optional<Long> sendPhoto(long chatId, byte[] photo, String caption, String parseMode) {
-        return mediaClient.sendPhoto(chatId, photo, caption, parseMode);
+        return sendPhoto(chatId, photo, caption, parseMode, null);
+    }
+
+    public Optional<Long> sendPhoto(long chatId, byte[] photo, String caption, String parseMode, Integer threadId) {
+        return mediaClient.sendPhoto(chatId, photo, caption, parseMode, threadId);
     }
 
     public Optional<Long> sendDocument(long chatId, byte[] document, String fileName,
                                         String caption, String parseMode) {
-        return mediaClient.sendDocument(chatId, document, fileName, caption, parseMode);
+        return sendDocument(chatId, document, fileName, caption, parseMode, null);
+    }
+
+    public Optional<Long> sendDocument(long chatId, byte[] document, String fileName,
+                                        String caption, String parseMode, Integer threadId) {
+        return mediaClient.sendDocument(chatId, document, fileName, caption, parseMode, threadId);
     }
 
     public Optional<Long> sendVoice(long chatId, byte[] voice, String caption) {
@@ -567,7 +576,12 @@ public class TelegramClient {
      */
     public Optional<Long> sendVideo(long chatId, byte[] video, String fileName,
                                      String caption, String parseMode) {
-        return mediaClient.sendVideo(chatId, video, fileName, caption, parseMode);
+        return sendVideo(chatId, video, fileName, caption, parseMode, null);
+    }
+
+    public Optional<Long> sendVideo(long chatId, byte[] video, String fileName,
+                                     String caption, String parseMode, Integer threadId) {
+        return mediaClient.sendVideo(chatId, video, fileName, caption, parseMode, threadId);
     }
 
     /**
@@ -581,7 +595,11 @@ public class TelegramClient {
      * @return the sent message id, or empty on failure
      */
     public Optional<Long> sendAudioAsVoice(long chatId, byte[] audio, String fileName, String caption) {
-        return mediaClient.sendAudioAsVoice(chatId, audio, fileName, caption);
+        return sendAudioAsVoice(chatId, audio, fileName, caption, null);
+    }
+
+    public Optional<Long> sendAudioAsVoice(long chatId, byte[] audio, String fileName, String caption, Integer threadId) {
+        return mediaClient.sendAudioAsVoice(chatId, audio, fileName, caption, threadId);
     }
 
     /**
@@ -597,7 +615,11 @@ public class TelegramClient {
      * @return list of sent message ids (may be shorter than photos on partial failure)
      */
     public List<Long> sendMediaGroup(long chatId, List<PhotoInput> photos) {
-        return mediaClient.sendMediaGroup(chatId, photos);
+        return sendMediaGroup(chatId, photos, null);
+    }
+
+    public List<Long> sendMediaGroup(long chatId, List<PhotoInput> photos, Integer threadId) {
+        return mediaClient.sendMediaGroup(chatId, photos, threadId);
     }
 
     /** Input for sendMediaGroup: photo bytes, filename, and optional caption. */

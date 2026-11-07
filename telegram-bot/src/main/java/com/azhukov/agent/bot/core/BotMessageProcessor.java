@@ -796,39 +796,50 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                              String owner, java.util.UUID sessionId) {
         if (owner == null || sessionId == null || media.isEmpty()) return;
         var photos = new ArrayList<AttachmentApiClient.Outbound>();
+        int pendingPhotoBytes = 0;
         for (var descriptor : media) {
-            attachmentApiClient.loadOutbound(descriptor.artifactId(), owner, sessionId).ifPresent(artifact -> {
-                String mime = artifact.mimeType();
-                if (mime.startsWith("image/") && !descriptor.asDocument()) {
-                    photos.add(artifact);
-                    return;
-                }
-                Optional<Long> sent;
-                if (!descriptor.asDocument() && mime.startsWith("video/")) {
-                    sent = telegramClient.sendVideo(chatId, artifact.bytes(), artifact.fileName(), null, null);
-                } else if (!descriptor.asDocument() && descriptor.asVoice() && mime.startsWith("audio/")) {
-                    sent = telegramClient.sendAudioAsVoice(chatId, artifact.bytes(), artifact.fileName(), null);
-                } else {
-                    sent = telegramClient.sendDocument(chatId, artifact.bytes(), artifact.fileName(), null, null);
-                }
-                sent.ifPresent(id -> attachmentApiClient.markOutboundDelivered(artifact.id(), owner, sessionId, id));
-            });
-        }
-        int max = MediaDeliveryService.MAX_MEDIA_GROUP_SIZE;
-        for (int from = 0; from < photos.size(); from += max) {
-            var batch = photos.subList(from, Math.min(from + max, photos.size()));
-            if (batch.size() == 1) {
-                var photo = batch.getFirst();
-                telegramClient.sendPhoto(chatId, photo.bytes(), null, null).ifPresent(
-                    id -> attachmentApiClient.markOutboundDelivered(photo.id(), owner, sessionId, id));
+            var artifact = attachmentApiClient.claimOutbound(descriptor.artifactId(), owner, sessionId).orElse(null);
+            if (artifact == null) continue;
+            String mime = artifact.mimeType();
+            boolean asPhoto = mime.startsWith("image/") && !descriptor.asDocument();
+            if (!asPhoto || photos.size() == MediaDeliveryService.MAX_MEDIA_GROUP_SIZE
+                    || pendingPhotoBytes + artifact.bytes().length > MediaDeliveryService.MAX_MEDIA_GROUP_BYTES) {
+                sendPhotoBatch(chatId, threadId, owner, sessionId, photos);
+                photos.clear();
+                pendingPhotoBytes = 0;
+            }
+            if (asPhoto) {
+                photos.add(artifact);
+                pendingPhotoBytes += artifact.bytes().length;
+                continue;
+            }
+            Optional<Long> sent;
+            if (!descriptor.asDocument() && mime.startsWith("video/")) {
+                sent = telegramClient.sendVideo(chatId, artifact.bytes(), artifact.fileName(), null, null, threadId);
+            } else if (!descriptor.asDocument() && descriptor.asVoice() && mime.startsWith("audio/")) {
+                sent = telegramClient.sendAudioAsVoice(chatId, artifact.bytes(), artifact.fileName(), null, threadId);
             } else {
-                var inputs = batch.stream().map(photo -> new TelegramClient.PhotoInput(photo.bytes(), photo.fileName(), null)).toList();
-                var receipts = telegramClient.sendMediaGroup(chatId, inputs);
-                if (receipts != null && receipts.size() == batch.size()) {
-                    for (int i = 0; i < batch.size(); i++) {
-                        attachmentApiClient.markOutboundDelivered(batch.get(i).id(), owner, sessionId, receipts.get(i));
-                    }
-                }
+                sent = telegramClient.sendDocument(chatId, artifact.bytes(), artifact.fileName(), null, null, threadId);
+            }
+            sent.ifPresent(id -> attachmentApiClient.markOutboundDelivered(artifact.id(), owner, sessionId, id));
+        }
+        sendPhotoBatch(chatId, threadId, owner, sessionId, photos);
+    }
+
+    private void sendPhotoBatch(long chatId, Integer threadId, String owner, java.util.UUID sessionId,
+                                List<AttachmentApiClient.Outbound> photos) {
+        if (photos.isEmpty()) return;
+        if (photos.size() == 1) {
+            var photo = photos.getFirst();
+            telegramClient.sendPhoto(chatId, photo.bytes(), null, null, threadId).ifPresent(
+                id -> attachmentApiClient.markOutboundDelivered(photo.id(), owner, sessionId, id));
+            return;
+        }
+        var inputs = photos.stream().map(photo -> new TelegramClient.PhotoInput(photo.bytes(), photo.fileName(), null)).toList();
+        var receipts = telegramClient.sendMediaGroup(chatId, inputs, threadId);
+        if (receipts.size() == photos.size()) {
+            for (int i = 0; i < photos.size(); i++) {
+                attachmentApiClient.markOutboundDelivered(photos.get(i).id(), owner, sessionId, receipts.get(i));
             }
         }
     }

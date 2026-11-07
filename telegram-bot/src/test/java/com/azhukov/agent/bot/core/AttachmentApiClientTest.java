@@ -47,6 +47,31 @@ class AttachmentApiClientTest {
     }
 
     @Test
+    void claimsExactScopedArtifactAndConsumesBinaryResponse() {
+        var builder = RestClient.builder().baseUrl("http://backend");
+        var server = org.springframework.test.web.client.MockRestServiceServer.bindTo(builder).build();
+        var api = new AttachmentApiClient(builder.build(), new ObjectMapper());
+        var session = java.util.UUID.randomUUID();
+        String uri = "http://backend/api/v1/attachments/att_test/outbound?ownerId=101&sessionId=" + session;
+        var type = org.springframework.http.MediaType.APPLICATION_PDF;
+        server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(uri))
+            .andExpect(org.springframework.test.web.client.match.MockRestRequestMatchers.method(
+                org.springframework.http.HttpMethod.POST))
+            .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators
+                .withSuccess(new byte[] {1, 2}, type).header("Content-Disposition", "inline; filename=\"report.pdf\""));
+        server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(uri))
+            .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators
+                .withStatus(org.springframework.http.HttpStatus.CONFLICT));
+
+        var artifact = api.claimOutbound("att_test", "101", session).orElseThrow();
+        assertThat(artifact.fileName()).isEqualTo("report.pdf");
+        assertThat(artifact.mimeType()).isEqualTo("application/pdf");
+        assertThat(artifact.bytes()).containsExactly(1, 2);
+        assertThat(api.claimOutbound("att_test", "101", session)).isEmpty();
+        server.verify();
+    }
+
+    @Test
     void registerParsesArtifactId() {
         when(responseSpec.body(String.class)).thenReturn(
             "{\"id\":\"att_abc\",\"contentHash\":\"h1\",\"duplicate\":false}");

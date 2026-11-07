@@ -121,20 +121,19 @@ public class AttachmentApiClient extends BaseBackendClient {
 
     public record Outbound(String id, String fileName, String mimeType, byte[] bytes) {}
 
-    public java.util.Optional<Outbound> loadOutbound(String id, String owner, UUID sessionId) {
+    public java.util.Optional<Outbound> claimOutbound(String id, String owner, UUID sessionId) {
         try {
-            String path = "/api/v1/attachments/{id}";
-            String json = restClient.get().uri(uri -> uri.path(path).queryParam("ownerId", owner)
-                .queryParam("sessionId", sessionId).build(id)).retrieve().body(String.class);
-            JsonNode metadata = readTree(json);
-            if (metadata == null || !"received".equals(metadata.path("state").asText())) {
-                return java.util.Optional.empty();
-            }
-            byte[] bytes = restClient.get().uri(uri -> uri.path(path + "/content").queryParam("ownerId", owner)
-                .queryParam("sessionId", sessionId).build(id)).retrieve().body(byte[].class);
+            var response = restClient.post().uri(uri -> uri.path("/api/v1/attachments/{id}/outbound")
+                .queryParam("ownerId", owner).queryParam("sessionId", sessionId).build(id))
+                .retrieve().toEntity(byte[].class);
+            byte[] bytes = response.getBody();
             if (bytes == null || bytes.length == 0) return java.util.Optional.empty();
-            return java.util.Optional.of(new Outbound(id, sanitize(metadata.path("fileName").asText("file.bin")),
-                metadata.path("mimeType").asText("application/octet-stream"), bytes));
+            var headers = response.getHeaders();
+            var type = headers.getContentType();
+            return java.util.Optional.of(new Outbound(id, sanitize(headers.getContentDisposition().getFilename()),
+                type == null ? MediaType.APPLICATION_OCTET_STREAM_VALUE : type.toString(), bytes));
+        } catch (org.springframework.web.client.HttpClientErrorException.Conflict alreadyClaimed) {
+            return java.util.Optional.empty();
         } catch (Exception e) {
             log.warn("Outbound artifact {} unavailable ({})", id, e.getClass().getSimpleName());
             return java.util.Optional.empty();

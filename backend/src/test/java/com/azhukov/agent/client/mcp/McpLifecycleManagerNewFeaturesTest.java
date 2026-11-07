@@ -567,7 +567,7 @@ class McpLifecycleManagerNewFeaturesTest {
         McpSchema.BlobResourceContents resource = new McpSchema.BlobResourceContents(
             "slack://files/F123/report.pdf", "application/pdf", Base64.getEncoder().encodeToString(pdf));
 
-        String out = McpLifecycleManager.renderMcpBlobResourceContents(resource);
+        String out = McpLifecycleManager.renderMcpBlobResourceContents(resource, null);
 
         assertThat(out).contains("saved to").contains("application/pdf").contains("read_file");
         Path path = resourcePathFromRendered(out);
@@ -580,11 +580,27 @@ class McpLifecycleManagerNewFeaturesTest {
     }
 
     @Test
+    void publishesEmbeddedPdfBytesForActiveSession() {
+        byte[] pdf = "%PDF-1.4".getBytes(StandardCharsets.US_ASCII);
+        var resource = new McpSchema.BlobResourceContents(
+            "slack://files/F123/report.pdf", "application/pdf", Base64.getEncoder().encodeToString(pdf));
+
+        String reference = McpLifecycleManager.renderMcpBlobResourceContents(resource, (kind, mime, name, bytes) -> {
+            assertThat(kind).isEqualTo("document");
+            assertThat(mime).isEqualTo("application/pdf");
+            assertThat(name).isEqualTo("report.pdf");
+            assertThat(bytes).isEqualTo(pdf);
+            return "MEDIA:artifact:att_pdf";
+        });
+        assertThat(reference).isEqualTo("MEDIA:artifact:att_pdf");
+    }
+
+    @Test
     void renderMcpBlobResourceContentsMalformedBase64FailsExplicitly() {
         McpSchema.BlobResourceContents resource = new McpSchema.BlobResourceContents(
             "x://y/report.pdf", "application/pdf", "!!!not-base64!!!");
 
-        assertThat(McpLifecycleManager.renderMcpBlobResourceContents(resource))
+        assertThat(McpLifecycleManager.renderMcpBlobResourceContents(resource, null))
             .contains("could not be decoded")
             .contains("application/pdf");
     }
@@ -595,7 +611,7 @@ class McpLifecycleManagerNewFeaturesTest {
         McpSchema.BlobResourceContents resource = new McpSchema.BlobResourceContents(
             "evil://host/../../etc/passwd", "application/pdf", Base64.getEncoder().encodeToString(pdf));
 
-        String out = McpLifecycleManager.renderMcpBlobResourceContents(resource);
+        String out = McpLifecycleManager.renderMcpBlobResourceContents(resource, null);
         Path path = resourcePathFromRendered(out);
         try {
             assertThat(path.getFileName().toString()).contains("passwd");
@@ -642,22 +658,19 @@ class McpLifecycleManagerNewFeaturesTest {
             new McpSchema.EmbeddedResource(null, new McpSchema.BlobResourceContents(
                 "slack://files/F123/report.pdf", "application/pdf", Base64.getEncoder().encodeToString(pdf)))
         ), false, null, null), "slack", (disposition, mime, file, bytes) -> {
-            assertThat(disposition).isEqualTo("audio");
-            assertThat(mime).isEqualTo("audio/wav");
-            assertThat(bytes).isEqualTo(wav);
-            return "MEDIA:artifact:att_0123456789abcdef0123456789abcdef";
+            if ("audio".equals(disposition)) {
+                assertThat(mime).isEqualTo("audio/wav");
+                assertThat(bytes).isEqualTo(wav);
+                return "MEDIA:artifact:att_audio";
+            }
+            assertThat(disposition).isEqualTo("document");
+            assertThat(mime).isEqualTo("application/pdf");
+            assertThat(bytes).isEqualTo(pdf);
+            return "MEDIA:artifact:att_document";
         });
         String text = objectMapper.readTree(payload).get("result").asText();
-        Path resourcePath = resourcePathFromRendered(text);
-
-        try {
-            assertThat(text).startsWith("File ID: F123");
-            assertThat(text.indexOf("MEDIA:")).isGreaterThan(text.indexOf("File ID: F123"));
-            assertThat(text.indexOf("[MCP resource saved to")).isGreaterThan(text.indexOf("MEDIA:"));
-            assertThat(Files.readAllBytes(resourcePath)).isEqualTo(pdf);
-        } finally {
-            Files.deleteIfExists(resourcePath);
-        }
+        assertThat(text).containsSubsequence("File ID: F123", "MEDIA:artifact:att_audio",
+            "MEDIA:artifact:att_document");
     }
 
     @Test

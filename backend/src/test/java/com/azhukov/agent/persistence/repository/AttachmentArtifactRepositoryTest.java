@@ -77,6 +77,35 @@ class AttachmentArtifactRepositoryTest extends PostgresTestContainer {
     }
 
     @Test
+    void onlyOneConcurrentOutboundClaimWinsAndUnknownDoesNotRetry() throws Exception {
+        var session = UUID.randomUUID();
+        var artifact = entity("alice", "claim", "document");
+        artifact.setSessionId(session);
+        repository.saveAndFlush(artifact);
+        var now = Instant.now();
+
+        assertThat(repository.claimOutbound(artifact.getId(), "bob", session, now)).isZero();
+        assertThat(repository.claimOutbound(artifact.getId(), "alice", UUID.randomUUID(), now)).isZero();
+        var start = new java.util.concurrent.CountDownLatch(1);
+        try (var executor = java.util.concurrent.Executors.newFixedThreadPool(2)) {
+            java.util.concurrent.Callable<Integer> attempt = () -> {
+                start.await();
+                return repository.claimOutbound(artifact.getId(), "alice", session, now);
+            };
+            var first = executor.submit(attempt);
+            var second = executor.submit(attempt);
+            start.countDown();
+            assertThat(List.of(first.get(10, java.util.concurrent.TimeUnit.SECONDS),
+                second.get(10, java.util.concurrent.TimeUnit.SECONDS))).containsExactlyInAnyOrder(0, 1);
+        }
+
+        assertThat(repository.claimOutbound(artifact.getId(), "alice", session, now)).isZero();
+        var stored = repository.findById(artifact.getId()).orElseThrow();
+        assertThat(stored.getOutboundClaimedAt()).isNotNull();
+        assertThat(stored.getDeliveredMessageId()).isNull();
+    }
+
+    @Test
     void sessionLinkageOrdersByCreation() {
         UUID sessionId = UUID.randomUUID();
         AttachmentArtifactEntity first = entity("alice", "h1", "document");

@@ -112,10 +112,25 @@ public class AttachmentController {
             @RequestParam(name = "ownerId", required = false) String ownerId,
             @RequestParam(name = "sessionId", required = false) UUID sessionId) {
         String owner = checkedArtifactOwner(id, ownerId, sessionId);
+        return contentResponse(id, owner, sessionId != null);
+    }
+
+    @PostMapping("/{id}/outbound")
+    public ResponseEntity<Resource> claimOutbound(@PathVariable("id") String id,
+            @RequestParam(name = "ownerId", required = false) String ownerId,
+            @RequestParam("sessionId") UUID sessionId) {
+        String owner = checkedArtifactOwner(id, ownerId, sessionId);
+        if (!service().claimOutbound(id, owner, sessionId)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Artifact delivery was already attempted");
+        }
+        return contentResponse(id, owner, true);
+    }
+
+    private ResponseEntity<Resource> contentResponse(String id, String owner, boolean verifyContent) {
         AttachmentArtifact artifact = service().find(id, owner)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "unknown artifact " + id));
         Resource resource;
-        if (sessionId != null) {
+        if (verifyContent) {
             byte[] bytes = service().verifiedContent(id, owner)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Artifact content is unavailable"));
             resource = new org.springframework.core.io.ByteArrayResource(bytes);
