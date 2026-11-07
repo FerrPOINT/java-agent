@@ -1201,7 +1201,7 @@ class BotMessageProcessorTest {
             .thenReturn(session);
 
         // Content that is only MEDIA: lines → cleanText is blank → no TTS
-        stubStreamingWithTokensAndFinalize("MEDIA:/tmp/test.jpg", "test-model", false);
+        stubStreamingWithTokensAndFinalize("MEDIA:artifact:att_0123456789abcdef0123456789abcdef", "test-model", false);
         when(backendClient.tts(anyString(), any())).thenReturn(new byte[]{1, 2, 3});
 
         processor.accept(textEvent(1, 100L, "hello"));
@@ -1345,18 +1345,16 @@ class BotMessageProcessorTest {
     // ─── sendFormatted — MEDIA: pattern ─────────────────────────
 
     @Test
-    void mediaPatternSendsPhoto(@TempDir Path tempDir) throws Exception {
+    void localPathCannotSendPhoto(@TempDir Path tempDir) throws Exception {
         Path mediaFile = tempDir.resolve("test.jpg");
         Files.write(mediaFile, new byte[]{1, 2, 3});
         properties.setWorkingDirectory(tempDir.toString());
 
         stubStreamingResult("MEDIA:" + mediaFile.toString(), false);
-        when(telegramClient.sendPhoto(anyLong(), any(byte[].class), any(), any()))
-            .thenReturn(Optional.of(1L));
 
         processor.init();
         processor.accept(textEvent(1, 100L, "hello"));
-        verify(telegramClient).sendPhoto(eq(100L), any(byte[].class), any(), any());
+        verify(telegramClient, never()).sendPhoto(eq(100L), any(byte[].class), any(), any());
     }
 
     @Test
@@ -1371,18 +1369,16 @@ class BotMessageProcessorTest {
     }
 
     @Test
-    void mediaPatternWithRemainingTextSendsBoth(@TempDir Path tempDir) throws Exception {
+    void localPathDoesNotSuppressAccompanyingText(@TempDir Path tempDir) throws Exception {
         Path mediaFile = tempDir.resolve("test.jpg");
         Files.write(mediaFile, new byte[]{1, 2, 3});
         properties.setWorkingDirectory(tempDir.toString());
 
         stubStreamingResult("Here is the photo\nMEDIA:" + mediaFile.toString(), false);
-        when(telegramClient.sendPhoto(anyLong(), any(byte[].class), any(), any()))
-            .thenReturn(Optional.of(1L));
 
         processor.init();
         processor.accept(textEvent(1, 100L, "hello"));
-        verify(telegramClient).sendPhoto(eq(100L), any(byte[].class), any(), any());
+        verify(telegramClient, never()).sendPhoto(eq(100L), any(byte[].class), any(), any());
         verify(telegramClient).sendMessage(eq(100L), contains("Here is the photo"), anyString(), any(), any());
     }
 
@@ -1399,19 +1395,16 @@ class BotMessageProcessorTest {
     }
 
     @Test
-    void mediaPatternSendPhotoThrowsExceptionSendsError(@TempDir Path tempDir) throws Exception {
+    void legacyMediaTagCannotInvokeTelegramPhoto(@TempDir Path tempDir) throws Exception {
         Path mediaFile = tempDir.resolve("test.jpg");
         Files.write(mediaFile, new byte[]{1, 2, 3});
         properties.setWorkingDirectory(tempDir.toString());
 
         stubStreamingResult("MEDIA:" + mediaFile.toString(), false);
-        when(telegramClient.sendPhoto(anyLong(), any(byte[].class), any(), any()))
-            .thenThrow(new RuntimeException("send failed"));
 
         processor.init();
         processor.accept(textEvent(1, 100L, "hello"));
-        // S-2: Send failure is logged, no error message sent to user
-        verify(telegramClient).sendPhoto(eq(100L), any(byte[].class), any(), any());
+        verify(telegramClient, never()).sendPhoto(eq(100L), any(byte[].class), any(), any());
     }
 
     // ─── sendFormatted — reply modes ────────────────────────────
@@ -1938,20 +1931,17 @@ class BotMessageProcessorTest {
     // ─── Media pattern with caption formatting ────────────────────
 
     @Test
-    void mediaPatternWithMarkdownV2Caption(@TempDir Path tempDir) throws Exception {
+    void markdownDoesNotTurnLocalPathIntoMedia(@TempDir Path tempDir) throws Exception {
         properties.setParseMode("MarkdownV2");
         Path mediaFile = tempDir.resolve("test.jpg");
         Files.write(mediaFile, new byte[]{1, 2, 3});
         properties.setWorkingDirectory(tempDir.toString());
 
         stubStreamingResult("MEDIA:" + mediaFile.toString(), false);
-        when(telegramClient.sendPhoto(anyLong(), any(byte[].class), any(), any()))
-            .thenReturn(Optional.of(1L));
 
         processor.init();
         processor.accept(textEvent(1, 100L, "hello"));
-        // S-2: deliverImageBatch sends photo with null caption and null parseMode
-        verify(telegramClient).sendPhoto(eq(100L), any(byte[].class), any(), any());
+        verify(telegramClient, never()).sendPhoto(eq(100L), any(byte[].class), any(), any());
     }
 
     // ─── Error in accept() catch block ───────────────────────────
@@ -2058,7 +2048,7 @@ class BotMessageProcessorTest {
     }
 
     @Test
-    void mediaPathWithinWorkingDirectorySendsFile(@TempDir Path tempDir) throws Exception {
+    void pathWithinWorkspaceCannotSendFile(@TempDir Path tempDir) throws Exception {
         Path mediaFile = tempDir.resolve("test.jpg");
         Files.write(mediaFile, new byte[]{1, 2, 3});
 
@@ -2066,15 +2056,13 @@ class BotMessageProcessorTest {
         properties.setWorkingDirectory(tempDir.toString());
 
         stubStreamingResult("MEDIA:" + mediaFile.toString(), false);
-        when(telegramClient.sendPhoto(anyLong(), any(byte[].class), any(), any()))
-            .thenReturn(Optional.of(1L));
         processor.init();
         processor.accept(textEvent(1, 100L, "hello"));
-        verify(telegramClient).sendPhoto(eq(100L), any(byte[].class), any(), any());
+        verify(telegramClient, never()).sendPhoto(eq(100L), any(byte[].class), any(), any());
     }
 
     @Test
-    void mediaPathWithinAgentMediaDirSendsFile() throws Exception {
+    void pathWithinOldMediaDirectoryCannotSendFile() throws Exception {
         // The agent media temp directory is always allowed
         Path mediaDir = AgentMediaPaths.mediaDir();
         Files.createDirectories(mediaDir);
@@ -2084,11 +2072,9 @@ class BotMessageProcessorTest {
             properties.setWorkingDirectory("/some/other/dir");
 
             stubStreamingResult("MEDIA:" + mediaFile.toString(), false);
-            when(telegramClient.sendPhoto(anyLong(), any(byte[].class), any(), any()))
-                .thenReturn(Optional.of(1L));
             processor.init();
             processor.accept(textEvent(1, 100L, "hello"));
-            verify(telegramClient).sendPhoto(eq(100L), any(byte[].class), any(), any());
+            verify(telegramClient, never()).sendPhoto(eq(100L), any(byte[].class), any(), any());
         } finally {
             Files.deleteIfExists(mediaFile);
         }

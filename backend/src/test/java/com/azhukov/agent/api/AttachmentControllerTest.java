@@ -64,6 +64,21 @@ class AttachmentControllerTest {
     }
 
     @Test
+    void outboundContentRequiresAuthenticatedOwnerAndMatchingSession() throws Exception {
+        UUID sessionId = UUID.randomUUID();
+        UserContext.set("alice", UserContext.ROLE_USER);
+        try {
+            org.mockito.Mockito.when(service.isAvailableInSession("att_1", "alice", sessionId)).thenReturn(false);
+            mockMvc.perform(get("/api/v1/attachments/att_1/content").param("sessionId", sessionId.toString()))
+                .andExpect(status().isNotFound());
+            org.mockito.Mockito.verify(service, org.mockito.Mockito.never()).verifiedContent(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
     void uploadRegistersArtifactAndReturnsId() throws Exception {
         when(service.register(any(), any(), any(), any(), anyString(), anyString(),
             any(), any(), any())).thenReturn(
