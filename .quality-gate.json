@@ -1,0 +1,686 @@
+{
+  "schema": "base-quality-product/v1",
+  "product": "java-agent",
+  "components": {
+    "docs": [
+      "docs/**",
+      "*.md"
+    ],
+    "tooling": [
+      "Makefile",
+      ".quality-gate.json",
+      "java-artifacts.json",
+      ".quality-tooling-revision",
+      ".github/workflows/ci.yml",
+      "Dockerfile",
+      "Dockerfile.slim",
+      "cli/Dockerfile",
+      "telegram-bot/Dockerfile",
+      "gradle/test-lanes.json",
+      "gradle/test-lanes.gradle",
+      "scripts/select_java_modules.py",
+      "scripts/quality-gradle.sh",
+      "scripts/quality-make.sh",
+      "scripts/tests/test_make_epoch.py",
+      "scripts/gradle-context.py",
+      "scripts/check_docs_standard.py",
+      "scripts/verify_readme.py",
+      "scripts/check_default_settings_reference.py",
+      "scripts/release_verify.py",
+      "scripts/endpoint_coverage_report.py",
+      "scripts/check_test_lanes.py",
+      "scripts/deploy-dev-systemd.sh",
+      "scripts/deploy-dev-docker.sh",
+      "scripts/parity-dashboard.py",
+      "scripts/vendor/base_quality_selection.py",
+      "scripts/vendor/base-quality-tooling.json",
+      "scripts/tests/test_java_selection.py",
+      "scripts/tests/test_test_lanes.py",
+      "scripts/tests/test_source_sets_native.py",
+      "scripts/tests/test_check_docs_standard.py",
+      "scripts/tests/test_verify_readme.py",
+      "scripts/tests/test_check_default_settings_reference.py",
+      "scripts/tests/test_release_verify.py",
+      "scripts/tests/test_deploy_dev_systemd.py",
+      "scripts/tests/test_deploy_dev_docker.py",
+      "scripts/tests/test_parity_dashboard.py"
+    ],
+    "backend": [
+      "backend/**"
+    ],
+    "bot": [
+      "telegram-bot/**"
+    ],
+    "cli": [
+      "cli/**"
+    ],
+    "shared": [
+      "shared/**",
+      "build.gradle",
+      "gradle.properties",
+      "gradle/**",
+      ".github/**"
+    ]
+  },
+  "gates": [
+    {
+      "id": "tooling:unit",
+      "component": "tooling",
+      "profiles": [
+        "fast",
+        "unit",
+        "build",
+        "integrated",
+        "release"
+      ],
+      "argv": [
+        "{python}",
+        "-B",
+        "-m",
+        "unittest",
+        "scripts.tests.test_release_verify",
+        "scripts.tests.test_check_docs_standard",
+        "scripts.tests.test_verify_readme",
+        "scripts.tests.test_check_default_settings_reference",
+        "-q"
+      ],
+      "cwd": ".",
+      "inputs": [
+        ".github/workflows/ci.yml",
+        "Makefile",
+        "scripts/quality-make.sh",
+        "scripts/tests/test_make_epoch.py",
+        "scripts/gradle-context.py",
+        "backend/gradle/wrapper/gradle-wrapper.properties",
+        "gradle/test-lanes.json",
+        "gradle/test-lanes.gradle",
+        "*/src/test/**",
+        "scripts/check_test_lanes.py",
+        "gradle/test-topology.gradle",
+        "gradle/test-membership.gradle",
+        ".quality-gate.json",
+        "scripts/vendor/**",
+        "scripts/select_java_modules.py",
+        "scripts/tests/test_java_selection.py",
+        "scripts/check_docs_standard.py",
+        "scripts/verify_readme.py",
+        "scripts/check_default_settings_reference.py",
+        "scripts/release_verify.py",
+        "scripts/tests/test_test_lanes.py",
+        "scripts/tests/test_release_verify.py",
+        "scripts/tests/test_check_docs_standard.py",
+        "scripts/tests/test_verify_readme.py",
+        "scripts/tests/test_check_default_settings_reference.py",
+        "backend/src/test/**",
+        "telegram-bot/src/test/**",
+        "cli/src/test/**",
+        "shared/src/test/**",
+        "scripts/tests/test_private_production_reader.py"
+      ],
+      "cacheable": false,
+      "execution_slot": "none",
+      "test_tier": "unit"
+    },
+    {
+      "id": "docs:readme",
+      "component": "docs",
+      "profiles": [
+        "fast",
+        "integrated",
+        "release"
+      ],
+      "argv": [
+        "{python}",
+        "-B",
+        "scripts/verify_readme.py"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": true,
+      "test_tier": "static"
+    },
+    {
+      "id": "backend:unit",
+      "component": "backend",
+      "profiles": [
+        "fast",
+        "unit",
+        "build"
+      ],
+      "argv": [
+        "bash",
+        "./gradlew",
+        "--no-daemon",
+        "--max-workers=2",
+        "test"
+      ],
+      "cwd": "backend",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1"
+        }
+      ],
+      "test_tier": "unit",
+      "outputs": [
+        "backend/build/test-results/test"
+      ]
+    },
+    {
+      "id": "backend:build",
+      "component": "backend",
+      "profiles": [
+        "build"
+      ],
+      "argv": [
+        "bash",
+        "./gradlew",
+        "--no-daemon",
+        "--max-workers=2",
+        "bootJar"
+      ],
+      "cwd": "backend",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1"
+        }
+      ],
+      "kind": "artifact",
+      "test_tier": "artifact",
+      "outputs": [
+        "backend/build/libs/java-agent-backend-0.0.1-SNAPSHOT.jar"
+      ]
+    },
+    {
+      "id": "bot:unit",
+      "component": "bot",
+      "profiles": [
+        "fast",
+        "unit",
+        "build"
+      ],
+      "argv": [
+        "bash",
+        "./gradlew",
+        "--no-daemon",
+        "--max-workers=2",
+        ":telegram-bot:test"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1"
+        }
+      ],
+      "test_tier": "unit",
+      "outputs": [
+        "telegram-bot/build/test-results/test"
+      ]
+    },
+    {
+      "id": "cli:unit",
+      "component": "cli",
+      "profiles": [
+        "fast",
+        "unit",
+        "build"
+      ],
+      "argv": [
+        "bash",
+        "./gradlew",
+        "--no-daemon",
+        "--max-workers=2",
+        ":cli:test"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1"
+        }
+      ],
+      "test_tier": "unit",
+      "outputs": [
+        "cli/build/test-results/test"
+      ]
+    },
+    {
+      "id": "shared:unit",
+      "component": "shared",
+      "profiles": [
+        "fast",
+        "unit",
+        "build"
+      ],
+      "argv": [
+        "bash",
+        "./gradlew",
+        "--no-daemon",
+        "--max-workers=2",
+        ":shared:test"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1"
+        }
+      ],
+      "test_tier": "unit",
+      "outputs": [
+        "shared/build/test-results/test"
+      ]
+    },
+    {
+      "id": "backend:integration",
+      "component": "backend",
+      "profiles": [
+        "integration"
+      ],
+      "argv": [
+        "bash",
+        "./gradlew",
+        "--no-daemon",
+        "--max-workers=2",
+        "e2eTest"
+      ],
+      "cwd": "backend",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1"
+        }
+      ],
+      "requires_env": [
+        "USAGE_PERSISTENCE_TEST_JDBC_URL",
+        "USAGE_PERSISTENCE_TEST_DB_USER",
+        "USAGE_PERSISTENCE_TEST_DB_PASSWORD",
+        "JAVA_AGENT_TEST_DB_DISPOSABLE",
+        "JAVA_AGENT_TEST_DB_URL",
+        "JAVA_AGENT_TEST_DB_USER",
+        "JAVA_AGENT_TEST_DB_PASSWORD"
+      ],
+      "test_tier": "integration",
+      "external_state": true
+    },
+    {
+      "id": "backend:release",
+      "component": "backend",
+      "profiles": [
+        "release",
+        "integrated"
+      ],
+      "argv": [
+        "bash",
+        "./gradlew",
+        "--no-daemon",
+        "--max-workers=2",
+        "test",
+        "jacocoTestReport"
+      ],
+      "cwd": "backend",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1"
+        }
+      ],
+      "requires_env": [
+        "USAGE_PERSISTENCE_TEST_JDBC_URL",
+        "USAGE_PERSISTENCE_TEST_DB_USER",
+        "USAGE_PERSISTENCE_TEST_DB_PASSWORD",
+        "JAVA_AGENT_TEST_DB_DISPOSABLE",
+        "JAVA_AGENT_TEST_DB_URL",
+        "JAVA_AGENT_TEST_DB_USER",
+        "JAVA_AGENT_TEST_DB_PASSWORD"
+      ],
+      "test_tier": "integration",
+      "external_state": true
+    },
+    {
+      "id": "bot:release",
+      "component": "bot",
+      "profiles": [
+        "release",
+        "integrated"
+      ],
+      "argv": [
+        "bash",
+        "./gradlew",
+        "--no-daemon",
+        "--max-workers=2",
+        ":telegram-bot:test",
+        ":telegram-bot:jacocoTestReport"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1"
+        }
+      ],
+      "test_tier": "integration",
+      "external_state": true
+    },
+    {
+      "id": "backend:slow",
+      "component": "backend",
+      "profiles": [
+        "slow"
+      ],
+      "argv": [
+        "bash",
+        "./gradlew",
+        "--no-daemon",
+        "--max-workers=2",
+        "slowTest"
+      ],
+      "cwd": "backend",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1"
+        }
+      ],
+      "requires_env": [
+        "USAGE_PERSISTENCE_TEST_JDBC_URL",
+        "USAGE_PERSISTENCE_TEST_DB_USER",
+        "USAGE_PERSISTENCE_TEST_DB_PASSWORD",
+        "JAVA_AGENT_TEST_DB_DISPOSABLE",
+        "JAVA_AGENT_TEST_DB_URL",
+        "JAVA_AGENT_TEST_DB_USER",
+        "JAVA_AGENT_TEST_DB_PASSWORD"
+      ],
+      "test_tier": "slow",
+      "external_state": true
+    },
+    {
+      "id": "bot:slow",
+      "component": "bot",
+      "profiles": [
+        "slow"
+      ],
+      "argv": [
+        "bash",
+        "./gradlew",
+        "--no-daemon",
+        "--max-workers=2",
+        ":telegram-bot:slowTest"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1"
+        }
+      ],
+      "test_tier": "slow",
+      "external_state": true
+    },
+    {
+      "id": "tooling:process-protocol",
+      "component": "tooling",
+      "profiles": [
+        "integration",
+        "release"
+      ],
+      "argv": [
+        "{python}",
+        "-B",
+        "-m",
+        "unittest",
+        "scripts.tests.test_deploy_dev_systemd",
+        "scripts.tests.test_deploy_dev_docker",
+        "scripts.tests.test_parity_dashboard",
+        "-q"
+      ],
+      "inputs": [
+        "scripts/**",
+        "Makefile",
+        ".github/**"
+      ],
+      "cacheable": false,
+      "test_tier": "integration"
+    },
+    {
+      "id": "cli:build",
+      "component": "cli",
+      "profiles": [
+        "build"
+      ],
+      "argv": [
+        "bash",
+        "./gradlew",
+        "--no-daemon",
+        "--max-workers=2",
+        ":cli:bootJar"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1"
+        }
+      ],
+      "kind": "artifact",
+      "test_tier": "artifact",
+      "outputs": [
+        "cli/build/libs/cli-0.0.1-SNAPSHOT.jar"
+      ]
+    },
+    {
+      "id": "bot:build",
+      "component": "bot",
+      "profiles": [
+        "build"
+      ],
+      "argv": [
+        "bash",
+        "./gradlew",
+        "--no-daemon",
+        "--max-workers=2",
+        ":telegram-bot:bootJar"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "java",
+            "-version"
+          ],
+          "pattern": "25\\.0\\.4\\.1"
+        }
+      ],
+      "kind": "artifact",
+      "test_tier": "artifact",
+      "outputs": [
+        "telegram-bot/build/libs/telegram-bot-0.0.1-SNAPSHOT.jar"
+      ]
+    },
+    {
+      "id": "tooling:coverage-ratchet",
+      "component": "tooling",
+      "profiles": [
+        "release"
+      ],
+      "argv": [
+        "{python}",
+        "-B",
+        "scripts/check_docs_standard.py",
+        "--check-coverage"
+      ],
+      "inputs": [
+        "scripts/check_docs_standard.py",
+        "docs/standards/coverage-baseline.json"
+      ],
+      "external_state": true,
+      "cacheable": false,
+      "test_tier": "integration"
+    }
+  ],
+  "additional_acceptance": "Existing product CI/CONTRIBUTING: MSRV/features, ignored DB, OpenAPI/packed consumer/themes, security and live acceptance remain separate mandatory gates where applicable.",
+  "backend_unit_inputs": [
+    "backend/src/test/**",
+    "backend/src/slowTest/**",
+    "shared/src/test/**",
+    "telegram-bot/src/test/**",
+    "cli/src/test/**"
+  ],
+  "impacts": [
+    {
+      "paths": [
+        "LICENSE",
+        "NOTICE",
+        "THIRD_PARTY_NOTICES.md"
+      ],
+      "components": [
+        "backend",
+        "bot",
+        "cli",
+        "shared"
+      ]
+    },
+    {
+      "paths": [
+        "*.gradle",
+        "*.gradle.kts",
+        "gradle.properties",
+        "gradle/**",
+        "scripts/quality-gradle.sh",
+        "scripts/gradle-context.py",
+        "shared/src/main/**",
+        "shared/build.gradle",
+        "shared/settings.gradle",
+        "shared/gradle.properties"
+      ],
+      "components": [
+        "backend",
+        "bot",
+        "cli",
+        "shared",
+        "tooling"
+      ]
+    }
+  ]
+}
