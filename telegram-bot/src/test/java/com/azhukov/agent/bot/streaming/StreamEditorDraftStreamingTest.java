@@ -244,28 +244,27 @@ class StreamEditorDraftStreamingTest {
     }
 
     @Test
-    void ambiguousPreviousDraftSegmentDoesNotMarkLaterRateLimitedFinalAsPartial() {
+    void ambiguousPreviousDraftSegmentPreventsLaterDelivery() {
         editor.startStream(123L, "First", "dm");
         when(client.sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), eq(false)))
             .thenReturn(Optional.empty(), Optional.empty());
-        when(client.takeLastRetryAfterSeconds()).thenReturn(-1, 12, -1);
+        when(client.takeLastRetryAfterSeconds()).thenReturn(-1);
         editor.onSegmentBreak(123L, -1L, "First segment");
         assertThat(editor.finalizeStream(123L, -1L, "Final segment")).isFalse();
-        assertThat(editor.takePartialFinalDelivery(123L)).isFalse();
-        assertThat(editor.takePendingFinalRetryAfterSeconds(123L)).isEqualTo(12);
+        assertThat(editor.takePartialFinalDelivery(123L)).isTrue();
+        verify(client, never()).sendMessage(eq(123L), eq("Final segment"), any(), any(), any(), eq(false));
     }
 
     @Test
-    void partiallyDeliveredMultipartSegmentDoesNotSuppressLaterFinalRetry() {
+    void expiredMultipartSegmentPreventsLaterDelivery() {
         editor.startStream(123L, "First", "dm");
         when(client.sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), eq(false)))
             .thenReturn(Optional.of(50L), Optional.empty(), Optional.empty());
-        when(client.takeLastRetryAfterSeconds()).thenReturn(12, 12, -1);
+        when(client.takeLastRetryAfterSeconds()).thenReturn(270);
         editor.onSegmentBreak(123L, -1L, "segment ".repeat(1200));
         assertThat(editor.finalizeStream(123L, -1L, "Final segment")).isFalse();
-        assertThat(editor.takePartialFinalDelivery(123L)).isFalse();
-        assertThat(editor.takePendingFinalRetryAfterSeconds(123L)).isEqualTo(12);
-        verify(client, times(3)).sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), eq(false));
+        assertThat(editor.takePartialFinalDelivery(123L)).isTrue();
+        verify(client, times(2)).sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), eq(false));
     }
 
     @Test
@@ -273,20 +272,20 @@ class StreamEditorDraftStreamingTest {
         editor.startStream(123L, "First", "dm");
         when(client.sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), eq(false)))
             .thenReturn(Optional.of(40L), Optional.of(50L), Optional.empty());
-        when(client.takeLastRetryAfterSeconds()).thenReturn(12, -1);
+        when(client.takeLastRetryAfterSeconds()).thenReturn(-1);
         editor.onSegmentBreak(123L, -1L, "First segment");
         assertThat(editor.finalizeStream(123L, -1L, "Final content ".repeat(800))).isFalse();
         assertThat(editor.takePartialFinalDelivery(123L)).isTrue();
-        assertThat(editor.takePendingFinalRetryAfterSeconds(123L)).isEqualTo(12);
+        assertThat(editor.takePendingFinalRetryAfterSeconds(123L)).isEqualTo(-1);
         verify(client, times(3)).sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), eq(false));
     }
 
     @Test
-    void rejectedPreviousDraftSegmentDoesNotCarryCooldownIntoFinalFailure() {
+    void expiredPreviousDraftSegmentDoesNotArmFinalRetry() {
         editor.startStream(123L, "First", "dm");
         when(client.sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), eq(false)))
             .thenReturn(Optional.empty(), Optional.empty());
-        when(client.takeLastRetryAfterSeconds()).thenReturn(12, -1, -1);
+        when(client.takeLastRetryAfterSeconds()).thenReturn(270, -1);
         editor.onSegmentBreak(123L, -1L, "First segment");
         assertThat(editor.finalizeStream(123L, -1L, "Final segment")).isFalse();
         assertThat(editor.takePartialFinalDelivery(123L)).isTrue();

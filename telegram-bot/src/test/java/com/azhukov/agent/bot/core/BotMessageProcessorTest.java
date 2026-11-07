@@ -938,8 +938,7 @@ class BotMessageProcessorTest {
 
     @SuppressWarnings("unchecked")
     @Test
-    @org.junit.jupiter.api.Tag("slow")
-    void previousAmbiguousDraftSegmentDoesNotPreventDeferredFinalDelivery() {
+    void previousAmbiguousDraftSegmentPreventsTheFinalDelivery() {
         properties.setStreamingTransport("draft");
         properties.setHeartbeatIntervalSeconds(0);
         properties.getDisplay().setToolProgress("off");
@@ -947,9 +946,7 @@ class BotMessageProcessorTest {
         when(telegramClient.sendDraft(anyLong(), anyString(), anyInt())).thenReturn(true);
         when(telegramClient.sendMessage(eq(100L), anyString(), eq("MarkdownV2"), any(), any(), eq(false)))
             .thenReturn(Optional.empty(), Optional.empty());
-        when(telegramClient.takeLastRetryAfterSeconds()).thenReturn(-1, 1, -1);
-        when(telegramClient.sendMessage(eq(100L), eq("Final answer"), eq("MarkdownV2"), any(), any()))
-            .thenReturn(Optional.of(42L));
+        when(telegramClient.takeLastRetryAfterSeconds()).thenReturn(-1);
         when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
                 ((Consumer<String>) inv.getArgument(4)).accept("Previous segment");
@@ -961,7 +958,8 @@ class BotMessageProcessorTest {
             });
         try (DeliveryFixture fixture = realDeliveryFixture()) {
             fixture.processor().accept(textEvent(1, 100L, "Hello"));
-            verify(telegramClient, timeout(5000)).sendMessage(eq(100L), eq("Final answer"), eq("MarkdownV2"), any(), any());
+            verify(telegramClient, never()).sendMessage(eq(100L), eq("Final answer"), eq("MarkdownV2"), any(), any());
+            verify(telegramClient, never()).sendMessage(eq(100L), eq("Final answer"), eq("MarkdownV2"), any(), any(), eq(false));
             verify(telegramClient, times(1)).sendMessage(eq(100L), eq("Previous segment"), eq("MarkdownV2"), any(), any(), eq(false));
         }
     }

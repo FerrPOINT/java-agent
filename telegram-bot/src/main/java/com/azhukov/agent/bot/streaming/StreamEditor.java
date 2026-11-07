@@ -367,6 +367,7 @@ public class StreamEditor {
     }
 
     boolean editStream(long chatId, long messageId, String text, StreamSession session) {
+        if (session.partialFinalDelivery) return false;
         // Update last token time (token arrived)
         session.lastTokenTime = System.currentTimeMillis();
 
@@ -620,6 +621,7 @@ public class StreamEditor {
     }
 
     boolean finalizeStream(long chatId, long messageId, String finalText, StreamSession session) {
+        if (session.partialFinalDelivery) return false;
         // R8: close orphaned code fences BEFORE delivery (Hermes ensure_closed_code_fences)
         finalText = ensureClosedCodeFences(finalText);
         // Stop heartbeat
@@ -1128,6 +1130,7 @@ public class StreamEditor {
     }
 
     private void checkHeartbeat(long chatId, StreamSession session) {
+        if (session.partialFinalDelivery || !session.pendingStreamChunks.isEmpty()) return;
         long startTime = session.streamStartTime;
         long lastToken = session.lastTokenTime;
         long msgId = session.currentMessageId.get();
@@ -1364,7 +1367,8 @@ public class StreamEditor {
                         }
                         retryAfter = telegramClient.takeLastRetryAfterSeconds();
                     } catch (TelegramApiException refusal) {
-                        retryAfter = refusal.isRateLimit() ? refusal.getRetryAfter() : -1;
+                        if (!refusal.isRateLimit()) throw refusal;
+                        retryAfter = refusal.getRetryAfter();
                     }
                     if (!waitForFloodRetry(session, chunks.subList(index, chunks.size()), retryAfter)) {
                         session.partialFinalDelivery = true;
