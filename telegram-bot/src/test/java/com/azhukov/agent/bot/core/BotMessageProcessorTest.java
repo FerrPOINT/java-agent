@@ -27,6 +27,7 @@ import com.azhukov.agent.bot.session.BusySessionHandler;
 import com.azhukov.agent.bot.session.EditCaptureService;
 import com.azhukov.agent.bot.streaming.StreamEditor;
 import com.azhukov.agent.bot.typing.TypingManager;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -85,6 +86,11 @@ class BotMessageProcessorTest {
     private BotMessageProcessor processor;
     private final com.azhukov.agent.bot.session.BotSessionStore sessionStoreMock = org.mockito.Mockito.mock(com.azhukov.agent.bot.session.BotSessionStore.class);
 
+
+    @AfterEach
+    void closeMediaRoots() {
+        processor.closeMediaRoots();
+    }
 
     @BeforeEach
     void setUp() {
@@ -1353,6 +1359,7 @@ class BotMessageProcessorTest {
         when(telegramClient.sendPhoto(anyLong(), any(byte[].class), any(), any()))
             .thenReturn(Optional.of(1L));
 
+        processor.init();
         processor.accept(textEvent(1, 100L, "hello"));
         verify(telegramClient).sendPhoto(eq(100L), any(byte[].class), any(), any());
     }
@@ -1378,6 +1385,7 @@ class BotMessageProcessorTest {
         when(telegramClient.sendPhoto(anyLong(), any(byte[].class), any(), any()))
             .thenReturn(Optional.of(1L));
 
+        processor.init();
         processor.accept(textEvent(1, 100L, "hello"));
         verify(telegramClient).sendPhoto(eq(100L), any(byte[].class), any(), any());
         verify(telegramClient).sendMessage(eq(100L), contains("Here is the photo"), anyString(), any(), any());
@@ -1405,6 +1413,7 @@ class BotMessageProcessorTest {
         when(telegramClient.sendPhoto(anyLong(), any(byte[].class), any(), any()))
             .thenThrow(new RuntimeException("send failed"));
 
+        processor.init();
         processor.accept(textEvent(1, 100L, "hello"));
         // S-2: Send failure is logged, no error message sent to user
         verify(telegramClient).sendPhoto(eq(100L), any(byte[].class), any(), any());
@@ -1944,6 +1953,7 @@ class BotMessageProcessorTest {
         when(telegramClient.sendPhoto(anyLong(), any(byte[].class), any(), any()))
             .thenReturn(Optional.of(1L));
 
+        processor.init();
         processor.accept(textEvent(1, 100L, "hello"));
         // S-2: deliverImageBatch sends photo with null caption and null parseMode
         verify(telegramClient).sendPhoto(eq(100L), any(byte[].class), any(), any());
@@ -2063,6 +2073,7 @@ class BotMessageProcessorTest {
         stubStreamingResult("MEDIA:" + mediaFile.toString(), false);
         when(telegramClient.sendPhoto(anyLong(), any(byte[].class), any(), any()))
             .thenReturn(Optional.of(1L));
+        processor.init();
         processor.accept(textEvent(1, 100L, "hello"));
         verify(telegramClient).sendPhoto(eq(100L), any(byte[].class), any(), any());
     }
@@ -2080,6 +2091,7 @@ class BotMessageProcessorTest {
             stubStreamingResult("MEDIA:" + mediaFile.toString(), false);
             when(telegramClient.sendPhoto(anyLong(), any(byte[].class), any(), any()))
                 .thenReturn(Optional.of(1L));
+            processor.init();
             processor.accept(textEvent(1, 100L, "hello"));
             verify(telegramClient).sendPhoto(eq(100L), any(byte[].class), any(), any());
         } finally {

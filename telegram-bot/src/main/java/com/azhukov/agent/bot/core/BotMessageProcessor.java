@@ -32,6 +32,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.io.File;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -44,6 +45,7 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
 import lombok.RequiredArgsConstructor;
 import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 
 /**
  * Main message processor — the thin orchestrator for all incoming {@link UpdateEvent}s.
@@ -101,6 +103,8 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
     // c5: extracted collaborators
     private final UpdateDispatcher updateDispatcher;
     private final StreamingOrchestrator streamingOrchestrator;
+    private SecureMediaReader workspaceMedia;
+    private SecureMediaReader inboundMedia;
 
     /**
      * Per-chat locks to prevent concurrent processing of messages within the same chat.
@@ -1099,6 +1103,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
      */
     private boolean isMediaPathAllowed(String path) {
         try {
+            if (path == null || path.isBlank()) return false;
             Path resolved = Paths.get(path).toAbsolutePath().normalize();
             Path workingDir = Paths.get(properties.getWorkingDirectory()).toAbsolutePath().normalize();
             Path mediaDir = AgentMediaPaths.mediaDir();
@@ -1124,7 +1129,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                     telegramClient.sendMessage(chatId, "⚠️ Media file not found: " + desc.path());
                     return;
                 }
-                byte[] data = Files.readAllBytes(file.toPath());
+                byte[] data = readMedia(file.toPath());
                 String fileName = file.getName();
                 java.util.Optional<Long> sent = telegramClient.sendPhoto(chatId, data, null, null);
                 markArtifactDelivered(artifactIdForPath(desc.path()), sent);
@@ -1150,7 +1155,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                         telegramClient.sendMessage(chatId, "⚠️ Media file not found: " + desc.path());
                         continue;
                     }
-                    byte[] data = Files.readAllBytes(file.toPath());
+                    byte[] data = readMedia(file.toPath());
                     String fileName = file.getName();
                     // First photo in the group gets the caption (if any)
                     String caption = (photoInputs.isEmpty()) ? null : null;
@@ -1194,7 +1199,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                 telegramClient.sendMessage(chatId, "⚠️ Media file not found: " + desc.path());
                 return;
             }
-            byte[] data = Files.readAllBytes(file.toPath());
+            byte[] data = readMedia(file.toPath());
             String fileName = file.getName();
             String parseMode = properties.getParseMode();
 
@@ -1253,10 +1258,48 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                 : platformMessageId.map(String::valueOf).orElse(null));
     }
 
+    private byte[] readMedia(Path path) throws IOException {
+        Path absolute = path.toAbsolutePath().normalize();
+        SecureMediaReader root = absolute.startsWith(AgentMediaPaths.mediaDir()) ? inboundMedia : workspaceMedia;
+        if (root == null) throw new IOException("Media root unavailable");
+        return root.read(absolute);
+    }
+
+    private SecureMediaReader pinMediaRoot(Path path) {
+        try {
+            return SecureMediaReader.open(path);
+        } catch (IOException e) {
+            log.warn("Cannot open outbound media root {}", path, e);
+            return null;
+        }
+    }
+
     @PostConstruct
     void init() {
+        workspaceMedia = pinMediaRoot(Path.of(properties.getWorkingDirectory()));
+        try {
+            Files.createDirectories(AgentMediaPaths.mediaDir());
+            inboundMedia = pinMediaRoot(AgentMediaPaths.mediaDir());
+        } catch (IOException e) {
+            log.warn("Cannot initialize inbound media root", e);
+        }
         textBatchDebouncer.onDispatch(this::dispatchTextBatch);
         photoBatchDebouncer.onDispatch(this::dispatchPhotoBatch);
+    }
+
+    @PreDestroy
+    void closeMediaRoots() {
+        closeMediaRoot(workspaceMedia);
+        closeMediaRoot(inboundMedia);
+    }
+
+    private void closeMediaRoot(SecureMediaReader root) {
+        if (root == null) return;
+        try {
+            root.close();
+        } catch (IOException e) {
+            log.warn("Cannot close outbound media root", e);
+        }
     }
 
     /**

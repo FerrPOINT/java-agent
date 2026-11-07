@@ -84,6 +84,7 @@ class BotMessageProcessorMediaDeliveryTest {
     private GoalAutoContinueService goalAutoContinueService;
     private EditCaptureService editCaptureService;
 
+    private AttachmentApiClient attachmentApiClient;
     private BotMessageProcessor processor;
     private final com.azhukov.agent.bot.session.BotSessionStore sessionStoreMock = org.mockito.Mockito.mock(com.azhukov.agent.bot.session.BotSessionStore.class);
 
@@ -161,19 +162,39 @@ class BotMessageProcessorMediaDeliveryTest {
             mock(com.azhukov.agent.bot.client.TelegramClient.class), sessionStoreMock,
             mock(com.azhukov.agent.bot.keyboard.ClarifyInteractionRenderer.class));
 
+        attachmentApiClient = mock(AttachmentApiClient.class);
         processor = new BotMessageProcessor(
             telegramClient, authorizationService, sessionStore, busyHandler,
             typingManager, backendClient, commandRegistry, callbackQueryHandler,
-            properties, streamEditor, inboundMediaHandler, mediaDeliveryService, org.mockito.Mockito.mock(com.azhukov.agent.bot.core.AttachmentApiClient.class),
+            properties, streamEditor, inboundMediaHandler, mediaDeliveryService, attachmentApiClient,
             runtimeFooter, reactionManager, textBatchDebouncer, photoBatchDebouncer,
             groupMessageFilter, slashAccessPolicy, responseFilter, goalAutoContinueService,
             editCaptureService, updateDispatcher, streamingOrchestrator);
+        processor.init();
     }
 
     @AfterEach
     void tearDown() {
-        // Reset the busy state between tests to avoid cross-test interference
-        // (BusySessionHandler is a real instance, not a mock)
+        processor.closeMediaRoots();
+    }
+
+    @Test
+    void workspaceCreatedAfterStartupRequiresRestart() throws Exception {
+        processor.closeMediaRoots();
+        Path workspace = tempDir.resolve("created-later");
+        properties.setWorkingDirectory(workspace.toString());
+        processor.init();
+
+        Path file = Files.writeString(Files.createDirectory(workspace).resolve("report.pdf"), "safe");
+        var media = List.of(new MediaDeliveryService.MediaDescriptor(file.toString(), ".pdf", false, false));
+        processor.deliverMedia(100L, media, null);
+        verify(telegramClient, never()).sendDocument(anyLong(), any(byte[].class), anyString(),
+            nullable(String.class), nullable(String.class));
+
+        processor.closeMediaRoots();
+        processor.init();
+        processor.deliverMedia(100L, media, null);
+        verify(telegramClient).sendDocument(eq(100L), any(byte[].class), eq("report.pdf"), isNull(), isNull());
     }
 
     @SuppressWarnings("unchecked")
@@ -208,6 +229,158 @@ class BotMessageProcessorMediaDeliveryTest {
     // ═══════════════════════════════════════════════════════════════════
     //  Media delivery routing tests
     // ═══════════════════════════════════════════════════════════════════
+
+    @Test
+    void mediaSymlinkToOutsideWorkspaceIsNotDelivered(@TempDir Path outsideDir) throws Exception {
+        Path outside = Files.writeString(outsideDir.resolve("private.pdf"), "private test data");
+        Path link = Files.createSymbolicLink(tempDir.resolve("linked.pdf"), outside);
+        processor.deliverMedia(100L, List.of(
+            new MediaDeliveryService.MediaDescriptor(link.toString(), "pdf", false, false)), null);
+        verify(telegramClient, never()).sendDocument(anyLong(), any(byte[].class), anyString(), nullable(String.class), nullable(String.class));
+    }
+
+    @Test
+    void replacingValidatedFileWithSymlinkDoesNotDeliverOutsideContent(@TempDir Path outsideDir) throws Exception {
+        Path local = Files.writeString(tempDir.resolve("att_abcdef.pdf"), "safe");
+        Path outside = Files.writeString(outsideDir.resolve("private.pdf"), "private test data");
+        AttachmentApiClient api = attachmentApiClient;
+        when(api.find("att_abcdef")).thenAnswer(invocation -> {
+            Files.delete(local);
+            Files.createSymbolicLink(local, outside);
+            return Optional.empty();
+        });
+        processor.deliverMedia(100L, List.of(
+            new MediaDeliveryService.MediaDescriptor(local.toString(), "pdf", false, false)), null);
+        verify(telegramClient, never()).sendDocument(anyLong(), any(byte[].class), anyString(), nullable(String.class), nullable(String.class));
+    }
+
+    @Test
+    void intermediateDirectoryReplacedDuringDeliveryIsRejected(@TempDir Path outsideDir) throws Exception {
+        Path directory = Files.createDirectory(tempDir.resolve("child"));
+        Path file = Files.writeString(directory.resolve("att_abcdef.pdf"), "safe");
+        Files.writeString(outsideDir.resolve(file.getFileName()), "private");
+        when(attachmentApiClient.find("att_abcdef")).thenAnswer(invocation -> {
+            Files.move(directory, tempDir.resolve("original"));
+            Files.createSymbolicLink(directory, outsideDir);
+            return Optional.empty();
+        });
+
+        processor.deliverMedia(100L, List.of(
+            new MediaDeliveryService.MediaDescriptor(file.toString(), ".pdf", false, false)), null);
+
+        verify(attachmentApiClient).find("att_abcdef");
+        verify(telegramClient, never()).sendDocument(anyLong(), any(byte[].class), anyString(),
+            nullable(String.class), nullable(String.class));
+    }
+
+    @Test
+    void intermediateDirectorySymlinkIsNotDelivered(@TempDir Path outsideDir) throws Exception {
+        Files.writeString(outsideDir.resolve("private.pdf"), "private");
+        Path link = Files.createSymbolicLink(tempDir.resolve("linked-dir"), outsideDir);
+        processor.deliverMedia(100L, List.of(
+            new MediaDeliveryService.MediaDescriptor(link.resolve("private.pdf").toString(), ".pdf", false, false)), null);
+        verify(telegramClient, never()).sendDocument(anyLong(), any(byte[].class), anyString(), nullable(String.class), nullable(String.class));
+    }
+
+    @Test
+    void replacingConfiguredWorkspaceWithSymlinkDoesNotDeliverOutsideFile(@TempDir Path outsideDir) throws Exception {
+        Path file = Files.writeString(tempDir.resolve("att_abcdef.pdf"), "safe");
+        Files.writeString(outsideDir.resolve("att_abcdef.pdf"), "outside");
+        AttachmentApiClient api = attachmentApiClient;
+        when(api.find("att_abcdef")).thenAnswer(invocation -> {
+            Path moved = tempDir.resolveSibling(tempDir.getFileName() + "-moved");
+            Files.move(tempDir, moved);
+            Files.createSymbolicLink(tempDir, outsideDir);
+            return Optional.empty();
+        });
+        try {
+            processor.deliverMedia(100L, List.of(new MediaDeliveryService.MediaDescriptor(file.toString(), ".pdf", false, false)), null);
+            verify(telegramClient, never()).sendDocument(anyLong(), any(byte[].class), anyString(), nullable(String.class), nullable(String.class));
+        } finally {
+            if (Files.isSymbolicLink(tempDir)) {
+                Files.delete(tempDir);
+                Files.move(tempDir.resolveSibling(tempDir.getFileName() + "-moved"), tempDir);
+            }
+        }
+    }
+
+    @Test
+    void mediaRootReplacedWithDirectoryDoesNotDeliverOutsideFile(@TempDir Path outsideDir) throws Exception {
+        Path file = Files.writeString(tempDir.resolve("att_abcdef.pdf"), "safe");
+        Files.writeString(outsideDir.resolve("att_abcdef.pdf"), "outside");
+        AttachmentApiClient api = attachmentApiClient;
+        when(api.find("att_abcdef")).thenAnswer(invocation -> {
+            Files.move(tempDir, tempDir.resolveSibling(tempDir.getFileName() + "-moved"));
+            Files.move(outsideDir, tempDir);
+            return Optional.empty();
+        });
+        try {
+            processor.deliverMedia(100L, List.of(new MediaDeliveryService.MediaDescriptor(file.toString(), ".pdf", false, false)), null);
+            verify(telegramClient, never()).sendDocument(anyLong(), any(byte[].class), anyString(), nullable(String.class), nullable(String.class));
+        } finally {
+            Path moved = tempDir.resolveSibling(tempDir.getFileName() + "-moved");
+            if (Files.exists(moved)) {
+                Files.move(tempDir, outsideDir);
+                Files.move(moved, tempDir);
+            }
+        }
+    }
+
+    @Test
+    void configuredWorkspaceReplacedBeforeDeliveryDoesNotExposeExternalFile(@TempDir Path outsideDir) throws Exception {
+        Path file = Files.writeString(tempDir.resolve("report.pdf"), "safe");
+        Files.writeString(outsideDir.resolve("report.pdf"), "outside");
+        Path moved = tempDir.resolveSibling(tempDir.getFileName() + "-moved");
+        try {
+            Files.move(tempDir, moved);
+            Files.move(outsideDir, tempDir);
+            processor.deliverMedia(100L, List.of(new MediaDeliveryService.MediaDescriptor(file.toString(), ".pdf", false, false)), null);
+            verify(telegramClient, never()).sendDocument(anyLong(), any(byte[].class), anyString(), nullable(String.class), nullable(String.class));
+        } finally {
+            if (Files.exists(moved)) {
+                Files.move(tempDir, outsideDir);
+                Files.move(moved, tempDir);
+            }
+        }
+    }
+
+    @Test
+    void workspaceReplacedBySymlinkBeforeDeliveryMustNotExposeExternalFile(@TempDir Path outsideDir) throws Exception {
+        Path file = Files.writeString(tempDir.resolve("report.pdf"), "safe");
+        Files.writeString(outsideDir.resolve("report.pdf"), "outside");
+        Path moved = tempDir.resolveSibling(tempDir.getFileName() + "-moved");
+        try {
+            Files.move(tempDir, moved);
+            Files.createSymbolicLink(tempDir, outsideDir);
+            processor.deliverMedia(100L, List.of(new MediaDeliveryService.MediaDescriptor(file.toString(), ".pdf", false, false)), null);
+            verify(telegramClient, never()).sendDocument(anyLong(), any(byte[].class), anyString(), nullable(String.class), nullable(String.class));
+        } finally {
+            if (Files.isSymbolicLink(tempDir)) Files.delete(tempDir);
+            if (Files.exists(moved)) Files.move(moved, tempDir);
+        }
+    }
+
+    @Test
+    void albumReadsFromBothAllowedRootsAndSkipsSymlinks(@TempDir Path outsideDir) throws Exception {
+        Path local = createTempFile("local.png");
+        Path outside = Files.writeString(outsideDir.resolve("private.png"), "outside");
+        Path link = Files.createSymbolicLink(tempDir.resolve("linked.png"), outside);
+        Path inbound = Files.createTempFile(com.azhukov.agent.bot.media.AgentMediaPaths.mediaDir(),
+            "media-test-", ".png");
+        try {
+            Files.writeString(inbound, "inbound");
+            processor.deliverMedia(100L, List.of(
+                new MediaDeliveryService.MediaDescriptor(local.toString(), ".png", false, false),
+                new MediaDeliveryService.MediaDescriptor(link.toString(), ".png", false, false),
+                new MediaDeliveryService.MediaDescriptor(inbound.toString(), ".png", false, false)
+            ), null);
+            verify(telegramClient).sendMediaGroup(eq(100L), argThat(photos -> photos.size() == 2
+                && photos.get(0).fileName().equals("local.png")
+                && photos.get(1).fileName().equals(inbound.getFileName().toString())));
+        } finally {
+            Files.delete(inbound);
+        }
+    }
 
     @Test
     void invalidMediaPathsDoNotPreventDeliveryOfLaterValidFiles() throws Exception {
