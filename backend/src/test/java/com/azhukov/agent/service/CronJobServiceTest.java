@@ -360,7 +360,6 @@ class CronJobServiceTest {
         job.setPrompt("Do something");
         job.setEnabled(true);
         when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
-        when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         service.runNow(id);
         verify(agentRuntimeService).runBackground(org.mockito.AdditionalMatchers.and(
             org.mockito.ArgumentMatchers.startsWith("[IMPORTANT: You are running as a scheduled cron job."),
@@ -415,7 +414,6 @@ class CronJobServiceTest {
         job.setEnabled(true);
         job.setSkills("hermes-agent,backend-dev");
         when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
-        when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(skillManager.getSkill("hermes-agent")).thenReturn("# Hermes Agent\nUse this skill.");
         when(skillManager.getSkill("backend-dev")).thenReturn("# Backend Dev\nDev conventions.");
 
@@ -438,7 +436,6 @@ class CronJobServiceTest {
         job.setEnabled(true);
         job.setSkills(null);
         when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
-        when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         service.runNow(id);
 
@@ -817,7 +814,6 @@ class CronJobServiceTest {
         job.setScript("echo hello");
         // This won't find the file, but it exercises the no_agent path and doesn't call LLM
         when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
-        when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         service.runNow(id);
 
@@ -882,7 +878,6 @@ class CronJobServiceTest {
         job.setModelName("gpt-4");
         job.setBaseUrl("https://api.openai.com");
         when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
-        when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         service.runNow(id);
 
