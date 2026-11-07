@@ -617,6 +617,36 @@ class BotMessageProcessorTest {
 
     @SuppressWarnings("unchecked")
     @Test
+    void floodWaitAfterFirstMultipartChunkRetriesOnlyRejectedRemainder() {
+        properties.setStreamingTransport("draft");
+        properties.getDisplay().setToolProgress("off");
+        when(telegramClient.supportsDraftStreaming(anyString())).thenReturn(true);
+        when(telegramClient.sendDraft(anyLong(), anyString(), anyInt())).thenReturn(true);
+        String segment = "a".repeat(4000) + "b".repeat(4000) + "c".repeat(1000);
+        var chunks = com.azhukov.agent.bot.formatting.MessageSplitter.splitAndFormat(segment, "MarkdownV2");
+        assertThat(chunks.size()).isGreaterThan(1);
+        when(telegramClient.sendMessage(eq(100L), anyString(), eq("MarkdownV2"), any(), any(), eq(false)))
+            .thenReturn(Optional.of(40L), Optional.empty());
+        when(telegramClient.takeLastRetryAfterSeconds()).thenReturn(1);
+        when(telegramClient.sendMessage(eq(100L), anyString(), eq("MarkdownV2"), any(), any()))
+            .thenReturn(Optional.of(41L));
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+            .thenAnswer(inv -> {
+                ((Consumer<String>) inv.getArgument(4)).accept(segment);
+                ((Consumer<String>) inv.getArgument(5)).accept("search");
+                var result = new AgentBackendClient.ChatResult(segment, "model", 1, 10, true);
+                ((Consumer<AgentBackendClient.ChatResult>) inv.getArgument(10)).accept(result);
+                return result;
+            });
+        try (DeliveryFixture fixture = realDeliveryFixture()) {
+            fixture.processor().accept(textEvent(1, 100L, "Hello"));
+            verify(telegramClient, timeout(4500)).sendMessage(eq(100L), eq(chunks.get(1)), eq("MarkdownV2"), any(), any());
+            verify(telegramClient, never()).sendMessage(eq(100L), eq(chunks.get(0)), eq("MarkdownV2"), any(), any());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
     void ambiguousShortSegmentIsNotRetried() throws InterruptedException {
         properties.setStreamingTransport("edit");
         properties.getDisplay().setToolProgress("off");
