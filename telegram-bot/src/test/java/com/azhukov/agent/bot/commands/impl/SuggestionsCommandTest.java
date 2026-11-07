@@ -36,7 +36,7 @@ class SuggestionsCommandTest {
 
     @Test
     void emptyListPointsAtCatalog() {
-        when(backendClient.listSuggestions(anyString())).thenReturn(mapper.createArrayNode());
+        when(backendClient.listSuggestions("456")).thenReturn(mapper.createArrayNode());
 
         String result = cmd.handle(textEvent("/suggestions"), null);
 
@@ -52,7 +52,7 @@ class SuggestionsCommandTest {
         s.put("title", "Daily briefing");
         s.put("description", "Every morning at 8am");
         pending.add(s);
-        when(backendClient.listSuggestions(anyString())).thenReturn(pending);
+        when(backendClient.listSuggestions("456")).thenReturn(pending);
 
         String result = cmd.handle(textEvent("/suggestions"), null);
 
@@ -65,7 +65,7 @@ class SuggestionsCommandTest {
     void catalogSeeds() {
         ObjectNode resp = mapper.createObjectNode();
         resp.put("added", 4);
-        when(backendClient.suggestionPost("/api/v1/agent/cron/suggestions/catalog", anyString())).thenReturn(resp);
+        when(backendClient.suggestionPost("/api/v1/agent/cron/suggestions/catalog", "456")).thenReturn(resp);
 
         String result = cmd.handle(textEvent("/suggestions catalog"), null);
 
@@ -80,8 +80,8 @@ class SuggestionsCommandTest {
         response.put("schedulingStatus", "failed");
         var pending = mapper.createArrayNode();
         pending.addObject().put("id", "id");
-        when(backendClient.listSuggestions(anyString())).thenReturn(pending);
-        when(backendClient.suggestionPost("/api/v1/agent/cron/suggestions/id/accept", anyString())).thenReturn(response);
+        when(backendClient.listSuggestions("456")).thenReturn(pending);
+        when(backendClient.suggestionPost("/api/v1/agent/cron/suggestions/id/accept", "456")).thenReturn(response);
         String result = cmd.handle(textEvent("/suggestions accept id"), null);
         assertThat(result).containsIgnoringCase("scheduling").containsIgnoringCase("failed");
     }
@@ -94,11 +94,11 @@ class SuggestionsCommandTest {
         s.put("title", "Weekly review");
         s.put("description", "d");
         pending.add(s);
-        when(backendClient.listSuggestions(anyString())).thenReturn(pending);
+        when(backendClient.listSuggestions("456")).thenReturn(pending);
         ObjectNode ok = mapper.createObjectNode();
         ok.put("accepted", true);
         ok.put("name", "Weekly review");
-        when(backendClient.suggestionPost("/api/v1/agent/cron/suggestions/sgg-9/accept", anyString())).thenReturn(ok);
+        when(backendClient.suggestionPost("/api/v1/agent/cron/suggestions/sgg-9/accept", "456")).thenReturn(ok);
 
         String result = cmd.handle(textEvent("/suggestions accept 1"), null);
 
@@ -113,10 +113,10 @@ class SuggestionsCommandTest {
         s.put("title", "t");
         s.put("description", "d");
         pending.add(s);
-        when(backendClient.listSuggestions(anyString())).thenReturn(pending);
+        when(backendClient.listSuggestions("456")).thenReturn(pending);
         ObjectNode ok = mapper.createObjectNode();
         ok.put("dismissed", true);
-        when(backendClient.suggestionPost("/api/v1/agent/cron/suggestions/sgg-2/dismiss", anyString())).thenReturn(ok);
+        when(backendClient.suggestionPost("/api/v1/agent/cron/suggestions/sgg-2/dismiss", "456")).thenReturn(ok);
 
         String result = cmd.handle(textEvent("/suggestions dismiss 1"), null);
 
