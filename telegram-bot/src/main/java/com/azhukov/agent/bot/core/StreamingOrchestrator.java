@@ -362,6 +362,7 @@ public class StreamingOrchestrator {
                         accumulated.setLength(0);
                     }
                     if (streamEditor.hasUnconfirmedDelivery(chatId)) return;
+                    if (streamEditor.hasDeferredDelivery(chatId)) return;
                     streamEditor.setCurrentToolName(chatId, toolName);
                     // Hermes parity (display.tool_progress=all, grouping=accumulate):
                     // tool lines accumulate in ONE bubble — first tool sends it,
@@ -492,7 +493,7 @@ public class StreamingOrchestrator {
                             try {
                                 delivered = streamEditor.finalizeStream(chatId, messageId[0], finalText);
                             } catch (TelegramApiException e) {
-                                streamEditor.recordFinalDeliveryFailure(chatId, fallbackText, e.getRetryAfter());
+                                streamEditor.recordFinalDeliveryFailure(chatId, fallbackText);
                                 failedFinalDelivery[0] = true;
                                 finalized[0] = false;
                                 return;
@@ -503,16 +504,20 @@ public class StreamingOrchestrator {
                             }
                             finalized[0] = delivered;
                             // Deliver extracted media files only after text finalization succeeds.
-                            if (delivered && !extraction.media().isEmpty()) {
+                            if (!extraction.media().isEmpty()) {
                                 Integer mediaThreadId = messageThreadId > 0 ? (int) messageThreadId : null;
-                                hooks.deliverMedia(chatId, extraction.media(), mediaThreadId);
+                                if (delivered) hooks.deliverMedia(chatId, extraction.media(), mediaThreadId);
+                                else if (streamEditor.hasDeferredDelivery(chatId)) {
+                                    streamEditor.afterDeferredDelivery(chatId,
+                                        () -> hooks.deliverMedia(chatId, extraction.media(), mediaThreadId));
+                                }
                             }
                         } else {
                             boolean delivered;
                             try {
                                 delivered = streamEditor.finalizeStream(chatId, messageId[0], finalText);
                             } catch (TelegramApiException e) {
-                                streamEditor.recordFinalDeliveryFailure(chatId, finalText, e.getRetryAfter());
+                                streamEditor.recordFinalDeliveryFailure(chatId, finalText);
                                 failedFinalDelivery[0] = true;
                                 finalized[0] = false;
                                 return;
@@ -573,11 +578,14 @@ public class StreamingOrchestrator {
             );
 
             // If streaming produced content, return it (with metadata from the stream)
-            if (accumulated.length() > 0 || finalized[0] || failedFinalDelivery[0]) {
+            if (accumulated.length() > 0 || finalized[0] || failedFinalDelivery[0] || streamEditor.hasDeferredDelivery(chatId)) {
                 progressBubbles.remove(chatId);
                 if (shouldSchedulePendingReviewPoll(finalized[0])) {
                     schedulePendingReviewPoll(sessionId, streamResult.backendSessionId(),
                         chatId, userMessageId, messageThreadId, hooks);
+                } else if (streamEditor.hasDeferredDelivery(chatId)) {
+                    streamEditor.afterDeferredDelivery(chatId, () -> schedulePendingReviewPoll(sessionId,
+                        streamResult.backendSessionId(), chatId, userMessageId, messageThreadId, hooks));
                 }
                 return new AgentBackendClient.ChatResult(
                     accumulated.toString(),

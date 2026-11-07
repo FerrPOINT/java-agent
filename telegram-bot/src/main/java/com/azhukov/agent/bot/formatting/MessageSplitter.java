@@ -34,7 +34,6 @@ public final class MessageSplitter {
      * @return list of chunks
      */
     public static List<String> split(String text, int maxLength) {
-        if (maxLength < 1) throw new IllegalArgumentException("maxLength must be positive");
         if (text == null || text.isEmpty()) {
             return List.of("");
         }
@@ -47,34 +46,8 @@ public final class MessageSplitter {
         // a closing "\n```" and a language-tagged reopening to neighbouring
         // chunks; without this reserve a hard split at 4096 overflows Telegram
         // after the otherwise-correct fence repair.
-        // Reserve the complete index before splitting; truncating after adding it
-        // silently loses source characters at every full-size boundary.
-        int prefixReserve = 2 * Integer.toString(text.length()).length() + 4;
-        // Tiny custom limits cannot fit an index and a Unicode code point.
-        if (maxLength < prefixReserve + 2) {
-            if (maxLength < 2 && text.codePoints().anyMatch(cp -> Character.charCount(cp) == 2)) {
-                throw new IllegalArgumentException("maxLength cannot fit a Unicode code point");
-            }
-            return splitVerbatim(text, maxLength);
-        }
-        int longestTag = text.lines().map(String::strip).filter(line -> line.startsWith("```"))
-            .map(line -> line.substring(3).strip())
-            .map(tag -> tag.isEmpty() ? "" : tag.split("\\s+", 2)[0])
-            .mapToInt(String::length).max().orElse(0);
-        int fenceReserve = text.contains("```") ? longestTag + 8 : 0;
-        if (maxLength - prefixReserve - fenceReserve < 2) {
-            // A fence label may be longer than an entire message. Preserve the
-            // source rather than inserting balancing markup and truncating it.
-            return splitVerbatim(text, maxLength);
-        }
-        int splitLimit = maxLength - prefixReserve - fenceReserve;
-        List<String> unbalanced = splitPreservingBoundaries(text, splitLimit);
-        List<String> chunks = balanceFencesAcrossChunks(unbalanced, maxLength);
-        // A hard boundary may turn inline backticks into a false fence and
-        // manufacture an oversized language tag. Preserve the original chunks.
-        if (chunks.stream().anyMatch(chunk -> chunk.length() + prefixReserve > maxLength)) {
-            chunks = unbalanced;
-        }
+        int splitLimit = text.contains("```") ? Math.max(1, maxLength - 16) : maxLength;
+        List<String> chunks = balanceFencesAcrossChunks(doSplit(text, splitLimit), maxLength);
 
         // Add "(1/N)" continuation indicator when splitting into multiple chunks.
         // The indicator is NOT escaped here — callers using MarkdownV2 should use
@@ -84,53 +57,25 @@ public final class MessageSplitter {
             List<String> indexed = new ArrayList<>(total);
             for (int i = 0; i < total; i++) {
                 String prefix = "(" + (i + 1) + "/" + total + ") ";
-                indexed.add(prefix + chunks.get(i));
+                int prefixLen = prefix.length();
+                String chunk = chunks.get(i);
+                // Shrink chunk so that prefix + chunk fits within maxLength.
+                // BUG FIX (audit H15): back off one char when the cut point would
+                // split a surrogate pair — otherwise the chunk ends with a lone
+                // high surrogate and the emoji renders broken in Telegram.
+                if (chunk.length() > maxLength - prefixLen) {
+                    int cut = maxLength - prefixLen;
+                    if (cut > 0 && Character.isHighSurrogate(chunk.charAt(cut - 1))) {
+                        cut--;
+                    }
+                    chunk = chunk.substring(0, cut);
+                }
+                indexed.add(prefix + chunk);
             }
             return indexed;
         }
 
         return chunks;
-    }
-
-    private static String escapeLiteralMarkdown(String text) {
-        StringBuilder out = new StringBuilder(text.length() * 2);
-        for (int i = 0; i < text.length(); i++) {
-            char c = text.charAt(i);
-            if ("_*[]()~`>#+-=|{}.!\\".indexOf(c) >= 0) out.append('\\');
-            out.append(c);
-        }
-        return out.toString();
-    }
-
-    private static List<String> splitVerbatim(String text, int maxLength) {
-        List<String> chunks = new ArrayList<>();
-        int start = 0;
-        while (start < text.length()) {
-            int end = Math.min(text.length(), start + maxLength);
-            if (end < text.length() && Character.isHighSurrogate(text.charAt(end - 1))
-                    && Character.isLowSurrogate(text.charAt(end))) end--;
-            if (end == start) throw new IllegalArgumentException("maxLength cannot fit a Unicode code point");
-            chunks.add(text.substring(start, end));
-            start = end;
-        }
-        return chunks;
-    }
-
-    public static List<String> splitEscapedHtmlText(String text) {
-        if (text == null || text.isEmpty()) return List.of("");
-        String escaped = escapeHtml(text);
-        if (escaped.length() <= TELEGRAM_MAX_LENGTH) return List.of(escaped);
-        // Reserve the index and the worst-case five-character entity per UTF-16 unit.
-        List<String> raw = splitPreservingBoundaries(text, (TELEGRAM_MAX_LENGTH - 24) / 5);
-        List<String> result = new ArrayList<>(raw.size());
-        for (int i = 0; i < raw.size(); i++) {
-            result.add("(" + (i + 1) + "/" + raw.size() + ") " + escapeHtml(raw.get(i)));
-        }
-        return result;
-    }
-
-    private static String escapeHtml(String text) {
-        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 
     /**
@@ -162,10 +107,9 @@ public final class MessageSplitter {
         // For MarkdownV2: split raw text first, then format each chunk, then add escaped indicator.
         // MarkdownV2 escaping can double each char (every special char gets a '\' prefix),
         // so we split the raw text at maxLength / maxExpansionFactor to leave room for escaping.
-        String converted = MarkdownConverter.convert(text);
-        if (utf16Length(converted) <= TELEGRAM_MAX_LENGTH) {
-            // Escaping may expand a short raw message beyond the transport limit.
-            return List.of(converted);
+        String single = MarkdownConverter.convert(text);
+        if (utf16Length(single) <= TELEGRAM_MAX_LENGTH) {
+            return List.of(single);
         }
 
         // Worst case: every character is a MarkdownV2 special char and gets escaped (doubled).
@@ -180,56 +124,33 @@ public final class MessageSplitter {
             rawMaxLen = 1; // ensure at least 1 char per chunk
         }
 
-        // Table rendering can repeat headers and exceed the 2x escaping budget.
-        // Render before splitting so expanded rows are never silently truncated.
-        text = MarkdownConverter.convertTables(text);
-        int longestTag = text.lines().map(String::strip).filter(line -> line.startsWith("```"))
-            .map(line -> line.substring(3).strip())
-            .map(tag -> tag.isEmpty() ? "" : tag.split("\\s+", 2)[0])
-            .mapToInt(String::length).max().orElse(0);
-        int fenceReserve = text.contains("```") ? longestTag + 8 : 0;
-        if (rawMaxLen - fenceReserve < 64) {
-            // A pathological fence label cannot be balanced within one chunk.
-            return splitLiteralMarkdown(text, rawMaxLen);
-        }
-        List<String> unbalanced = splitPreservingBoundaries(text, rawMaxLen - fenceReserve);
-        List<String> rawChunks = balanceFencesAcrossChunks(unbalanced, rawMaxLen);
-        for (int i = 0; i < rawChunks.size(); i++) {
-            if (rawChunks.get(i).length() > unbalanced.get(i).length() + fenceReserve) {
-                return splitLiteralMarkdown(text, rawMaxLen);
-            }
-        }
+        List<String> rawChunks = doSplit(text, rawMaxLen);
         int total = rawChunks.size();
         List<String> result = new ArrayList<>(total);
 
         for (int i = 0; i < total; i++) {
             String formatted = MarkdownConverter.convert(rawChunks.get(i));
             if (total > 1) {
+                // Build the indicator and escape it for MarkdownV2
                 String indicator = "(" + (i + 1) + "/" + total + ") ";
                 String escapedIndicator = MarkdownConverter.escapeMarkdownV2(indicator);
-                if (formatted.length() + escapedIndicator.length() > TELEGRAM_MAX_LENGTH) {
-                    // Formatting or a false fence expanded unexpectedly. Render
-                    // the original text literally rather than losing characters.
-                    return splitLiteralMarkdown(text, rawMaxLen);
+                // Truncate formatted text if it still exceeds the limit with the prefix
+                int remaining = TELEGRAM_MAX_LENGTH - escapedIndicator.length();
+                if (formatted.length() > remaining) {
+                    // BUG FIX (audit H15): avoid splitting a surrogate pair at the
+                    // cut point — a lone high surrogate breaks the emoji.
+                    int cut = remaining;
+                    if (cut > 0 && Character.isHighSurrogate(formatted.charAt(cut - 1))) {
+                        cut--;
+                    }
+                    formatted = formatted.substring(0, cut);
                 }
                 result.add(escapedIndicator + formatted);
-            } else if (formatted.length() > TELEGRAM_MAX_LENGTH) {
-                return splitLiteralMarkdown(text, rawMaxLen);
             } else {
                 result.add(formatted);
             }
         }
 
-        return result;
-    }
-
-    private static List<String> splitLiteralMarkdown(String text, int rawMaxLen) {
-        List<String> chunks = splitPreservingBoundaries(text, rawMaxLen);
-        List<String> result = new ArrayList<>(chunks.size());
-        for (int i = 0; i < chunks.size(); i++) {
-            String indicator = "(" + (i + 1) + "/" + chunks.size() + ") ";
-            result.add(MarkdownConverter.escapeMarkdownV2(indicator) + escapeLiteralMarkdown(chunks.get(i)));
-        }
         return result;
     }
 
@@ -277,24 +198,168 @@ public final class MessageSplitter {
         return balanced;
     }
 
-    private static List<String> splitPreservingBoundaries(String text, int maxLength) {
+    private static List<String> doSplit(String text, int maxLength) {
         List<String> chunks = new ArrayList<>();
+
+        // Split by paragraphs (double newline), but not inside code blocks
+        StringBuilder current = new StringBuilder();
+        boolean insideCodeBlock = false;
+
+        // Find all paragraph boundaries, tracking code block state
+        int start = 0;
+        int pos;
+        while ((pos = text.indexOf("\n\n", start)) >= 0) {
+            String segment = text.substring(start, pos);
+            // Check if this segment toggles a code block
+            boolean segmentHasFence = containsCodeFence(segment);
+            if (insideCodeBlock) {
+                // Inside code block — don't split here, just accumulate
+                current.append(segment).append("\n\n");
+                if (segmentHasFence) {
+                    insideCodeBlock = false;
+                }
+            } else {
+                // Outside code block — safe to split
+                if (segmentHasFence) {
+                    insideCodeBlock = true;
+                }
+                // Try to fit segment + current
+                String paraWithJoin = current.length() > 0 ? current + "\n\n" + segment : segment;
+                if (utf16Length(paraWithJoin) <= maxLength) {
+                    if (current.length() > 0) current.append("\n\n");
+                    current.append(segment);
+                } else {
+                    if (current.length() > 0) {
+                        chunks.add(current.toString());
+                        current.setLength(0);
+                    }
+                    if (utf16Length(segment) <= maxLength) {
+                        current.append(segment);
+                    } else {
+                        splitByLines(segment, chunks, current, maxLength);
+                    }
+                }
+            }
+            start = pos + 2;
+        }
+
+        // Handle remaining text
+        if (start < text.length()) {
+            String remaining = text.substring(start);
+            if (current.length() > 0) {
+                String combined = current + "\n\n" + remaining;
+                if (utf16Length(combined) <= maxLength) {
+                    current.append("\n\n").append(remaining);
+                } else {
+                    chunks.add(current.toString());
+                    current.setLength(0);
+                    if (utf16Length(remaining) <= maxLength) {
+                        current.append(remaining);
+                    } else {
+                        splitByLines(remaining, chunks, current, maxLength);
+                    }
+                }
+            } else {
+                if (utf16Length(remaining) <= maxLength) {
+                    current.append(remaining);
+                } else {
+                    splitByLines(remaining, chunks, current, maxLength);
+                }
+            }
+        }
+
+        if (current.length() > 0) {
+            chunks.add(current.toString());
+        }
+
+        return chunks;
+    }
+
+    /** Check if a text segment contains a markdown code fence (``` or ~~~). */
+    private static boolean containsCodeFence(String segment) {
+        return segment.contains("```") || segment.contains("~~~");
+    }
+
+    private static void splitByLines(String paragraph, List<String> chunks, StringBuilder current, int maxLength) {
+        String[] lines = paragraph.split("\n", -1);
+        for (String line : lines) {
+            String lineWithJoin = line;
+            if (current.length() > 0) {
+                lineWithJoin = current + "\n" + line;
+            }
+
+            if (utf16Length(lineWithJoin) <= maxLength) {
+                if (current.length() > 0) {
+                    current.append("\n");
+                }
+                current.append(line);
+            } else {
+                // Flush current
+                if (current.length() > 0) {
+                    chunks.add(current.toString());
+                    current.setLength(0);
+                }
+
+                // Single line too big — hard split
+                if (utf16Length(line) <= maxLength) {
+                    current.append(line);
+                } else {
+                    splitHard(line, chunks, current, maxLength);
+                }
+            }
+        }
+    }
+
+    private static void splitHard(String text, List<String> chunks, StringBuilder current, int maxLength) {
         int start = 0;
         while (start < text.length()) {
-            int end = Math.min(text.length(), start + maxLength);
-            if (end < text.length()) {
-                if (Character.isHighSurrogate(text.charAt(end - 1))
-                        && Character.isLowSurrogate(text.charAt(end))) end--;
-                int paragraph = text.lastIndexOf("\n\n", end - 2);
-                int newline = text.lastIndexOf('\n', end - 1);
-                int boundary = paragraph >= start ? paragraph + 2 : newline >= start ? newline + 1 : end;
-                end = boundary > start ? boundary : end;
+            int remaining = text.length() - start;
+            // Calculate how many chars fit in maxLength UTF-16 code units
+            int capacity = maxLength - utf16Length(current.toString());
+            if (capacity <= 0) {
+                if (current.length() > 0) {
+                    chunks.add(current.toString());
+                    current.setLength(0);
+                }
+                capacity = maxLength;
             }
-            if (end == start) throw new IllegalArgumentException("maxLength cannot fit a Unicode code point");
-            chunks.add(text.substring(start, end));
+
+            int end = start;
+            int codeUnits = 0;
+            while (end < text.length() && codeUnits < capacity) {
+                char c = text.charAt(end);
+                if (Character.isSurrogate(c)) {
+                    if (end + 1 < text.length() && Character.isSurrogatePair(c, text.charAt(end + 1))) {
+                        if (codeUnits + 2 > capacity) break;
+                        codeUnits += 2;
+                        end += 2;
+                    } else {
+                        codeUnits += 1;
+                        end += 1;
+                    }
+                } else {
+                    codeUnits += 1;
+                    end += 1;
+                }
+            }
+
+            if (end == start) {
+                // Can't fit anything — flush and retry
+                if (current.length() > 0) {
+                    chunks.add(current.toString());
+                    current.setLength(0);
+                }
+                continue;
+            }
+
+            current.append(text, start, end);
             start = end;
+
+            if (utf16Length(current.toString()) >= maxLength) {
+                chunks.add(current.toString());
+                current.setLength(0);
+            }
         }
-        return chunks;
     }
 
     /**

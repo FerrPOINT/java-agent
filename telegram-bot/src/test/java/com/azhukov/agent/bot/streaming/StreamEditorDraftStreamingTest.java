@@ -62,13 +62,11 @@ class StreamEditorDraftStreamingTest {
     @Test
     void startingNewDraftResetsPriorDeliveryOutcome() {
         editor.startStream(123L, "first", "dm");
-        when(client.sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), eq(false)))
+        when(client.sendMessageChecked(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), isNull(), eq(false)))
             .thenReturn(Optional.empty());
-        when(client.takeLastRetryAfterSeconds()).thenReturn(-1);
         assertThat(editor.finalizeStream(123L, -1L, "first answer")).isFalse();
         editor.startStream(123L, "second", "dm");
         assertThat(editor.takePartialFinalDelivery(123L)).isFalse();
-        assertThat(editor.takePendingFinalRetryAfterSeconds(123L)).isEqualTo(-1);
     }
 
     @Test
@@ -182,7 +180,7 @@ class StreamEditorDraftStreamingTest {
     void finalizeStream_withDraftStreaming_sendsRegularMessage() {
         editor.startStream(123L, "Hello world", "dm");
 
-        when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
+        when(client.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), isNull(), anyBoolean()))
             .thenReturn(Optional.of(99L));
 
         boolean result = editor.finalizeStream(123L, -1, "Hello world final");
@@ -190,7 +188,7 @@ class StreamEditorDraftStreamingTest {
         assertThat(result).isTrue();
         // Final message is sent WITH parseMode (MarkdownV2): Hermes parity —
         // format_message is always applied before delivery, even for draft finalize.
-        verify(client).sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), anyBoolean());
+        verify(client).sendMessageChecked(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), isNull(), anyBoolean());
         // Should NOT call editMessageText (drafts have no message_id)
         verify(client, never()).editMessageText(anyLong(), anyLong(), anyString(), any(), anyBoolean());
         // Draft streaming should be cleaned up
@@ -223,11 +221,11 @@ class StreamEditorDraftStreamingTest {
     void draftSegmentLongMarkdownIsConvertedOnce() {
         editor.startStream(123L, "First", "forum", 77L);
         String text = "prefix_".repeat(700);
-        when(client.sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), eq(77), eq(false)))
+        when(client.sendMessageChecked(eq(123L), anyString(), eq("MarkdownV2"), any(), eq(77), isNull(), eq(false)))
             .thenReturn(Optional.of(50L));
         editor.onSegmentBreak(123L, -1, text);
         var sent = org.mockito.ArgumentCaptor.forClass(String.class);
-        verify(client, atLeast(2)).sendMessage(eq(123L), sent.capture(), eq("MarkdownV2"), any(), eq(77), eq(false));
+        verify(client, atLeast(2)).sendMessageChecked(eq(123L), sent.capture(), eq("MarkdownV2"), any(), eq(77), isNull(), eq(false));
         String restored = sent.getAllValues().stream()
             .map(chunk -> chunk.replaceFirst("^\\\\\\(\\d+/\\d+\\\\\\) ", ""))
             .collect(java.util.stream.Collectors.joining()).replace("\\_", "_");
@@ -237,59 +235,43 @@ class StreamEditorDraftStreamingTest {
     @Test
     void draftSegmentPreservesForumTopic() {
         editor.startStream(123L, "First", "forum", 77L);
-        when(client.sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), eq(77), eq(false)))
+        when(client.sendMessageChecked(eq(123L), anyString(), eq("MarkdownV2"), any(), eq(77), isNull(), eq(false)))
             .thenReturn(Optional.of(50L));
         editor.onSegmentBreak(123L, -1, "First segment");
-        verify(client).sendMessage(eq(123L), eq("First segment"), eq("MarkdownV2"), any(), eq(77), eq(false));
+        verify(client).sendMessageChecked(eq(123L), eq("First segment"), eq("MarkdownV2"), any(), eq(77), isNull(), eq(false));
     }
 
     @Test
     void ambiguousPreviousDraftSegmentPreventsLaterDelivery() {
         editor.startStream(123L, "First", "dm");
-        when(client.sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), eq(false)))
+        when(client.sendMessageChecked(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), isNull(), eq(false)))
             .thenReturn(Optional.empty(), Optional.empty());
-        when(client.takeLastRetryAfterSeconds()).thenReturn(-1);
         editor.onSegmentBreak(123L, -1L, "First segment");
         assertThat(editor.finalizeStream(123L, -1L, "Final segment")).isFalse();
         assertThat(editor.takePartialFinalDelivery(123L)).isTrue();
-        verify(client, never()).sendMessage(eq(123L), eq("Final segment"), any(), any(), any(), eq(false));
+        verify(client, never()).sendMessageChecked(eq(123L), eq("Final segment"), any(), any(), any(), isNull(), eq(false));
     }
 
     @Test
     void expiredMultipartSegmentPreventsLaterDelivery() {
         editor.startStream(123L, "First", "dm");
-        when(client.sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), eq(false)))
+        when(client.sendMessageChecked(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), isNull(), eq(false)))
             .thenReturn(Optional.of(50L), Optional.empty(), Optional.empty());
-        when(client.takeLastRetryAfterSeconds()).thenReturn(270);
         editor.onSegmentBreak(123L, -1L, "segment ".repeat(1200));
         assertThat(editor.finalizeStream(123L, -1L, "Final segment")).isFalse();
         assertThat(editor.takePartialFinalDelivery(123L)).isTrue();
-        verify(client, times(2)).sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), eq(false));
+        verify(client, times(2)).sendMessageChecked(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), isNull(), eq(false));
     }
 
     @Test
     void multipartFinalPartialDeliveryIsStillReportedAfterSuccessfulSegment() {
         editor.startStream(123L, "First", "dm");
-        when(client.sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), eq(false)))
+        when(client.sendMessageChecked(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), isNull(), eq(false)))
             .thenReturn(Optional.of(40L), Optional.of(50L), Optional.empty());
-        when(client.takeLastRetryAfterSeconds()).thenReturn(-1);
         editor.onSegmentBreak(123L, -1L, "First segment");
         assertThat(editor.finalizeStream(123L, -1L, "Final content ".repeat(800))).isFalse();
         assertThat(editor.takePartialFinalDelivery(123L)).isTrue();
-        assertThat(editor.takePendingFinalRetryAfterSeconds(123L)).isEqualTo(-1);
-        verify(client, times(3)).sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), eq(false));
-    }
-
-    @Test
-    void expiredPreviousDraftSegmentDoesNotArmFinalRetry() {
-        editor.startStream(123L, "First", "dm");
-        when(client.sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), eq(false)))
-            .thenReturn(Optional.empty(), Optional.empty());
-        when(client.takeLastRetryAfterSeconds()).thenReturn(270, -1);
-        editor.onSegmentBreak(123L, -1L, "First segment");
-        assertThat(editor.finalizeStream(123L, -1L, "Final segment")).isFalse();
-        assertThat(editor.takePartialFinalDelivery(123L)).isTrue();
-        assertThat(editor.takePendingFinalRetryAfterSeconds(123L)).isEqualTo(-1);
+        verify(client, times(3)).sendMessageChecked(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), isNull(), eq(false));
     }
 
     @Test
@@ -297,13 +279,13 @@ class StreamEditorDraftStreamingTest {
         editor.startStream(123L, "First segment text", "dm");
 
         // Send a segment break — should commit the draft as a real message
-        when(client.sendMessage(anyLong(), anyString(), anyString(), any(), any(), eq(false)))
+        when(client.sendMessageChecked(anyLong(), anyString(), anyString(), any(), any(), isNull(), eq(false)))
             .thenReturn(Optional.of(50L));
 
         editor.onSegmentBreak(123L, -1, "First segment text accumulated");
 
         // Should have sent the accumulated text as a real message
-        verify(client).sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), eq(false));
+        verify(client).sendMessageChecked(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), isNull(), eq(false));
         // Draft streaming should still be active (segment break doesn't disable it)
         assertThat(editor.isDraftStreamingActive(123L)).isTrue();
     }
@@ -349,14 +331,14 @@ class StreamEditorDraftStreamingTest {
         offEditor.startStream(123L, "Hello", "dm");
         offEditor.editStream(123L, -1, "Hello world");
 
-        when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
+        when(client.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), isNull(), anyBoolean()))
             .thenReturn(Optional.of(99L));
 
         boolean result = offEditor.finalizeStream(123L, -1, "Hello world final");
 
         assertThat(result).isTrue();
         // 'off' transport finalize now sends formatted text (parseMode=MarkdownV2) — Hermes parity.
-        verify(client).sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), anyBoolean());
+        verify(client).sendMessageChecked(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), isNull(), anyBoolean());
     }
 
     // ─── Draft transport (explicit) tests ────────────────────────

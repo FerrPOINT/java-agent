@@ -1,6 +1,6 @@
 package com.azhukov.agent.bot.streaming;
 
-import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -91,12 +91,15 @@ public class StreamSession {
      * This state is not durable across process restarts.
      */
     public volatile String pendingFinalText = null;
-    public volatile int pendingFinalRetryAfterSeconds = -1;
     /** A final part may already be visible; never replay the whole response. */
     public volatile boolean partialFinalDelivery = false;
-    /** Remaining formatted chunks while an explicit FloodWait is being honored. */
-    volatile List<String> pendingStreamChunks = List.of();
+    final java.util.Deque<java.util.function.Supplier<Optional<Long>>> delivery = new java.util.ArrayDeque<>();
+    volatile java.util.concurrent.CompletableFuture<Boolean> deferredDelivery;
+    java.util.concurrent.ScheduledFuture<?> deliveryRetry;
     long floodDeliveryDeadlineNanos;
+    volatile boolean deliverySealed;
+    volatile boolean deliveryCancelled;
+    final java.util.List<Runnable> afterDelivery = new java.util.ArrayList<>();
 
     // ─── S5: Native draft streaming state ────────────────────────
     /** True when draft streaming is active for this chat (else edit-based). */
@@ -127,10 +130,8 @@ public class StreamSession {
         currentToolName = null;
         currentMessageId.set(-1L);
         pendingFinalText = null;
-        pendingFinalRetryAfterSeconds = -1;
         partialFinalDelivery = false;
-        pendingStreamChunks = List.of();
-        floodDeliveryDeadlineNanos = 0;
+
         heartbeatMessageId.set(-1L);
         replyToMessageId = 0L;
         useDraftStreaming = false;

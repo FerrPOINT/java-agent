@@ -107,6 +107,8 @@ public class StreamEditor {
 
     // Heartbeat
     private int heartbeatIntervalSeconds;
+    private final ScheduledExecutorService deliveryExecutor =
+        Executors.newSingleThreadScheduledExecutor(Thread.ofPlatform().daemon().name("telegram-delivery").factory());
     private final ScheduledExecutorService heartbeatExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "stream-heartbeat");
         t.setDaemon(true);
@@ -159,6 +161,7 @@ public class StreamEditor {
 
     @PreDestroy
     void destroy() {
+        deliveryExecutor.shutdownNow();
         heartbeatExecutor.shutdownNow();
     }
 
@@ -179,8 +182,13 @@ public class StreamEditor {
      */
     void removeSession(long chatId) {
         StreamSession s = sessions.remove(chatId);
-        if (s != null && s.heartbeatFuture != null) {
-            s.heartbeatFuture.cancel(false);
+        if (s != null) {
+            stopHeartbeat(s);
+            synchronized (s) {
+                if (s.deliveryRetry != null) s.deliveryRetry.cancel(false);
+                s.delivery.clear();
+                if (s.deferredDelivery != null) s.deferredDelivery.complete(false);
+            }
         }
     }
 
@@ -235,7 +243,6 @@ public class StreamEditor {
 
     Optional<Long> startStream(long chatId, String initialText, String chatType, StreamSession session) {
         session.pendingFinalText = null;
-        session.pendingFinalRetryAfterSeconds = -1;
         session.partialFinalDelivery = false;
         // S5: "off" transport — no streaming, just record start time and return.
         // Content will be buffered by the caller and sent on finalizeStream.
@@ -367,7 +374,7 @@ public class StreamEditor {
     }
 
     boolean editStream(long chatId, long messageId, String text, StreamSession session) {
-        if (session.partialFinalDelivery) return false;
+        if (session.deferredDelivery != null || session.partialFinalDelivery) return false;
         // Update last token time (token arrived)
         session.lastTokenTime = System.currentTimeMillis();
 
@@ -622,6 +629,11 @@ public class StreamEditor {
 
     boolean finalizeStream(long chatId, long messageId, String finalText, StreamSession session) {
         if (session.partialFinalDelivery) return false;
+        if (session.deferredDelivery != null) {
+            stopHeartbeat(session);
+            sendFormattedFinalMessage(chatId, scrubThinkFinal(session, finalText), session.messageThreadId);
+            return false;
+        }
         // R8: close orphaned code fences BEFORE delivery (Hermes ensure_closed_code_fences)
         finalText = ensureClosedCodeFences(finalText);
         // Stop heartbeat
@@ -676,8 +688,6 @@ public class StreamEditor {
                 log.debug("Draft finalized for chat {}, messageId={}", chatId, finalMsgId.get());
                 return true;
             } else {
-                int retryAfter = telegramClient.takeLastRetryAfterSeconds();
-                if (retryAfter > 0) session.pendingFinalRetryAfterSeconds = retryAfter;
                 log.warn("Draft finalize sendMessage failed for chat {}", chatId);
                 return false;
             }
@@ -703,12 +713,6 @@ public class StreamEditor {
                 removeSession(chatId);
                 log.debug("Flood fallback sent for chat {}, new messageId={}", chatId, newMsgId.get());
                 return true;
-            }
-            int retryAfter = telegramClient.takeLastRetryAfterSeconds();
-            if (retryAfter > 0) {
-                // The next generic fallback must wait for Telegram's explicit
-                // cooldown instead of sending the same completed answer again.
-                session.pendingFinalRetryAfterSeconds = retryAfter;
             }
             // Preserve the stream session and original draft. A later completion
             // retry / user retry can still recover it; never erase visible output
@@ -755,8 +759,6 @@ public class StreamEditor {
                 log.debug("Fresh-final sent for chat {}, new messageId={}", chatId, newMsgId.get());
                 return true;
             }
-            int retryAfter = telegramClient.takeLastRetryAfterSeconds();
-            if (retryAfter > 0) session.pendingFinalRetryAfterSeconds = retryAfter;
             log.warn("Fresh-final sendMessage failed for chat {}; preserving draft message {}", chatId, effectiveMessageId);
             return false;
         }
@@ -783,9 +785,8 @@ public class StreamEditor {
             success = telegramClient.editMessageText(chatId, effectiveMessageId, formatted, parseMode, false);
         } catch (TelegramApiException e) {
             if (e.isRateLimit()) {
-                // 429 on final edit — fall through to sendMessage fallback
-                log.warn("Final edit 429 rate limited for chat {}, trying sendMessage fallback", chatId);
-                success = false;
+                deferEdit(chatId, session, effectiveMessageId, formatted, parseMode, e.getRetryAfter());
+                return false;
             } else if (e.isParseError()) {
                 // 400 parse error on final edit — text may not be properly escaped;
                 // fall back to plain text edit to avoid visible backslashes.
@@ -850,20 +851,7 @@ public class StreamEditor {
      */
     public void recordFinalDeliveryFailure(long chatId, String finalText) {
         StreamSession session = sessionFor(chatId);
-        recordFinalDeliveryFailure(chatId, finalText, session.pendingFinalRetryAfterSeconds);
-    }
-
-    /**
-     * Retain the complete final response plus a server-provided FloodWait, if
-     * Telegram rejected the terminal send. Callers must defer recovery rather
-     * than sending the same payload again inside that cooldown.
-     */
-    public void recordFinalDeliveryFailure(long chatId, String finalText, int retryAfterSeconds) {
-        StreamSession session = sessionFor(chatId);
         session.pendingFinalText = finalText;
-        session.pendingFinalRetryAfterSeconds = retryAfterSeconds;
-        log.warn("final_delivery_pending chat={} chars={} retryAfterSeconds={}", chatId,
-            finalText == null ? 0 : finalText.length(), retryAfterSeconds);
     }
 
     /** Consume the full response retained after a terminal stream-delivery failure. */
@@ -883,17 +871,6 @@ public class StreamEditor {
         String pending = session.pendingFinalText;
         session.pendingFinalText = null;
         return pending;
-    }
-
-    /** Return and clear the FloodWait paired with the pending final response. */
-    public int takePendingFinalRetryAfterSeconds(long chatId) {
-        StreamSession session = sessions.get(chatId);
-        if (session == null) {
-            return -1;
-        }
-        int retryAfter = session.pendingFinalRetryAfterSeconds;
-        session.pendingFinalRetryAfterSeconds = -1;
-        return retryAfter;
     }
 
     // ─── S5: Native draft streaming ───────────────────────────────
@@ -1080,20 +1057,14 @@ public class StreamEditor {
             sendFormattedFinalMessage(chatId, scrubbed, session.messageThreadId);
         } else {
             String formatted = formatForTelegramDelegate(scrubbed);
-            while (true) {
-                try {
-                    if (!telegramClient.editMessageText(chatId, effectiveMessageId, formatted, "MarkdownV2", false)) {
-                        session.partialFinalDelivery = true;
-                    }
-                    break;
-                } catch (TelegramApiException refusal) {
-                    if (!refusal.isRateLimit() || !waitForFloodRetry(session, List.of(formatted), refusal.getRetryAfter())) {
-                        session.partialFinalDelivery = true;
-                        break;
-                    }
+            try {
+                if (!telegramClient.editMessageText(chatId, effectiveMessageId, formatted, "MarkdownV2", false)) {
+                    session.partialFinalDelivery = true;
                 }
+            } catch (TelegramApiException refusal) {
+                if (!refusal.isRateLimit()) throw refusal;
+                deferEdit(chatId, session, effectiveMessageId, formatted, "MarkdownV2", refusal.getRetryAfter());
             }
-            session.pendingStreamChunks = List.of();
         }
         // Clear the tool name since the tool is done
         session.currentToolName = null;
@@ -1130,7 +1101,7 @@ public class StreamEditor {
     }
 
     private void checkHeartbeat(long chatId, StreamSession session) {
-        if (session.partialFinalDelivery || !session.pendingStreamChunks.isEmpty()) return;
+        if (session.partialFinalDelivery || session.deferredDelivery != null) return;
         long startTime = session.streamStartTime;
         long lastToken = session.lastTokenTime;
         long msgId = session.currentMessageId.get();
@@ -1352,54 +1323,117 @@ public class StreamEditor {
         Integer messageThreadId = threadId > 0 ? (int) threadId : null;
         List<String> chunks = formatted.length() > MessageSplitter.TELEGRAM_MAX_LENGTH
             ? MessageSplitter.splitAndFormat(text, parseMode) : List.of(formatted);
-        Optional<Long> last = Optional.empty();
-        try {
-            for (int index = 0; index < chunks.size(); index++) {
-                String chunk = chunks.get(index);
-                if (chunk.isBlank()) continue;
-                while (true) {
-                    int retryAfter;
-                    try {
-                        var sent = telegramClient.sendMessage(chatId, chunk, parseMode, null, messageThreadId, false);
-                        if (sent.isPresent()) {
-                            last = sent;
-                            break;
-                        }
-                        retryAfter = telegramClient.takeLastRetryAfterSeconds();
-                    } catch (TelegramApiException refusal) {
-                        if (!refusal.isRateLimit()) throw refusal;
-                        retryAfter = refusal.getRetryAfter();
-                    }
-                    if (!waitForFloodRetry(session, chunks.subList(index, chunks.size()), retryAfter)) {
-                        session.partialFinalDelivery = true;
-                        return Optional.empty();
-                    }
+        synchronized (session) {
+            for (String chunk : chunks) {
+                if (!chunk.isBlank()) {
+                    session.delivery.addLast(() -> telegramClient.sendMessageChecked(
+                        chatId, chunk, parseMode, null, messageThreadId, null, false));
                 }
             }
-            return last;
-        } catch (RuntimeException e) {
-            session.partialFinalDelivery = true;
-            throw e;
-        } finally {
-            session.pendingStreamChunks = List.of();
+            return session.deliveryRetry == null ? deliverQueued(chatId, session) : Optional.empty();
         }
     }
 
-    private boolean waitForFloodRetry(StreamSession session, List<String> remaining, int retryAfterSeconds) {
-        if (retryAfterSeconds <= 0) return false;
+    private void deferEdit(long chatId, StreamSession session, long messageId, String text,
+                           String mode, int retryAfter) {
+        synchronized (session) {
+            session.delivery.addLast(() -> telegramClient.editMessageText(chatId, messageId, text, mode, false)
+                ? Optional.of(messageId) : Optional.empty());
+            scheduleDelivery(chatId, session, retryAfter);
+        }
+    }
+
+    private Optional<Long> deliverQueued(long chatId, StreamSession session) {
+        Optional<Long> last = Optional.empty();
+        while (!session.delivery.isEmpty() && sessions.get(chatId) == session && !session.deliveryCancelled) {
+            if (session.deferredDelivery != null && System.nanoTime() >= session.floodDeliveryDeadlineNanos) {
+                failDelivery(session);
+                return Optional.empty();
+            }
+            try {
+                last = session.delivery.getFirst().get();
+            } catch (TelegramClient.SendRefusalException e) {
+                scheduleDelivery(chatId, session, e.getRetryAfterSeconds());
+                return Optional.empty();
+            } catch (TelegramApiException e) {
+                if (e.isRateLimit()) scheduleDelivery(chatId, session, e.getRetryAfter());
+                else failDelivery(session);
+                return Optional.empty();
+            }
+            if (last.isEmpty()) {
+                failDelivery(session);
+                return Optional.empty();
+            }
+            session.delivery.removeFirst();
+        }
+        if (session.deliveryCancelled) failDelivery(session);
+        else if (session.deliverySealed) session.deferredDelivery.complete(true);
+        return last;
+    }
+
+    private void scheduleDelivery(long chatId, StreamSession session, int retryAfter) {
         long now = System.nanoTime();
-        if (session.floodDeliveryDeadlineNanos == 0) {
+        if (session.deferredDelivery == null) {
+            session.deferredDelivery = new java.util.concurrent.CompletableFuture<>();
             session.floodDeliveryDeadlineNanos = now + TimeUnit.SECONDS.toNanos(FLOOD_DELIVERY_WINDOW_SECONDS);
         }
-        long waitNanos = TimeUnit.SECONDS.toNanos(retryAfterSeconds);
-        if (waitNanos >= session.floodDeliveryDeadlineNanos - now) return false;
-        session.pendingStreamChunks = remaining;
-        try {
-            TimeUnit.NANOSECONDS.sleep(waitNanos);
-            return System.nanoTime() < session.floodDeliveryDeadlineNanos;
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-            return false;
+        long delay = TimeUnit.SECONDS.toNanos(retryAfter);
+        if (retryAfter <= 0 || delay >= session.floodDeliveryDeadlineNanos - now) {
+            failDelivery(session);
+            return;
+        }
+        session.deliveryRetry = deliveryExecutor.schedule(() -> {
+            synchronized (session) {
+                session.deliveryRetry = null;
+                if (sessions.get(chatId) == session) deliverQueued(chatId, session);
+            }
+        }, delay, TimeUnit.NANOSECONDS);
+    }
+
+    private void failDelivery(StreamSession session) {
+        session.partialFinalDelivery = true;
+        session.delivery.clear();
+        if (session.deferredDelivery != null) session.deferredDelivery.complete(false);
+    }
+
+    public boolean hasDeferredDelivery(long chatId) {
+        StreamSession session = sessions.get(chatId);
+        return session != null && session.deferredDelivery != null;
+    }
+
+    public void afterDeferredDelivery(long chatId, Runnable action) {
+        StreamSession session = sessions.get(chatId);
+        if (session != null) session.afterDelivery.add(action);
+    }
+
+    public void afterConfirmedDelivery(long chatId) {
+        StreamSession session = sessions.get(chatId);
+        if (session != null) session.afterDelivery.forEach(Runnable::run);
+    }
+
+    public boolean isFinishingDelivery(long chatId) {
+        StreamSession session = sessions.get(chatId);
+        return session != null && session.deliverySealed;
+    }
+
+    public void cancelDeferredDelivery(long chatId) {
+        StreamSession session = sessions.get(chatId);
+        if (session == null) return;
+        session.deliveryCancelled = true;
+        synchronized (session) {
+            if (session.deliveryRetry != null) session.deliveryRetry.cancel(false);
+            failDelivery(session);
+        }
+    }
+
+    public java.util.concurrent.CompletableFuture<Boolean> sealDeferredDelivery(long chatId) {
+        StreamSession session = sessions.get(chatId);
+        if (session == null) return null;
+        synchronized (session) {
+            if (session.deferredDelivery == null) return null;
+            session.deliverySealed = true;
+            if (session.delivery.isEmpty()) session.deferredDelivery.complete(!session.partialFinalDelivery);
+            return session.deferredDelivery;
         }
     }
 

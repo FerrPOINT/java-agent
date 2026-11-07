@@ -39,8 +39,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
@@ -70,7 +68,6 @@ import jakarta.annotation.PostConstruct;
 @Slf4j
 @RequiredArgsConstructor
 public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatcher.Handlers, StreamingOrchestrator.ProcessorHooks {
-    private static final int MAX_DEFERRED_FLOOD_RETRIES = 3;
 
     private final TelegramClient telegramClient;
     private final AuthorizationService authorizationService;
@@ -110,13 +107,6 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
      * Keyed by chatId. Used in {@link #handleTextOrMedia} to serialize work per chat.
      */
     private final ConcurrentHashMap<Long, ReentrantLock> locks = new ConcurrentHashMap<>();
-    private final ScheduledExecutorService deferredFinalDeliveryExecutor =
-        Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "telegram-final-delivery");
-            t.setDaemon(true);
-            return t;
-        });
-
     /**
      * B1.3: Called by TextBatchDebouncer when a batch is ready to dispatch.
      */
@@ -129,11 +119,6 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
      */
     private void dispatchPhotoBatch(UpdateEvent mergedEvent) {
         handleTextOrMedia(mergedEvent);
-    }
-
-    @jakarta.annotation.PreDestroy
-    void stopDeferredFinalDeliveryExecutor() {
-        deferredFinalDeliveryExecutor.shutdownNow();
     }
 
     @Override
@@ -208,6 +193,9 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         }
         try {
             String response = handler.handle(event, resolveSession(event));
+            if ("stop".equals(commandName) && streamEditor.hasDeferredDelivery(event.chatId())) {
+                streamEditor.cancelDeferredDelivery(event.chatId());
+            }
             if (response != null && !response.isBlank()) {
                 sendFormatted(event.chatId(), response);
             }
@@ -315,21 +303,6 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         }
     }
 
-    private void scheduleFinalDelivery(long chatId, String response, long userMessageId,
-                                       long messageThreadId, long delaySeconds) {
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(StreamEditor.FLOOD_DELIVERY_WINDOW_SECONDS);
-        long wait = TimeUnit.SECONDS.toNanos(delaySeconds);
-        if (wait >= deadline - System.nanoTime()) {
-            log.warn("Telegram FloodWait exceeded the response delivery deadline for chat {}", chatId);
-            return;
-        }
-        deferredFinalDeliveryExecutor.schedule(() -> {
-            if (System.nanoTime() < deadline) {
-                sendFormatted(chatId, response, userMessageId, messageThreadId, 0, deadline);
-            }
-        }, delaySeconds, TimeUnit.SECONDS);
-    }
-
     // ─── Text / Media ──────────────────────────────────────────────
 
     @Override
@@ -347,8 +320,10 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
             if (tryResolveTypedClarify(chatId, event)) {
                 return;
             }
-            handleBusyMessage(chatId, event, busyHandler.getEffectiveBusyInputMode(), resolveSession(event));
-            return;
+            if (!streamEditor.isFinishingDelivery(chatId)) {
+                handleBusyMessage(chatId, event, busyHandler.getEffectiveBusyInputMode(), resolveSession(event));
+                return;
+            }
         }
         ReentrantLock lock = locks.computeIfAbsent(chatId, k -> new ReentrantLock());
         boolean acquired;
@@ -368,6 +343,14 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
             // The old handleTextOrMediaInternal re-acquired the lock (dead code,
             // harmless under ReentrantLock but wasteful and misleading); it has
             // been removed and the body inlined below.
+            if (busyHandler.isBusy(chatId) && streamEditor.isFinishingDelivery(chatId)) {
+                busyHandler.queueMessage(chatId, event);
+                if ("interrupt".equals(busyHandler.getEffectiveBusyInputMode())) {
+                    busyHandler.interrupt(chatId);
+                    streamEditor.cancelDeferredDelivery(chatId);
+                }
+                return;
+            }
             handleTextOrMediaInternalBody(event);
             // M28: Drain queued messages inside the per-chat lock to prevent
             // new messages arriving between draining and processing
@@ -469,6 +452,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
 
         // Process the turn
         busyHandler.markBusy(chatId);
+        boolean deferred = false;
         // B1.6/B2.7: Route typing indicator to the correct forum thread
         Integer typingThreadId = event.messageThreadId() > 0 ? (int) event.messageThreadId() : null;
         typingManager.startTyping(chatId, typingThreadId);
@@ -502,6 +486,15 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                 sessionStore.updateBackendSessionId(session.getId(), result.backendSessionId());
             }
 
+            var delivery = streamEditor.hasDeferredDelivery(chatId) ? streamEditor.sealDeferredDelivery(chatId) : null;
+            if (delivery != null) {
+                deferred = true;
+                delivery.whenComplete((delivered, failure) -> Thread.startVirtualThread(() ->
+                    finishDeferredDelivery(chatId, event, session, result, threadId,
+                        failure == null && Boolean.TRUE.equals(delivered))));
+                return;
+            }
+
             // If streaming produced content and finalized a message, don't send duplicate
             if (!result.streamFinalized()) {
                 // Streaming didn't finalize (failed or no content) — send via sendFormatted
@@ -514,7 +507,6 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                     session == null || session.isFooterEnabled()
                 );
                 String backendResponse = streamEditor.takePendingFinalText(chatId);
-                int retryAfterSeconds = streamEditor.takePendingFinalRetryAfterSeconds(chatId);
                 if (backendResponse == null || backendResponse.isBlank()) {
                     backendResponse = result.content();
                 }
@@ -527,41 +519,12 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                 streamEditor.clearStream(chatId);
                 if (partialFinal) {
                     log.warn("Final Telegram delivery was partial for chat {}; not replaying the complete answer", chatId);
-                } else if (retryAfterSeconds > 0) {
-                    String deferredResponse = backendResponse;
-                    long delaySeconds = (long) retryAfterSeconds + 1L;
-                    log.warn("Deferring final Telegram delivery for chat {} by {}s after FloodWait", chatId, delaySeconds);
-                    scheduleFinalDelivery(chatId, deferredResponse, event.messageId(), threadId, delaySeconds);
                 } else {
                     sendFormatted(chatId, backendResponse, event.messageId(), threadId);
                 }
             }
 
-            // Voice mode: synthesize TTS and send as voice message
-            if (session.isVoiceMode() && result.content() != null && !result.content().isBlank()) {
-                sendVoiceResponse(chatId, result.content());
-            }
-
-            // 💾 Memory updated notification 
-            if (result.memoryUpdated()) {
-                sendFormatted(chatId, "💾 Self-improvement review: Memory updated", event.messageId(), threadId);
-            }
-
-            // P0: Standing goal auto-continuation
-            if (properties.getGoalAutoContinue().isEnabled()
-                && result.turnSucceeded()
-                && result.content() != null && !result.content().isBlank()
-                && GoalCommand.getActiveGoal(session) != null
-                && !busyHandler.isInterrupted(chatId)) {
-                final long chatIdForLambda = chatId;
-                List<String> continuations = goalAutoContinueService.runAutoContinue(
-                    session, result.content(), () -> busyHandler.isInterrupted(chatIdForLambda));
-                for (String continuation : continuations) {
-                    if (continuation != null && !continuation.isBlank()) {
-                        sendFormatted(chatId, continuation, event.messageId(), threadId);
-                    }
-                }
-            }
+            afterTurn(chatId, event, session, result, threadId);
 
             // B1.2: Reaction — processing complete (success or cancelled)
             if (busyHandler.isInterrupted(chatId) || result.turnCancelled()) {
@@ -578,7 +541,63 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
             reactionManager.onProcessingComplete(chatId, event.messageId(), false);
             typingManager.stopTyping(chatId);
         } finally {
+            if (!deferred) busyHandler.markFree(chatId);
+        }
+    }
+
+    private void afterTurn(long chatId, UpdateEvent event, BotSessionEntity session,
+                           AgentBackendClient.ChatResult result, long threadId) {
+        // Voice mode: synthesize TTS and send as voice message
+        if (session.isVoiceMode() && result.content() != null && !result.content().isBlank()) {
+            sendVoiceResponse(chatId, result.content());
+        }
+
+        // 💾 Memory updated notification
+        if (result.memoryUpdated()) {
+            sendFormatted(chatId, "💾 Self-improvement review: Memory updated", event.messageId(), threadId);
+        }
+
+        // P0: Standing goal auto-continuation
+        if (properties.getGoalAutoContinue().isEnabled()
+            && result.turnSucceeded()
+            && result.content() != null && !result.content().isBlank()
+            && GoalCommand.getActiveGoal(session) != null
+            && !busyHandler.isInterrupted(chatId)) {
+            final long chatIdForLambda = chatId;
+            List<String> continuations = goalAutoContinueService.runAutoContinue(
+                session, result.content(), () -> busyHandler.isInterrupted(chatIdForLambda));
+            for (String continuation : continuations) {
+                if (continuation != null && !continuation.isBlank()) {
+                    sendFormatted(chatId, continuation, event.messageId(), threadId);
+                }
+            }
+        }
+
+    }
+
+    private void finishDeferredDelivery(long chatId, UpdateEvent event, BotSessionEntity session,
+                                        AgentBackendClient.ChatResult result, long threadId, boolean delivered) {
+        var lock = locks.get(chatId);
+        lock.lock();
+        try {
+            if (busyHandler.isInterrupted(chatId)) {
+                reactionManager.onCancel(chatId, event.messageId());
+            } else {
+                if (delivered) {
+                    streamEditor.afterConfirmedDelivery(chatId);
+                    afterTurn(chatId, event, session, result, threadId);
+                }
+                reactionManager.onProcessingComplete(chatId, event.messageId(), delivered && result.turnSucceeded());
+            }
+            typingManager.stopTyping(chatId);
+        } finally {
+            streamEditor.clearStream(chatId);
             busyHandler.markFree(chatId);
+            try {
+                drainQueueLocked(chatId);
+            } finally {
+                lock.unlock();
+            }
         }
     }
 
@@ -763,27 +782,15 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
     private void drainQueueLocked(long chatId) {
         int maxDrainDepth = 100;
         int drained = 0;
-        while (busyHandler.hasQueued(chatId) && drained < maxDrainDepth) {
-            List<UpdateEvent> queued = busyHandler.drainQueue(chatId);
-            // An interrupt-mode message is queued while the previous turn is
-            // still marked busy. Clear the per-turn marker BEFORE replaying it,
-            // otherwise the replay sees itself as busy, cancels itself and is
-            // queued again until the drain-depth guard intervenes.
-            if (busyHandler.isInterrupted(chatId)) {
-                busyHandler.markFree(chatId);
+        while (!busyHandler.isBusy(chatId) && drained < maxDrainDepth) {
+            UpdateEvent next = busyHandler.pollQueued(chatId);
+            if (next == null) return;
+            try {
+                handleTextOrMediaInternalBody(next);
+            } catch (Exception e) {
+                log.error("Error draining queued message for chat {}: {}", chatId, e.getMessage(), e);
             }
-            for (UpdateEvent queuedEvent : queued) {
-                try {
-                    handleTextOrMediaInternalBody(queuedEvent);
-                } catch (Exception e) {
-                    log.error("Error draining queued message for chat {}: {}", chatId, e.getMessage(), e);
-                }
-                drained++;
-                if (drained >= maxDrainDepth) {
-                    log.warn("Queue drain depth limit ({}) reached for chat {}, dropping remaining", maxDrainDepth, chatId);
-                    break;
-                }
-            }
+            drained++;
         }
     }
 
@@ -1069,10 +1076,6 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
      * @param messageThreadId the Telegram forum thread ID (0 = no thread routing)
      */
     private void sendFormatted(long chatId, String text, long userMessageId, long messageThreadId) {
-        sendFormatted(chatId, text, userMessageId, messageThreadId, -1, 0L);
-    }
-
-    private void sendFormatted(long chatId, String text, long userMessageId, long messageThreadId, int retries, long deadline) {
         // B2.8: Response filter — filter silent/empty responses
         if (responseFilter.shouldFilter(text)) {
             log.debug("Response filtered (silent or empty) for chat {}", chatId);
@@ -1102,23 +1105,22 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         // StreamEditor strips them during streaming, but sendFormatted is used
         // when streaming didn't finalize — without this, raw think tags reach the user.
         formatted = StreamEditor.stripThinkTagsRegex(formatted);
+        if ("MarkdownV2".equalsIgnoreCase(parseMode)) {
+            formatted = MarkdownConverter.convert(formatted);
+        } else if ("HTML".equalsIgnoreCase(parseMode)) {
+            // Audit M20: escape HTML-special characters in LLM output to prevent
+            // injection of <a>, <b>, <code> and other Telegram-allowed tags.
+            formatted = formatted.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;");
+        }
+
         // B1.6: Thread reply mode — off/all/first
         String replyMode = properties.getReplyToMode();
-        List<String> chunks = "MarkdownV2".equalsIgnoreCase(parseMode)
-            ? MessageSplitter.splitAndFormat(formatted, parseMode)
-            : "HTML".equalsIgnoreCase(parseMode)
-                ? MessageSplitter.splitEscapedHtmlText(formatted)
-                : MessageSplitter.split(formatted);
-        sendFormattedChunks(chatId, chunks, 0, parseMode, replyMode, userMessageId, messageThreadId,
-            text.equals(textForDisplay) ? retries : -1, deadline);
-    }
+        Long replyToMessageId = null; // null = no reply_to by default
 
-    private void sendFormattedChunks(long chatId, List<String> chunks, int start, String parseMode,
-                                     String replyMode, long userMessageId, long messageThreadId, int retries, long deadline) {
-        Integer threadId = messageThreadId > 0 ? (int) messageThreadId : null;
-        Long replyToMessageId;
-        if (retries >= 0 && System.nanoTime() >= deadline) return;
-        for (int i = start; i < chunks.size(); i++) {
+        List<String> chunks = MessageSplitter.split(formatted);
+        for (int i = 0; i < chunks.size(); i++) {
             String chunk = chunks.get(i);
             if (!chunk.isBlank()) {
                 if ("all".equalsIgnoreCase(replyMode) && userMessageId > 0) {
@@ -1128,28 +1130,11 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                 } else {
                     replyToMessageId = null;
                 }
-                // Resume at the rejected chunk; previously accepted chunks must not be replayed.
-                boolean retryable = retries >= 0 && retries < MAX_DEFERRED_FLOOD_RETRIES;
-                java.util.Optional<Long> sent;
+                // Use 6-arg sendMessage when thread routing is needed, 5-arg otherwise
                 if (threadId != null) {
-                    sent = telegramClient.sendMessage(chatId, chunk, parseMode, replyToMessageId, threadId, false);
+                    telegramClient.sendMessage(chatId, chunk, parseMode, replyToMessageId, threadId, false);
                 } else {
-                    sent = telegramClient.sendMessage(chatId, chunk, parseMode, replyToMessageId, null);
-                }
-                if (sent.isEmpty()) {
-                    if (retryable) {
-                        int retryAfter = telegramClient.takeLastRetryAfterSeconds();
-                        long delay = (long) retryAfter + 1L;
-                        if (retryAfter > 0 && TimeUnit.SECONDS.toNanos(delay) < deadline - System.nanoTime()) {
-                            int failedIndex = i;
-                            deferredFinalDeliveryExecutor.schedule(
-                                () -> sendFormattedChunks(chatId, chunks, failedIndex, parseMode, replyMode,
-                                    userMessageId, messageThreadId, retries + 1, deadline),
-                                delay, TimeUnit.SECONDS);
-                        }
-                    }
-                    // Do not send later chunks after a missing or ambiguous receipt.
-                    return;
+                    telegramClient.sendMessage(chatId, chunk, parseMode, replyToMessageId, null);
                 }
             }
         }

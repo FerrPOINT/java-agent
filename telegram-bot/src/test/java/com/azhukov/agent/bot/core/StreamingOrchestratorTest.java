@@ -439,7 +439,7 @@ class StreamingOrchestratorTest {
         });
         var result = orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
         assertThat(result.streamFinalized()).isFalse();
-        verify(streamEditor).recordFinalDeliveryFailure(100L, "draft answer", 17);
+        verify(streamEditor).recordFinalDeliveryFailure(100L, "draft answer");
     }
 
     @Test
