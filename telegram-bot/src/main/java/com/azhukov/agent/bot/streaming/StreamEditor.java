@@ -186,6 +186,7 @@ public class StreamEditor {
         if (s != null) {
             stopHeartbeat(s);
             synchronized (s) {
+                s.deliveryCancelled = true;
                 if (s.deliveryRetry != null) s.deliveryRetry.cancel(false);
                 s.delivery.clear();
                 if (s.deferredDelivery != null) s.deferredDelivery.complete(false);
@@ -639,7 +640,7 @@ public class StreamEditor {
         if (session.partialFinalDelivery) return false;
         if (session.deferredDelivery != null) {
             stopHeartbeat(session);
-            sendFormattedFinalMessage(chatId, scrubThinkFinal(session, finalText), session.messageThreadId);
+            sendFormattedFinalMessage(chatId, scrubThinkFinal(session, finalText));
             return false;
         }
         // R8: close orphaned code fences BEFORE delivery (Hermes ensure_closed_code_fences)
@@ -912,7 +913,7 @@ public class StreamEditor {
         if (session.useDraftStreaming) {
             // Send the accumulated text as a real message (committing the draft)
             String scrubbed = scrubThink(session, accumulatedText);
-            sendFormattedFinalMessage(chatId, scrubbed, session.messageThreadId);
+            sendFormattedFinalMessage(chatId, scrubbed);
             // Bump draftId for the next segment
             int newDraftId = draftIdCounter.incrementAndGet();
             session.draftId = newDraftId;
@@ -930,7 +931,7 @@ public class StreamEditor {
         long effectiveMessageId = session.currentMessageId.get();
         String scrubbed = scrubThink(session, accumulatedText);
         if (effectiveMessageId <= 0) {
-            sendFormattedFinalMessage(chatId, scrubbed, session.messageThreadId);
+            sendFormattedFinalMessage(chatId, scrubbed);
         } else {
             String formatted = formatForTelegramDelegate(scrubbed);
             enqueueDelivery(chatId, session, List.of(editOperation(chatId, effectiveMessageId, scrubbed, formatted, parseMode)));
@@ -1180,10 +1181,6 @@ public class StreamEditor {
      * is converted to Telegram MarkdownV2 before sending (Hermes parity:
      * format_message is always applied before delivery).
      */
-    public Optional<Long> sendFormattedFinalMessage(long chatId, String text) {
-        return sendFormattedFinalMessage(chatId, text, 0L);
-    }
-
     record DeliveryOperation(java.util.function.Supplier<Optional<Long>> send,
                              java.util.function.Predicate<TelegramApiException> formatRefusal,
                              List<DeliveryOperation> onFormatRefusal, long replacedPreview) {
@@ -1198,7 +1195,7 @@ public class StreamEditor {
             error -> mode != null && error.getErrorCode() == 400 && error.isParseError(), List.of(plainEdit), 0);
     }
 
-    private Optional<Long> sendFormattedFinalMessage(long chatId, String text, long threadId) {
+    public Optional<Long> sendFormattedFinalMessage(long chatId, String text) {
         var session = sessionFor(chatId);
         return enqueueDelivery(chatId, session, formattedOperations(chatId, text, session, 0));
     }
@@ -1206,8 +1203,9 @@ public class StreamEditor {
     private List<DeliveryOperation> formattedOperations(long chatId, String text, StreamSession session, long replacedPreview) {
         String formatted = formatForTelegramDelegate(text);
         Integer topic = session.messageThreadId > 0 ? (int) session.messageThreadId : null;
-        List<String> chunks = (formatted.length() > MessageSplitter.TELEGRAM_MAX_LENGTH
-            ? MessageSplitter.splitAndFormat(text, parseMode) : List.of(formatted)).stream().filter(chunk -> !chunk.isBlank()).toList();
+        List<String> parts = formatted.length() <= MessageSplitter.TELEGRAM_MAX_LENGTH ? List.of(formatted)
+            : "HTML".equalsIgnoreCase(parseMode) ? MessageSplitter.split(formatted) : MessageSplitter.splitAndFormat(text, parseMode);
+        List<String> chunks = parts.stream().filter(chunk -> !chunk.isBlank()).toList();
         var operations = new java.util.ArrayList<DeliveryOperation>();
         for (int i = 0; i < chunks.size(); i++) {
             String chunk = chunks.get(i);
@@ -1239,8 +1237,7 @@ public class StreamEditor {
         for (;;) {
             DeliveryOperation operation;
             synchronized (session) {
-                if (session.deliveryCancelled || sessions.get(chatId) != session
-                        || session.deferredDelivery != null && System.nanoTime() >= session.floodDeliveryDeadlineNanos) {
+                if (session.deliveryCancelled || sessions.get(chatId) != session) {
                     failDelivery(session);
                     return Optional.empty();
                 }
@@ -1249,6 +1246,10 @@ public class StreamEditor {
                     session.deliveryDraining = false;
                     if (session.deliverySealed) session.deferredDelivery.complete(true);
                     return last;
+                }
+                if (session.deferredDelivery != null && System.nanoTime() >= session.floodDeliveryDeadlineNanos) {
+                    failDelivery(session);
+                    return Optional.empty();
                 }
             }
             try {
@@ -1288,13 +1289,17 @@ public class StreamEditor {
     private void scheduleDelivery(long chatId, StreamSession session, int retryAfter) {
         session.deliveryDraining = false;
         if (session.deliveryCancelled) return;
+        if (retryAfter <= 0) {
+            failDelivery(session);
+            return;
+        }
         long now = System.nanoTime();
         if (session.deferredDelivery == null) {
             session.deferredDelivery = new java.util.concurrent.CompletableFuture<>();
             session.floodDeliveryDeadlineNanos = now + TimeUnit.SECONDS.toNanos(FLOOD_DELIVERY_WINDOW_SECONDS);
         }
         long delay = TimeUnit.SECONDS.toNanos(retryAfter);
-        if (retryAfter <= 0 || delay >= session.floodDeliveryDeadlineNanos - now) {
+        if (delay >= session.floodDeliveryDeadlineNanos - now) {
             failDelivery(session);
             return;
         }
@@ -1344,7 +1349,9 @@ public class StreamEditor {
             after = List.copyOf(session.afterDelivery);
             session.afterDelivery.clear();
         }
-        if (preview > 0) telegramClient.deleteMessage(chatId, preview);
+        if (preview > 0 && !telegramClient.deleteMessage(chatId, preview)) {
+            log.warn("Could not remove replaced Telegram preview {} for chat {}", preview, chatId);
+        }
         after.forEach(Runnable::run);
     }
 

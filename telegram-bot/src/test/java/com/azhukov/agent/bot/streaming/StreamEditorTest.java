@@ -250,8 +250,7 @@ class StreamEditorTest {
     void finalizeStreamDoesNotResendWhenEditIsUnconfirmed() {
         StreamSession session = editor.sessionFor(123L);
         session.currentMessageId.set(42L);
-        when(client.editFinalMessage(123L, 42L, "Final text", "MarkdownV2"))
-            .thenReturn(Optional.empty());
+        doReturn(Optional.empty()).when(client).editFinalMessage(123L, 42L, "Final text", "MarkdownV2");
 
         assertThat(editor.finalizeStream(123L, 42L, "Final text")).isFalse();
 

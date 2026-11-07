@@ -28,6 +28,9 @@ public final class TelegramTextFormatter {
         if ("MarkdownV2".equalsIgnoreCase(parseMode)) {
             return MarkdownConverter.convert(text);
         }
+        if ("HTML".equalsIgnoreCase(parseMode)) {
+            return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+        }
         return text;
     }
 
