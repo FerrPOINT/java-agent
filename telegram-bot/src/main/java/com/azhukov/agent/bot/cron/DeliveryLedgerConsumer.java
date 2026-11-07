@@ -190,10 +190,9 @@ public class DeliveryLedgerConsumer {
         log.info("delivery_batch_started items={} sourceIds={} chat={} attempts={}", batch.size(),
             batch.stream().map(ClaimedItem::sourceId).toList(), chatId,
             batch.stream().map(ClaimedItem::attempts).toList());
-        boolean sentAny = false;
+        Long lastMessageId = null;
         try {
             List<String> chunks = com.azhukov.agent.bot.formatting.MessageSplitter.split(text);
-            Long lastMessageId = null;
             boolean sendFailed = false;
             for (String chunk : chunks) {
                 Optional<Long> sent = threadId == null
@@ -204,7 +203,6 @@ public class DeliveryLedgerConsumer {
                     break;
                 }
                 lastMessageId = sent.get();
-                sentAny = true;
             }
             if (!sendFailed) {
                 String messageId = lastMessageId == null ? null : lastMessageId.toString();
@@ -226,7 +224,7 @@ public class DeliveryLedgerConsumer {
                 batch.stream().map(ClaimedItem::sourceId).toList(), chatId,
                 lastMessageId != null ? "partial_chunk_failure" : "empty_send_result");
         } catch (TelegramClient.SendRefusalException e) {
-            if (sentAny) {
+            if (lastMessageId != null) {
                 for (ClaimedItem item : batch) outcome(item, "unknown", "partial_chunk_failure", null);
                 return;
             }
@@ -248,11 +246,11 @@ public class DeliveryLedgerConsumer {
                 category, e.getRetryAfterSeconds());
         } catch (Exception e) {
             for (ClaimedItem item : batch) {
-                outcome(item, "unknown", sentAny ? "partial_chunk_failure" : "transport_error", null);
+                outcome(item, "unknown", lastMessageId != null ? "partial_chunk_failure" : "transport_error", null);
             }
             log.warn("delivery_batch_unresolved items={} sourceIds={} chat={} category={}", batch.size(),
                 batch.stream().map(ClaimedItem::sourceId).toList(), chatId,
-                sentAny ? "partial_chunk_failure" : "transport_error");
+                lastMessageId != null ? "partial_chunk_failure" : "transport_error");
         }
     }
 
