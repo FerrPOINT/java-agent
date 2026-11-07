@@ -623,6 +623,13 @@ public class StreamEditor {
      * @param finalText the complete final text
      * @return {@code true} if the edit succeeded
      */
+    public boolean finalizeTurn(long chatId, String text, long userMessageId, long threadId) {
+        var session = sessionFor(chatId);
+        session.replyToMessageId = userMessageId;
+        session.messageThreadId = threadId;
+        return finalizeStream(chatId, -1L, text, session);
+    }
+
     public boolean finalizeStream(long chatId, long messageId, String finalText) {
         StreamSession session = sessionFor(chatId);
         return finalizeStream(chatId, messageId, finalText, session);
@@ -668,14 +675,15 @@ public class StreamEditor {
         boolean replace = session.useDraftStreaming || preview <= 0 || fresh
             || formatted.length() > MessageSplitter.TELEGRAM_MAX_LENGTH || !session.floodFallbackBuffer.isEmpty();
         List<DeliveryOperation> normal = replace
-            ? formattedOperations(chatId, finalText, session.messageThreadId, preview)
+            ? formattedOperations(chatId, finalText, session, preview)
             : List.of(editOperation(chatId, preview, finalText, formatted, parseMode));
         List<DeliveryOperation> operations = normal;
         if (richMessageSupport != null && richMessageSupport.shouldAttemptRich(finalText)) {
             String richText = finalText;
             Long topic = session.messageThreadId > 0 ? session.messageThreadId : null;
+            Long reply = replyFor(session, 0);
             operations = List.of(new DeliveryOperation(
-                () -> richMessageSupport.sendRichMessage(chatId, richText, null, topic),
+                () -> richMessageSupport.sendRichMessage(chatId, richText, reply, topic),
                 richMessageSupport::formatWasRejected, normal, preview));
         }
         Optional<Long> confirmed = enqueueDelivery(chatId, session, operations);
@@ -1191,21 +1199,29 @@ public class StreamEditor {
     }
 
     private Optional<Long> sendFormattedFinalMessage(long chatId, String text, long threadId) {
-        return enqueueDelivery(chatId, sessionFor(chatId), formattedOperations(chatId, text, threadId, 0));
+        var session = sessionFor(chatId);
+        return enqueueDelivery(chatId, session, formattedOperations(chatId, text, session, 0));
     }
 
-    private List<DeliveryOperation> formattedOperations(long chatId, String text, long threadId, long replacedPreview) {
+    private List<DeliveryOperation> formattedOperations(long chatId, String text, StreamSession session, long replacedPreview) {
         String formatted = formatForTelegramDelegate(text);
-        Integer topic = threadId > 0 ? (int) threadId : null;
+        Integer topic = session.messageThreadId > 0 ? (int) session.messageThreadId : null;
         List<String> chunks = (formatted.length() > MessageSplitter.TELEGRAM_MAX_LENGTH
             ? MessageSplitter.splitAndFormat(text, parseMode) : List.of(formatted)).stream().filter(chunk -> !chunk.isBlank()).toList();
         var operations = new java.util.ArrayList<DeliveryOperation>();
         for (int i = 0; i < chunks.size(); i++) {
             String chunk = chunks.get(i);
+            Long reply = replyFor(session, i);
             operations.add(new DeliveryOperation(() -> telegramClient.sendMessageChecked(
-                chatId, chunk, parseMode, null, topic, null, false), i == chunks.size() - 1 ? replacedPreview : 0));
+                chatId, chunk, parseMode, reply, topic, null, false), i == chunks.size() - 1 ? replacedPreview : 0));
         }
         return operations;
+    }
+
+    private Long replyFor(StreamSession session, int part) {
+        String mode = properties.getReplyToMode();
+        return session.replyToMessageId > 0 && ("all".equalsIgnoreCase(mode)
+            || part == 0 && "first".equalsIgnoreCase(mode)) ? session.replyToMessageId : null;
     }
 
     private Optional<Long> enqueueDelivery(long chatId, StreamSession session, List<DeliveryOperation> operations) {

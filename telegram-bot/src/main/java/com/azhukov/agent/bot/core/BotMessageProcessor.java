@@ -516,7 +516,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                     log.warn("Final Telegram delivery was partial for chat {}; not replaying the complete answer", chatId);
                 } else {
                     if (backendResponse != null && !backendResponse.isBlank()) {
-                        confirmed = streamEditor.finalizeStream(chatId, -1L, backendResponse);
+                        confirmed = streamEditor.finalizeTurn(chatId, backendResponse, event.messageId(), threadId);
                     }
                 }
             }
