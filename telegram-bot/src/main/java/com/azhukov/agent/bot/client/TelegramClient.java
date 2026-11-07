@@ -296,6 +296,23 @@ public class TelegramClient {
         }
     }
 
+    /** A final edit reports Telegram's explicit refusal to the delivery owner. */
+    public Optional<Long> editFinalMessage(long chatId, long messageId, String text, String parseMode) {
+        var params = new LinkedHashMap<String, Object>();
+        params.put("chat_id", chatId);
+        params.put("message_id", messageId);
+        params.put("text", text);
+        if (parseMode != null && !parseMode.isBlank()) params.put("parse_mode", parseMode);
+        try {
+            return callApi("editMessageText", params).map(response -> messageId);
+        } catch (TelegramApiException error) {
+            if (error.getErrorCode() == 400 && error.getMessage().contains("message is not modified")) {
+                return Optional.of(messageId);
+            }
+            throw error;
+        }
+    }
+
     /** Typed known-refusal signal for durable delivery (never ambiguous). */
     public static class SendRefusalException extends RuntimeException {
         private final int retryAfterSeconds;
@@ -888,19 +905,20 @@ public class TelegramClient {
         } catch (Exception e) {
             // Check for HTTP 409 conflict from RestClient (comes as HttpStatusCodeException)
             String msg = e.getMessage();
-            if (e instanceof org.springframework.web.client.HttpClientErrorException httpError
-                    && httpError.getStatusCode().value() == 429) {
+            if (e instanceof org.springframework.web.client.HttpClientErrorException httpError) {
                 try {
                     TelegramResponse error = objectMapper.readValue(httpError.getResponseBodyAsByteArray(), TelegramResponse.class);
-                    if (error != null && !error.isSuccess() && Integer.valueOf(429).equals(error.errorCode())) {
-                        lastApiErrorCode = 429;
-                        int retryAfter = error.parameters() == null || !error.parameters().containsKey("retry_after")
+                    int code = httpError.getStatusCode().value();
+                    if (error != null && !error.isSuccess() && Integer.valueOf(code).equals(error.errorCode())) {
+                        lastApiErrorCode = code;
+                        int retryAfter = code != 429 || error.parameters() == null || !error.parameters().containsKey("retry_after")
                             ? -1 : error.parameters().get("retry_after").asInt(-1);
                         if (retryAfter > 0) applyFloodCooldown(retryAfter);
-                        throw new TelegramApiException(429, error.description(), retryAfter);
+                        if (code == 409) lastCallConflict = true;
+                        throw new TelegramApiException(code, error.description(), retryAfter);
                     }
                 } catch (java.io.IOException ignored) {
-                    // Unparseable HTTP error remains an ambiguous transport result.
+                    // A non-Telegram response does not establish the outcome.
                 }
             }
             if (e instanceof org.springframework.web.client.HttpClientErrorException httpError

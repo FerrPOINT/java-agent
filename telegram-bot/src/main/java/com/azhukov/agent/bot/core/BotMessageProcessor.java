@@ -492,18 +492,8 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                 sessionStore.updateBackendSessionId(session.getId(), result.backendSessionId());
             }
 
-            var delivery = streamEditor.hasDeferredDelivery(chatId) ? streamEditor.sealDeferredDelivery(chatId) : null;
-            if (delivery != null) {
-                deferred = true;
-                delivery.whenComplete((delivered, failure) -> Thread.startVirtualThread(() ->
-                    finishDeferredDelivery(chatId, event, session, result, threadId,
-                        failure == null && Boolean.TRUE.equals(delivered))));
-                return;
-            }
-
-            // If streaming produced content and finalized a message, don't send duplicate
-            if (!result.streamFinalized()) {
-                // Streaming didn't finalize (failed or no content) — send via sendFormatted
+            boolean confirmed = result.streamFinalized();
+            if (!confirmed && !streamEditor.hasDeferredDelivery(chatId)) {
                 String footer = runtimeFooter.format(
                     resolveModelUsed(session, result),
                     result.contextTokens() != null ? result.contextTokens() : 0,
@@ -516,27 +506,37 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                 if (backendResponse == null || backendResponse.isBlank()) {
                     backendResponse = result.content();
                 }
-                if (footer != null && !footer.isEmpty() && !backendResponse.endsWith(footer)) {
+                if (footer != null && !footer.isEmpty() && backendResponse != null && !backendResponse.endsWith(footer)) {
                     backendResponse = backendResponse + footer;
                 }
 
                 typingManager.flushTyping(chatId);
                 boolean partialFinal = streamEditor.takePartialFinalDelivery(chatId);
-                streamEditor.clearStream(chatId);
                 if (partialFinal) {
                     log.warn("Final Telegram delivery was partial for chat {}; not replaying the complete answer", chatId);
                 } else {
-                    sendFormatted(chatId, backendResponse, event.messageId(), threadId);
+                    if (backendResponse != null && !backendResponse.isBlank()) {
+                        confirmed = streamEditor.finalizeStream(chatId, -1L, backendResponse);
+                    }
                 }
             }
 
-            afterTurn(chatId, event, session, result, threadId);
+            var delivery = streamEditor.hasDeferredDelivery(chatId) ? streamEditor.sealDeferredDelivery(chatId) : null;
+            if (delivery != null) {
+                deferred = true;
+                delivery.whenComplete((delivered, failure) -> Thread.startVirtualThread(() ->
+                    finishDeferredDelivery(chatId, event, session, result, threadId,
+                        failure == null && Boolean.TRUE.equals(delivered))));
+                return;
+            }
+
+            if (confirmed) afterTurn(chatId, event, session, result, threadId);
 
             // B1.2: Reaction — processing complete (success or cancelled)
             if (busyHandler.isInterrupted(chatId) || result.turnCancelled()) {
                 reactionManager.onCancel(chatId, event.messageId());
             } else {
-                reactionManager.onProcessingComplete(chatId, event.messageId(), result.turnSucceeded());
+                reactionManager.onProcessingComplete(chatId, event.messageId(), confirmed && result.turnSucceeded());
             }
             typingManager.stopTyping(chatId);
         } catch (Exception e) {

@@ -1,6 +1,5 @@
 package com.azhukov.agent.bot.streaming;
 
-import java.util.Optional;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -93,10 +92,12 @@ public class StreamSession {
     public volatile String pendingFinalText = null;
     /** A final part may already be visible; never replay the whole response. */
     public volatile boolean partialFinalDelivery = false;
-    final java.util.Deque<java.util.function.Supplier<Optional<Long>>> delivery = new java.util.ArrayDeque<>();
+    final java.util.Deque<StreamEditor.DeliveryOperation> delivery = new java.util.ArrayDeque<>();
     volatile java.util.concurrent.CompletableFuture<Boolean> deferredDelivery;
     java.util.concurrent.ScheduledFuture<?> deliveryRetry;
     long floodDeliveryDeadlineNanos;
+    boolean deliveryDraining;
+    long replacedPreviewId;
     volatile boolean deliverySealed;
     volatile boolean deliveryCancelled;
     final java.util.List<Runnable> afterDelivery = new java.util.ArrayList<>();
