@@ -1069,25 +1069,27 @@ public class StreamEditor {
             return;
         }
 
-        // Use session.currentMessageId (may differ from messageId parameter after
-        // a previous segment break created a new message). The caller's messageId
-        // is stale once onSegmentBreak resets currentMessageId to -1.
+        // The caller's original ID may refer to an earlier committed segment.
+        // If no current preview exists, send this segment rather than edit a stale ID.
         long effectiveMessageId = session.currentMessageId.get();
-        if (effectiveMessageId < 0) {
-            effectiveMessageId = messageId;
-        }
-
-        // Finalize the current message with MarkdownV2 formatting (Hermes parity).
-        // Hermes sends segment breaks with finalize=True (MarkdownV2 formatted).
         String scrubbed = scrubThink(session, accumulatedText);
-        String formatted = formatForTelegramDelegate(scrubbed);
-        try {
-            telegramClient.editMessageText(chatId, effectiveMessageId, formatted, "MarkdownV2", false);
-        } catch (TelegramApiException e) {
-            if (!e.isRateLimit()) {
-                throw e;
+        if (effectiveMessageId <= 0) {
+            try {
+                sendFormattedFinalMessage(chatId, scrubbed, session.messageThreadId);
+            } finally {
+                session.partialFinalDelivery = false;
+                session.pendingFinalRetryAfterSeconds = -1;
             }
-            log.debug("Segment break edit 429 rate limited for chat {}, skipping", chatId);
+        } else {
+            String formatted = formatForTelegramDelegate(scrubbed);
+            try {
+                telegramClient.editMessageText(chatId, effectiveMessageId, formatted, "MarkdownV2", false);
+            } catch (TelegramApiException e) {
+                if (!e.isRateLimit()) {
+                    throw e;
+                }
+                log.debug("Segment break edit 429 rate limited for chat {}, skipping", chatId);
+            }
         }
         // Clear the tool name since the tool is done
         session.currentToolName = null;

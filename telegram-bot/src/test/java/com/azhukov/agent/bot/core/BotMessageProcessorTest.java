@@ -569,6 +569,29 @@ class BotMessageProcessorTest {
 
     @SuppressWarnings("unchecked")
     @Test
+    void shortTextBeforeToolIsDeliveredWithoutInvalidEdit() {
+        properties.setStreamingTransport("edit");
+        properties.getDisplay().setToolProgress("off");
+        when(telegramClient.sendMessage(eq(100L), eq("Hi"), eq("MarkdownV2"), any(), any(), anyBoolean()))
+            .thenReturn(Optional.of(41L));
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+            .thenAnswer(inv -> {
+                ((Consumer<String>) inv.getArgument(4)).accept("Hi");
+                ((Consumer<String>) inv.getArgument(5)).accept("search");
+                var result = new AgentBackendClient.ChatResult("Hi", "model", 1, 10, true);
+                ((Consumer<AgentBackendClient.ChatResult>) inv.getArgument(10)).accept(result);
+                return result;
+            });
+        try (DeliveryFixture fixture = realDeliveryFixture()) {
+            fixture.processor().accept(textEvent(1, 100L, "Hello"));
+            verify(telegramClient).sendMessage(eq(100L), eq("Hi"), eq("MarkdownV2"), any(), any(), anyBoolean());
+            verify(telegramClient, never()).editMessageText(eq(100L), eq(-1L), anyString(), any(), anyBoolean());
+            verify(backendClient, never()).chat(anyString(), any(), any());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
     void cancelledAfterToolKeepsCommittedSegmentAndClearsReaction() {
         properties.setStreamingTransport("edit");
         properties.getDisplay().setToolProgress("off");
