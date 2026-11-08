@@ -96,6 +96,11 @@ public final class MessageSplitter {
         return splitNumberedSource(text, (TELEGRAM_MAX_LENGTH - 32) / 5);
     }
 
+    /** Reserve room for MarkdownV2 escaping of both the source and part label. */
+    public static List<String> splitMarkdownSource(String text) {
+        return splitNumberedSource(text, TELEGRAM_MAX_LENGTH / 2 - 24);
+    }
+
     private static List<String> splitNumberedSource(String text, int limit) {
         List<String> parts = new ArrayList<>();
         for (int start = 0; start < text.length();) {

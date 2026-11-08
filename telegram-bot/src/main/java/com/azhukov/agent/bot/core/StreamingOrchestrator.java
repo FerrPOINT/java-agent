@@ -287,7 +287,6 @@ public class StreamingOrchestrator {
         StringBuilder accumulated = new StringBuilder(); // clean LLM text only
         final long[] messageId = {-1};
         final boolean[] finalized = {false};
-        final boolean[] toolObserved = {false};
         final boolean[] turnFailed = {false};
         final boolean[] turnCancelled = {false};
         // Review notifications are read from the durable pending queue only
@@ -343,7 +342,6 @@ public class StreamingOrchestrator {
                         log.debug("Stream interrupted during tool call for chat {}", chatId);
                         throw new StreamInterruptedException();
                     }
-                    toolObserved[0] = true;
                     // Parse "toolName\u0001args" format from MessageApiClient
                     String toolName = toolCall;
                     String toolArgs = null;
@@ -387,9 +385,7 @@ public class StreamingOrchestrator {
                 // because currentMessageId was reset to -1 by the previous segment break).
                 // Calling onSegmentBreak here with stale messageId would edit the wrong
                 // (already-finalized) message. Hermes does not break on tool_result either.
-                (toolName, toolResultPreview) -> {
-                    toolObserved[0] = true;
-                },
+                (toolName, toolResultPreview) -> { },
                 // retryConsumer — called when backend emits retry/continuation events.
                 // TRANSIENT status only (Hermes parity: gateway shows retry status, it never
                 // becomes part of the answer): the display text is shown on the streaming
@@ -426,6 +422,16 @@ public class StreamingOrchestrator {
                 },
                 // onComplete
                 result -> {
+                    if (busyHandler.isInterrupted(chatId)) {
+                        turnFailed[0] = true;
+                        turnCancelled[0] = true;
+                        if (streamEditor.hasDeferredDelivery(chatId)) {
+                            streamEditor.cancelDeferredDelivery(chatId);
+                        } else {
+                            streamEditor.discardStreamPreview(chatId);
+                        }
+                        return;
+                    }
                     if (streamEditor.hasUnconfirmedDelivery(chatId)) {
                         turnFailed[0] = true;
                         return;
@@ -566,16 +572,6 @@ public class StreamingOrchestrator {
                     streamResult.lastReasoning(),
                     !turnFailed[0] && streamResult.turnSucceeded(), turnCancelled[0]
                 );
-            }
-            // Do not replay a request after a tool event: its side effects may
-            // already have occurred, even when no final text was streamed.
-            if (toolObserved[0]) {
-                progressBubbles.remove(chatId);
-                streamEditor.discardStreamPreview(chatId);
-                return new AgentBackendClient.ChatResult("", streamResult.modelUsed(),
-                    streamResult.contextTokens(), streamResult.contextLength(), false,
-                    streamResult.memoryUpdated(), streamResult.backendSessionId(), streamResult.lastReasoning(),
-                    !turnFailed[0] && streamResult.turnSucceeded(), turnCancelled[0]);
             }
             // Once the streaming request was sent, an empty response does not
             // prove the backend skipped side effects. Never issue a second turn.

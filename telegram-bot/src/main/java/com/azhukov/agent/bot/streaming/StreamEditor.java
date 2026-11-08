@@ -1149,21 +1149,27 @@ public class StreamEditor {
     private List<DeliveryOperation> formattedOperations(long chatId, String text, StreamSession session, long replacedPreview) {
         String formatted = formatForTelegramDelegate(text);
         Integer topic = session.messageThreadId > 0 ? (int) session.messageThreadId : null;
-        boolean html = "HTML".equalsIgnoreCase(parseMode);
-        List<String> parts = html
-            ? (formatted.length() <= MessageSplitter.TELEGRAM_MAX_LENGTH ? List.of(text) : MessageSplitter.splitHtmlSource(text))
-            : (formatted.length() <= MessageSplitter.TELEGRAM_MAX_LENGTH ? List.of(formatted)
-                : MessageSplitter.splitAndFormat(text, parseMode));
+        List<String> parts;
+        if (formatted.length() <= MessageSplitter.TELEGRAM_MAX_LENGTH && text.length() <= MessageSplitter.TELEGRAM_MAX_LENGTH) {
+            parts = List.of(text);
+        } else if ("HTML".equalsIgnoreCase(parseMode)) {
+            parts = MessageSplitter.splitHtmlSource(text);
+        } else if ("MarkdownV2".equalsIgnoreCase(parseMode)) {
+            parts = MessageSplitter.splitMarkdownSource(text);
+        } else {
+            parts = MessageSplitter.splitPlainText(text);
+        }
         List<String> chunks = parts.stream().filter(chunk -> !chunk.isBlank()).toList();
         var operations = new java.util.ArrayList<DeliveryOperation>();
         for (int i = 0; i < chunks.size(); i++) {
             String chunk = chunks.get(i);
-            String payload = html ? formatForTelegramDelegate(chunk) : chunk;
+            String payload = parts.size() == 1 ? formatted : formatForTelegramDelegate(chunk);
             Long reply = replyFor(session, i);
             long preview = i == chunks.size() - 1 ? replacedPreview : 0;
             var plain = new DeliveryOperation(() -> telegramClient.sendMessageChecked(
                 chatId, chunk, null, reply, topic, null, false), preview);
-            operations.add(parseMode == null ? plain : new DeliveryOperation(
+            operations.add(parseMode == null || payload.length() > MessageSplitter.TELEGRAM_MAX_LENGTH
+                ? plain : new DeliveryOperation(
                 () -> telegramClient.sendMessageChecked(chatId, payload, parseMode, reply, topic, null, false),
                 error -> error.getErrorCode() == 400 && error.isParseError(), List.of(plain), preview));
         }

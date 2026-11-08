@@ -67,6 +67,29 @@ class StreamDeliveryRegressionTest {
         }
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints = {1, 800})
+    void markdownRejectionSendsOriginalFragmentsAsPlainText(int repeats) {
+        String text = "file_name. ".repeat(repeats).stripTrailing();
+        when(client.sendMessageChecked(eq(101L), anyString(), eq("MarkdownV2"), any(), any(), isNull(), anyBoolean()))
+            .thenThrow(new TelegramClient.SendRefusalException(400, -1, "Bad Request: can't parse entities"));
+        when(client.sendMessageChecked(eq(101L), anyString(), isNull(), any(), any(), isNull(), anyBoolean()))
+            .thenReturn(Optional.of(17L));
+        var editor = editor(false, 0);
+        try {
+            assertThat(editor.sendFormattedFinalMessage(101L, text)).contains(17L);
+            var plain = org.mockito.ArgumentCaptor.forClass(String.class);
+            verify(client, atLeastOnce()).sendMessageChecked(
+                eq(101L), plain.capture(), isNull(), any(), any(), isNull(), anyBoolean());
+            String joined = plain.getAllValues().stream()
+                .map(part -> part.replaceFirst("^\\(\\d+/\\d+\\) ", ""))
+                .collect(java.util.stream.Collectors.joining());
+            assertThat(joined).isEqualTo(text);
+        } finally {
+            editor.destroy();
+        }
+    }
+
     @Test
     void oversizedToolSegmentIsSplitBeforeFinalDelivery() {
         when(client.sendMessageChecked(eq(101L), anyString(), any(), any(), any(), isNull(), anyBoolean()))

@@ -478,6 +478,25 @@ class StreamingOrchestratorTest {
     }
 
     @Test
+    void stopAfterLastTokenPreventsFinalizationAndArtifactDelivery() {
+        stubChatStream(ctx -> {
+            ctx.tokenConsumer.accept("answer MEDIA:artifact:att_0123456789abcdef0123456789abcdef");
+            busyHandler.markBusy(100L);
+            busyHandler.interrupt(100L);
+            ctx.returnResult = new AgentBackendClient.ChatResult("answer", "model", 1, 10, true);
+            ctx.onComplete.accept(ctx.returnResult);
+        });
+
+        var result = orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
+
+        assertThat(result.turnCancelled()).isTrue();
+        assertThat(result.turnSucceeded()).isFalse();
+        verify(streamEditor, never()).finalizeStream(eq(100L), anyLong(), anyString());
+        verify(streamEditor).discardStreamPreview(100L);
+        verify(hooks, never()).deliverMedia(anyLong(), any(), any(), any(), any());
+    }
+
+    @Test
     void streamChat_interrupted_finalizesWithAccumulatedContent() {
         when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(),
             any(), any(), any(), any(), any(), any(), any(), any()))
