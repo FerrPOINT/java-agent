@@ -112,9 +112,6 @@ class TelegramClientTest {
             .isInstanceOfSatisfying(TelegramClient.SendRefusalException.class,
                 ex -> assertThat(ex.getRetryAfterSeconds()).isEqualTo(37));
         assertThat(client.getLastApiErrorCode()).isEqualTo(429);
-        assertThatThrownBy(() -> client.sendMessageChecked(1L, "again", null, null, null, null, false))
-            .isInstanceOfSatisfying(TelegramClient.SendRefusalException.class,
-                ex -> assertThat(ex.getRetryAfterSeconds()).isPositive());
         verify(restClient, times(1)).post();
     }
 

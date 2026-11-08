@@ -40,7 +40,7 @@ class TelegramTransportTest {
     void floodWaitFromOneChatDoesNotSuppressAnotherChatsRequest() throws Exception {
         var requests = new AtomicInteger();
         var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        server.createContext("/bot-fixture/sendMessage", exchange -> {
+        server.createContext("/botfixture/sendMessage", exchange -> {
             try (exchange) {
                 String request = new String(exchange.getRequestBody().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
                 requests.incrementAndGet();
