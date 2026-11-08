@@ -1,5 +1,6 @@
 package com.azhukov.agent.bot.core;
 
+import com.azhukov.agent.shared.http.BackendRestClientFactory;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
@@ -12,6 +13,8 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -36,9 +39,8 @@ class MessageApiClientMetadataOnErrorTest {
     @BeforeEach
     void setUp() throws IOException {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        restClient = RestClient.builder()
-            .baseUrl("http://127.0.0.1:" + server.getAddress().getPort())
-            .build();
+        restClient = BackendRestClientFactory.createStreaming(
+            "http://127.0.0.1:" + server.getAddress().getPort(), null);
     }
 
     @AfterEach
@@ -124,6 +126,51 @@ class MessageApiClientMetadataOnErrorTest {
             assertThat(complete.get()).isNull();
             assertThat(error.get()).isInstanceOf(java.io.EOFException.class);
         }
+    }
+
+    @Test
+    void doesNotReplayPostWhenServerReadsRequestAndClosesBeforeHeaders() {
+        var requests = new AtomicInteger();
+        server.createContext("/api/v1/agent/chat/stream", exchange -> {
+            try (exchange) {
+                exchange.getRequestBody().readAllBytes();
+                if (requests.incrementAndGet() == 1) {
+                    return;
+                }
+                exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
+                byte[] payload = "data:{\"type\":\"done\"}\n\n".getBytes(StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(200, payload.length);
+                exchange.getResponseBody().write(payload);
+            }
+        });
+        server.start();
+        var completed = new AtomicReference<AgentBackendClient.ChatResult>();
+        var error = new AtomicReference<Throwable>();
+        var client = new MessageApiClient(restClient, mapper, new com.azhukov.agent.bot.config.BotProperties());
+
+        var result = client.chatStream("hi", null, null, token -> {}, tool -> {}, (name, preview) -> {},
+            retry -> {}, review -> {}, clarify -> {}, completed::set, error::set);
+
+        assertThat(requests).hasValue(1);
+        assertThat(result.turnSucceeded()).isFalse();
+        assertThat(completed.get()).isNull();
+        assertThat(error.get()).isNotNull();
+    }
+
+    @Test
+    void cancelledCallbackStopsReadingBeforeDone() {
+        serveSse("{malformed", "{\"type\":\"token\",\"token\":\"partial\"}", "{\"type\":\"done\"}");
+        var completed = new AtomicReference<AgentBackendClient.ChatResult>();
+        var error = new AtomicReference<Throwable>();
+        var cancellation = new CancellationException("stop");
+        var client = new MessageApiClient(restClient, mapper, new com.azhukov.agent.bot.config.BotProperties());
+
+        var result = client.chatStream("hi", null, null, token -> { throw cancellation; }, tool -> {},
+            (name, preview) -> {}, retry -> {}, review -> {}, clarify -> {}, completed::set, error::set);
+
+        assertThat(result.turnSucceeded()).isFalse();
+        assertThat(completed.get()).isNull();
+        assertThat(error.get()).isSameAs(cancellation);
     }
 
     @Test
