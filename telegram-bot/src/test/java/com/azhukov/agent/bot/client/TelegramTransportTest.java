@@ -70,6 +70,35 @@ class TelegramTransportTest {
     }
 
     @Test
+    @org.junit.jupiter.api.extension.ExtendWith(org.springframework.boot.test.system.OutputCaptureExtension.class)
+    void transportErrorsKeepTheTokenOutOfLogsAndExceptions(org.springframework.boot.test.system.CapturedOutput output)
+            throws Exception {
+        int port;
+        try (var socket = new java.net.ServerSocket(0, 1, java.net.InetAddress.getByName("127.0.0.1"))) {
+            port = socket.getLocalPort();
+        }
+        var mapper = new ObjectMapper();
+        var transport = new BotConfig().telegramRestClient(mapper).mutate()
+            .baseUrl("http://127.0.0.1:" + port).build();
+        String token = "synthetic-secret-fixture";
+        var client = new TelegramClient(transport, mapper, token, 0);
+
+        assertThatThrownBy(() -> client.callApi("sendMessage", Map.of("text", "fixture")))
+            .isInstanceOfSatisfying(TelegramApiException.class, error -> {
+                assertThat(error.getErrorCode()).isEqualTo(-1);
+                assertThat(error.getMessage()).doesNotContain(token);
+            });
+        var multipart = new org.springframework.util.LinkedMultiValueMap<String, Object>();
+        multipart.add("chat_id", "1");
+        assertThatThrownBy(() -> client.callMultipartApi("sendDocument", multipart))
+            .isInstanceOfSatisfying(TelegramApiException.class, error -> {
+                assertThat(error.getErrorCode()).isEqualTo(-1);
+                assertThat(error.getMessage()).doesNotContain(token);
+            });
+        assertThat(output.getAll()).contains("transport failed").doesNotContain(token);
+    }
+
+    @Test
     void lostReplyToAcceptedPostDoesNotTriggerAnotherRequest() throws Exception {
         var requests = new AtomicInteger();
         var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
