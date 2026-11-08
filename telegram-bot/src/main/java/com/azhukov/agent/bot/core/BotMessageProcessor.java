@@ -529,7 +529,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
             reactionManager.onProcessingComplete(chatId, event.messageId(), false);
             typingManager.stopTyping(chatId);
         } finally {
-            var delivery = streamEditor.sealDeferredDelivery(chatId);
+            var delivery = streamEditor.hasDeferredDelivery(chatId) ? streamEditor.sealDeferredDelivery(chatId) : null;
             if (delivery == null) {
                 busyHandler.markFree(chatId);
             } else {
