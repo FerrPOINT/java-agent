@@ -1,6 +1,8 @@
 package com.azhukov.agent.tools.tts;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.security.FileSafety;
+import com.azhukov.agent.tools.file.FileToolSafety;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
@@ -18,7 +20,13 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.SecureDirectoryStream;
+import java.nio.file.StandardOpenOption;
+import java.util.Set;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -58,6 +66,7 @@ public class TtsTool implements ToolHandler {
 
     private final List<TtsProvider> providers;
     private final AgentProperties properties;
+    private final FileSafety fileSafety;
     private final com.azhukov.agent.service.AttachmentArtifactService artifacts;
 
 
@@ -96,7 +105,8 @@ public class TtsTool implements ToolHandler {
             return jsonErrorResponse("TTS provider" + requested + " is not enabled or unavailable.");
         }
 
-        if (args.outputPath() != null && !args.outputPath().isBlank()) {
+        boolean customPath = args.outputPath() != null && !args.outputPath().isBlank();
+        if (customPath) {
             ToolResult pathError = validateOutputPath(args.outputPath());
             if (pathError != null) return pathError;
         }
@@ -113,39 +123,73 @@ public class TtsTool implements ToolHandler {
         List<Path> writtenPaths = new ArrayList<>();
         List<String> mediaTags = new ArrayList<>();
         try {
+            Path parent = baseOutputPath.getParent();
+            if (parent == null) {
+                throw new IOException("The audio output must be a file");
+            }
             for (int i = 0; i < chunks.size(); i++) {
-                Path outputPath = chunks.size() == 1
-                    ? baseOutputPath
-                    : chunkOutputPath(baseOutputPath, i + 1);
-                Path parent = outputPath.getParent();
-                if (parent != null) {
-                    Files.createDirectories(parent);
-                }
-
-                byte[] audio = provider.synthesize(chunks.get(i), voice, speed, args.instructions());
-                if (audio == null || audio.length == 0) {
-                    throw new IllegalStateException("TTS provider returned empty audio data");
-                }
-                Files.write(outputPath, audio);
-                writtenPaths.add(outputPath);
-                if (session != null) {
-                    String name = outputPath.getFileName().toString().replaceAll("[^A-Za-z0-9._-]", "_");
-                    mediaTags.add(artifacts.publishGenerated(session, "audio", "audio/mpeg", name, audio));
+                Path target = chunks.size() == 1 ? baseOutputPath : chunkOutputPath(baseOutputPath, i + 1);
+                ToolResult denied = FileToolSafety.ensureWritable(fileSafety, target, target.toString(), false);
+                if (denied != null) throw new IOException(denied.error());
+            }
+            if (!customPath) Files.createDirectories(parent);
+            try (var directory = openAudioDirectory(parent)) {
+                try {
+                    for (int i = 0; i < chunks.size(); i++) {
+                        Path target = chunks.size() == 1 ? baseOutputPath : chunkOutputPath(baseOutputPath, i + 1);
+                        byte[] audio = provider.synthesize(chunks.get(i), voice, speed, args.instructions());
+                        if (audio == null || audio.length == 0) {
+                            throw new IllegalStateException("TTS provider returned empty audio data");
+                        }
+                        try (var channel = directory.newByteChannel(target.getFileName(),
+                                Set.of(StandardOpenOption.WRITE, StandardOpenOption.CREATE_NEW, LinkOption.NOFOLLOW_LINKS))) {
+                            writtenPaths.add(target);
+                            var remaining = ByteBuffer.wrap(audio);
+                            while (remaining.hasRemaining()) channel.write(remaining);
+                        }
+                        if (session != null) {
+                            String name = target.getFileName().toString().replaceAll("[^A-Za-z0-9._-]", "_");
+                            mediaTags.add(artifacts.publishGenerated(session, "audio", "audio/mpeg", name, audio));
+                        }
+                    }
+                } catch (Exception failure) {
+                    for (Path path : writtenPaths) {
+                        try {
+                            directory.deleteFile(path.getFileName());
+                        } catch (IOException cleanupError) {
+                            failure.addSuppressed(cleanupError);
+                        }
+                    }
+                    throw failure;
                 }
             }
 
             log.debug("TTS generated {} file(s) for provider={}", writtenPaths.size(), provider.name());
             return ToolResult.ok(jsonSuccessResponse(writtenPaths, mediaTags, provider.name(), chunks.size()));
         } catch (Exception e) {
-            for (Path path : writtenPaths) {
-                try {
-                    Files.deleteIfExists(path);
-                } catch (Exception cleanupError) {
-                    log.debug("Failed to clean partial TTS artifact {}: {}", path, cleanupError.getMessage());
-                }
-            }
             log.error("TTS failed: {}", e.getMessage(), e);
             return jsonErrorResponse("TTS failed: " + errorMessage(e));
+        }
+    }
+
+    private SecureDirectoryStream<Path> openAudioDirectory(Path parent) throws IOException {
+        var root = Files.newDirectoryStream(parent.getRoot());
+        if (!(root instanceof SecureDirectoryStream<Path> secureRoot)) {
+            root.close();
+            throw new IOException("The filesystem does not support secure audio output");
+        }
+        var current = secureRoot;
+        try {
+            for (Path component : parent) {
+                var next = current.newDirectoryStream(component, LinkOption.NOFOLLOW_LINKS);
+                var previous = current;
+                current = next;
+                previous.close();
+            }
+            return current;
+        } catch (IOException | RuntimeException e) {
+            current.close();
+            throw e;
         }
     }
 
@@ -153,13 +197,6 @@ public class TtsTool implements ToolHandler {
         String normalized = outputPath.replace('\\', '/');
         if (normalized.matches(".*(^|/)\\.\\.(/|$).*$")) {
             return jsonErrorResponse("output_path contains '..' traversal component. Use an absolute path or a relative path without '..'.");
-        }
-        Path resolved = Path.of(outputPath).toAbsolutePath().normalize();
-        Path home = Path.of(System.getProperty("user.home")).toAbsolutePath().normalize();
-        Path etc = Path.of("/etc").toAbsolutePath().normalize();
-        Path proc = Path.of("/proc").toAbsolutePath().normalize();
-        if (resolved.startsWith(home.resolve(".ssh")) || resolved.startsWith(etc) || resolved.startsWith(proc)) {
-            return jsonErrorResponse("output_path targets a protected credential or system path. Choose a normal audio output location.");
         }
         return null;
     }
@@ -343,7 +380,7 @@ public class TtsTool implements ToolHandler {
 
     record TtsArgs(
         @ToolParam(description = "The text to convert to speech. Markdown, URLs, emoji, and <think> reasoning blocks are cleaned before synthesis.") String text,
-        @ToolParam(description = "Optional custom save path.", required = false) @JsonProperty("output_path") @JsonAlias("outputPath") String outputPath,
+        @ToolParam(description = "Optional new audio file in an existing directory. Existing files are preserved.", required = false) @JsonProperty("output_path") @JsonAlias("outputPath") String outputPath,
         @ToolParam(description = "Optional provider-specific voice override.", required = false) @JsonProperty("voice") String voice,
         @ToolParam(description = "Playback speed multiplier. Range: 0.25-4.0.", required = false) @JsonProperty("speed") Double speed,
         @ToolParam(description = "Optional voice-design guidance for providers that support it.", required = false) @JsonProperty("instructions") String instructions,

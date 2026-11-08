@@ -272,6 +272,26 @@ class BotMessageProcessorMediaDeliveryTest {
     }
 
     @Test
+    void reportsUnavailableArtifactAndSendsLargeImageAsDocument() {
+        UUID sessionId = UUID.randomUUID();
+        byte[] image = new byte[10_000_001];
+        when(attachmentApiClient.claimOutbound("missing", "101", sessionId))
+            .thenThrow(new AttachmentApiClient.OutboundUnavailable(new IllegalStateException()));
+        when(attachmentApiClient.claimOutbound("large", "101", sessionId))
+            .thenReturn(Optional.of(new AttachmentApiClient.Outbound("large", "large.png", "image/png", image)));
+        when(telegramClient.sendDocument(100L, image, "large.png", null, null, 55)).thenReturn(Optional.of(18L));
+
+        processor.deliverMedia(100L, List.of(new MediaDeliveryService.MediaDescriptor("missing", false, false),
+            new MediaDeliveryService.MediaDescriptor("large", false, false)), 55, "101", sessionId);
+
+        verify(telegramClient).sendDocument(100L, image, "large.png", null, null, 55);
+        verify(telegramClient).sendMessage(100L, "Delivery could not be confirmed for one or more attachments.",
+            null, null, 55, null, false);
+        verify(attachmentApiClient).markOutboundDelivered("large", "101", sessionId, 18L);
+        verifyNoMoreInteractions(telegramClient);
+    }
+
+    @Test
     void missingOrUnscopedArtifactsDoNotReachTelegram() {
         UUID sessionId = UUID.randomUUID();
         var media = List.of(new MediaDeliveryService.MediaDescriptor("missing", false, false));

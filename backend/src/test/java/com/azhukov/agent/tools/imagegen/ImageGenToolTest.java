@@ -33,6 +33,8 @@ class ImageGenToolTest {
     private ImageGenProvider provider;
 
     private com.azhukov.agent.config.AgentProperties properties;
+    @Mock
+    private com.azhukov.agent.service.AttachmentArtifactService artifacts;
     private ImageGenTool tool;
 
     @BeforeEach
@@ -40,7 +42,21 @@ class ImageGenToolTest {
         properties = new com.azhukov.agent.config.AgentProperties();
         properties.getImageGen().setProvider("openai");
         org.mockito.Mockito.lenient().when(provider.name()).thenReturn("openai");
-        tool = new ImageGenTool(providerProvider, properties);
+        tool = new ImageGenTool(providerProvider, properties, artifacts);
+    }
+
+    @Test
+    void publishesSessionImageUsingProviderBytes() throws Exception {
+        var session = com.azhukov.agent.core.model.Session.create("owner", "openai", "model");
+        byte[] jpeg = {(byte) 0xff, (byte) 0xd8, (byte) 0xff};
+        when(providerProvider.stream()).thenReturn(java.util.stream.Stream.of(provider));
+        when(provider.generate("image", "square")).thenReturn(jpeg);
+        when(artifacts.publishGenerated(eq(session), eq("photo"), eq("image/jpeg"), endsWith(".jpg"), eq(jpeg)))
+            .thenReturn("MEDIA:artifact:att_image");
+
+        var response = MAPPER.readTree(tool.execute("{\"prompt\":\"image\"}", null, session).content());
+
+        assertThat(response.path("media_tag").asText()).isEqualTo("MEDIA:artifact:att_image");
     }
 
     @Test

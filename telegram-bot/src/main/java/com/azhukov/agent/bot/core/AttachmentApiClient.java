@@ -89,22 +89,26 @@ public class AttachmentApiClient extends BaseBackendClient {
 
     public record Outbound(String id, String fileName, String mimeType, byte[] bytes) {}
 
+    static final class OutboundUnavailable extends RuntimeException {
+        OutboundUnavailable(Throwable cause) { super(cause); }
+    }
+
     public java.util.Optional<Outbound> claimOutbound(String id, String owner, UUID sessionId) {
         try {
             var response = restClient.post().uri(uri -> uri.path("/api/v1/attachments/{id}/outbound")
                 .queryParam("ownerId", owner).queryParam("sessionId", sessionId).build(id))
                 .retrieve().toEntity(byte[].class);
             byte[] bytes = response.getBody();
-            if (bytes == null || bytes.length == 0) return java.util.Optional.empty();
+            if (bytes == null || bytes.length == 0) throw new IllegalStateException("Empty artifact body");
             var headers = response.getHeaders();
             var type = headers.getContentType();
             return java.util.Optional.of(new Outbound(id, sanitize(headers.getContentDisposition().getFilename()),
                 type == null ? MediaType.APPLICATION_OCTET_STREAM_VALUE : type.toString(), bytes));
         } catch (org.springframework.web.client.HttpClientErrorException.Conflict alreadyClaimed) {
             return java.util.Optional.empty();
-        } catch (Exception e) {
+        } catch (org.springframework.web.client.RestClientException | IllegalStateException e) {
             log.warn("Outbound artifact {} unavailable ({})", id, e.getClass().getSimpleName());
-            return java.util.Optional.empty();
+            throw new OutboundUnavailable(e);
         }
     }
 

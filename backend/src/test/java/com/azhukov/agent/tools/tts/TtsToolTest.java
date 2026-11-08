@@ -49,7 +49,7 @@ class TtsToolTest {
         AgentProperties properties = new AgentProperties();
         lenient().when(artifacts.publishGenerated(eq(session), eq("audio"), anyString(), anyString(), any())).thenReturn(ARTIFACT);
         lenient().when(provider.name()).thenReturn("edge");
-        tool = new TtsTool(List.of(provider), properties, artifacts);
+        tool = new TtsTool(List.of(provider), properties, new com.azhukov.agent.core.security.DefaultFileSafety(properties), artifacts);
     }
 
     @Test
@@ -125,7 +125,7 @@ class TtsToolTest {
     void synthesize_outputPathUsesRequestedFile() throws Exception {
         byte[] audioBytes = "custom-output".getBytes();
         when(provider.synthesize(eq("Hello"), any(), any(), any())).thenReturn(audioBytes);
-        Path requested = Files.createTempDirectory("tts-output-").resolve("nested/custom.mp3");
+        Path requested = Files.createTempDirectory("tts-output-").resolve("custom.mp3");
 
         ToolResult result = tool.execute("{\"text\":\"Hello\",\"output_path\":\"" + jsonPath(requested) + "\"}", null, session);
 
@@ -137,13 +137,12 @@ class TtsToolTest {
         assertThat(Files.readAllBytes(requested)).isEqualTo(audioBytes);
         Files.deleteIfExists(requested);
         Files.deleteIfExists(requested.getParent());
-        Files.deleteIfExists(requested.getParent().getParent());
     }
 
     @Test
     void synthesize_usesRequestedProviderAndClampsSpeed() throws Exception {
         lenient().when(alternateProvider.name()).thenReturn("openai");
-        tool = new TtsTool(List.of(provider, alternateProvider), new AgentProperties(), artifacts);
+        tool = new TtsTool(List.of(provider, alternateProvider), new AgentProperties(), new com.azhukov.agent.core.security.DefaultFileSafety(new AgentProperties()), artifacts);
         when(alternateProvider.synthesize(eq("Hello"), any(), eq(4.0), any())).thenReturn("audio".getBytes());
 
         ToolResult result = tool.execute("{\"text\":\"Hello\",\"provider\":\"openai\",\"speed\":99}", null, session);
@@ -160,7 +159,7 @@ class TtsToolTest {
         properties.getTts().setProvider("openai");
         when(provider.name()).thenReturn("openai");
         when(provider.synthesize(any(), any(), any(), any())).thenReturn("audio".getBytes());
-        tool = new TtsTool(List.of(provider), properties, artifacts);
+        tool = new TtsTool(List.of(provider), properties, new com.azhukov.agent.core.security.DefaultFileSafety(properties), artifacts);
 
         String longText = "hello ".repeat(900);
         ToolResult result = tool.execute("{\"text\":\"" + longText + "\"}", null, session);
@@ -190,7 +189,7 @@ class TtsToolTest {
         when(provider.synthesize(any(), any(), any(), any()))
             .thenReturn("chunk-one".getBytes())
             .thenThrow(new RuntimeException("boom"));
-        tool = new TtsTool(List.of(provider), properties, artifacts);
+        tool = new TtsTool(List.of(provider), properties, new com.azhukov.agent.core.security.DefaultFileSafety(properties), artifacts);
 
         Path requested = dir.resolve("voice.mp3");
         String longText = "hello ".repeat(900);
@@ -206,6 +205,27 @@ class TtsToolTest {
     }
 
     @Test
+    void rejectsProtectedPathBeforeSynthesis() throws Exception {
+        ToolResult result = tool.execute("""
+            {"text":"Hello","output_path":"/artifacts/voice.mp3"}
+            """, null, session);
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.error()).contains("Access denied");
+        verify(provider, never()).synthesize(any(), any(), any(), any());
+    }
+
+    @Test
+    void existingOutputIsNeverOverwrittenOrRemoved(@TempDir Path dir) throws Exception {
+        when(provider.synthesize(any(), any(), any(), any())).thenReturn("new".getBytes());
+        Path existing = Files.writeString(dir.resolve("voice.mp3"), "original");
+        ToolResult result = tool.execute("{\"text\":\"Hello\",\"output_path\":\"" + jsonPath(existing) + "\"}", null, session);
+
+        assertThat(result.success()).isFalse();
+        assertThat(Files.readString(existing)).isEqualTo("original");
+    }
+
+    @Test
     void synthesize_rejectsTraversalOutputPath() throws Exception {
         ToolResult result = tool.execute("{\"text\":\"Hello\",\"output_path\":\"tmp/../secret.mp3\"}", null, session);
 
@@ -218,7 +238,7 @@ class TtsToolTest {
 
     @Test
     void synthesize_noProvider_returnsFailureJson() throws Exception {
-        tool = new TtsTool(List.of(), new AgentProperties(), artifacts);
+        tool = new TtsTool(List.of(), new AgentProperties(), new com.azhukov.agent.core.security.DefaultFileSafety(new AgentProperties()), artifacts);
 
         String args = """
             {"text":"Hello"}
