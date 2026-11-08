@@ -55,6 +55,45 @@ class StreamEditorFloodFallbackTest {
     // ─── 4a: Flood strikes fallback mode tests ─────────────────────
 
     @Test
+    void draftFinalRetriesConfirmedFormattingRefusalOnceWithoutParseMode() throws Exception {
+        var requests = new java.util.ArrayList<com.fasterxml.jackson.databind.JsonNode>();
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        var server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/bot-fixture/sendMessage", exchange -> {
+            try (exchange) {
+                var request = mapper.readTree(exchange.getRequestBody());
+                requests.add(request);
+                boolean formatted = request.has("parse_mode");
+                byte[] response = (formatted
+                    ? "{\"ok\":false,\"error_code\":400,\"description\":\"Bad Request: cannot parse entities\"}"
+                    : "{\"ok\":true,\"result\":{\"message_id\":91}}").getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", "application/json");
+                exchange.sendResponseHeaders(formatted ? 400 : 200, response.length);
+                exchange.getResponseBody().write(response);
+            }
+        });
+        server.start();
+        var props = new com.azhukov.agent.bot.config.BotProperties();
+        props.setParseMode("MarkdownV2");
+        var transport = new com.azhukov.agent.bot.config.BotConfig().telegramRestClient(mapper).mutate()
+            .baseUrl("http://127.0.0.1:" + server.getAddress().getPort()).build();
+        var client = new TelegramClient(transport, mapper, "-fixture", 0);
+        var editor = new StreamEditor(client, props, new MediaDeliveryService(), new RichMessageSupport(client));
+        try {
+            editor.init();
+            assertThat(editor.finalizeTurn(1L, "ordinary answer", 0L, 55L)).isTrue();
+            assertThat(requests).hasSize(2);
+            assertThat(requests.get(0).path("parse_mode").asText()).isEqualTo("MarkdownV2");
+            assertThat(requests.get(1).has("parse_mode")).isFalse();
+            assertThat(requests.get(1).path("text").asText()).isEqualTo("ordinary answer");
+            assertThat(requests.get(1).path("message_thread_id").asInt()).isEqualTo(55);
+        } finally {
+            editor.destroy();
+            server.stop(0);
+        }
+    }
+
+    @Test
     void discardStreamPreviewUsesCurrentMessageAndCleansSessionOnFailure() {
         var session = editor.sessionFor(123L);
         session.currentMessageId.set(42L);

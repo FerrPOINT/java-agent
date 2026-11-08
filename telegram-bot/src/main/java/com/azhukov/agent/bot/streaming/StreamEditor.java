@@ -1156,8 +1156,12 @@ public class StreamEditor {
         for (int i = 0; i < chunks.size(); i++) {
             String chunk = chunks.get(i);
             Long reply = replyFor(session, i);
-            operations.add(new DeliveryOperation(() -> telegramClient.sendMessageChecked(
-                chatId, chunk, parseMode, reply, topic, null, false), i == chunks.size() - 1 ? replacedPreview : 0));
+            long preview = i == chunks.size() - 1 ? replacedPreview : 0;
+            var plain = new DeliveryOperation(() -> telegramClient.sendMessageChecked(
+                chatId, chunk, null, reply, topic, null, false), preview);
+            operations.add(parseMode == null ? plain : new DeliveryOperation(
+                () -> telegramClient.sendMessageChecked(chatId, chunk, parseMode, reply, topic, null, false),
+                error -> error.getErrorCode() == 400 && error.isParseError(), List.of(plain), preview));
         }
         return operations;
     }
@@ -1214,9 +1218,6 @@ public class StreamEditor {
                 if (operation.replacedPreview() > 0) {
                     removeReplacedPreview(chatId, operation.replacedPreview());
                 }
-            } catch (TelegramClient.SendRefusalException refusal) {
-                synchronized (session) { scheduleDelivery(chatId, session, refusal.getRetryAfterSeconds()); }
-                return Optional.empty();
             } catch (TelegramApiException error) {
                 synchronized (session) {
                     if (session.deliveryCancelled) {
