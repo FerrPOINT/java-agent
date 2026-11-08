@@ -44,8 +44,18 @@ class CronJobServiceTest {
         };
     }
 
+    static void stubExecutionHistory(CronExecutionLogRepository repository) {
+        lenient().when(repository.save(any(com.azhukov.agent.persistence.entity.CronExecutionLogEntity.class)))
+            .thenAnswer(invocation -> {
+                var entry = invocation.<com.azhukov.agent.persistence.entity.CronExecutionLogEntity>getArgument(0);
+                entry.setId(1L);
+                return entry;
+            });
+    }
+
     @BeforeEach
     void setUp() {
+        stubExecutionHistory(cronExecutionLogRepository);
         org.mockito.Mockito.lenient().when(cronJobRepository.findByIdForUpdate(
                 org.mockito.ArgumentMatchers.any(java.util.UUID.class)))
             .thenAnswer(call -> cronJobRepository.findById(call.getArgument(0)));

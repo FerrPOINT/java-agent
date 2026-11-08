@@ -71,19 +71,21 @@ class CronJobServiceDeliveryProducerTest {
     }
 
     private void prepareFailingRun(CronJobEntity job) {
+        prepareRun(job);
+        when(runtime.runBackground(any(), any(), anyBoolean()))
+            .thenThrow(new IllegalStateException("provider timed out"));
+    }
+
+    private void prepareRun(CronJobEntity job) {
         lenient().when(cronJobRepository.recordRun(job)).thenReturn(1);
         when(cronJobRepository.findById(job.getId())).thenReturn(Optional.of(job));
         when(agentRuntimeServiceProvider.getIfAvailable()).thenReturn(runtime);
-        // Default-profile jobs run the 3-arg overload (metadata empty); non-default
-        // profiles stamp "profile" into metadata and run the 4-arg one.
-        when(runtime.runBackground(any(), any(), anyBoolean()))
-            .thenThrow(new IllegalStateException("provider timed out"));
         when(cronExecutionLogRepository.save(any(CronExecutionLogEntity.class))).thenAnswer(inv -> {
             CronExecutionLogEntity entity = inv.getArgument(0);
             entity.setId(42L);
             return entity;
         });
-        when(deliveryProvider.getIfAvailable()).thenReturn(deliveryService);
+        lenient().when(deliveryProvider.getIfAvailable()).thenReturn(deliveryService);
     }
 
     @Test
@@ -111,6 +113,59 @@ class CronJobServiceDeliveryProducerTest {
         } finally {
             dataSource.destroy();
         }
+    }
+
+    @Test
+    void missingHistoryStopsBeforeReportingACommittedRun() {
+        var job = jobWithDeliverTo("telegram:111");
+        var properties = new AgentProperties();
+        properties.getCron().setEnabled(false);
+        when(cronJobRepository.findById(job.getId())).thenReturn(Optional.of(job));
+        when(cronExecutionLogRepository.save(any(CronExecutionLogEntity.class)))
+            .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("history unavailable"));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service(properties).runNow(job.getId()))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("Cron execution result could not be committed");
+        verify(cronJobRepository, org.mockito.Mockito.never()).recordRun(any());
+        verify(deliveryService, org.mockito.Mockito.never()).enqueue(any());
+    }
+
+    @Test
+    void uncommittedOneShotResultDisablesTheJobWithoutRearmingTheTimer() {
+        var job = jobWithDeliverTo("telegram:111");
+        job.setRepeatCount(1);
+        var properties = new AgentProperties();
+        properties.getCron().setEnabled(true);
+        prepareRun(job);
+        var session = UUID.randomUUID();
+        when(runtime.runBackground(any(), any(), anyBoolean())).thenReturn(session.toString());
+        var message = new com.azhukov.agent.persistence.entity.MessageEntity();
+        message.setRole("assistant");
+        message.setContent("completed side effect");
+        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(session)).thenReturn(List.of(message));
+        when(deliveryService.enqueue(any())).thenThrow(new IllegalArgumentException("ledger rejected output"));
+        when(cronJobRepository.findByEnabledTrue()).thenReturn(List.of(job));
+        when(cronJobRepository.findByIdForUpdate(job.getId())).thenReturn(Optional.of(job));
+
+        var service = service(properties);
+        var scheduler = mock(java.util.concurrent.ScheduledExecutorService.class);
+        var timer = mock(java.util.concurrent.ScheduledFuture.class);
+        var callback = ArgumentCaptor.forClass(Runnable.class);
+        org.mockito.Mockito.doReturn(timer).when(scheduler)
+            .schedule(callback.capture(), org.mockito.ArgumentMatchers.anyLong(), any());
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "scheduler", scheduler);
+
+        service.init();
+        callback.getValue().run();
+
+        assertThat(job.isEnabled()).isFalse();
+        assertThat(job.getNextRunAt()).isNull();
+        assertThat(job.getRepeatCompleted()).isZero();
+        assertThat(job.getLastError()).contains("result was not committed");
+        verify(timer).cancel(false);
+        verify(scheduler).schedule(any(Runnable.class), org.mockito.ArgumentMatchers.anyLong(), any());
+        verify(runtime).runBackground(any(), any(), anyBoolean());
     }
 
     @Test

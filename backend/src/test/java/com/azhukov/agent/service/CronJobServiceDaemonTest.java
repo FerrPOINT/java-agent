@@ -43,6 +43,7 @@ class CronJobServiceDaemonTest {
         properties = new AgentProperties();
         properties.getCron().setEnabled(false);
         lenient().when(agentRuntimeServiceProvider.getIfAvailable()).thenReturn(agentRuntimeService);
+        CronJobServiceTest.stubExecutionHistory(cronExecutionLogRepository);
         service = new CronJobService(cronJobRepository, agentRuntimeServiceProvider, properties, skillManager, cronExecutionLogRepository, messageRepository, new org.springframework.transaction.support.TransactionTemplate(org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class)), new CronScheduleParser());
     }
 

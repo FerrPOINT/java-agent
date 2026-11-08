@@ -898,6 +898,12 @@ private static final String CRON_EXECUTION_HINT = """
         transactionTemplate.executeWithoutResult(status -> {
             var job = cronJobRepository.findByIdForUpdate(id).orElse(null);
             if (job == null || !job.isEnabled() || job.getConfigurationRevision() != revision || !due.equals(job.getNextRunAt())) return;
+            if (outcome == CronExecutionOutcome.RESULT_NOT_COMMITTED && Integer.valueOf(1).equals(job.getRepeatCount())) {
+                job.setEnabled(false);
+                job.setLastStatus("error");
+                job.setLastError("Execution result was not committed. Review the run before resuming.");
+                job.setLastErrorAt(Instant.now());
+            }
             if (outcome != null) {
                 if (outcome.countsTowardRepeat() && job.getRepeatCount() != null) {
                     job.setRepeatCompleted(job.getRepeatCompleted() + 1);
@@ -1114,10 +1120,13 @@ private static final String CRON_EXECUTION_HINT = """
     private boolean recordRunAndDelivery(CronJobEntity job, Instant startedAt, String status,
                                       String error, String output, boolean retryPending) {
         Long executionId = recordExecution(job.getId(), startedAt, Instant.now(), status, error, output);
+        if (executionId == null) {
+            return false;
+        }
         try {
             String mirrorPayload = transactionTemplate.execute(tx -> {
                 // The conditional UPDATE holds the row through enqueue. History survives a stale revision.
-                if (cronJobRepository.recordRun(job) == 0 || retryPending || executionId == null
+                if (cronJobRepository.recordRun(job) == 0 || retryPending
                         || (error == null && CronSilenceFilter.isSilent(output))) {
                     return null;
                 }
