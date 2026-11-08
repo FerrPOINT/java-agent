@@ -38,7 +38,8 @@ class ContextReferenceServiceEdgeCasesTest {
     void setUp() {
         properties = new AgentProperties();
         properties.getCore().setWorkingDirectory(tempDir.toString());
-        service = new DefaultContextReferenceService(properties, skillManager);
+        service = new DefaultContextReferenceService(properties, skillManager,
+            new com.azhukov.agent.core.security.DefaultFileSafety(properties));
         service.initHttpClient();
     }
 
@@ -319,7 +320,8 @@ class ContextReferenceServiceEdgeCasesTest {
         Files.createDirectories(folder);
         Files.writeString(folder.resolve("file.txt"), "content");
         properties.getCore().setWorkingDirectory(tempDir.toString());
-        service = new DefaultContextReferenceService(properties, skillManager);
+        service = new DefaultContextReferenceService(properties, skillManager,
+            new com.azhukov.agent.core.security.DefaultFileSafety(properties));
         service.initHttpClient();
         ContextReference ref = new ContextReference(ReferenceType.FOLDER, "relfolder", "relfolder", null);
         Optional<String> result = service.loadContent(ref);

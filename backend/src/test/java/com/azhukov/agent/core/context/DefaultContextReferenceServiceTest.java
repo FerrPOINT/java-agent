@@ -31,7 +31,8 @@ class DefaultContextReferenceServiceTest {
     void setUp() {
         properties = new AgentProperties();
         properties.getCore().setWorkingDirectory(System.getProperty("java.io.tmpdir"));
-        service = new DefaultContextReferenceService(properties, skillManager);
+        service = new DefaultContextReferenceService(properties, skillManager,
+            new com.azhukov.agent.core.security.DefaultFileSafety(properties));
         service.initHttpClient();
     }
 

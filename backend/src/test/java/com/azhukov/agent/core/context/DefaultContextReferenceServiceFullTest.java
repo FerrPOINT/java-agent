@@ -50,7 +50,8 @@ class DefaultContextReferenceServiceFullTest {
         properties.getCore().setHttpUserAgent("TestAgent/1.0");
 
         httpClient = mock(HttpClient.class);
-        service = new DefaultContextReferenceService(properties, skillManager);
+        service = new DefaultContextReferenceService(properties, skillManager,
+            new com.azhukov.agent.core.security.DefaultFileSafety(properties));
         injectHttpClient(service, httpClient);
     }
 
@@ -124,6 +125,21 @@ class DefaultContextReferenceServiceFullTest {
         assertThat(service.loadContent(ref))
             .isPresent()
             .hasValueSatisfying(v -> assertThat(v).contains("file too large").contains(file.toString()));
+    }
+
+    @Test
+    void fileReferencesCheckTheTargetOfWorkspaceSymlinks() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        properties.getCore().setWorkingDirectory(workspace.toString());
+        Path privateFile = Files.writeString(tempDir.resolve("private.txt"), "private marker");
+        Path publicFile = Files.writeString(workspace.resolve("notes.txt"), "workspace note");
+        Path outside = Files.createSymbolicLink(workspace.resolve("outside.txt"), privateFile);
+        Path inside = Files.createSymbolicLink(workspace.resolve("inside.txt"), publicFile);
+        var refs = service.resolve(List.of(outside.toUri().toString(), inside.toUri().toString()));
+
+        assertThat(service.loadContent(refs.get(0))).hasValueSatisfying(value ->
+            assertThat(value).contains("file access denied").doesNotContain("private marker"));
+        assertThat(service.loadContent(refs.get(1))).hasValue("workspace note");
     }
 
     @Test
