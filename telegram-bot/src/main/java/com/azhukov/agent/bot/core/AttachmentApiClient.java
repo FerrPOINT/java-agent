@@ -36,7 +36,7 @@ public class AttachmentApiClient extends BaseBackendClient {
 
     /**
      * Register an inbound artifact. Returns empty on ANY failure (network,
-     * 4xx/5xx, unparsable body) — the caller decides the fallback.
+     * 4xx/5xx or an unparsable body).
      */
     public java.util.Optional<Registered> register(byte[] data, String fileName, String mimeType,
                                                    String disposition, String origin,

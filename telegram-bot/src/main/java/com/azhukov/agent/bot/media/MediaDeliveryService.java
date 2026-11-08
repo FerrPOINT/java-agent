@@ -68,16 +68,9 @@ public class MediaDeliveryService {
             spans.add(new int[]{fenced.start(), fenced.end()});
         }
 
-        // Inline code: `...` but NOT backtick-quoted paths in MEDIA: tags
         Matcher inline = INLINE_CODE_RE.matcher(content);
         while (inline.find()) {
-            int start = inline.start();
-            // Check if this is a backtick-quoted path after MEDIA:
-            String prefix = content.substring(Math.max(0, start - 20), start);
-            if (Pattern.compile("MEDIA:\\s*$").matcher(prefix).find()) {
-                continue; // This is a MEDIA path quote, not inline code
-            }
-            spans.add(new int[]{start, inline.end()});
+            spans.add(new int[]{inline.start(), inline.end()});
         }
 
         // Blockquote lines: > at line start
@@ -99,7 +92,7 @@ public class MediaDeliveryService {
     }
 
     /**
-     * Mask {@code MEDIA:<bare-path>} occurrences inside JSON string values
+     * Mask media references inside JSON string values
      * to prevent re-delivery of stored tool-result text.
      *
      * <p>Ported from Hermes {@code _mask_json_string_media()}.

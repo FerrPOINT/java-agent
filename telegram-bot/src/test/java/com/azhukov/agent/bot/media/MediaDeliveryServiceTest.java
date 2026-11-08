@@ -19,6 +19,7 @@ class MediaDeliveryServiceTest {
     void pathsAndExamplesCannotInitiateDelivery() {
         for (String text : java.util.List.of("MEDIA:/workspace/photo.png", "/workspace/photo.png",
                 "MEDIA:/workspace/fifo", "MEDIA:/workspace/link", "example " + (char) 96 + TAG + (char) 96,
+                "MEDIA:" + (char) 96 + TAG + (char) 96,
                 "{\"media_tag\":\"" + TAG + "\"}")) {
             assertThat(service.extractMediaTags(text).media()).isEmpty();
         }
