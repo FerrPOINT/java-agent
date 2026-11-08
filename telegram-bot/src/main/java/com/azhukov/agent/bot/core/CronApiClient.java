@@ -42,10 +42,10 @@ public class CronApiClient extends BaseBackendClient {
                 .retrieve()
                 .body(String.class);
             JsonNode parsed = readTree(json);
-            return parsed != null ? parsed : arrayNode();
+            return parsed != null && parsed.isArray() ? parsed : null;
         } catch (Exception e) {
             log.warn("listSuggestions failed: {}", e.getMessage());
-            return arrayNode();
+            return null;
         }
     }
 
