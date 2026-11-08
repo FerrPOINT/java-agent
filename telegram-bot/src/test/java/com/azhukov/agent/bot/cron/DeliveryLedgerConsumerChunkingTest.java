@@ -56,19 +56,35 @@ class DeliveryLedgerConsumerChunkingTest {
 
         consumer().deliverBatchForTest(List.of(item(payload)));
 
+        assertSentText(payload);
+    }
+
+    @Test
+    void coalescedResultsKeepTextAtTheChunkBoundary() {
+        var batch = java.util.stream.IntStream.range(0, 7)
+            .mapToObj(i -> new DeliveryLedgerConsumer.ClaimedItem(
+                "id-" + i, "token-" + i, "cron_execution", String.valueOf(i),
+                "telegram", "100200300", "", "🚀 ".repeat(250) + "RESULT-" + i, 1))
+            .toList();
+        when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean()))
+            .thenReturn(Optional.of(1L));
+
+        consumer().deliverBatchForTest(batch);
+
+        assertSentText(DeliveryLedgerConsumer.formatCoalescedBatch(batch));
+    }
+
+    private void assertSentText(String expected) {
         ArgumentCaptor<String> sent = ArgumentCaptor.forClass(String.class);
-        verify(telegram, times(MessageSplitter.split(payload).size()))
+        verify(telegram, org.mockito.Mockito.atLeast(2))
             .sendMessageChecked(anyLong(), sent.capture(), any(), any(), any(), any(), anyBoolean());
-        List<String> chunks = sent.getAllValues();
-        assertThat(chunks.size()).isGreaterThan(1);
-        for (String chunk : chunks) {
+        StringBuilder delivered = new StringBuilder();
+        for (String chunk : sent.getAllValues()) {
             assertThat(chunk.length()).isLessThanOrEqualTo(MessageSplitter.TELEGRAM_MAX_LENGTH);
-            char last = chunk.charAt(chunk.length() - 1);
-            assertThat(Character.isHighSurrogate(last)).isFalse();
+            assertThat(Character.isHighSurrogate(chunk.charAt(chunk.length() - 1))).isFalse();
+            delivered.append(chunk.replaceFirst("^\\(\\d+/\\d+\\) ", ""));
         }
-        String joined = String.join("", chunks);
-        assertThat(joined).contains("Строка #0");
-        assertThat(joined).contains("Строка #299");
+        assertThat(delivered.toString()).isEqualTo(expected);
     }
 
     @Test
