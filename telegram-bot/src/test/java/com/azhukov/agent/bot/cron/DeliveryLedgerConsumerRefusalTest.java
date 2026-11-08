@@ -182,10 +182,12 @@ class DeliveryLedgerConsumerRefusalTest {
 
         consumer().deliverBatchForTest(List.of(delegate("44", "payload")));
 
+        verify(restClient.post()).uri("/api/v1/agent/delivery/drop");
+        verify(restClient.post(), org.mockito.Mockito.never()).uri("/api/v1/agent/delivery/release");
         ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
         verify(specMock, times(1)).body(body.capture());
         assertThat(body.getAllValues().stream()
-            .filter(p -> p.contains("bad_request") && p.contains("drop"))
+            .filter(p -> p.contains("bad_request"))
             .count()).isEqualTo(1);
     }
 }
