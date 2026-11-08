@@ -176,6 +176,10 @@ public class AttachmentController {
     }
 
     private String checkedArtifactOwner(String id, String ownerId, UUID sessionId) {
+        var origin = com.azhukov.agent.core.security.NativeIdentityOrigin.current();
+        if (origin == null || origin.kind() != com.azhukov.agent.core.security.NativeIdentityOrigin.Kind.GATEWAY_KEY) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Telegram gateway authentication required");
+        }
         String owner = UserContext.requireRequestOwner(ownerId);
         if (!service().isAvailableInSession(id, owner, sessionId)) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Unknown artifact");

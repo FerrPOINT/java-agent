@@ -201,13 +201,18 @@ class TtsToolTest {
     }
 
     @Test
-    void synthesize_longInputCleansPartialChunksOnFailure(@TempDir Path dir) throws Exception {
+    void synthesize_preservesReplacementAfterLaterChunkFails(@TempDir Path dir) throws Exception {
         AgentProperties properties = new AgentProperties();
         properties.getTts().setProvider("openai");
         when(provider.name()).thenReturn("openai");
         when(provider.synthesize(any(), any(), any(), any()))
             .thenReturn("chunk-one".getBytes())
-            .thenThrow(new RuntimeException("boom"));
+            .thenAnswer(call -> {
+                Path replacement = Files.writeString(dir.resolve("replacement.mp3"), "another process");
+                Files.move(replacement, dir.resolve("voice.chunk001.mp3"),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                throw new RuntimeException("boom");
+            });
         tool = new TtsTool(List.of(provider), properties, new com.azhukov.agent.core.security.DefaultFileSafety(properties), artifacts);
 
         Path requested = dir.resolve("voice.mp3");
@@ -219,7 +224,7 @@ class TtsToolTest {
         assertThat(response.get("success").asBoolean()).isFalse();
         assertThat(response.get("error").asText()).contains("boom");
         assertThat(result.error()).contains("boom");
-        assertThat(Files.exists(dir.resolve("voice.chunk001.mp3"))).isFalse();
+        assertThat(Files.readString(dir.resolve("voice.chunk001.mp3"))).isEqualTo("another process");
         assertThat(Files.exists(dir.resolve("voice.chunk002.mp3"))).isFalse();
     }
 

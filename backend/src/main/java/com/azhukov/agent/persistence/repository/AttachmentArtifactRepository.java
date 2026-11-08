@@ -13,12 +13,9 @@ import java.util.UUID;
 
 public interface AttachmentArtifactRepository extends JpaRepository<AttachmentArtifactEntity, String> {
 
-    /** Dedupe lookup: same owner + hash + disposition is ONE artifact. */
+    /** Look up the inbound deduplication key within its owner and session. */
     Optional<AttachmentArtifactEntity> findFirstByOwnerIdAndContentHashAndDispositionAndSessionIdAndDedupScope(
         String ownerId, String contentHash, String disposition, UUID sessionId, String dedupScope);
-
-    Optional<AttachmentArtifactEntity> findFirstByOwnerIdAndContentHashAndDisposition(
-        String ownerId, String contentHash, String disposition);
 
     List<AttachmentArtifactEntity> findBySessionIdOrderByCreatedAtAsc(UUID sessionId);
 
