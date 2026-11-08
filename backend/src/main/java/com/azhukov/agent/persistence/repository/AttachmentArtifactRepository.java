@@ -14,8 +14,8 @@ import java.util.UUID;
 public interface AttachmentArtifactRepository extends JpaRepository<AttachmentArtifactEntity, String> {
 
     /** Dedupe lookup: same owner + hash + disposition is ONE artifact. */
-    Optional<AttachmentArtifactEntity> findFirstByOwnerIdAndContentHashAndDispositionAndSessionId(
-        String ownerId, String contentHash, String disposition, UUID sessionId);
+    Optional<AttachmentArtifactEntity> findFirstByOwnerIdAndContentHashAndDispositionAndSessionIdAndDedupScope(
+        String ownerId, String contentHash, String disposition, UUID sessionId, String dedupScope);
 
     Optional<AttachmentArtifactEntity> findFirstByOwnerIdAndContentHashAndDisposition(
         String ownerId, String contentHash, String disposition);

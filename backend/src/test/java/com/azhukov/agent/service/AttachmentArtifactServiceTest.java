@@ -103,8 +103,8 @@ class AttachmentArtifactServiceTest {
         existing.setCachePath("u1/att_existing.png");
         Files.createDirectories(tempDir.resolve("u1"));
         Files.write(tempDir.resolve("u1/att_existing.png"), data);
-        when(repository.findFirstByOwnerIdAndContentHashAndDispositionAndSessionId(
-            org.mockito.ArgumentMatchers.eq("u1"), any(), org.mockito.ArgumentMatchers.eq("photo"), org.mockito.ArgumentMatchers.isNull()))
+        when(repository.findFirstByOwnerIdAndContentHashAndDispositionAndSessionIdAndDedupScope(
+            org.mockito.ArgumentMatchers.eq("u1"), any(), org.mockito.ArgumentMatchers.eq("photo"), org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.eq("")))
             .thenReturn(Optional.of(existing));
 
         var result = service().register("u1", "default", null, null,
@@ -287,7 +287,7 @@ class AttachmentArtifactServiceTest {
         var entity = new AttachmentArtifactEntity();
         entity.setId("att_missing");
         entity.setCachePath("u1/missing.txt");
-        when(repository.findFirstByOwnerIdAndContentHashAndDispositionAndSessionId(any(), any(), any(), any()))
+        when(repository.findFirstByOwnerIdAndContentHashAndDispositionAndSessionIdAndDedupScope(any(), any(), any(), any(), org.mockito.ArgumentMatchers.eq("")))
             .thenReturn(Optional.of(entity));
         var result = service().register("u1", "default", null, null,
             "cli", "document", "text/plain", "safe.txt", "bytes".getBytes());

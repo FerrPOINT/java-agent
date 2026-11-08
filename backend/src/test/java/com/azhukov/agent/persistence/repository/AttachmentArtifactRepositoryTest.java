@@ -66,9 +66,9 @@ class AttachmentArtifactRepositoryTest extends PostgresTestContainer {
         second.setSessionId(secondSession);
         repository.saveAndFlush(first);
         repository.saveAndFlush(second);
-        assertThat(repository.findFirstByOwnerIdAndContentHashAndDispositionAndSessionId("alice", "same", "photo", firstSession))
+        assertThat(repository.findFirstByOwnerIdAndContentHashAndDispositionAndSessionIdAndDedupScope("alice", "same", "photo", firstSession, ""))
             .get().extracting(AttachmentArtifactEntity::getId).isEqualTo(first.getId());
-        assertThat(repository.findFirstByOwnerIdAndContentHashAndDispositionAndSessionId("alice", "same", "photo", secondSession))
+        assertThat(repository.findFirstByOwnerIdAndContentHashAndDispositionAndSessionIdAndDedupScope("alice", "same", "photo", secondSession, ""))
             .get().extracting(AttachmentArtifactEntity::getId).isEqualTo(second.getId());
         var duplicate = entity("alice", "same", "photo");
         duplicate.setSessionId(firstSession);

@@ -31,9 +31,11 @@ class AttachmentFlywayConfigTest {
                 assertThat(existing.next()).isTrue();
                 assertThat(existing.getObject(1)).isNull();
             }
-            sql.execute("INSERT INTO attachment_artifacts VALUES (2,'owner','hash','photo',RANDOM_UUID(),NULL)");
+            sql.execute("INSERT INTO attachment_artifacts(id,owner_id,content_hash,disposition,session_id,outbound_claimed_at) VALUES (2,'owner','hash','photo',RANDOM_UUID(),NULL)");
+            sql.execute("INSERT INTO attachment_artifacts(id,owner_id,content_hash,disposition,dedup_scope) "
+                + "VALUES (4,'owner','hash','photo','publication-one'), (5,'owner','hash','photo','publication-two')");
             org.assertj.core.api.Assertions.assertThatThrownBy(() ->
-                sql.execute("INSERT INTO attachment_artifacts VALUES (3,'owner','hash','photo',NULL,NULL)"))
+                sql.execute("INSERT INTO attachment_artifacts(id,owner_id,content_hash,disposition,session_id,outbound_claimed_at) VALUES (3,'owner','hash','photo',NULL,NULL)"))
                 .isInstanceOf(java.sql.SQLIntegrityConstraintViolationException.class);
         }
     }

@@ -18,6 +18,9 @@ services:
 
   agent:
     init: true
+    security_opt:
+      - no-new-privileges:true
+      - apparmor=docker-default//&pdlc-java-agent
     build:
       context: .
       dockerfile: Dockerfile

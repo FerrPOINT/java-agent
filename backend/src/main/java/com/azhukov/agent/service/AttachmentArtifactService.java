@@ -87,14 +87,22 @@ public class AttachmentArtifactService {
     public ArtifactRegistration register(String ownerId, String profile, UUID sessionId,
                                          String messageId, String origin, String disposition,
                                          String mimeType, String fileName, byte[] data) {
+        return register(ownerId, profile, sessionId, messageId, origin, disposition, mimeType, fileName, data, true);
+    }
+
+    private ArtifactRegistration register(String ownerId, String profile, UUID sessionId,
+                                          String messageId, String origin, String disposition,
+                                          String mimeType, String fileName, byte[] data, boolean deduplicate) {
         String rejection = validate(disposition, origin, fileName, data);
         if (rejection != null) {
             return new ArtifactRegistration(null, null, null, false, rejection);
         }
         String hash = sha256(data);
         AttachmentArtifactRepository repository = repository();
-        Optional<AttachmentArtifactEntity> existing = repository
-            .findFirstByOwnerIdAndContentHashAndDispositionAndSessionId(ownerId, hash, disposition, sessionId);
+        Optional<AttachmentArtifactEntity> existing = deduplicate
+            ? repository.findFirstByOwnerIdAndContentHashAndDispositionAndSessionIdAndDedupScope(
+                ownerId, hash, disposition, sessionId, "")
+            : Optional.empty();
         if (existing.isPresent()) {
             try {
                 Path cached = safeCachePath(existing.get().getCachePath());
@@ -136,6 +144,7 @@ public class AttachmentArtifactService {
             entity.setSessionId(sessionId);
             entity.setMessageId(messageId);
             entity.setContentHash(hash);
+            entity.setDedupScope(deduplicate ? "" : id);
             entity.setOrigin(origin);
             entity.setDisposition(disposition);
             entity.setMimeType(mimeType);
@@ -159,7 +168,7 @@ public class AttachmentArtifactService {
             throw new IllegalArgumentException("An active session is required to publish media");
         }
         var result = register(session.userId(), session.getMetadata("profile"), session.id(), null,
-            "internal", disposition, mimeType, fileName, bytes);
+            "internal", disposition, mimeType, fileName, bytes, false);
         if (result.rejection() != null) {
             throw new IllegalStateException(result.rejection());
         }
