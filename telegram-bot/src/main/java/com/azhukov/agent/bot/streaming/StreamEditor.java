@@ -1351,7 +1351,10 @@ public class StreamEditor {
             after = List.copyOf(session.afterDelivery);
             session.afterDelivery.clear();
         }
-        after.forEach(Runnable::run);
+        for (Runnable action : after) {
+            if (session.deliveryCancelled || sessions.get(chatId) != session) break;
+            action.run();
+        }
     }
 
     private void removeReplacedPreview(long chatId, long preview) {

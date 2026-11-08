@@ -90,6 +90,26 @@ class StreamDeliveryRegressionTest {
     }
 
     @Test
+    void cancellingWhileAConfirmedActionRunsPreventsFollowingActions() {
+        var editor = editor(false, 0);
+        var calls = new java.util.ArrayList<String>();
+        try {
+            editor.sessionFor(101L);
+            editor.afterDeferredDelivery(101L, () -> {
+                calls.add("started");
+                editor.cancelDeferredDelivery(101L);
+            });
+            editor.afterDeferredDelivery(101L, () -> calls.add("stale"));
+
+            editor.afterConfirmedDelivery(101L);
+
+            assertThat(calls).containsExactly("started");
+        } finally {
+            editor.destroy();
+        }
+    }
+
+    @Test
     @Tag("slow")
     void slowRetryDoesNotBlockAnotherDueRetry() throws Exception {
         var editor = editor(false, 0);

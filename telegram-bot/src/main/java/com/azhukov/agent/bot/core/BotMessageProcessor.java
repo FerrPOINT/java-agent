@@ -586,13 +586,13 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         var lock = locks.get(chatId);
         lock.lock();
         try {
+            if (delivered && !busyHandler.isInterrupted(chatId)) {
+                streamEditor.afterConfirmedDelivery(chatId);
+                if (!busyHandler.isInterrupted(chatId)) afterTurn(chatId, event, session, result, threadId);
+            }
             if (busyHandler.isInterrupted(chatId)) {
                 reactionManager.onCancel(chatId, event.messageId());
             } else {
-                if (delivered) {
-                    streamEditor.afterConfirmedDelivery(chatId);
-                    afterTurn(chatId, event, session, result, threadId);
-                }
                 reactionManager.onProcessingComplete(chatId, event.messageId(), delivered && result.turnSucceeded());
             }
             typingManager.stopTyping(chatId);
