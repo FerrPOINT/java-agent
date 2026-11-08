@@ -229,7 +229,7 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
             properties.getCron().setEnabled(true);
             org.springframework.test.util.ReflectionTestUtils.setField(cronJobService, "scheduler", rejecting);
             com.azhukov.agent.core.security.UserContext.set(owner, com.azhukov.agent.core.security.UserContext.ROLE_USER);
-            var result = cronController.acceptSuggestion(id.toString(), null);
+            var result = cronController.acceptSuggestion(id, null);
             assertThat(result).containsEntry("accepted", true).containsEntry("schedulingStatus", "failed");
             assertThat(cronJobRepository.findById(java.util.UUID.fromString((String) result.get("jobId"))).orElseThrow().getLastStatus()).isEqualTo("error");
         } finally {

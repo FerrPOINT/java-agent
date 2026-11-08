@@ -58,6 +58,15 @@ class CronJobControllerTest {
     }
 
     @Test
+    void suggestionMutationsRejectDisplayOrdinals() throws Exception {
+        for (String action : java.util.List.of("accept", "dismiss")) {
+            mockMvc.perform(post("/api/v1/agent/cron/suggestions/1/" + action))
+                .andExpect(status().isBadRequest());
+        }
+        org.mockito.Mockito.verifyNoInteractions(cronSuggestionService);
+    }
+
+    @Test
     void createEndpoint() throws Exception {
         CronJobEntity entity = new CronJobEntity();
         entity.setId(UUID.randomUUID());

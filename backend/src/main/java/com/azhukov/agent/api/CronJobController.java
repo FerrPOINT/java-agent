@@ -73,8 +73,8 @@ public class CronJobController {
     }
 
     @PostMapping("/suggestions/{id}/accept")
-    public java.util.Map<String, Object> acceptSuggestion(@PathVariable String id, @RequestParam(name = "ownerId", required = false) String ownerId) {
-        var entity = cronSuggestionService.acceptSuggestion(id, UserContext.requireRequestOwner(ownerId));
+    public java.util.Map<String, Object> acceptSuggestion(@PathVariable UUID id, @RequestParam(name = "ownerId", required = false) String ownerId) {
+        var entity = cronSuggestionService.acceptSuggestion(id.toString(), UserContext.requireRequestOwner(ownerId));
         if (entity == null) {
             return java.util.Map.of("accepted", false, "reason", "not found or already decided");
         }
@@ -87,8 +87,8 @@ public class CronJobController {
     }
 
     @PostMapping("/suggestions/{id}/dismiss")
-    public java.util.Map<String, Object> dismissSuggestion(@PathVariable String id, @RequestParam(name = "ownerId", required = false) String ownerId) {
-        boolean ok = cronSuggestionService.dismissSuggestion(id, UserContext.requireRequestOwner(ownerId));
+    public java.util.Map<String, Object> dismissSuggestion(@PathVariable UUID id, @RequestParam(name = "ownerId", required = false) String ownerId) {
+        boolean ok = cronSuggestionService.dismissSuggestion(id.toString(), UserContext.requireRequestOwner(ownerId));
         return java.util.Map.of("dismissed", ok);
     }
 
