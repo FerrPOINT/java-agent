@@ -280,11 +280,11 @@ public class TelegramClient {
                 // The platform REFUSED the send (429) — nothing was delivered.
                 // Return a known failure; the ledger's flood handling keeps the
                 // platform's own retry_after wait (Hermes flood_not_before).
-                throw new SendRefusalException(e.getRetryAfter(), e.getMessage());
+                throw new SendRefusalException(429, e.getRetryAfter(), e.getMessage());
             }
             if (e.getErrorCode() >= 400 && e.getErrorCode() < 500) {
                 // A client-error response explicitly rejects this request.
-                throw new SendRefusalException(-1, e.getMessage());
+                throw new SendRefusalException(e.getErrorCode(), -1, e.getMessage());
             }
             return Optional.empty();  // server or transport outcome may be ambiguous
         }
@@ -309,11 +309,14 @@ public class TelegramClient {
 
     /** Typed known-refusal signal for durable delivery (never ambiguous). */
     public static class SendRefusalException extends RuntimeException {
+        private final int errorCode;
         private final int retryAfterSeconds;
-        public SendRefusalException(int retryAfterSeconds, String message) {
+        public SendRefusalException(int errorCode, int retryAfterSeconds, String message) {
             super(message);
+            this.errorCode = errorCode;
             this.retryAfterSeconds = retryAfterSeconds;
         }
+        public int getErrorCode() { return errorCode; }
         public int getRetryAfterSeconds() { return retryAfterSeconds; }
     }
 

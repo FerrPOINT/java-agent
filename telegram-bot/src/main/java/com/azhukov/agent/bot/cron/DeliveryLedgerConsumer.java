@@ -230,13 +230,13 @@ public class DeliveryLedgerConsumer {
             }
             // Hermes delivery.py parity: the platform REFUSED the send — a
             // known failure (never ambiguous). A flood refusal (429) keeps the
-            // platform's own retry_after wait; any other definite refusal
-            // backs off normally.
+            // platform's retry_after. Retrying a rejected payload cannot fix a bad request.
+            boolean badRequest = e.getErrorCode() == 400;
             String category = e.getRetryAfterSeconds() > 0
                 ? "flood_control:" + e.getRetryAfterSeconds()
-                : "send_refused";
+                : badRequest ? "bad_request" : "send_refused";
             for (ClaimedItem item : batch) {
-                outcome(item, "release", category,
+                outcome(item, badRequest ? "drop" : "release", category,
                     e.getRetryAfterSeconds() > 0
                         ? "retry_after=" + e.getRetryAfterSeconds() + "s " + e.getMessage()
                         : e.getMessage());

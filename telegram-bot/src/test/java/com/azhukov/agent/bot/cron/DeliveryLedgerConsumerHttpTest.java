@@ -33,7 +33,7 @@ class DeliveryLedgerConsumerHttpTest {
         try {
             var telegram = mock(TelegramClient.class);
             when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean()))
-                .thenReturn(Optional.of(42L)).thenThrow(new TelegramClient.SendRefusalException(30, "rate limited"));
+                .thenReturn(Optional.of(42L)).thenThrow(new TelegramClient.SendRefusalException(429, 30, "rate limited"));
             var rest = RestClient.builder().baseUrl("http://127.0.0.1:" + server.getAddress().getPort()).build();
             var consumer = new DeliveryLedgerConsumer(rest, telegram, new BotProperties(), new ObjectMapper());
             var item = new DeliveryLedgerConsumer.ClaimedItem("id-1", "token-1", "cron_execution", "source-1",
