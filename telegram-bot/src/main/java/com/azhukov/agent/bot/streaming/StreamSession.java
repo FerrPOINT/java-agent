@@ -83,13 +83,6 @@ public class StreamSession {
     /** Current streaming message id; may differ from the caller's messageId after a split. */
     public final AtomicLong currentMessageId = new AtomicLong(-1L);
 
-    /**
-     * Full final response retained after a failed live Telegram delivery.
-     * It is consumed by {@code BotMessageProcessor}'s in-memory deferred delivery
-     * path, rather than attempting another immediate send during a FloodWait.
-     * This state is not durable across process restarts.
-     */
-    public volatile String pendingFinalText = null;
     /** A final part may already be visible; never replay the whole response. */
     public volatile boolean partialFinalDelivery = false;
     final java.util.Deque<StreamEditor.DeliveryOperation> delivery = new java.util.ArrayDeque<>();
@@ -129,7 +122,6 @@ public class StreamSession {
         thinkScrubber = null;
         currentToolName = null;
         currentMessageId.set(-1L);
-        pendingFinalText = null;
         partialFinalDelivery = false;
 
         heartbeatMessageId.set(-1L);

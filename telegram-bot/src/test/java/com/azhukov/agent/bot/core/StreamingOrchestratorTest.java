@@ -357,7 +357,7 @@ class StreamingOrchestratorTest {
     }
 
     @Test
-    void failedFinalizationPreservesMediaReferenceForFallback() {
+    void failedFinalizationDoesNotDeliverMedia() {
         properties.setMediaDeliveryEnabled(true);
         String response = "answer\nMEDIA:/workspace/report.pdf";
         when(streamEditor.finalizeStream(eq(100L), eq(1L), anyString())).thenReturn(false);
@@ -368,7 +368,6 @@ class StreamingOrchestratorTest {
         });
         var result = orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
         assertThat(result.streamFinalized()).isFalse();
-        verify(streamEditor).recordFinalDeliveryFailure(eq(100L), contains("MEDIA:/workspace/report.pdf"));
         verify(hooks, never()).deliverMedia(anyLong(), anyList(), any());
     }
 
@@ -410,7 +409,7 @@ class StreamingOrchestratorTest {
     }
 
     @Test
-    void draftMediaIsRetainedForFallbackWhenFinalTextFails() {
+    void draftDoesNotDeliverMediaWhenFinalTextFails() {
         properties.setMediaDeliveryEnabled(true);
         when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong()))
             .thenReturn(Optional.empty());
@@ -423,15 +422,15 @@ class StreamingOrchestratorTest {
         });
         var result = orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
         assertThat(result.streamFinalized()).isFalse();
-        verify(streamEditor).recordFinalDeliveryFailure(eq(100L), contains("MEDIA:/workspace/report.pdf"));
         verify(hooks, never()).deliverMedia(anyLong(), anyList(), any());
     }
 
     @Test
-    void draftFloodWaitRetainsFinalTextAndCooldown() {
+    void draftFloodWaitLeavesFinalDeliveryWithStreamEditor() {
         when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong())).thenReturn(Optional.empty());
         when(streamEditor.finalizeStream(100L, -1L, "draft answer"))
-            .thenThrow(new com.azhukov.agent.bot.client.TelegramApiException(429, "flood", 17));
+            .thenReturn(false);
+        when(streamEditor.hasDeferredDelivery(100L)).thenReturn(true);
         stubChatStream(ctx -> {
             ctx.tokenConsumer.accept("draft answer");
             ctx.onComplete.accept(new AgentBackendClient.ChatResult("draft answer", "model", 1, 10, true));
@@ -439,7 +438,7 @@ class StreamingOrchestratorTest {
         });
         var result = orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
         assertThat(result.streamFinalized()).isFalse();
-        verify(streamEditor).recordFinalDeliveryFailure(100L, "draft answer");
+        verify(streamEditor).finalizeStream(100L, -1L, "draft answer");
     }
 
     @Test
@@ -475,7 +474,6 @@ class StreamingOrchestratorTest {
             5L, 0L, hooks);
 
         assertThat(result.streamFinalized()).isFalse();
-        verify(streamEditor).recordFinalDeliveryFailure(100L, "draft answer");
         verify(backendClient, never()).getPendingReview(anyString());
     }
 
@@ -878,7 +876,7 @@ class StreamingOrchestratorTest {
 
 
     @Test
-    void errorDeliveryFailedEditRetainsErrorAndRequiresFallback() {
+    void errorDeliveryFailedEditDoesNotRepeatModelRequest() {
         when(streamEditor.finalizeStream(eq(100L), eq(1L), anyString())).thenReturn(false);
         stubChatStream(ctx -> {
             ctx.tokenConsumer.accept("partial answer");
@@ -889,16 +887,20 @@ class StreamingOrchestratorTest {
         var response = orchestrator.streamChat(100L, "hi", "existing-session", session(), 5L, 0L, hooks);
 
         assertThat(response.streamFinalized()).isFalse();
-        verify(streamEditor).recordFinalDeliveryFailure(100L,
-            "partial answer\n\nTemporary issue. Please try again.");
+        verify(streamEditor).finalizeStream(100L, 1L, "partial answer\n\nTemporary issue. Please try again.");
         verify(backendClient, never()).chat(anyString(), nullable(String.class), any());
     }
 
     @Test
-    void errorDeliveryFailedDraftSendRetainsErrorWithoutRepeatingModelRequest() {
+    void errorDeliveryFailedDraftSendDoesNotRepeatModelRequest() {
         when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong()))
             .thenReturn(Optional.empty());
-        when(streamEditor.sendFormattedFinalMessage(anyLong(), anyString())).thenReturn(Optional.empty());
+        var unconfirmed = new java.util.concurrent.atomic.AtomicBoolean();
+        when(streamEditor.hasUnconfirmedDelivery(100L)).thenAnswer(call -> unconfirmed.get());
+        when(streamEditor.sendFormattedFinalMessage(100L, "Temporary issue. Please try again.")).thenAnswer(call -> {
+            unconfirmed.set(true);
+            return Optional.empty();
+        });
         stubChatStream(ctx -> {
             ctx.onError.accept(new RuntimeException("backend disconnected"));
             ctx.returnResult = new AgentBackendClient.ChatResult("", "model", 1, 10, true);
@@ -908,8 +910,6 @@ class StreamingOrchestratorTest {
 
         assertThat(response.streamFinalized()).isFalse();
         verify(streamEditor, never()).clearStream(100L);
-        verify(streamEditor).recordFinalDeliveryFailure(100L,
-            "Temporary issue. Please try again.");
         verify(backendClient, never()).chat(anyString(), nullable(String.class), any());
     }
 
@@ -926,7 +926,6 @@ class StreamingOrchestratorTest {
         var response = orchestrator.streamChat(100L, "hi", "existing-session", session(), 5L, 0L, hooks);
 
         assertThat(response.streamFinalized()).isTrue();
-        verify(streamEditor, never()).recordFinalDeliveryFailure(anyLong(), anyString());
         verify(backendClient, never()).chat(anyString(), nullable(String.class), any());
     }
     @Test

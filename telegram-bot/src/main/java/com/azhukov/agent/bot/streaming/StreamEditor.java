@@ -244,7 +244,6 @@ public class StreamEditor {
     }
 
     Optional<Long> startStream(long chatId, String initialText, String chatType, StreamSession session) {
-        session.pendingFinalText = null;
         session.partialFinalDelivery = false;
         // S5: "off" transport — no streaming, just record start time and return.
         // Content will be buffered by the caller and sent on finalizeStream.
@@ -721,35 +720,6 @@ public class StreamEditor {
         removeSession(chatId);
     }
 
-    /**
-     * Record that final stream delivery could not replace the visible draft.
-     * The caller's regular fallback send must use the complete response rather
-     * than a stale partial stream buffer.
-     */
-    public void recordFinalDeliveryFailure(long chatId, String finalText) {
-        StreamSession session = sessionFor(chatId);
-        session.pendingFinalText = finalText;
-    }
-
-    /** Consume the full response retained after a terminal stream-delivery failure. */
-    public boolean takePartialFinalDelivery(long chatId) {
-        StreamSession session = sessions.get(chatId);
-        if (session == null) return false;
-        boolean partial = session.partialFinalDelivery;
-        session.partialFinalDelivery = false;
-        return partial;
-    }
-
-    public String takePendingFinalText(long chatId) {
-        StreamSession session = sessions.get(chatId);
-        if (session == null) {
-            return null;
-        }
-        String pending = session.pendingFinalText;
-        session.pendingFinalText = null;
-        return pending;
-    }
-
     // ─── S5: Native draft streaming ───────────────────────────────
 
     /**
@@ -1158,32 +1128,6 @@ public class StreamEditor {
         return telegramClient.sendMessage(chatId, text, null, replyToMessageId, threadId, disableNotification);
     }
 
-    /**
-     * Send a plain final message (no parse_mode). Used by draft finalize and
-     * flood fallback where the text has not been MarkdownV2-escaped.
-     */
-    public Optional<Long> sendPlainMessage(long chatId, String text) {
-        // BUG FIX (audit H14): split oversized finals — draft finalize / fresh-final /
-        // flood fallback send raw text that can exceed the Telegram 4096 limit.
-        if (text != null && text.length() > MessageSplitter.TELEGRAM_MAX_LENGTH) {
-            List<String> chunks = MessageSplitter.split(text);
-            Optional<Long> last = Optional.empty();
-            for (String chunk : chunks) {
-                if (chunk.isBlank()) continue;
-                last = telegramClient.sendMessage(chatId, chunk, null, null, null, false);
-                if (last.isEmpty()) return Optional.empty();
-            }
-            return last;
-        }
-        return telegramClient.sendMessage(chatId, text, null, null, null, false);
-    }
-
-    /**
-     * Send a formatted final message with MarkdownV2 conversion applied.
-     * Used by draft finalize and fresh-final paths — raw markdown from the model
-     * is converted to Telegram MarkdownV2 before sending (Hermes parity:
-     * format_message is always applied before delivery).
-     */
     record DeliveryOperation(java.util.function.Supplier<Optional<Long>> send,
                              java.util.function.Predicate<TelegramApiException> formatRefusal,
                              List<DeliveryOperation> onFormatRefusal, long replacedPreview) {
@@ -1390,27 +1334,6 @@ public class StreamEditor {
             if (session.delivery.isEmpty()) session.deferredDelivery.complete(!session.partialFinalDelivery);
             return session.deferredDelivery;
         }
-    }
-
-    /**
-     * Send a formatted final message with parse_mode enabled.
-     * Used by finalizeStream fallback paths where MarkdownV2 formatting is needed.
-     * BUG FIX (audit H14): text above the Telegram limit is split into chunks —
-     * previously a single oversized sendMessage failed with 400 and the final
-     * content was lost entirely.
-     */
-    public Optional<Long> sendFormattedMessage(long chatId, String text) {
-        if (text != null && text.length() > MessageSplitter.TELEGRAM_MAX_LENGTH) {
-            List<String> chunks = MessageSplitter.splitAndFormat(text, parseMode);
-            Optional<Long> last = Optional.empty();
-            for (String chunk : chunks) {
-                if (chunk.isBlank()) continue;
-                last = telegramClient.sendMessage(chatId, chunk, parseMode, null, null);
-                if (last.isEmpty()) return Optional.empty();
-            }
-            return last;
-        }
-        return telegramClient.sendMessage(chatId, text, parseMode, null, null);
     }
 
     // ─── Formatting ──────────────────────────────────────────────

@@ -8,7 +8,6 @@ import com.azhukov.agent.bot.session.BusySessionHandler;
 import com.azhukov.agent.bot.session.ReviewDeliveryReceiptEntity;
 import com.azhukov.agent.bot.session.ReviewDeliveryReceiptRepository;
 import com.azhukov.agent.bot.streaming.StreamEditor;
-import com.azhukov.agent.bot.client.TelegramApiException;
 import com.azhukov.agent.bot.streaming.ToolEmojiMap;
 import com.azhukov.agent.bot.streaming.ToolProgressBubble;
 import lombok.extern.slf4j.Slf4j;
@@ -288,7 +287,6 @@ public class StreamingOrchestrator {
         StringBuilder accumulated = new StringBuilder(); // clean LLM text only
         final long[] messageId = {-1};
         final boolean[] finalized = {false};
-        final boolean[] failedFinalDelivery = {false};
         final boolean[] toolObserved = {false};
         final boolean[] turnFailed = {false};
         final boolean[] turnCancelled = {false};
@@ -429,7 +427,6 @@ public class StreamingOrchestrator {
                 // onComplete
                 result -> {
                     if (streamEditor.hasUnconfirmedDelivery(chatId)) {
-                        failedFinalDelivery[0] = true;
                         turnFailed[0] = true;
                         return;
                     }
@@ -483,50 +480,18 @@ public class StreamingOrchestrator {
                         if (footer != null && !footer.isEmpty()) {
                             finalText = finalText + footer;
                         }
-                        // S-2: Extract MEDIA: tags before finalizing the stream message
-                        // so the displayed text doesn't contain raw MEDIA: tags
-                        if (properties.isMediaDeliveryEnabled()) {
-                            String fallbackText = finalText;
-                            MediaDeliveryService.ExtractionResult extraction = mediaDeliveryService.extractMediaTags(finalText);
-                            finalText = extraction.cleanedText();
-                            boolean delivered;
-                            try {
-                                delivered = streamEditor.finalizeStream(chatId, messageId[0], finalText);
-                            } catch (TelegramApiException e) {
-                                streamEditor.recordFinalDeliveryFailure(chatId, fallbackText);
-                                failedFinalDelivery[0] = true;
-                                finalized[0] = false;
-                                return;
+                        var extraction = properties.isMediaDeliveryEnabled()
+                            ? mediaDeliveryService.extractMediaTags(finalText) : null;
+                        boolean delivered = streamEditor.finalizeStream(chatId, messageId[0],
+                            extraction == null ? finalText : extraction.cleanedText());
+                        finalized[0] = delivered;
+                        if (extraction != null && !extraction.media().isEmpty()) {
+                            Integer mediaThreadId = messageThreadId > 0 ? (int) messageThreadId : null;
+                            if (delivered) hooks.deliverMedia(chatId, extraction.media(), mediaThreadId);
+                            else if (streamEditor.hasDeferredDelivery(chatId)) {
+                                streamEditor.afterDeferredDelivery(chatId,
+                                    () -> hooks.deliverMedia(chatId, extraction.media(), mediaThreadId));
                             }
-                            if (!delivered) {
-                                streamEditor.recordFinalDeliveryFailure(chatId, fallbackText);
-                                failedFinalDelivery[0] = true;
-                            }
-                            finalized[0] = delivered;
-                            // Deliver extracted media files only after text finalization succeeds.
-                            if (!extraction.media().isEmpty()) {
-                                Integer mediaThreadId = messageThreadId > 0 ? (int) messageThreadId : null;
-                                if (delivered) hooks.deliverMedia(chatId, extraction.media(), mediaThreadId);
-                                else if (streamEditor.hasDeferredDelivery(chatId)) {
-                                    streamEditor.afterDeferredDelivery(chatId,
-                                        () -> hooks.deliverMedia(chatId, extraction.media(), mediaThreadId));
-                                }
-                            }
-                        } else {
-                            boolean delivered;
-                            try {
-                                delivered = streamEditor.finalizeStream(chatId, messageId[0], finalText);
-                            } catch (TelegramApiException e) {
-                                streamEditor.recordFinalDeliveryFailure(chatId, finalText);
-                                failedFinalDelivery[0] = true;
-                                finalized[0] = false;
-                                return;
-                            }
-                            if (!delivered) {
-                                streamEditor.recordFinalDeliveryFailure(chatId, finalText);
-                                failedFinalDelivery[0] = true;
-                            }
-                            finalized[0] = delivered;
                         }
                     }
                 },
@@ -534,7 +499,6 @@ public class StreamingOrchestrator {
                 error -> {
                     turnFailed[0] = true;
                     if (streamEditor.hasUnconfirmedDelivery(chatId)) {
-                        failedFinalDelivery[0] = true;
                         return;
                     }
                     if (error instanceof StreamInterruptedException || error instanceof java.util.concurrent.CancellationException) {
@@ -569,16 +533,13 @@ public class StreamingOrchestrator {
                             if (delivered) streamEditor.clearStream(chatId);
                         }
                         finalized[0] = delivered;
-                        if (!delivered) {
-                            streamEditor.recordFinalDeliveryFailure(chatId, errorText);
-                            failedFinalDelivery[0] = true;
-                        }
                     }
                 }
             );
 
             // If streaming produced content, return it (with metadata from the stream)
-            if (accumulated.length() > 0 || finalized[0] || failedFinalDelivery[0] || streamEditor.hasDeferredDelivery(chatId)) {
+            if (accumulated.length() > 0 || finalized[0]
+                    || streamEditor.hasUnconfirmedDelivery(chatId) || streamEditor.hasDeferredDelivery(chatId)) {
                 progressBubbles.remove(chatId);
                 if (shouldSchedulePendingReviewPoll(finalized[0])) {
                     schedulePendingReviewPoll(sessionId, streamResult.backendSessionId(),

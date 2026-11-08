@@ -938,7 +938,7 @@ class BotMessageProcessorTest {
     @Test
     void partialStreamFinalMustNotReplayTheWholeAnswer() {
         stubStreamingResult("Long response", false);
-        when(streamEditor.takePartialFinalDelivery(100L)).thenReturn(true);
+        when(streamEditor.hasUnconfirmedDelivery(100L)).thenReturn(true);
         processor.accept(textEvent(1, 100L, "Hello"));
         verify(telegramClient, never()).sendMessage(eq(100L), contains("Long response"), anyString(), any(), any());
     }

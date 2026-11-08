@@ -493,7 +493,8 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
             }
 
             boolean confirmed = result.streamFinalized();
-            if (!confirmed && !streamEditor.hasDeferredDelivery(chatId)) {
+            if (!confirmed && !result.turnCancelled() && !streamEditor.hasDeferredDelivery(chatId)
+                    && !streamEditor.hasUnconfirmedDelivery(chatId)) {
                 String footer = runtimeFooter.format(
                     resolveModelUsed(session, result),
                     result.contextTokens() != null ? result.contextTokens() : 0,
@@ -502,22 +503,14 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                     -1,
                     session == null || session.isFooterEnabled()
                 );
-                String backendResponse = streamEditor.takePendingFinalText(chatId);
-                if (backendResponse == null || backendResponse.isBlank()) {
-                    backendResponse = result.content();
-                }
+                String backendResponse = result.content();
                 if (footer != null && !footer.isEmpty() && backendResponse != null && !backendResponse.endsWith(footer)) {
                     backendResponse = backendResponse + footer;
                 }
 
                 typingManager.flushTyping(chatId);
-                boolean partialFinal = streamEditor.takePartialFinalDelivery(chatId);
-                if (partialFinal) {
-                    log.warn("Final Telegram delivery was partial for chat {}; not replaying the complete answer", chatId);
-                } else {
-                    if (backendResponse != null && !backendResponse.isBlank()) {
-                        confirmed = streamEditor.finalizeTurn(chatId, backendResponse, event.messageId(), threadId);
-                    }
+                if (backendResponse != null && !backendResponse.isBlank()) {
+                    confirmed = streamEditor.finalizeTurn(chatId, backendResponse, event.messageId(), threadId);
                 }
             }
 

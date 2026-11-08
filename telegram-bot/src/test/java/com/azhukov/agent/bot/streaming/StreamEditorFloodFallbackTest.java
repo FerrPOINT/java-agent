@@ -118,7 +118,7 @@ class StreamEditorFloodFallbackTest {
         String text = "a".repeat(4000) + "b".repeat(4000) + "c".repeat(1000);
         when(client.sendMessage(eq(123L), anyString(), any(), any(), any()))
             .thenReturn(Optional.of(1L), Optional.empty(), Optional.of(3L));
-        assertThat(editor.sendFormattedMessage(123L, text)).isEmpty();
+        assertThat(editor.sendFormattedFinalMessage(123L, text)).isEmpty();
         verify(client, times(2)).sendMessage(eq(123L), anyString(), any(), any(), any());
     }
 
@@ -158,9 +158,9 @@ class StreamEditorFloodFallbackTest {
             .thenReturn(Optional.of(41L), Optional.empty(), Optional.of(42L));
         assertThat(editor.finalizeStream(123L, -1L, text)).isFalse();
         verify(client, times(2)).sendMessageChecked(eq(123L), anyString(), any(), any(), any(), isNull(), anyBoolean());
-        assertThat(editor.takePartialFinalDelivery(123L)).isTrue();
-        assertThat(editor.takePartialFinalDelivery(123L)).isFalse();
-        editor.recordFinalDeliveryFailure(123L, text);
+        assertThat(editor.hasUnconfirmedDelivery(123L)).isTrue();
+        assertThat(editor.finalizeStream(123L, -1L, text)).isFalse();
+        verify(client, times(2)).sendMessageChecked(eq(123L), anyString(), any(), any(), any(), isNull(), anyBoolean());
     }
 
     @Test
@@ -171,7 +171,7 @@ class StreamEditorFloodFallbackTest {
             .thenReturn(Optional.of(41L))
             .thenThrow(new com.azhukov.agent.bot.client.TelegramApiException(429, "rate limit", 270));
         assertThat(editor.finalizeStream(123L, -1L, "x".repeat(9000))).isFalse();
-        assertThat(editor.takePartialFinalDelivery(123L)).isTrue();
+        assertThat(editor.hasUnconfirmedDelivery(123L)).isTrue();
         verify(client, times(2)).sendMessageChecked(eq(123L), anyString(), any(), any(), any(), isNull(), anyBoolean());
     }
 
@@ -183,7 +183,7 @@ class StreamEditorFloodFallbackTest {
             .thenReturn(Optional.empty());
         assertThat(editor.finalizeStream(123L, -1L, "answer")).isFalse();
         verify(client).sendMessageChecked(eq(123L), eq("answer"), any(), any(), any(), isNull(), anyBoolean());
-        assertThat(editor.takePartialFinalDelivery(123L)).isTrue();
+        assertThat(editor.hasUnconfirmedDelivery(123L)).isTrue();
     }
 
     @Test

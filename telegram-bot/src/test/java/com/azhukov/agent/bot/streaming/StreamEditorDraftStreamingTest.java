@@ -66,7 +66,7 @@ class StreamEditorDraftStreamingTest {
             .thenReturn(Optional.empty());
         assertThat(editor.finalizeStream(123L, -1L, "first answer")).isFalse();
         editor.startStream(123L, "second", "dm");
-        assertThat(editor.takePartialFinalDelivery(123L)).isFalse();
+        assertThat(editor.hasUnconfirmedDelivery(123L)).isFalse();
     }
 
     @Test
@@ -248,7 +248,7 @@ class StreamEditorDraftStreamingTest {
             .thenReturn(Optional.empty(), Optional.empty());
         editor.onSegmentBreak(123L, -1L, "First segment");
         assertThat(editor.finalizeStream(123L, -1L, "Final segment")).isFalse();
-        assertThat(editor.takePartialFinalDelivery(123L)).isTrue();
+        assertThat(editor.hasUnconfirmedDelivery(123L)).isTrue();
         verify(client, never()).sendMessageChecked(eq(123L), eq("Final segment"), any(), any(), any(), isNull(), eq(false));
     }
 
@@ -259,7 +259,7 @@ class StreamEditorDraftStreamingTest {
             .thenReturn(Optional.of(50L), Optional.empty(), Optional.empty());
         editor.onSegmentBreak(123L, -1L, "segment ".repeat(1200));
         assertThat(editor.finalizeStream(123L, -1L, "Final segment")).isFalse();
-        assertThat(editor.takePartialFinalDelivery(123L)).isTrue();
+        assertThat(editor.hasUnconfirmedDelivery(123L)).isTrue();
         verify(client, times(2)).sendMessageChecked(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), isNull(), eq(false));
     }
 
@@ -270,7 +270,7 @@ class StreamEditorDraftStreamingTest {
             .thenReturn(Optional.of(40L), Optional.of(50L), Optional.empty());
         editor.onSegmentBreak(123L, -1L, "First segment");
         assertThat(editor.finalizeStream(123L, -1L, "Final content ".repeat(800))).isFalse();
-        assertThat(editor.takePartialFinalDelivery(123L)).isTrue();
+        assertThat(editor.hasUnconfirmedDelivery(123L)).isTrue();
         verify(client, times(3)).sendMessageChecked(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), isNull(), eq(false));
     }
 
