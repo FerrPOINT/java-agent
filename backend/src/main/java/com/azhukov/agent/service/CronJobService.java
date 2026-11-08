@@ -940,12 +940,8 @@ private static final String CRON_EXECUTION_HINT = """
                 job.setLastRunAt(Instant.now());
                 job.setLastStatus("success");
                 job.setLastError(null);
-                cronJobRepository.recordRun(job);
-                // WP-1: no_agent stdout is the deliverable (Hermes run_job delivers
-                // it verbatim); record + enqueue in the same sequence as the agent path.
                 String stdout = scriptResult.output() == null ? "" : scriptResult.output().trim();
-                Long executionLogId = recordExecution(job.getId(), startedAt, Instant.now(), "success", null, stdout);
-                enqueueDeliveryWork(job, executionLogId, stdout);
+                recordRunAndDelivery(job, startedAt, "success", null, stdout, false);
                 publishCronEvent("cron.success", job, startedAt, null);
                 return CronExecutionOutcome.success();
             }
@@ -1065,11 +1061,8 @@ private static final String CRON_EXECUTION_HINT = """
                     log.warn("Cron job '{}' produced non-UUID session id: {}", job.getName(), lastRunSessionId);
                 }
             }
-            cronJobRepository.recordRun(job);
-            // h72: Record successful execution in the ledger.
             String executionOutput = loadLastRunOutput(job.getLastRunSessionId());
-            Long executionLogId = recordExecution(job.getId(), startedAt, Instant.now(), "success", null, executionOutput);
-            enqueueDeliveryWork(job, executionLogId, executionOutput);
+            recordRunAndDelivery(job, startedAt, "success", null, executionOutput, false);
             publishCronEvent("cron.success", job, startedAt, Map.of("monitor_changed", monitorOutcome.changed()));
             return CronExecutionOutcome.success();
         } catch (Exception e) {
@@ -1096,21 +1089,10 @@ private static final String CRON_EXECUTION_HINT = """
                 log.warn("Cron job '{}' detected backend unavailability (consecutive failures: {})",
                     job.getName(), job.getConsecutiveFailures());
             }
-            cronJobRepository.recordRun(job);
-
-            // h72: Record failed execution in the ledger.
             String status = errorMsg.toLowerCase().contains("timeout") ? "timeout" : "failure";
-            Long executionLogId = recordExecution(job.getId(), startedAt, Instant.now(), status, errorMsg, null);
             boolean retryPending = job.getUnreachableRetries() > 0
                 && job.getUnreachableRetries() <= UNREACHABLE_LADDER_SECONDS.length;
-            // WP-1 (Hermes scheduler deliver path): every failed run delivers a
-            // compact one-line failure summary + a review nudge once the failure
-            // streak reaches the threshold — through the durable ledger, not a
-            // bot-side scan.
-            // WP-c: suppressed while an unreachable re-run is still pending.
-            if (!retryPending) {
-                enqueueFailureDeliveryWork(job, executionLogId, errorMsg);
-            }
+            recordRunAndDelivery(job, startedAt, status, errorMsg, null, retryPending);
             publishCronEvent("cron." + status, job, startedAt, Map.of("error", errorMsg));
             // h71: Re-arm: clear the error status so the job can run on the next tick.
             // The error is recorded for audit but doesn't permanently block execution.
@@ -1119,6 +1101,22 @@ private static final String CRON_EXECUTION_HINT = """
                 ? CronExecutionOutcome.unreachableBeforeModel(status)
                 : CronExecutionOutcome.failure(status);
         }
+    }
+
+    private void recordRunAndDelivery(CronJobEntity job, Instant startedAt, String status,
+                                      String error, String output, boolean retryPending) {
+        Long executionId = recordExecution(job.getId(), startedAt, Instant.now(), status, error, output);
+        transactionTemplate.executeWithoutResult(tx -> {
+            // The conditional UPDATE holds the row through enqueue. History survives a stale revision.
+            if (cronJobRepository.recordRun(job) == 0 || retryPending) {
+                return;
+            }
+            if (error == null) {
+                enqueueDeliveryWork(job, executionId, output);
+            } else {
+                enqueueFailureDeliveryWork(job, executionId, error);
+            }
+        });
     }
 
     private long delayAfterExecution(CronJobEntity job, CronExecutionOutcome outcome, long regularDelay) {

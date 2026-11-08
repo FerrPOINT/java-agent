@@ -822,6 +822,49 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
         }
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void completedRunOnlyEnqueuesForItsCurrentDestination(boolean changeDestination) throws Exception {
+        var entered = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        org.mockito.Mockito.doAnswer(call -> {
+            entered.countDown();
+            if (!release.await(10, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("run not released");
+            throw new IllegalStateException("provider failed");
+        }).when(runtime).runBackground(org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.nullable(String.class), org.mockito.ArgumentMatchers.eq(true));
+
+        var job = cronJobService.create("delivery-revision-" + UUID.randomUUID(), "every 1h", "work", "telegram:701938011");
+        cronJobService.pause(job.getId());
+        var jdbc = new org.springframework.jdbc.core.JdbcTemplate(dataSource);
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var running = executor.submit(() -> cronJobService.runNow(job.getId()));
+            try {
+                assertThat(entered.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                if (changeDestination) {
+                    cronController.update(job.getId(), new com.azhukov.agent.api.CronJobController.UpdateCronRequest(
+                        job.getName(), job.getSchedule(), null, "local", false, null, null, null));
+                }
+            } finally {
+                release.countDown();
+            }
+            running.get(10, java.util.concurrent.TimeUnit.SECONDS);
+            assertThat(jdbc.queryForObject("select count(*) from cron_execution_log where job_id = ? and status = 'failure'",
+                Integer.class, job.getId())).isOne();
+            assertThat(jdbc.queryForObject("""
+                select count(*) from delivery_work_items d join cron_execution_log c on d.source_id = cast(c.id as text)
+                where c.job_id = ? and d.source_type = 'cron_execution'
+                """, Integer.class, job.getId())).isEqualTo(changeDestination ? 0 : 1);
+        } finally {
+            jdbc.update("""
+                delete from delivery_work_items where source_type = 'cron_execution'
+                and source_id in (select cast(id as text) from cron_execution_log where job_id = ?)
+                """, job.getId());
+            cronJobService.remove(job.getId());
+        }
+    }
+
     @Test
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     void scheduleUpdatesCannotPublishAnOlderDueTime() throws Exception {

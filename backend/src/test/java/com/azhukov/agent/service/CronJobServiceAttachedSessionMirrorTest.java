@@ -81,6 +81,7 @@ class CronJobServiceAttachedSessionMirrorTest {
     }
 
     private void prepareFailingRun(CronJobEntity job, UUID attachedSessionId) {
+        when(cronJobRepository.recordRun(job)).thenReturn(1);
         when(cronJobRepository.findById(job.getId())).thenReturn(Optional.of(job));
         when(agentRuntimeServiceProvider.getIfAvailable()).thenReturn(runtime);
         when(runtime.runBackground(any(), any(), anyBoolean()))

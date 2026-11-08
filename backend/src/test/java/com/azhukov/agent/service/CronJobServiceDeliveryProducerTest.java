@@ -24,6 +24,8 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -47,7 +49,7 @@ class CronJobServiceDeliveryProducerTest {
     private CronJobService service(AgentProperties properties) {
         return new CronJobService(cronJobRepository, agentRuntimeServiceProvider, properties,
             skillManager, cronExecutionLogRepository, messageRepository,
-            new TransactionTemplate(), new CronScheduleParser(),
+            new TransactionTemplate(mock(org.springframework.transaction.PlatformTransactionManager.class)), new CronScheduleParser(),
             deliveryProvider, sessionRepositoryProvider, null);
     }
 
@@ -65,6 +67,7 @@ class CronJobServiceDeliveryProducerTest {
     }
 
     private void prepareFailingRun(CronJobEntity job) {
+        lenient().when(cronJobRepository.recordRun(job)).thenReturn(1);
         when(cronJobRepository.findById(job.getId())).thenReturn(Optional.of(job));
         when(agentRuntimeServiceProvider.getIfAvailable()).thenReturn(runtime);
         // Default-profile jobs run the 3-arg overload (metadata empty); non-default
