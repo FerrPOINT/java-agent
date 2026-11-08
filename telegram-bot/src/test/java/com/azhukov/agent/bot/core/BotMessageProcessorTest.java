@@ -627,7 +627,7 @@ class BotMessageProcessorTest {
         properties.setStreamingTransport("edit");
         properties.getDisplay().setToolProgress("off");
         when(telegramClient.sendMessageChecked(eq(100L), eq("Hi"), eq("MarkdownV2"), any(), any(), isNull(), anyBoolean()))
-            .thenThrow(new TelegramClient.SendRefusalException(1, "rate limit")).thenReturn(Optional.of(41L));
+            .thenThrow(new TelegramClient.SendRefusalException(429, 1, "rate limit")).thenReturn(Optional.of(41L));
         when(telegramClient.sendMessage(eq(100L), eq("Hi"), eq("MarkdownV2"), any(), any()))
             .thenReturn(Optional.of(41L));
         when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
@@ -654,7 +654,7 @@ class BotMessageProcessorTest {
         var accepted = new java.util.concurrent.CopyOnWriteArrayList<String>();
         var attempts = new java.util.concurrent.atomic.AtomicInteger();
         when(telegramClient.sendMessageChecked(eq(100L), eq("Hi"), eq("MarkdownV2"), any(), any(), isNull(), anyBoolean()))
-            .thenAnswer(inv -> { if (attempts.incrementAndGet() == 1) throw new TelegramClient.SendRefusalException(1, "rate limit"); accepted.add("Hi"); return Optional.of(41L); });
+            .thenAnswer(inv -> { if (attempts.incrementAndGet() == 1) throw new TelegramClient.SendRefusalException(429, 1, "rate limit"); accepted.add("Hi"); return Optional.of(41L); });
         when(telegramClient.sendMessage(eq(100L), eq("Hi"), eq("MarkdownV2"), any(), any()))
             .thenAnswer(inv -> { accepted.add("Hi"); return Optional.of(41L); });
         when(telegramClient.sendMessageChecked(eq(100L), startsWith("Final answer"), isNull(), any(), any(), isNull(), anyBoolean()))
@@ -693,7 +693,7 @@ class BotMessageProcessorTest {
         when(telegramClient.supportsDraftStreaming(anyString())).thenReturn(true);
         when(telegramClient.sendDraft(anyLong(), anyString(), anyInt())).thenReturn(true);
         when(telegramClient.sendMessageChecked(eq(100L), eq("first"), any(), any(), any(), isNull(), anyBoolean()))
-            .thenThrow(new TelegramClient.SendRefusalException(15, "rate limit"));
+            .thenThrow(new TelegramClient.SendRefusalException(429, 15, "rate limit"));
         when(telegramClient.sendMessageChecked(eq(200L), eq("independent"), any(), any(), any(), isNull(), anyBoolean()))
             .thenReturn(Optional.of(42L));
         when(telegramClient.sendMessageChecked(eq(100L), eq("queued"), any(), any(), any(), isNull(), anyBoolean()))
@@ -738,7 +738,7 @@ class BotMessageProcessorTest {
         var chunks = com.azhukov.agent.bot.formatting.MessageSplitter.splitAndFormat(segment, "MarkdownV2");
         assertThat(chunks.size()).isGreaterThan(1);
         when(telegramClient.sendMessageChecked(eq(100L), anyString(), eq("MarkdownV2"), any(), any(), isNull(), eq(false)))
-            .thenReturn(Optional.of(40L)).thenThrow(new TelegramClient.SendRefusalException(1, "rate limit")).thenReturn(Optional.of(41L));
+            .thenReturn(Optional.of(40L)).thenThrow(new TelegramClient.SendRefusalException(429, 1, "rate limit")).thenReturn(Optional.of(41L));
         when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
                 ((Consumer<String>) inv.getArgument(4)).accept(segment);

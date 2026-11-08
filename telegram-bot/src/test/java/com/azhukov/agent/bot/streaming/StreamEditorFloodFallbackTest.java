@@ -181,7 +181,7 @@ class StreamEditorFloodFallbackTest {
     void confirmedRefusalBeyondDeadlineCompletesWithoutReplay() {
         editor.sessionFor(123L).useDraftStreaming = true;
         when(client.sendMessageChecked(eq(123L), eq("answer"), any(), any(), any(), isNull(), anyBoolean()))
-            .thenThrow(new TelegramClient.SendRefusalException(31, "rate limited"));
+            .thenThrow(new TelegramClient.SendRefusalException(429, 31, "rate limited"));
 
         assertThat(editor.finalizeStream(123L, -1L, "answer")).isFalse();
         assertThat(editor.sealDeferredDelivery(123L)).isCompletedWithValue(false);
@@ -192,7 +192,7 @@ class StreamEditorFloodFallbackTest {
     void cancellationDropsRejectedFragmentAndQueuedFinal() {
         editor.sessionFor(123L).useDraftStreaming = true;
         when(client.sendMessageChecked(eq(123L), eq("first"), any(), any(), any(), isNull(), anyBoolean()))
-            .thenThrow(new TelegramClient.SendRefusalException(15, "rate limited"));
+            .thenThrow(new TelegramClient.SendRefusalException(429, 15, "rate limited"));
         editor.onSegmentBreak(123L, -1L, "first");
         assertThat(editor.finalizeStream(123L, -1L, "final")).isFalse();
         var delivery = editor.sealDeferredDelivery(123L);

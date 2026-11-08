@@ -53,7 +53,7 @@ class StreamDeliveryRegressionTest {
     @Tag("slow")
     void silentFinalLeavesEarlierDeferredSegmentQueued() throws Exception {
         when(client.sendMessageChecked(eq(101L), eq("earlier"), any(), any(), any(), isNull(), anyBoolean()))
-            .thenThrow(new TelegramClient.SendRefusalException(1, "rate limit")).thenReturn(Optional.of(1L));
+            .thenThrow(new TelegramClient.SendRefusalException(429, 1, "rate limit")).thenReturn(Optional.of(1L));
         var editor = editor(false, 0);
         try {
             editor.sendFormattedFinalMessage(101L, "earlier");
@@ -117,13 +117,13 @@ class StreamDeliveryRegressionTest {
         var releaseFirst = new CountDownLatch(1);
         var secondStarted = new CountDownLatch(1);
         when(client.sendMessageChecked(eq(101L), eq("first"), any(), any(), any(), isNull(), anyBoolean()))
-            .thenThrow(new TelegramClient.SendRefusalException(1, "rate limit")).thenAnswer(call -> {
+            .thenThrow(new TelegramClient.SendRefusalException(429, 1, "rate limit")).thenAnswer(call -> {
                 firstStarted.countDown();
                 if (!releaseFirst.await(8, SECONDS)) throw new IllegalStateException("first retry gate");
                 return Optional.of(1L);
             });
         when(client.sendMessageChecked(eq(202L), eq("second"), any(), any(), any(), isNull(), anyBoolean()))
-            .thenThrow(new TelegramClient.SendRefusalException(1, "rate limit")).thenAnswer(call -> {
+            .thenThrow(new TelegramClient.SendRefusalException(429, 1, "rate limit")).thenAnswer(call -> {
                 secondStarted.countDown();
                 return Optional.of(2L);
             });
@@ -150,7 +150,7 @@ class StreamDeliveryRegressionTest {
     void successfulDeferredReplacementRemovesOldPreview() throws Exception {
         var editor = editor(false, 1);
         when(client.sendMessageChecked(eq(101L), eq("final"), any(), any(), any(), isNull(), anyBoolean()))
-            .thenThrow(new TelegramClient.SendRefusalException(1, "rate limit")).thenReturn(Optional.of(17L));
+            .thenThrow(new TelegramClient.SendRefusalException(429, 1, "rate limit")).thenReturn(Optional.of(17L));
         try {
             var session = editor.sessionFor(101L);
             session.streamStartTime = System.currentTimeMillis() - 5000;
