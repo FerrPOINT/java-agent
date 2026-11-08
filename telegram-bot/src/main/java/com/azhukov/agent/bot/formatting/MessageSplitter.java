@@ -51,7 +51,7 @@ public final class MessageSplitter {
 
         // Add "(1/N)" continuation indicator when splitting into multiple chunks.
         // The indicator is NOT escaped here — callers using MarkdownV2 should use
-        // splitAndFormat() or escape the prefix themselves.
+        // splitMarkdown() or escape the prefix themselves.
         if (chunks.size() > 1) {
             int total = chunks.size();
             List<String> indexed = new ArrayList<>(total);
@@ -97,6 +97,14 @@ public final class MessageSplitter {
     }
 
     private static List<String> splitNumberedSource(String text, int limit) {
+        List<String> parts = splitSource(text, limit);
+        for (int i = 0; i < parts.size(); i++) {
+            parts.set(i, partLabel(i, parts.size()) + parts.get(i));
+        }
+        return parts;
+    }
+
+    private static List<String> splitSource(String text, int limit) {
         List<String> parts = new ArrayList<>();
         for (int start = 0; start < text.length();) {
             int end = Math.min(start + limit, text.length());
@@ -106,93 +114,34 @@ public final class MessageSplitter {
             parts.add(text.substring(start, end));
             start = end;
         }
-        for (int i = 0; i < parts.size(); i++) {
-            parts.set(i, "(" + (i + 1) + "/" + parts.size() + ") " + parts.get(i));
-        }
         return parts;
     }
 
-    /**
-     * Split text and format each chunk for the given parse mode.
-     *
-     * <p>For MarkdownV2, this splits the raw (unformatted) text first, then converts
-     * each chunk via {@link MarkdownConverter#convert(String)}, then prepends the
-     * {@code (1/N)} continuation indicator — escaped for MarkdownV2 so that
-     * special characters like {@code (}, {@code )}, {@code /} are properly escaped.
-     *
-     * <p>For non-MarkdownV2 parse modes (HTML, null), this falls back to
-     * {@link #split(String, int)} with the standard unescaped indicator.
-     *
-     * @param text      the raw (unformatted) text to split and format
-     * @param parseMode the Telegram parse mode ("MarkdownV2", "HTML", or null)
-     * @return list of formatted chunks with continuation indicators
-     */
-    public static List<String> splitAndFormat(String text, String parseMode) {
-        if (text == null || text.isEmpty()) {
-            return List.of("");
-        }
-
-        boolean isMarkdownV2 = "MarkdownV2".equalsIgnoreCase(parseMode);
-        if (!isMarkdownV2) {
-            // For HTML or plain text, use the standard split (indicator is not escaped)
-            return split(text);
-        }
-
-        return splitMarkdown(text).stream().map(TextPart::formatted).toList();
+    private static String partLabel(int index, int total) {
+        return "(" + (index + 1) + "/" + total + ") ";
     }
 
     public record TextPart(String original, String formatted) {}
 
-    /** Prepare both representations of the same delivery fragment. */
+    /** Prepare both representations without discarding characters at a delivery boundary. */
     public static List<TextPart> splitMarkdown(String text) {
-        // For MarkdownV2: split raw text first, then format each chunk, then add escaped indicator.
-        // MarkdownV2 escaping can double each char (every special char gets a '\' prefix),
-        // so we split the raw text at maxLength / maxExpansionFactor to leave room for escaping.
-        String single = MarkdownConverter.convert(text);
-        if (utf16Length(single) <= TELEGRAM_MAX_LENGTH && text.length() <= TELEGRAM_MAX_LENGTH) {
-            return List.of(new TextPart(text, single));
+        if (text == null || text.isEmpty()) {
+            return List.of(new TextPart("", ""));
+        }
+        String formatted = MarkdownConverter.convert(text);
+        if (formatted.length() <= TELEGRAM_MAX_LENGTH && text.length() <= TELEGRAM_MAX_LENGTH) {
+            return List.of(new TextPart(text, formatted));
         }
 
-        // Worst case: every character is a MarkdownV2 special char and gets escaped (doubled).
-        // Also account for the escaped continuation indicator prefix length.
-        final int maxExpansionFactor = 2;
-        // Reserve space for the longest possible indicator prefix "(N/M) " —
-        // after escaping, each of its chars could double, but in practice the indicator
-        // is short (e.g. "(10/10) " = 8 chars, escaped ≈ 12 chars). We use a safe margin.
-        int indicatorReserve = 24; // generous upper bound for escaped "(NN/NN) "
-        int rawMaxLen = (TELEGRAM_MAX_LENGTH - indicatorReserve) / maxExpansionFactor;
-        if (rawMaxLen <= 0) {
-            rawMaxLen = 1; // ensure at least 1 char per chunk
+        // Escape expansion needs twice the source capacity, with space left for the label.
+        List<String> source = splitSource(text, (TELEGRAM_MAX_LENGTH - 24) / 2);
+        List<TextPart> result = new ArrayList<>(source.size());
+        for (int i = 0; i < source.size(); i++) {
+            String fragment = source.get(i);
+            String label = source.size() == 1 ? "" : partLabel(i, source.size());
+            result.add(new TextPart(label + fragment,
+                MarkdownConverter.escapeMarkdownV2(label) + MarkdownConverter.convert(fragment)));
         }
-
-        List<String> rawChunks = doSplit(text, rawMaxLen);
-        int total = rawChunks.size();
-        List<TextPart> result = new ArrayList<>(total);
-
-        for (int i = 0; i < total; i++) {
-            String original = rawChunks.get(i);
-            String formatted = MarkdownConverter.convert(original);
-            if (total > 1) {
-                // Build the indicator and escape it for MarkdownV2
-                String indicator = "(" + (i + 1) + "/" + total + ") ";
-                String escapedIndicator = MarkdownConverter.escapeMarkdownV2(indicator);
-                // Truncate formatted text if it still exceeds the limit with the prefix
-                int remaining = TELEGRAM_MAX_LENGTH - escapedIndicator.length();
-                if (formatted.length() > remaining) {
-                    // BUG FIX (audit H15): avoid splitting a surrogate pair at the
-                    // cut point — a lone high surrogate breaks the emoji.
-                    int cut = remaining;
-                    if (cut > 0 && Character.isHighSurrogate(formatted.charAt(cut - 1))) {
-                        cut--;
-                    }
-                    formatted = formatted.substring(0, cut);
-                }
-                result.add(new TextPart(indicator + original, escapedIndicator + formatted));
-            } else {
-                result.add(new TextPart(original, formatted));
-            }
-        }
-
         return result;
     }
 

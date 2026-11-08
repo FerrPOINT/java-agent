@@ -736,7 +736,8 @@ class BotMessageProcessorTest {
         when(telegramClient.supportsDraftStreaming(anyString())).thenReturn(true);
         when(telegramClient.sendDraft(anyLong(), anyString(), anyInt())).thenReturn(true);
         String segment = "a".repeat(4000) + "b".repeat(4000) + "c".repeat(1000);
-        var chunks = com.azhukov.agent.bot.formatting.MessageSplitter.splitAndFormat(segment, "MarkdownV2");
+        var chunks = com.azhukov.agent.bot.formatting.MessageSplitter.splitMarkdown(segment).stream()
+            .map(com.azhukov.agent.bot.formatting.MessageSplitter.TextPart::formatted).toList();
         assertThat(chunks.size()).isGreaterThan(1);
         when(telegramClient.sendMessageChecked(eq(100L), anyString(), eq("MarkdownV2"), any(), any(), isNull(), eq(false)))
             .thenReturn(Optional.of(40L)).thenThrow(new TelegramClient.SendRefusalException(429, 1, "rate limit")).thenReturn(Optional.of(41L));

@@ -91,6 +91,28 @@ class StreamDeliveryRegressionTest {
     }
 
     @Test
+    void longMarkdownBlockDeliversItsTailAndKeepsPlainFragmentsWithinLimit() {
+        String text = "intro\n\n~~~\n\n" + "paragraph\n\n".repeat(530) + "TAIL_MARKER\n~~~\n\nafter";
+        when(client.sendMessageChecked(eq(101L), anyString(), any(), any(), any(), isNull(), anyBoolean()))
+            .thenReturn(Optional.of(17L));
+        var editor = editor(false, 0);
+        try {
+            assertThat(editor.sendFormattedFinalMessage(101L, text)).contains(17L);
+            var sent = org.mockito.ArgumentCaptor.forClass(String.class);
+            verify(client, atLeast(2)).sendMessageChecked(
+                eq(101L), sent.capture(), any(), any(), any(), isNull(), anyBoolean());
+            assertThat(sent.getAllValues()).allMatch(part -> part.length() <= 4096);
+            assertThat(String.join("", sent.getAllValues())).contains("TAIL\\_MARKER");
+            var originals = com.azhukov.agent.bot.formatting.MessageSplitter.splitMarkdown(text).stream()
+                .map(part -> part.original().replaceFirst("^\\(\\d+/\\d+\\) ", "")).toList();
+            assertThat(originals).allMatch(part -> part.length() <= 4096);
+            assertThat(String.join("", originals)).isEqualTo(text);
+        } finally {
+            editor.destroy();
+        }
+    }
+
+    @Test
     void oversizedToolSegmentIsSplitBeforeFinalDelivery() {
         when(client.sendMessageChecked(eq(101L), anyString(), any(), any(), any(), isNull(), anyBoolean()))
             .thenReturn(Optional.of(17L));

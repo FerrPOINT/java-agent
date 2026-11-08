@@ -1147,6 +1147,7 @@ public class StreamEditor {
     }
 
     private List<DeliveryOperation> formattedOperations(long chatId, String text, StreamSession session, long replacedPreview) {
+        if (text == null || text.isBlank()) return List.of();
         String formatted = formatForTelegramDelegate(text);
         Integer topic = session.messageThreadId > 0 ? (int) session.messageThreadId : null;
         List<MessageSplitter.TextPart> parts;
