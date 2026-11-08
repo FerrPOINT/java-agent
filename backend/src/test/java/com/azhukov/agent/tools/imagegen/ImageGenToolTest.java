@@ -50,7 +50,7 @@ class ImageGenToolTest {
         var session = com.azhukov.agent.core.model.Session.create("owner", "openai", "model");
         byte[] jpeg = {(byte) 0xff, (byte) 0xd8, (byte) 0xff};
         when(providerProvider.stream()).thenReturn(java.util.stream.Stream.of(provider));
-        when(provider.generate("image", "square")).thenReturn(jpeg);
+        when(provider.generate("image", "landscape")).thenReturn(jpeg);
         when(artifacts.publishGenerated(eq(session), eq("photo"), eq("image/jpeg"), endsWith(".jpg"), eq(jpeg)))
             .thenReturn("MEDIA:artifact:att_image");
 
