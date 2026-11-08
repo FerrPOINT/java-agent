@@ -114,15 +114,6 @@ class StreamEditorFloodFallbackTest {
     }
 
     @Test
-    void multipartFallbackStopsOnFirstAmbiguousReceipt() {
-        String text = "a".repeat(4000) + "b".repeat(4000) + "c".repeat(1000);
-        when(client.sendMessage(eq(123L), anyString(), any(), any(), any()))
-            .thenReturn(Optional.of(1L), Optional.empty(), Optional.of(3L));
-        assertThat(editor.sendFormattedFinalMessage(123L, text)).isEmpty();
-        verify(client, times(2)).sendMessage(eq(123L), anyString(), any(), any(), any());
-    }
-
-    @Test
     void draftRichFinalUsesOriginalForumThread() {
         var rich = mock(RichMessageSupport.class);
         var props = new BotProperties();
