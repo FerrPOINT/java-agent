@@ -788,7 +788,8 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
         try {
             boolean manual = "update-paused".equals(change);
             if (manual) cronJobService.pause(job.getId());
-            var running = executor.submit(manual ? () -> cronJobService.runNow(job.getId()) : callbacks.getFirst());
+            Runnable run = manual ? () -> cronJobService.runNow(job.getId()) : callbacks.getFirst();
+            var running = executor.submit(run);
             assertThat(entered.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
             switch (change) {
                 case "pause" -> assertThat(cronController.pause(job.getId()).enabled()).isFalse();
