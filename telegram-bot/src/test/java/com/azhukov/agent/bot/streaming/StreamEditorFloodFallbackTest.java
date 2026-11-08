@@ -81,15 +81,46 @@ class StreamEditorFloodFallbackTest {
         var editor = new StreamEditor(client, props, new MediaDeliveryService(), new RichMessageSupport(client));
         try {
             editor.init();
-            assertThat(editor.finalizeTurn(1L, "ordinary answer", 0L, 55L)).isTrue();
+            assertThat(editor.finalizeTurn(1L, "ordinary answer", 41L, 55L)).isTrue();
             assertThat(requests).hasSize(2);
             assertThat(requests.get(0).path("parse_mode").asText()).isEqualTo("MarkdownV2");
             assertThat(requests.get(1).has("parse_mode")).isFalse();
             assertThat(requests.get(1).path("text").asText()).isEqualTo("ordinary answer");
             assertThat(requests.get(1).path("message_thread_id").asInt()).isEqualTo(55);
+            assertThat(requests).allSatisfy(request -> {
+                var reply = request.path("reply_parameters");
+                assertThat(reply.path("message_id").asInt()).isEqualTo(41);
+                assertThat(reply.path("allow_sending_without_reply").asBoolean()).isTrue();
+                assertThat(request.has("reply_to_message_id")).isFalse();
+            });
         } finally {
             editor.destroy();
             server.stop(0);
+        }
+    }
+
+    @Test
+    void splitHtmlFinalKeepsEveryCharacterAndCompleteEntities() {
+        var props = new BotProperties();
+        props.setParseMode("HTML");
+        var htmlEditor = new StreamEditor(client, props, new MediaDeliveryService(), new RichMessageSupport(client));
+        htmlEditor.init();
+        try {
+            String input = "&".repeat(811) + "🙂" + "<".repeat(501) + ">";
+            when(client.sendMessageChecked(eq(123L), anyString(), eq("HTML"), any(), any(), isNull(), eq(false)))
+                .thenReturn(Optional.of(99L));
+            assertThat(htmlEditor.finalizeTurn(123L, input, 0L, 0L)).isTrue();
+            var parts = org.mockito.ArgumentCaptor.forClass(String.class);
+            verify(client, atLeast(2)).sendMessageChecked(eq(123L), parts.capture(), eq("HTML"), any(), any(), isNull(), eq(false));
+            var decoded = new StringBuilder();
+            for (String part : parts.getAllValues()) {
+                assertThat(part.length()).isLessThanOrEqualTo(4096);
+                String body = part.substring(part.indexOf(' ') + 1);
+                decoded.append(body.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&"));
+            }
+            assertThat(decoded.toString()).isEqualTo(input);
+        } finally {
+            htmlEditor.destroy();
         }
     }
 

@@ -322,7 +322,9 @@ public class TelegramClient {
         params.put("chat_id", chatId);
         params.put("text", text);
         if (parseMode != null && !parseMode.isBlank()) params.put("parse_mode", parseMode);
-        if (replyToMessageId != null) params.put("reply_to_message_id", replyToMessageId);
+        if (replyToMessageId != null) {
+            params.put("reply_parameters", Map.of("message_id", replyToMessageId, "allow_sending_without_reply", true));
+        }
         if (messageThreadId != null) params.put("message_thread_id", messageThreadId);
         if (replyMarkup != null && !replyMarkup.isBlank()) params.put("reply_markup", replyMarkup);
         if (disableNotification) params.put("disable_notification", true);

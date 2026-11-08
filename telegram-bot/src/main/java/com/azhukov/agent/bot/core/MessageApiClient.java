@@ -203,8 +203,7 @@ public class MessageApiClient extends BaseBackendClient {
             }
 
             if (is == null) {
-                onError.accept(new IllegalStateException("Backend stream returned null input stream after retries"));
-                return new AgentBackendClient.ChatResult("");
+                throw new IllegalStateException("Backend stream returned null input stream after retries");
             }
 
             try (BufferedReader reader = new BufferedReader(
@@ -244,19 +243,7 @@ public class MessageApiClient extends BaseBackendClient {
                                         String errorMsg = event.path("error").asText(
                                             event.path("message").asText("Unknown stream error"));
                                         onError.accept(new RuntimeException(errorMsg));
-                                        // Preserve metadata received before the error
-                                        // (model, context) so the bot can still resolve
-                                        // the footer model on failed turns.
-                                        return metadataHolder[0] != null
-                                            ? new AgentBackendClient.ChatResult(accumulated.toString(),
-                                                metadataHolder[0].modelUsed(),
-                                                metadataHolder[0].contextTokens(),
-                                                metadataHolder[0].contextLength(),
-                                                false,
-                                                metadataHolder[0].memoryUpdated(),
-                                                metadataHolder[0].backendSessionId(),
-                                                metadataHolder[0].lastReasoning())
-                                            : new AgentBackendClient.ChatResult(accumulated.toString());
+                                        return streamResult(accumulated, metadataHolder[0], false);
                                     }
                                     if ("metadata".equalsIgnoreCase(type)) {
                                         metadataHolder[0] = extractMetadata(event);
@@ -357,12 +344,7 @@ public class MessageApiClient extends BaseBackendClient {
                                         tokenConsumer.accept(token);
                                     }
                                     if ("done".equalsIgnoreCase(type)) {
-                                        AgentBackendClient.ChatResult result = metadataHolder[0] != null
-                                            ? new AgentBackendClient.ChatResult(accumulated.toString(), metadataHolder[0].modelUsed(),
-                                            metadataHolder[0].contextTokens(), metadataHolder[0].contextLength(),
-                                            metadataHolder[0].streamFinalized(), metadataHolder[0].memoryUpdated(),
-                                            metadataHolder[0].backendSessionId(), metadataHolder[0].lastReasoning())
-                                            : new AgentBackendClient.ChatResult(accumulated.toString());
+                                        var result = streamResult(accumulated, metadataHolder[0], true);
                                         onComplete.accept(result);
                                         return result;
                                     }
@@ -380,22 +362,29 @@ public class MessageApiClient extends BaseBackendClient {
                     watchdogTask.cancel(false);
                     watchdog.shutdownNow();
                 }
-                // Stream ended without explicit "done" event
-                AgentBackendClient.ChatResult result = metadataHolder[0] != null
-                    ? new AgentBackendClient.ChatResult(accumulated.toString(), metadataHolder[0].modelUsed(),
-                    metadataHolder[0].contextTokens(), metadataHolder[0].contextLength(), false,
-                    metadataHolder[0].memoryUpdated(), metadataHolder[0].backendSessionId(),
-                metadataHolder[0].lastReasoning())
-                    : new AgentBackendClient.ChatResult(accumulated.toString());
-                onComplete.accept(result);
-                return result;
+                throw new java.io.EOFException("Backend stream closed before the done event");
             }
         } catch (Exception e) {
             log.warn("chatStream failed for sessionId={}: {}", sessionId, e.getMessage());
             onError.accept(e);
-            return new AgentBackendClient.ChatResult(accumulated.toString());
+            return streamResult(accumulated, metadataHolder[0], false);
         }
     }
+
+    private static AgentBackendClient.ChatResult streamResult(StringBuilder accumulated,
+                                                               AgentBackendClient.ChatResult metadata,
+                                                               boolean succeeded) {
+        return new AgentBackendClient.ChatResult(accumulated.toString(),
+            metadata == null ? null : metadata.modelUsed(),
+            metadata == null ? null : metadata.contextTokens(),
+            metadata == null ? null : metadata.contextLength(),
+            succeeded && metadata != null && metadata.streamFinalized(),
+            succeeded && metadata != null && metadata.memoryUpdated(),
+            metadata == null ? null : metadata.backendSessionId(),
+            metadata == null ? null : metadata.lastReasoning(),
+            succeeded);
+    }
+
 
     /** Backward-compatible overload without runtime flags. */
     public AgentBackendClient.ChatResult chatStream(String message,

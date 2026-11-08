@@ -78,6 +78,26 @@ public final class MessageSplitter {
         return chunks;
     }
 
+    /** Split original HTML text before escaping entities. Keep every source character. */
+    public static List<String> splitHtmlSource(String text) {
+        // Each ampersand expands to five units. Reserve space for the part label.
+        int limit = (TELEGRAM_MAX_LENGTH - 32) / 5;
+        List<String> parts = new ArrayList<>();
+        for (int start = 0; start < text.length();) {
+            int end = Math.min(start + limit, text.length());
+            if (end < text.length() && Character.isHighSurrogate(text.charAt(end - 1))
+                    && Character.isLowSurrogate(text.charAt(end))) {
+                end--;
+            }
+            parts.add(text.substring(start, end));
+            start = end;
+        }
+        for (int i = 0; i < parts.size(); i++) {
+            parts.set(i, "(" + (i + 1) + "/" + parts.size() + ") " + parts.get(i));
+        }
+        return parts;
+    }
+
     /**
      * Split text and format each chunk for the given parse mode.
      *

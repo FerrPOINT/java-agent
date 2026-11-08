@@ -102,6 +102,30 @@ class MessageApiClientMetadataOnErrorTest {
             .isEqualTo(java.util.UUID.fromString("00000000-0000-0000-0000-000000000001"));
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void onlyDoneConfirmsCompletion(boolean sendDone) {
+        String token = "{\"type\":\"token\",\"token\":\"partial\"}";
+        if (sendDone) serveSse(token, "{\"type\":\"done\"}");
+        else serveSse(token);
+        var complete = new AtomicReference<AgentBackendClient.ChatResult>();
+        var error = new AtomicReference<Throwable>();
+        var client = new MessageApiClient(restClient, mapper, new com.azhukov.agent.bot.config.BotProperties());
+
+        var result = client.chatStream("hi", null, null, text -> {}, tool -> {}, (name, preview) -> {},
+            retry -> {}, review -> {}, clarify -> {}, complete::set, error::set);
+
+        assertThat(result.content()).isEqualTo("partial");
+        assertThat(result.turnSucceeded()).isEqualTo(sendDone);
+        if (sendDone) {
+            assertThat(complete.get()).isSameAs(result);
+            assertThat(error.get()).isNull();
+        } else {
+            assertThat(complete.get()).isNull();
+            assertThat(error.get()).isInstanceOf(java.io.EOFException.class);
+        }
+    }
+
     @Test
     void streamingIdleTimeoutOutlivesTheRecommendedClarifyWindow() {
         assertThat(MessageApiClient.STREAM_IDLE_TIMEOUT_MS)
