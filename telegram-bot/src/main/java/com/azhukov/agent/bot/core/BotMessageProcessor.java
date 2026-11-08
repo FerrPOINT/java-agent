@@ -580,7 +580,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                 streamEditor.afterConfirmedDelivery(chatId);
                 if (!busyHandler.isInterrupted(chatId)) afterTurn(chatId, event, session, result, threadId);
             }
-            if (busyHandler.isInterrupted(chatId)) {
+            if (busyHandler.isInterrupted(chatId) || (result != null && result.turnCancelled())) {
                 reactionManager.onCancel(chatId, event.messageId());
             } else {
                 reactionManager.onProcessingComplete(chatId, event.messageId(), delivered && result.turnSucceeded());
