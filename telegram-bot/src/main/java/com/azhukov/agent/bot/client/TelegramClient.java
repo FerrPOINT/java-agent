@@ -907,7 +907,8 @@ public class TelegramClient {
                     // Unparseable HTTP error remains an ambiguous transport result.
                 }
             }
-            if (e instanceof org.springframework.web.client.HttpClientErrorException httpError
+            if ("getUpdates".equals(method)
+                    && e instanceof org.springframework.web.client.HttpClientErrorException httpError
                     && httpError.getStatusCode().value() == 409) {
                 lastCallConflict = true;
                 lastApiErrorCode = 409;
