@@ -174,7 +174,12 @@ public class AttachmentArtifactService {
     }
 
     public boolean hasProtectedOutbound() {
-        return artifactProcessIsolation.protects(cacheRoot());
+        try {
+            return artifactProcessIsolation.protects(cacheRoot());
+        } catch (IllegalArgumentException e) {
+            log.warn("Outbound artifact storage is unavailable");
+            return false;
+        }
     }
 
     public boolean claimOutbound(String id, String owner, UUID sessionId) {
