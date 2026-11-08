@@ -835,7 +835,7 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
         }).when(runtime).runBackground(org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.nullable(String.class), org.mockito.ArgumentMatchers.eq(true));
 
-        var job = cronJobService.create("delivery-revision-" + UUID.randomUUID(), "every 1h", "work", "telegram:701938011");
+        var job = cronJobService.create("delivery-revision-" + java.util.UUID.randomUUID(), "every 1h", "work", "telegram:701938011");
         cronJobService.pause(job.getId());
         var jdbc = new org.springframework.jdbc.core.JdbcTemplate(dataSource);
         try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
@@ -850,12 +850,14 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
                 release.countDown();
             }
             running.get(10, java.util.concurrent.TimeUnit.SECONDS);
-            assertThat(jdbc.queryForObject("select count(*) from cron_execution_log where job_id = ? and status = 'failure'",
-                Integer.class, job.getId())).isOne();
-            assertThat(jdbc.queryForObject("""
+            int history = jdbc.queryForObject("select count(*) from cron_execution_log where job_id = ? and status = 'failure'",
+                Integer.class, job.getId());
+            int deliveries = jdbc.queryForObject("""
                 select count(*) from delivery_work_items d join cron_execution_log c on d.source_id = cast(c.id as text)
                 where c.job_id = ? and d.source_type = 'cron_execution'
-                """, Integer.class, job.getId())).isEqualTo(changeDestination ? 0 : 1);
+                """, Integer.class, job.getId());
+            assertThat(history).isOne();
+            assertThat(deliveries).isEqualTo(changeDestination ? 0 : 1);
         } finally {
             jdbc.update("""
                 delete from delivery_work_items where source_type = 'cron_execution'

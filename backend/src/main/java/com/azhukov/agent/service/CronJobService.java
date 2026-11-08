@@ -1106,17 +1106,21 @@ private static final String CRON_EXECUTION_HINT = """
     private void recordRunAndDelivery(CronJobEntity job, Instant startedAt, String status,
                                       String error, String output, boolean retryPending) {
         Long executionId = recordExecution(job.getId(), startedAt, Instant.now(), status, error, output);
-        transactionTemplate.executeWithoutResult(tx -> {
-            // The conditional UPDATE holds the row through enqueue. History survives a stale revision.
-            if (cronJobRepository.recordRun(job) == 0 || retryPending) {
-                return;
-            }
-            if (error == null) {
-                enqueueDeliveryWork(job, executionId, output);
-            } else {
-                enqueueFailureDeliveryWork(job, executionId, error);
-            }
-        });
+        try {
+            transactionTemplate.executeWithoutResult(tx -> {
+                // The conditional UPDATE holds the row through enqueue. History survives a stale revision.
+                if (cronJobRepository.recordRun(job) == 0 || retryPending) {
+                    return;
+                }
+                if (error == null) {
+                    enqueueDeliveryWork(job, executionId, output);
+                } else {
+                    enqueueFailureDeliveryWork(job, executionId, error);
+                }
+            });
+        } catch (org.springframework.transaction.TransactionException | org.springframework.dao.DataAccessException e) {
+            log.warn("Could not publish the completed cron run {}", job.getId(), e);
+        }
     }
 
     private long delayAfterExecution(CronJobEntity job, CronExecutionOutcome outcome, long regularDelay) {
