@@ -504,7 +504,9 @@ public class StreamingOrchestrator {
                     if (error instanceof StreamInterruptedException || error instanceof java.util.concurrent.CancellationException) {
                         turnCancelled[0] = true;
                         // Interrupted — finalize with accumulated content (no raw error text)
-                        if (messageId[0] >= 0 && accumulated.length() > 0) {
+                        if (streamEditor.hasDeferredDelivery(chatId)) {
+                            streamEditor.cancelDeferredDelivery(chatId);
+                        } else if (messageId[0] >= 0 && accumulated.length() > 0) {
                             finalized[0] = streamEditor.finalizeStream(chatId, messageId[0],
                                 accumulated.toString());
                         } else if (messageId[0] < 0) {
@@ -520,7 +522,9 @@ public class StreamingOrchestrator {
                             ? accumulated + "\n\n" + userFriendlyError
                             : userFriendlyError;
                         boolean delivered;
-                        if (messageId[0] >= 0) {
+                        if (streamEditor.hasDeferredDelivery(chatId)) {
+                            delivered = streamEditor.finalizeTurn(chatId, errorText, userMessageId, messageThreadId);
+                        } else if (messageId[0] >= 0) {
                             delivered = streamEditor.finalizeStream(chatId, messageId[0], errorText);
                         } else {
                             // P0: no streaming message exists (draft streaming keeps
@@ -587,7 +591,11 @@ public class StreamingOrchestrator {
             log.warn("Streaming failed for chat {}: {}", chatId, e.getMessage());
             // A native draft owns a StreamSession despite having no message id. Always
             // remove it on an exceptional stream exit or its heartbeat keeps posting.
-            streamEditor.clearStream(chatId);
+            if (streamEditor.hasDeferredDelivery(chatId)) {
+                streamEditor.cancelDeferredDelivery(chatId);
+            } else {
+                streamEditor.clearStream(chatId);
+            }
             throw new RuntimeException("Streaming failed: " + e.getMessage(), e);
         } finally {
             // WP-b: turn ended inside THIS process — no recovery notice needed.

@@ -564,6 +564,21 @@ class StreamingOrchestratorTest {
     }
 
     @Test
+    void cancelledDraftKeepsDeferredDeliveryUntilItsOwnerCanDrain() {
+        when(streamEditor.hasDeferredDelivery(100L)).thenReturn(true);
+        stubChatStream(ctx -> {
+            ctx.onError.accept(new java.util.concurrent.CancellationException("cancelled"));
+            ctx.returnResult = new AgentBackendClient.ChatResult("", "model", 1, 10, false, false, null, null, false);
+        });
+
+        var result = orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
+
+        assertThat(result.turnCancelled()).isTrue();
+        verify(streamEditor).cancelDeferredDelivery(100L);
+        verify(streamEditor, never()).clearStream(100L);
+    }
+
+    @Test
     void cancelledBeforeAnyTokenDoesNotReportSuccess() {
         stubChatStream(ctx -> {
             ctx.onError.accept(new java.util.concurrent.CancellationException("cancelled"));

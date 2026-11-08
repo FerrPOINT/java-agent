@@ -458,12 +458,11 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
 
         // Process the turn
         busyHandler.markBusy(chatId);
-        boolean deferred = false;
         // B1.6/B2.7: Route typing indicator to the correct forum thread
         Integer typingThreadId = event.messageThreadId() > 0 ? (int) event.messageThreadId() : null;
         typingManager.startTyping(chatId, typingThreadId);
 
-        AgentBackendClient.ChatResult result;
+        AgentBackendClient.ChatResult result = null;
         String sessionId = session.getBackendSessionId() != null
             ? session.getBackendSessionId().toString()
             : null;
@@ -507,14 +506,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                 }
             }
 
-            var delivery = streamEditor.hasDeferredDelivery(chatId) ? streamEditor.sealDeferredDelivery(chatId) : null;
-            if (delivery != null) {
-                deferred = true;
-                delivery.whenComplete((delivered, failure) -> Thread.startVirtualThread(() ->
-                    finishDeferredDelivery(chatId, event, session, result, threadId,
-                        failure == null && Boolean.TRUE.equals(delivered))));
-                return;
-            }
+            if (streamEditor.hasDeferredDelivery(chatId)) return;
 
             if (confirmed && !interrupted) afterTurn(chatId, event, session, result, threadId);
 
@@ -527,13 +519,25 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
             typingManager.stopTyping(chatId);
         } catch (Exception e) {
             log.error("Backend call failed for chat {}: {}", chatId, e.getMessage(), e);
+            if (streamEditor.hasDeferredDelivery(chatId)) {
+                streamEditor.cancelDeferredDelivery(chatId);
+                return;
+            }
             typingManager.flushTyping(chatId);
             sendError(chatId, "Error contacting the agent backend: " + e.getMessage());
             // B1.2: Reaction — processing complete (failure)
             reactionManager.onProcessingComplete(chatId, event.messageId(), false);
             typingManager.stopTyping(chatId);
         } finally {
-            if (!deferred) busyHandler.markFree(chatId);
+            var delivery = streamEditor.sealDeferredDelivery(chatId);
+            if (delivery == null) {
+                busyHandler.markFree(chatId);
+            } else {
+                var finishedTurn = result;
+                delivery.whenComplete((delivered, failure) -> Thread.startVirtualThread(() ->
+                    finishDeferredDelivery(chatId, event, session, finishedTurn, threadId,
+                        finishedTurn != null && failure == null && Boolean.TRUE.equals(delivered))));
+            }
         }
     }
 
