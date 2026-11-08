@@ -1,6 +1,9 @@
 package com.azhukov.agent.bot.config;
 
 import com.azhukov.agent.bot.client.ContentTypeNormalizingInterceptor;
+import com.azhukov.agent.bot.client.DohIpDiscovery;
+import com.azhukov.agent.bot.client.FallbackIpTransport;
+import com.azhukov.agent.bot.client.TelegramRequestFactory;
 import com.azhukov.agent.bot.core.BotMessageProcessor;
 import com.azhukov.agent.bot.polling.UpdateEvent;
 import com.azhukov.agent.bot.polling.ReconnectWatcher;
@@ -16,6 +19,7 @@ import org.springframework.web.client.RestClient;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.function.Consumer;
 
 @Configuration
@@ -37,8 +41,21 @@ public class BotConfig {
         MappingJackson2HttpMessageConverter jacksonConverter =
             new MappingJackson2HttpMessageConverter(objectMapper);
 
-        // Keep the canonical hostname for SNI and normal TLS peer verification.
-        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
+        // P0: Fallback IP Transport — discover fallback IPs via DoH and retry
+        // against them when primary api.telegram.org is unreachable.
+        // Wrapped in try-catch with short timeout: DoH discovery is a network call
+        // that may fail in test/offline environments — degrade gracefully to seed IPs.
+        FallbackIpTransport fallbackTransport;
+        try {
+            DohIpDiscovery dohDiscovery = new DohIpDiscovery();
+            List<String> fallbackIps = dohDiscovery.discover();
+            fallbackTransport = new FallbackIpTransport(fallbackIps);
+        } catch (Exception e) {
+            log.warn("DoH discovery failed during startup, using seed fallback IPs: {}", e.getMessage());
+            fallbackTransport = new FallbackIpTransport(DohIpDiscovery.SEED_FALLBACK_IPS);
+        }
+
+        SimpleClientHttpRequestFactory requestFactory = new TelegramRequestFactory();
         requestFactory.setConnectTimeout((int) Duration.ofSeconds(10).toMillis());
         requestFactory.setReadTimeout((int) Duration.ofSeconds(60).toMillis());
 
@@ -50,6 +67,7 @@ public class BotConfig {
                 converters.add(jacksonConverter);
             })
             .requestInterceptor(new ContentTypeNormalizingInterceptor())
+            .requestInterceptor(fallbackTransport)
             .build();
     }
 
