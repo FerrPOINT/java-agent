@@ -98,22 +98,22 @@ public class AttachmentController {
     }
 
     @GetMapping("/{id}")
-    public AttachmentArtifact get(@PathVariable("id") String id,
-            @RequestParam(name = "ownerId", required = false) String ownerId,
-            @RequestParam(name = "sessionId", required = false) UUID sessionId) {
-        String owner = checkedArtifactOwner(id, ownerId, sessionId);
+    public AttachmentArtifact get(@PathVariable("id") String id) {
+        String owner = scopedOwner();
         return service().find(id, owner)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "unknown artifact " + id));
     }
 
     /** Attachment block injected into the turn (bounded text preview or path reference). */
     @GetMapping("/{id}/content")
-    public ResponseEntity<Resource> content(@PathVariable("id") String id,
-            @RequestParam(name = "ownerId", required = false) String ownerId,
-            @RequestParam(name = "sessionId", required = false) UUID sessionId) {
-        String owner = checkedArtifactOwner(id, ownerId, sessionId);
-        if (sessionId != null) requireProtectedOutbound();
-        return contentResponse(id, owner, sessionId != null);
+    public ResponseEntity<Resource> content(@PathVariable("id") String id) {
+        String owner = scopedOwner();
+        AttachmentArtifact artifact = service().find(id, owner)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "unknown artifact " + id));
+        Path path = service().contentPath(id, owner)
+            .filter(Files::isReadable)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "artifact content is gone " + id));
+        return contentResponse(artifact, new FileSystemResource(path));
     }
 
     @PostMapping("/{id}/outbound")
@@ -125,7 +125,9 @@ public class AttachmentController {
         if (!service().claimOutbound(id, owner, sessionId)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Artifact delivery was already attempted");
         }
-        return contentResponse(id, owner, true);
+        var content = service().verifiedContent(id, owner)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Artifact content is unavailable"));
+        return contentResponse(content.artifact(), new org.springframework.core.io.ByteArrayResource(content.bytes()));
     }
 
     private void requireProtectedOutbound() {
@@ -135,22 +137,7 @@ public class AttachmentController {
         }
     }
 
-    private ResponseEntity<Resource> contentResponse(String id, String owner, boolean verifyContent) {
-        AttachmentArtifact artifact = service().find(id, owner)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "unknown artifact " + id));
-        Resource resource;
-        if (verifyContent) {
-            byte[] bytes = service().verifiedContent(id, owner)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Artifact content is unavailable"));
-            resource = new org.springframework.core.io.ByteArrayResource(bytes);
-        } else {
-            Path path = service().contentPath(id, owner)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "artifact content is gone " + id));
-            if (!Files.isReadable(path)) {
-                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "artifact content is gone " + id);
-            }
-            resource = new FileSystemResource(path);
-        }
+    private ResponseEntity<Resource> contentResponse(AttachmentArtifact artifact, Resource resource) {
         String fileName = artifact.fileName() != null ? artifact.fileName() : "artifact.bin";
         String contentType = artifact.mimeType() != null ? artifact.mimeType()
             : URLConnection.guessContentTypeFromName(fileName);

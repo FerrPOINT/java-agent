@@ -41,6 +41,9 @@ class AttachmentFlowE2ETest extends PostgresTestContainer {
     private com.azhukov.agent.persistence.repository.SessionRepository sessionRepository;
 
     @Autowired
+    private com.azhukov.agent.service.AttachmentArtifactService artifactService;
+
+    @Autowired
     private org.springframework.web.context.WebApplicationContext webApplicationContext;
 
     @org.springframework.test.context.bean.override.mockito.MockitoBean
@@ -307,10 +310,7 @@ class AttachmentFlowE2ETest extends PostgresTestContainer {
                 .header("X-API-Key", "fixture-gateway-key").param("ownerId", owner).param("sessionId", session.toString())
                 .param("messageId", "420"))
             .andExpect(status().isOk());
-        gateway.perform(get("/api/v1/attachments/{id}", id)
-                .header("X-API-Key", "fixture-gateway-key").param("ownerId", owner).param("sessionId", session.toString()))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.deliveredMessageId").value("420"));
+        assertThat(artifactService.find(id, owner).orElseThrow().deliveredMessageId()).isEqualTo("420");
     }
 
     @Test

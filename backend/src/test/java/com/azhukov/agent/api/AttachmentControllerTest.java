@@ -70,7 +70,7 @@ class AttachmentControllerTest {
         UserContext.set("alice", UserContext.ROLE_USER);
         try {
             org.mockito.Mockito.when(service.isAvailableInSession("att_1", "alice", sessionId)).thenReturn(false);
-            mockMvc.perform(get("/api/v1/attachments/att_1/content").param("sessionId", sessionId.toString()))
+            mockMvc.perform(post("/api/v1/attachments/att_1/outbound").param("sessionId", sessionId.toString()))
                 .andExpect(status().isNotFound());
             org.mockito.Mockito.verify(service, org.mockito.Mockito.never()).verifiedContent(
                 org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
@@ -102,8 +102,6 @@ class AttachmentControllerTest {
         try {
             when(service.isAvailableInSession("att_1", "alice", sessionId)).thenReturn(true);
             mockMvc.perform(post("/api/v1/attachments/att_1/outbound").param("sessionId", sessionId.toString()))
-                .andExpect(status().isServiceUnavailable());
-            mockMvc.perform(get("/api/v1/attachments/att_1/content").param("sessionId", sessionId.toString()))
                 .andExpect(status().isServiceUnavailable());
             org.mockito.Mockito.verify(service, org.mockito.Mockito.never()).claimOutbound(anyString(), anyString(), any());
             org.mockito.Mockito.verify(service, org.mockito.Mockito.never()).verifiedContent(anyString(), anyString());

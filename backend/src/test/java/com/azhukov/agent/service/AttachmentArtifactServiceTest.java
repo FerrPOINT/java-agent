@@ -72,7 +72,7 @@ class AttachmentArtifactServiceTest {
         assertThat(service.isAvailableInSession(registration.id(), "u1", UUID.randomUUID())).isFalse();
         assertThat(service.isAvailableInSession(registration.id(), "u2", session)).isFalse();
         assertThat(service.verifiedContent(registration.id(), "u1")).hasValueSatisfying(
-            content -> assertThat(content).isEqualTo(bytes));
+            content -> assertThat(content.bytes()).isEqualTo(bytes));
         Files.write(tempDir.resolve(registration.cachePath()), new byte[]{3, 2, 1});
         assertThat(service.verifiedContent(registration.id(), "u1")).isEmpty();
     }

@@ -186,8 +186,10 @@ public class AttachmentArtifactService {
         return repository().claimOutbound(id, owner, sessionId, Instant.now()) == 1;
     }
 
+    public record VerifiedContent(AttachmentArtifact artifact, byte[] bytes) {}
+
     /** Read the exact registered payload before serving it to an outbound consumer. */
-    public Optional<byte[]> verifiedContent(String artifactId, String ownerId) {
+    public Optional<VerifiedContent> verifiedContent(String artifactId, String ownerId) {
         return findEntity(artifactId, ownerId).flatMap(artifact -> {
             try {
                 Path path = safeCachePath(artifact.getCachePath());
@@ -196,7 +198,7 @@ public class AttachmentArtifactService {
                     byte[] bytes = input.readNBytes((int) MAX_ATTACHMENT_BYTES + 1);
                     if (bytes.length > MAX_ATTACHMENT_BYTES || !java.util.Objects.equals((long) bytes.length, artifact.getSizeBytes())
                             || !sha256(bytes).equals(artifact.getContentHash())) return Optional.empty();
-                    return Optional.of(bytes);
+                    return Optional.of(new VerifiedContent(AttachmentArtifact.from(artifact), bytes));
                 }
             } catch (IOException | IllegalArgumentException e) {
                 return Optional.empty();
