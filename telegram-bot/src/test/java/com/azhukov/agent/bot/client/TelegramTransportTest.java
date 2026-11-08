@@ -88,9 +88,9 @@ class TelegramTransportTest {
                 assertThat(error.getErrorCode()).isEqualTo(-1);
                 assertThat(error.getMessage()).doesNotContain(token);
             });
-        var multipart = new org.springframework.util.LinkedMultiValueMap<String, Object>();
-        multipart.add("chat_id", "1");
-        assertThatThrownBy(() -> client.callMultipartApi("sendDocument", multipart))
+        var multipart = new org.springframework.http.client.MultipartBodyBuilder();
+        multipart.part("chat_id", "1");
+        assertThatThrownBy(() -> client.callMultipartApi("sendDocument", multipart.build()))
             .isInstanceOfSatisfying(TelegramApiException.class, error -> {
                 assertThat(error.getErrorCode()).isEqualTo(-1);
                 assertThat(error.getMessage()).doesNotContain(token);
