@@ -192,7 +192,7 @@ public class DeliveryLedgerConsumer {
             batch.stream().map(ClaimedItem::attempts).toList());
         Long lastMessageId = null;
         try {
-            List<String> chunks = com.azhukov.agent.bot.formatting.MessageSplitter.split(text);
+            List<String> chunks = com.azhukov.agent.bot.formatting.MessageSplitter.splitPlainText(text);
             boolean sendFailed = false;
             for (String chunk : chunks) {
                 Optional<Long> sent = threadId == null
