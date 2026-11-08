@@ -42,6 +42,34 @@ class TelegramTransportTest {
     }
 
     @Test
+    void rawConflictIsAmbiguousForSendAndRecognizedForPolling() throws Exception {
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/bot-fixture/", exchange -> {
+            try (exchange) {
+                exchange.getRequestBody().readAllBytes();
+                byte[] body = "upstream conflict".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().add("Content-Type", "text/plain");
+                exchange.sendResponseHeaders(409, body.length);
+                exchange.getResponseBody().write(body);
+            }
+        });
+        server.start();
+        try {
+            var mapper = new ObjectMapper();
+            var transport = new BotConfig().telegramRestClient(mapper).mutate()
+                .baseUrl("http://127.0.0.1:" + server.getAddress().getPort()).build();
+            var client = new TelegramClient(transport, mapper, "-fixture", 0);
+
+            assertThat(client.sendMessageChecked(1L, "fixture", null, null, null, null, false)).isEmpty();
+            assertThatThrownBy(() -> client.callApi("getUpdates", Map.of()))
+                .isInstanceOfSatisfying(TelegramApiException.class,
+                    conflict -> assertThat(conflict.getErrorCode()).isEqualTo(409));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void lostReplyToAcceptedPostDoesNotTriggerAnotherRequest() throws Exception {
         var requests = new AtomicInteger();
         var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
