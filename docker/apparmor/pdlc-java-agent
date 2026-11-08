@@ -1,0 +1,22 @@
+abi <abi/4.0>,
+
+# Apply on top of the container runtime's standard AppArmor confinement.
+profile pdlc-java-agent flags=(attach_disconnected,mediate_deleted) {
+  /** rwklm,
+  /** ix,
+  network,
+  signal,
+  ptrace,
+  /opt/java/openjdk/lib/jspawnhelper Px -> "pdlc-java-agent//&pdlc-java-agent-worker",
+}
+
+# Keep the parent profile in the stack when OpenJDK spawns any subprocess.
+profile pdlc-java-agent-worker flags=(attach_disconnected,mediate_deleted) {
+  /** rwklm,
+  /** ix,
+  network,
+  signal (receive),
+  signal (send) peer=pdlc-java-agent-worker,
+  deny /artifacts{,/**} rwklm,
+  deny /proc/**/{root,environ,mem}{,/**} rwklm,
+}

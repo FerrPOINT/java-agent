@@ -626,7 +626,14 @@ public class McpLifecycleManager {
             paramsBuilder.env(filteredEnv);
         }
         ServerParameters params = paramsBuilder.build();
-        StdioClientTransport transport = new StdioClientTransport(params, new JacksonMcpJsonMapper(objectMapper));
+        StdioClientTransport transport = new StdioClientTransport(params, new JacksonMcpJsonMapper(objectMapper)) {
+            @Override
+            protected ProcessBuilder getProcessBuilder() {
+                var builder = super.getProcessBuilder();
+                builder.environment().clear();
+                return builder;
+            }
+        };
         return McpClient.sync(transport).build();
     }
 

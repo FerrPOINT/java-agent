@@ -23,6 +23,16 @@ import static org.assertj.core.api.Assertions.assertThat;
  * </ul>
  */
 class DefaultFileSafetyTest {
+    @Test
+    void backendArtifactRootIsOutsideFileToolWriteScope() {
+        var settings = new AgentProperties();
+        settings.getSecurity().setFileSafetyEnabled(false);
+        var safety = new DefaultFileSafety(settings);
+
+        assertThat(safety.isWriteAllowed(Paths.get("/artifacts/fixture"))).isFalse();
+        assertThat(safety.isWriteAllowed(Paths.get("/workspace/fixture"))).isTrue();
+    }
+
 
     private static Path userHomePath(String first, String... more) {
         Path result = Path.of(System.getProperty("user.home"), first);

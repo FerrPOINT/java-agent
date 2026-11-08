@@ -43,6 +43,9 @@ class AttachmentFlowE2ETest extends PostgresTestContainer {
     @Autowired
     private org.springframework.web.context.WebApplicationContext webApplicationContext;
 
+    @org.springframework.test.context.bean.override.mockito.MockitoBean
+    private com.azhukov.agent.service.ArtifactProcessIsolation artifactProcessIsolation;
+
     private static final String TEXT_PAYLOAD = "quarterly figures: 42";
 
     private String uploadTextArtifact(String fileName, String content, String ownerId)
@@ -274,6 +277,7 @@ class AttachmentFlowE2ETest extends PostgresTestContainer {
 
     @Test
     void gatewayCanClaimExactSessionOnlyOnceAndRecordReceipt() throws Exception {
+        org.mockito.Mockito.when(artifactProcessIsolation.protects(org.mockito.ArgumentMatchers.any())).thenReturn(true);
         String owner = "701938011";
         UUID session = UUID.randomUUID();
         String payload = "outbound fixture " + session;

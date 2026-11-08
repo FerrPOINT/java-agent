@@ -1,5 +1,7 @@
 package com.azhukov.agent.tools.terminal;
 
+import com.azhukov.agent.core.security.ChildProcessEnvironment;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -451,6 +453,7 @@ public class ShellHookManager {
  }
 
  ProcessBuilder pb = new ProcessBuilder(argv);
+ ChildProcessEnvironment.prepare(pb.environment(), null);
  pb.redirectInput(ProcessBuilder.Redirect.PIPE);
  pb.redirectOutput(ProcessBuilder.Redirect.PIPE);
  pb.redirectError(ProcessBuilder.Redirect.PIPE);

@@ -174,6 +174,7 @@ public class SkillPreprocessor {
      }
      try {
  ProcessBuilder pb = new ProcessBuilder("bash", "-c", command);
+ com.azhukov.agent.core.security.ChildProcessEnvironment.prepare(pb.environment(), null);
  pb.redirectInput(ProcessBuilder.Redirect.from(new File("/dev/null")));
  // H10: Merge stderr into stdout to avoid pipe-buffer deadlock when the child
  // fills its stderr pipe while we only read stdout after waitFor().

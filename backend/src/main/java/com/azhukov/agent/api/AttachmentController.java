@@ -112,6 +112,7 @@ public class AttachmentController {
             @RequestParam(name = "ownerId", required = false) String ownerId,
             @RequestParam(name = "sessionId", required = false) UUID sessionId) {
         String owner = checkedArtifactOwner(id, ownerId, sessionId);
+        if (sessionId != null) requireProtectedOutbound();
         return contentResponse(id, owner, sessionId != null);
     }
 
@@ -120,10 +121,18 @@ public class AttachmentController {
             @RequestParam(name = "ownerId", required = false) String ownerId,
             @RequestParam("sessionId") UUID sessionId) {
         String owner = checkedArtifactOwner(id, ownerId, sessionId);
+        requireProtectedOutbound();
         if (!service().claimOutbound(id, owner, sessionId)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Artifact delivery was already attempted");
         }
         return contentResponse(id, owner, true);
+    }
+
+    private void requireProtectedOutbound() {
+        if (!service().hasProtectedOutbound()) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Outbound artifacts require an enforced storage boundary");
+        }
     }
 
     private ResponseEntity<Resource> contentResponse(String id, String owner, boolean verifyContent) {

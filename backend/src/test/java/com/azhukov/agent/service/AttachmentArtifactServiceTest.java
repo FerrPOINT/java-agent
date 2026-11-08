@@ -51,7 +51,7 @@ class AttachmentArtifactServiceTest {
     }
 
     private AttachmentArtifactService service() {
-        AttachmentArtifactService service = new AttachmentArtifactService(prov(repository));
+        AttachmentArtifactService service = new AttachmentArtifactService(prov(repository), new ArtifactProcessIsolation());
         ReflectionTestUtils.setField(service, "cacheRootConfig", tempDir.toString());
         lenient().when(repository.save(any(AttachmentArtifactEntity.class)))
             .thenAnswer(inv -> inv.getArgument(0));

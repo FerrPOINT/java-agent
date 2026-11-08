@@ -76,6 +76,7 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+      - apparmor=docker-default//&pdlc-java-agent
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "--show-error", "--max-time", "2", "--output", "/dev/null", "http://localhost:8090/actuator/health/readiness"]
       interval: 15s

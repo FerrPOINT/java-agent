@@ -40,6 +40,7 @@ public class AttachmentArtifactService {
         java.util.regex.Pattern.compile("[a-zA-Z0-9._-]{1,128}");
 
     private final ObjectProvider<AttachmentArtifactRepository> repositoryProvider;
+    private final ArtifactProcessIsolation artifactProcessIsolation;
 
     @Value("${agent.attachments.cache-root:}")
     private String cacheRootConfig;
@@ -170,6 +171,10 @@ public class AttachmentArtifactService {
             .filter(artifact -> artifact.getExpiresAt().isAfter(Instant.now()))
             .filter(artifact -> "received".equals(artifact.getState()) || "delivered".equals(artifact.getState()))
             .isPresent();
+    }
+
+    public boolean hasProtectedOutbound() {
+        return artifactProcessIsolation.protects(cacheRoot());
     }
 
     public boolean claimOutbound(String id, String owner, UUID sessionId) {

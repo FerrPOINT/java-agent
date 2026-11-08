@@ -1,5 +1,7 @@
 package com.azhukov.agent.tools.terminal;
 
+import com.azhukov.agent.core.security.ChildProcessEnvironment;
+
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.config.SharedObjectMapper;
 import com.azhukov.agent.core.agent.InterruptToken;

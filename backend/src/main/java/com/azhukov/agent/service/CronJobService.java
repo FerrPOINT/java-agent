@@ -1855,6 +1855,7 @@ private static final String CRON_EXECUTION_HINT = """
 
         try {
             ProcessBuilder pb = new ProcessBuilder(command);
+            com.azhukov.agent.core.security.ChildProcessEnvironment.prepare(pb.environment(), null);
             pb.directory(workDir);
             pb.redirectErrorStream(false);
             Process process = pb.start();
