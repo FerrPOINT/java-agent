@@ -148,36 +148,29 @@ public class TtsTool implements ToolHandler {
             }
             if (!customPath) Files.createDirectories(parent);
             try (var directory = openAudioDirectory(parent)) {
-                try {
-                    for (int i = 0; i < chunks.size(); i++) {
-                        Path target = chunks.size() == 1 ? baseOutputPath : chunkOutputPath(baseOutputPath, i + 1);
-                        byte[] audio = synthesize(provider, chunks.get(i), voice, speed, args.instructions());
-                        try (var channel = directory.newByteChannel(target.getFileName(),
-                                Set.of(StandardOpenOption.WRITE, StandardOpenOption.CREATE_NEW, LinkOption.NOFOLLOW_LINKS))) {
-                            writtenPaths.add(target);
-                            var remaining = ByteBuffer.wrap(audio);
-                            while (remaining.hasRemaining()) channel.write(remaining);
-                        }
-                        if (telegram) {
-                            String name = target.getFileName().toString().replaceAll("[^A-Za-z0-9._-]", "_");
-                            mediaTags.add(artifacts.publishGenerated(session, "audio", "audio/mpeg", name, audio));
-                        }
+                for (int i = 0; i < chunks.size(); i++) {
+                    Path target = chunks.size() == 1 ? baseOutputPath : chunkOutputPath(baseOutputPath, i + 1);
+                    byte[] audio = synthesize(provider, chunks.get(i), voice, speed, args.instructions());
+                    try (var channel = directory.newByteChannel(target.getFileName(),
+                            Set.of(StandardOpenOption.WRITE, StandardOpenOption.CREATE_NEW, LinkOption.NOFOLLOW_LINKS))) {
+                        writtenPaths.add(target);
+                        var remaining = ByteBuffer.wrap(audio);
+                        while (remaining.hasRemaining()) channel.write(remaining);
                     }
-                } catch (Exception failure) {
-                    for (Path path : writtenPaths) {
-                        try {
-                            directory.deleteFile(path.getFileName());
-                        } catch (IOException cleanupError) {
-                            failure.addSuppressed(cleanupError);
-                        }
+                    if (telegram) {
+                        String name = target.getFileName().toString().replaceAll("[^A-Za-z0-9._-]", "_");
+                        mediaTags.add(artifacts.publishGenerated(session, "audio", "audio/mpeg", name, audio));
                     }
-                    throw failure;
                 }
             }
 
             log.debug("TTS generated {} file(s) for provider={}", writtenPaths.size(), provider.name());
             return ToolResult.ok(jsonSuccessResponse(writtenPaths, mediaTags, provider.name(), chunks.size()));
         } catch (Exception e) {
+            if (!writtenPaths.isEmpty()) {
+                return jsonErrorResponse("TTS failed: " + errorMessage(e)
+                    + ". Output files already created were preserved: " + writtenPaths);
+            }
             return synthesisFailure(e);
         }
     }

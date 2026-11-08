@@ -48,9 +48,9 @@ class AttachmentArtifactRepositoryTest extends PostgresTestContainer {
         repository.save(entity("bob", "hash-a", "photo"));
 
         Optional<AttachmentArtifactEntity> aliceHit = repository
-            .findFirstByOwnerIdAndContentHashAndDisposition("alice", "hash-a", "photo");
+            .findFirstByOwnerIdAndContentHashAndDispositionAndSessionIdAndDedupScope("alice", "hash-a", "photo", null, "");
         Optional<AttachmentArtifactEntity> carolMiss = repository
-            .findFirstByOwnerIdAndContentHashAndDisposition("carol", "hash-a", "photo");
+            .findFirstByOwnerIdAndContentHashAndDispositionAndSessionIdAndDedupScope("carol", "hash-a", "photo", null, "");
 
         assertThat(aliceHit).isPresent();
         assertThat(carolMiss).isEmpty();
