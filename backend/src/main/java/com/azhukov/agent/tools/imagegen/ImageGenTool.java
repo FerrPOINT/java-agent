@@ -3,6 +3,7 @@ package com.azhukov.agent.tools.imagegen;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
+import com.azhukov.agent.service.AttachmentArtifactService;
 import com.azhukov.agent.service.imagegen.ImageGenProvider;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
@@ -25,11 +26,11 @@ import java.util.UUID;
 
 /**
  * Agent tool for generating images from text prompts.
- * Saves generated images to the system temp directory and returns the file path.
+ * Publishes images for a session and saves standalone output locally.
  */
 @AgentTool(
     name = "image_generate",
-    description = "Generate an image from a text prompt. Returns the file path to the generated image.",
+    description = "Generate an image from a text prompt. Returns a published MEDIA:artifact reference in Telegram, or a local image path for CLI and other clients.",
     toolset = "image_gen"
 )
 @Component
@@ -42,6 +43,7 @@ public class ImageGenTool implements ToolHandler {
 
     private final org.springframework.beans.factory.ObjectProvider<ImageGenProvider> providerProvider;
     private final com.azhukov.agent.config.AgentProperties properties;
+    private final AttachmentArtifactService artifacts;
 
 
     /**
@@ -101,14 +103,20 @@ public class ImageGenTool implements ToolHandler {
             if (imageBytes == null || imageBytes.length == 0) {
                 throw new IllegalStateException("Image generation returned empty image data");
             }
-            String fileName = "img_" + UUID.randomUUID() + imageExtension(imageBytes);
+            String extension = imageExtension(imageBytes);
+            String fileName = "img_" + UUID.randomUUID() + extension;
+            if (session != null && "telegram".equalsIgnoreCase(session.getMetadata("platform"))) {
+                String mimeType = extension.equals(".jpg") ? "image/jpeg" : "image/" + extension.substring(1);
+                return ToolResult.ok(jsonSuccessResponse(null,
+                    artifacts.publishGenerated(session, "photo", mimeType, fileName, imageBytes)));
+            }
             Path outputPath = defaultOutputDir().resolve(fileName)
                 .toAbsolutePath()
                 .normalize();
             Files.createDirectories(outputPath.getParent());
             Files.write(outputPath, imageBytes);
             log.debug("Image generated: {} ({} bytes)", outputPath, imageBytes.length);
-            return ToolResult.ok(jsonSuccessResponse(outputPath));
+            return ToolResult.ok(jsonSuccessResponse(outputPath, null));
         } catch (Exception e) {
             log.error("Image generation failed: {}", e.getMessage(), e);
             return jsonFailureResponse(errorMessage(e), e.getClass().getSimpleName());
@@ -162,10 +170,14 @@ public class ImageGenTool implements ToolHandler {
         return new ToolResult(false, response.toString(), error);
     }
 
-    private String jsonSuccessResponse(Path imagePath) {
+    private String jsonSuccessResponse(Path imagePath, String mediaTag) {
         ObjectNode response = MAPPER.createObjectNode();
         response.put("success", true);
-        response.put("image", imagePath.toString());
+        if (imagePath != null) {
+            response.put("image", imagePath.toString());
+        } else {
+            response.put("media_tag", mediaTag);
+        }
         response.put("modality", "text");
         response.put("upscaled", false);
         return response.toString();

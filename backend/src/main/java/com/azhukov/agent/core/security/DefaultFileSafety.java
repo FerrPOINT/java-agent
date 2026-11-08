@@ -222,6 +222,9 @@ public class DefaultFileSafety implements FileSafety {
  }
 
  private boolean matchesDenylist(Path normalized) {
+ if (normalized.startsWith(com.azhukov.agent.service.ArtifactProcessIsolation.ARTIFACT_ROOT)) {
+ return true;
+ }
  if (normalized == null) return false;
  String pathStr = normalized.toString();
 

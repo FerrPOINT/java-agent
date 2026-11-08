@@ -22,6 +22,7 @@ import java.util.Map;
 public class BrowserVisionTool implements ToolHandler {
 
     private final BrowserService browserService;
+    private final com.azhukov.agent.service.AttachmentArtifactService artifacts;
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
@@ -38,7 +39,11 @@ public class BrowserVisionTool implements ToolHandler {
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("data_url", screenshot.dataUrl());
             response.put("screenshot_path", screenshot.screenshotPath());
-            response.put("media_tag", screenshot.mediaTag());
+            if (session != null) {
+                String dataUrl = screenshot.dataUrl();
+                byte[] png = java.util.Base64.getDecoder().decode(dataUrl.substring(dataUrl.indexOf(',') + 1));
+                response.put("media_tag", artifacts.publishGenerated(session, "photo", screenshot.mimeType(), "screenshot.png", png));
+            }
             response.put("mime_type", screenshot.mimeType());
             return ToolResult.ok(BrowserToolResponses.success(response));
         } catch (Exception e) {

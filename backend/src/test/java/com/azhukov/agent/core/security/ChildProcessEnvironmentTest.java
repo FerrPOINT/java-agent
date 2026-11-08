@@ -1,4 +1,4 @@
-package com.azhukov.agent.tools.terminal;
+package com.azhukov.agent.core.security;
 
 import org.junit.jupiter.api.Test;
 

@@ -121,6 +121,30 @@ class TelegramMediaClientTest {
     class SendPhotoTest {
 
         @Test
+    void multipartArtifactKeepsForumTopicAndIsNotReplayed() throws Exception {
+        var payloads = new java.util.concurrent.CopyOnWriteArrayList<String>();
+        var server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/botfixture/sendDocument", exchange -> {
+            try (exchange) {
+                payloads.add(new String(exchange.getRequestBody().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8));
+            }
+        });
+        server.start();
+        try {
+            var mapper = new ObjectMapper();
+            var transport = new com.azhukov.agent.bot.config.BotConfig().telegramRestClient(mapper).mutate()
+                .baseUrl("http://127.0.0.1:" + server.getAddress().getPort()).build();
+            var client = new TelegramClient(transport, mapper, "fixture", 0);
+            assertThat(client.sendDocument(101, new byte[] {1}, "report.pdf", null, null, 55)).isEmpty();
+            assertThat(payloads).singleElement().asString()
+                .contains("name=\"message_thread_id\"")
+                .contains("\r\n\r\n55\r\n");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
         @DisplayName("returns message id on success")
         void sendPhotoSuccess() {
             stubMultipartChain(successResponseWithMessageId(10L));

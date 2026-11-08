@@ -8,7 +8,6 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.http.ResponseEntity;
 import org.springframework.web.client.RestClient;
 
 import java.util.Optional;
@@ -41,9 +40,40 @@ class AttachmentApiClientTest {
         when(postSpec.contentType(any())).thenReturn(postSpec);
         when(postSpec.body(any(Object.class))).thenReturn(postSpec);
         when(postSpec.retrieve()).thenReturn(responseSpec);
-        when(responseSpec.toBodilessEntity()).thenReturn(ResponseEntity.ok().build());
 
         client = new AttachmentApiClient(restClient, new ObjectMapper());
+    }
+
+    @Test
+    void claimsExactScopedArtifactAndConsumesBinaryResponse() {
+        var builder = RestClient.builder().baseUrl("http://backend");
+        var server = org.springframework.test.web.client.MockRestServiceServer.bindTo(builder).build();
+        var api = new AttachmentApiClient(builder.build(), new ObjectMapper());
+        var session = java.util.UUID.randomUUID();
+        String uri = "http://backend/api/v1/attachments/att_test/outbound?ownerId=101&sessionId=" + session;
+        var type = org.springframework.http.MediaType.APPLICATION_PDF;
+        server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(uri))
+            .andExpect(org.springframework.test.web.client.match.MockRestRequestMatchers.method(
+                org.springframework.http.HttpMethod.POST))
+            .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators
+                .withSuccess(new byte[] {1, 2}, type).header("Content-Disposition", "inline; filename=\"report.pdf\""));
+        server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(uri))
+            .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators
+                .withStatus(org.springframework.http.HttpStatus.CONFLICT));
+
+        server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(
+            "http://backend/api/v1/attachments/att_test/delivered?ownerId=101&sessionId=" + session + "&messageId=12"))
+            .andExpect(org.springframework.test.web.client.match.MockRestRequestMatchers.method(
+                org.springframework.http.HttpMethod.POST))
+            .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withNoContent());
+
+        var artifact = api.claimOutbound("att_test", "101", session).orElseThrow();
+        assertThat(artifact.fileName()).isEqualTo("report.pdf");
+        assertThat(artifact.mimeType()).isEqualTo("application/pdf");
+        assertThat(artifact.bytes()).containsExactly(1, 2);
+        assertThat(api.claimOutbound("att_test", "101", session)).isEmpty();
+        api.markOutboundDelivered("att_test", "101", session, 12);
+        server.verify();
     }
 
     @Test
@@ -113,23 +143,5 @@ class AttachmentApiClientTest {
             client.register(new byte[0], "x", "image/jpeg", "photo",
                 "telegram", "123", null, null);
         assertThat(result).isEmpty();
-    }
-
-    @Test
-    void markDeliveredPostsAndReturnsTrue() {
-        assertThat(client.markDelivered("att_abc")).isTrue();
-    }
-
-    @Test
-    void markDeliveredFalseOnFailure() {
-        when(responseSpec.toBodilessEntity())
-            .thenThrow(new RuntimeException("connect refused"));
-        assertThat(client.markDelivered("att_abc")).isFalse();
-    }
-
-    @Test
-    void markDeliveredFalseOnBlankId() {
-        assertThat(client.markDelivered(null)).isFalse();
-        assertThat(client.markDelivered(" ")).isFalse();
     }
 }

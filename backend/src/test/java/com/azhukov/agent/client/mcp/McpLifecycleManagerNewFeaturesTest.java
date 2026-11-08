@@ -509,38 +509,31 @@ class McpLifecycleManagerNewFeaturesTest {
         String png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
         byte[] expected = Base64.getDecoder().decode(png);
 
-        String tag = McpLifecycleManager.cacheMcpImageContent(new McpSchema.ImageContent(null, png, "image/png"));
+        String tag = McpLifecycleManager.publishMcpImageContent(new McpSchema.ImageContent(null, png, "image/png"), (d, m, n, bytes) -> "MEDIA:artifact:" + n);
 
-        assertThat(tag).startsWith("MEDIA:");
-        Path path = Path.of(tag.substring("MEDIA:".length()));
-        try {
-            assertThat(path.getFileName().toString()).endsWith(".png");
-            assertThat(Files.readAllBytes(path)).isEqualTo(expected);
-        } finally {
-            Files.deleteIfExists(path);
-        }
+        assertThat(tag).startsWith("MEDIA:artifact:");
     }
 
     @Test
     void cacheMcpImageContentRejectsNonImageMime() {
         String png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
-        assertThat(McpLifecycleManager.cacheMcpImageContent(
-            new McpSchema.ImageContent(null, png, "text/html"))).isEmpty();
+        assertThat(McpLifecycleManager.publishMcpImageContent(
+            new McpSchema.ImageContent(null, png, "text/html"), (d, m, n, bytes) -> "MEDIA:artifact:" + n)).isEmpty();
     }
 
     @Test
     void cacheMcpImageContentRejectsMissingData() {
-        assertThat(McpLifecycleManager.cacheMcpImageContent(
-            new McpSchema.ImageContent(null, "", "image/png"))).isEmpty();
+        assertThat(McpLifecycleManager.publishMcpImageContent(
+            new McpSchema.ImageContent(null, "", "image/png"), (d, m, n, bytes) -> "MEDIA:artifact:" + n)).isEmpty();
     }
 
     @Test
     void cacheMcpImageContentRejectsHtmlMasqueradingAsImage() {
         String html = Base64.getEncoder().encodeToString("<html></html>".getBytes(java.nio.charset.StandardCharsets.UTF_8));
 
-        assertThat(McpLifecycleManager.cacheMcpImageContent(
-            new McpSchema.ImageContent(null, html, "image/png"))).isEmpty();
+        assertThat(McpLifecycleManager.publishMcpImageContent(
+            new McpSchema.ImageContent(null, html, "image/png"), (d, m, n, bytes) -> "MEDIA:artifact:" + n)).isEmpty();
     }
 
     @Test
@@ -548,16 +541,9 @@ class McpLifecycleManagerNewFeaturesTest {
         byte[] jpeg = new byte[] {(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, 0x00, 0x01, (byte) 0xFF, (byte) 0xD9};
         String data = Base64.getEncoder().encodeToString(jpeg);
 
-        String tag = McpLifecycleManager.cacheMcpImageContent(new McpSchema.ImageContent(null, data, "image/jpeg"));
+        String tag = McpLifecycleManager.publishMcpImageContent(new McpSchema.ImageContent(null, data, "image/jpeg"), (d, m, n, bytes) -> "MEDIA:artifact:" + n);
 
-        assertThat(tag).startsWith("MEDIA:");
-        Path path = Path.of(tag.substring("MEDIA:".length()));
-        try {
-            assertThat(path.getFileName().toString()).endsWith(".jpg");
-            assertThat(Files.readAllBytes(path)).isEqualTo(jpeg);
-        } finally {
-            Files.deleteIfExists(path);
-        }
+        assertThat(tag).startsWith("MEDIA:artifact:");
     }
 
     @Test
@@ -581,7 +567,7 @@ class McpLifecycleManagerNewFeaturesTest {
         McpSchema.BlobResourceContents resource = new McpSchema.BlobResourceContents(
             "slack://files/F123/report.pdf", "application/pdf", Base64.getEncoder().encodeToString(pdf));
 
-        String out = McpLifecycleManager.renderMcpBlobResourceContents(resource);
+        String out = McpLifecycleManager.renderMcpBlobResourceContents(resource, null);
 
         assertThat(out).contains("saved to").contains("application/pdf").contains("read_file");
         Path path = resourcePathFromRendered(out);
@@ -594,11 +580,27 @@ class McpLifecycleManagerNewFeaturesTest {
     }
 
     @Test
+    void publishesEmbeddedPdfBytesForActiveSession() {
+        byte[] pdf = "%PDF-1.4".getBytes(StandardCharsets.US_ASCII);
+        var resource = new McpSchema.BlobResourceContents(
+            "slack://files/F123/report.pdf", "application/pdf", Base64.getEncoder().encodeToString(pdf));
+
+        String reference = McpLifecycleManager.renderMcpBlobResourceContents(resource, (kind, mime, name, bytes) -> {
+            assertThat(kind).isEqualTo("document");
+            assertThat(mime).isEqualTo("application/pdf");
+            assertThat(name).isEqualTo("report.pdf");
+            assertThat(bytes).isEqualTo(pdf);
+            return "MEDIA:artifact:att_pdf";
+        });
+        assertThat(reference).isEqualTo("MEDIA:artifact:att_pdf");
+    }
+
+    @Test
     void renderMcpBlobResourceContentsMalformedBase64FailsExplicitly() {
         McpSchema.BlobResourceContents resource = new McpSchema.BlobResourceContents(
             "x://y/report.pdf", "application/pdf", "!!!not-base64!!!");
 
-        assertThat(McpLifecycleManager.renderMcpBlobResourceContents(resource))
+        assertThat(McpLifecycleManager.renderMcpBlobResourceContents(resource, null))
             .contains("could not be decoded")
             .contains("application/pdf");
     }
@@ -609,7 +611,7 @@ class McpLifecycleManagerNewFeaturesTest {
         McpSchema.BlobResourceContents resource = new McpSchema.BlobResourceContents(
             "evil://host/../../etc/passwd", "application/pdf", Base64.getEncoder().encodeToString(pdf));
 
-        String out = McpLifecycleManager.renderMcpBlobResourceContents(resource);
+        String out = McpLifecycleManager.renderMcpBlobResourceContents(resource, null);
         Path path = resourcePathFromRendered(out);
         try {
             assertThat(path.getFileName().toString()).contains("passwd");
@@ -623,8 +625,8 @@ class McpLifecycleManagerNewFeaturesTest {
     void cacheMcpAudioContentRejectsNonAudioMime() {
         String data = Base64.getEncoder().encodeToString("x".getBytes(StandardCharsets.US_ASCII));
 
-        assertThat(McpLifecycleManager.cacheMcpAudioContent(
-            new McpSchema.AudioContent(null, data, "application/pdf"))).isEmpty();
+        assertThat(McpLifecycleManager.publishMcpAudioContent(
+            new McpSchema.AudioContent(null, data, "application/pdf"), (d, m, n, bytes) -> "MEDIA:artifact:" + n)).isEmpty();
     }
 
     @Test
@@ -632,16 +634,9 @@ class McpLifecycleManagerNewFeaturesTest {
         byte[] wav = "RIFFfakewav".getBytes(StandardCharsets.US_ASCII);
         String data = Base64.getEncoder().encodeToString(wav);
 
-        String tag = McpLifecycleManager.cacheMcpAudioContent(new McpSchema.AudioContent(null, data, "audio/wav"));
+        String tag = McpLifecycleManager.publishMcpAudioContent(new McpSchema.AudioContent(null, data, "audio/wav"), (d, m, n, bytes) -> "MEDIA:artifact:" + n);
 
-        assertThat(tag).startsWith("MEDIA:");
-        Path path = Path.of(tag.substring("MEDIA:".length()));
-        try {
-            assertThat(path.getFileName().toString()).endsWith(".wav");
-            assertThat(Files.readAllBytes(path)).isEqualTo(wav);
-        } finally {
-            Files.deleteIfExists(path);
-        }
+        assertThat(tag).startsWith("MEDIA:artifact:");
     }
 
     @Test
@@ -662,21 +657,20 @@ class McpLifecycleManagerNewFeaturesTest {
             new McpSchema.AudioContent(null, Base64.getEncoder().encodeToString(wav), "audio/wav"),
             new McpSchema.EmbeddedResource(null, new McpSchema.BlobResourceContents(
                 "slack://files/F123/report.pdf", "application/pdf", Base64.getEncoder().encodeToString(pdf)))
-        ), false, null, null), "slack");
+        ), false, null, null), "slack", (disposition, mime, file, bytes) -> {
+            if ("audio".equals(disposition)) {
+                assertThat(mime).isEqualTo("audio/wav");
+                assertThat(bytes).isEqualTo(wav);
+                return "MEDIA:artifact:att_audio";
+            }
+            assertThat(disposition).isEqualTo("document");
+            assertThat(mime).isEqualTo("application/pdf");
+            assertThat(bytes).isEqualTo(pdf);
+            return "MEDIA:artifact:att_document";
+        });
         String text = objectMapper.readTree(payload).get("result").asText();
-        Path audioPath = mediaPathFromText(text);
-        Path resourcePath = resourcePathFromRendered(text);
-
-        try {
-            assertThat(text).startsWith("File ID: F123");
-            assertThat(text.indexOf("MEDIA:")).isGreaterThan(text.indexOf("File ID: F123"));
-            assertThat(text.indexOf("[MCP resource saved to")).isGreaterThan(text.indexOf("MEDIA:"));
-            assertThat(Files.readAllBytes(audioPath)).isEqualTo(wav);
-            assertThat(Files.readAllBytes(resourcePath)).isEqualTo(pdf);
-        } finally {
-            Files.deleteIfExists(audioPath);
-            Files.deleteIfExists(resourcePath);
-        }
+        assertThat(text).containsSubsequence("File ID: F123", "MEDIA:artifact:att_audio",
+            "MEDIA:artifact:att_document");
     }
 
     @Test

@@ -36,7 +36,7 @@ class BrowserToolWrapperTest {
         tools.put("browser_scroll", new BrowserScrollTool(browserService));
         tools.put("browser_snapshot", new BrowserSnapshotTool(browserService));
         tools.put("browser_type", new BrowserTypeTool(browserService));
-        tools.put("browser_vision", new BrowserVisionTool(browserService));
+        tools.put("browser_vision", new BrowserVisionTool(browserService, mock(com.azhukov.agent.service.AttachmentArtifactService.class)));
 
         for (Map.Entry<String, ToolHandler> entry : tools.entrySet()) {
             ToolResult result = entry.getValue().execute("{", null, null);
@@ -57,11 +57,10 @@ class BrowserToolWrapperTest {
             true,
             "data:image/png;base64,AQID",
             "C:\\tmp\\browser_screenshot_1.png",
-            "MEDIA:C:\\tmp\\browser_screenshot_1.png",
             "image/png",
             null));
 
-        BrowserVisionTool tool = new BrowserVisionTool(browserService);
+        BrowserVisionTool tool = new BrowserVisionTool(browserService, mock(com.azhukov.agent.service.AttachmentArtifactService.class));
         ToolResult result = tool.execute("{\"question\":\"what is visible?\"}", null, null);
 
         assertThat(result.success()).isTrue();
@@ -69,7 +68,6 @@ class BrowserToolWrapperTest {
         assertThat(json.path("success").asBoolean()).isTrue();
         assertThat(json.path("data_url").asText()).isEqualTo("data:image/png;base64,AQID");
         assertThat(json.path("screenshot_path").asText()).isEqualTo("C:\\tmp\\browser_screenshot_1.png");
-        assertThat(json.path("media_tag").asText()).isEqualTo("MEDIA:C:\\tmp\\browser_screenshot_1.png");
         assertThat(json.path("mime_type").asText()).isEqualTo("image/png");
         verify(browserService).captureScreenshot();
     }
@@ -78,9 +76,9 @@ class BrowserToolWrapperTest {
     void visionReturnsStructuredFailureWhenCaptureFails() throws Exception {
         BrowserService browserService = mock(BrowserService.class);
         when(browserService.captureScreenshot()).thenReturn(new BrowserService.BrowserScreenshot(
-            false, null, null, null, null, "Screenshot failed: no data"));
+            false, null, null, null, "Screenshot failed: no data"));
 
-        BrowserVisionTool tool = new BrowserVisionTool(browserService);
+        BrowserVisionTool tool = new BrowserVisionTool(browserService, mock(com.azhukov.agent.service.AttachmentArtifactService.class));
         ToolResult result = tool.execute("{\"question\":\"what is visible?\"}", null, null);
 
         assertThat(result.success()).isFalse();

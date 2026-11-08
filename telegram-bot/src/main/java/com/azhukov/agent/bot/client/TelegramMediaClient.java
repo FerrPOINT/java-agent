@@ -52,8 +52,13 @@ class TelegramMediaClient {
     // ─── Photo ────────────────────────────────────────────────────
 
     Optional<Long> sendPhoto(long chatId, byte[] photo, String caption, String parseMode) {
+        return sendPhoto(chatId, photo, caption, parseMode, null);
+    }
+
+    Optional<Long> sendPhoto(long chatId, byte[] photo, String caption, String parseMode, Integer threadId) {
         MultipartBodyBuilder builder = new MultipartBodyBuilder();
         builder.part("chat_id", String.valueOf(chatId));
+        if (threadId != null) builder.part("message_thread_id", threadId);
         builder.part("photo", new ByteArrayResource(photo) {
             @Override public String getFilename() { return "photo.jpg"; }
         }, MediaType.IMAGE_JPEG);
@@ -72,9 +77,15 @@ class TelegramMediaClient {
 
     Optional<Long> sendDocument(long chatId, byte[] document, String fileName,
                                 String caption, String parseMode) {
+        return sendDocument(chatId, document, fileName, caption, parseMode, null);
+    }
+
+    Optional<Long> sendDocument(long chatId, byte[] document, String fileName,
+                                String caption, String parseMode, Integer threadId) {
         String name = (fileName == null || fileName.isBlank()) ? "document" : fileName;
         MultipartBodyBuilder builder = new MultipartBodyBuilder();
         builder.part("chat_id", String.valueOf(chatId));
+        if (threadId != null) builder.part("message_thread_id", threadId);
         builder.part("document", new ByteArrayResource(document) {
             @Override public String getFilename() { return name; }
         }, MediaType.APPLICATION_OCTET_STREAM);
@@ -111,9 +122,15 @@ class TelegramMediaClient {
 
     Optional<Long> sendVideo(long chatId, byte[] video, String fileName,
                              String caption, String parseMode) {
+        return sendVideo(chatId, video, fileName, caption, parseMode, null);
+    }
+
+    Optional<Long> sendVideo(long chatId, byte[] video, String fileName,
+                             String caption, String parseMode, Integer threadId) {
         String name = (fileName == null || fileName.isBlank()) ? "video.mp4" : fileName;
         MultipartBodyBuilder builder = new MultipartBodyBuilder();
         builder.part("chat_id", String.valueOf(chatId));
+        if (threadId != null) builder.part("message_thread_id", threadId);
         builder.part("video", new ByteArrayResource(video) {
             @Override public String getFilename() { return name; }
         }, MediaType.APPLICATION_OCTET_STREAM);
@@ -131,6 +148,10 @@ class TelegramMediaClient {
     // ─── Audio as Voice ───────────────────────────────────────────
 
     Optional<Long> sendAudioAsVoice(long chatId, byte[] audio, String fileName, String caption) {
+        return sendAudioAsVoice(chatId, audio, fileName, caption, null);
+    }
+
+    Optional<Long> sendAudioAsVoice(long chatId, byte[] audio, String fileName, String caption, Integer threadId) {
         String name = (fileName == null || fileName.isBlank()) ? "voice.ogg" : fileName;
         // Caption ladder: MarkdownV2 first, plain retry when Telegram rejects
         // the entities. A bare '*' or '_' in a transcript must not kill the
@@ -161,6 +182,7 @@ class TelegramMediaClient {
         for (int i = 0; i < texts.size(); i++) {
             MultipartBodyBuilder builder = new MultipartBodyBuilder();
             builder.part("chat_id", String.valueOf(chatId));
+            if (threadId != null) builder.part("message_thread_id", threadId);
             builder.part("voice", new ByteArrayResource(audio) {
                 @Override public String getFilename() { return name; }
             }, MediaType.parseMediaType("audio/ogg"));
@@ -188,11 +210,16 @@ class TelegramMediaClient {
     // ─── Media Group (album) ──────────────────────────────────────
 
     List<Long> sendMediaGroup(long chatId, List<TelegramClient.PhotoInput> photos) {
+        return sendMediaGroup(chatId, photos, null);
+    }
+
+    List<Long> sendMediaGroup(long chatId, List<TelegramClient.PhotoInput> photos, Integer threadId) {
         if (photos == null || photos.isEmpty()) {
             return List.of();
         }
         MultipartBodyBuilder builder = new MultipartBodyBuilder();
         builder.part("chat_id", String.valueOf(chatId));
+        if (threadId != null) builder.part("message_thread_id", threadId);
 
         // Build the media JSON array with attach:// references
         List<Map<String, Object>> mediaArray = new ArrayList<>();

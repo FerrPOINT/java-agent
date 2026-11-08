@@ -17,7 +17,6 @@ import com.azhukov.agent.bot.goal.GoalAutoContinueService;
 import com.azhukov.agent.bot.group.GroupMessageFilter;
 import com.azhukov.agent.bot.keyboard.CallbackQueryHandler;
 import com.azhukov.agent.bot.keyboard.ClarifyTextInterceptor;
-import com.azhukov.agent.bot.media.AgentMediaPaths;
 import com.azhukov.agent.bot.media.InboundMediaHandler;
 import com.azhukov.agent.bot.media.MediaDeliveryService;
 import com.azhukov.agent.bot.polling.UpdateEvent;
@@ -31,10 +30,6 @@ import com.azhukov.agent.bot.typing.TypingManager;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.io.File;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -502,7 +497,16 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
 
                 typingManager.flushTyping(chatId);
                 if (backendResponse != null && !backendResponse.isBlank()) {
-                    confirmed = streamEditor.finalizeTurn(chatId, backendResponse, event.messageId(), threadId);
+                    var media = properties.isMediaDeliveryEnabled() ? mediaDeliveryService.extractMediaTags(backendResponse)
+                        : new MediaDeliveryService.ExtractionResult(List.of(), backendResponse);
+                    confirmed = streamEditor.finalizeTurn(chatId, media.cleanedText(), event.messageId(), threadId);
+                    if (!media.media().isEmpty()) {
+                        var sessionIdForMedia = result.backendSessionId() != null ? result.backendSessionId() : session.getBackendSessionId();
+                        Runnable sendArtifacts = () -> deliverMedia(chatId, media.media(), threadId > 0 ? (int) threadId : null,
+                            Long.toString(event.userId()), sessionIdForMedia);
+                        if (confirmed) sendArtifacts.run();
+                        else if (streamEditor.hasDeferredDelivery(chatId)) streamEditor.afterDeferredDelivery(chatId, sendArtifacts);
+                    }
                 }
             }
 
@@ -837,60 +841,69 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
     }
 
     @Override
-    public void deliverMedia(long chatId, List<MediaDeliveryService.MediaDescriptor> media, Integer threadId) {
-        if (media == null || media.isEmpty()) return;
-
-        // Partition: images (not as_document) go to batch, everything else goes individually
-        List<MediaDeliveryService.MediaDescriptor> imageBatch = new ArrayList<>();
-        List<MediaDeliveryService.MediaDescriptor> individualFiles = new ArrayList<>();
-
-        for (MediaDeliveryService.MediaDescriptor desc : media) {
-            // Security: validate path against allowed base directories
-            if (!isMediaPathAllowed(desc.path())) {
-                log.warn("media_delivery_rejected reason=outside_allowed_root file={}", mediaFileName(desc));
+    public void deliverMedia(long chatId, List<MediaDeliveryService.MediaDescriptor> media, Integer threadId,
+                             String owner, java.util.UUID sessionId) {
+        if (owner == null || sessionId == null || media.isEmpty()) return;
+        var photos = new ArrayList<AttachmentApiClient.Outbound>();
+        int pendingPhotoBytes = 0;
+        boolean allConfirmed = true;
+        for (var descriptor : media) {
+            AttachmentApiClient.Outbound artifact;
+            try {
+                artifact = attachmentApiClient.claimOutbound(descriptor.artifactId(), owner, sessionId).orElse(null);
+            } catch (AttachmentApiClient.OutboundUnavailable unavailable) {
+                allConfirmed = false;
                 continue;
             }
-            // WP-11: skip artifacts that were already delivered — a retry after
-            // an ambiguous send must never re-send the same file.
-            String artifactId = artifactIdForPath(desc.path());
-            if (artifactId != null && isArtifactDelivered(artifactId)) {
-                log.info("Skipping already-delivered artifact {} ({})", artifactId, desc.path());
+            if (artifact == null) continue;
+            String mime = artifact.mimeType();
+            boolean asPhoto = mime.startsWith("image/") && !descriptor.asDocument()
+                && artifact.bytes().length <= 10_000_000;
+            if (!asPhoto || photos.size() == MediaDeliveryService.MAX_MEDIA_GROUP_SIZE
+                    || pendingPhotoBytes + artifact.bytes().length > MediaDeliveryService.MAX_MEDIA_GROUP_BYTES) {
+                allConfirmed &= sendPhotoBatch(chatId, threadId, owner, sessionId, photos);
+                photos.clear();
+                pendingPhotoBytes = 0;
+            }
+            if (asPhoto) {
+                photos.add(artifact);
+                pendingPhotoBytes += artifact.bytes().length;
                 continue;
             }
-            if (desc.isImage() && !desc.asDocument()) {
-                imageBatch.add(desc);
+            Optional<Long> sent;
+            if (!descriptor.asDocument() && mime.startsWith("video/")) {
+                sent = telegramClient.sendVideo(chatId, artifact.bytes(), artifact.fileName(), null, null, threadId);
+            } else if (!descriptor.asDocument() && descriptor.asVoice() && mime.startsWith("audio/")) {
+                sent = telegramClient.sendAudioAsVoice(chatId, artifact.bytes(), artifact.fileName(), null, threadId);
             } else {
-                individualFiles.add(desc);
+                sent = telegramClient.sendDocument(chatId, artifact.bytes(), artifact.fileName(), null, null, threadId);
             }
+            sent.ifPresent(id -> attachmentApiClient.markOutboundDelivered(artifact.id(), owner, sessionId, id));
+            allConfirmed &= sent.isPresent();
         }
-
-        // Deliver image batch via sendMediaGroup (up to 10 per call)
-        if (!imageBatch.isEmpty()) {
-            deliverImageBatch(chatId, imageBatch);
-        }
-
-        // Deliver individual files
-        for (MediaDeliveryService.MediaDescriptor desc : individualFiles) {
-            deliverSingleMedia(chatId, desc);
+        allConfirmed &= sendPhotoBatch(chatId, threadId, owner, sessionId, photos);
+        if (!allConfirmed) {
+            telegramClient.sendMessage(chatId, "Delivery could not be confirmed for one or more attachments.",
+                null, null, threadId, null, false);
         }
     }
 
-    /**
-     * WP-11: outbound artifacts live under the backend cache root as
-     * {@code <owner>/att_<id>.<ext>} — resolve the artifact id from a
-     * delivered file path. Returns null for non-artifact (legacy) paths.
-     */
-    static String artifactIdForPath(String path) {
-        if (path == null) return null;
-        java.util.regex.Matcher m = java.util.regex.Pattern
-            .compile("(att_[a-f0-9]+)\\.[a-zA-Z0-9]+$").matcher(path);
-        return m.find() ? m.group(1) : null;
-    }
-
-    private boolean isArtifactDelivered(String artifactId) {
-        return attachmentApiClient.find(artifactId)
-            .map(AttachmentApiClient.Registered::duplicate)
-            .orElse(false);
+    private boolean sendPhotoBatch(long chatId, Integer threadId, String owner, java.util.UUID sessionId,
+                                List<AttachmentApiClient.Outbound> photos) {
+        if (photos.isEmpty()) return true;
+        if (photos.size() == 1) {
+            var photo = photos.getFirst();
+            var receipt = telegramClient.sendPhoto(chatId, photo.bytes(), null, null, threadId);
+            receipt.ifPresent(id -> attachmentApiClient.markOutboundDelivered(photo.id(), owner, sessionId, id));
+            return receipt.isPresent();
+        }
+        var inputs = photos.stream().map(photo -> new TelegramClient.PhotoInput(photo.bytes(), photo.fileName(), null)).toList();
+        var receipts = telegramClient.sendMediaGroup(chatId, inputs, threadId);
+        if (receipts.size() != photos.size()) return false;
+        for (int i = 0; i < photos.size(); i++) {
+            attachmentApiClient.markOutboundDelivered(photos.get(i).id(), owner, sessionId, receipts.get(i));
+        }
+        return true;
     }
 
     /**
@@ -1013,9 +1026,6 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         if (properties.isMediaDeliveryEnabled()) {
             MediaDeliveryService.ExtractionResult extraction = mediaDeliveryService.extractMediaTags(text);
             textForDisplay = extraction.cleanedText();
-            if (!extraction.media().isEmpty()) {
-                deliverMedia(chatId, extraction.media(), threadId);
-            }
         }
         if (textForDisplay == null || textForDisplay.isBlank()) {
             return false;
@@ -1085,10 +1095,6 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         if (properties.isMediaDeliveryEnabled()) {
             MediaDeliveryService.ExtractionResult extraction = mediaDeliveryService.extractMediaTags(text);
             textForDisplay = extraction.cleanedText();
-            // Deliver extracted media files as native Telegram attachments
-            if (!extraction.media().isEmpty()) {
-                deliverMedia(chatId, extraction.media(), threadId);
-            }
         }
 
         if (textForDisplay.isBlank()) {
@@ -1134,169 +1140,6 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                 }
             }
         }
-    }
-
-    /**
-     * S-2: Validate that a media file path is within allowed base directories.
-     * Security check to prevent path-traversal attacks.
-     *
-     * @param path the file path to validate
-     * @return true if the path is within an allowed directory
-     */
-    private boolean isMediaPathAllowed(String path) {
-        try {
-            Path resolved = Paths.get(path).toAbsolutePath().normalize();
-            Path workingDir = Paths.get(properties.getWorkingDirectory()).toAbsolutePath().normalize();
-            Path mediaDir = AgentMediaPaths.mediaDir();
-            return resolved.startsWith(workingDir) || resolved.startsWith(mediaDir);
-        } catch (Exception e) {
-            return false;
-        }
-    }
-
-    /**
-     * Deliver a batch of images via sendMediaGroup (up to 10 per call).
-     * For a single image, uses sendPhoto instead.
-     */
-    private void deliverImageBatch(long chatId, List<MediaDeliveryService.MediaDescriptor> images) {
-        if (images.size() == 1) {
-            // Single image — use sendPhoto
-            MediaDeliveryService.MediaDescriptor desc = images.get(0);
-            try {
-                File file = new File(desc.path());
-                if (!file.exists() || !file.isFile()) {
-                    log.warn("Media file not found: {}", desc.path());
-                    // M2: Notify user that the referenced file doesn't exist
-                    telegramClient.sendMessage(chatId, "⚠️ Media file not found: " + desc.path());
-                    return;
-                }
-                byte[] data = Files.readAllBytes(file.toPath());
-                String fileName = file.getName();
-                java.util.Optional<Long> sent = telegramClient.sendPhoto(chatId, data, null, null);
-                markArtifactDelivered(artifactIdForPath(desc.path()), sent);
-                log.debug("Sent photo {} to chat {}", desc.path(), chatId);
-            } catch (Exception e) {
-                log.error("Failed to send photo {} to chat {}: {}", desc.path(), chatId, e.getMessage());
-            }
-            return;
-        }
-
-        // Multiple images — chunk into groups of 10
-        for (int i = 0; i < images.size(); i += MediaDeliveryService.MAX_MEDIA_GROUP_SIZE) {
-            int end = Math.min(i + MediaDeliveryService.MAX_MEDIA_GROUP_SIZE, images.size());
-            List<MediaDeliveryService.MediaDescriptor> chunk = images.subList(i, end);
-
-            List<TelegramClient.PhotoInput> photoInputs = new ArrayList<>();
-            for (MediaDeliveryService.MediaDescriptor desc : chunk) {
-                try {
-                    File file = new File(desc.path());
-                    if (!file.exists() || !file.isFile()) {
-                        log.warn("Media file not found, skipping: {}", desc.path());
-                        // M2: Notify user that the referenced file doesn't exist
-                        telegramClient.sendMessage(chatId, "⚠️ Media file not found: " + desc.path());
-                        continue;
-                    }
-                    byte[] data = Files.readAllBytes(file.toPath());
-                    String fileName = file.getName();
-                    // First photo in the group gets the caption (if any)
-                    String caption = (photoInputs.isEmpty()) ? null : null;
-                    photoInputs.add(new TelegramClient.PhotoInput(data, fileName, caption));
-                } catch (Exception e) {
-                    log.warn("Failed to read media file {}: {}", desc.path(), e.getMessage());
-                }
-            }
-
-            if (!photoInputs.isEmpty()) {
-                List<Long> messageIds = telegramClient.sendMediaGroup(chatId, photoInputs);
-                // WP-11: mark every artifact in the group delivered with the first
-                // platform message id of the album.
-                String firstMsgId = messageIds == null || messageIds.isEmpty()
-                    ? null : String.valueOf(messageIds.get(0));
-                for (MediaDeliveryService.MediaDescriptor desc : chunk) {
-                    String artifactId = artifactIdForPath(desc.path());
-                    if (artifactId != null) {
-                        attachmentApiClient.markDelivered(artifactId, firstMsgId);
-                    }
-                }
-                log.debug("Sent media group of {} to chat {} (messageIds: {})",
-                    photoInputs.size(), chatId, messageIds);
-            }
-        }
-    }
-
-    /**
-     * Deliver a single media file, routing by extension.
-     * - Video → sendVideo
-     * - Audio with [[audio_as_voice]] → sendAudioAsVoice
-     * - Image with [[as_document]] → sendDocument
-     * - Everything else → sendDocument
-     */
-    private void deliverSingleMedia(long chatId, MediaDeliveryService.MediaDescriptor desc) {
-        try {
-            File file = new File(desc.path());
-            if (!file.exists() || !file.isFile()) {
-                log.warn("media_delivery_rejected reason=file_missing file={}", mediaFileName(desc));
-                // M2: Notify user that the referenced file doesn't exist
-                telegramClient.sendMessage(chatId, "⚠️ Media file not found: " + desc.path());
-                return;
-            }
-            byte[] data = Files.readAllBytes(file.toPath());
-            String fileName = file.getName();
-            String parseMode = properties.getParseMode();
-
-            String artifactId = artifactIdForPath(desc.path());
-            if (desc.isVideo()) {
-                java.util.Optional<Long> sent = telegramClient.sendVideo(chatId, data, fileName, null, null);
-                logMediaDelivery("video", desc, data.length, sent);
-                markArtifactDelivered(artifactId, sent);
-            } else if (desc.isAudio() && desc.asVoice()) {
-                java.util.Optional<Long> sent = telegramClient.sendAudioAsVoice(chatId, data, fileName, null);
-                logMediaDelivery("voice", desc, data.length, sent);
-                markArtifactDelivered(artifactId, sent);
-            } else {
-                // Document (covers as_document images, audio without voice, PDFs, etc.)
-                java.util.Optional<Long> sent = telegramClient.sendDocument(chatId, data, fileName, null, null);
-                logMediaDelivery("document", desc, data.length, sent);
-                markArtifactDelivered(artifactId, sent);
-            }
-        } catch (Exception e) {
-            log.error("media_delivery_failed type={} file={} error={}", mediaType(desc), mediaFileName(desc),
-                e.getClass().getSimpleName());
-        }
-    }
-
-    private void logMediaDelivery(String type, MediaDeliveryService.MediaDescriptor desc, int bytes,
-                                  java.util.Optional<Long> platformMessageId) {
-        if (platformMessageId != null && platformMessageId.isPresent()) {
-            log.info("media_delivery_sent type={} file={} bytes={} receipt=true", type, mediaFileName(desc), bytes);
-        } else {
-            log.warn("media_delivery_failed type={} file={} bytes={} reason=telegram_no_receipt",
-                type, mediaFileName(desc), bytes);
-        }
-    }
-
-    private static String mediaType(MediaDeliveryService.MediaDescriptor desc) {
-        if (desc.isVideo()) return "video";
-        if (desc.isAudio() && desc.asVoice()) return "voice";
-        return "document";
-    }
-
-    private static String mediaFileName(MediaDeliveryService.MediaDescriptor desc) {
-        if (desc.path() == null) return "<invalid>";
-        try {
-            Path name = Path.of(desc.path()).getFileName();
-            return name == null ? "<invalid>" : name.toString();
-        } catch (java.nio.file.InvalidPathException e) {
-            return "<invalid>";
-        }
-    }
-
-    /** WP-11: record the outbound receipt (platform message id) after a successful send. */
-    private void markArtifactDelivered(String artifactId, java.util.Optional<Long> platformMessageId) {
-        if (artifactId == null) return;
-        attachmentApiClient.markDelivered(artifactId,
-            platformMessageId == null ? null
-                : platformMessageId.map(String::valueOf).orElse(null));
     }
 
     @PostConstruct

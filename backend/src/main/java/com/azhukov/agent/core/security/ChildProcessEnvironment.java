@@ -1,4 +1,4 @@
-package com.azhukov.agent.tools.terminal;
+package com.azhukov.agent.core.security;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -6,7 +6,7 @@ import java.util.Locale;
 import java.util.Map;
 
 /** Builds a minimal environment for agent-started shell processes. */
-final class ChildProcessEnvironment {
+public final class ChildProcessEnvironment {
     private static final List<String> SAFE_PARENT_PREFIXES = List.of(
         "PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_", "TERM", "TMPDIR", "TMP", "TEMP",
         "SHELL", "XDG_", "JAVA_HOME"
@@ -24,7 +24,7 @@ final class ChildProcessEnvironment {
     private ChildProcessEnvironment() {
     }
 
-    static void prepare(Map<String, String> environment, Map<String, String> sessionEnvironment) {
+    public static void prepare(Map<String, String> environment, Map<String, String> sessionEnvironment) {
         Map<String, String> inherited = new LinkedHashMap<>(environment);
         environment.clear();
         inherited.forEach((name, value) -> {
@@ -41,7 +41,7 @@ final class ChildProcessEnvironment {
         }
     }
 
-    static boolean isSafeSessionVariable(String name) {
+    public static boolean isSafeSessionVariable(String name) {
         if (name == null || !name.matches("[A-Za-z_][A-Za-z0-9_]*")) {
             return false;
         }

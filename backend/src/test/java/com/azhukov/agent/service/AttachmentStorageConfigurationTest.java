@@ -46,7 +46,7 @@ class AttachmentStorageConfigurationTest {
             var repository = mock(AttachmentArtifactRepository.class);
             when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
             context.registerBean(AttachmentArtifactRepository.class, () -> repository);
-            context.register(AttachmentArtifactService.class);
+            context.register(AttachmentArtifactService.class, ArtifactProcessIsolation.class);
             context.refresh();
             var result = context.getBean(AttachmentArtifactService.class).register("u1", "default",
                 null, null, "cli", "document", "text/plain", "proof.txt", "durable".getBytes());

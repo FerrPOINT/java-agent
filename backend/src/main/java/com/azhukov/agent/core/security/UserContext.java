@@ -85,6 +85,23 @@ public final class UserContext {
         return getUserId() != null ? getUserId() : requestedUserId;
     }
 
+    /** Resolve an explicit Telegram gateway owner, or use the authenticated human owner. */
+    public static String requireRequestOwner(String requested) {
+        String principal = getUserId();
+        var origin = NativeIdentityOrigin.current();
+        if (origin != null && origin.kind() == NativeIdentityOrigin.Kind.GATEWAY_KEY) {
+            if (!origin.mayNameNativeScope() || requested == null || !requested.matches("[1-9][0-9]{0,18}")) {
+                throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.BAD_REQUEST, "Telegram sender ID required");
+            }
+            return requested;
+        }
+        if (principal == null || (requested != null && !principal.equals(requested))) {
+            throw new org.springframework.security.access.AccessDeniedException("Requested owner is not authenticated");
+        }
+        return principal;
+    }
+
     /** A queued task retains the exact proof and never captures a refreshed role/TTL. */
     public static Runnable wrap(Runnable work) {
         var captured = Snapshot.capture();

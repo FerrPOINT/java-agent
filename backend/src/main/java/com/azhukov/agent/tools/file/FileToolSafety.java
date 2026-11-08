@@ -123,7 +123,7 @@ public final class FileToolSafety {
         return ensureReadable(properties, fileSafety, path, path.toString()) == null;
     }
 
-    static ToolResult ensureWritable(FileSafety fileSafety, Path path, String rawPath, Boolean crossProfile) {
+    public static ToolResult ensureWritable(FileSafety fileSafety, Path path, String rawPath, Boolean crossProfile) {
         ToolResult writeCheck = ensurePathAllowed(fileSafety, path, rawPath);
         if (writeCheck != null) {
             return writeCheck;

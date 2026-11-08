@@ -329,6 +329,7 @@ public class DefaultContextReferenceService implements ContextReferenceService {
          }
          String workingDir = properties.getCore().getWorkingDirectory();
  ProcessBuilder pb = new ProcessBuilder(command.split(" "));
+ com.azhukov.agent.core.security.ChildProcessEnvironment.prepare(pb.environment(), null);
  pb.directory(workingDir != null ? new java.io.File(workingDir) : new java.io.File("."));
  pb.redirectInput(ProcessBuilder.Redirect.from(new java.io.File("/dev/null")));
  Process process = pb.start();

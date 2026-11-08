@@ -85,6 +85,7 @@ public class PtySessionService {
             ProcessBuilder pb = new ProcessBuilder(SCRIPT, "-qfc",
                 System.getenv().getOrDefault("SHELL", "/bin/bash"), "/dev/null");
             pb.directory(workdir.toFile());
+            com.azhukov.agent.core.security.ChildProcessEnvironment.prepare(pb.environment(), null);
             pb.redirectErrorStream(true);
             Process process = pb.start();
             String id = "pty_" + UUID.randomUUID().toString().replace("-", "");

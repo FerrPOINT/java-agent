@@ -934,7 +934,7 @@ class SpringToolRegistryTest {
             new BrowserBackTool(browserService),
             new BrowserPressTool(browserService),
             new BrowserGetImagesTool(browserService),
-            new BrowserVisionTool(browserService),
+            new BrowserVisionTool(browserService, mock(com.azhukov.agent.service.AttachmentArtifactService.class)),
             new BrowserConsoleTool(browserService),
             new BrowserCdpTool(browserService),
             new BrowserDialogTool(browserService)

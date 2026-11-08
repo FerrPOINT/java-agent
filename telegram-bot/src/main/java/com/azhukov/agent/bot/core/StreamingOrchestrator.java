@@ -242,7 +242,7 @@ public class StreamingOrchestrator {
         /** Resolve the model name used for the footer (override → result → default). */
         String resolveModelUsed(BotSessionEntity session, AgentBackendClient.ChatResult result);
         /** Deliver extracted media files as native Telegram attachments. */
-        void deliverMedia(long chatId, List<MediaDeliveryService.MediaDescriptor> media, Integer threadId);
+        void deliverMedia(long chatId, List<MediaDeliveryService.MediaDescriptor> media, Integer threadId, String owner, java.util.UUID sessionId);
         /** Build the message with an optional PII-redacted session-context prefix. */
         String buildMessageWithContext(String messageText, BotSessionEntity session, long chatId);
         /**
@@ -487,10 +487,13 @@ public class StreamingOrchestrator {
                         finalized[0] = delivered;
                         if (extraction != null && !extraction.media().isEmpty()) {
                             Integer mediaThreadId = messageThreadId > 0 ? (int) messageThreadId : null;
-                            if (delivered) hooks.deliverMedia(chatId, extraction.media(), mediaThreadId);
+                            var mediaSessionId = result.backendSessionId() != null
+                                ? result.backendSessionId() : session.getBackendSessionId();
+                            Runnable sendArtifacts = () -> hooks.deliverMedia(chatId, extraction.media(), mediaThreadId,
+                                session.getUserId(), mediaSessionId);
+                            if (delivered) sendArtifacts.run();
                             else if (streamEditor.hasDeferredDelivery(chatId)) {
-                                streamEditor.afterDeferredDelivery(chatId,
-                                    () -> hooks.deliverMedia(chatId, extraction.media(), mediaThreadId));
+                                streamEditor.afterDeferredDelivery(chatId, sendArtifacts);
                             }
                         }
                     }

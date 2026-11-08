@@ -31,7 +31,9 @@ class ProviderToolGateRegistryTest {
     }
 
     private static com.azhukov.agent.tools.tts.TtsTool ttsTool(java.util.List<com.azhukov.agent.service.tts.TtsProvider> providers) {
-        return new com.azhukov.agent.tools.tts.TtsTool(providers, new AgentProperties());
+        return new com.azhukov.agent.tools.tts.TtsTool(providers, new AgentProperties(),
+            Mockito.mock(com.azhukov.agent.core.security.FileSafety.class),
+            org.mockito.Mockito.mock(com.azhukov.agent.service.AttachmentArtifactService.class));
     }
 
     @Test
@@ -63,7 +65,8 @@ class ProviderToolGateRegistryTest {
         // agent.image-gen.enabled=false (default) → ObjectProvider empty
         AgentProperties properties = new AgentProperties();
         var providerProvider = emptyObjectProvider();
-        var tool = new com.azhukov.agent.tools.imagegen.ImageGenTool(providerProvider, properties);
+        var tool = new com.azhukov.agent.tools.imagegen.ImageGenTool(providerProvider, properties,
+            Mockito.mock(com.azhukov.agent.service.AttachmentArtifactService.class));
         var registry = registryWithBeans(properties, tool);
 
         assertThat(registry.getDefinitions())
@@ -76,7 +79,8 @@ class ProviderToolGateRegistryTest {
         AgentProperties properties = new AgentProperties();
         properties.getImageGen().setProvider("pollinations");
         var providerProvider = objectProviderWith(new PollinationsStub());
-        var tool = new com.azhukov.agent.tools.imagegen.ImageGenTool(providerProvider, properties);
+        var tool = new com.azhukov.agent.tools.imagegen.ImageGenTool(providerProvider, properties,
+            Mockito.mock(com.azhukov.agent.service.AttachmentArtifactService.class));
         var registry = registryWithBeans(properties, tool);
 
         assertThat(registry.getDefinitions())

@@ -36,7 +36,7 @@ public class AttachmentApiClient extends BaseBackendClient {
 
     /**
      * Register an inbound artifact. Returns empty on ANY failure (network,
-     * 4xx/5xx, unparsable body) — the caller decides the fallback.
+     * 4xx/5xx or an unparsable body).
      */
     public java.util.Optional<Registered> register(byte[] data, String fileName, String mimeType,
                                                    String disposition, String origin,
@@ -81,68 +81,44 @@ public class AttachmentApiClient extends BaseBackendClient {
                 node.path("contentHash").asText(null),
                 node.path("duplicate").asBoolean(false)));
         } catch (Exception e) {
-            log.debug("attachment register failed ({}), caller falls back to legacy path: {}",
+            log.debug("attachment register failed ({}): {}",
                 e.getClass().getSimpleName(), e.getMessage());
             return java.util.Optional.empty();
         }
     }
 
-    /**
-     * Mark an artifact delivered after a successful outbound send.
-     * Idempotent server-side; failures are logged, never thrown.
-     */
-    public boolean markDelivered(String artifactId) {
-        return markDelivered(artifactId, null);
+    public record Outbound(String id, String fileName, String mimeType, byte[] bytes) {}
+
+    static final class OutboundUnavailable extends RuntimeException {
+        OutboundUnavailable(Throwable cause) { super(cause); }
     }
 
-    /**
-     * Mark an artifact delivered, recording the platform message id of the
-     * successful send (WP-11 outbound receipt). A retry after an ambiguous
-     * send re-posts; the server keeps the FIRST receipt.
-     */
-    public boolean markDelivered(String artifactId, String platformMessageId) {
-        if (artifactId == null || artifactId.isBlank()) {
-            return false;
-        }
+    public java.util.Optional<Outbound> claimOutbound(String id, String owner, UUID sessionId) {
         try {
-            String path = "/api/v1/attachments/" + artifactId + "/delivered"
-                + (platformMessageId == null || platformMessageId.isBlank()
-                    ? "" : "?messageId=" + platformMessageId);
-            restClient.post()
-                .uri(path)
-                .retrieve()
-                .toBodilessEntity();
-            return true;
-        } catch (Exception e) {
-            log.debug("attachment markDelivered failed for {}: {}", artifactId, e.getMessage());
-            return false;
+            var response = restClient.post().uri(uri -> uri.path("/api/v1/attachments/{id}/outbound")
+                .queryParam("ownerId", owner).queryParam("sessionId", sessionId).build(id))
+                .retrieve().toEntity(byte[].class);
+            byte[] bytes = response.getBody();
+            if (bytes == null || bytes.length == 0) throw new IllegalStateException("Empty artifact body");
+            var headers = response.getHeaders();
+            var type = headers.getContentType();
+            return java.util.Optional.of(new Outbound(id, sanitize(headers.getContentDisposition().getFilename()),
+                type == null ? MediaType.APPLICATION_OCTET_STREAM_VALUE : type.toString(), bytes));
+        } catch (org.springframework.web.client.HttpClientErrorException.Conflict alreadyClaimed) {
+            return java.util.Optional.empty();
+        } catch (org.springframework.web.client.RestClientException | IllegalStateException e) {
+            log.warn("Outbound artifact {} unavailable ({})", id, e.getClass().getSimpleName());
+            throw new OutboundUnavailable(e);
         }
     }
 
-    /**
-     * Fetch artifact metadata by id (null on any failure) — the outbound lane
-     * uses this to learn whether an artifact was already delivered.
-     */
-    public java.util.Optional<Registered> find(String artifactId) {
-        if (artifactId == null || artifactId.isBlank()) {
-            return java.util.Optional.empty();
-        }
+    public void markOutboundDelivered(String id, String owner, UUID sessionId, long messageId) {
         try {
-            String json = restClient.get()
-                .uri("/api/v1/attachments/{id}", artifactId)
-                .retrieve()
-                .body(String.class);
-            JsonNode node = readTree(json);
-            if (node == null || node.path("id").asText("").isBlank()) {
-                return java.util.Optional.empty();
-            }
-            return java.util.Optional.of(new Registered(
-                node.path("id").asText(),
-                node.path("contentHash").asText(null),
-                "delivered".equals(node.path("state").asText(""))));
+            restClient.post().uri(uri -> uri.path("/api/v1/attachments/{id}/delivered")
+                .queryParam("ownerId", owner).queryParam("sessionId", sessionId).queryParam("messageId", messageId)
+                .build(id)).retrieve().toBodilessEntity();
         } catch (Exception e) {
-            log.debug("attachment lookup failed for {}: {}", artifactId, e.getMessage());
-            return java.util.Optional.empty();
+            log.warn("Could not record outbound artifact {} receipt ({})", id, e.getClass().getSimpleName());
         }
     }
 
