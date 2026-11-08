@@ -120,6 +120,9 @@ public class CronJobEntity {
     @Column(name = "last_run_at")
     private Instant lastRunAt;
 
+    @Column(name = "configuration_revision", nullable = false)
+    private long configurationRevision;
+
     @Column(name = "next_run_at")
     private Instant nextRunAt;
 

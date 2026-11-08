@@ -134,7 +134,7 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
             assertThat(acquired.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
             var dismiss = pool.submit(() -> {
                 com.azhukov.agent.core.security.UserContext.set(owner, com.azhukov.agent.core.security.UserContext.ROLE_USER);
-                try { return suggestionService.dismissSuggestion(id.toString()); }
+                try { return suggestionService.dismissSuggestion(id); }
                 finally { com.azhukov.agent.core.security.UserContext.clear(); }
             });
             try {
@@ -193,7 +193,7 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
             cron.setEnabled(true);
             com.azhukov.agent.core.security.UserContext.set(owner, com.azhukov.agent.core.security.UserContext.ROLE_USER);
             var jobId = tx.execute(status -> {
-                var job = suggestionService.acceptSuggestion(id.toString());
+                var job = suggestionService.acceptSuggestion(id);
                 assertThat(job).isNotNull();
                 status.setRollbackOnly();
                 return job.getId();
@@ -256,14 +256,14 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
             properties.getCron().setEnabled(true);
             org.springframework.test.util.ReflectionTestUtils.setField(cronJobService, "scheduler", rejecting);
             com.azhukov.agent.core.security.UserContext.set(owner, com.azhukov.agent.core.security.UserContext.ROLE_USER);
-            var accepted = suggestionService.acceptSuggestion(id.toString());
+            var accepted = suggestionService.acceptSuggestion(id);
             assertThat(accepted).isNotNull();
             var persisted = cronJobRepository.findById(accepted.getId()).orElseThrow();
             assertThat(persisted.getLastStatus()).isEqualTo("error");
             assertThat(persisted.getLastError()).contains("schedule");
             assertThat(persisted.getNextRunAt()).isNull();
             assertThat(cronSuggestionRepository.findById(id).orElseThrow().getStatus()).isEqualTo("accepted");
-            assertThat(suggestionService.acceptSuggestion(id.toString())).isNull();
+            assertThat(suggestionService.acceptSuggestion(id)).isNull();
             org.springframework.test.util.ReflectionTestUtils.setField(cronJobService, "scheduler", scheduler);
             cronJobService.init();
             var recovered = cronJobRepository.findById(accepted.getId()).orElseThrow();
@@ -294,7 +294,7 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
         try {
             properties.getCron().setEnabled(false);
             com.azhukov.agent.core.security.UserContext.set(owner, com.azhukov.agent.core.security.UserContext.ROLE_USER);
-            jobId = suggestionService.acceptSuggestion(suggestionId.toString()).getId();
+            jobId = suggestionService.acceptSuggestion(suggestionId).getId();
             cronJobService.pause(jobId);
             properties.getCron().setEnabled(true);
             var selected = jobId;
@@ -339,7 +339,7 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
         try {
             properties.getCron().setEnabled(false);
             com.azhukov.agent.core.security.UserContext.set(owner, com.azhukov.agent.core.security.UserContext.ROLE_USER);
-            jobId = suggestionService.acceptSuggestion(suggestionId.toString()).getId();
+            jobId = suggestionService.acceptSuggestion(suggestionId).getId();
             cronJobService.pause(jobId);
             org.springframework.test.util.ReflectionTestUtils.setField(cronJobService, "scheduler", wrapper);
             properties.getCron().setEnabled(true);
@@ -375,7 +375,7 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
         try {
             properties.getCron().setEnabled(true);
             com.azhukov.agent.core.security.UserContext.set(owner, com.azhukov.agent.core.security.UserContext.ROLE_USER);
-            jobId = suggestionService.acceptSuggestion(suggestionId.toString()).getId();
+            jobId = suggestionService.acceptSuggestion(suggestionId).getId();
             @SuppressWarnings("unchecked")
             var tasks = (java.util.Map<java.util.UUID, java.util.concurrent.ScheduledFuture<?>>) org.springframework.test.util.ReflectionTestUtils.getField(cronJobService, "scheduledTasks");
             var original = tasks.get(jobId);
@@ -412,7 +412,7 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
         try {
             properties.getCron().setEnabled(true);
             com.azhukov.agent.core.security.UserContext.set(owner, com.azhukov.agent.core.security.UserContext.ROLE_USER);
-            jobId = suggestionService.acceptSuggestion(suggestionId.toString()).getId();
+            jobId = suggestionService.acceptSuggestion(suggestionId).getId();
             @SuppressWarnings("unchecked")
             var tasks = (java.util.Map<java.util.UUID, java.util.concurrent.ScheduledFuture<?>>) org.springframework.test.util.ReflectionTestUtils.getField(cronJobService, "scheduledTasks");
             var original = tasks.get(jobId);
@@ -449,7 +449,7 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
         try {
             properties.getCron().setEnabled(true);
             com.azhukov.agent.core.security.UserContext.set(owner, com.azhukov.agent.core.security.UserContext.ROLE_USER);
-            jobId = suggestionService.acceptSuggestion(suggestionId.toString()).getId();
+            jobId = suggestionService.acceptSuggestion(suggestionId).getId();
             @SuppressWarnings("unchecked")
             var tasks = (java.util.Map<java.util.UUID, java.util.concurrent.ScheduledFuture<?>>) org.springframework.test.util.ReflectionTestUtils.getField(cronJobService, "scheduledTasks");
             var original = tasks.get(jobId);
@@ -486,7 +486,7 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
         try {
             properties.getCron().setEnabled(true);
             com.azhukov.agent.core.security.UserContext.set(owner, com.azhukov.agent.core.security.UserContext.ROLE_USER);
-            jobId = suggestionService.acceptSuggestion(suggestionId.toString()).getId();
+            jobId = suggestionService.acceptSuggestion(suggestionId).getId();
             @SuppressWarnings("unchecked")
             var tasks = (java.util.Map<java.util.UUID, java.util.concurrent.ScheduledFuture<?>>) org.springframework.test.util.ReflectionTestUtils.getField(cronJobService, "scheduledTasks");
             var original = tasks.get(jobId);
@@ -523,7 +523,7 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
         try {
             properties.getCron().setEnabled(true);
             com.azhukov.agent.core.security.UserContext.set(owner, com.azhukov.agent.core.security.UserContext.ROLE_USER);
-            jobId = suggestionService.acceptSuggestion(suggestionId.toString()).getId();
+            jobId = suggestionService.acceptSuggestion(suggestionId).getId();
             @SuppressWarnings("unchecked")
             var tasks = (java.util.Map<java.util.UUID, java.util.concurrent.ScheduledFuture<?>>) org.springframework.test.util.ReflectionTestUtils.getField(cronJobService, "scheduledTasks");
             var original = tasks.get(jobId);
@@ -560,7 +560,7 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
         try {
             properties.getCron().setEnabled(true);
             com.azhukov.agent.core.security.UserContext.set(owner, com.azhukov.agent.core.security.UserContext.ROLE_USER);
-            jobId = suggestionService.acceptSuggestion(suggestionId.toString()).getId();
+            jobId = suggestionService.acceptSuggestion(suggestionId).getId();
             @SuppressWarnings("unchecked")
             var tasks = (java.util.Map<java.util.UUID, java.util.concurrent.ScheduledFuture<?>>) org.springframework.test.util.ReflectionTestUtils.getField(cronJobService, "scheduledTasks");
             var original = tasks.get(jobId);
@@ -598,7 +598,7 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
             properties.getCron().setEnabled(true);
             com.azhukov.agent.core.security.UserContext.set(owner, com.azhukov.agent.core.security.UserContext.ROLE_USER);
             jobId = tx.execute(status -> {
-                var created = suggestionService.acceptSuggestion(suggestionId.toString());
+                var created = suggestionService.acceptSuggestion(suggestionId);
                 cronJobService.pause(created.getId());
                 return created.getId();
             });
@@ -633,7 +633,7 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
         try {
             properties.getCron().setEnabled(false);
             com.azhukov.agent.core.security.UserContext.set(owner, com.azhukov.agent.core.security.UserContext.ROLE_USER);
-            jobId = suggestionService.acceptSuggestion(suggestionId.toString()).getId();
+            jobId = suggestionService.acceptSuggestion(suggestionId).getId();
             cronJobService.pause(jobId);
             properties.getCron().setEnabled(true);
             var selected = jobId;
@@ -669,8 +669,8 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
         try {
             properties.getCron().setEnabled(true);
             com.azhukov.agent.core.security.UserContext.set(owner, com.azhukov.agent.core.security.UserContext.ROLE_USER);
-            jobId = suggestionService.acceptSuggestion(id.toString()).getId();
-            assertThat(suggestionService.acceptSuggestion(id.toString())).isNull();
+            jobId = suggestionService.acceptSuggestion(id).getId();
+            assertThat(suggestionService.acceptSuggestion(id)).isNull();
             var persisted = cronJobRepository.findById(jobId).orElseThrow();
             assertThat(persisted.getUserId()).isEqualTo(owner);
             assertThat(persisted.getNextRunAt()).isNotNull();
@@ -704,7 +704,7 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
         try {
             properties.getCron().setEnabled(false);
             com.azhukov.agent.core.security.UserContext.set(owner, com.azhukov.agent.core.security.UserContext.ROLE_USER);
-            jobId = suggestionService.acceptSuggestion(id.toString()).getId();
+            jobId = suggestionService.acceptSuggestion(id).getId();
             assertThat(cronJobRepository.findById(jobId)).isPresent();
             @SuppressWarnings("unchecked")
             var tasks = (java.util.Map<java.util.UUID, java.util.concurrent.ScheduledFuture<?>>) org.springframework.test.util.ReflectionTestUtils.getField(cronJobService, "scheduledTasks");
@@ -741,7 +741,7 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
         assertThat(cronSuggestionRepository.findByUserIdAndStatusOrderByCreatedAtAsc("alice", "pending"))
             .extracting(CronSuggestionEntity::getId)
             .containsExactly(alice.getId());
-        assertThat(cronSuggestionRepository.findByIdAndUserId(bob.getId(), "alice")).isEmpty();
+        assertThat(cronSuggestionRepository.findByIdAndUserIdForUpdate(bob.getId(), "alice")).isEmpty();
         assertThat(cronSuggestionRepository.findByUserIdAndDedupKey("alice", "daily-briefing"))
             .contains(alice);
         assertThat(cronSuggestionRepository.findByUserIdAndDedupKey("bob", "daily-briefing"))
@@ -757,7 +757,7 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
     }
 
     @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.ValueSource(strings = {"pause", "update", "remove"})
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"pause", "update", "remove", "update-paused"})
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     void completingRunDoesNotUndoCommittedChange(String change) throws Exception {
         var entered = new java.util.concurrent.CountDownLatch(1);
@@ -786,11 +786,13 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
         var job = cronJobService.create("schedule-race-" + java.util.UUID.randomUUID(), "every 1h", "work", "local");
         var executor = java.util.concurrent.Executors.newSingleThreadExecutor();
         try {
-            var running = executor.submit(callbacks.getFirst());
+            boolean manual = "update-paused".equals(change);
+            if (manual) cronJobService.pause(job.getId());
+            var running = executor.submit(manual ? () -> cronJobService.runNow(job.getId()) : callbacks.getFirst());
             assertThat(entered.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
             switch (change) {
                 case "pause" -> assertThat(cronController.pause(job.getId()).enabled()).isFalse();
-                case "update" -> assertThat(cronController.update(job.getId(),
+                case "update", "update-paused" -> assertThat(cronController.update(job.getId(),
                     new com.azhukov.agent.api.CronJobController.UpdateCronRequest(job.getName(), "every 2h",
                         null, null, null, null, null, null)).schedule()).isEqualTo("every 2h");
                 case "remove" -> assertThat(cronController.delete(job.getId()).getStatusCode().is2xxSuccessful()).isTrue();
@@ -803,9 +805,10 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
             var persisted = cronJobRepository.findById(job.getId());
             switch (change) {
                 case "pause" -> assertThat(persisted.orElseThrow().isEnabled()).isFalse();
-                case "update" -> assertThat(persisted.orElseThrow().getSchedule()).isEqualTo("every 2h");
+                case "update", "update-paused" -> assertThat(persisted.orElseThrow().getSchedule()).isEqualTo("every 2h");
                 case "remove" -> assertThat(persisted).isEmpty();
             }
+            if (manual) assertThat(persisted.orElseThrow().getNextRunAt()).isNull();
             assertThat(callbacks).hasSize(scheduledAfterChange);
             persisted.ifPresent(current -> assertThat(current.getLastStatus()).isNull());
         } finally {

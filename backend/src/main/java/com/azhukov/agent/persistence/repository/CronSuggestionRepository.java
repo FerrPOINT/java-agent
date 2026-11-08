@@ -23,8 +23,6 @@ public interface CronSuggestionRepository extends JpaRepository<CronSuggestionEn
     @Query("select suggestion from CronSuggestionEntity suggestion where suggestion.id = :id and suggestion.userId = :userId")
     Optional<CronSuggestionEntity> findByIdAndUserIdForUpdate(@Param("id") UUID id, @Param("userId") String userId);
 
-    Optional<CronSuggestionEntity> findByIdAndUserId(UUID id, String userId);
-
     Optional<CronSuggestionEntity> findByUserIdAndDedupKey(String userId, String dedupKey);
 
     List<CronSuggestionEntity> findByUserIdAndStatusOrderByCreatedAtAsc(String userId, String status);

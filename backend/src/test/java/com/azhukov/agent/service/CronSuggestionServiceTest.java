@@ -55,11 +55,6 @@ class CronSuggestionServiceTest {
             .thenAnswer(invocation -> stored.stream()
                 .filter(entity -> entity.getUserId().equals(invocation.getArgument(0)))
                 .toList());
-        lenient().when(cronSuggestionRepository.findByIdAndUserId(any(), anyString()))
-            .thenAnswer(invocation -> stored.stream()
-                .filter(entity -> entity.getId().equals(invocation.getArgument(0))
-                    && entity.getUserId().equals(invocation.getArgument(1)))
-                .findFirst());
         lenient().when(cronSuggestionRepository.findByIdAndUserIdForUpdate(any(), anyString()))
             .thenAnswer(invocation -> stored.stream()
                 .filter(entity -> entity.getId().equals(invocation.getArgument(0))
@@ -77,7 +72,7 @@ class CronSuggestionServiceTest {
             stored.removeAll(invocation.getArgument(0));
             return null;
         }).when(cronSuggestionRepository).deleteAll(any());
-        service = new CronSuggestionService(cronJobService, cronSuggestionRepository, mock(jakarta.persistence.EntityManager.class));
+        service = new CronSuggestionService(cronJobService, cronSuggestionRepository);
     }
 
     @AfterEach
@@ -86,21 +81,14 @@ class CronSuggestionServiceTest {
     }
 
     @Test
-    void resolvedSuggestionRemainsFindableByTitle() {
+    void missingUuidNeverMutatesSuggestionWithMatchingTitle() {
+        UUID missing = UUID.randomUUID();
         var spec = new CronSuggestionService.JobSpec("name", "0 9 * * *", "prompt", null, null);
-        service.addSuggestion("Find Me", "desc", "catalog", spec, "key");
-        assertThat(service.dismissSuggestion("Find Me")).isTrue();
-        assertThat(service.getSuggestion("Find Me")).isNotNull();
-        assertThat(service.getSuggestion("Find Me").status()).isEqualTo("dismissed");
-    }
-
-    @Test
-    void oversizedNumericReferenceDoesNotThrow() {
-        String title = "999999999999999999999999999999999999";
-        assertThat(service.getSuggestion(title)).isNull();
-        var spec = new CronSuggestionService.JobSpec("name", "0 9 * * *", "prompt", null, null);
-        service.addSuggestion(title, "desc", "catalog", spec, "numeric-title");
-        assertThat(service.getSuggestion(title).title()).isEqualTo(title);
+        var record = service.addSuggestion(missing.toString(), "desc", "catalog", spec, "key");
+        assertThat(service.acceptSuggestion(missing)).isNull();
+        assertThat(service.dismissSuggestion(missing)).isFalse();
+        assertThat(service.listPending()).containsExactly(record);
+        assertThat(service.dismissSuggestion(UUID.fromString(record.id()))).isTrue();
     }
 
     @Test
@@ -140,10 +128,10 @@ class CronSuggestionServiceTest {
         entity.setId(UUID.randomUUID());
         when(cronJobService.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any()))
             .thenReturn(entity);
-        assertThat(service.acceptSuggestion(userARecord.id())).isNull();
+        assertThat(service.acceptSuggestion(UUID.fromString(userARecord.id()))).isNull();
         verify(cronJobService, never()).create(any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any());
 
-        assertThat(service.acceptSuggestion(userBRecord.id())).isSameAs(entity);
+        assertThat(service.acceptSuggestion(UUID.fromString(userBRecord.id()))).isSameAs(entity);
         verify(cronJobService).create("user-b", "daily-report", "0 9 * * *", "Generate report", null, null,
             null, null, null, false, null, null, null, null, null);
     }
@@ -189,42 +177,6 @@ class CronSuggestionServiceTest {
     }
 
     @Test
-    void getSuggestion_byId() {
-        var spec = new CronSuggestionService.JobSpec("name", "0 9 * * *", "prompt", null, null);
-        var record = service.addSuggestion("Find Me", "desc", "catalog", spec, "key");
-
-        var found = service.getSuggestion(record.id());
-        assertThat(found).isNotNull();
-        assertThat(found.title()).isEqualTo("Find Me");
-    }
-
-    @Test
-    void getSuggestion_byIndex() {
-        var spec = new CronSuggestionService.JobSpec("name", "0 9 * * *", "prompt", null, null);
-        service.addSuggestion("First", "desc", "catalog", spec, "key-1");
-        service.addSuggestion("Second", "desc", "catalog", spec, "key-2");
-
-        var found = service.getSuggestion("2");
-        assertThat(found).isNotNull();
-        assertThat(found.title()).isEqualTo("Second");
-    }
-
-    @Test
-    void getSuggestion_byTitle() {
-        var spec = new CronSuggestionService.JobSpec("name", "0 9 * * *", "prompt", null, null);
-        service.addSuggestion("My Suggestion", "desc", "catalog", spec, "key");
-
-        var found = service.getSuggestion("my suggestion");
-        assertThat(found).isNotNull();
-        assertThat(found.title()).isEqualTo("My Suggestion");
-    }
-
-    @Test
-    void getSuggestion_notFound_returnsNull() {
-        assertThat(service.getSuggestion("nonexistent")).isNull();
-    }
-
-    @Test
     void acceptSuggestion_createsCronJob() {
         var spec = new CronSuggestionService.JobSpec("daily-report", "0 9 * * *", "Generate report", "telegram", null);
         var record = service.addSuggestion("Daily Report", "desc", "catalog", spec, "key");
@@ -234,7 +186,7 @@ class CronSuggestionServiceTest {
         entity.setName("daily-report");
         when(cronJobService.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any())).thenReturn(entity);
 
-        var created = service.acceptSuggestion(record.id());
+        var created = service.acceptSuggestion(UUID.fromString(record.id()));
 
         assertThat(created).isNotNull();
         assertThat(created.getName()).isEqualTo("daily-report");
@@ -250,16 +202,16 @@ class CronSuggestionServiceTest {
     void acceptSuggestion_notPending_returnsNull() {
         var spec = new CronSuggestionService.JobSpec("name", "0 9 * * *", "prompt", null, null);
         var record = service.addSuggestion("Title", "desc", "catalog", spec, "key");
-        service.dismissSuggestion(record.id());
+        service.dismissSuggestion(UUID.fromString(record.id()));
 
-        var result = service.acceptSuggestion(record.id());
+        var result = service.acceptSuggestion(UUID.fromString(record.id()));
         assertThat(result).isNull();
         verify(cronJobService, never()).create(any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any());
     }
 
     @Test
     void acceptSuggestion_notFound_returnsNull() {
-        var result = service.acceptSuggestion("nonexistent");
+        var result = service.acceptSuggestion(UUID.randomUUID());
         assertThat(result).isNull();
     }
 
@@ -268,7 +220,7 @@ class CronSuggestionServiceTest {
         var spec = new CronSuggestionService.JobSpec("name", "0 9 * * *", "prompt", null, null);
         var record = service.addSuggestion("Dismiss Me", "desc", "catalog", spec, "latch-key");
 
-        boolean dismissed = service.dismissSuggestion(record.id());
+        boolean dismissed = service.dismissSuggestion(UUID.fromString(record.id()));
         assertThat(dismissed).isTrue();
 
         // Same dedup_key should not be re-offered
@@ -278,7 +230,7 @@ class CronSuggestionServiceTest {
 
     @Test
     void dismissSuggestion_notFound_returnsFalse() {
-        boolean result = service.dismissSuggestion("nonexistent");
+        boolean result = service.dismissSuggestion(UUID.randomUUID());
         assertThat(result).isFalse();
     }
 
@@ -291,7 +243,7 @@ class CronSuggestionServiceTest {
         CronJobEntity entity = new CronJobEntity();
         entity.setId(UUID.randomUUID());
         when(cronJobService.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any())).thenReturn(entity);
-        service.acceptSuggestion(r1.id());
+        service.acceptSuggestion(UUID.fromString(r1.id()));
 
         int removed = service.clearAccepted();
         assertThat(removed).isEqualTo(1);
@@ -312,7 +264,7 @@ class CronSuggestionServiceTest {
         var spec = new CronSuggestionService.JobSpec("name", "0 9 * * *", "prompt", null, null);
         var r1 = service.addSuggestion("S1", "desc", "catalog", spec, "k1");
         service.addSuggestion("S2", "desc", "catalog", spec, "k2");
-        service.dismissSuggestion(r1.id());
+        service.dismissSuggestion(UUID.fromString(r1.id()));
 
         var all = service.listAll();
         assertThat(all).hasSize(2);
@@ -326,7 +278,7 @@ class CronSuggestionServiceTest {
         List<com.azhukov.agent.service.CronSuggestionService.SuggestionRecord> first = service.listPending();
         assertThat(first).isNotEmpty();
         for (var rec : first) {
-            service.dismissSuggestion(rec.id());
+            service.dismissSuggestion(UUID.fromString(rec.id()));
         }
         assertThat(service.listPending()).isEmpty();
         // Re-seed: the dismiss latch must hold — nothing comes back
@@ -340,7 +292,7 @@ class CronSuggestionServiceTest {
         service.seedCatalogSuggestions();
         var rec = service.listPending().get(0);
         when(cronJobService.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any())).thenReturn(new CronJobEntity());
-        service.acceptSuggestion(rec.id());
+        service.acceptSuggestion(UUID.fromString(rec.id()));
         // Only the accepted one leaves pending; the rest stay
         assertThat(service.listPending()).hasSize(3);
         assertThat(service.listPending().stream().map(s -> s.id())).doesNotContain(rec.id());

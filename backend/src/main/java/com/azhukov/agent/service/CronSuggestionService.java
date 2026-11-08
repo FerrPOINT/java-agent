@@ -34,7 +34,6 @@ public class CronSuggestionService {
 
  private final CronJobService cronJobService;
  private final CronSuggestionRepository cronSuggestionRepository;
- private final jakarta.persistence.EntityManager entityManager;
  private final ReentrantLock noopCreationLock = new ReentrantLock();
 
  @Value("${spring.datasource.driver-class-name}")
@@ -124,24 +123,17 @@ public class CronSuggestionService {
  .stream().map(CronSuggestionService::toRecord).toList();
  }
 
- /** Resolve a current-owner suggestion by UUID, 1-based pending index, or exact title. */
- @Transactional(readOnly = true)
- public SuggestionRecord getSuggestion(String ref) {
- CronSuggestionEntity entity = resolve(ref, currentUserId());
- return entity == null ? null : toRecord(entity);
- }
-
  /**
  * Accept a pending suggestion and create its cron job with the same owner from the first write.
  */
  @Transactional
- public CronJobEntity acceptSuggestion(String ref) {
-     return acceptSuggestion(ref, currentUserId());
+ public CronJobEntity acceptSuggestion(UUID id) {
+     return acceptSuggestion(id, currentUserId());
  }
 
  @Transactional
- public CronJobEntity acceptSuggestion(String ref, String userId) {
- CronSuggestionEntity suggestion = resolveForUpdate(ref, userId);
+ public CronJobEntity acceptSuggestion(UUID id, String userId) {
+ CronSuggestionEntity suggestion = cronSuggestionRepository.findByIdAndUserIdForUpdate(id, userId).orElse(null);
  if (suggestion == null || !STATUS_PENDING.equals(suggestion.getStatus())) {
  return null;
  }
@@ -159,13 +151,13 @@ public class CronSuggestionService {
 
  /** Dismiss a current-owner suggestion and retain its dedup latch. */
  @Transactional
- public boolean dismissSuggestion(String ref) {
-     return dismissSuggestion(ref, currentUserId());
+ public boolean dismissSuggestion(UUID id) {
+     return dismissSuggestion(id, currentUserId());
  }
 
  @Transactional
- public boolean dismissSuggestion(String ref, String userId) {
- CronSuggestionEntity suggestion = resolveForUpdate(ref, userId);
+ public boolean dismissSuggestion(UUID id, String userId) {
+ CronSuggestionEntity suggestion = cronSuggestionRepository.findByIdAndUserIdForUpdate(id, userId).orElse(null);
  if (suggestion == null || !STATUS_PENDING.equals(suggestion.getStatus())) {
  return false;
  }
@@ -187,47 +179,6 @@ public class CronSuggestionService {
  .findByUserIdAndStatusOrderByCreatedAtAsc(userId, STATUS_ACCEPTED);
  cronSuggestionRepository.deleteAll(accepted);
  return accepted.size();
- }
-
- private CronSuggestionEntity resolveForUpdate(String ref, String userId) {
- CronSuggestionEntity suggestion = resolve(ref, userId);
- if (suggestion == null) {
- return null;
- }
- CronSuggestionEntity locked = cronSuggestionRepository.findByIdAndUserIdForUpdate(suggestion.getId(), userId).orElse(null);
- if (locked != null) {
- // The initial lookup may have loaded stale state while another transaction held the lock.
- entityManager.refresh(locked);
- }
- return locked;
- }
-
- private CronSuggestionEntity resolve(String ref, String userId) {
- if (ref == null || ref.isBlank()) {
- return null;
- }
- try {
- CronSuggestionEntity byId = cronSuggestionRepository.findByIdAndUserId(UUID.fromString(ref), userId).orElse(null);
- if (byId != null) {
- return byId;
- }
- } catch (IllegalArgumentException ignored) {
- // The reference can be a numeric index or title.
- }
- List<CronSuggestionEntity> pending = cronSuggestionRepository
- .findByUserIdAndStatusOrderByCreatedAtAsc(userId, STATUS_PENDING);
- if (ref.matches("\\d+")) {
- try {
- int index = Integer.parseInt(ref) - 1;
- if (index >= 0 && index < pending.size()) {
- return pending.get(index);
- }
- } catch (NumberFormatException ignored) {
- // A numeric title may be larger than the index range; try title lookup.
- }
- }
- return cronSuggestionRepository.findByUserIdOrderByCreatedAtAsc(userId).stream()
- .filter(s -> s.getTitle().equalsIgnoreCase(ref)).findFirst().orElse(null);
  }
 
  private static void applyJobSpec(CronSuggestionEntity entity, JobSpec jobSpec) {
