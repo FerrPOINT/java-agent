@@ -136,7 +136,15 @@ public class ReadFileTool implements ToolHandler {
 
         try {
             // h55: Detect UTF-16 BOM and transcode to UTF-8 before processing.
-            byte[] rawBytes = Files.readAllBytes(path);
+            Path target = path.toRealPath();
+            ToolResult targetCheck = FileToolSafety.ensureReadable(properties, fileSafety, target, rawPath);
+            if (targetCheck != null) {
+                return jsonFail(targetCheck.error());
+            }
+            byte[] rawBytes;
+            try (var channel = com.azhukov.agent.core.security.SecureFileAccess.openRead(target)) {
+                rawBytes = java.nio.channels.Channels.newInputStream(channel).readAllBytes();
+            }
             String content;
             boolean extractedDocument = false;
             try {

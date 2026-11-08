@@ -24,7 +24,6 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
-import java.nio.file.SecureDirectoryStream;
 import java.nio.file.StandardOpenOption;
 import java.util.Set;
 import java.nio.file.Path;
@@ -147,7 +146,7 @@ public class TtsTool implements ToolHandler {
                 if (denied != null) throw new IOException(denied.error());
             }
             if (!customPath) Files.createDirectories(parent);
-            try (var directory = openAudioDirectory(parent)) {
+            try (var directory = com.azhukov.agent.core.security.SecureFileAccess.openDirectory(parent)) {
                 for (int i = 0; i < chunks.size(); i++) {
                     Path target = chunks.size() == 1 ? baseOutputPath : chunkOutputPath(baseOutputPath, i + 1);
                     byte[] audio = synthesize(provider, chunks.get(i), voice, speed, args.instructions());
@@ -186,27 +185,6 @@ public class TtsTool implements ToolHandler {
     private ToolResult synthesisFailure(Exception error) {
         log.error("TTS failed: {}", error.getMessage(), error);
         return jsonErrorResponse("TTS failed: " + errorMessage(error));
-    }
-
-    private SecureDirectoryStream<Path> openAudioDirectory(Path parent) throws IOException {
-        var root = Files.newDirectoryStream(parent.getRoot());
-        if (!(root instanceof SecureDirectoryStream<Path> secureRoot)) {
-            root.close();
-            throw new IOException("The filesystem does not support secure audio output");
-        }
-        var current = secureRoot;
-        try {
-            for (Path component : parent) {
-                var next = current.newDirectoryStream(component, LinkOption.NOFOLLOW_LINKS);
-                var previous = current;
-                current = next;
-                previous.close();
-            }
-            return current;
-        } catch (IOException | RuntimeException e) {
-            current.close();
-            throw e;
-        }
     }
 
     private ToolResult validateOutputPath(String outputPath) {

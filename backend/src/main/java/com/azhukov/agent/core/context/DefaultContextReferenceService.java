@@ -257,14 +257,18 @@ public class DefaultContextReferenceService implements ContextReferenceService {
  if (!target.startsWith(base.toRealPath()) || isSensitivePath(target)) {
  return Optional.of("[file access denied: " + source + "]");
  }
- if (!Files.isRegularFile(target, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
- return Optional.of("[file not found: " + source + "]");
- }
- long maxBytes = properties.getCore().getMaxReferenceFileBytes();
- if (Files.size(target) > maxBytes) {
+ int maxBytes = properties.getCore().getMaxReferenceFileBytes();
+ try (var channel = com.azhukov.agent.core.security.SecureFileAccess.openRead(target)) {
+ if (channel.size() > maxBytes) {
  return Optional.of("[file too large: " + source + "]");
  }
- return Optional.of(Files.readString(target, StandardCharsets.UTF_8));
+ var input = java.nio.channels.Channels.newInputStream(channel);
+ byte[] bytes = input.readNBytes(maxBytes);
+ if (input.read() != -1) {
+ return Optional.of("[file too large: " + source + "]");
+ }
+ return Optional.of(StandardCharsets.UTF_8.newDecoder().decode(java.nio.ByteBuffer.wrap(bytes)).toString());
+ }
  } catch (IOException e) {
  log.warn("Failed to read referenced file {}", source, e);
  return Optional.of("[file read error: " + source + "]");

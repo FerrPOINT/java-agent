@@ -143,6 +143,39 @@ class DefaultContextReferenceServiceFullTest {
     }
 
     @Test
+    void fileReferenceCannotReadAfterItsParentIsReplacedDuringAuthorization() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path parent = Files.createDirectory(workspace.resolve("subdir"));
+        Path outside = Files.createDirectory(tempDir.resolve("outside"));
+        Path file = Files.writeString(parent.resolve("note.txt"), "public marker");
+        Files.writeString(outside.resolve("note.txt"), "private marker");
+        properties.getCore().setWorkingDirectory(workspace.toString());
+
+        var guard = new com.azhukov.agent.core.security.DefaultFileSafety(properties) {
+            private int checks;
+
+            @Override
+            public boolean isReadBlocked(Path path) {
+                boolean blocked = super.isReadBlocked(path);
+                if (path.equals(file) && ++checks == 2) {
+                    try {
+                        Files.move(parent, workspace.resolve("old-subdir"));
+                        Files.createSymbolicLink(parent, outside);
+                    } catch (IOException e) {
+                        throw new java.io.UncheckedIOException(e);
+                    }
+                }
+                return blocked;
+            }
+        };
+        var guarded = new DefaultContextReferenceService(properties, skillManager, guard);
+        var reference = guarded.resolve(List.of(file.toUri().toString())).getFirst();
+
+        assertThat(guarded.loadContent(reference)).hasValueSatisfying(value ->
+            assertThat(value).contains("file read error").doesNotContain("private marker"));
+    }
+
+    @Test
     void loadContentReturnsAccessDeniedForFileOutsideWorkingDir() {
         ContextReference ref = new ContextReference(ReferenceType.FILE, "/etc/passwd", "passwd", null);
 

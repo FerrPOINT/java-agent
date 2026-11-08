@@ -919,7 +919,6 @@ public class TelegramClient {
             throw e; // Re-throw typed exceptions
         } catch (Exception e) {
             // Check for HTTP 409 conflict from RestClient (comes as HttpStatusCodeException)
-            String msg = e.getMessage();
             if (e instanceof org.springframework.web.client.HttpClientErrorException httpError) {
                 try {
                     TelegramResponse error = objectMapper.readValue(httpError.getResponseBodyAsByteArray(), TelegramResponse.class);
@@ -940,12 +939,11 @@ public class TelegramClient {
                     && httpError.getStatusCode().value() == 409) {
                 lastCallConflict = true;
                 lastApiErrorCode = 409;
-                log.warn("Telegram {} returned 409 Conflict: {}", method, msg);
-                throw new TelegramApiException(409, msg, -1);
+                log.warn("Telegram {} returned HTTP 409", method);
+                throw new TelegramApiException(409, "Telegram polling conflict", -1);
             }
-            log.warn("Telegram {} exception: {}", method, msg);
-            lastApiErrorCode = -1; // Indicate exception (not a Telegram API error code)
-            throw new TelegramApiException(-1, msg, -1);
+            lastApiErrorCode = -1;
+            throw transportFailure(method, e);
         } finally {
             releaseRateLimit();
         }
@@ -998,10 +996,15 @@ public class TelegramClient {
         } catch (TelegramApiException e) {
             throw e;
         } catch (Exception e) {
-            log.warn("Telegram {} (multipart) exception: {}", method, e.getMessage());
-            throw new TelegramApiException(-1, e.getMessage(), -1);
+            throw transportFailure(method, e);
         } finally {
             releaseRateLimit();
         }
     }
+    private static TelegramApiException transportFailure(String method, Exception error) {
+        // HTTP-client exceptions can include the bot token in the request URI.
+        log.warn("Telegram {} transport failed ({})", method, error.getClass().getSimpleName());
+        return new TelegramApiException(-1, "Telegram transport failed", -1);
+    }
+
 }
