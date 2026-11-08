@@ -884,6 +884,10 @@ private static final String CRON_EXECUTION_HINT = """
                 finishScheduledRun(jobId, expected, due, revision, CronExecutionOutcome.failure("backoff"));
                 return;
             }
+            if (Integer.valueOf(1).equals(job.getRepeatCount())) {
+                executeOneShot(jobId, due, revision);
+                return;
+            }
             finishScheduledRun(jobId, expected, due, revision, executeJob(job));
         } catch (Exception e) {
             log.error("Error executing cron job {}", jobId, e);
@@ -893,17 +897,35 @@ private static final String CRON_EXECUTION_HINT = """
         }
     }
 
+    private void executeOneShot(UUID id, Instant due, long revision) {
+        var claimed = transactionTemplate.execute(status -> {
+            var job = cronJobRepository.findByIdForUpdate(id).orElse(null);
+            if (job == null || !job.isEnabled() || job.getConfigurationRevision() != revision
+                    || !due.equals(job.getNextRunAt())) {
+                return null;
+            }
+            // Consume this firing durably before running anything outside the database.
+            job.setEnabled(false);
+            job.setLastStatus("error");
+            job.setLastError("One-shot execution claimed. Verify its result before resuming.");
+            job.setLastErrorAt(Instant.now());
+            updateSchedule(job, null);
+            return job;
+        });
+        if (claimed == null || !executeJob(claimed).countsTowardRepeat()) {
+            return;
+        }
+        transactionTemplate.executeWithoutResult(status ->
+            cronJobRepository.findByIdForUpdate(id)
+                .filter(job -> !job.isEnabled() && job.getConfigurationRevision() == revision)
+                .ifPresent(cronJobRepository::delete));
+    }
+
     private void finishScheduledRun(UUID id, ScheduledFuture<?> expected, Instant due, long revision, CronExecutionOutcome outcome) {
         if (scheduledTasks.get(id) != expected) return;
         transactionTemplate.executeWithoutResult(status -> {
             var job = cronJobRepository.findByIdForUpdate(id).orElse(null);
             if (job == null || !job.isEnabled() || job.getConfigurationRevision() != revision || !due.equals(job.getNextRunAt())) return;
-            if (outcome == CronExecutionOutcome.RESULT_NOT_COMMITTED && Integer.valueOf(1).equals(job.getRepeatCount())) {
-                job.setEnabled(false);
-                job.setLastStatus("error");
-                job.setLastError("Execution result was not committed. Review the run before resuming.");
-                job.setLastErrorAt(Instant.now());
-            }
             if (outcome != null) {
                 if (outcome.countsTowardRepeat() && job.getRepeatCount() != null) {
                     job.setRepeatCompleted(job.getRepeatCompleted() + 1);

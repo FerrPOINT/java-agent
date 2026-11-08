@@ -131,20 +131,30 @@ class CronJobServiceDeliveryProducerTest {
         verify(deliveryService, org.mockito.Mockito.never()).enqueue(any());
     }
 
-    @Test
-    void uncommittedOneShotResultDisablesTheJobWithoutRearmingTheTimer() {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+    void oneShotConsumesItsTimerBeforeExecutingEvenWhenCompletionFails(boolean enqueueFails) {
         var job = jobWithDeliverTo("telegram:111");
         job.setRepeatCount(1);
         var properties = new AgentProperties();
         properties.getCron().setEnabled(true);
         prepareRun(job);
         var session = UUID.randomUUID();
-        when(runtime.runBackground(any(), any(), anyBoolean())).thenReturn(session.toString());
+        when(runtime.runBackground(any(), any(), anyBoolean())).thenAnswer(invocation -> {
+            assertThat(job.isEnabled()).isFalse();
+            assertThat(job.getNextRunAt()).isNull();
+            return session.toString();
+        });
         var message = new com.azhukov.agent.persistence.entity.MessageEntity();
         message.setRole("assistant");
         message.setContent("completed side effect");
         when(messageRepository.findBySessionIdOrderByCreatedAtAsc(session)).thenReturn(List.of(message));
-        when(deliveryService.enqueue(any())).thenThrow(new IllegalArgumentException("ledger rejected output"));
+        if (enqueueFails) {
+            when(deliveryService.enqueue(any())).thenThrow(new IllegalArgumentException("ledger rejected output"));
+        } else {
+            org.mockito.Mockito.doThrow(new org.springframework.dao.DataAccessResourceFailureException("completion write failed"))
+                .when(cronJobRepository).delete(job);
+        }
         when(cronJobRepository.findByEnabledTrue()).thenReturn(List.of(job));
         when(cronJobRepository.findByIdForUpdate(job.getId())).thenReturn(Optional.of(job));
 
@@ -162,10 +172,14 @@ class CronJobServiceDeliveryProducerTest {
         assertThat(job.isEnabled()).isFalse();
         assertThat(job.getNextRunAt()).isNull();
         assertThat(job.getRepeatCompleted()).isZero();
-        assertThat(job.getLastError()).contains("result was not committed");
+        verify(cronJobRepository, org.mockito.Mockito.times(enqueueFails ? 0 : 1)).delete(any(CronJobEntity.class));
         verify(timer).cancel(false);
         verify(scheduler).schedule(any(Runnable.class), org.mockito.ArgumentMatchers.anyLong(), any());
         verify(runtime).runBackground(any(), any(), anyBoolean());
+
+        when(cronJobRepository.findByEnabledTrue()).thenReturn(List.of());
+        service.init();
+        verify(scheduler).schedule(any(Runnable.class), org.mockito.ArgumentMatchers.anyLong(), any());
     }
 
     @Test
