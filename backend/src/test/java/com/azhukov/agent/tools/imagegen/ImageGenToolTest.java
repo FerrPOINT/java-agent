@@ -47,7 +47,8 @@ class ImageGenToolTest {
 
     @Test
     void publishesSessionImageUsingProviderBytes() throws Exception {
-        var session = com.azhukov.agent.core.model.Session.create("owner", "openai", "model");
+        var session = com.azhukov.agent.core.model.Session.create("owner", "openai", "model")
+            .withMetadata("platform", "telegram");
         byte[] jpeg = {(byte) 0xff, (byte) 0xd8, (byte) 0xff};
         when(providerProvider.stream()).thenReturn(java.util.stream.Stream.of(provider));
         when(provider.generate("image", "landscape")).thenReturn(jpeg);

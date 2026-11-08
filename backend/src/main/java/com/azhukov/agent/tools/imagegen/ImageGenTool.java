@@ -30,7 +30,7 @@ import java.util.UUID;
  */
 @AgentTool(
     name = "image_generate",
-    description = "Generate an image from a text prompt. Returns a published MEDIA:artifact reference in a session, or a local image path for standalone use.",
+    description = "Generate an image from a text prompt. Returns a published MEDIA:artifact reference in Telegram, or a local image path for CLI and other clients.",
     toolset = "image_gen"
 )
 @Component
@@ -105,7 +105,7 @@ public class ImageGenTool implements ToolHandler {
             }
             String extension = imageExtension(imageBytes);
             String fileName = "img_" + UUID.randomUUID() + extension;
-            if (session != null) {
+            if (session != null && "telegram".equalsIgnoreCase(session.getMetadata("platform"))) {
                 String mimeType = extension.equals(".jpg") ? "image/jpeg" : "image/" + extension.substring(1);
                 return ToolResult.ok(jsonSuccessResponse(null,
                     artifacts.publishGenerated(session, "photo", mimeType, fileName, imageBytes)));
