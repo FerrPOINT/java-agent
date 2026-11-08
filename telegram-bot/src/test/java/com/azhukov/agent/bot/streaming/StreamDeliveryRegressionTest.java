@@ -136,6 +136,8 @@ class StreamDeliveryRegressionTest {
             assertThat(secondStarted.await(2, SECONDS)).isTrue();
             assertThat(second.get(2, SECONDS)).isTrue();
             editor.cancelDeferredDelivery(101L);
+            assertThat(first).isNotDone();
+            releaseFirst.countDown();
             assertThat(first.get(2, SECONDS)).isFalse();
         } finally {
             releaseFirst.countDown();

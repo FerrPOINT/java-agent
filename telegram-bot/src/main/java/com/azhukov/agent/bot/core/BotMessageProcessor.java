@@ -477,23 +477,16 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
             result = streamingOrchestrator.streamChat(chatId, messageText, sessionId, session,
                 event.messageId(), threadId, artifactIds, this);
 
-            // A /stop or interrupt-mode replacement can arrive while the
-            // backend stream is unwinding. Do not render, persist, or continue
-            // a result belonging to that cancelled turn.
-            if (busyHandler.isInterrupted(chatId)) {
-                log.debug("Discarding interrupted turn result for chat {}", chatId);
-                reactionManager.onCancel(chatId, event.messageId());
-                typingManager.stopTyping(chatId);
-                return;
-            }
+            boolean interrupted = busyHandler.isInterrupted(chatId);
+            if (interrupted) streamEditor.cancelDeferredDelivery(chatId);
 
             // Persist the backend-assigned session ID for conversation history continuity
-            if (result.backendSessionId() != null) {
+            if (!interrupted && result.backendSessionId() != null) {
                 sessionStore.updateBackendSessionId(session.getId(), result.backendSessionId());
             }
 
             boolean confirmed = result.streamFinalized();
-            if (!confirmed && !result.turnCancelled() && !streamEditor.hasDeferredDelivery(chatId)
+            if (!interrupted && !confirmed && !result.turnCancelled() && !streamEditor.hasDeferredDelivery(chatId)
                     && !streamEditor.hasUnconfirmedDelivery(chatId)) {
                 String footer = runtimeFooter.format(
                     resolveModelUsed(session, result),
@@ -523,7 +516,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                 return;
             }
 
-            if (confirmed) afterTurn(chatId, event, session, result, threadId);
+            if (confirmed && !interrupted) afterTurn(chatId, event, session, result, threadId);
 
             // B1.2: Reaction — processing complete (success or cancelled)
             if (busyHandler.isInterrupted(chatId) || result.turnCancelled()) {

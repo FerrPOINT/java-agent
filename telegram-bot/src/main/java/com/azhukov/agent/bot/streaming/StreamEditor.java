@@ -188,8 +188,7 @@ public class StreamEditor {
             synchronized (s) {
                 s.deliveryCancelled = true;
                 if (s.deliveryRetry != null) s.deliveryRetry.cancel(false);
-                s.delivery.clear();
-                if (s.deferredDelivery != null) s.deferredDelivery.complete(false);
+                if (!s.deliveryDraining) failDelivery(s);
             }
         }
     }
@@ -1202,7 +1201,10 @@ public class StreamEditor {
             try {
                 last = operation.send().get();
                 synchronized (session) {
-                    if (session.deliveryCancelled) return Optional.empty();
+                    if (session.deliveryCancelled) {
+                        failDelivery(session);
+                        return Optional.empty();
+                    }
                     if (last.isEmpty()) {
                         failDelivery(session);
                         return Optional.empty();
@@ -1217,7 +1219,10 @@ public class StreamEditor {
                 return Optional.empty();
             } catch (TelegramApiException error) {
                 synchronized (session) {
-                    if (session.deliveryCancelled) return Optional.empty();
+                    if (session.deliveryCancelled) {
+                        failDelivery(session);
+                        return Optional.empty();
+                    }
                     if (operation.formatRefusal().test(error)) {
                         session.delivery.removeFirst();
                         for (var fallback : operation.onFormatRefusal().reversed()) session.delivery.addFirst(fallback);
@@ -1237,8 +1242,7 @@ public class StreamEditor {
 
     private void scheduleDelivery(long chatId, StreamSession session, int retryAfter) {
         session.deliveryDraining = false;
-        if (session.deliveryCancelled) return;
-        if (retryAfter <= 0) {
+        if (session.deliveryCancelled || retryAfter <= 0) {
             failDelivery(session);
             return;
         }
@@ -1318,10 +1322,11 @@ public class StreamEditor {
     public void cancelDeferredDelivery(long chatId) {
         StreamSession session = sessions.get(chatId);
         if (session == null) return;
-        session.deliveryCancelled = true;
         synchronized (session) {
+            session.deliveryCancelled = true;
             if (session.deliveryRetry != null) session.deliveryRetry.cancel(false);
-            failDelivery(session);
+            // A running drain owns the HTTP call. Keep the chat busy until it returns.
+            if (!session.deliveryDraining) failDelivery(session);
         }
     }
 
@@ -1331,7 +1336,9 @@ public class StreamEditor {
         synchronized (session) {
             if (session.deferredDelivery == null) return null;
             session.deliverySealed = true;
-            if (session.delivery.isEmpty()) session.deferredDelivery.complete(!session.partialFinalDelivery);
+            if (!session.deliveryDraining && session.delivery.isEmpty()) {
+                session.deferredDelivery.complete(!session.partialFinalDelivery);
+            }
             return session.deferredDelivery;
         }
     }
