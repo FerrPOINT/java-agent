@@ -1107,18 +1107,28 @@ private static final String CRON_EXECUTION_HINT = """
                                       String error, String output, boolean retryPending) {
         Long executionId = recordExecution(job.getId(), startedAt, Instant.now(), status, error, output);
         try {
-            transactionTemplate.executeWithoutResult(tx -> {
+            String mirrorPayload = transactionTemplate.execute(tx -> {
                 // The conditional UPDATE holds the row through enqueue. History survives a stale revision.
-                if (cronJobRepository.recordRun(job) == 0 || retryPending) {
-                    return;
+                if (cronJobRepository.recordRun(job) == 0 || retryPending || executionId == null
+                        || (error == null && CronSilenceFilter.isSilent(output))) {
+                    return null;
                 }
+                DeliveryWorkItemService deliveryService = deliveryProvider();
+                if (deliveryService == null) {
+                    return null;
+                }
+                String payload = error == null ? Objects.toString(output, "") : failureDeliveryText(job, error);
+                String target = resolveDeliveryTarget(job);
                 if (error == null) {
-                    enqueueDeliveryWork(job, executionId, output);
-                } else {
-                    enqueueFailureDeliveryWork(job, executionId, error);
+                    target = withSessionOriginThread(job, target);
                 }
+                enqueueDeliveryWork(deliveryService, job, executionId, target, payload);
+                return payload;
             });
-        } catch (org.springframework.transaction.TransactionException | org.springframework.dao.DataAccessException e) {
+            // The transcript is optional, including for local jobs without a delivery target.
+            mirrorToAttachedSession(job, mirrorPayload);
+        } catch (org.springframework.transaction.TransactionException | org.springframework.dao.DataAccessException
+                | IllegalArgumentException e) {
             log.warn("Could not publish the completed cron run {}", job.getId(), e);
         }
     }
@@ -1523,85 +1533,16 @@ private static final String CRON_EXECUTION_HINT = """
         return null;
     }
 
-    /**
-     * WP-1 durable delivery: create the delivery work item for a finished cron
-     * execution in the same logical sequence. The target is resolved once, from
-     * the job's deliver_to (already normalized to platform:chat_id by the
-     * creator) — never from the current bot state at send time. Silenced runs
-     * ([SILENT] markers) are terminally acknowledged without platform send.
-     */
-    private void enqueueDeliveryWork(CronJobEntity job, Long executionLogId, String output) {
-        if (executionLogId == null || CronSilenceFilter.isSilent(output)) {
-            return;
-        }
-        DeliveryWorkItemService deliveryService = deliveryProvider();
-        if (deliveryService == null) {
-            return;
-        }
-        String target = resolveDeliveryTarget(job);
-        target = withSessionOriginThread(job, target);
-        // Mirror rides along ANY delivery — including target-less local runs
-        // (Hermes _maybe_mirror_cron_delivery is a transcript mirror, not a
-        // transport; it must not depend on the ledger target resolving).
-        mirrorToAttachedSession(job, output == null ? "" : output);
-        if (target == null) {
-            log.debug("Cron job '{}' has no resolvable delivery target; skipping ledger enqueue", job.getName());
-            return;
-        }
-        String profile = job.getProfile() == null || job.getProfile().isBlank()
-            ? DEFAULT_PROFILE : job.getProfile();
-        String payload = output == null ? "" : output;
-        try {
-            deliveryService.enqueue(new DeliveryWorkItemService.EnqueueRequest(
-                DeliveryWorkItemService.SOURCE_CRON_EXECUTION,
-                String.valueOf(executionLogId),
-                profile,
-                job.getUserId(),
-                job.getLastRunSessionId(),
-                target,
-                payload));
-        } catch (IllegalArgumentException e) {
-            log.warn("Cron job '{}' delivery target rejected: {}", job.getName(), e.getMessage());
-        } catch (Exception e) {
-            log.warn("Cron job '{}' delivery enqueue failed: {}", job.getName(), e.getMessage());
-        }
-    }
-
-    /**
-     * WP-1 (Hermes _summarize_cron_failure_for_delivery + _failure_streak_nudge):
-     * every failed run delivers a compact one-line failure summary, plus a
-     * "worth a review" nudge line once the streak reaches the configured
-     * threshold. Compact by design — no provider JSON, retry noise or stack
-     * traces in the delivery channel.
-     */
-    private void enqueueFailureDeliveryWork(CronJobEntity job, Long executionLogId, String errorMsg) {
-        DeliveryWorkItemService deliveryService = deliveryProvider();
-        if (deliveryService == null || executionLogId == null) {
-            return;
-        }
-        String payload = failureDeliveryText(job, errorMsg);
-        // Mirror rides along ANY delivery — see enqueueDeliveryWork.
-        mirrorToAttachedSession(job, payload);
-        String target = resolveDeliveryTarget(job);
+    private void enqueueDeliveryWork(DeliveryWorkItemService deliveryService, CronJobEntity job,
+                                     long executionId, String target, String payload) {
         if (target == null) {
             return;
         }
         String profile = job.getProfile() == null || job.getProfile().isBlank()
             ? DEFAULT_PROFILE : job.getProfile();
-        try {
-            deliveryService.enqueue(new DeliveryWorkItemService.EnqueueRequest(
-                DeliveryWorkItemService.SOURCE_CRON_EXECUTION,
-                String.valueOf(executionLogId),
-                profile,
-                job.getUserId(),
-                job.getLastRunSessionId(),
-                target,
-                payload));
-        } catch (IllegalArgumentException e) {
-            log.warn("Cron job '{}' failure delivery target rejected: {}", job.getName(), e.getMessage());
-        } catch (Exception e) {
-            log.warn("Cron job '{}' failure delivery enqueue failed: {}", job.getName(), e.getMessage());
-        }
+        deliveryService.enqueue(new DeliveryWorkItemService.EnqueueRequest(
+            DeliveryWorkItemService.SOURCE_CRON_EXECUTION, String.valueOf(executionId),
+            profile, job.getUserId(), job.getLastRunSessionId(), target, payload));
     }
 
     /**

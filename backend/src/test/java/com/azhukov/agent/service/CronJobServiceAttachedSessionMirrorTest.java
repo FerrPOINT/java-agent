@@ -14,14 +14,15 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.SimpleTransactionStatus;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -47,7 +48,7 @@ class CronJobServiceAttachedSessionMirrorTest {
     @Mock private SkillManager skillManager;
     @Mock private CronExecutionLogRepository cronExecutionLogRepository;
     @Mock private MessageRepository messageRepository;
-    @Mock private TransactionTemplate transactionTemplate;
+    @Mock private PlatformTransactionManager transactions;
     @Mock private ObjectProvider<DeliveryWorkItemService> deliveryProvider;
     @Mock private ObjectProvider<com.azhukov.agent.persistence.repository.SessionRepository> sessionRepositoryProvider;
     @Mock private DeliveryWorkItemService deliveryService;
@@ -56,7 +57,7 @@ class CronJobServiceAttachedSessionMirrorTest {
     private CronJobService service() {
         return new CronJobService(cronJobRepository, agentRuntimeServiceProvider, properties(),
             skillManager, cronExecutionLogRepository, messageRepository,
-            transactionTemplate, new CronScheduleParser(),
+            new TransactionTemplate(transactions), new CronScheduleParser(),
             deliveryProvider, sessionRepositoryProvider, null);
     }
 
@@ -92,15 +93,8 @@ class CronJobServiceAttachedSessionMirrorTest {
             return entity;
         });
         when(deliveryProvider.getIfAvailable()).thenReturn(deliveryService);
-        // Lenient: target-less local runs never reach the ledger enqueue.
-        org.mockito.Mockito.lenient()
-            .when(deliveryService.enqueue(any())).thenAnswer(inv -> inv.getArgument(0));
-        // Run the tx callback inline (no real transaction manager in unit tests).
-        // Lenient: the no-attached-session path never opens a mirror transaction.
-        org.mockito.Mockito.lenient().doAnswer(invocation -> {
-            invocation.<Consumer<TransactionStatus>>getArgument(0).accept(null);
-            return null;
-        }).when(transactionTemplate).executeWithoutResult(any());
+        org.mockito.Mockito.lenient().when(transactions.getTransaction(any(TransactionDefinition.class)))
+            .thenAnswer(invocation -> new SimpleTransactionStatus());
         if (attachedSessionId != null) {
             // Session already has turns 0,2,5 — the mirror note must land at 6.
             when(messageRepository.findTurnIndicesBySessionIdDesc(attachedSessionId))
@@ -171,6 +165,10 @@ class CronJobServiceAttachedSessionMirrorTest {
 
         service().runNow(job.getId());
 
-        verify(deliveryService).enqueue(any());
+        var order = org.mockito.Mockito.inOrder(deliveryService, transactions, messageRepository);
+        order.verify(deliveryService).enqueue(any());
+        order.verify(transactions).commit(any());
+        order.verify(messageRepository).save(any(MessageEntity.class));
+        order.verify(transactions).rollback(any());
     }
 }

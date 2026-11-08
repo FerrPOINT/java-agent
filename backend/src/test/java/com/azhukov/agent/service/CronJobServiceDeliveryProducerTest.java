@@ -80,7 +80,6 @@ class CronJobServiceDeliveryProducerTest {
             return entity;
         });
         when(deliveryProvider.getIfAvailable()).thenReturn(deliveryService);
-        when(deliveryService.enqueue(any())).thenAnswer(inv -> inv.getArgument(0));
     }
 
     @Test
