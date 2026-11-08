@@ -286,24 +286,26 @@ public class TelegramClient {
                 // The platform REFUSED the send (429) — nothing was delivered.
                 // Return a known failure; the ledger's flood handling keeps the
                 // platform's own retry_after wait (Hermes flood_not_before).
-                throw new SendRefusalException(e.getRetryAfter(), e.getMessage());
+                throw new SendRefusalException(429, e.getRetryAfter(), e.getMessage());
             }
-            if (e.getErrorCode() > 0) {
-                // Definite Telegram API refusal (4xx/5xx with a code): the
-                // message was NOT accepted. Retrying may succeed later.
-                throw new SendRefusalException(-1, e.getMessage());
+            if (e.getErrorCode() >= 400 && e.getErrorCode() < 500) {
+                // A client-error response explicitly rejects this request.
+                throw new SendRefusalException(e.getErrorCode(), -1, e.getMessage());
             }
-            return Optional.empty();  // ambiguous transport outcome
+            return Optional.empty();  // server or transport outcome may be ambiguous
         }
     }
 
     /** Typed known-refusal signal for durable delivery (never ambiguous). */
     public static class SendRefusalException extends RuntimeException {
+        private final int errorCode;
         private final int retryAfterSeconds;
-        public SendRefusalException(int retryAfterSeconds, String message) {
+        public SendRefusalException(int errorCode, int retryAfterSeconds, String message) {
             super(message);
+            this.errorCode = errorCode;
             this.retryAfterSeconds = retryAfterSeconds;
         }
+        public int getErrorCode() { return errorCode; }
         public int getRetryAfterSeconds() { return retryAfterSeconds; }
     }
 
@@ -911,7 +913,24 @@ public class TelegramClient {
         } catch (Exception e) {
             // Check for HTTP 409 conflict from RestClient (comes as HttpStatusCodeException)
             String msg = e.getMessage();
-            if (msg != null && msg.contains("409 Conflict")) {
+            if (e instanceof org.springframework.web.client.HttpClientErrorException httpError) {
+                int status = httpError.getStatusCode().value();
+                try {
+                    TelegramResponse error = objectMapper.readValue(httpError.getResponseBodyAsByteArray(), TelegramResponse.class);
+                    if (error != null && !error.isSuccess() && Integer.valueOf(status).equals(error.errorCode())) {
+                        lastApiErrorCode = status;
+                        int retryAfter = status != 429 || error.parameters() == null || !error.parameters().containsKey("retry_after")
+                            ? -1 : error.parameters().get("retry_after").asInt(-1);
+                        if (retryAfter > 0) applyFloodCooldown(retryAfter);
+                        if (status == 409) lastCallConflict = true;
+                        throw new TelegramApiException(status, error.description(), retryAfter);
+                    }
+                } catch (java.io.IOException ignored) {
+                    // Unparseable HTTP error remains an ambiguous transport result.
+                }
+            }
+            if (e instanceof org.springframework.web.client.HttpClientErrorException httpError
+                    && httpError.getStatusCode().value() == 409) {
                 lastCallConflict = true;
                 lastApiErrorCode = 409;
                 log.warn("Telegram {} returned 409 Conflict: {}", method, msg);

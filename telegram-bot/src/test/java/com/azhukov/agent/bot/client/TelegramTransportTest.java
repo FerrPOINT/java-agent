@@ -14,6 +14,34 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class TelegramTransportTest {
     @Test
+    void httpBadRequestWithTelegramEnvelopeIsDefiniteRefusal() throws Exception {
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/bot-fixture/sendMessage", exchange -> {
+            try (exchange) {
+                exchange.getRequestBody().readAllBytes();
+                byte[] body = """
+                    {"ok":false,"error_code":400,"description":"Bad Request"}
+                    """.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().add("Content-Type", "application/json");
+                exchange.sendResponseHeaders(400, body.length);
+                exchange.getResponseBody().write(body);
+            }
+        });
+        server.start();
+        try {
+            var mapper = new ObjectMapper();
+            var transport = new BotConfig().telegramRestClient(mapper).mutate()
+                .baseUrl("http://127.0.0.1:" + server.getAddress().getPort()).build();
+            var client = new TelegramClient(transport, mapper, "-fixture", 0);
+            assertThatThrownBy(() -> client.sendMessageChecked(1L, "fixture", null, null, null, null, false))
+                .isInstanceOfSatisfying(TelegramClient.SendRefusalException.class,
+                    refusal -> assertThat(refusal.getErrorCode()).isEqualTo(400));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void lostReplyToAcceptedPostDoesNotTriggerAnotherRequest() throws Exception {
         var requests = new AtomicInteger();
         var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
