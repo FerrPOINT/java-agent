@@ -4,6 +4,7 @@ import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.service.AttachmentArtifactService;
 import com.azhukov.agent.service.AttachmentArtifactService.ArtifactRegistration;
 import com.azhukov.agent.service.AttachmentArtifactService.AttachmentArtifact;
+import com.azhukov.agent.service.AttachmentArtifactService.OutboundStatus;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
@@ -120,15 +121,23 @@ public class AttachmentController {
     public ResponseEntity<Resource> claimOutbound(@PathVariable("id") String id,
             @RequestParam(name = "ownerId", required = false) String ownerId,
             @RequestParam("sessionId") UUID sessionId) {
-        String owner = checkedArtifactOwner(id, ownerId, sessionId);
+        String owner = requireGatewayOwner(ownerId);
+        OutboundStatus status = requireOutboundArtifact(id, owner, sessionId);
         requireProtectedOutbound();
+        if (status == OutboundStatus.CLAIMED) {
+            throw alreadyClaimed();
+        }
         var content = service().verifiedContent(id, owner)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Artifact content is unavailable"));
         var response = contentResponse(content.artifact(), new org.springframework.core.io.ByteArrayResource(content.bytes()));
         if (!service().claimOutbound(id, owner, sessionId)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Artifact delivery was already attempted");
+            throw alreadyClaimed();
         }
         return response;
+    }
+
+    private static ResponseStatusException alreadyClaimed() {
+        return new ResponseStatusException(HttpStatus.CONFLICT, "Artifact delivery was already attempted");
     }
 
     private void requireProtectedOutbound() {
@@ -163,7 +172,8 @@ public class AttachmentController {
         if (messageId.isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Telegram message ID required");
         }
-        String owner = checkedArtifactOwner(id, ownerId, sessionId);
+        String owner = requireGatewayOwner(ownerId);
+        requireOutboundArtifact(id, owner, sessionId);
         if (!service().markDelivered(id, owner, sessionId, messageId)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "No matching outbound attempt or receipt");
         }
@@ -175,16 +185,20 @@ public class AttachmentController {
         return service().bySession(sessionId, scopedOwner());
     }
 
-    private String checkedArtifactOwner(String id, String ownerId, UUID sessionId) {
+    private static String requireGatewayOwner(String ownerId) {
         var origin = com.azhukov.agent.core.security.NativeIdentityOrigin.current();
         if (origin == null || origin.kind() != com.azhukov.agent.core.security.NativeIdentityOrigin.Kind.GATEWAY_KEY) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Telegram gateway authentication required");
         }
-        String owner = UserContext.requireRequestOwner(ownerId);
-        if (!service().isAvailableInSession(id, owner, sessionId)) {
+        return UserContext.requireRequestOwner(ownerId);
+    }
+
+    private OutboundStatus requireOutboundArtifact(String id, String owner, UUID sessionId) {
+        OutboundStatus status = service().outboundStatus(id, owner, sessionId);
+        if (status == OutboundStatus.UNAVAILABLE) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Unknown artifact");
         }
-        return owner;
+        return status;
     }
 
     private static String scopedOwner() {

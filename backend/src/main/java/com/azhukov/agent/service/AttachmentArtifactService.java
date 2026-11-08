@@ -175,11 +175,15 @@ public class AttachmentArtifactService {
         return "MEDIA:artifact:" + result.id();
     }
 
-    public boolean isAvailableInSession(String id, String owner, UUID sessionId) {
+    public enum OutboundStatus { UNAVAILABLE, UNCLAIMED, CLAIMED }
+
+    public OutboundStatus outboundStatus(String id, String owner, UUID sessionId) {
         return findEntity(id, owner).filter(artifact -> sessionId.equals(artifact.getSessionId()))
             .filter(artifact -> artifact.getExpiresAt().isAfter(Instant.now()))
             .filter(artifact -> "received".equals(artifact.getState()) || "delivered".equals(artifact.getState()))
-            .isPresent();
+            .map(artifact -> "received".equals(artifact.getState()) && artifact.getOutboundClaimedAt() == null
+                ? OutboundStatus.UNCLAIMED : OutboundStatus.CLAIMED)
+            .orElse(OutboundStatus.UNAVAILABLE);
     }
 
     public boolean hasProtectedOutbound() {

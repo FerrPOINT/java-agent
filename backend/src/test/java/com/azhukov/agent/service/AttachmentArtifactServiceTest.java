@@ -69,9 +69,15 @@ class AttachmentArtifactServiceTest {
         var stored = org.mockito.ArgumentCaptor.forClass(AttachmentArtifactEntity.class);
         verify(repository).save(stored.capture());
         when(repository.findById(registration.id())).thenReturn(Optional.of(stored.getValue()));
-        assertThat(service.isAvailableInSession(registration.id(), "u1", session)).isTrue();
-        assertThat(service.isAvailableInSession(registration.id(), "u1", UUID.randomUUID())).isFalse();
-        assertThat(service.isAvailableInSession(registration.id(), "u2", session)).isFalse();
+        assertThat(service.outboundStatus(registration.id(), "u1", session))
+            .isEqualTo(AttachmentArtifactService.OutboundStatus.UNCLAIMED);
+        assertThat(service.outboundStatus(registration.id(), "u1", UUID.randomUUID()))
+            .isEqualTo(AttachmentArtifactService.OutboundStatus.UNAVAILABLE);
+        assertThat(service.outboundStatus(registration.id(), "u2", session))
+            .isEqualTo(AttachmentArtifactService.OutboundStatus.UNAVAILABLE);
+        stored.getValue().setOutboundClaimedAt(java.time.Instant.now());
+        assertThat(service.outboundStatus(registration.id(), "u1", session))
+            .isEqualTo(AttachmentArtifactService.OutboundStatus.CLAIMED);
         assertThat(service.verifiedContent(registration.id(), "u1")).hasValueSatisfying(
             content -> assertThat(content.bytes()).isEqualTo(bytes));
         Files.write(tempDir.resolve(registration.cachePath()), new byte[]{3, 2, 1});
