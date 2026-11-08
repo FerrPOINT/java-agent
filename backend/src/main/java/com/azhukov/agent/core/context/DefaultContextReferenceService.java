@@ -4,6 +4,7 @@ import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.model.ContextReference;
 import com.azhukov.agent.core.model.ReferenceType;
 import com.azhukov.agent.core.skill.SkillManager;
+import com.azhukov.agent.core.security.FileSafety;
 import com.azhukov.agent.tools.terminal.CommandGuard;
 import jakarta.annotation.PostConstruct;
 import lombok.Getter;
@@ -54,6 +55,7 @@ public class DefaultContextReferenceService implements ContextReferenceService {
 
  private final AgentProperties properties;
  private final SkillManager skillManager;
+ private final FileSafety fileSafety;
  @Getter
  private HttpClient httpClient;
  private CommandGuard commandGuard;
@@ -207,6 +209,7 @@ public class DefaultContextReferenceService implements ContextReferenceService {
  * Blocks .ssh, .aws, .env, .gnupg, .kube and other sensitive directories/files.
  */
  private boolean isSensitivePath(Path path) {
+ if (fileSafety.isReadBlocked(path)) return true;
  String pathStr = path.toString();
  Path home = Paths.get(System.getProperty("user.home"));
 
@@ -250,11 +253,18 @@ public class DefaultContextReferenceService implements ContextReferenceService {
  if (!Files.exists(path)) {
  return Optional.of("[file not found: " + source + "]");
  }
+ Path target = path.toRealPath();
+ if (!target.startsWith(base.toRealPath()) || isSensitivePath(target)) {
+ return Optional.of("[file access denied: " + source + "]");
+ }
+ if (!Files.isRegularFile(target, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+ return Optional.of("[file not found: " + source + "]");
+ }
  long maxBytes = properties.getCore().getMaxReferenceFileBytes();
- if (Files.size(path) > maxBytes) {
+ if (Files.size(target) > maxBytes) {
  return Optional.of("[file too large: " + source + "]");
  }
- return Optional.of(Files.readString(path, StandardCharsets.UTF_8));
+ return Optional.of(Files.readString(target, StandardCharsets.UTF_8));
  } catch (IOException e) {
  log.warn("Failed to read referenced file {}", source, e);
  return Optional.of("[file read error: " + source + "]");
@@ -384,7 +394,6 @@ public class DefaultContextReferenceService implements ContextReferenceService {
  String workingDir = properties.getCore().getWorkingDirectory();
  path = Paths.get(workingDir != null ? workingDir : ".").resolve(path).toAbsolutePath().normalize();
  }
- final Path basePath = path;
  // Sensitive path blocking
  if (isSensitivePath(path)) {
  log.warn("Blocked sensitive folder reference: {}", source);
@@ -394,12 +403,16 @@ public class DefaultContextReferenceService implements ContextReferenceService {
  return Optional.of("[folder not found: " + source + "]");
  }
 
+ Path basePath = path.toRealPath();
+ if (isSensitivePath(basePath)) {
+ return Optional.of("[folder access denied — sensitive credential path: " + source + "]");
+ }
  StringBuilder listing = new StringBuilder();
  listing.append(path.getFileName()).append("/\n");
- try (var stream = Files.walk(path, 3)) {
+ try (var stream = Files.walk(basePath, 3)) {
  int limit = 200;
  var items = stream
- .filter(p -> !p.equals(basePath))
+ .filter(p -> !p.equals(basePath) && !fileSafety.isReadBlocked(p))
  .filter(p -> {
  String name = p.getFileName().toString();
  return !name.startsWith(".") && !name.equals("__pycache__");
@@ -408,7 +421,7 @@ public class DefaultContextReferenceService implements ContextReferenceService {
  .sorted()
  .toList();
  for (Path item : items) {
- int depth = path.relativize(item).getNameCount();
+ int depth = basePath.relativize(item).getNameCount();
  String indent = " ".repeat(Math.max(depth - 1, 0));
  if (Files.isDirectory(item)) {
  listing.append(indent).append("- ").append(item.getFileName()).append("/\n");

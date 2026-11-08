@@ -36,8 +36,9 @@ public class ContextConfig {
     }
 
     @Bean
-    public ContextReferenceService contextReferenceService(AgentProperties properties, SkillManager skillManager) {
-        return new DefaultContextReferenceService(properties, skillManager);
+    public ContextReferenceService contextReferenceService(AgentProperties properties, SkillManager skillManager,
+                                                           com.azhukov.agent.core.security.FileSafety fileSafety) {
+        return new DefaultContextReferenceService(properties, skillManager, fileSafety);
     }
 
     @Bean

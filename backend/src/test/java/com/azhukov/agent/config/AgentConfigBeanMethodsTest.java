@@ -104,7 +104,8 @@ class AgentConfigBeanMethodsTest {
 
     @Test
     void contextReferenceService_bean() {
-        assertThat(contextConfig.contextReferenceService(properties, mock(SkillManager.class))).isNotNull();
+        assertThat(contextConfig.contextReferenceService(properties, mock(SkillManager.class),
+            new com.azhukov.agent.core.security.DefaultFileSafety(properties))).isNotNull();
     }
 
     @Test
