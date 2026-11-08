@@ -359,7 +359,7 @@ class StreamingOrchestratorTest {
     @Test
     void failedFinalizationDoesNotDeliverMedia() {
         properties.setMediaDeliveryEnabled(true);
-        String response = "answer\nMEDIA:/workspace/report.pdf";
+        String response = "answer\nMEDIA:artifact:att_0123456789abcdef0123456789abcdef";
         when(streamEditor.finalizeStream(eq(100L), eq(1L), anyString())).thenReturn(false);
         stubChatStream(ctx -> {
             ctx.tokenConsumer.accept(response);
@@ -368,7 +368,7 @@ class StreamingOrchestratorTest {
         });
         var result = orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
         assertThat(result.streamFinalized()).isFalse();
-        verify(hooks, never()).deliverMedia(anyLong(), anyList(), any());
+        verify(hooks, never()).deliverMedia(anyLong(), anyList(), any(), any(), any());
     }
 
     @Test
@@ -376,7 +376,7 @@ class StreamingOrchestratorTest {
         properties.setMediaDeliveryEnabled(true);
         when(runtimeFooter.format(anyString(), anyInt(), anyInt(), anyString(), anyLong(), anyBoolean()))
             .thenReturn("\n[footer]");
-        String response = "MEDIA:/workspace/report.pdf";
+        String response = "MEDIA:artifact:att_0123456789abcdef0123456789abcdef";
         stubChatStream(ctx -> {
             ctx.tokenConsumer.accept(response);
             var result = new AgentBackendClient.ChatResult(response, "model", 1, 10, true);
@@ -386,7 +386,7 @@ class StreamingOrchestratorTest {
         var result = orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
         assertThat(result.streamFinalized()).isTrue();
         verify(streamEditor).finalizeStream(eq(100L), eq(1L), contains("[footer]"));
-        verify(hooks).deliverMedia(eq(100L), argThat(media -> media.size() == 1), isNull());
+        verify(hooks).deliverMedia(eq(100L), argThat(media -> media.size() == 1), isNull(), any(), any());
         verify(streamEditor, never()).discardStreamPreview(anyLong());
     }
 
@@ -395,7 +395,7 @@ class StreamingOrchestratorTest {
         properties.setMediaDeliveryEnabled(true);
         when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong()))
             .thenReturn(Optional.empty());
-        String response = "answer\nMEDIA:/workspace/report.pdf";
+        String response = "answer\nMEDIA:artifact:att_0123456789abcdef0123456789abcdef";
         stubChatStream(ctx -> {
             ctx.tokenConsumer.accept(response);
             ctx.onComplete.accept(new AgentBackendClient.ChatResult(response, "model", 1, 10, true));
@@ -405,7 +405,7 @@ class StreamingOrchestratorTest {
         assertThat(result.streamFinalized()).isTrue();
         InOrder order = inOrder(streamEditor, hooks);
         order.verify(streamEditor).finalizeStream(eq(100L), eq(-1L), argThat(text -> !text.contains("MEDIA:")));
-        order.verify(hooks).deliverMedia(eq(100L), argThat(media -> media.size() == 1), isNull());
+        order.verify(hooks).deliverMedia(eq(100L), argThat(media -> media.size() == 1), isNull(), any(), any());
     }
 
     @Test
@@ -414,7 +414,7 @@ class StreamingOrchestratorTest {
         when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong()))
             .thenReturn(Optional.empty());
         when(streamEditor.finalizeStream(eq(100L), eq(-1L), anyString())).thenReturn(false);
-        String response = "answer\nMEDIA:/workspace/report.pdf";
+        String response = "answer\nMEDIA:artifact:att_0123456789abcdef0123456789abcdef";
         stubChatStream(ctx -> {
             ctx.tokenConsumer.accept(response);
             ctx.onComplete.accept(new AgentBackendClient.ChatResult(response, "model", 1, 10, true));
@@ -422,7 +422,7 @@ class StreamingOrchestratorTest {
         });
         var result = orchestrator.streamChat(100L, "hi", null, session(), 5L, 0L, hooks);
         assertThat(result.streamFinalized()).isFalse();
-        verify(hooks, never()).deliverMedia(anyLong(), anyList(), any());
+        verify(hooks, never()).deliverMedia(anyLong(), anyList(), any(), any(), any());
     }
 
     @Test
