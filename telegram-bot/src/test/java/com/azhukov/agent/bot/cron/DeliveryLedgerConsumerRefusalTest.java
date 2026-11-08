@@ -65,7 +65,7 @@ class DeliveryLedgerConsumerRefusalTest {
     void floodRefusalReleasesWithPlatformRetryAfter() {
         spec();
         when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean()))
-            .thenThrow(new TelegramClient.SendRefusalException(95, "429: Too Many Requests"));
+            .thenThrow(new TelegramClient.SendRefusalException(429, 95, "429: Too Many Requests"));
 
         consumer().deliverBatchForTest(List.of(
             delegate("42", "result A"), delegate("43", "result B")));
@@ -86,7 +86,7 @@ class DeliveryLedgerConsumerRefusalTest {
         spec();
         when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(123L))
-            .thenThrow(new TelegramClient.SendRefusalException(95, "429: Too Many Requests"));
+            .thenThrow(new TelegramClient.SendRefusalException(429, 95, "429: Too Many Requests"));
         consumer().deliverBatchForTest(List.of(delegate("42", "a".repeat(9000))));
         ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
         verify(specMock).body(body.capture());
@@ -124,7 +124,7 @@ class DeliveryLedgerConsumerRefusalTest {
         spec();
         when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(123L))
-            .thenThrow(new TelegramClient.SendRefusalException(95, "429: Too Many Requests"));
+            .thenThrow(new TelegramClient.SendRefusalException(429, 95, "429: Too Many Requests"));
         var items = new java.util.ArrayList<DeliveryLedgerConsumer.ClaimedItem>();
         for (int i = 0; i < 10; i++) items.add(delegate(String.valueOf(i), "a".repeat(1000)));
         consumer().deliverBatchForTest(items);
@@ -175,17 +175,17 @@ class DeliveryLedgerConsumerRefusalTest {
     }
 
     @Test
-    void definiteApiRefusalReleasesAsSendRefused() {
+    void badRequestDropsBeforeAnyAcceptedChunk() {
         spec();
         when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean()))
-            .thenThrow(new TelegramClient.SendRefusalException(-1, "400: Bad Request: chat not found"));
+            .thenThrow(new TelegramClient.SendRefusalException(400, -1, "400: Bad Request: chat not found"));
 
         consumer().deliverBatchForTest(List.of(delegate("44", "payload")));
 
         ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
         verify(specMock, times(1)).body(body.capture());
         assertThat(body.getAllValues().stream()
-            .filter(p -> p.contains("send_refused") && !p.contains("flood"))
+            .filter(p -> p.contains("bad_request") && p.contains("drop"))
             .count()).isEqualTo(1);
     }
 }
