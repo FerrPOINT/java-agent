@@ -1149,21 +1149,23 @@ public class StreamEditor {
     private List<DeliveryOperation> formattedOperations(long chatId, String text, StreamSession session, long replacedPreview) {
         String formatted = formatForTelegramDelegate(text);
         Integer topic = session.messageThreadId > 0 ? (int) session.messageThreadId : null;
-        List<String> parts;
+        List<MessageSplitter.TextPart> parts;
         if (formatted.length() <= MessageSplitter.TELEGRAM_MAX_LENGTH && text.length() <= MessageSplitter.TELEGRAM_MAX_LENGTH) {
-            parts = List.of(text);
-        } else if ("HTML".equalsIgnoreCase(parseMode)) {
-            parts = MessageSplitter.splitHtmlSource(text);
+            parts = List.of(new MessageSplitter.TextPart(text, formatted));
         } else if ("MarkdownV2".equalsIgnoreCase(parseMode)) {
-            parts = MessageSplitter.splitMarkdownSource(text);
+            parts = MessageSplitter.splitMarkdown(text);
         } else {
-            parts = MessageSplitter.splitPlainText(text);
+            List<String> source = "HTML".equalsIgnoreCase(parseMode)
+                ? MessageSplitter.splitHtmlSource(text) : MessageSplitter.splitPlainText(text);
+            parts = source.stream()
+                .map(part -> new MessageSplitter.TextPart(part, formatForTelegramDelegate(part))).toList();
         }
-        List<String> chunks = parts.stream().filter(chunk -> !chunk.isBlank()).toList();
+        var chunks = parts.stream().filter(part -> !part.original().isBlank()).toList();
         var operations = new java.util.ArrayList<DeliveryOperation>();
         for (int i = 0; i < chunks.size(); i++) {
-            String chunk = chunks.get(i);
-            String payload = parts.size() == 1 ? formatted : formatForTelegramDelegate(chunk);
+            var part = chunks.get(i);
+            String chunk = part.original();
+            String payload = part.formatted();
             Long reply = replyFor(session, i);
             long preview = i == chunks.size() - 1 ? replacedPreview : 0;
             var plain = new DeliveryOperation(() -> telegramClient.sendMessageChecked(

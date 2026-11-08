@@ -96,11 +96,6 @@ public final class MessageSplitter {
         return splitNumberedSource(text, (TELEGRAM_MAX_LENGTH - 32) / 5);
     }
 
-    /** Reserve room for MarkdownV2 escaping of both the source and part label. */
-    public static List<String> splitMarkdownSource(String text) {
-        return splitNumberedSource(text, TELEGRAM_MAX_LENGTH / 2 - 24);
-    }
-
     private static List<String> splitNumberedSource(String text, int limit) {
         List<String> parts = new ArrayList<>();
         for (int start = 0; start < text.length();) {
@@ -143,12 +138,19 @@ public final class MessageSplitter {
             return split(text);
         }
 
+        return splitMarkdown(text).stream().map(TextPart::formatted).toList();
+    }
+
+    public record TextPart(String original, String formatted) {}
+
+    /** Prepare both representations of the same delivery fragment. */
+    public static List<TextPart> splitMarkdown(String text) {
         // For MarkdownV2: split raw text first, then format each chunk, then add escaped indicator.
         // MarkdownV2 escaping can double each char (every special char gets a '\' prefix),
         // so we split the raw text at maxLength / maxExpansionFactor to leave room for escaping.
         String single = MarkdownConverter.convert(text);
-        if (utf16Length(single) <= TELEGRAM_MAX_LENGTH) {
-            return List.of(single);
+        if (utf16Length(single) <= TELEGRAM_MAX_LENGTH && text.length() <= TELEGRAM_MAX_LENGTH) {
+            return List.of(new TextPart(text, single));
         }
 
         // Worst case: every character is a MarkdownV2 special char and gets escaped (doubled).
@@ -165,10 +167,11 @@ public final class MessageSplitter {
 
         List<String> rawChunks = doSplit(text, rawMaxLen);
         int total = rawChunks.size();
-        List<String> result = new ArrayList<>(total);
+        List<TextPart> result = new ArrayList<>(total);
 
         for (int i = 0; i < total; i++) {
-            String formatted = MarkdownConverter.convert(rawChunks.get(i));
+            String original = rawChunks.get(i);
+            String formatted = MarkdownConverter.convert(original);
             if (total > 1) {
                 // Build the indicator and escape it for MarkdownV2
                 String indicator = "(" + (i + 1) + "/" + total + ") ";
@@ -184,9 +187,9 @@ public final class MessageSplitter {
                     }
                     formatted = formatted.substring(0, cut);
                 }
-                result.add(escapedIndicator + formatted);
+                result.add(new TextPart(indicator + original, escapedIndicator + formatted));
             } else {
-                result.add(formatted);
+                result.add(new TextPart(original, formatted));
             }
         }
 
