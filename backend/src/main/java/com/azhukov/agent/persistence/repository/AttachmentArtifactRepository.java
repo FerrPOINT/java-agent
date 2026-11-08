@@ -37,6 +37,19 @@ public interface AttachmentArtifactRepository extends JpaRepository<AttachmentAr
     int claimOutbound(@Param("id") String id, @Param("owner") String owner,
                       @Param("session") UUID session, @Param("now") Instant now);
 
+    @org.springframework.transaction.annotation.Transactional
+    @Modifying
+    @Query("""
+        UPDATE AttachmentArtifactEntity a SET a.state = 'delivered',
+            a.deliveredMessageId = :messageId, a.deliveredAt = COALESCE(a.deliveredAt, :now)
+        WHERE a.id = :id AND a.ownerId = :owner AND a.sessionId = :session
+          AND a.expiresAt > :now AND a.outboundClaimedAt IS NOT NULL
+          AND (a.state = 'received' OR (a.state = 'delivered' AND a.deliveredMessageId = :messageId))
+        """)
+    int recordOutboundReceipt(@Param("id") String id, @Param("owner") String owner,
+                              @Param("session") UUID session, @Param("messageId") String messageId,
+                              @Param("now") Instant now);
+
     @Modifying
     @Query("DELETE FROM AttachmentArtifactEntity a WHERE a.expiresAt < :cutoff")
     int deleteExpired(@Param("cutoff") Instant cutoff);

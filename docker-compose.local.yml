@@ -124,7 +124,6 @@ services:
       retries: 10
       start_period: 30s
     volumes:
-      - agent_local_workspace:/workspace
       - agent_local_state:/home/agent/.java-agent
 
   cli:

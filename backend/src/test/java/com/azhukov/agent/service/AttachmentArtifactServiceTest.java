@@ -133,46 +133,15 @@ class AttachmentArtifactServiceTest {
     }
 
     @Test
-    void ownerScopedLookupAndReceiptDoNotCrossArtifactBoundary() {
-        AttachmentArtifactEntity artifact = new AttachmentArtifactEntity();
-        artifact.setId("att_private");
-        artifact.setOwnerId("user-b");
-        artifact.setState("received");
-        when(repository.findById("att_private")).thenReturn(Optional.of(artifact));
+    void receiptUsesExactOwnerAndSession() {
+        var session = UUID.randomUUID();
+        when(repository.recordOutboundReceipt(eq("att_1"), eq("user-a"), eq(session), eq("42"), any(Instant.class)))
+            .thenReturn(1);
+        var service = service();
 
-        assertThat(service().find("att_private", "user-a")).isEmpty();
-        assertThat(service().markDelivered("att_private", "user-a", "msg-1")).isFalse();
-        assertThat(artifact.getState()).isEqualTo("received");
-        verify(repository, never()).save(artifact);
-    }
-
-    @Test
-    void markDeliveredIsIdempotent() {
-        AttachmentArtifactEntity delivered = new AttachmentArtifactEntity();
-        delivered.setId("att_1");
-        delivered.setState("delivered");
-        when(repository.findById("att_1")).thenReturn(Optional.of(delivered));
-
-        assertThat(service().markDelivered("att_1")).isTrue();
-        verify(repository, never()).save(any()); // already delivered — no rewrite
-    }
-
-    @Test
-    void markDeliveredTransitionsReceivedOnce() {
-        AttachmentArtifactEntity received = new AttachmentArtifactEntity();
-        received.setId("att_2");
-        received.setState("received");
-        when(repository.findById("att_2")).thenReturn(Optional.of(received));
-
-        assertThat(service().markDelivered("att_2")).isTrue();
-        assertThat(received.getState()).isEqualTo("delivered");
-        verify(repository).save(received);
-    }
-
-    @Test
-    void unknownArtifactMarkDeliveredFalse() {
-        when(repository.findById("att_missing")).thenReturn(Optional.empty());
-        assertThat(service().markDelivered("att_missing")).isFalse();
+        assertThat(service.markDelivered("att_1", "user-a", session, "42")).isTrue();
+        assertThat(service.markDelivered("att_1", "user-b", session, "42")).isFalse();
+        assertThat(service.markDelivered("att_1", "user-a", UUID.randomUUID(), "42")).isFalse();
     }
 
     // helper to expose hash for dedupe stubbing

@@ -119,6 +119,20 @@ public class TtsTool implements ToolHandler {
             return jsonErrorResponse("Text is empty after TTS cleanup");
         }
 
+        boolean telegram = session != null && "telegram".equalsIgnoreCase(session.getMetadata("platform"));
+        if (telegram && !customPath) {
+            try {
+                List<String> tags = new ArrayList<>();
+                for (String chunk : chunks) {
+                    byte[] audio = synthesize(provider, chunk, voice, speed, args.instructions());
+                    tags.add(artifacts.publishGenerated(session, "audio", "audio/mpeg", "voice.mp3", audio));
+                }
+                return ToolResult.ok(jsonSuccessResponse(List.of(), tags, provider.name(), chunks.size()));
+            } catch (Exception e) {
+                return synthesisFailure(e);
+            }
+        }
+
         Path baseOutputPath = resolveOutputPath(args.outputPath());
         List<Path> writtenPaths = new ArrayList<>();
         List<String> mediaTags = new ArrayList<>();
@@ -137,17 +151,14 @@ public class TtsTool implements ToolHandler {
                 try {
                     for (int i = 0; i < chunks.size(); i++) {
                         Path target = chunks.size() == 1 ? baseOutputPath : chunkOutputPath(baseOutputPath, i + 1);
-                        byte[] audio = provider.synthesize(chunks.get(i), voice, speed, args.instructions());
-                        if (audio == null || audio.length == 0) {
-                            throw new IllegalStateException("TTS provider returned empty audio data");
-                        }
+                        byte[] audio = synthesize(provider, chunks.get(i), voice, speed, args.instructions());
                         try (var channel = directory.newByteChannel(target.getFileName(),
                                 Set.of(StandardOpenOption.WRITE, StandardOpenOption.CREATE_NEW, LinkOption.NOFOLLOW_LINKS))) {
                             writtenPaths.add(target);
                             var remaining = ByteBuffer.wrap(audio);
                             while (remaining.hasRemaining()) channel.write(remaining);
                         }
-                        if (session != null) {
+                        if (telegram) {
                             String name = target.getFileName().toString().replaceAll("[^A-Za-z0-9._-]", "_");
                             mediaTags.add(artifacts.publishGenerated(session, "audio", "audio/mpeg", name, audio));
                         }
@@ -167,9 +178,21 @@ public class TtsTool implements ToolHandler {
             log.debug("TTS generated {} file(s) for provider={}", writtenPaths.size(), provider.name());
             return ToolResult.ok(jsonSuccessResponse(writtenPaths, mediaTags, provider.name(), chunks.size()));
         } catch (Exception e) {
-            log.error("TTS failed: {}", e.getMessage(), e);
-            return jsonErrorResponse("TTS failed: " + errorMessage(e));
+            return synthesisFailure(e);
         }
+    }
+
+    private byte[] synthesize(TtsProvider provider, String text, String voice, Double speed, String instructions) throws Exception {
+        byte[] audio = provider.synthesize(text, voice, speed, instructions);
+        if (audio == null || audio.length == 0) {
+            throw new IllegalStateException("TTS provider returned empty audio data");
+        }
+        return audio;
+    }
+
+    private ToolResult synthesisFailure(Exception error) {
+        log.error("TTS failed: {}", error.getMessage(), error);
+        return jsonErrorResponse("TTS failed: " + errorMessage(error));
     }
 
     private SecureDirectoryStream<Path> openAudioDirectory(Path parent) throws IOException {
@@ -211,7 +234,7 @@ public class TtsTool implements ToolHandler {
     private String jsonSuccessResponse(List<Path> paths, List<String> tags, String provider, int chunkCount) {
         ObjectNode response = MAPPER.createObjectNode();
         response.put("success", true);
-        response.put("file_path", paths.getFirst().toString());
+        if (!paths.isEmpty()) response.put("file_path", paths.getFirst().toString());
         ArrayNode filePaths = response.putArray("file_paths");
         for (Path path : paths) {
             filePaths.add(path.toString());
@@ -220,7 +243,7 @@ public class TtsTool implements ToolHandler {
         response.put("provider", provider);
         response.put("voice_compatible", false);
         response.put("chunk_count", chunkCount);
-        response.put("delivery_file_count", paths.size());
+        response.put("delivery_file_count", tags.isEmpty() ? paths.size() : tags.size());
         response.put("combined_chunks", false);
         return response.toString();
     }

@@ -250,38 +250,8 @@ public class AttachmentArtifactService {
         return bySession(sessionId, null);
     }
 
-    /** Outbound receipt: mark delivered exactly once (idempotent). */
-    public boolean markDelivered(String artifactId) {
-        return markDelivered(artifactId, null, null);
-    }
-
-    /** Backward-compatible admin/service receipt without an owner filter. */
-    public boolean markDelivered(String artifactId, String deliveredMessageId) {
-        return markDelivered(artifactId, null, deliveredMessageId);
-    }
-
-    /**
-     * Outbound receipt with the platform message id of the successful send.
-     * Idempotent: an already-delivered artifact keeps its FIRST receipt —
-     * a retry after an ambiguous send never overwrites it and the caller
-     * can detect the duplicate by the false return.
-     */
-    public boolean markDelivered(String artifactId, String ownerId, String deliveredMessageId) {
-        AttachmentArtifactRepository repository = repository();
-        AttachmentArtifactEntity entity = findEntity(artifactId, ownerId).orElse(null);
-        if (entity == null) {
-            return false;
-        }
-        if ("delivered".equals(entity.getState())) {
-            return true;
-        }
-        entity.setState("delivered");
-        if (deliveredMessageId != null && !deliveredMessageId.isBlank()) {
-            entity.setDeliveredMessageId(deliveredMessageId.trim());
-            entity.setDeliveredAt(Instant.now());
-        }
-        repository.save(entity);
-        return true;
+    public boolean markDelivered(String artifactId, String ownerId, UUID sessionId, String messageId) {
+        return repository().recordOutboundReceipt(artifactId, ownerId, sessionId, messageId, Instant.now()) == 1;
     }
 
     /**

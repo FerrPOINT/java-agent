@@ -80,16 +80,15 @@ class AttachmentControllerTest {
     }
 
     @Test
-    void duplicateOutboundClaimReturnsConflictWithoutReadingContent() throws Exception {
+    void missingContentDoesNotConsumeClaim() throws Exception {
         UUID sessionId = UUID.randomUUID();
         UserContext.set("alice", UserContext.ROLE_USER);
         try {
             when(service.isAvailableInSession("att_1", "alice", sessionId)).thenReturn(true);
             when(service.hasProtectedOutbound()).thenReturn(true);
-            when(service.claimOutbound("att_1", "alice", sessionId)).thenReturn(false);
             mockMvc.perform(post("/api/v1/attachments/att_1/outbound").param("sessionId", sessionId.toString()))
-                .andExpect(status().isConflict());
-            org.mockito.Mockito.verify(service, org.mockito.Mockito.never()).verifiedContent(anyString(), anyString());
+                .andExpect(status().isNotFound());
+            org.mockito.Mockito.verify(service, org.mockito.Mockito.never()).claimOutbound(anyString(), anyString(), any());
         } finally {
             UserContext.clear();
         }
@@ -158,15 +157,15 @@ class AttachmentControllerTest {
 
     @Test
     void regularUserCannotMarkAnotherOwnersArtifactDelivered() throws Exception {
-        when(service.markDelivered("att_1", "user-a", null)).thenReturn(false);
-        com.azhukov.agent.core.security.UserContext.set("user-a",
-            com.azhukov.agent.core.security.UserContext.ROLE_USER);
+        UUID sessionId = UUID.randomUUID();
+        UserContext.set("user-a", UserContext.ROLE_USER);
         try {
-            mockMvc.perform(post("/api/v1/attachments/att_1/delivered"))
+            mockMvc.perform(post("/api/v1/attachments/att_1/delivered")
+                    .param("sessionId", sessionId.toString()).param("messageId", "42"))
                 .andExpect(status().isNotFound());
-            org.mockito.Mockito.verify(service).markDelivered("att_1", "user-a", null);
+            org.mockito.Mockito.verify(service, org.mockito.Mockito.never()).markDelivered(any(), any(), any(), any());
         } finally {
-            com.azhukov.agent.core.security.UserContext.clear();
+            UserContext.clear();
         }
     }
 
@@ -210,18 +209,10 @@ class AttachmentControllerTest {
     }
 
     @Test
-    void deliveredMarksAndIsIdempotent() throws Exception {
-        when(service.markDelivered("att_1", null, null)).thenReturn(true);
+    void deliveredRequiresSessionAndMessageId() throws Exception {
         mockMvc.perform(post("/api/v1/attachments/att_1/delivered"))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.state").value("delivered"));
-    }
-
-    @Test
-    void deliveredUnknownArtifactIs404() throws Exception {
-        when(service.markDelivered("att_missing", null, null)).thenReturn(false);
-        mockMvc.perform(post("/api/v1/attachments/att_missing/delivered"))
-            .andExpect(status().isNotFound());
+            .andExpect(status().isBadRequest());
+        org.mockito.Mockito.verifyNoInteractions(service);
     }
 
     @Test

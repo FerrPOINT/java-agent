@@ -122,12 +122,13 @@ public class AttachmentController {
             @RequestParam("sessionId") UUID sessionId) {
         String owner = checkedArtifactOwner(id, ownerId, sessionId);
         requireProtectedOutbound();
+        var content = service().verifiedContent(id, owner)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Artifact content is unavailable"));
+        var response = contentResponse(content.artifact(), new org.springframework.core.io.ByteArrayResource(content.bytes()));
         if (!service().claimOutbound(id, owner, sessionId)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Artifact delivery was already attempted");
         }
-        var content = service().verifiedContent(id, owner)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Artifact content is unavailable"));
-        return contentResponse(content.artifact(), new org.springframework.core.io.ByteArrayResource(content.bytes()));
+        return response;
     }
 
     private void requireProtectedOutbound() {
@@ -152,17 +153,19 @@ public class AttachmentController {
 
     /**
      * Outbound receipt: mark delivered exactly once (idempotent). Accepts an
-     * optional platform message id from the successful send.
+     * platform message ID from a claimed send.
      */
     @PostMapping("/{id}/delivered")
     public Map<String, Object> delivered(@PathVariable("id") String id,
             @RequestParam(name = "ownerId", required = false) String ownerId,
-            @RequestParam(name = "sessionId", required = false) UUID sessionId,
-            @RequestParam(value = "messageId", required = false) String messageId) {
+            @RequestParam("sessionId") UUID sessionId,
+            @RequestParam("messageId") String messageId) {
+        if (messageId.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Telegram message ID required");
+        }
         String owner = checkedArtifactOwner(id, ownerId, sessionId);
-        boolean ok = service().markDelivered(id, owner, messageId);
-        if (!ok) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "unknown artifact " + id);
+        if (!service().markDelivered(id, owner, sessionId, messageId)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "No matching outbound attempt or receipt");
         }
         return Map.of("ok", true, "id", id, "state", "delivered");
     }
@@ -173,10 +176,6 @@ public class AttachmentController {
     }
 
     private String checkedArtifactOwner(String id, String ownerId, UUID sessionId) {
-        if (ownerId == null && sessionId == null) return scopedOwner();
-        if (sessionId == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Artifact session ID required");
-        }
         String owner = UserContext.requireRequestOwner(ownerId);
         if (!service().isAvailableInSession(id, owner, sessionId)) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Unknown artifact");

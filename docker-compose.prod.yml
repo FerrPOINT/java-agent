@@ -138,7 +138,6 @@ services:
     networks:
       - backend
     volumes:
-      - agent_prod_workspace:/workspace
       - agent_prod_state:/home/agent/.java-agent
     deploy:
       resources:

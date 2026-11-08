@@ -47,9 +47,28 @@ class TtsToolTest {
     @BeforeEach
     void setUp() {
         AgentProperties properties = new AgentProperties();
-        lenient().when(artifacts.publishGenerated(eq(session), eq("audio"), anyString(), anyString(), any())).thenReturn(ARTIFACT);
         lenient().when(provider.name()).thenReturn("edge");
         tool = new TtsTool(List.of(provider), properties, new com.azhukov.agent.core.security.DefaultFileSafety(properties), artifacts);
+    }
+
+    @Test
+    void telegramPublishesAudioWithoutResolvingALocalOutputPath() throws Exception {
+        var telegram = session.withMetadata("platform", "telegram");
+        byte[] audio = "audio".getBytes();
+        when(provider.synthesize(eq("Hello"), any(), any(), any())).thenReturn(audio);
+        when(artifacts.publishGenerated(telegram, "audio", "audio/mpeg", "voice.mp3", audio)).thenReturn(ARTIFACT);
+        var policy = org.mockito.Mockito.mock(com.azhukov.agent.core.security.FileSafety.class);
+        var remoteTool = new TtsTool(List.of(provider), new AgentProperties(), policy, artifacts);
+
+        var result = remoteTool.execute("{\"text\":\"Hello\"}", null, telegram);
+
+        assertThat(result.success()).isTrue();
+        var response = json(result);
+        assertThat(response.has("file_path")).isFalse();
+        assertThat(response.path("file_paths").isEmpty()).isTrue();
+        assertThat(response.path("media_tag").asText()).isEqualTo(ARTIFACT);
+        assertThat(response.path("delivery_file_count").asInt()).isOne();
+        org.mockito.Mockito.verifyNoInteractions(policy);
     }
 
     @Test
@@ -87,7 +106,7 @@ class TtsToolTest {
         assertThat(savedPath.getFileName().toString()).startsWith("tts_");
         assertThat(Files.exists(savedPath)).isTrue();
         assertThat(Files.readAllBytes(savedPath)).isEqualTo(audioBytes);
-        assertThat(response.get("media_tag").asText()).isEqualTo(ARTIFACT);
+        assertThat(response.get("media_tag").asText()).isEmpty();
 
         Files.deleteIfExists(savedPath);
     }
@@ -133,7 +152,7 @@ class TtsToolTest {
         JsonNode response = json(result);
         Path actualPath = Path.of(response.get("file_path").asText());
         assertThat(actualPath).isEqualTo(requested.toAbsolutePath().normalize());
-        assertThat(response.get("media_tag").asText()).isEqualTo(ARTIFACT);
+        assertThat(response.get("media_tag").asText()).isEmpty();
         assertThat(Files.readAllBytes(requested)).isEqualTo(audioBytes);
         Files.deleteIfExists(requested);
         Files.deleteIfExists(requested.getParent());
@@ -170,7 +189,7 @@ class TtsToolTest {
         assertThat(filePaths).hasSize(2);
         assertThat(response.get("chunk_count").asInt()).isEqualTo(2);
         assertThat(response.get("delivery_file_count").asInt()).isEqualTo(2);
-        assertThat(response.get("media_tag").asText().lines()).hasSize(2);
+        assertThat(response.get("media_tag").asText()).isEmpty();
 
         ArgumentCaptor<String> textCaptor = ArgumentCaptor.forClass(String.class);
         verify(provider, times(2)).synthesize(textCaptor.capture(), any(), any(), any());

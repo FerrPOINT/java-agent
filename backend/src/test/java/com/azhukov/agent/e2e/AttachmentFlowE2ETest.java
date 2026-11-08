@@ -235,23 +235,7 @@ class AttachmentFlowE2ETest extends PostgresTestContainer {
         assertThat(persisted).contains(TEXT_PAYLOAD);
         assertThat(persisted).contains("notes.txt");
 
-        // 4) delivered receipt with platform message id — idempotent
-        mockMvc.perform(post("/api/v1/attachments/{id}/delivered", artifactId)
-                .param("messageId", "42133"))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.state").value("delivered"));
-
-        // second call keeps the FIRST receipt, still 200
-        mockMvc.perform(post("/api/v1/attachments/{id}/delivered", artifactId)
-                .param("messageId", "99999"))
-            .andExpect(status().isOk());
-
-        mockMvc.perform(get("/api/v1/attachments/" + artifactId))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.state").value("delivered"))
-            .andExpect(jsonPath("$.deliveredMessageId").value("42133"));
-
-        // 5) by-session listing: the chat-time artifact was registered before
+        // 4) by-session listing: the chat-time artifact was registered before
         //    the session existed (session id is only known after the first
         //    turn), so a follow-up upload explicitly linked to the session
         //    must appear; the first one stays owner-scoped.
@@ -298,6 +282,10 @@ class AttachmentFlowE2ETest extends PostgresTestContainer {
                 .header("X-API-Key", "fixture-gateway-key").param("ownerId", owner)
                 .param("sessionId", UUID.randomUUID().toString()))
             .andExpect(status().isNotFound());
+        gateway.perform(post("/api/v1/attachments/{id}/delivered", id)
+                .header("X-API-Key", "fixture-gateway-key").param("ownerId", owner).param("sessionId", session.toString())
+                .param("messageId", "419"))
+            .andExpect(status().isConflict());
         var response = gateway.perform(post("/api/v1/attachments/{id}/outbound", id)
                 .header("X-API-Key", "fixture-gateway-key").param("ownerId", owner).param("sessionId", session.toString()))
             .andExpect(status().isOk()).andReturn().getResponse();
@@ -310,6 +298,14 @@ class AttachmentFlowE2ETest extends PostgresTestContainer {
                 .header("X-API-Key", "fixture-gateway-key").param("ownerId", owner).param("sessionId", session.toString())
                 .param("messageId", "420"))
             .andExpect(status().isOk());
+        gateway.perform(post("/api/v1/attachments/{id}/delivered", id)
+                .header("X-API-Key", "fixture-gateway-key").param("ownerId", owner).param("sessionId", session.toString())
+                .param("messageId", "420"))
+            .andExpect(status().isOk());
+        gateway.perform(post("/api/v1/attachments/{id}/delivered", id)
+                .header("X-API-Key", "fixture-gateway-key").param("ownerId", owner).param("sessionId", session.toString())
+                .param("messageId", "421"))
+            .andExpect(status().isConflict());
         assertThat(artifactService.find(id, owner).orElseThrow().deliveredMessageId()).isEqualTo("420");
     }
 

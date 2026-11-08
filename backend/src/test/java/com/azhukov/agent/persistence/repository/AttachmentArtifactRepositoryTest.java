@@ -106,6 +106,39 @@ class AttachmentArtifactRepositoryTest extends PostgresTestContainer {
     }
 
     @Test
+    void concurrentReceiptsPreserveTheFirstAcceptedMessage() throws Exception {
+        UUID session = UUID.randomUUID();
+        var artifact = entity("alice", "receipt-race", "photo");
+        artifact.setSessionId(session);
+        repository.saveAndFlush(artifact);
+        Instant now = Instant.now();
+        assertThat(repository.recordOutboundReceipt(artifact.getId(), "alice", session, "41", now)).isZero();
+        assertThat(repository.claimOutbound(artifact.getId(), "alice", session, now)).isOne();
+
+        var start = new java.util.concurrent.CountDownLatch(1);
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var first = executor.submit(() -> {
+                start.await();
+                return repository.recordOutboundReceipt(artifact.getId(), "alice", session, "42", now);
+            });
+            var second = executor.submit(() -> {
+                start.await();
+                return repository.recordOutboundReceipt(artifact.getId(), "alice", session, "43", now);
+            });
+            start.countDown();
+            int firstResult = first.get(10, java.util.concurrent.TimeUnit.SECONDS);
+            int secondResult = second.get(10, java.util.concurrent.TimeUnit.SECONDS);
+            assertThat(List.of(firstResult, secondResult)).containsExactlyInAnyOrder(0, 1);
+            String winner = firstResult == 1 ? "42" : "43";
+            assertThat(repository.recordOutboundReceipt(artifact.getId(), "alice", session, winner, now.plusSeconds(1)))
+                .isOne();
+            var stored = repository.findById(artifact.getId()).orElseThrow();
+            assertThat(stored.getDeliveredMessageId()).isEqualTo(winner);
+            assertThat(stored.getDeliveredAt()).isBefore(now.plusSeconds(1));
+        }
+    }
+
+    @Test
     void sessionLinkageOrdersByCreation() {
         UUID sessionId = UUID.randomUUID();
         AttachmentArtifactEntity first = entity("alice", "h1", "document");
