@@ -2,6 +2,7 @@ package com.azhukov.agent.api;
 
 import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.service.AttachmentArtifactService;
+import com.azhukov.agent.service.AttachmentArtifactService.OutboundStatus;
 import com.azhukov.agent.service.AttachmentArtifactService.ArtifactRegistration;
 import com.azhukov.agent.service.AttachmentArtifactService.AttachmentArtifact;
 import org.junit.jupiter.api.BeforeEach;
@@ -71,11 +72,31 @@ class AttachmentControllerTest {
         com.azhukov.agent.core.security.NativeIdentityOrigin.bind(new com.azhukov.agent.core.security.NativeIdentityOrigin.Origin(
             com.azhukov.agent.core.security.NativeIdentityOrigin.Kind.GATEWAY_KEY, "gateway", true));
         try {
-            org.mockito.Mockito.when(service.isAvailableInSession("att_1", "701938011", sessionId)).thenReturn(false);
+            org.mockito.Mockito.when(service.outboundStatus("att_1", "701938011", sessionId)).thenReturn(OutboundStatus.UNAVAILABLE);
             mockMvc.perform(post("/api/v1/attachments/att_1/outbound").param("ownerId", "701938011").param("sessionId", sessionId.toString()))
                 .andExpect(status().isNotFound());
             org.mockito.Mockito.verify(service, org.mockito.Mockito.never()).verifiedContent(
                 org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
+        } finally {
+            UserContext.clear();
+            com.azhukov.agent.core.security.NativeIdentityOrigin.clear();
+        }
+    }
+
+    @Test
+    void previouslyClaimedArtifactReturnsConflictWithoutReadingContent() throws Exception {
+        UUID sessionId = UUID.randomUUID();
+        UserContext.set("gateway", UserContext.ROLE_ADMIN);
+        com.azhukov.agent.core.security.NativeIdentityOrigin.bind(new com.azhukov.agent.core.security.NativeIdentityOrigin.Origin(
+            com.azhukov.agent.core.security.NativeIdentityOrigin.Kind.GATEWAY_KEY, "gateway", true));
+        try {
+            when(service.outboundStatus("att_1", "701938011", sessionId)).thenReturn(OutboundStatus.CLAIMED);
+            when(service.hasProtectedOutbound()).thenReturn(true);
+            mockMvc.perform(post("/api/v1/attachments/att_1/outbound")
+                    .param("ownerId", "701938011").param("sessionId", sessionId.toString()))
+                .andExpect(status().isConflict());
+            org.mockito.Mockito.verify(service, org.mockito.Mockito.never()).verifiedContent(anyString(), anyString());
+            org.mockito.Mockito.verify(service, org.mockito.Mockito.never()).claimOutbound(anyString(), anyString(), any());
         } finally {
             UserContext.clear();
             com.azhukov.agent.core.security.NativeIdentityOrigin.clear();
@@ -89,7 +110,7 @@ class AttachmentControllerTest {
         com.azhukov.agent.core.security.NativeIdentityOrigin.bind(new com.azhukov.agent.core.security.NativeIdentityOrigin.Origin(
             com.azhukov.agent.core.security.NativeIdentityOrigin.Kind.GATEWAY_KEY, "gateway", true));
         try {
-            when(service.isAvailableInSession("att_1", "701938011", sessionId)).thenReturn(true);
+            when(service.outboundStatus("att_1", "701938011", sessionId)).thenReturn(OutboundStatus.UNCLAIMED);
             when(service.hasProtectedOutbound()).thenReturn(true);
             mockMvc.perform(post("/api/v1/attachments/att_1/outbound").param("ownerId", "701938011").param("sessionId", sessionId.toString()))
                 .andExpect(status().isNotFound());
@@ -107,7 +128,7 @@ class AttachmentControllerTest {
         com.azhukov.agent.core.security.NativeIdentityOrigin.bind(new com.azhukov.agent.core.security.NativeIdentityOrigin.Origin(
             com.azhukov.agent.core.security.NativeIdentityOrigin.Kind.GATEWAY_KEY, "gateway", true));
         try {
-            when(service.isAvailableInSession("att_1", "701938011", sessionId)).thenReturn(true);
+            when(service.outboundStatus("att_1", "701938011", sessionId)).thenReturn(OutboundStatus.UNCLAIMED);
             mockMvc.perform(post("/api/v1/attachments/att_1/outbound").param("ownerId", "701938011").param("sessionId", sessionId.toString()))
                 .andExpect(status().isServiceUnavailable());
             org.mockito.Mockito.verify(service, org.mockito.Mockito.never()).claimOutbound(anyString(), anyString(), any());
