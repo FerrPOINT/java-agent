@@ -47,9 +47,13 @@ class CronJobServiceDeliveryProducerTest {
     @Mock private AgentRuntimeService runtime;
 
     private CronJobService service(AgentProperties properties) {
+        return service(properties, new TransactionTemplate(mock(org.springframework.transaction.PlatformTransactionManager.class)));
+    }
+
+    private CronJobService service(AgentProperties properties, TransactionTemplate transactions) {
         return new CronJobService(cronJobRepository, agentRuntimeServiceProvider, properties,
             skillManager, cronExecutionLogRepository, messageRepository,
-            new TransactionTemplate(mock(org.springframework.transaction.PlatformTransactionManager.class)), new CronScheduleParser(),
+            transactions, new CronScheduleParser(),
             deliveryProvider, sessionRepositoryProvider, null);
     }
 
@@ -80,6 +84,33 @@ class CronJobServiceDeliveryProducerTest {
             return entity;
         });
         when(deliveryProvider.getIfAvailable()).thenReturn(deliveryService);
+    }
+
+    @Test
+    void rejectedLedgerWriteRollsBackRunProjectionAndIsReportedToCaller() {
+        var dataSource = new org.springframework.jdbc.datasource.SingleConnectionDataSource(
+            "jdbc:h2:mem:" + UUID.randomUUID(), true);
+        try {
+            var jdbc = new org.springframework.jdbc.core.JdbcTemplate(dataSource);
+            jdbc.execute("create table recorded_run (id integer)");
+            var transactions = new TransactionTemplate(
+                new org.springframework.jdbc.datasource.DataSourceTransactionManager(dataSource));
+            var job = jobWithDeliverTo("telegram:111");
+            var properties = new AgentProperties();
+            properties.getCron().setEnabled(false);
+            prepareFailingRun(job);
+            when(cronJobRepository.recordRun(job))
+                .thenAnswer(invocation -> jdbc.update("insert into recorded_run values (1)"));
+            when(deliveryService.enqueue(any())).thenThrow(new IllegalArgumentException("ledger payload rejected"));
+
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> service(properties, transactions).runNow(job.getId()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Cron execution result could not be committed");
+            assertThat(jdbc.queryForObject("select count(*) from recorded_run", Integer.class)).isZero();
+            verify(cronExecutionLogRepository).save(any(CronExecutionLogEntity.class));
+        } finally {
+            dataSource.destroy();
+        }
     }
 
     @Test

@@ -719,7 +719,7 @@ private static final String CRON_EXECUTION_HINT = """
             try {
                 executeManualNow(id, extraPrompt);
             } catch (Exception e) {
-                log.warn("Manual background cron run {} failed before execution: {}", id, e.getMessage());
+                log.warn("Manual background cron run {} did not complete: {}", id, e.getMessage());
             }
         });
         return entity;
@@ -731,7 +731,9 @@ private static final String CRON_EXECUTION_HINT = """
         try {
             CronJobEntity entity = cronJobRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Cron job not found: " + id));
-            executeJob(entity, extraPrompt);
+            if (executeJob(entity, extraPrompt) == CronExecutionOutcome.RESULT_NOT_COMMITTED) {
+                throw new IllegalStateException("Cron execution result could not be committed");
+            }
             return entity;
         } finally {
             lock.unlock();
@@ -941,7 +943,9 @@ private static final String CRON_EXECUTION_HINT = """
                 job.setLastStatus("success");
                 job.setLastError(null);
                 String stdout = scriptResult.output() == null ? "" : scriptResult.output().trim();
-                recordRunAndDelivery(job, startedAt, "success", null, stdout, false);
+                if (!recordRunAndDelivery(job, startedAt, "success", null, stdout, false)) {
+                    return CronExecutionOutcome.RESULT_NOT_COMMITTED;
+                }
                 publishCronEvent("cron.success", job, startedAt, null);
                 return CronExecutionOutcome.success();
             }
@@ -1062,7 +1066,9 @@ private static final String CRON_EXECUTION_HINT = """
                 }
             }
             String executionOutput = loadLastRunOutput(job.getLastRunSessionId());
-            recordRunAndDelivery(job, startedAt, "success", null, executionOutput, false);
+            if (!recordRunAndDelivery(job, startedAt, "success", null, executionOutput, false)) {
+                return CronExecutionOutcome.RESULT_NOT_COMMITTED;
+            }
             publishCronEvent("cron.success", job, startedAt, Map.of("monitor_changed", monitorOutcome.changed()));
             return CronExecutionOutcome.success();
         } catch (Exception e) {
@@ -1092,7 +1098,9 @@ private static final String CRON_EXECUTION_HINT = """
             String status = errorMsg.toLowerCase().contains("timeout") ? "timeout" : "failure";
             boolean retryPending = job.getUnreachableRetries() > 0
                 && job.getUnreachableRetries() <= UNREACHABLE_LADDER_SECONDS.length;
-            recordRunAndDelivery(job, startedAt, status, errorMsg, null, retryPending);
+            if (!recordRunAndDelivery(job, startedAt, status, errorMsg, null, retryPending)) {
+                return CronExecutionOutcome.RESULT_NOT_COMMITTED;
+            }
             publishCronEvent("cron." + status, job, startedAt, Map.of("error", errorMsg));
             // h71: Re-arm: clear the error status so the job can run on the next tick.
             // The error is recorded for audit but doesn't permanently block execution.
@@ -1103,7 +1111,7 @@ private static final String CRON_EXECUTION_HINT = """
         }
     }
 
-    private void recordRunAndDelivery(CronJobEntity job, Instant startedAt, String status,
+    private boolean recordRunAndDelivery(CronJobEntity job, Instant startedAt, String status,
                                       String error, String output, boolean retryPending) {
         Long executionId = recordExecution(job.getId(), startedAt, Instant.now(), status, error, output);
         try {
@@ -1127,9 +1135,11 @@ private static final String CRON_EXECUTION_HINT = """
             });
             // The transcript is optional, including for local jobs without a delivery target.
             mirrorToAttachedSession(job, mirrorPayload);
+            return true;
         } catch (org.springframework.transaction.TransactionException | org.springframework.dao.DataAccessException
                 | IllegalArgumentException e) {
             log.warn("Could not publish the completed cron run {}", job.getId(), e);
+            return false;
         }
     }
 
@@ -1205,6 +1215,8 @@ private static final String CRON_EXECUTION_HINT = """
 
     private record CronExecutionOutcome(String status, boolean failed, boolean countsTowardRepeat,
                                         boolean unreachableBeforeModel) {
+        private static final CronExecutionOutcome RESULT_NOT_COMMITTED = failure("result_not_committed");
+
         static CronExecutionOutcome success() {
             return new CronExecutionOutcome("success", false, true, false);
         }
