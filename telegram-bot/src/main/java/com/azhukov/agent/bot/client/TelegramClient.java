@@ -935,7 +935,8 @@ public class TelegramClient {
                     // A non-Telegram response does not establish the outcome.
                 }
             }
-            if (e instanceof org.springframework.web.client.HttpClientErrorException httpError
+            if ("getUpdates".equals(method)
+                    && e instanceof org.springframework.web.client.HttpClientErrorException httpError
                     && httpError.getStatusCode().value() == 409) {
                 lastCallConflict = true;
                 lastApiErrorCode = 409;

@@ -222,10 +222,8 @@ public class DefaultFileSafety implements FileSafety {
  }
 
  private boolean matchesDenylist(Path normalized) {
- if (normalized.startsWith(com.azhukov.agent.service.ArtifactProcessIsolation.ARTIFACT_ROOT)) {
- return true;
- }
  if (normalized == null) return false;
+ if (isArtifactPath(normalized)) return true;
  String pathStr = normalized.toString();
 
  // Check absolute paths
@@ -313,16 +311,21 @@ public class DefaultFileSafety implements FileSafety {
  return false;
  }
 
+ private static boolean isArtifactPath(Path normalized) {
+ return normalized.startsWith(com.azhukov.agent.service.ArtifactProcessIsolation.ARTIFACT_ROOT);
+ }
+
  @Override
  public boolean isReadBlocked(Path path) {
  if (path == null) {
  return false;
  }
+ Path normalized = path.toAbsolutePath().normalize();
+ if (isArtifactPath(normalized)) return true;
  if (!properties.getSecurity().isFileSafetyEnabled()) {
  return false;
  }
 
- Path normalized = path.toAbsolutePath().normalize();
  String pathStr = normalized.toString();
  String fileName = normalized.getFileName() != null ? normalized.getFileName().toString() : "";
 
