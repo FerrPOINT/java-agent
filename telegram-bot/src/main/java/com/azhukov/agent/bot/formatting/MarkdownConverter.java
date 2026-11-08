@@ -215,7 +215,7 @@ public final class MarkdownConverter {
     // stops at the first closing ```. For content with nested code blocks, the user
     // should use indentation-based code blocks (4 spaces) instead. This matches the
     // behavior of most Markdown processors that use regex for fenced code detection.
-    private static final Pattern CODE_BLOCK_PATTERN =
+    static final Pattern CODE_BLOCK_PATTERN =
         Pattern.compile("```([^\\n]*)\\n(.*?)```", Pattern.DOTALL);
 
     // Inline code: `code`

@@ -108,13 +108,16 @@ public final class MessageSplitter {
         List<String> parts = new ArrayList<>();
         for (int start = 0; start < text.length();) {
             int end = Math.min(start + limit, text.length());
-            if (end < text.length() && Character.isSurrogatePair(text.charAt(end - 1), text.charAt(end))) {
-                end--;
-            }
+            end = safeEnd(text, end);
             parts.add(text.substring(start, end));
             start = end;
         }
         return parts;
+    }
+
+    private static int safeEnd(String text, int end) {
+        return end < text.length() && Character.isSurrogatePair(text.charAt(end - 1), text.charAt(end))
+            ? end - 1 : end;
     }
 
     private static String partLabel(int index, int total) {
@@ -133,16 +136,50 @@ public final class MessageSplitter {
             return List.of(new TextPart(text, formatted));
         }
 
-        // Escape expansion needs twice the source capacity, with space left for the label.
-        List<String> source = splitSource(text, (TELEGRAM_MAX_LENGTH - 24) / 2);
-        List<TextPart> result = new ArrayList<>(source.size());
-        for (int i = 0; i < source.size(); i++) {
-            String fragment = source.get(i);
-            String label = source.size() == 1 ? "" : partLabel(i, source.size());
-            result.add(new TextPart(label + fragment,
-                MarkdownConverter.escapeMarkdownV2(label) + MarkdownConverter.convert(fragment)));
+        // Leave headroom for escaping, the part label, and closing a code fence.
+        int limit = (TELEGRAM_MAX_LENGTH - 32) / 2;
+        var fences = MarkdownConverter.CODE_BLOCK_PATTERN.matcher(text).results().toList();
+        var parts = new ArrayList<TextPart>();
+        int fenceIndex = 0;
+        for (int start = 0; start < text.length();) {
+            int end = Math.min(start + limit, text.length());
+            while (fenceIndex < fences.size() && fences.get(fenceIndex).end() <= start) {
+                fenceIndex++;
+            }
+            var firstFence = fenceIndex < fences.size() ? fences.get(fenceIndex) : null;
+            String reopen = firstFence != null && firstFence.start(2) <= start && start <= firstFence.end(2)
+                ? text.substring(firstFence.start(), firstFence.start(2)) : "";
+            while (fenceIndex < fences.size() && fences.get(fenceIndex).end() <= end) {
+                fenceIndex++;
+            }
+            String close = "";
+            if (fenceIndex < fences.size()) {
+                var fence = fences.get(fenceIndex);
+                if (fence.start() < end) {
+                    if (fence.start() > start) {
+                        end = fence.start();
+                    } else if (end >= fence.end(2)) {
+                        end = fence.end();
+                    } else if (end >= fence.start(2)) {
+                        close = "```";
+                    }
+                }
+            }
+            end = safeEnd(text, end);
+            String fragment = text.substring(start, end);
+            parts.add(new TextPart(fragment, MarkdownConverter.convert(reopen + fragment + close)));
+            start = end;
         }
-        return result;
+        if (parts.size() == 1) {
+            return parts;
+        }
+        for (int i = 0; i < parts.size(); i++) {
+            var part = parts.get(i);
+            String label = partLabel(i, parts.size());
+            parts.set(i, new TextPart(label + part.original(),
+                MarkdownConverter.escapeMarkdownV2(label) + part.formatted()));
+        }
+        return parts;
     }
 
     /**

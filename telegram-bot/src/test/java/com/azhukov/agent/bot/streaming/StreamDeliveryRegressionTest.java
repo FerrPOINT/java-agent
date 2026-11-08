@@ -113,6 +113,28 @@ class StreamDeliveryRegressionTest {
     }
 
     @Test
+    void markdownKeepsSmallCodeBlocksWholeAndClosesEachPartOfALargeBlock() {
+        String fence = "```";
+        String code = "item_name = 42\n".repeat(12);
+        String shortBlock = fence + "python\n" + code + fence;
+        String prefix = "a".repeat(2010) + "\n\n";
+        String suffix = "\n\n" + "b".repeat(2300);
+        var shortParts = com.azhukov.agent.bot.formatting.MessageSplitter.splitMarkdown(prefix + shortBlock + suffix);
+        assertThat(shortParts).anyMatch(part -> part.formatted().contains(shortBlock));
+
+        String longBlock = fence + "python\n" + code.repeat(32) + "TAIL_MARKER\n" + fence;
+        String text = prefix + longBlock + suffix;
+        var longParts = com.azhukov.agent.bot.formatting.MessageSplitter.splitMarkdown(text);
+        assertThat(longParts).allMatch(part -> part.original().length() <= 4096 && part.formatted().length() <= 4096);
+        assertThat(longParts).anyMatch(part -> part.formatted().contains("TAIL_MARKER\n" + fence));
+        assertThat(longParts.stream().filter(part -> part.formatted().contains("item_name")))
+            .allMatch(part -> part.formatted().contains(fence + "python\n"));
+        assertThat(longParts.stream()
+            .map(part -> part.original().replaceFirst("^\\(\\d+/\\d+\\) ", ""))
+            .collect(java.util.stream.Collectors.joining())).isEqualTo(text);
+    }
+
+    @Test
     void oversizedToolSegmentIsSplitBeforeFinalDelivery() {
         when(client.sendMessageChecked(eq(101L), anyString(), any(), any(), any(), isNull(), anyBoolean()))
             .thenReturn(Optional.of(17L));
