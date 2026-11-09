@@ -111,6 +111,23 @@ class CheckpointManagerTest {
     }
 
     @Test
+    void snapshotHashesLargeFileWithoutStoringItsContent(@TempDir Path workspace) throws Exception {
+        properties.getCore().setWorkingDirectory(workspace.toString());
+        byte[] bytes = new byte[512 * 1024 + 1];
+        bytes[bytes.length - 1] = 7;
+        Files.write(workspace.resolve("large.txt"), bytes);
+        when(checkpointRepository.save(any(CheckpointEntity.class))).thenAnswer(call -> call.getArgument(0));
+
+        var snapshot = manager.snapshot("large");
+        assertThat(snapshot.getFiles()).singleElement().satisfies(file -> {
+            assertThat(file.getFileSize()).isEqualTo(bytes.length);
+            assertThat(file.getContentBase64()).isNull();
+            assertThat(file.getFileHash()).isEqualTo(java.util.HexFormat.of().formatHex(
+                java.security.MessageDigest.getInstance("SHA-256").digest(bytes), 0, 8));
+        });
+    }
+
+    @Test
     void snapshotCreatesEntity() {
         when(checkpointRepository.save(any(CheckpointEntity.class))).thenAnswer(inv -> inv.getArgument(0));
         when(checkpointRepository.findAll(org.mockito.ArgumentMatchers.any(org.springframework.data.domain.Sort.class))).thenReturn(List.of());

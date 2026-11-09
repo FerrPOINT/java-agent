@@ -16,6 +16,7 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.channels.Channels;
 import java.nio.charset.StandardCharsets;
@@ -105,10 +106,10 @@ public class CheckpointManager {
         }
     }
 
-    private static void collectFiles(SecureFileAccess.Directory directory, Path relative,
-                                     List<String> ignoreRules, List<CollectedFile> out) {
+    private static int collectFiles(SecureFileAccess.Directory directory, Path relative,
+                                     List<String> ignoreRules, List<CollectedFile> out, int remaining) {
         for (Path entry : directory.entries()) {
-            if (out.size() >= MAX_FILES) return;
+            if (remaining == 0) break;
             Path name = entry.getFileName();
             Path path = relative.resolve(name);
             String pathText = path.toString();
@@ -122,21 +123,46 @@ public class CheckpointManager {
                 if (attributes.isDirectory()) {
                     if (!EXCLUDED_DIRS.contains(name.toString())) {
                         try (var child = directory.openDirectory(name, false)) {
-                            collectFiles(child, path, ignoreRules, out);
+                            remaining = collectFiles(child, path, ignoreRules, out, remaining);
                         }
                     }
                 } else if (attributes.isRegularFile() && !isHidden(path)
                     && EXCLUDED_SUFFIXES.stream().noneMatch(suffix -> name.toString().endsWith(suffix))) {
-                    byte[] bytes = readFile(directory, name);
-                    if (bytes != null) {
-                        String content = bytes.length <= MAX_STORED_CONTENT_SIZE
-                            ? Base64.getEncoder().encodeToString(bytes) : null;
-                        out.add(new CollectedFile(pathText, hashBytes(bytes), bytes.length, content));
+                    remaining--;
+                    var file = inspectFile(directory, name, true);
+                    if (file != null) {
+                        out.add(new CollectedFile(pathText, file.hash(), file.size(), file.contentBase64()));
                     }
                 }
             } catch (IOException e) {
                 log.debug("Skipping unreadable checkpoint entry {}", path);
             }
+        }
+        return remaining;
+    }
+
+    private record FileFingerprint(String hash, long size, String contentBase64) {}
+
+    private static FileFingerprint inspectFile(SecureFileAccess.Directory directory, Path name, boolean storeContent)
+            throws IOException {
+        try (var channel = directory.openRead(name)) {
+            long initialSize = channel.size();
+            if (initialSize > MAX_FILE_SIZE) return null;
+            var digest = sha256();
+            var content = storeContent ? new ByteArrayOutputStream() : null;
+            var input = Channels.newInputStream(channel);
+            byte[] buffer = new byte[8192];
+            long size = 0;
+            int count;
+            while ((count = input.read(buffer, 0, (int) Math.min(buffer.length, MAX_FILE_SIZE + 1 - size))) != -1) {
+                size += count;
+                if (size > MAX_FILE_SIZE) return null;
+                digest.update(buffer, 0, count);
+                if (size > MAX_STORED_CONTENT_SIZE) content = null;
+                if (content != null) content.write(buffer, 0, count);
+            }
+            return new FileFingerprint(HexFormat.of().formatHex(digest.digest(), 0, 8), size,
+                content == null ? null : Base64.getEncoder().encodeToString(content.toByteArray()));
         }
     }
 
@@ -190,7 +216,7 @@ public class CheckpointManager {
         log.info("Taking checkpoint snapshot of {} — {}", workingDir, description);
         List<CollectedFile> collected = new ArrayList<>();
         try (var directory = SecureFileAccess.openDirectory(root)) {
-            collectFiles(directory, Path.of(""), readGitignoreRules(directory), collected);
+            collectFiles(directory, Path.of(""), readGitignoreRules(directory), collected, MAX_FILES);
         } catch (IOException e) {
             throw new java.io.UncheckedIOException("Could not snapshot workspace " + root, e);
         }
@@ -339,13 +365,13 @@ public class CheckpointManager {
     private static void restoreFile(SecureFileAccess.Directory parent, Path path, String expectedHash,
                                     String content, List<Path> restored) throws IOException {
         Path name = path.getFileName();
-        byte[] current = null;
+        FileFingerprint current = null;
         try {
-            current = readFile(parent, name);
+            current = inspectFile(parent, name, false);
         } catch (NoSuchFileException missing) {
             // A stored file can be recreated.
         }
-        if (current != null && expectedHash.equals(hashBytes(current))) return;
+        if (current != null && expectedHash.equals(current.hash())) return;
         if (content == null) {
             log.warn("File differs, no stored content to restore: {}", path);
             return;
@@ -392,10 +418,9 @@ public class CheckpointManager {
         log.info("Removed checkpoint: {}", id);
     }
 
-    private static String hashBytes(byte[] bytes) {
+    private static MessageDigest sha256() {
         try {
-            byte[] hash = MessageDigest.getInstance("SHA-256").digest(bytes);
-            return HexFormat.of().formatHex(hash, 0, 8);
+            return MessageDigest.getInstance("SHA-256");
         } catch (java.security.NoSuchAlgorithmException e) {
             throw new IllegalStateException(e);
         }
