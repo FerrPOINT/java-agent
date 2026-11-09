@@ -33,10 +33,9 @@ public class OpenAiIdempotencyCache {
 
     public record Result(ResponseEntity<?> response, UUID sessionId) {}
 
-    public String fingerprint(String scope, ObjectMapper objectMapper, Object... parts) {
+    public String fingerprint(ObjectMapper objectMapper, Object... parts) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            digest.update((scope != null ? scope : "").getBytes(java.nio.charset.StandardCharsets.UTF_8));
             if (parts != null) {
                 for (Object part : parts) {
                     digest.update((byte) 0);
