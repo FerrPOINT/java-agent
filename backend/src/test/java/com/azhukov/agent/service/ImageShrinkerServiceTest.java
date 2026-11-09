@@ -8,7 +8,7 @@ import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.util.Base64;
-import java.util.List;
+import java.nio.ByteBuffer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
@@ -25,10 +25,9 @@ class ImageShrinkerServiceTest {
         return new ImageShrinkerService(new AgentProperties());
     }
 
-    private ImageShrinkerService createShrinker(int maxImageBytes, int maxTotalBytes, double quality) {
+    private ImageShrinkerService createShrinker(int maxImageBytes, double quality) {
         AgentProperties props = new AgentProperties();
         props.getModel().setMaxImageSizeBytes(maxImageBytes);
-        props.getModel().setMaxTotalImageSizeBytes(maxTotalBytes);
         props.getModel().setImageJpegQuality(quality);
         return new ImageShrinkerService(props);
     }
@@ -125,64 +124,22 @@ class ImageShrinkerServiceTest {
         String img = createTestImageBase64(100, 100);
         int imgSize = Base64.getDecoder().decode(img).length;
         // Set threshold just above the image size
-        ImageShrinkerService shrinker = createShrinker(imgSize + 1, 100 * 1024 * 1024, 0.85);
+        ImageShrinkerService shrinker = createShrinker(imgSize + 1, 0.85);
         assertThat(shrinker.prepareImage(img).base64()).isEqualTo(img);
     }
 
     @Test
-    @DisplayName("list of small images is not shrunk")
-    void smallImageListNotShrunk() throws Exception {
-        ImageShrinkerService shrinker = createShrinker();
-        String small = createTestImageBase64(10, 10);
-        List<String> images = List.of(small, small);
-        List<String> result = shrinker.shrinkIfNeeded(images);
-        assertThat(result).isEqualTo(images);
-    }
+    void rejectsTooManyPixelsBeforeReadingImageData() throws Exception {
+        byte[] bytes = Base64.getDecoder().decode(createTestImageBase64(10, 10));
+        // Keep only the signature and IHDR. A pixel read would fail on missing IDAT.
+        var header = ByteBuffer.wrap(java.util.Arrays.copyOf(bytes, 33));
+        header.putInt(16, 8000).putInt(20, 6000);
+        String png = Base64.getEncoder().encodeToString(header.array());
 
-    @Test
-    @DisplayName("list with one oversized image triggers shrinking")
-    void listWithOversizedImageTriggersShrinking() throws Exception {
-        String large = createLargeNoisyImageBase64(1200, 1200);
-        String small = createTestImageBase64(10, 10);
-        ImageShrinkerService shrinker = createShrinker();
-        List<String> result = shrinker.shrinkIfNeeded(List.of(small, large));
-        assertThat(result).hasSize(2);
-        // Small image unchanged
-        assertThat(result.get(0)).isEqualTo(small);
-        // Large image shrunk
-        int shrunkSize = Base64.getDecoder().decode(result.get(1)).length;
-        int originalSize = Base64.getDecoder().decode(large).length;
-        assertThat(shrunkSize).isLessThan(originalSize);
-    }
-
-    @Test
-    @DisplayName("total payload over limit triggers shrinking even if individual images are under")
-    void totalPayloadOverLimitTriggersShrinking() throws Exception {
-        // Create medium images that individually are under 4MB but together exceed a low total limit
-        String medium = createTestImageBase64(500, 500);
-        int mediumSize = Base64.getDecoder().decode(medium).length;
-        // Set per-image limit high (so individual check passes), but total limit very low
-        ImageShrinkerService shrinker = createShrinker(50 * 1024 * 1024, mediumSize, 0.85);
-        List<String> result = shrinker.shrinkIfNeeded(List.of(medium, medium));
-        assertThat(result).hasSize(2);
-        // Each should be shrunk since total exceeds limit
-        int shrunkSize = Base64.getDecoder().decode(result.get(0)).length;
-        assertThat(shrunkSize).isLessThanOrEqualTo(mediumSize);
-    }
-
-    @Test
-    @DisplayName("empty list returns empty list")
-    void emptyListReturnsEmpty() {
-        ImageShrinkerService shrinker = createShrinker();
-        List<String> result = shrinker.shrinkIfNeeded(List.of());
-        assertThat(result).isEmpty();
-    }
-
-    @Test
-    @DisplayName("null list returns null")
-    void nullListReturnsNull() {
-        ImageShrinkerService shrinker = createShrinker();
-        List<String> result = shrinker.shrinkIfNeeded((List<String>) null);
-        assertThat(result).isNull();
+        for (int byteLimit : new int[] {1, 1000}) {
+            var shrinker = createShrinker(byteLimit, 0.85);
+            assertThatIllegalArgumentException().isThrownBy(() -> shrinker.prepareImage(png))
+                .withMessageContaining("40 megapixels");
+        }
     }
 }

@@ -15,27 +15,14 @@ import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Base64;
-import java.util.List;
 
-/**
- * P2-15: Image shrinking for provider payload limits.
- * <p>
- * Mirrors Hermes {@code try_shrink_image_parts_in_messages} — before sending
- * image content to the LLM provider, checks if the image exceeds the configured
- * per-image or total payload limit. If it does, shrinks the image by resizing
- * and/or re-encoding as JPEG with configurable quality.
- * <p>
- * This prevents API errors from oversized images (e.g. Anthropic's 5 MB cap,
- * OpenAI's per-image limits).
- */
+/** Prepares one image within the provider's payload limit. */
 @Slf4j
 @Component
 public class ImageShrinkerService {
 
     private final int maxImageSizeBytes;
-    private final int maxTotalImageSizeBytes;
     private final float jpegQuality;
     private final ImageTranscodeService transcodeService;
 
@@ -46,7 +33,6 @@ public class ImageShrinkerService {
     @org.springframework.beans.factory.annotation.Autowired
     public ImageShrinkerService(AgentProperties properties, ImageTranscodeService transcodeService) {
         this.maxImageSizeBytes = properties.getModel().getMaxImageSizeBytes();
-        this.maxTotalImageSizeBytes = properties.getModel().getMaxTotalImageSizeBytes();
         this.jpegQuality = (float) properties.getModel().getImageJpegQuality();
         this.transcodeService = transcodeService;
     }
@@ -58,135 +44,47 @@ public class ImageShrinkerService {
         if (base64Image == null || base64Image.isBlank()) {
             throw new IllegalArgumentException("Image data must not be empty");
         }
-        byte[] imageBytes;
         try {
-            imageBytes = transcodeService.toDecodablePng(Base64.getDecoder().decode(base64Image));
+            byte[] bytes = transcodeService.toDecodablePng(Base64.getDecoder().decode(base64Image));
+            return preparePixels(bytes);
         } catch (IOException e) {
-            throw new IllegalArgumentException("Image conversion failed: " + e.getMessage(), e);
+            throw new IllegalArgumentException("Image preparation failed: " + e.getMessage(), e);
         }
-        if (imageBytes.length <= maxImageSizeBytes) {
-            return new PreparedImage(Base64.getEncoder().encodeToString(imageBytes), imageMimeType(imageBytes));
-        }
-
-        byte[] shrunk = shrinkImageBytes(imageBytes, maxImageSizeBytes);
-        if (shrunk == null) {
-            throw new IllegalArgumentException("Image could not be reduced to " + maxImageSizeBytes + " bytes");
-        }
-        log.info("image-shrink: shrank image from {} bytes to {} bytes", imageBytes.length, shrunk.length);
-        return new PreparedImage(Base64.getEncoder().encodeToString(shrunk), "image/jpeg");
     }
 
-    private static String imageMimeType(byte[] bytes) {
-        // WebP is a provider-supported format without a built-in JDK ImageIO reader.
-        if (bytes.length >= 12 && bytes[0] == 'R' && bytes[1] == 'I' && bytes[2] == 'F' && bytes[3] == 'F'
+    private PreparedImage preparePixels(byte[] bytes) throws IOException {
+        boolean fits = bytes.length <= maxImageSizeBytes;
+        // The JDK cannot decode WebP, but can forward it within the byte limit.
+        if (fits && bytes.length >= 12 && bytes[0] == 'R' && bytes[1] == 'I' && bytes[2] == 'F' && bytes[3] == 'F'
                 && bytes[8] == 'W' && bytes[9] == 'E' && bytes[10] == 'B' && bytes[11] == 'P') {
-            return "image/webp";
+            return prepared(bytes, "image/webp");
         }
         try (var input = new MemoryCacheImageInputStream(new ByteArrayInputStream(bytes))) {
             var readers = ImageIO.getImageReaders(input);
-            if (readers.hasNext()) {
-                var reader = readers.next();
-                try {
-                    return reader.getOriginatingProvider().getMIMETypes()[0];
-                } finally {
-                    reader.dispose();
+            if (!readers.hasNext()) throw new IOException("Unsupported image format");
+            var reader = readers.next();
+            try {
+                reader.setInput(input, true, true);
+                ImageTranscodeService.verifyPixelCount(reader.getWidth(0), reader.getHeight(0));
+                if (fits) return prepared(bytes, reader.getOriginatingProvider().getMIMETypes()[0]);
+
+                byte[] shrunk = shrinkToJpeg(reader.read(0), maxImageSizeBytes);
+                if (shrunk == null) {
+                    throw new IllegalArgumentException("Image could not be reduced to " + maxImageSizeBytes + " bytes");
                 }
+                log.info("image-shrink: shrank image from {} bytes to {} bytes", bytes.length, shrunk.length);
+                return prepared(shrunk, "image/jpeg");
+            } finally {
+                reader.dispose();
             }
-        } catch (IOException e) {
-            throw new IllegalArgumentException("Could not identify image format", e);
         }
-        throw new IllegalArgumentException("Unsupported image format");
     }
 
-    /**
-     * Shrink a list of base64-encoded images if their total payload exceeds the
-     * total limit, or if any individual image exceeds the per-image limit.
-     *
-     * @param base64Images list of base64-encoded image data
-     * @return list of base64-encoded image data, with oversized images shrunk
-     */
-    public List<String> shrinkIfNeeded(List<String> base64Images) {
-        if (base64Images == null || base64Images.isEmpty()) {
-            return base64Images;
-        }
-
-        // M13: Decode each image once and cache the bytes, avoiding triple base64 decode
-        // (was called in totalSize calculation, anyMatch check, and again in shrinkIfNeeded)
-        List<byte[]> decodedBytes = new ArrayList<>(base64Images.size());
-        long totalSize = 0;
-        boolean needShrink = false;
-        for (String s : base64Images) {
-            if (s == null) {
-                decodedBytes.add(null);
-                continue;
-            }
-            byte[] bytes = Base64.getDecoder().decode(s);
-            decodedBytes.add(bytes);
-            totalSize += bytes.length;
-            if (bytes.length > maxImageSizeBytes) {
-                needShrink = true;
-            }
-        }
-
-        needShrink = needShrink || totalSize > maxTotalImageSizeBytes;
-
-        if (!needShrink) {
-            return base64Images;
-        }
-
-        log.info("image-shrink: total image payload {} bytes exceeds limit {} bytes — shrinking",
-            totalSize, maxTotalImageSizeBytes);
-
-        List<String> result = new ArrayList<>(base64Images.size());
-        for (int i = 0; i < base64Images.size(); i++) {
-            String s = base64Images.get(i);
-            if (s == null) {
-                result.add(null);
-                continue;
-            }
-            byte[] bytes = decodedBytes.get(i);
-            // M13: Use cached bytes instead of re-decoding
-            if (bytes.length <= maxImageSizeBytes) {
-                result.add(s);
-            } else {
-                byte[] shrunk = shrinkImageBytes(bytes, maxImageSizeBytes);
-                if (shrunk != null && shrunk.length < bytes.length) {
-                    log.info("image-shrink: shrank image from {} bytes to {} bytes (target {} bytes)",
-                        bytes.length, shrunk.length, maxImageSizeBytes);
-                    result.add(Base64.getEncoder().encodeToString(shrunk));
-                } else {
-                    log.warn("image-shrink: could not shrink image below {} bytes (original {} bytes) — sending as-is",
-                        maxImageSizeBytes, bytes.length);
-                    result.add(s);
-                }
-            }
-        }
-        return result;
+    private static PreparedImage prepared(byte[] bytes, String mimeType) {
+        return new PreparedImage(Base64.getEncoder().encodeToString(bytes), mimeType);
     }
 
-    /**
-     * Core image shrinking logic: decode the image, progressively reduce
-     * dimensions and re-encode as JPEG until the result fits under the target
-     * byte budget or we hit the minimum scale.
-     *
-     * @param imageBytes  raw image bytes
-     * @param targetBytes maximum acceptable size in bytes
-     * @return shrunk JPEG bytes, or null if shrinking failed
-     */
-    byte[] shrinkImageBytes(byte[] imageBytes, int targetBytes) {
-        BufferedImage original;
-        try (ByteArrayInputStream in = new ByteArrayInputStream(imageBytes)) {
-            original = ImageIO.read(in);
-        } catch (IOException e) {
-            log.warn("image-shrink: could not read image: {}", e.getMessage());
-            return null;
-        }
-
-        if (original == null) {
-            log.warn("image-shrink: ImageIO returned null for input (unsupported format?)");
-            return null;
-        }
-
+    private byte[] shrinkToJpeg(BufferedImage original, int targetBytes) {
         // Progressive downscale: 1.0, 0.8, 0.6, 0.4, 0.2
         double[] scales = {1.0, 0.8, 0.6, 0.4, 0.2};
         for (double scale : scales) {
