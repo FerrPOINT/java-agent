@@ -1,18 +1,44 @@
 package com.azhukov.agent.bot.client;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.JsonNode;
 
 import java.util.Map;
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record TelegramResponse(
-    boolean ok,
+    Boolean ok,
     @JsonProperty("error_code") Integer errorCode,
     String description,
     Object result,
-    Map<String, com.fasterxml.jackson.databind.JsonNode> parameters
+    Map<String, JsonNode> parameters
 ) {
+
+    @JsonCreator(mode = JsonCreator.Mode.PROPERTIES)
+    static TelegramResponse fromJson(
+        @JsonProperty("ok") JsonNode ok,
+        @JsonProperty("error_code") JsonNode errorCode,
+        @JsonProperty("description") String description,
+        @JsonProperty("result") Object result,
+        @JsonProperty("parameters") Map<String, JsonNode> parameters
+    ) {
+        // These fields can authorize a retry, so require their wire types before conversion.
+        boolean hasOk = ok != null && !ok.isNull();
+        boolean hasErrorCode = errorCode != null && !errorCode.isNull();
+        if (hasOk && !ok.isBoolean()) {
+            throw new IllegalArgumentException("Telegram ok must be a JSON boolean");
+        }
+        if (hasErrorCode && (!errorCode.isIntegralNumber() || !errorCode.canConvertToInt())) {
+            throw new IllegalArgumentException("Telegram error_code must be a JSON integer");
+        }
+        if (!hasOk || (ok.booleanValue() ? hasErrorCode || result == null : !hasErrorCode || result != null)) {
+            throw new IllegalArgumentException("Inconsistent Telegram response envelope");
+        }
+        return new TelegramResponse(ok.booleanValue(),
+            hasErrorCode ? errorCode.intValue() : null, description, result, parameters);
+    }
 
     /** Compact constructor with null-safe default for parameters. */
     public TelegramResponse(boolean ok, Integer errorCode, String description, Object result) {
@@ -20,7 +46,7 @@ public record TelegramResponse(
     }
 
     public boolean isSuccess() {
-        return ok;
+        return Boolean.TRUE.equals(ok);
     }
 
     public String errorMessage() {
@@ -46,19 +72,16 @@ public record TelegramResponse(
         return java.util.List.of();
     }
 
-    public String resultMessageId() {
-        Map<String, Object> map = resultAsMap();
-        Object messageId = map.get("message_id");
-        return messageId != null ? messageId.toString() : null;
+    public Long resultMessageIdAsLong() {
+        return deliveredMessageId(result);
     }
 
-    public Long resultMessageIdAsLong() {
-        String id = resultMessageId();
-        if (id == null) return null;
-        try {
-            return Long.parseLong(id);
-        } catch (NumberFormatException e) {
-            return null;
-        }
+    static Long deliveredMessageId(Object message) {
+        if (!(message instanceof Map<?, ?> fields)) return null;
+        Object id = fields.get("message_id");
+        if (!(id instanceof Integer || id instanceof Long)) return null;
+        long value = ((Number) id).longValue();
+        // Telegram may return zero before a scheduled message is usable.
+        return value > 0 ? value : null;
     }
 }

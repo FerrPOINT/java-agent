@@ -37,10 +37,10 @@ class StreamEditorTest {
     @BeforeEach
     void setUp() {
         client = mock(TelegramClient.class, call -> {
-            if ("editFinalMessage".equals(call.getMethod().getName())) {
+            if ("editMessageChecked".equals(call.getMethod().getName())) {
                 long id = call.getArgument(1);
                 return ((TelegramClient) call.getMock()).editMessageText(call.<Long>getArgument(0), id,
-                    call.getArgument(2), call.getArgument(3), false) ? Optional.of(id) : Optional.empty();
+                    call.getArgument(2), call.getArgument(3), call.getArgument(4)) ? Optional.of(id) : Optional.empty();
             }
             return RETURNS_DEFAULTS.answer(call);
         });
@@ -56,8 +56,6 @@ class StreamEditorTest {
         when(meResponse.isSuccess()).thenReturn(true);
         when(meResponse.resultAsMap()).thenReturn(Map.of()); // no supports_rich_messages field
         when(client.callApi("getMe", Map.of())).thenReturn(Optional.of(meResponse));
-        // Default: last API error code = 0 (success)
-        when(client.getLastApiErrorCode()).thenReturn(0);
     }
 
     // --- Streaming cursor tests ---
@@ -117,8 +115,8 @@ class StreamEditorTest {
     @Test
     void finalizeStream_stripsStreamingCursor() {
         // finalizeStream should NOT append the cursor
-        when(client.editMessageText(123L, 42L, "Final text", "MarkdownV2", false))
-            .thenReturn(true);
+        doReturn(true).when(client)
+            .editMessageText(123L, 42L, "Final text", "MarkdownV2", false);
 
         boolean result = editor.finalizeStream(123L, 42L, "Final text");
 
@@ -138,8 +136,8 @@ class StreamEditorTest {
 
         when(client.sendMessage(eq(124L), eq("Waiting"), isNull(), isNull(), isNull(), anyBoolean()))
             .thenReturn(Optional.of(43L));
-        when(client.editMessageText(eq(124L), eq(43L), anyString(), eq("MarkdownV2"), eq(false)))
-            .thenReturn(true);
+        doReturn(true).when(client)
+            .editMessageText(eq(124L), eq(43L), anyString(), eq("MarkdownV2"), eq(false));
         assertThat(editor.startStream(124L, "Waiting")).contains(43L);
         editor.onSegmentBreak(124L, 43L, "Already committed");
         editor.discardStreamPreview(124L);
@@ -187,8 +185,8 @@ class StreamEditorTest {
     void editStream_throttlesWhenCalledTooSoon() throws InterruptedException {
         when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(42L));
-        when(client.editMessageText(anyLong(), anyLong(), anyString(), anyString(), anyBoolean()))
-            .thenReturn(true);
+        doReturn(true).when(client)
+            .editMessageText(anyLong(), anyLong(), anyString(), anyString(), anyBoolean());
 
         editor.startStream(123L, "Hello");
         // Immediately call editStream -- should be throttled
@@ -202,8 +200,8 @@ class StreamEditorTest {
     void editStream_doesNotBypassIntervalAfterAnswerExceedsBufferThreshold() {
         when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(42L));
-        when(client.editMessageText(anyLong(), anyLong(), anyString(), any(), anyBoolean()))
-            .thenReturn(true);
+        doReturn(true).when(client)
+            .editMessageText(anyLong(), anyLong(), anyString(), any(), anyBoolean());
 
         editor.startStream(123L, "Hello");
         String firstUpdate = "123456789012345678901234567890";
@@ -220,8 +218,8 @@ class StreamEditorTest {
         when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(42L));
         // Hermes: streaming edits send raw text (null parse_mode)
-        when(client.editMessageText(123L, 42L, "Updated" + cursor, null, true))
-            .thenReturn(true);
+        doReturn(true).when(client)
+            .editMessageText(123L, 42L, "Updated" + cursor, null, true);
 
         editor.startStream(123L, "Hello");
         // Actual timing: wait past 100ms throttle interval so editStream is not throttled
@@ -236,8 +234,8 @@ class StreamEditorTest {
     void finalizeStream_alwaysSendsRegardlessOfThrottle() {
         when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(42L));
-        when(client.editMessageText(123L, 42L, "Final text", "MarkdownV2", false))
-            .thenReturn(true);
+        doReturn(true).when(client)
+            .editMessageText(123L, 42L, "Final text", "MarkdownV2", false);
 
         editor.startStream(123L, "Hello");
         boolean result = editor.finalizeStream(123L, 42L, "Final text");
@@ -250,13 +248,13 @@ class StreamEditorTest {
     void finalizeStreamDoesNotResendWhenEditIsUnconfirmed() {
         StreamSession session = editor.sessionFor(123L);
         session.currentMessageId.set(42L);
-        doReturn(Optional.empty()).when(client).editFinalMessage(eq(123L), eq(42L), eq("Final text"), eq("MarkdownV2"), any());
+        doReturn(Optional.empty()).when(client).editMessageChecked(eq(123L), eq(42L), eq("Final text"), eq("MarkdownV2"), anyBoolean(), any());
 
         assertThat(editor.finalizeStream(123L, 42L, "Final text")).isFalse();
 
         assertThat(editor.hasUnconfirmedDelivery(123L)).isTrue();
         assertThat(editor.getSession(123L)).isSameAs(session);
-        verify(client).editFinalMessage(eq(123L), eq(42L), eq("Final text"), eq("MarkdownV2"), any());
+        verify(client).editMessageChecked(eq(123L), eq(42L), eq("Final text"), eq("MarkdownV2"), anyBoolean(), any());
         verifyNoMoreInteractions(client);
     }
 
@@ -346,8 +344,8 @@ class StreamEditorTest {
         String cursor = " \u2589";
         when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(42L));
-        when(client.editMessageText(anyLong(), anyLong(), anyString(), anyString(), anyBoolean()))
-            .thenReturn(true);
+        doReturn(true).when(client)
+            .editMessageText(anyLong(), anyLong(), anyString(), anyString(), anyBoolean());
 
         editor.startStream(123L, "Hello");
         editor.clearStream(123L);
@@ -366,11 +364,11 @@ class StreamEditorTest {
         when(client.sendMessage(eq(123L), eq("Part 1"), isNull(), isNull(), isNull(), anyBoolean()))
             .thenReturn(Optional.of(99L));
         // Hermes: streaming edits send raw text (null parse_mode)
-        when(client.editMessageText(eq(123L), eq(99L), anyString(), isNull(), eq(true)))
-            .thenReturn(true);
+        doReturn(true).when(client)
+            .editMessageText(eq(123L), eq(99L), anyString(), isNull(), eq(true));
         // finalizeStream still uses MarkdownV2 parse_mode
-        when(client.editMessageText(eq(123L), eq(99L), anyString(), eq("MarkdownV2"), eq(false)))
-            .thenReturn(true);
+        doReturn(true).when(client)
+            .editMessageText(eq(123L), eq(99L), anyString(), eq("MarkdownV2"), eq(false));
 
         Optional<Long> msgId = editor.startStream(123L, "Part 1");
         assertThat(msgId).contains(99L);
@@ -531,8 +529,8 @@ class StreamEditorTest {
 
     @Test
     void finalizeStream_scrubsThinkBlocks() {
-        when(client.editMessageText(anyLong(), anyLong(), anyString(), anyString(), anyBoolean()))
-            .thenReturn(true);
+        doReturn(true).when(client)
+            .editMessageText(anyLong(), anyLong(), anyString(), anyString(), anyBoolean());
 
         // Think block at start of text (block boundary) — should be stripped
         String input = THINK_OPEN + "secret" + THINK_CLOSE + "Final answer";
@@ -546,16 +544,14 @@ class StreamEditorTest {
 
     @Test
     void editStream_increasesIntervalOnFailure() {
-        when(client.editMessageText(anyLong(), anyLong(), anyString(), anyString(), anyBoolean()))
-            .thenReturn(false);
-        when(client.getLastApiErrorCode()).thenReturn(429);
+        doThrow(new com.azhukov.agent.bot.client.TelegramApiException(429, "Too Many Requests")).when(client)
+            .editMessageText(anyLong(), anyLong(), anyString(), anyString(), anyBoolean());
 
         editor.editStream(123L, 42L, "text");
 
         editor.clearStream(123L);
-        when(client.editMessageText(anyLong(), anyLong(), anyString(), anyString(), anyBoolean()))
-            .thenReturn(false);
-        when(client.getLastApiErrorCode()).thenReturn(429);
+        doThrow(new com.azhukov.agent.bot.client.TelegramApiException(429, "Too Many Requests")).when(client)
+            .editMessageText(anyLong(), anyLong(), anyString(), anyString(), anyBoolean());
 
         for (int i = 0; i < 5; i++) {
             editor.editStream(123L, 42L, "attempt " + i);
@@ -571,8 +567,8 @@ class StreamEditorTest {
         // second editStream edits via editMessageText (raw text, null parse_mode)
         when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(42L));
-        when(client.editMessageText(anyLong(), anyLong(), anyString(), nullable(String.class), anyBoolean()))
-            .thenReturn(true);
+        doReturn(true).when(client)
+            .editMessageText(anyLong(), anyLong(), anyString(), nullable(String.class), anyBoolean());
 
         // Actual timing: wait past 100ms throttle interval
         Thread.sleep(110); // timing-assertion
@@ -588,16 +584,27 @@ class StreamEditorTest {
     // --- 400 vs 429 tests ---
 
     @Test
+    void unknownPreviewOutcomeDoesNotIncreaseFloodStrikes() {
+        var session = editor.sessionFor(123L);
+        session.currentMessageId.set(42L);
+        doThrow(new com.azhukov.agent.bot.client.TelegramApiException(-1, "lost receipt")).when(client)
+            .editMessageText(eq(123L), eq(42L), anyString(), isNull(), anyBoolean());
+
+        assertThat(editor.editStream(123L, 42L, "preview")).isFalse();
+        assertThat(session.floodStrikes.get()).isZero();
+        verify(client, times(1)).editMessageText(eq(123L), eq(42L), anyString(), isNull(), anyBoolean());
+    }
+
+    @Test
     void editStream_400DoesNotIncrementFloodStrikes() throws InterruptedException {
         // Hermes: need startStream first so editStream goes through editMessageText path
         when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(42L));
         // First edit fails with 400, then truncated retry succeeds
-        when(client.getLastApiErrorCode()).thenReturn(400);
         // editMessageText is called twice: first with null parse_mode (streaming),
         // then with "MarkdownV2" parse_mode (400 retry). Use nullable to match both.
-        when(client.editMessageText(anyLong(), anyLong(), anyString(), nullable(String.class), anyBoolean()))
-            .thenReturn(false, true);
+        doThrow(new com.azhukov.agent.bot.client.TelegramApiException(400, "message is too long")).doReturn(true).when(client)
+            .editMessageText(anyLong(), anyLong(), anyString(), nullable(String.class), anyBoolean());
 
         editor.startStream(123L, "Hello world");
         // Actual timing: wait past 100ms throttle interval
@@ -607,9 +614,8 @@ class StreamEditorTest {
 
         // Now try another edit -- should NOT be throttled by flood strikes
         editor.clearStream(123L);
-        when(client.editMessageText(anyLong(), anyLong(), anyString(), nullable(String.class), anyBoolean()))
-            .thenReturn(true);
-        when(client.getLastApiErrorCode()).thenReturn(0);
+        doReturn(true).when(client)
+            .editMessageText(anyLong(), anyLong(), anyString(), nullable(String.class), anyBoolean());
 
         // After clearStream, currentMessageId is null → editStream sends new message via sendMessage
         boolean result2 = editor.editStream(123L, 42L, "Next text");
@@ -618,9 +624,8 @@ class StreamEditorTest {
 
     @Test
     void editStream_429IncrementsFloodStrikes() {
-        when(client.editMessageText(anyLong(), anyLong(), anyString(), anyString(), anyBoolean()))
-            .thenReturn(false);
-        when(client.getLastApiErrorCode()).thenReturn(429);
+        doThrow(new com.azhukov.agent.bot.client.TelegramApiException(429, "Too Many Requests")).when(client)
+            .editMessageText(anyLong(), anyLong(), anyString(), anyString(), anyBoolean());
 
         for (int i = 0; i < 5; i++) {
             editor.editStream(123L, 42L, "attempt " + i);
@@ -645,8 +650,8 @@ class StreamEditorTest {
         when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(42L));
         // Streaming edit uses null parse_mode with silent notification
-        when(client.editMessageText(anyLong(), anyLong(), anyString(), any(), eq(true)))
-            .thenReturn(true);
+        doReturn(true).when(client)
+            .editMessageText(anyLong(), anyLong(), anyString(), any(), eq(true));
 
         silentEditor.startStream(123L, "Hello");
         // This test checks notification mode; establish an eligible edit without
@@ -659,8 +664,8 @@ class StreamEditorTest {
 
     @Test
     void finalizeStream_usesPushNotification() {
-        when(client.editMessageText(anyLong(), anyLong(), anyString(), anyString(), eq(false)))
-            .thenReturn(true);
+        doReturn(true).when(client)
+            .editMessageText(anyLong(), anyLong(), anyString(), anyString(), eq(false));
 
         boolean result = editor.finalizeStream(123L, 42L, "final");
         assertThat(result).isTrue();
@@ -697,8 +702,8 @@ class StreamEditorTest {
         try {
             when(client.sendMessage(eq(123L), anyString(), any(), any(), any(), anyBoolean()))
                 .thenReturn(Optional.of(42L));
-            when(client.editMessageText(eq(123L), eq(42L), anyString(), isNull(), anyBoolean()))
-                .thenReturn(true);
+            doReturn(true).when(client)
+            .editMessageText(eq(123L), eq(42L), anyString(), isNull(), anyBoolean());
             String text = "a".repeat(18) + "😀" + "b".repeat(4900);
             assertThat(preview.startStream(123L, "Initial text")).contains(42L);
             assertThat(preview.editStream(123L, 42L, text)).isTrue();
@@ -769,8 +774,8 @@ class StreamEditorTest {
         when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(42L));
         // Hermes: streaming edits send raw text (null parse_mode) — no backslash escaping
-        when(client.editMessageText(123L, 42L, specialText + cursor, null, true))
-            .thenReturn(true);
+        doReturn(true).when(client)
+            .editMessageText(123L, 42L, specialText + cursor, null, true);
 
         editor.startStream(123L, "Hello");
         // Actual timing: wait past 100ms throttle interval so editStream is not throttled

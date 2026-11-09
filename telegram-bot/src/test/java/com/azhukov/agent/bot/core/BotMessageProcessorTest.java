@@ -94,10 +94,10 @@ class BotMessageProcessorTest {
                 return ((TelegramClient) call.getMock()).sendMessage(call.<Long>getArgument(0), call.getArgument(1),
                     call.getArgument(2), call.getArgument(3), call.getArgument(4), call.<Boolean>getArgument(6));
             }
-            if ("editFinalMessage".equals(call.getMethod().getName())) {
+            if ("editMessageChecked".equals(call.getMethod().getName())) {
                 long id = call.getArgument(1);
                 return ((TelegramClient) call.getMock()).editMessageText(call.<Long>getArgument(0), id,
-                    call.getArgument(2), call.getArgument(3), false) ? Optional.of(id) : Optional.empty();
+                    call.getArgument(2), call.getArgument(3), call.getArgument(4)) ? Optional.of(id) : Optional.empty();
             }
             return RETURNS_DEFAULTS.answer(call);
         });

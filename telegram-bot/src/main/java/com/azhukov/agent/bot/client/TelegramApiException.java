@@ -6,7 +6,7 @@ package com.azhukov.agent.bot.client;
  * Thrown by {@link TelegramClient#callApi} and {@link TelegramClient#callMultipartApi}
  * on non-200 (i.e. non-{@code ok}) Telegram API responses, allowing callers to
  * inspect the error code (e.g. 400, 429) and description without relying on
- * side-channel state like {@code lastApiErrorCode}.
+ * shared state from another request.
  *
  * <p>For HTTP 429 (rate limit) responses, {@link #retryAfter} carries the
  * seconds-to-wait value from the Telegram {@code retry_after} parameter

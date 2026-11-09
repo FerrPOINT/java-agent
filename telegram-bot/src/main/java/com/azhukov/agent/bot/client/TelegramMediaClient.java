@@ -260,12 +260,9 @@ class TelegramMediaClient {
                 if (result instanceof List<?> list) {
                     List<Long> messageIds = new ArrayList<>();
                     for (Object item : list) {
-                        if (item instanceof Map<?, ?> msg) {
-                            Object id = msg.get("message_id");
-                            if (id instanceof Number num) {
-                                messageIds.add(num.longValue());
-                            }
-                        }
+                        Long id = TelegramResponse.deliveredMessageId(item);
+                        if (id == null) return List.of();
+                        messageIds.add(id);
                     }
                     return messageIds;
                 }

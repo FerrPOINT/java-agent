@@ -44,8 +44,11 @@ class StreamDeliveryRegressionTest {
                 String path = request.getURI().getPath();
                 String apiMethod = path.substring(path.lastIndexOf('/') + 1);
                 requests.add(apiMethod);
-                String result = apiMethod.equals("getMe")
-                    ? "{\"supports_rich_messages\":true}" : "{\"message_id\":42}";
+                String result = switch (apiMethod) {
+                    case "getMe" -> "{\"supports_rich_messages\":true}";
+                    case "editMessageText" -> "{\"message_id\":" + mapper.readTree(body).get("message_id").asLong() + "}";
+                    default -> "{\"message_id\":42}";
+                };
                 var response = new org.springframework.mock.http.client.MockClientHttpResponse(
                     ("{\"ok\":true,\"result\":" + result + "}").getBytes(java.nio.charset.StandardCharsets.UTF_8),
                     org.springframework.http.HttpStatus.OK);
@@ -64,15 +67,18 @@ class StreamDeliveryRegressionTest {
             var session = editor.sessionFor(101L);
             long preview = method.equals("editMessageText") ? 9L : -1L;
             session.currentMessageId.set(preview);
-            var permit = (java.util.concurrent.Semaphore) org.springframework.test.util.ReflectionTestUtils
-                .getField(telegram, "rateLimiter");
+            var permit = org.mockito.Mockito.mock(io.github.resilience4j.ratelimiter.RateLimiter.class);
+            var waiting = new java.util.concurrent.CountDownLatch(1);
+            var release = new java.util.concurrent.CountDownLatch(1);
+            org.mockito.Mockito.when(permit.acquirePermission()).thenAnswer(call -> {
+                waiting.countDown();
+                return release.await(2, java.util.concurrent.TimeUnit.SECONDS);
+            });
+            org.springframework.test.util.ReflectionTestUtils.setField(telegram, "rateLimiter", permit);
             var send = new java.util.concurrent.FutureTask<>(() -> editor.finalizeStream(101L, preview, "final"));
-            permit.acquire();
             try {
                 Thread.startVirtualThread(send);
-                long limit = System.nanoTime() + SECONDS.toNanos(2);
-                while (!permit.hasQueuedThreads() && System.nanoTime() < limit) Thread.sleep(1);
-                assertThat(permit.hasQueuedThreads()).isTrue();
+                assertThat(waiting.await(2, SECONDS)).isTrue();
                 if (state.equals("stop")) editor.cancelDeferredDelivery(101L);
                 if (state.equals("expired")) {
                     synchronized (session) {
@@ -81,7 +87,7 @@ class StreamDeliveryRegressionTest {
                     }
                 }
             } finally {
-                permit.release();
+                release.countDown();
             }
             boolean allowed = state.equals("allowed");
             assertThat(send.get(2, SECONDS)).isEqualTo(allowed);
@@ -94,7 +100,7 @@ class StreamDeliveryRegressionTest {
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(ints = {400, -1})
     void onlyConfirmedMissingPreviewCanBeReplaced(int code) {
-        when(client.editFinalMessage(eq(101L), eq(9L), eq("final"), eq("MarkdownV2"), any())).thenThrow(
+        when(client.editMessageChecked(eq(101L), eq(9L), eq("final"), eq("MarkdownV2"), anyBoolean(), any())).thenThrow(
             new TelegramApiException(code, code == 400 ? "Bad Request: message to edit not found" : "lost receipt"));
         if (code == 400) {
             when(client.sendMessageChecked(eq(101L), eq("final"), eq("MarkdownV2"), any(), any(), any(), anyBoolean(), any()))
@@ -187,7 +193,7 @@ class StreamDeliveryRegressionTest {
             assertThat(parts.getAllValues()).allMatch(part -> part.length() <= 4096);
             assertThat(String.join("", parts.getAllValues().stream()
                 .map(part -> part.replaceFirst("^\\(\\d+/\\d+\\) ", "")).toList())).isEqualTo(text);
-            verify(client, never()).editFinalMessage(anyLong(), anyLong(), anyString(), any(), any());
+            verify(client, never()).editMessageChecked(anyLong(), anyLong(), anyString(), any(), anyBoolean(), any());
         } finally {
             editor.destroy();
         }

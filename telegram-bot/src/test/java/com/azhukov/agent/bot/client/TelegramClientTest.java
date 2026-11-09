@@ -97,7 +97,6 @@ class TelegramClientTest {
             assertThatThrownBy(() -> actualClient.sendMessageChecked(1L, "text", null, null, null, null, false))
                 .isInstanceOfSatisfying(TelegramClient.SendRefusalException.class,
                     ex -> assertThat(ex.getRetryAfterSeconds()).isEqualTo(37));
-            assertThat(actualClient.getLastApiErrorCode()).isEqualTo(429);
         } finally { server.stop(0); }
     }
 
@@ -111,7 +110,6 @@ class TelegramClientTest {
         assertThatThrownBy(() -> client.sendMessageChecked(1L, "text", null, null, null, null, false))
             .isInstanceOfSatisfying(TelegramClient.SendRefusalException.class,
                 ex -> assertThat(ex.getRetryAfterSeconds()).isEqualTo(37));
-        assertThat(client.getLastApiErrorCode()).isEqualTo(429);
         assertThatThrownBy(() -> client.sendMessageChecked(1L, "again", null, null, null, null, false))
             .isInstanceOfSatisfying(TelegramClient.SendRefusalException.class,
                 ex -> assertThat(ex.getRetryAfterSeconds()).isEqualTo(37));
@@ -127,7 +125,6 @@ class TelegramClientTest {
             org.springframework.http.HttpHeaders.EMPTY, body, java.nio.charset.StandardCharsets.UTF_8));
         assertThatThrownBy(() -> client.editMessageText(1L, 2L, "text", null))
             .isInstanceOfSatisfying(TelegramApiException.class, e -> assertThat(e.getRetryAfter()).isEqualTo(37));
-        assertThat(client.getLastApiErrorCode()).isEqualTo(429);
     }
 
     @Test
@@ -1418,7 +1415,7 @@ class TelegramClientTest {
     class RateLimiterTest {
 
         @Test
-        @DisplayName("rateLimitPerSecond > 0 creates semaphore and allows calls")
+        @DisplayName("rateLimitPerSecond > 0 allows calls within quota")
         void rateLimiterActive() {
             client = new TelegramClient(restClient, objectMapper, "token", 10);
             stubPostChain(successResponseWithResult(true));
@@ -1427,7 +1424,7 @@ class TelegramClientTest {
         }
 
         @Test
-        @DisplayName("rateLimitPerSecond = 0 disables rate limiter (null semaphore)")
+        @DisplayName("rateLimitPerSecond = 0 disables rate limiting")
         void rateLimiterDisabled() {
             // rateLimitPerSecond=0 already set in setUp
             stubPostChain(successResponseWithResult(true));
@@ -1435,24 +1432,6 @@ class TelegramClientTest {
             assertThat(result).isTrue();
         }
 
-        @Test
-        @DisplayName("rate limiter releases permit after call completes (finally block)")
-        void rateLimiterReleasesAfterCall() {
-            // With rateLimitPerSecond=1, we should be able to make 2 sequential
-            // calls because the permit is released in the finally block after
-            // the first call completes.
-            client = new TelegramClient(restClient, objectMapper, "token", 1);
-            // First call: success
-            stubPostChain(successResponseWithResult(true));
-            boolean result1 = client.sendChatAction(1L, "typing");
-            assertThat(result1).isTrue();
-
-            // Second call should also succeed because the permit was released
-            // in the finally block (not on a 1s timer)
-            when(responseSpec.body(TelegramResponse.class)).thenReturn(successResponseWithResult(true));
-            boolean result2 = client.sendChatAction(1L, "typing");
-            assertThat(result2).isTrue();
-        }
     }
 
     // ─── isLastCallConflict tests ─────────────────────────────────
