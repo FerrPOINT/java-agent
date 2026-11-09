@@ -33,7 +33,10 @@ public record TelegramResponse(
         if (hasErrorCode && (!errorCode.isIntegralNumber() || !errorCode.canConvertToInt())) {
             throw new IllegalArgumentException("Telegram error_code must be a JSON integer");
         }
-        return new TelegramResponse(hasOk ? ok.booleanValue() : null,
+        if (!hasOk || (ok.booleanValue() ? hasErrorCode || result == null : !hasErrorCode || result != null)) {
+            throw new IllegalArgumentException("Inconsistent Telegram response envelope");
+        }
+        return new TelegramResponse(ok.booleanValue(),
             hasErrorCode ? errorCode.intValue() : null, description, result, parameters);
     }
 

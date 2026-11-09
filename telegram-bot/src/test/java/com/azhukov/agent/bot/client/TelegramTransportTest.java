@@ -109,7 +109,9 @@ class TelegramTransportTest {
         "200, '{\"ok\":false,\"error_code\":429}{\"ok\":true,\"result\":{\"message_id\":42}}'",
         "429, '{\"ok\":false,\"error_code\":429}{\"ok\":true,\"result\":{\"message_id\":42}}'",
         "200, '{\"ok\":false,\"error_code\":429}garbage'",
-        "429, '{\"ok\":false,\"error_code\":429}garbage'"
+        "429, '{\"ok\":false,\"error_code\":429}garbage'",
+        "200, '{\"ok\":true,\"error_code\":429,\"result\":{\"message_id\":42}}'",
+        "429, '{\"ok\":false,\"error_code\":429,\"result\":{\"message_id\":42}}'"
     })
     void invalidTelegramEnvelopeHasUnknownOutcomeForTextAndMedia(int status, String body) {
         var config = new BotConfig();
@@ -148,6 +150,48 @@ class TelegramTransportTest {
         var photos = java.util.List.of(new TelegramClient.PhotoInput(new byte[] {1}, "first.jpg", null),
             new TelegramClient.PhotoInput(new byte[] {2}, "second.jpg", null));
         assertThat(client.sendMediaGroup(1L, photos, null)).isEmpty();
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({
+        "200, '{\"ok\":true,\"result\":{\"message_id\":42}}', true",
+        "200, '{\"ok\":true,\"result\":{\"message_id\":43}}', false",
+        "200, '{\"ok\":true,\"result\":true}', false",
+        "200, '{\"ok\":true,\"result\":{\"message_id\":42.5}}', false",
+        "400, '{\"ok\":false,\"error_code\":400,\"description\":\"Bad Request: message is not modified\"}', true"
+    })
+    void checkedEditConfirmsOnlyTheRequestedMessageOrAnExplicitNoOp(int status, String body, boolean confirmed) {
+        var config = new BotConfig();
+        var mapper = config.telegramObjectMapper(config.objectMapper());
+        var transport = config.telegramRestClient(mapper).mutate()
+            .requestInterceptor((request, bytes, execution) -> {
+                var response = new org.springframework.mock.http.client.MockClientHttpResponse(
+                    body.getBytes(java.nio.charset.StandardCharsets.UTF_8), org.springframework.http.HttpStatus.valueOf(status));
+                response.getHeaders().setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
+                return response;
+            }).build();
+        var client = new TelegramClient(transport, mapper, "fixture", 0);
+
+        var edited = client.editMessageChecked(1L, 42L, "report", null, false, () -> true);
+
+        assertThat(edited).isEqualTo(confirmed ? java.util.Optional.of(42L) : java.util.Optional.empty());
+    }
+
+    @Test
+    void missingResultIsNotAnEditReceipt() {
+        var config = new BotConfig();
+        var mapper = config.telegramObjectMapper(config.objectMapper());
+        var transport = config.telegramRestClient(mapper).mutate()
+            .requestInterceptor((request, bytes, execution) -> {
+                var response = new org.springframework.mock.http.client.MockClientHttpResponse(
+                    "{\"ok\":true}".getBytes(java.nio.charset.StandardCharsets.UTF_8), org.springframework.http.HttpStatus.OK);
+                response.getHeaders().setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
+                return response;
+            }).build();
+        var client = new TelegramClient(transport, mapper, "fixture", 0);
+
+        assertThatThrownBy(() -> client.editMessageChecked(1L, 42L, "report", null, false, () -> true))
+            .isInstanceOfSatisfying(TelegramApiException.class, error -> assertThat(error.getErrorCode()).isEqualTo(-1));
     }
 
     @Test

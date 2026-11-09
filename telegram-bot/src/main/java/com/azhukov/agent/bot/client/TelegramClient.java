@@ -264,7 +264,9 @@ public class TelegramClient {
         if (parseMode != null && !parseMode.isBlank()) params.put("parse_mode", parseMode);
         if (disableNotification) params.put("disable_notification", true);
         try {
-            return callApi("editMessageText", params, maySend).map(response -> messageId);
+            return callApi("editMessageText", params, maySend)
+                .map(TelegramResponse::resultMessageIdAsLong)
+                .filter(editedId -> editedId == messageId);
         } catch (TelegramApiException error) {
             if (error.getErrorCode() == 400 && error.getMessage().contains("message is not modified")) {
                 return Optional.of(messageId);
