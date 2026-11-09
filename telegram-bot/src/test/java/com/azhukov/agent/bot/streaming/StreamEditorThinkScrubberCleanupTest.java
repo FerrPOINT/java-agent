@@ -39,7 +39,6 @@ class StreamEditorThinkScrubberCleanupTest {
         when(meResponse.isSuccess()).thenReturn(true);
         when(meResponse.resultAsMap()).thenReturn(Map.of());
         when(client.callApi("getMe", Map.of())).thenReturn(Optional.of(meResponse));
-        when(client.getLastApiErrorCode()).thenReturn(0);
     }
 
     @Test

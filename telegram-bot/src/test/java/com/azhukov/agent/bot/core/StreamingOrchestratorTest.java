@@ -88,7 +88,6 @@ class StreamingOrchestratorTest {
         when(meResponse.isSuccess()).thenReturn(true);
         when(meResponse.resultAsMap()).thenReturn(Map.of());
         when(telegramClient.callApi(anyString(), any())).thenReturn(Optional.of(meResponse));
-        when(telegramClient.getLastApiErrorCode()).thenReturn(0);
     }
 
     @AfterEach
