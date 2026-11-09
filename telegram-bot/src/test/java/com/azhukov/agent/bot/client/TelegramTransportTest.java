@@ -48,7 +48,7 @@ class TelegramTransportTest {
 
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(ints = {200, 429})
-    void multipartSendPreservesConfirmedFloodControl(int status) {
+    void sendsPreserveConfirmedFloodControl(int status) {
         var mapper = new ObjectMapper();
         var transport = new BotConfig().telegramRestClient(mapper).mutate()
             .requestInterceptor((request, bytes, execution) -> {
@@ -61,6 +61,11 @@ class TelegramTransportTest {
                 return response;
             }).build();
         var client = new TelegramClient(transport, mapper, "fixture", 0);
+        assertThatThrownBy(() -> client.sendMessageChecked(1L, "report", null, null, null, null, false))
+            .isInstanceOfSatisfying(TelegramClient.SendRefusalException.class, refusal -> {
+                assertThat(refusal.getErrorCode()).isEqualTo(429);
+                assertThat(refusal.getRetryAfterSeconds()).isEqualTo(17);
+            });
         assertThatThrownBy(() -> client.sendDocument(1L, new byte[] {1}, "report.txt", null, null))
             .isInstanceOfSatisfying(TelegramClient.SendRefusalException.class, refusal -> {
                 assertThat(refusal.getErrorCode()).isEqualTo(429);
@@ -79,6 +84,23 @@ class TelegramTransportTest {
                     org.springframework.http.HttpStatus.TOO_MANY_REQUESTS))
             .build();
         var client = new TelegramClient(transport, mapper, "fixture", 0);
+        assertThat(client.sendDocument(1L, new byte[] {1}, "report.txt", null, null)).isEmpty();
+    }
+
+    @Test
+    void missingOkInSuccessfulHttpResponseHasUnknownOutcomeForTextAndMedia() {
+        var mapper = new ObjectMapper();
+        var transport = new BotConfig().telegramRestClient(mapper).mutate()
+            .requestInterceptor((request, bytes, execution) -> {
+                var response = new org.springframework.mock.http.client.MockClientHttpResponse(
+                    "{\"error_code\":429,\"parameters\":{\"retry_after\":17}}"
+                        .getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                    org.springframework.http.HttpStatus.OK);
+                response.getHeaders().setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
+                return response;
+            }).build();
+        var client = new TelegramClient(transport, mapper, "fixture", 0);
+        assertThat(client.sendMessageChecked(1L, "report", null, null, null, null, false)).isEmpty();
         assertThat(client.sendDocument(1L, new byte[] {1}, "report.txt", null, null)).isEmpty();
     }
 

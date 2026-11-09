@@ -888,8 +888,8 @@ public class TelegramClient {
                 .body(params)
                 .retrieve()
                 .body(TelegramResponse.class);
-            if (response == null) {
-                log.warn("Telegram {} returned null response body", method);
+            if (response == null || response.ok() == null) {
+                log.warn("Telegram {} returned no result envelope", method);
                 return Optional.empty();
             }
             if (!response.isSuccess()) {
