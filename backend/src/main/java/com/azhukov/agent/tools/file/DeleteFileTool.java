@@ -59,7 +59,7 @@ public class DeleteFileTool implements ToolHandler {
         }
 
         try (var parent = com.azhukov.agent.core.security.SecureFileAccess.openDirectory(path.getParent())) {
-            parent.deleteFile(path.getFileName());
+            parent.entries().deleteFile(path.getFileName());
             return ToolResult.ok("Deleted file: " + path);
         } catch (IOException e) {
             return ToolResult.fail("Failed to delete file: " + e.getMessage());

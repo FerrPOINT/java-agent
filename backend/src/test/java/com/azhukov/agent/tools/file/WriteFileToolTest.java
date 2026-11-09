@@ -83,6 +83,31 @@ class WriteFileToolTest {
         assertThat(outside.toFile().list()).containsExactly("a.txt");
     }
 
+    @Test
+    void descriptorRejectsFifoAndPatchRejectsChangedSnapshot(@TempDir Path dir) throws Exception {
+        Path file = Files.writeString(dir.resolve("file.txt"), "before");
+        try (var parent = com.azhukov.agent.core.security.SecureFileAccess.openDirectory(dir)) {
+            String original = TextFileWriteSupport.read(parent, file.getFileName());
+            Files.writeString(file, "concurrent");
+            org.assertj.core.api.Assertions.assertThatThrownBy(
+                () -> TextFileWriteSupport.write(parent, file, original, "patch"))
+                .isInstanceOf(java.io.IOException.class).hasMessageContaining("changed");
+            assertThat(Files.readString(file)).isEqualTo("concurrent");
+            Files.delete(file);
+            assertThat(new ProcessBuilder("/usr/bin/mkfifo", file.toString()).start().waitFor()).isZero();
+            var outcome = new java.util.concurrent.CompletableFuture<Throwable>();
+            Thread.startVirtualThread(() -> {
+                try (var channel = parent.openRead(file.getFileName())) {
+                    outcome.complete(new AssertionError("FIFO accepted"));
+                } catch (Exception rejected) {
+                    outcome.complete(rejected);
+                }
+            });
+            assertThat(outcome.get(3, java.util.concurrent.TimeUnit.SECONDS))
+                .isInstanceOf(java.io.IOException.class).hasMessageContaining("Not a regular file");
+        }
+    }
+
     private static com.azhukov.agent.core.security.DefaultFileSafety fileSafety() {
         com.azhukov.agent.config.AgentProperties props = new com.azhukov.agent.config.AgentProperties();
         props.getSecurity().setFileSafetyEnabled(true);

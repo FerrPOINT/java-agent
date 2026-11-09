@@ -102,8 +102,14 @@ public class PatchTool implements ToolHandler {
     }
 
     private ToolResult replace(Path path, String oldString, String newString, boolean replaceAll) throws IOException {
-        String content = TextFileWriteSupport.read(path);
+        try (var parent = SecureFileAccess.openDirectory(path.getParent())) {
+            String content = TextFileWriteSupport.read(parent, path.getFileName());
+            return replace(parent, path, content, oldString, newString, replaceAll);
+        }
+    }
 
+    private ToolResult replace(SecureFileAccess.Directory parent, Path path, String content,
+                               String oldString, String newString, boolean replaceAll) throws IOException {
         // p7: Check if new_string is already present in the file content.
         // If so, the patch was likely already applied — return success with info.
         if (!replaceAll && content.contains(newString) && !content.contains(oldString)) {
@@ -143,7 +149,7 @@ public class PatchTool implements ToolHandler {
             String updated = replaceAll
                 ? content.replace(oldString, newString)
                 : content.replaceFirst(Pattern.quote(oldString), Matcher.quoteReplacement(newString));
-            return writePatched(path, updated, "replace " + (replaceAll ? "all" : "first"));
+            return writePatched(parent, path, content, updated, "replace " + (replaceAll ? "all" : "first"));
         }
         // Fuzzy matching strategies
         String[] strategies = {
@@ -157,7 +163,7 @@ public class PatchTool implements ToolHandler {
             String updated = replaceAll
                 ? content.replace(trimmed, newString)
                 : content.replaceFirst(Pattern.quote(trimmed), Matcher.quoteReplacement(newString));
-            return writePatched(path, updated, "fuzzy: trimmed whitespace");
+            return writePatched(parent, path, content, updated, "fuzzy: trimmed whitespace");
         }
         // Strategy 2: normalize line endings (CRLF → LF)
         String normalizedOld = oldString.replace("\r\n", "\n");
@@ -166,7 +172,7 @@ public class PatchTool implements ToolHandler {
             String updated = replaceAll
                 ? normalizedContent.replace(normalizedOld, newString)
                 : normalizedContent.replaceFirst(Pattern.quote(normalizedOld), Matcher.quoteReplacement(newString));
-            return writePatched(path, updated, "fuzzy: normalized line endings");
+            return writePatched(parent, path, content, updated, "fuzzy: normalized line endings");
         }
         // Strategy 3: collapse multiple whitespace runs to single space
         String collapsedOld = oldString.replaceAll("\\s+", " ");
@@ -178,7 +184,7 @@ public class PatchTool implements ToolHandler {
                 ? content.replaceFirst(Pattern.quote(findOriginalMatch(content, oldString, collapsedOld)), Matcher.quoteReplacement(newString))
                 : content.replaceFirst(Pattern.quote(findOriginalMatch(content, oldString, collapsedOld)), Matcher.quoteReplacement(newString));
             if (!updated.equals(content)) {
-                return writePatched(path, updated, "fuzzy: collapsed whitespace");
+                return writePatched(parent, path, content, updated, "fuzzy: collapsed whitespace");
             }
         }
         // Strategy 4: case-insensitive match
@@ -188,7 +194,7 @@ public class PatchTool implements ToolHandler {
             String updated = replaceAll
                 ? content.replace(actual, newString)
                 : content.replaceFirst(Pattern.quote(actual), Matcher.quoteReplacement(newString));
-            return writePatched(path, updated, "fuzzy: case-insensitive");
+            return writePatched(parent, path, content, updated, "fuzzy: case-insensitive");
         }
         // Strategy 5: ignore trailing whitespace per line
         String[] oldLines = oldString.split("\n");
@@ -209,7 +215,7 @@ public class PatchTool implements ToolHandler {
             if (actualMatch != null) {
                 String updated = content.replaceFirst(Pattern.quote(actualMatch), Matcher.quoteReplacement(newString));
                 if (!updated.equals(content)) {
-                    return writePatched(path, updated, "fuzzy: trailing whitespace");
+                    return writePatched(parent, path, content, updated, "fuzzy: trailing whitespace");
                 }
             }
         }
@@ -220,7 +226,7 @@ public class PatchTool implements ToolHandler {
         }
         if (!bomStrippedContent.equals(content) && bomStrippedContent.contains(oldString)) {
             String updated = bomStrippedContent.replaceFirst(Pattern.quote(oldString), Matcher.quoteReplacement(newString));
-            return writePatched(path, updated, "fuzzy: BOM stripped");
+            return writePatched(parent, path, content, updated, "fuzzy: BOM stripped");
         }
         // Strategy 7: normalize tabs to spaces (4 spaces) in old_string
         String tabNormalizedOld = oldString.replace("\t", "    ");
@@ -228,22 +234,22 @@ public class PatchTool implements ToolHandler {
             String updated = replaceAll
                 ? content.replace(tabNormalizedOld, newString)
                 : content.replaceFirst(Pattern.quote(tabNormalizedOld), Matcher.quoteReplacement(newString));
-            return writePatched(path, updated, "fuzzy: tabs to spaces");
+            return writePatched(parent, path, content, updated, "fuzzy: tabs to spaces");
         }
         // Strategy 8: try matching with empty lines removed from old_string
         String noEmptyLinesOld = oldString.lines().filter(l -> !l.isBlank()).reduce((a, b) -> a + "\n" + b).orElse("");
         if (!noEmptyLinesOld.equals(oldString) && !noEmptyLinesOld.isEmpty() && content.contains(noEmptyLinesOld)) {
             String updated = content.replaceFirst(Pattern.quote(noEmptyLinesOld), Matcher.quoteReplacement(newString));
             if (!updated.equals(content)) {
-                return writePatched(path, updated, "fuzzy: empty lines removed");
+                return writePatched(parent, path, content, updated, "fuzzy: empty lines removed");
             }
         }
         return jsonFail("Could not find old_string in file. Tried fuzzy strategies: " + String.join(", ", strategies) + ". Use read_file to verify current content.");
     }
 
-    private ToolResult writePatched(Path path, String updated, String label) throws IOException {
-        String before = TextFileWriteSupport.read(path);
-        TextFileWriteSupport.WriteOutcome write = TextFileWriteSupport.write(path, updated);
+    private ToolResult writePatched(SecureFileAccess.Directory parent, Path path, String before, String updated,
+                                    String label) throws IOException {
+        TextFileWriteSupport.WriteOutcome write = TextFileWriteSupport.write(parent, path, before, updated);
         Map<String, Object> result = patchResult(true);
         result.put("diff", compactDiff(write.path(), before, write.content()));
         result.put("files_modified", List.of(write.path().toString()));
@@ -287,7 +293,8 @@ public class PatchTool implements ToolHandler {
         if (operations.isEmpty() && errors.isEmpty()) {
             return jsonFail("No V4A file operations found");
         }
-        errors.addAll(validateV4aOperations(patchText, operations, crossProfile));
+        Map<V4aOperation, PreparedUpdate> updates = new LinkedHashMap<>();
+        errors.addAll(validateV4aOperations(patchText, operations, crossProfile, updates));
         if (!errors.isEmpty()) {
             return jsonFail(String.join("\n", errors));
         }
@@ -306,14 +313,15 @@ public class PatchTool implements ToolHandler {
                 filesCreated.add(pathStr);
             } else if ("Delete".equals(op)) {
                 try (var parent = SecureFileAccess.openDirectory(path.getParent())) {
-                    parent.deleteFile(path.getFileName());
+                    parent.entries().deleteFile(path.getFileName());
                 }
                 filesDeleted.add(pathStr);
             } else if ("Update".equals(op)) {
-                String content = TextFileWriteSupport.read(path);
-                String updated = applyHunks(content, parseHunks(extractDiff(patchText, operation.contentStart())));
-                TextFileWriteSupport.WriteOutcome write = TextFileWriteSupport.write(path, updated);
-                appendDiff(diff, compactDiff(write.path(), content, write.content()));
+                var prepared = updates.get(operation);
+                try (var parent = SecureFileAccess.openDirectory(path.getParent())) {
+                    var write = TextFileWriteSupport.write(parent, path, prepared.before(), prepared.after());
+                    appendDiff(diff, compactDiff(write.path(), prepared.before(), write.content()));
+                }
                 filesModified.add(pathStr);
             } else if ("Move".equals(op)) {
                 moveFile(path, operation.destination());
@@ -479,7 +487,8 @@ public class PatchTool implements ToolHandler {
         return FileToolSafety.resolvePath(path, session);
     }
 
-    private List<String> validateV4aOperations(String patchText, List<V4aOperation> operations, Boolean crossProfile) {
+    private List<String> validateV4aOperations(String patchText, List<V4aOperation> operations, Boolean crossProfile,
+                                               Map<V4aOperation, PreparedUpdate> updates) {
         List<String> errors = new ArrayList<>();
         for (V4aOperation operation : operations) {
             errors.addAll(validateWritableTarget(operation.path(), operation.rawPath(), crossProfile));
@@ -504,7 +513,7 @@ public class PatchTool implements ToolHandler {
                     errors.add("File not found for delete: " + operation.rawPath());
                 }
             } else if ("Update".equals(operation.op())) {
-                validateUpdateOperation(patchText, operation, errors);
+                prepareUpdate(patchText, operation, errors, updates);
             } else if ("Move".equals(operation.op())) {
                 validateMoveOperation(operation, errors);
             }
@@ -533,15 +542,19 @@ public class PatchTool implements ToolHandler {
         }
     }
 
-    private void validateUpdateOperation(String patchText, V4aOperation operation, List<String> errors) {
+    private record PreparedUpdate(String before, String after) {}
+
+    private void prepareUpdate(String patchText, V4aOperation operation, List<String> errors,
+                               Map<V4aOperation, PreparedUpdate> updates) {
         if (!Files.exists(operation.path())) {
             errors.add("File not found for update: " + operation.rawPath());
             return;
         }
-        try {
-            String content = TextFileWriteSupport.read(operation.path());
+        try (var parent = SecureFileAccess.openDirectory(operation.path().getParent())) {
+            String content = TextFileWriteSupport.read(parent, operation.path().getFileName());
             String updated = applyHunks(content, parseHunks(extractDiff(patchText, operation.contentStart())));
             TextFileWriteSupport.validateCandidate(operation.path(), updated);
+            updates.put(operation, new PreparedUpdate(content, updated));
         } catch (Exception e) {
             errors.add("Failed to update " + operation.rawPath() + ": " + e.getMessage());
         }
@@ -563,7 +576,7 @@ public class PatchTool implements ToolHandler {
     private void moveFile(Path source, Path destination) throws IOException {
         try (var sourceParent = SecureFileAccess.openDirectory(source.getParent());
              var destinationParent = SecureFileAccess.openOrCreateDirectory(destination.getParent())) {
-            sourceParent.move(source.getFileName(), destinationParent, destination.getFileName());
+            sourceParent.entries().move(source.getFileName(), destinationParent.entries(), destination.getFileName());
         }
     }
 

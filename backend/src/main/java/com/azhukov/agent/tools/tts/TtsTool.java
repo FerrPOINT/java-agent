@@ -150,7 +150,7 @@ public class TtsTool implements ToolHandler {
                 for (int i = 0; i < chunks.size(); i++) {
                     Path target = chunks.size() == 1 ? baseOutputPath : chunkOutputPath(baseOutputPath, i + 1);
                     byte[] audio = synthesize(provider, chunks.get(i), voice, speed, args.instructions());
-                    try (var channel = directory.newByteChannel(target.getFileName(),
+                    try (var channel = directory.entries().newByteChannel(target.getFileName(),
                             Set.of(StandardOpenOption.WRITE, StandardOpenOption.CREATE_NEW, LinkOption.NOFOLLOW_LINKS))) {
                         writtenPaths.add(target);
                         var remaining = ByteBuffer.wrap(audio);

@@ -1,100 +1,197 @@
 package com.azhukov.agent.core.security;
 
 import java.io.IOException;
+import java.lang.foreign.Arena;
+import java.lang.foreign.FunctionDescriptor;
+import java.lang.foreign.Linker;
+import java.lang.foreign.MemorySegment;
+import java.lang.invoke.MethodHandle;
 import java.nio.channels.SeekableByteChannel;
 import java.nio.file.Files;
-import java.nio.file.LinkOption;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.SecureDirectoryStream;
-import java.nio.file.StandardOpenOption;
-import java.nio.file.attribute.BasicFileAttributeView;
-import java.util.Set;
-import java.util.concurrent.TimeUnit;
+import java.nio.file.attribute.BasicFileAttributes;
 
-/** Opens an authorized absolute path without following replacements by symlink. */
+import static java.lang.foreign.ValueLayout.ADDRESS;
+import static java.lang.foreign.ValueLayout.JAVA_INT;
+
+/** Descriptor-relative Linux file access for paths already authorized by the caller. */
 public final class SecureFileAccess {
+    private static final int AT_FDCWD = -100;
+    private static final int O_NONBLOCK = 00004000;
+    private static final int O_CLOEXEC = 02000000;
+
     private SecureFileAccess() {}
 
-    public static SecureDirectoryStream<Path> openDirectory(Path absolutePath) throws IOException {
-        if (absolutePath == null || !absolutePath.isAbsolute() || !absolutePath.equals(absolutePath.normalize())) {
+    public static Directory openDirectory(Path path) throws IOException {
+        return openDirectory(path, false);
+    }
+
+    public static Directory openOrCreateDirectory(Path path) throws IOException {
+        return openDirectory(path, true);
+    }
+
+    private static Directory openDirectory(Path path, boolean create) throws IOException {
+        if (path == null || !path.isAbsolute() || !path.equals(path.normalize())) {
             throw new IOException("Expected an absolute normalized directory path");
         }
-        var root = Files.newDirectoryStream(absolutePath.getRoot());
-        if (!(root instanceof SecureDirectoryStream<Path> secureRoot)) {
-            root.close();
-            throw new IOException("The filesystem does not support secure directory access");
-        }
-        var current = secureRoot;
+        var linux = Linux.current();
+        int flags = linux.directory | linux.noFollow | O_CLOEXEC;
+        Descriptor current = linux.open(AT_FDCWD, "/", flags);
         try {
-            for (Path component : absolutePath) {
-                var next = current.newDirectoryStream(component, LinkOption.NOFOLLOW_LINKS);
+            for (Path component : path) {
+                Descriptor next;
+                String name = component.toString();
+                try {
+                    next = linux.open(current.fd, name, flags);
+                } catch (NoSuchFileException missing) {
+                    if (!create) throw missing;
+                    linux.mkdir(current.fd, name);
+                    next = linux.open(current.fd, name, flags);
+                }
                 var previous = current;
                 current = next;
                 previous.close();
             }
-            return current;
-        } catch (IOException | RuntimeException error) {
-            try {
-                current.close();
-            } catch (IOException closeError) {
-                error.addSuppressed(closeError);
+            var entries = Files.newDirectoryStream(current.procPath());
+            if (!(entries instanceof SecureDirectoryStream<Path> secure)) {
+                entries.close();
+                throw new IOException("The filesystem does not support secure directory access");
             }
-            throw error;
+            return new Directory(current, secure);
+        } catch (IOException | RuntimeException failure) {
+            current.close();
+            throw failure;
         }
     }
 
-    public static SecureDirectoryStream<Path> openOrCreateDirectory(Path path) throws IOException {
-        try {
-            return openDirectory(path);
-        } catch (NoSuchFileException missing) {
-            // SecureDirectoryStream has no mkdir operation. Python is already a runtime
-            // dependency and exposes mkdirat via dir_fd without resolving pathnames twice.
-            var command = new ProcessBuilder("/usr/bin/python3", "-I", "-c", """
-                import os, sys
-                flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-                parent = os.open("/", flags)
-                for name in sys.argv[1].split("/")[1:]:
-                    try:
-                        child = os.open(name, flags, dir_fd=parent)
-                    except FileNotFoundError:
-                        try:
-                            os.mkdir(name, dir_fd=parent)
-                        except FileExistsError:
-                            pass
-                        child = os.open(name, flags, dir_fd=parent)
-                    os.close(parent)
-                    parent = child
-                """, path.toString())
-                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-                .redirectError(ProcessBuilder.Redirect.DISCARD);
-            command.environment().clear();
-            var child = command.start();
-            try {
-                if (!child.waitFor(5, TimeUnit.SECONDS) || child.exitValue() != 0) {
-                    throw new IOException("Could not create directories safely: " + path);
+    public static SeekableByteChannel openRead(Path path) throws IOException {
+        try (var directory = openDirectory(path.getParent())) {
+            return directory.openRead(path.getFileName());
+        }
+    }
+
+    public static final class Directory implements AutoCloseable {
+        private final Descriptor descriptor;
+        private final SecureDirectoryStream<Path> entries;
+
+        private Directory(Descriptor descriptor, SecureDirectoryStream<Path> entries) {
+            this.descriptor = descriptor;
+            this.entries = entries;
+        }
+
+        public SecureDirectoryStream<Path> entries() {
+            return entries;
+        }
+
+        public SeekableByteChannel openRead(Path name) throws IOException {
+            if (name == null || name.isAbsolute() || name.getNameCount() != 1
+                    || name.toString().isEmpty() || ".".equals(name.toString()) || "..".equals(name.toString())) {
+                throw new IOException("Expected a file name relative to the open directory");
+            }
+            var linux = descriptor.linux;
+            try (var file = linux.open(descriptor.fd, name.toString(), O_NONBLOCK | O_CLOEXEC | linux.noFollow)) {
+                Path pinned = file.procPath();
+                if (!Files.readAttributes(pinned, BasicFileAttributes.class).isRegularFile()) {
+                    throw new IOException("Not a regular file: " + name);
                 }
-            } catch (InterruptedException interrupted) {
-                Thread.currentThread().interrupt();
-                throw new IOException("Directory creation interrupted", interrupted);
-            } finally {
-                if (child.isAlive()) child.destroyForcibly();
+                // The open descriptor pins the inode until Java has opened its own channel.
+                return Files.newByteChannel(pinned);
             }
-            return openDirectory(path);
+        }
+
+        @Override
+        public void close() throws IOException {
+            try {
+                entries.close();
+            } finally {
+                descriptor.close();
+            }
         }
     }
 
-    public static SeekableByteChannel openRead(Path authorizedPath) throws IOException {
-        Path name = authorizedPath.getFileName();
-        if (name == null) {
-            throw new IOException("Not a regular file");
+    private record Descriptor(Linux linux, int fd) implements AutoCloseable {
+        Path procPath() {
+            return Path.of("/proc/self/fd", Integer.toString(fd));
         }
-        try (var directory = openDirectory(authorizedPath.getParent())) {
-            var attributes = directory.getFileAttributeView(name, BasicFileAttributeView.class, LinkOption.NOFOLLOW_LINKS);
-            if (!attributes.readAttributes().isRegularFile()) {
-                throw new IOException("Not a regular file");
+
+        @Override
+        public void close() {
+            linux.close(fd);
+        }
+    }
+
+    private static final class Linux {
+        private static final Linux INSTANCE = detect();
+        private final int directory;
+        private final int noFollow;
+        private final MethodHandle open;
+        private final MethodHandle mkdir;
+        private final MethodHandle close;
+        private final java.lang.foreign.StructLayout callState = Linker.Option.captureStateLayout();
+        private final long errno = callState.byteOffset(java.lang.foreign.MemoryLayout.PathElement.groupElement("errno"));
+
+        private Linux(int directory, int noFollow) {
+            this.directory = directory;
+            this.noFollow = noFollow;
+            var linker = Linker.nativeLinker();
+            var libc = linker.defaultLookup();
+            open = linker.downcallHandle(libc.find("openat").orElseThrow(),
+                FunctionDescriptor.of(JAVA_INT, JAVA_INT, ADDRESS, JAVA_INT),
+                Linker.Option.firstVariadicArg(3), Linker.Option.captureCallState("errno"));
+            mkdir = linker.downcallHandle(libc.find("mkdirat").orElseThrow(),
+                FunctionDescriptor.of(JAVA_INT, JAVA_INT, ADDRESS, JAVA_INT));
+            close = linker.downcallHandle(libc.find("close").orElseThrow(), FunctionDescriptor.of(JAVA_INT, JAVA_INT));
+        }
+
+        private static Linux detect() {
+            if (!"Linux".equals(System.getProperty("os.name"))) return null;
+            return switch (System.getProperty("os.arch")) {
+                case "amd64", "x86_64" -> new Linux(00200000, 00400000);
+                case "aarch64" -> new Linux(00040000, 00100000);
+                default -> null;
+            };
+        }
+
+        static Linux current() throws IOException {
+            if (INSTANCE == null) throw new IOException("Secure file access requires Linux on x86-64 or AArch64");
+            return INSTANCE;
+        }
+
+        Descriptor open(int parent, String name, int flags) throws IOException {
+            try (var arena = Arena.ofConfined()) {
+                var state = arena.allocate(callState);
+                int fd = (int) open.invokeExact(state, parent, arena.allocateFrom(name), flags);
+                if (fd >= 0) return new Descriptor(this, fd);
+                if (state.get(JAVA_INT, errno) == 2) throw new NoSuchFileException(name);
+                throw new IOException("Could not safely open " + name);
+            } catch (IOException | RuntimeException | Error failure) {
+                throw failure;
+            } catch (Throwable failure) {
+                throw new IOException("Secure file open failed", failure);
             }
-            return directory.newByteChannel(name, Set.of(StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS));
+        }
+
+        void mkdir(int parent, String name) throws IOException {
+            try (var arena = Arena.ofConfined()) {
+                // The following openat validates the result, including concurrent creation.
+                int ignored = (int) mkdir.invokeExact(parent, arena.allocateFrom(name), 0777);
+            } catch (RuntimeException | Error failure) {
+                throw failure;
+            } catch (Throwable failure) {
+                throw new IOException("Secure directory creation failed", failure);
+            }
+        }
+
+        void close(int fd) {
+            try {
+                int ignored = (int) close.invokeExact(fd);
+            } catch (RuntimeException | Error failure) {
+                throw failure;
+            } catch (Throwable failure) {
+                throw new IllegalStateException("Secure descriptor close failed", failure);
+            }
         }
     }
 }
