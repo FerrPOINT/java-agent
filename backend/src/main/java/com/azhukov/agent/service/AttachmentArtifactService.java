@@ -198,8 +198,15 @@ public class AttachmentArtifactService {
         }
     }
 
-    public boolean claimOutbound(String id, String owner, UUID sessionId) {
-        return repository().claimOutbound(id, owner, sessionId, Instant.now()) == 1;
+    public Optional<Instant> claimOutbound(String id, String owner, UUID sessionId) {
+        // The claim is read back through a timestamp column with microsecond precision.
+        Instant claimedAt = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+        return repository().claimOutbound(id, owner, sessionId, claimedAt) == 1
+            ? Optional.of(claimedAt) : Optional.empty();
+    }
+
+    public boolean releaseOutbound(String id, String owner, UUID sessionId, Instant claimedAt) {
+        return repository().releaseOutbound(id, owner, sessionId, claimedAt) == 1;
     }
 
     public record VerifiedContent(AttachmentArtifact artifact, byte[] bytes) {}

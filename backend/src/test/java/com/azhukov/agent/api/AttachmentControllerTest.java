@@ -143,6 +143,30 @@ class AttachmentControllerTest {
     }
 
     @Test
+    void releaseRequiresGatewayAndMatchesClaimTimestamp() throws Exception {
+        UUID session = UUID.randomUUID();
+        var claim = java.time.Instant.parse("2026-01-01T12:00:00.123456Z");
+        var request = org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+            .delete("/api/v1/attachments/att_1/outbound")
+            .param("ownerId", "701938011").param("sessionId", session.toString())
+            .header("X-Outbound-Claim", claim.toString());
+        mockMvc.perform(request).andExpect(status().isForbidden());
+
+        UserContext.set("gateway", UserContext.ROLE_ADMIN);
+        com.azhukov.agent.core.security.NativeIdentityOrigin.bind(new com.azhukov.agent.core.security.NativeIdentityOrigin.Origin(
+            com.azhukov.agent.core.security.NativeIdentityOrigin.Kind.GATEWAY_KEY, "gateway", true));
+        try {
+            when(service.outboundStatus("att_1", "701938011", session)).thenReturn(OutboundStatus.CLAIMED);
+            when(service.releaseOutbound("att_1", "701938011", session, claim)).thenReturn(true, false);
+            mockMvc.perform(request).andExpect(status().isNoContent());
+            mockMvc.perform(request).andExpect(status().isConflict());
+        } finally {
+            UserContext.clear();
+            com.azhukov.agent.core.security.NativeIdentityOrigin.clear();
+        }
+    }
+
+    @Test
     void uploadRegistersArtifactAndReturnsId() throws Exception {
         when(service.register(any(), any(), any(), any(), anyString(), anyString(),
             any(), any(), any())).thenReturn(

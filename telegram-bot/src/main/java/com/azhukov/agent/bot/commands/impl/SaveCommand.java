@@ -79,10 +79,14 @@ public class SaveCommand implements CommandHandler {
             filename = parts.length > 1 ? parts[1] : "session-" + stamp + ".md";
         }
 
-        var sent = telegramClient.sendDocument(event.chatId(), payload, filename,
-            "Session export " + backend, null);
-        if (sent.isPresent()) {
-            return null; // document sent — no extra text
+        try {
+            var sent = telegramClient.sendDocument(event.chatId(), payload, filename,
+                "Session export " + backend, null);
+            if (sent.isPresent()) {
+                return null;
+            }
+        } catch (TelegramClient.LocalSendRefusalException refused) {
+            return "Failed to send the document.";
         }
         return "Failed to send the document.";
     }

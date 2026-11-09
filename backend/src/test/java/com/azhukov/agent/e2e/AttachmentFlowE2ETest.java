@@ -320,9 +320,9 @@ class AttachmentFlowE2ETest extends PostgresTestContainer {
             .substring("MEDIA:artifact:".length());
 
         assertThat(second).isNotEqualTo(first);
-        assertThat(artifactService.claimOutbound(first, session.userId(), session.id())).isTrue();
-        assertThat(artifactService.claimOutbound(first, session.userId(), session.id())).isFalse();
-        assertThat(artifactService.claimOutbound(second, session.userId(), session.id())).isTrue();
+        assertThat(artifactService.claimOutbound(first, session.userId(), session.id())).isPresent();
+        assertThat(artifactService.claimOutbound(first, session.userId(), session.id())).isEmpty();
+        assertThat(artifactService.claimOutbound(second, session.userId(), session.id())).isPresent();
         assertThat(artifactService.verifiedContent(second, session.userId())).hasValueSatisfying(
             content -> assertThat(content.bytes()).isEqualTo(bytes));
     }

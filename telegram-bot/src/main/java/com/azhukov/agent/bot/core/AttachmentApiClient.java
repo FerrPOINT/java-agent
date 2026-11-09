@@ -87,7 +87,7 @@ public class AttachmentApiClient extends BaseBackendClient {
         }
     }
 
-    public record Outbound(String id, String fileName, String mimeType, byte[] bytes) {}
+    public record Outbound(String id, String fileName, String mimeType, byte[] bytes, String claim) {}
 
     static final class OutboundUnavailable extends RuntimeException {
         OutboundUnavailable(Throwable cause) { super(cause); }
@@ -104,10 +104,25 @@ public class AttachmentApiClient extends BaseBackendClient {
             var headers = response.getHeaders();
             var type = headers.getContentType();
             return java.util.Optional.of(new Outbound(id, sanitize(headers.getContentDisposition().getFilename()),
-                type == null ? MediaType.APPLICATION_OCTET_STREAM_VALUE : type.toString(), bytes));
+                type == null ? MediaType.APPLICATION_OCTET_STREAM_VALUE : type.toString(), bytes,
+                headers.getFirst("X-Outbound-Claim")));
         } catch (org.springframework.web.client.RestClientException | IllegalStateException e) {
             log.warn("Outbound artifact {} unavailable ({})", id, e.getClass().getSimpleName());
             throw new OutboundUnavailable(e);
+        }
+    }
+
+    void releaseOutbound(Outbound artifact, String owner, UUID sessionId) {
+        if (artifact.claim() == null) {
+            log.warn("Cannot release outbound artifact {} without a claim", artifact.id());
+            return;
+        }
+        try {
+            restClient.delete().uri(uri -> uri.path("/api/v1/attachments/{id}/outbound")
+                .queryParam("ownerId", owner).queryParam("sessionId", sessionId).build(artifact.id()))
+                .header("X-Outbound-Claim", artifact.claim()).retrieve().toBodilessEntity();
+        } catch (org.springframework.web.client.RestClientException e) {
+            log.warn("Could not release outbound artifact {} ({})", artifact.id(), e.getClass().getSimpleName());
         }
     }
 

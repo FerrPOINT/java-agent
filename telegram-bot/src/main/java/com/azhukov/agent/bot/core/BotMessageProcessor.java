@@ -874,16 +874,21 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                 pendingPhotoBytes += artifact.bytes().length;
                 continue;
             }
-            Optional<Long> sent;
-            if (!descriptor.asDocument() && mime.startsWith("video/")) {
-                sent = telegramClient.sendVideo(chatId, artifact.bytes(), artifact.fileName(), null, null, threadId);
-            } else if (!descriptor.asDocument() && descriptor.asVoice() && mime.startsWith("audio/")) {
-                sent = telegramClient.sendAudioAsVoice(chatId, artifact.bytes(), artifact.fileName(), null, threadId);
-            } else {
-                sent = telegramClient.sendDocument(chatId, artifact.bytes(), artifact.fileName(), null, null, threadId);
+            try {
+                Optional<Long> sent;
+                if (!descriptor.asDocument() && mime.startsWith("video/")) {
+                    sent = telegramClient.sendVideo(chatId, artifact.bytes(), artifact.fileName(), null, null, threadId);
+                } else if (!descriptor.asDocument() && descriptor.asVoice() && mime.startsWith("audio/")) {
+                    sent = telegramClient.sendAudioAsVoice(chatId, artifact.bytes(), artifact.fileName(), null, threadId);
+                } else {
+                    sent = telegramClient.sendDocument(chatId, artifact.bytes(), artifact.fileName(), null, null, threadId);
+                }
+                allConfirmed &= sent.map(id -> attachmentApiClient.markOutboundDelivered(artifact.id(), owner, sessionId, id))
+                    .orElse(false);
+            } catch (TelegramClient.LocalSendRefusalException refused) {
+                attachmentApiClient.releaseOutbound(artifact, owner, sessionId);
+                allConfirmed = false;
             }
-            allConfirmed &= sent.map(id -> attachmentApiClient.markOutboundDelivered(artifact.id(), owner, sessionId, id))
-                .orElse(false);
         }
         allConfirmed &= sendPhotoBatch(chatId, threadId, owner, sessionId, photos);
         if (!allConfirmed) {
@@ -895,20 +900,25 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
     private boolean sendPhotoBatch(long chatId, Integer threadId, String owner, java.util.UUID sessionId,
                                 List<AttachmentApiClient.Outbound> photos) {
         if (photos.isEmpty()) return true;
-        if (photos.size() == 1) {
-            var photo = photos.getFirst();
-            var receipt = telegramClient.sendPhoto(chatId, photo.bytes(), null, null, threadId);
-            return receipt.map(id -> attachmentApiClient.markOutboundDelivered(photo.id(), owner, sessionId, id))
-                .orElse(false);
+        try {
+            if (photos.size() == 1) {
+                var photo = photos.getFirst();
+                var receipt = telegramClient.sendPhoto(chatId, photo.bytes(), null, null, threadId);
+                return receipt.map(id -> attachmentApiClient.markOutboundDelivered(photo.id(), owner, sessionId, id))
+                    .orElse(false);
+            }
+            var inputs = photos.stream().map(photo -> new TelegramClient.PhotoInput(photo.bytes(), photo.fileName(), null)).toList();
+            var receipts = telegramClient.sendMediaGroup(chatId, inputs, threadId);
+            if (receipts.size() != photos.size()) return false;
+            boolean allConfirmed = true;
+            for (int i = 0; i < photos.size(); i++) {
+                allConfirmed &= attachmentApiClient.markOutboundDelivered(photos.get(i).id(), owner, sessionId, receipts.get(i));
+            }
+            return allConfirmed;
+        } catch (TelegramClient.LocalSendRefusalException refused) {
+            photos.forEach(photo -> attachmentApiClient.releaseOutbound(photo, owner, sessionId));
+            return false;
         }
-        var inputs = photos.stream().map(photo -> new TelegramClient.PhotoInput(photo.bytes(), photo.fileName(), null)).toList();
-        var receipts = telegramClient.sendMediaGroup(chatId, inputs, threadId);
-        if (receipts.size() != photos.size()) return false;
-        boolean allConfirmed = true;
-        for (int i = 0; i < photos.size(); i++) {
-            allConfirmed &= attachmentApiClient.markOutboundDelivered(photos.get(i).id(), owner, sessionId, receipts.get(i));
-        }
-        return allConfirmed;
     }
 
     /**
