@@ -183,10 +183,7 @@ class GlobalExceptionHandlerTest {
 
     @Test
     void noResourceFoundReturnsClean404InsteadOf500() {
-        org.springframework.web.servlet.resource.NoResourceFoundException ex =
-            new org.springframework.web.servlet.resource.NoResourceFoundException(
-                org.springframework.http.HttpMethod.GET, "/api/v1/agent/capabilities", null);
-        ResponseEntity<Map<String, Object>> r = h.handleNoResourceFound(ex);
+        ResponseEntity<Map<String, Object>> r = h.handleNoResourceFound();
         assertThat(r.getStatusCode().value()).isEqualTo(404);
         assertThat(r.getBody()).isNotNull();
         assertThat(r.getBody().get("type")).isEqualTo("not_found");

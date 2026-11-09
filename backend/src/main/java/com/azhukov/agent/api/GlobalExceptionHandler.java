@@ -194,13 +194,14 @@ public class GlobalExceptionHandler {
 
     /**
      * Unknown API paths must return a clean 404, not fall into the generic
-     * 500 handler with a full stack trace. NoResourceFoundException is thrown
-     * by Spring MVC's resource chain when no controller matches the path
-     * (Hermes-parity behaviour for wrong API paths).
+     * 500 handler with a full stack trace. Spring reports the missing path
+     * through its dispatcher or static resource handler.
      */
-    @ExceptionHandler(org.springframework.web.servlet.resource.NoResourceFoundException.class)
-    public ResponseEntity<Map<String, Object>> handleNoResourceFound(
-            org.springframework.web.servlet.resource.NoResourceFoundException ex) {
+    @ExceptionHandler({
+        org.springframework.web.servlet.NoHandlerFoundException.class,
+        org.springframework.web.servlet.resource.NoResourceFoundException.class
+    })
+    public ResponseEntity<Map<String, Object>> handleNoResourceFound() {
         String path = "unknown";
         try {
             RequestAttributes attrs = RequestContextHolder.getRequestAttributes();
