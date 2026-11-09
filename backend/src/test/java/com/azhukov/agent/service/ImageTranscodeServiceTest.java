@@ -63,6 +63,15 @@ class ImageTranscodeServiceTest {
     }
 
     @Test
+    void preflightRejectsOversizedOrMissingDimensions() throws Exception {
+        ImageTranscodeService.verifyImageSize("width: 8000\nheight: 5000\nbands: 3\n");
+        assertThatThrownBy(() -> ImageTranscodeService.verifyImageSize("width: 8001\nheight: 5000\n"))
+            .isInstanceOf(java.io.IOException.class).hasMessageContaining("40 megapixels");
+        assertThatThrownBy(() -> ImageTranscodeService.verifyImageSize("width: 8000\n"))
+            .isInstanceOf(java.io.IOException.class).hasMessageContaining("HEIF image dimensions");
+    }
+
+    @Test
     @EnabledOnOs(OS.LINUX)
     void realHeicFileTranscodesToDecodablePng() throws Exception {
         // Generate a real HEIC through libheif's own encoder, then transcode back.
@@ -92,6 +101,90 @@ class ImageTranscodeServiceTest {
         assertThat(ImageIO.read(new ByteArrayInputStream(out))).isNotNull();
         java.nio.file.Files.deleteIfExists(src);
         java.nio.file.Files.deleteIfExists(heic);
+    }
+
+    @Test
+    @EnabledOnOs(OS.LINUX)
+    void converterDeadlineCoversSilentProcessAndReapsIt(
+        @org.junit.jupiter.api.io.TempDir java.nio.file.Path dir
+    ) throws Exception {
+        var pidFile = dir.resolve("pid");
+        assertThatThrownBy(() -> ImageTranscodeService.runConverter(
+            java.util.List.of("sh", "-c", "echo $$ > \"$1\"; exec sleep 30", "test", pidFile.toString()),
+            new byte[0], 1024, System.nanoTime() + java.time.Duration.ofMillis(500).toNanos()))
+            .isInstanceOf(java.io.IOException.class).hasMessageContaining("timed out");
+        long pid = Long.parseLong(java.nio.file.Files.readString(pidFile).strip());
+        assertThat(ProcessHandle.of(pid).filter(ProcessHandle::isAlive)).isEmpty();
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"false, false", "true, false", "true, true"})
+    @EnabledOnOs(OS.LINUX)
+    void converterTimeoutStopsChildHoldingProcessPipes(boolean holdStdin, boolean keepParentAlive,
+        @org.junit.jupiter.api.io.TempDir java.nio.file.Path dir
+    ) throws Exception {
+        var pidFile = dir.resolve("child-pid");
+        String child = holdStdin
+            ? "exec 3<&0; sleep 6 <&3 3<&- >/dev/null 2>&1 &"
+            : "sleep 6 &";
+        String parent = keepParentAlive ? "wait" : "sleep 0.05; exit 0";
+        byte[] input = new byte[holdStdin ? 1024 * 1024 : 0];
+        try {
+            long start = System.nanoTime();
+            assertThatThrownBy(() -> ImageTranscodeService.runConverter(
+                java.util.List.of("/bin/sh", "-c", child + " echo $! > \"$1\"; " + parent,
+                    "test", pidFile.toString()),
+                input, 1024, start + java.time.Duration.ofMillis(750).toNanos()))
+                .isInstanceOf(java.io.IOException.class).hasMessageContaining("timed out");
+            assertThat(java.time.Duration.ofNanos(System.nanoTime() - start))
+                .as("cleanup must finish before the child exits on its own")
+                .isLessThan(java.time.Duration.ofSeconds(3));
+
+            long pid = Long.parseLong(java.nio.file.Files.readString(pidFile).strip());
+            var procStatus = java.nio.file.Path.of("/proc", Long.toString(pid), "status");
+            long deadline = System.nanoTime() + java.time.Duration.ofSeconds(2).toNanos();
+            while (isRunning(procStatus) && System.nanoTime() < deadline) {
+                Thread.sleep(10);
+            }
+            assertThat(isRunning(procStatus)).isFalse();
+        } finally {
+            if (java.nio.file.Files.exists(pidFile)) {
+                long pid = Long.parseLong(java.nio.file.Files.readString(pidFile).strip());
+                ProcessHandle.of(pid).ifPresent(ProcessHandle::destroyForcibly);
+            }
+        }
+    }
+
+    private static boolean isRunning(java.nio.file.Path procStatus) throws java.io.IOException {
+        try {
+            return java.nio.file.Files.readAllLines(procStatus).stream()
+                .noneMatch(line -> line.startsWith("State:") && line.contains("(zombie)"));
+        } catch (java.io.IOException error) {
+            // Linux can report ESRCH if the child exits between opening and reading procfs.
+            if (error instanceof java.nio.file.NoSuchFileException
+                    || "No such process".equals(error.getMessage())) return false;
+            throw error;
+        }
+    }
+
+    @Test
+    @EnabledOnOs(OS.LINUX)
+    void converterPipesBytesWhileDrainingDiagnostics() throws Exception {
+        byte[] input = new byte[256 * 1024];
+        new java.util.Random(123).nextBytes(input);
+        byte[] output = ImageTranscodeService.runConverter(
+            java.util.List.of("/bin/sh", "-c", "head -c 1048576 /dev/zero >&2; cat"),
+            input, input.length, System.nanoTime() + java.time.Duration.ofSeconds(3).toNanos());
+        assertThat(output).isEqualTo(input);
+    }
+
+    @Test
+    @EnabledOnOs(OS.LINUX)
+    void converterRejectsExcessOutputWithoutWaitingForExit() {
+        assertThatThrownBy(() -> ImageTranscodeService.runConverter(
+            java.util.List.of("/bin/sh", "-c", "head -c 4096 /dev/zero; exec sleep 30"),
+            new byte[0], 1024, System.nanoTime() + java.time.Duration.ofSeconds(3).toNanos()))
+            .isInstanceOf(java.io.IOException.class).hasMessageContaining("output exceeds 1024 bytes");
     }
 
     @Test

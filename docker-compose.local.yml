@@ -40,7 +40,7 @@ services:
     init: true
     security_opt:
       - no-new-privileges:true
-      - apparmor=docker-default//&pdlc-java-agent
+      - apparmor=pdlc-java-agent
     build:
       context: .
       dockerfile: Dockerfile

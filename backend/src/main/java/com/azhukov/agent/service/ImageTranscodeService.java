@@ -3,33 +3,31 @@ package com.azhukov.agent.service;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import javax.imageio.ImageIO;
-import java.awt.image.BufferedImage;
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.Base64;
+import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
 
-/**
- * WP-j (Hermes vision HEIC/HEIF/AVIF parity): iPhone photos arrive as HEIC/
- * HEIF (and increasingly AVIF). {@code ImageIO} cannot decode them on a stock
- * JVM, so before this service the vision lane silently produced a corrupt or
- * empty image — the model saw garbage instead of the photo.
- *
- * This service transcodes such formats to PNG via system converters when
- * available (libheif {@code heif-convert}, ImageMagick {@code convert},
- * AVIF {@code avifdec}) — probed once per process, honest degradation:
- * without a converter the caller gets a clear error naming the missing
- * package instead of a garbage decode.
- */
+/** Converts the first HEIF or AVIF image to a bounded PNG for model input. */
 @Slf4j
 @Service
 public class ImageTranscodeService {
+
+    private static final int DIAGNOSTIC_BYTES = 16 * 1024;
+    private static final int MAX_PNG_BYTES = 64 * 1024 * 1024;
+    private static final long MAX_IMAGE_PIXELS = 40_000_000;
+    private static final Duration CONVERTER_TIMEOUT = Duration.ofSeconds(60);
+    private static final Pattern IMAGE_SIZE = Pattern.compile(
+        "(?m)^width: ([0-9]{1,10})\\Rheight: ([0-9]{1,10})$");
 
     /** Magic-byte sniffing — source of truth is the file, not the extension. */
     static boolean isHeifFamily(byte[] bytes) {
@@ -47,106 +45,137 @@ public class ImageTranscodeService {
         return false;
     }
 
-    private volatile Boolean heifConvertAvailable;
-    private volatile Boolean magickAvailable;
-
-    /**
-     * Decode a HEIF-family image to PNG bytes. Returns the original bytes
-     * when the input is already decodable by ImageIO (fast path), transcodes
-     * when a converter exists, and throws with a fix instruction otherwise.
-     */
+    /** Convert HEIF or AVIF, passing other formats through to the image reader. */
     public byte[] toDecodablePng(byte[] bytes) throws IOException {
-        if (bytes == null || bytes.length == 0) {
-            throw new IOException("empty image");
-        }
-        if (ImageIO.read(new ByteArrayInputStream(bytes)) != null) {
-            return bytes; // already decodable (JPEG/PNG/GIF/BMP/WebP-JVM)
-        }
-        if (!isHeifFamily(bytes)) {
-            return bytes; // unknown-but-not-HEIF: let the downstream try
-        }
-        byte[] png = transcode(bytes);
-        BufferedImage check = ImageIO.read(new ByteArrayInputStream(png));
-        if (check == null) {
-            throw new IOException("HEIF transcode produced an undecodable image");
-        }
-        return png;
+        if (bytes == null || bytes.length == 0) throw new IOException("empty image");
+        if (!isHeifFamily(bytes)) return bytes;
+
+        long deadline = System.nanoTime() + CONVERTER_TIMEOUT.toNanos();
+        // Both commands read the same owned bytes, with no shared file to replace.
+        String firstImage = "stdin[page=0,n=1]";
+        byte[] metadata = runConverter(List.of("vipsheader", "-a", firstImage), bytes, DIAGNOSTIC_BYTES, deadline);
+        verifyImageSize(new String(metadata, StandardCharsets.UTF_8));
+        // A suffix by itself directs libvips output to stdout.
+        return runConverter(List.of("vips", "copy", firstImage, ".png"), bytes, MAX_PNG_BYTES, deadline);
     }
 
-    private byte[] transcode(byte[] heifBytes) throws IOException {
-        Path tmp = null;
+    static void verifyImageSize(String metadata) throws IOException {
+        var dimensions = IMAGE_SIZE.matcher(metadata);
+        if (!dimensions.find()) {
+            throw new IOException("Could not read HEIF image dimensions");
+        }
+        verifyPixelCount(Long.parseLong(dimensions.group(1)), Long.parseLong(dimensions.group(2)));
+    }
+
+    static byte[] runConverter(List<String> command, byte[] input, int outputLimit, long deadline)
+            throws IOException {
+        if (deadline - System.nanoTime() <= 0) {
+            throw new IOException("converter timed out: " + command.getFirst());
+        }
+        var groupedCommand = new ArrayList<>(List.of("/usr/bin/setsid", "--"));
+        groupedCommand.addAll(command);
+        Process process = new ProcessBuilder(groupedCommand).start();
+        var writer = startIo(() -> {
+            try (var stdin = process.getOutputStream()) {
+                stdin.write(input);
+            }
+            return null;
+        });
+        var reader = startIo(() -> {
+            try (var stdout = process.getInputStream()) {
+                byte[] output = stdout.readNBytes(outputLimit + 1);
+                if (output.length > outputLimit) {
+                    throw new IOException("converter output exceeds " + outputLimit + " bytes");
+                }
+                return output;
+            }
+        });
+        var diagnostics = startIo(() -> {
+            try (var stderr = process.getErrorStream()) {
+                byte[] prefix = stderr.readNBytes(DIAGNOSTIC_BYTES);
+                stderr.transferTo(OutputStream.nullOutputStream());
+                return new String(prefix, StandardCharsets.UTF_8).trim();
+            }
+        });
+        boolean finished = false;
         try {
-            tmp = Files.createTempFile("vision-heif-", ".heic");
-            Files.write(tmp, heifBytes);
-            if (isHeifConvertAvailable()) {
-                return runConverter(List.of("heif-convert", tmp.toString(), tmp + ".png"), tmp + ".png");
+            byte[] output = awaitIo(reader, deadline);
+            String error = awaitIo(diagnostics, deadline);
+            if (!process.waitFor(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS)) {
+                throw new TimeoutException();
             }
-            if (isMagickAvailable()) {
-                return runConverter(List.of("convert", tmp.toString(), "png:" + tmp + ".png"), tmp + ".png");
+            if (process.exitValue() != 0) {
+                throw new IOException("converter failed (" + process.exitValue() + "): " + error);
             }
-            throw new IOException("image is HEIC/HEIF/AVIF but no system converter is installed "
-                + "(install libheif-examples for heif-convert)");
-        } finally {
-            if (tmp != null) {
-                Files.deleteIfExists(tmp);
-                deleteQuietly(Path.of(tmp + ".png"));
-            }
-        }
-    }
-
-    private boolean isHeifConvertAvailable() {
-        if (heifConvertAvailable == null) {
-            heifConvertAvailable = probeBinary("heif-convert");
-        }
-        return heifConvertAvailable;
-    }
-
-    private boolean isMagickAvailable() {
-        if (magickAvailable == null) {
-            magickAvailable = probeBinary("convert");
-        }
-        return magickAvailable;
-    }
-
-    private byte[] runConverter(List<String> command, String output) throws IOException {
-        try {
-            Process p = new ProcessBuilder(command).redirectErrorStream(true).start();
-            byte[] allOut = p.getInputStream().readAllBytes();
-            if (!p.waitFor(60, TimeUnit.SECONDS)) {
-                p.destroyForcibly();
-                throw new IOException("converter timed out: " + command.get(0));
-            }
-            if (p.exitValue() != 0) {
-                throw new IOException("converter failed (" + p.exitValue() + "): "
-                    + new String(allOut, StandardCharsets.UTF_8).trim());
-            }
-            Path out = Path.of(output);
-            if (!Files.exists(out) || Files.size(out) == 0) {
-                throw new IOException("converter produced no output: " + command.get(0));
-            }
-            return Files.readAllBytes(out);
+            awaitIo(writer, deadline);
+            finished = true;
+            return output;
+        } catch (TimeoutException e) {
+            throw new IOException("converter timed out: " + command.getFirst(), e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IOException("converter interrupted", e);
+        } finally {
+            if (!finished) stopConverterGroup(process);
+            writer.cancel(true);
+            reader.cancel(true);
+            diagnostics.cancel(true);
         }
     }
 
-    private static Boolean probeBinary(String name) {
+    private static <T> FutureTask<T> startIo(Callable<T> action) {
+        var task = new FutureTask<>(action);
+        Thread.startVirtualThread(task);
+        return task;
+    }
+
+    private static <T> T awaitIo(FutureTask<T> task, long deadline)
+            throws IOException, InterruptedException, TimeoutException {
         try {
-            Process p = new ProcessBuilder(name).start();
-            p.waitFor(5, TimeUnit.SECONDS);
-            p.destroyForcibly();
-            return true; // found + executed (usage error still means present)
-        } catch (Exception e) {
+            return task.get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+        } catch (ExecutionException e) {
+            if (e.getCause() instanceof IOException io) throw io;
+            throw new IOException("converter I/O failed", e.getCause());
+        }
+    }
+
+    private static void stopConverterGroup(Process process) {
+        // Also stop the direct process if cancellation beat setsid during startup.
+        // Signal through the handle so a blocked pipe cannot delay signaling the group.
+        if (process.isAlive()) process.toHandle().destroyForcibly();
+        try {
+            Process signal = new ProcessBuilder("/bin/bash", "-c", "kill -KILL -- \"-$1\"",
+                "image-converter-cleanup", Long.toString(process.pid()))
+                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                .redirectError(ProcessBuilder.Redirect.DISCARD)
+                .start();
+            if (!awaitExit(signal) || signal.exitValue() != 0) {
+                log.warn("Could not confirm signal delivery to image converter process group {}", process.pid());
+            }
+        } catch (IOException failure) {
+            log.warn("Could not signal image converter process group {}", process.pid(), failure);
+        } finally {
+            if (!awaitExit(process)) {
+                log.warn("Could not confirm exit of image converter {}", process.pid());
+            }
+        }
+    }
+
+    private static boolean awaitExit(Process process) {
+        try {
+            process.onExit().orTimeout(1, TimeUnit.SECONDS).join();
+            return true;
+        } catch (CompletionException failure) {
             return false;
         }
     }
 
-    private static void deleteQuietly(Path p) {
-        try {
-            Files.deleteIfExists(p);
-        } catch (IOException ignored) {
-            // best-effort temp cleanup
+    static void verifyPixelCount(long width, long height) throws IOException {
+        if (width <= 0 || height <= 0) {
+            throw new IOException("Invalid image dimensions");
+        }
+        if (width > MAX_IMAGE_PIXELS / height) {
+            throw new IOException("image exceeds 40 megapixels");
         }
     }
 }
