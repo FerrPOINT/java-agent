@@ -92,15 +92,22 @@ class TelegramTransportTest {
         assertThat(client.sendDocument(1L, new byte[] {1}, "report.txt", null, null)).isEmpty();
     }
 
-    @Test
-    void missingOkInSuccessfulHttpResponseHasUnknownOutcomeForTextAndMedia() {
-        var mapper = new ObjectMapper();
-        var transport = new BotConfig().telegramRestClient(mapper).mutate()
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({
+        "200, '{\"error_code\":429}'", "429, '{\"error_code\":429}'",
+        "200, '{\"ok\":0,\"error_code\":429}'", "429, '{\"ok\":0,\"error_code\":429}'",
+        "200, '{\"ok\":\"false\",\"error_code\":429}'", "429, '{\"ok\":\"false\",\"error_code\":429}'",
+        "200, '{\"ok\":false,\"error_code\":429.5}'", "429, '{\"ok\":false,\"error_code\":429.5}'",
+        "200, '{\"ok\":false,\"error_code\":\"429\"}'", "429, '{\"ok\":false,\"error_code\":\"429\"}'"
+    })
+    void invalidTelegramEnvelopeHasUnknownOutcomeForTextAndMedia(int status, String body) {
+        var config = new BotConfig();
+        var mapper = config.objectMapper();
+        var transport = config.telegramRestClient(mapper).mutate()
             .requestInterceptor((request, bytes, execution) -> {
                 var response = new org.springframework.mock.http.client.MockClientHttpResponse(
-                    "{\"error_code\":429,\"parameters\":{\"retry_after\":17}}"
-                        .getBytes(java.nio.charset.StandardCharsets.UTF_8),
-                    org.springframework.http.HttpStatus.OK);
+                    body.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                    org.springframework.http.HttpStatus.valueOf(status));
                 response.getHeaders().setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
                 return response;
             }).build();
