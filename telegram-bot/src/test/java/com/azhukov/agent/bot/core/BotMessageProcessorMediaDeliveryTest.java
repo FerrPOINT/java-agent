@@ -278,16 +278,19 @@ class BotMessageProcessorMediaDeliveryTest {
         verifyNoMoreInteractions(telegramClient);
     }
 
-    @Test
-    void localAdmissionRefusalReleasesEveryClaimInAnUnsentAlbum() {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void confirmedRefusalReleasesEveryClaimInAnUnsentAlbum(boolean telegramRateLimit) {
         UUID session = UUID.randomUUID();
         byte[] bytes = {1, 2};
         var first = new AttachmentApiClient.Outbound("first", "first.png", "image/png", bytes, "claim-1");
         var second = new AttachmentApiClient.Outbound("second", "second.png", "image/png", bytes, "claim-2");
         when(attachmentApiClient.claimOutbound("first", "101", session)).thenReturn(Optional.of(first));
         when(attachmentApiClient.claimOutbound("second", "101", session)).thenReturn(Optional.of(second));
-        when(telegramClient.sendMediaGroup(eq(100L), anyList(), eq(55)))
-            .thenThrow(mock(TelegramClient.LocalSendRefusalException.class));
+        var refusal = telegramRateLimit
+            ? new TelegramClient.SendRefusalException(429, 17, "Flood control")
+            : mock(TelegramClient.LocalSendRefusalException.class);
+        when(telegramClient.sendMediaGroup(eq(100L), anyList(), eq(55))).thenThrow(refusal);
 
         processor.deliverMedia(100L, List.of(new MediaDeliveryService.MediaDescriptor("first", false, false),
             new MediaDeliveryService.MediaDescriptor("second", false, false)), 55, "101", session);

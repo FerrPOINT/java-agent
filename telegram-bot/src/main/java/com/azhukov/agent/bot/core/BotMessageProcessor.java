@@ -885,7 +885,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                 }
                 allConfirmed &= sent.map(id -> attachmentApiClient.markOutboundDelivered(artifact.id(), owner, sessionId, id))
                     .orElse(false);
-            } catch (TelegramClient.LocalSendRefusalException refused) {
+            } catch (TelegramClient.SendRefusalException refused) {
                 attachmentApiClient.releaseOutbound(artifact, owner, sessionId);
                 allConfirmed = false;
             }
@@ -915,7 +915,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                 allConfirmed &= attachmentApiClient.markOutboundDelivered(photos.get(i).id(), owner, sessionId, receipts.get(i));
             }
             return allConfirmed;
-        } catch (TelegramClient.LocalSendRefusalException refused) {
+        } catch (TelegramClient.SendRefusalException refused) {
             photos.forEach(photo -> attachmentApiClient.releaseOutbound(photo, owner, sessionId));
             return false;
         }

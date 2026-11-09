@@ -10,6 +10,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.http.converter.json.JacksonJsonHttpMessageConverter;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
 import org.springframework.web.client.RestClient;
 
@@ -46,7 +47,9 @@ public class BotConfig {
             .baseUrl("https://api.telegram.org")
             .requestFactory(requestFactory)
             .messageConverters(converters -> {
-                converters.removeIf(c -> c instanceof MappingJackson2HttpMessageConverter);
+                // TelegramResponse contains Jackson 2 JsonNode values.
+                converters.removeIf(c -> c instanceof JacksonJsonHttpMessageConverter
+                    || c instanceof MappingJackson2HttpMessageConverter);
                 converters.add(jacksonConverter);
             })
             .requestInterceptor(new ContentTypeNormalizingInterceptor())

@@ -85,7 +85,7 @@ public class SaveCommand implements CommandHandler {
             if (sent.isPresent()) {
                 return null;
             }
-        } catch (TelegramClient.LocalSendRefusalException refused) {
+        } catch (TelegramClient.SendRefusalException refused) {
             return "Failed to send the document.";
         }
         return "Failed to send the document.";

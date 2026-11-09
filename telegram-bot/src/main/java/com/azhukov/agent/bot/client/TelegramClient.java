@@ -955,8 +955,8 @@ public class TelegramClient {
                 .body(parts)
                 .retrieve()
                 .body(TelegramResponse.class);
-            if (response == null) {
-                log.warn("Telegram {} (multipart) returned null response", method);
+            if (response == null || response.ok() == null) {
+                log.warn("Telegram {} (multipart) returned no result envelope", method);
                 return Optional.empty();
             }
             if (!response.isSuccess()) {
@@ -971,12 +971,18 @@ public class TelegramClient {
             }
             return Optional.of(response);
         } catch (TelegramApiException e) {
-            throw e;
+            throw multipartFailure(e);
         } catch (Exception e) {
             var refusal = telegramHttpRefusal(e);
-            if (refusal != null) throw refusal;
+            if (refusal != null) throw multipartFailure(refusal);
             throw transportFailure(method, e);
         }
+    }
+
+    private static TelegramApiException multipartFailure(TelegramApiException error) {
+        return error.isRateLimit()
+            ? new SendRefusalException(error.getErrorCode(), error.getRetryAfter(), error.getErrorDescription())
+            : error;
     }
 
     private TelegramApiException telegramHttpRefusal(Exception failure) {
@@ -984,7 +990,7 @@ public class TelegramClient {
             try {
                 TelegramResponse error = objectMapper.readValue(httpError.getResponseBodyAsByteArray(), TelegramResponse.class);
                 int code = httpError.getStatusCode().value();
-                if (error != null && !error.isSuccess() && Integer.valueOf(code).equals(error.errorCode())) {
+                if (error != null && Boolean.FALSE.equals(error.ok()) && Integer.valueOf(code).equals(error.errorCode())) {
                     int retryAfter = code == 429 && error.parameters() != null && error.parameters().containsKey("retry_after")
                         ? error.parameters().get("retry_after").asInt(-1) : -1;
                     return new TelegramApiException(code, error.description(), retryAfter);

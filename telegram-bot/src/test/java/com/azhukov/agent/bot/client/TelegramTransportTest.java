@@ -46,6 +46,42 @@ class TelegramTransportTest {
         assertThat(requests).hasValue(0);
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints = {200, 429})
+    void multipartSendPreservesConfirmedFloodControl(int status) {
+        var mapper = new ObjectMapper();
+        var transport = new BotConfig().telegramRestClient(mapper).mutate()
+            .requestInterceptor((request, bytes, execution) -> {
+                String body = """
+                    {"ok":false,"error_code":429,"description":"Flood control","parameters":{"retry_after":17}}
+                    """;
+                var response = new org.springframework.mock.http.client.MockClientHttpResponse(
+                    body.getBytes(java.nio.charset.StandardCharsets.UTF_8), org.springframework.http.HttpStatus.valueOf(status));
+                response.getHeaders().setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
+                return response;
+            }).build();
+        var client = new TelegramClient(transport, mapper, "fixture", 0);
+        assertThatThrownBy(() -> client.sendDocument(1L, new byte[] {1}, "report.txt", null, null))
+            .isInstanceOfSatisfying(TelegramClient.SendRefusalException.class, refusal -> {
+                assertThat(refusal.getErrorCode()).isEqualTo(429);
+                assertThat(refusal.getRetryAfterSeconds()).isEqualTo(17);
+            });
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"Proxy rate limit", "{\"error_code\":429}"})
+    void proxyFloodControlWithoutTelegramEnvelopeHasUnknownOutcome(String body) {
+        var mapper = new ObjectMapper();
+        var transport = new BotConfig().telegramRestClient(mapper).mutate()
+            .requestInterceptor((request, bytes, execution) ->
+                new org.springframework.mock.http.client.MockClientHttpResponse(
+                    body.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                    org.springframework.http.HttpStatus.TOO_MANY_REQUESTS))
+            .build();
+        var client = new TelegramClient(transport, mapper, "fixture", 0);
+        assertThat(client.sendDocument(1L, new byte[] {1}, "report.txt", null, null)).isEmpty();
+    }
+
     @Test
     void jsonAndMultipartShareQuotaWhilePollingRemainsIndependent() {
         var requests = new AtomicInteger();

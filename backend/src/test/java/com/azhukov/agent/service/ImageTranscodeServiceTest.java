@@ -117,17 +117,22 @@ class ImageTranscodeServiceTest {
         assertThat(ProcessHandle.of(pid).filter(ProcessHandle::isAlive)).isEmpty();
     }
 
-    @Test
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
     @EnabledOnOs(OS.LINUX)
-    void converterTimeoutStopsChildAfterParentExits(
+    void converterTimeoutStopsChildAfterParentExits(boolean holdStdin,
         @org.junit.jupiter.api.io.TempDir java.nio.file.Path dir
     ) throws Exception {
         var pidFile = dir.resolve("child-pid");
+        String child = holdStdin
+            ? "exec 3<&0; sleep 30 <&3 3<&- >/dev/null 2>&1 &"
+            : "sleep 30 &";
+        byte[] input = new byte[holdStdin ? 1024 * 1024 : 0];
         try {
             assertThatThrownBy(() -> ImageTranscodeService.runConverter(
-                java.util.List.of("/bin/sh", "-c", "sleep 30 & echo $! > \"$1\"; sleep 0.05; exit 0",
+                java.util.List.of("/bin/sh", "-c", child + " echo $! > \"$1\"; sleep 0.05; exit 0",
                     "test", pidFile.toString()),
-                new byte[0], 1024, System.nanoTime() + java.time.Duration.ofMillis(500).toNanos()))
+                input, 1024, System.nanoTime() + java.time.Duration.ofMillis(750).toNanos()))
                 .isInstanceOf(java.io.IOException.class).hasMessageContaining("timed out");
 
             long pid = Long.parseLong(java.nio.file.Files.readString(pidFile).strip());
@@ -149,8 +154,11 @@ class ImageTranscodeServiceTest {
         try {
             return java.nio.file.Files.readAllLines(procStatus).stream()
                 .noneMatch(line -> line.startsWith("State:") && line.contains("(zombie)"));
-        } catch (java.nio.file.NoSuchFileException gone) {
-            return false;
+        } catch (java.io.IOException error) {
+            // Linux can report ESRCH if the child exits between opening and reading procfs.
+            if (error instanceof java.nio.file.NoSuchFileException
+                    || "No such process".equals(error.getMessage())) return false;
+            throw error;
         }
     }
 

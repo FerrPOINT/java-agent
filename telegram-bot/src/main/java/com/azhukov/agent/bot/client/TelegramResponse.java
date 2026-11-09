@@ -7,7 +7,7 @@ import java.util.Map;
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record TelegramResponse(
-    boolean ok,
+    Boolean ok,
     @JsonProperty("error_code") Integer errorCode,
     String description,
     Object result,
@@ -20,7 +20,7 @@ public record TelegramResponse(
     }
 
     public boolean isSuccess() {
-        return ok;
+        return Boolean.TRUE.equals(ok);
     }
 
     public String errorMessage() {

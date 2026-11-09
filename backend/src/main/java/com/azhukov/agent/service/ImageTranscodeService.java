@@ -104,11 +104,11 @@ public class ImageTranscodeService {
             if (!process.waitFor(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS)) {
                 throw new TimeoutException();
             }
-            finished = true;
             if (process.exitValue() != 0) {
                 throw new IOException("converter failed (" + process.exitValue() + "): " + error);
             }
             awaitIo(writer, deadline);
+            finished = true;
             return output;
         } catch (TimeoutException e) {
             throw new IOException("converter timed out: " + command.getFirst(), e);
