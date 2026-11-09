@@ -34,6 +34,7 @@ public class DeliveryWorkItemService {
     public static final String STATE_LOCAL_DELIVERED = "local_delivered";
 
     private static final int MAX_ATTEMPTS = 8;
+    public static final Duration CLAIM_LEASE = Duration.ofMinutes(10);
     private static final int MAX_PAYLOAD_CHARS = 2_000_000;
     private static final Duration RETRY_BASE_DELAY = Duration.ofSeconds(5);
 
