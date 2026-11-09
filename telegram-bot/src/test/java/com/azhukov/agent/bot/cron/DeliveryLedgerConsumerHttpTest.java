@@ -95,6 +95,30 @@ class DeliveryLedgerConsumerHttpTest {
     }
 
     @Test
+    void backendWithoutVersionedClaimNeverTriggersTelegramPost() throws Exception {
+        var requests = new CopyOnWriteArrayList<String>();
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", exchange -> {
+            try (exchange) {
+                requests.add(exchange.getRequestURI().getPath());
+                exchange.sendResponseHeaders(404, -1);
+            }
+        });
+        server.start();
+        try {
+            var telegram = mock(TelegramClient.class);
+            var rest = RestClient.builder().baseUrl("http://127.0.0.1:" + server.getAddress().getPort()).build();
+            var properties = new BotProperties();
+            properties.setCronDeliveryEnabled(true);
+            new DeliveryLedgerConsumer(rest, telegram, properties, new ObjectMapper()).consume();
+            assertThat(requests).containsExactly("/api/v1/agent/delivery/claim-batch-v2");
+            verifyNoInteractions(telegram);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void partialRefusalPostsUnknownThroughRealHttpClient() throws Exception {
         var requests = new CopyOnWriteArrayList<String>();
         var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
