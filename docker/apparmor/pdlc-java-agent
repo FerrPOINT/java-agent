@@ -1,12 +1,23 @@
 abi <abi/4.0>,
 
-# Apply on top of the container runtime's standard AppArmor confinement.
+# Kubernetes CRI requires a loaded profile name. Keep container-level
+# restrictions in this profile as well as the JVM subprocess transition.
 profile pdlc-java-agent flags=(attach_disconnected,mediate_deleted) {
   /** rwklm,
   /** ix,
   network,
-  signal,
-  ptrace,
+  deny network alg,
+  deny network vsock,
+  deny mount,
+  deny /proc/* w,
+  deny /proc/sys/** wklx,
+  deny /proc/{sysrq-trigger,kcore,mem,kmem} rwklx,
+  deny /sys/** wklx,
+  deny /sys/{firmware,kernel/security,devices/virtual/powercap}/** rwklx,
+  signal (receive),
+  signal (send) peer=pdlc-java-agent,
+  signal (send) peer=pdlc-java-agent-worker,
+  ptrace peer=pdlc-java-agent,
   /opt/java/openjdk/lib/jspawnhelper Px -> "pdlc-java-agent//&pdlc-java-agent-worker",
 }
 
