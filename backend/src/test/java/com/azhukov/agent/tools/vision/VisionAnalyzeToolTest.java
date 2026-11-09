@@ -4,7 +4,6 @@ import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
-import com.azhukov.agent.service.ImageShrinkerService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -19,7 +18,6 @@ import static org.mockito.Mockito.*;
 class VisionAnalyzeToolTest {
 
     private ModelClient modelClient;
-    private ImageShrinkerService imageShrinker;
     private com.azhukov.agent.core.security.UrlSafety urlSafety;
     private VisionAnalyzeTool tool;
     private com.azhukov.agent.core.security.DefaultFileSafety fileSafety;
@@ -30,13 +28,11 @@ class VisionAnalyzeToolTest {
     @BeforeEach
     void setUp() {
         modelClient = mock(ModelClient.class);
-        imageShrinker = mock(ImageShrinkerService.class);
         urlSafety = mock(com.azhukov.agent.core.security.UrlSafety.class);
         when(urlSafety.checkUrl(anyString())).thenReturn(null);
-        when(imageShrinker.shrinkIfNeeded(anyString())).thenAnswer(inv -> inv.getArgument(0));
         var properties = new com.azhukov.agent.config.AgentProperties();
         fileSafety = spy(new com.azhukov.agent.core.security.DefaultFileSafety(properties));
-        tool = new VisionAnalyzeTool(modelClient, imageShrinker, urlSafety, properties, fileSafety);
+        tool = new VisionAnalyzeTool(modelClient, urlSafety, properties, fileSafety);
     }
 
     @Test
@@ -182,7 +178,7 @@ class VisionAnalyzeToolTest {
         var result = tool.execute("{\"image_url\":\"/artifacts/protected.png\"}", null, null);
         assertThat(result.success()).isFalse();
         assertThat(result.error()).contains("Reading this path is not allowed");
-        verifyNoInteractions(imageShrinker, modelClient);
+        verifyNoInteractions(modelClient);
     }
 
     @Test
@@ -193,7 +189,7 @@ class VisionAnalyzeToolTest {
         var result = tool.execute(new com.fasterxml.jackson.databind.ObjectMapper()
             .writeValueAsString(java.util.Map.of("image_url", link.toString())), null, null);
         assertThat(result.success()).isFalse();
-        verifyNoInteractions(imageShrinker, modelClient);
+        verifyNoInteractions(modelClient);
     }
 
     @Test
@@ -237,18 +233,16 @@ class VisionAnalyzeToolTest {
     }
 
     @Test
-    void execute_shrinkerCalledBeforeModelClient() throws Exception {
+    void execute_passesOriginalBytesToModelClient() throws Exception {
         Path imgFile = tempDir.resolve("test.png");
         Files.write(imgFile, new byte[]{0x42});
-        when(modelClient.analyzeImage(anyString(), anyString())).thenReturn("shrunk result");
-        when(imageShrinker.shrinkIfNeeded(anyString())).thenReturn("shrunk-base64");
+        when(modelClient.analyzeImage(anyString(), anyString())).thenReturn("result");
 
         tool.execute(
             "{\"image_url\":\"" + imgFile.toString().replace("\\", "\\\\") + "\"}",
             Message.assistant("test", 0), Session.create("test", "noop", "noop"));
 
-        verify(imageShrinker).shrinkIfNeeded(anyString());
-        verify(modelClient).analyzeImage(eq("shrunk-base64"), anyString());
+        verify(modelClient).analyzeImage(eq("Qg=="), anyString());
     }
 
     @Test

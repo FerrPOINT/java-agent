@@ -17,7 +17,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 
-/** Converts the first HEIF or AVIF image to a bounded PNG for model input. */
+/** Converts the first HEIF, AVIF or WebP image to a bounded PNG for model input. */
 @Slf4j
 @Service
 public class ImageTranscodeService {
@@ -45,24 +45,30 @@ public class ImageTranscodeService {
         return false;
     }
 
-    /** Convert HEIF or AVIF, passing other formats through to the image reader. */
+    /** Convert HEIF, AVIF or WebP, passing other formats through to the image reader. */
     public byte[] toDecodablePng(byte[] bytes) throws IOException {
         if (bytes == null || bytes.length == 0) throw new IOException("empty image");
-        if (!isHeifFamily(bytes)) return bytes;
+        if (!isHeifFamily(bytes) && !isWebp(bytes)) return bytes;
 
         long deadline = System.nanoTime() + CONVERTER_TIMEOUT.toNanos();
         // Both commands read the same owned bytes, with no shared file to replace.
-        String firstImage = "stdin[page=0,n=1]";
+        String firstImage = "stdin[page=0,n=1,fail-on=error]";
         byte[] metadata = runConverter(List.of("vipsheader", "-a", firstImage), bytes, DIAGNOSTIC_BYTES, deadline);
         verifyImageSize(new String(metadata, StandardCharsets.UTF_8));
         // A suffix by itself directs libvips output to stdout.
         return runConverter(List.of("vips", "copy", firstImage, ".png"), bytes, MAX_PNG_BYTES, deadline);
     }
 
+    private static boolean isWebp(byte[] bytes) {
+        return bytes.length >= 12 && bytes[0] == 'R' && bytes[1] == 'I'
+            && bytes[2] == 'F' && bytes[3] == 'F'
+            && bytes[8] == 'W' && bytes[9] == 'E' && bytes[10] == 'B' && bytes[11] == 'P';
+    }
+
     static void verifyImageSize(String metadata) throws IOException {
         var dimensions = IMAGE_SIZE.matcher(metadata);
         if (!dimensions.find()) {
-            throw new IOException("Could not read HEIF image dimensions");
+            throw new IOException("Could not read image dimensions");
         }
         verifyPixelCount(Long.parseLong(dimensions.group(1)), Long.parseLong(dimensions.group(2)));
     }

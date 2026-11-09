@@ -71,7 +71,7 @@ class ImageTranscodeServiceTest {
         assertThatThrownBy(() -> ImageTranscodeService.verifyImageSize("width: 8001\nheight: 5000\n"))
             .isInstanceOf(java.io.IOException.class).hasMessageContaining("40 megapixels");
         assertThatThrownBy(() -> ImageTranscodeService.verifyImageSize("width: 8000\n"))
-            .isInstanceOf(java.io.IOException.class).hasMessageContaining("HEIF image dimensions");
+            .isInstanceOf(java.io.IOException.class).hasMessageContaining("image dimensions");
     }
 
     @ParameterizedTest
@@ -88,6 +88,22 @@ class ImageTranscodeServiceTest {
             assertThat(png).isNotNull();
             assertThat(png.getWidth()).isEqualTo(32);
             assertThat(png.getHeight()).isEqualTo(32);
+        }
+    }
+
+    @Test
+    @EnabledOnOs(OS.LINUX)
+    @EnabledIf("hasVips")
+    void decodesRealWebpAndRejectsHeaderWithoutPixels() throws Exception {
+        try (var fixture = getClass().getResourceAsStream("/fixtures/vision/sample.webp")) {
+            assertThat(fixture).isNotNull();
+            byte[] bytes = fixture.readAllBytes();
+            var png = ImageIO.read(new ByteArrayInputStream(service.toDecodablePng(bytes)));
+            assertThat(png).isNotNull();
+            assertThat(png.getWidth()).isEqualTo(32);
+            assertThat(png.getHeight()).isEqualTo(32);
+            assertThatThrownBy(() -> service.toDecodablePng(java.util.Arrays.copyOf(bytes, 30)))
+                .isInstanceOf(java.io.IOException.class);
         }
     }
 
@@ -187,8 +203,8 @@ class ImageTranscodeServiceTest {
         ImageShrinkerService shrinker = new ImageShrinkerService(props, service);
         byte[] png = pngBytes();
         String base64 = Base64.getEncoder().encodeToString(png);
-        // Decodable input returns re-encoded (or same) bytes, never garbage.
-        String out = shrinker.shrinkIfNeeded(base64);
-        assertThat(ImageIO.read(new ByteArrayInputStream(Base64.getDecoder().decode(out)))).isNotNull();
+        var out = shrinker.prepareImage(base64);
+        assertThat(out.mimeType()).isEqualTo("image/png");
+        assertThat(ImageIO.read(new ByteArrayInputStream(Base64.getDecoder().decode(out.base64())))).isNotNull();
     }
 }
