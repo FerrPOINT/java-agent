@@ -48,6 +48,30 @@ class CronJobServiceReEnableTest {
         service = new CronJobService(cronJobRepository, agentRuntimeServiceProvider, properties, skillManager, cronExecutionLogRepository, messageRepository, CronJobServiceTest.unitTransaction(), new CronScheduleParser());
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void restartKeepsRecordedDeadlineAndArmsOverdueJobImmediately(boolean overdue) {
+        var job = new CronJobEntity();
+        job.setId(UUID.randomUUID());
+        job.setEnabled(true);
+        job.setSchedule("30m");
+        Instant due = Instant.now().plusSeconds(overdue ? -60 : 300);
+        job.setNextRunAt(due);
+        when(cronJobRepository.findByEnabledTrue()).thenReturn(List.of(job));
+        when(cronJobRepository.findById(job.getId())).thenReturn(Optional.of(job));
+        var scheduler = org.mockito.Mockito.mock(java.util.concurrent.ScheduledExecutorService.class);
+        var timer = org.mockito.Mockito.mock(java.util.concurrent.ScheduledFuture.class);
+        org.mockito.Mockito.doReturn(timer).when(scheduler)
+            .schedule(any(Runnable.class), org.mockito.ArgumentMatchers.anyLong(), any());
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "scheduler", scheduler);
+        service.init();
+        var delay = org.mockito.ArgumentCaptor.forClass(Long.class);
+        verify(scheduler).schedule(any(Runnable.class), delay.capture(), org.mockito.ArgumentMatchers.eq(java.util.concurrent.TimeUnit.MILLISECONDS));
+        assertThat(job.getNextRunAt()).isEqualTo(due);
+        if (overdue) assertThat(delay.getValue()).isZero();
+        else assertThat(delay.getValue()).isBetween(280_000L, 300_000L);
+    }
+
     @Test
     void init_loadsAllEnabledJobs_noPaginationLimit() {
         // Create more than 50 enabled jobs to verify no pagination limit

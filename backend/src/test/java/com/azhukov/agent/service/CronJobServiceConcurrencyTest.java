@@ -50,6 +50,18 @@ class CronJobServiceConcurrencyTest {
     }
 
     @Test
+    void retiredCallbackCannotRecreateJobLock() {
+        var service = new CronJobService(cronJobRepository, agentRuntimeServiceProvider, new AgentProperties(),
+            skillManager, cronExecutionLogRepository, messageRepository, CronJobServiceTest.unitTransaction(), new CronScheduleParser());
+        var id = java.util.UUID.randomUUID();
+        var retired = org.mockito.Mockito.mock(java.util.concurrent.ScheduledFuture.class);
+        org.springframework.test.util.ReflectionTestUtils.invokeMethod(service, "executeAndReschedule",
+            id, retired, java.time.Instant.now(), 0L);
+        var locks = (java.util.Map<?, ?>) org.springframework.test.util.ReflectionTestUtils.getField(service, "jobLocks");
+        assertThat(locks.containsKey(id)).isFalse();
+    }
+
+    @Test
     void executeAndRescheduleUsesPerJobLock() throws Exception {
         // Verify the jobLocks field exists
         java.lang.reflect.Field field = CronJobService.class.getDeclaredField("jobLocks");

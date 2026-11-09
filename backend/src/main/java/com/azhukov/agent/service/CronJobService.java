@@ -764,7 +764,13 @@ private static final String CRON_EXECUTION_HINT = """
 
     private void reconcileSchedule(UUID id) {
         transactionTemplate.executeWithoutResult(status ->
-            lockedSchedule(id).ifPresent(job -> updateSchedule(job, null)));
+            lockedSchedule(id).ifPresent(job -> {
+                if (job.isEnabled() && job.getNextRunAt() != null) {
+                    scheduleJob(job, job.getNextRunAt());
+                } else {
+                    updateSchedule(job, null);
+                }
+            }));
     }
 
     private Optional<CronJobEntity> lockedSchedule(UUID id) {
@@ -775,7 +781,7 @@ private static final String CRON_EXECUTION_HINT = """
         if (job.isEnabled() && properties.getCron().isEnabled()) {
             long delay = calculateDelaySeconds(job.getSchedule());
             if (outcome != null) delay = delayAfterExecution(job, outcome, delay);
-            scheduleJob(job, delay);
+            scheduleJob(job, Instant.now().plusSeconds(delay).truncatedTo(java.time.temporal.ChronoUnit.MICROS));
         } else {
             job.setNextRunAt(null);
             cronJobRepository.save(job);
@@ -790,8 +796,9 @@ private static final String CRON_EXECUTION_HINT = """
         }, () -> {});
     }
 
-    private void scheduleJob(CronJobEntity job, long delaySeconds) {
-        Instant due = Instant.now().plusSeconds(delaySeconds).truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+    private void scheduleJob(CronJobEntity job, Instant due) {
+        // A missed, unclaimed firing runs once when the service comes back.
+        long delayMillis = Math.max(0, Duration.between(Instant.now(), due).toMillis());
         UUID id = job.getId();
         long revision = job.getConfigurationRevision();
         var persisted = new CompletableFuture<ScheduledFuture<?>>();
@@ -806,7 +813,7 @@ private static final String CRON_EXECUTION_HINT = """
                         if (current != null) executeAndReschedule(id, current, due, revision);
                     }, scheduler);
                 }
-            }, delaySeconds, TimeUnit.SECONDS);
+            }, delayMillis, TimeUnit.MILLISECONDS);
         } catch (java.util.concurrent.RejectedExecutionException rejected) {
             job.setLastStatus("error");
             job.setLastError("Failed to schedule cron job");
@@ -832,7 +839,7 @@ private static final String CRON_EXECUTION_HINT = """
             persisted.complete(null);
             throw e;
         }
-        log.debug("Scheduled cron job '{}' to run in {} seconds", job.getName(), delaySeconds);
+        log.debug("Scheduled cron job '{}' for {}", job.getName(), due);
     }
 
     private static final class PendingPublication {
@@ -871,7 +878,9 @@ private static final String CRON_EXECUTION_HINT = """
     }
 
     private void executeAndReschedule(UUID jobId, ScheduledFuture<?> expected, Instant due, long revision) {
-        ReentrantLock lock = jobLocks.computeIfAbsent(jobId, ignored -> new ReentrantLock());
+        ReentrantLock lock = jobLocks.compute(jobId, (id, existing) ->
+            scheduledTasks.get(id) == expected ? (existing == null ? new ReentrantLock() : existing) : existing);
+        if (lock == null || scheduledTasks.get(jobId) != expected) return;
         if (!lock.tryLock()) {
             finishScheduledRun(jobId, expected, due, revision, null);
             return;
