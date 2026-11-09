@@ -11,6 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.FutureTask;
@@ -117,7 +118,12 @@ public class ImageTranscodeService {
 
     static byte[] runConverter(List<String> command, Path output, Duration timeout) throws IOException {
         long deadline = System.nanoTime() + timeout.toNanos();
-        Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
+        // Keep the group addressable by the original PID even if the converter exits first.
+        var groupedCommand = new ArrayList<String>(command.size() + 2);
+        groupedCommand.add("/usr/bin/setsid");
+        groupedCommand.add("--");
+        groupedCommand.addAll(command);
+        Process process = new ProcessBuilder(groupedCommand).redirectErrorStream(true).start();
         try (var pipe = process.getInputStream()) {
             var diagnostics = new FutureTask<>(() -> {
                 byte[] prefix = pipe.readNBytes(DIAGNOSTIC_BYTES);
@@ -125,12 +131,14 @@ public class ImageTranscodeService {
                 return prefix;
             });
             Thread.ofVirtual().name("image-converter-output").start(diagnostics);
+            boolean diagnosticsDrained = false;
             try {
                 process.getOutputStream().close();
                 if (!process.waitFor(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS)) {
                     throw new TimeoutException();
                 }
                 byte[] prefix = diagnostics.get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+                diagnosticsDrained = true;
                 if (process.exitValue() != 0) {
                     throw new IOException("converter failed (" + process.exitValue() + "): "
                         + new String(prefix, StandardCharsets.UTF_8).trim());
@@ -144,13 +152,26 @@ public class ImageTranscodeService {
             } catch (ExecutionException e) {
                 throw new IOException("could not read converter diagnostics", e.getCause());
             } finally {
-                if (process.isAlive()) {
-                    process.descendants().forEach(ProcessHandle::destroyForcibly);
-                    process.destroyForcibly();
-                    process.onExit().join();
-                }
+                if (!diagnosticsDrained) stopConverterGroup(process);
                 diagnostics.cancel(true);
             }
+        }
+    }
+
+    private static void stopConverterGroup(Process process) {
+        // Also stop the direct process if cancellation beat setsid during startup.
+        if (process.isAlive()) process.destroyForcibly();
+        try {
+            Process signal = new ProcessBuilder("/bin/bash", "-c", "kill -KILL -- \"-$1\"",
+                "image-converter-cleanup", Long.toString(process.pid()))
+                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                .redirectError(ProcessBuilder.Redirect.DISCARD)
+                .start();
+            signal.onExit().join();
+        } catch (IOException failure) {
+            log.warn("Could not signal image converter process group {}", process.pid(), failure);
+        } finally {
+            process.onExit().join();
         }
     }
 

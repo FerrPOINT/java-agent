@@ -110,6 +110,43 @@ class ImageTranscodeServiceTest {
 
     @Test
     @EnabledOnOs(OS.LINUX)
+    void converterTimeoutStopsChildAfterParentExits(
+        @org.junit.jupiter.api.io.TempDir java.nio.file.Path dir
+    ) throws Exception {
+        var pidFile = dir.resolve("child-pid");
+        try {
+            assertThatThrownBy(() -> ImageTranscodeService.runConverter(
+                java.util.List.of("/bin/sh", "-c", "sleep 30 & echo $! > \"$1\"; sleep 0.05; exit 0",
+                    "test", pidFile.toString()),
+                dir.resolve("result.png"), java.time.Duration.ofMillis(500)))
+                .isInstanceOf(java.io.IOException.class).hasMessageContaining("timed out");
+
+            long pid = Long.parseLong(java.nio.file.Files.readString(pidFile).strip());
+            var procStatus = java.nio.file.Path.of("/proc", Long.toString(pid), "status");
+            long deadline = System.nanoTime() + java.time.Duration.ofSeconds(2).toNanos();
+            while (isRunning(procStatus) && System.nanoTime() < deadline) {
+                Thread.sleep(10);
+            }
+            assertThat(isRunning(procStatus)).isFalse();
+        } finally {
+            if (java.nio.file.Files.exists(pidFile)) {
+                long pid = Long.parseLong(java.nio.file.Files.readString(pidFile).strip());
+                ProcessHandle.of(pid).ifPresent(ProcessHandle::destroyForcibly);
+            }
+        }
+    }
+
+    private static boolean isRunning(java.nio.file.Path procStatus) throws java.io.IOException {
+        try {
+            return java.nio.file.Files.readAllLines(procStatus).stream()
+                .noneMatch(line -> line.startsWith("State:") && line.contains("(zombie)"));
+        } catch (java.nio.file.NoSuchFileException gone) {
+            return false;
+        }
+    }
+
+    @Test
+    @EnabledOnOs(OS.LINUX)
     void converterDrainsNoisyOutputAndRejectsOversizedPng(
         @org.junit.jupiter.api.io.TempDir java.nio.file.Path dir
     ) throws Exception {
