@@ -336,6 +336,7 @@ class CronJobServiceTest {
         CronJobEntity job = new CronJobEntity();
         job.setId(id);
         job.setEnabled(false);
+        job.setSchedule("0 9 * * *");
         when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
         when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         CronJobEntity resumed = service.resume(id);

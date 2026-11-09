@@ -70,6 +70,7 @@ class CronJobServiceBranchTest {
         stuck.setConsecutiveFailures(3);
 
         when(cronJobRepository.findByEnabledTrue()).thenReturn(List.of(stuck));
+        when(cronJobRepository.findById(stuck.getId())).thenReturn(Optional.of(stuck));
         properties.getCron().setEnabled(true);
         try {
             service.init();
