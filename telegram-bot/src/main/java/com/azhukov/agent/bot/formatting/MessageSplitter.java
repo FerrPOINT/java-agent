@@ -78,6 +78,34 @@ public final class MessageSplitter {
         return chunks;
     }
 
+    /** Split literal Telegram text without dropping whitespace or source characters. */
+    public static List<String> splitPlainText(String text) {
+        if (text == null) {
+            return List.of("");
+        }
+        if (text.length() <= TELEGRAM_MAX_LENGTH) {
+            return List.of(text);
+        }
+        // A label with two ten-digit part numbers takes at most 24 UTF-16 units.
+        return splitNumberedSource(text, TELEGRAM_MAX_LENGTH - 24);
+    }
+
+    private static List<String> splitNumberedSource(String text, int limit) {
+        List<String> parts = new ArrayList<>();
+        for (int start = 0; start < text.length();) {
+            int end = Math.min(start + limit, text.length());
+            if (end < text.length() && Character.isSurrogatePair(text.charAt(end - 1), text.charAt(end))) {
+                end--;
+            }
+            parts.add(text.substring(start, end));
+            start = end;
+        }
+        for (int i = 0; i < parts.size(); i++) {
+            parts.set(i, "(" + (i + 1) + "/" + parts.size() + ") " + parts.get(i));
+        }
+        return parts;
+    }
+
     /**
      * Split text and format each chunk for the given parse mode.
      *

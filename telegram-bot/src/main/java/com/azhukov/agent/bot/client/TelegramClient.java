@@ -14,6 +14,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BooleanSupplier;
 
 /**
  * Typed wrapper around the Telegram Bot API.
@@ -38,7 +39,6 @@ public class TelegramClient {
     private final Semaphore rateLimiter;
     private final int rateLimitPerSecond;
     private final ScheduledExecutorService rateLimitScheduler;
-    private final java.util.concurrent.atomic.AtomicLong floodBlockedUntilMs = new java.util.concurrent.atomic.AtomicLong();
     private final TelegramMediaClient mediaClient;
     /** Long FloodWaits belong to durable delivery retry, never a live stream thread. */
     static final int MAX_INLINE_RATE_LIMIT_RETRY_SECONDS = 5;
@@ -80,22 +80,16 @@ public class TelegramClient {
      * release happens after the API call completes — keeping the
      * effective rate within the configured limit.
      */
-    private void acquireRateLimit() {
-        long now = System.currentTimeMillis();
-        long blockedUntil = floodBlockedUntilMs.get();
-        if (blockedUntil > now) {
-            throw new TelegramApiException(429, "Telegram flood cooldown active", Math.max(1, (int) Math.ceil((blockedUntil - now) / 1000.0)));
+    private boolean acquireRateLimit() {
+        if (rateLimiter == null) return false;
+        try {
+            if (rateLimiter.tryAcquire(5, TimeUnit.SECONDS)) return true;
+            log.warn("Rate limit exceeded, proceeding anyway");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("Rate limit acquire interrupted, proceeding anyway");
         }
-        if (rateLimiter != null) {
-            try {
-                if (!rateLimiter.tryAcquire(5, TimeUnit.SECONDS)) {
-                    log.warn("Rate limit exceeded, proceeding anyway");
-                }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                log.warn("Rate limit acquire interrupted, proceeding anyway");
-            }
-        }
+        return false;
     }
 
     /**
@@ -276,34 +270,43 @@ public class TelegramClient {
     public Optional<Long> sendMessageChecked(long chatId, String text, String parseMode,
                                              Long replyToMessageId, Integer messageThreadId,
                                              String replyMarkup, boolean disableNotification) {
+        return sendMessageChecked(chatId, text, parseMode, replyToMessageId, messageThreadId, replyMarkup,
+            disableNotification, () -> true);
+    }
+
+    public Optional<Long> sendMessageChecked(long chatId, String text, String parseMode,
+                                             Long replyToMessageId, Integer messageThreadId,
+                                             String replyMarkup, boolean disableNotification, BooleanSupplier maySend) {
         Map<String, Object> params = baseSendParams(chatId, text, parseMode, replyToMessageId,
             messageThreadId, replyMarkup, disableNotification);
         try {
-            Optional<TelegramResponse> response = callApi("sendMessage", params);
+            Optional<TelegramResponse> response = callApi("sendMessage", params, maySend);
             return response.flatMap(r -> Optional.ofNullable(r.resultMessageIdAsLong()));
         } catch (TelegramApiException e) {
             if (e.isRateLimit()) {
                 // The platform REFUSED the send (429) — nothing was delivered.
                 // Return a known failure; the ledger's flood handling keeps the
                 // platform's own retry_after wait (Hermes flood_not_before).
-                throw new SendRefusalException(e.getRetryAfter(), e.getMessage());
+                throw new SendRefusalException(429, e.getRetryAfter(), e.getMessage());
             }
-            if (e.getErrorCode() > 0) {
-                // Definite Telegram API refusal (4xx/5xx with a code): the
-                // message was NOT accepted. Retrying may succeed later.
-                throw new SendRefusalException(-1, e.getMessage());
+            if (e.getErrorCode() >= 400 && e.getErrorCode() < 500) {
+                // A client-error response explicitly rejects this request.
+                throw new SendRefusalException(e.getErrorCode(), -1, e.getMessage());
             }
-            return Optional.empty();  // ambiguous transport outcome
+            return Optional.empty();  // server or transport outcome may be ambiguous
         }
     }
 
     /** Typed known-refusal signal for durable delivery (never ambiguous). */
     public static class SendRefusalException extends RuntimeException {
+        private final int errorCode;
         private final int retryAfterSeconds;
-        public SendRefusalException(int retryAfterSeconds, String message) {
+        public SendRefusalException(int errorCode, int retryAfterSeconds, String message) {
             super(message);
+            this.errorCode = errorCode;
             this.retryAfterSeconds = retryAfterSeconds;
         }
+        public int getErrorCode() { return errorCode; }
         public int getRetryAfterSeconds() { return retryAfterSeconds; }
     }
 
@@ -845,14 +848,19 @@ public class TelegramClient {
      * @throws TelegramApiException on non-{@code ok} API responses
      */
     public Optional<TelegramResponse> callApi(String method, Map<String, Object> params) {
+        return callApi(method, params, () -> true);
+    }
+
+    private Optional<TelegramResponse> callApi(String method, Map<String, Object> params, BooleanSupplier maySend) {
         if (botToken.isBlank()) {
             log.warn("Bot token is empty; cannot call {}", method);
             return Optional.empty();
         }
         lastCallConflict = false; // B3: clear at start of each call
         lastApiErrorCode = 0; // Clear error code at start of each call
-        acquireRateLimit();
+        boolean acquired = acquireRateLimit();
         try {
+            if (!maySend.getAsBoolean()) return Optional.empty();
             log.debug("Telegram API call: POST /bot{}/{}, token length={}", maskToken(botToken), method, botToken.length());
             TelegramResponse response = restClient.post()
                 .uri("/bot{token}/{method}", botToken, method)
@@ -879,7 +887,6 @@ public class TelegramClient {
                 if (code == 429 && response.parameters() != null
                     && response.parameters().containsKey("retry_after")) {
                     retryAfter = response.parameters().get("retry_after").asInt(1);
-                    applyFloodCooldown(retryAfter);
                 }
                 throw new TelegramApiException(code, desc, retryAfter);
             }
@@ -888,28 +895,34 @@ public class TelegramClient {
             throw e; // Re-throw typed exceptions
         } catch (Exception e) {
             // Check for HTTP 409 conflict from RestClient (comes as HttpStatusCodeException)
-            String msg = e.getMessage();
-            if (msg != null && msg.contains("409 Conflict")) {
+            if (e instanceof org.springframework.web.client.HttpClientErrorException httpError) {
+                int status = httpError.getStatusCode().value();
+                try {
+                    TelegramResponse error = objectMapper.readValue(httpError.getResponseBodyAsByteArray(), TelegramResponse.class);
+                    if (error != null && !error.isSuccess() && Integer.valueOf(status).equals(error.errorCode())) {
+                        lastApiErrorCode = status;
+                        int retryAfter = status != 429 || error.parameters() == null || !error.parameters().containsKey("retry_after")
+                            ? -1 : error.parameters().get("retry_after").asInt(-1);
+                        if (status == 409) lastCallConflict = true;
+                        throw new TelegramApiException(status, error.description(), retryAfter);
+                    }
+                } catch (java.io.IOException ignored) {
+                    // Unparseable HTTP error remains an ambiguous transport result.
+                }
+            }
+            if ("getUpdates".equals(method)
+                    && e instanceof org.springframework.web.client.HttpClientErrorException httpError
+                    && httpError.getStatusCode().value() == 409) {
                 lastCallConflict = true;
                 lastApiErrorCode = 409;
-                log.warn("Telegram {} returned 409 Conflict: {}", method, msg);
-                throw new TelegramApiException(409, msg, -1);
+                log.warn("Telegram {} returned HTTP 409", method);
+                throw new TelegramApiException(409, "Telegram polling conflict", -1);
             }
-            log.warn("Telegram {} exception: {}", method, msg);
-            lastApiErrorCode = -1; // Indicate exception (not a Telegram API error code)
-            throw new TelegramApiException(-1, msg, -1);
+            lastApiErrorCode = -1;
+            throw transportFailure(method, e);
         } finally {
-            releaseRateLimit();
+            if (acquired) releaseRateLimit();
         }
-    }
-
-    private void applyFloodCooldown(int retryAfterSeconds) {
-        if (retryAfterSeconds <= 0) {
-            return;
-        }
-        long until = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(retryAfterSeconds);
-        floodBlockedUntilMs.accumulateAndGet(until, Math::max);
-        log.warn("Telegram flood cooldown registered for {}s", retryAfterSeconds);
     }
 
     /**
@@ -933,7 +946,7 @@ public class TelegramClient {
             log.warn("Bot token is empty; cannot call {}", method);
             return Optional.empty();
         }
-        acquireRateLimit();
+        boolean acquired = acquireRateLimit();
         try {
             TelegramResponse response = restClient.post()
                 .uri("/bot{token}/{method}", botToken, method)
@@ -952,7 +965,6 @@ public class TelegramClient {
                 if (code == 429 && response.parameters() != null
                     && response.parameters().containsKey("retry_after")) {
                     retryAfter = response.parameters().get("retry_after").asInt(1);
-                    applyFloodCooldown(retryAfter);
                 }
                 throw new TelegramApiException(code, desc, retryAfter);
             }
@@ -960,10 +972,15 @@ public class TelegramClient {
         } catch (TelegramApiException e) {
             throw e;
         } catch (Exception e) {
-            log.warn("Telegram {} (multipart) exception: {}", method, e.getMessage());
-            throw new TelegramApiException(-1, e.getMessage(), -1);
+            throw transportFailure(method, e);
         } finally {
-            releaseRateLimit();
+            if (acquired) releaseRateLimit();
         }
     }
+    private static TelegramApiException transportFailure(String method, Exception error) {
+        // HTTP-client exceptions can include the bot token in the request URI.
+        log.warn("Telegram {} transport failed ({})", method, error.getClass().getSimpleName());
+        return new TelegramApiException(-1, "Telegram transport failed", -1);
+    }
+
 }

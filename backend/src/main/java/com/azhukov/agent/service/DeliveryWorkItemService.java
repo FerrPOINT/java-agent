@@ -34,6 +34,7 @@ public class DeliveryWorkItemService {
     public static final String STATE_LOCAL_DELIVERED = "local_delivered";
 
     private static final int MAX_ATTEMPTS = 8;
+    public static final Duration CLAIM_LEASE = Duration.ofMinutes(10);
     private static final int MAX_PAYLOAD_CHARS = 2_000_000;
     private static final Duration RETRY_BASE_DELAY = Duration.ofSeconds(5);
 
@@ -245,12 +246,9 @@ public class DeliveryWorkItemService {
 
     /**
      * WP-1 (Hermes sweep_recoverable): recovery for claims whose consumer died
-     * between claim and ack/release. A claim older than the lease cutoff is
-     * either returned to pending (bounded by the attempts cap) or terminalized
-     * as dropped when the cap is exhausted. Called from a scheduled sweep on
-     * the backend — the safety net for bot crashes mid-delivery.
-     *
-     * @return recovered = rows returned to pending, abandoned = rows over the cap
+     * between claim and ack/release. Expired Telegram claims have an unknown
+     * outcome because the consumer may have sent before it could record a receipt.
+     * Other platforms keep their existing bounded recovery.
      */
     @Transactional
     public SweepResult sweepStaleClaims(Instant now, Duration leaseCutoff) {
@@ -258,8 +256,13 @@ public class DeliveryWorkItemService {
         List<DeliveryWorkItemEntity> stale = repository.findByStateAndClaimedAtBefore(STATE_CLAIMED, cutoff);
         int recovered = 0;
         int abandoned = 0;
+        int unknown = 0;
         for (DeliveryWorkItemEntity item : stale) {
-            if (item.getAttempts() >= MAX_ATTEMPTS) {
+            if ("telegram".equals(item.getPlatform())) {
+                unknown += repository.markTerminal(
+                    item.getId(), item.getClaimToken(), STATE_UNKNOWN, now,
+                    "lease_expired", null);
+            } else if (item.getAttempts() >= MAX_ATTEMPTS) {
                 abandoned += repository.markTerminal(
                     item.getId(),
                     item.getClaimToken(),
@@ -276,7 +279,7 @@ public class DeliveryWorkItemService {
                     null) == 1 ? 1 : 0;
             }
         }
-        return new SweepResult(recovered, abandoned);
+        return new SweepResult(recovered, abandoned, unknown);
     }
 
     /**
@@ -291,7 +294,7 @@ public class DeliveryWorkItemService {
         return repository.rearmSendPathDegraded(Instant.now(), NEVER_DUE);
     }
 
-    public record SweepResult(int recovered, int abandoned) {}
+    public record SweepResult(int recovered, int abandoned, int unknown) {}
 
     private boolean markTerminal(UUID id, String claimToken, String state, String category, String detail) {
         if (id == null || isBlank(claimToken)) {

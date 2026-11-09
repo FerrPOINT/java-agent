@@ -410,8 +410,9 @@ class DeliveryWorkItemServiceTest {
     // ── WP-1 stale-claim sweep (Hermes sweep_recoverable parity) ────────
 
     @Test
-    void sweepReturnsExpiredClaimToPendingWhenAttemptsRemain() {
+    void sweepReturnsExpiredNonTelegramClaimToPendingWhenAttemptsRemain() {
         DeliveryWorkItemEntity claimed = pendingItem("default");
+        claimed.setPlatform("discord");
         claimed.setState(DeliveryWorkItemService.STATE_CLAIMED);
         claimed.setClaimToken("token-1");
         claimed.setClaimedAt(Instant.now().minusSeconds(1200));
@@ -429,8 +430,9 @@ class DeliveryWorkItemServiceTest {
     }
 
     @Test
-    void sweepAbandonsExpiredClaimOverAttemptsCap() {
+    void sweepAbandonsExpiredNonTelegramClaimOverAttemptsCap() {
         DeliveryWorkItemEntity claimed = pendingItem("default");
+        claimed.setPlatform("discord");
         claimed.setState(DeliveryWorkItemService.STATE_CLAIMED);
         claimed.setClaimToken("token-2");
         claimed.setClaimedAt(Instant.now().minusSeconds(1200));
@@ -446,6 +448,25 @@ class DeliveryWorkItemServiceTest {
 
         assertThat(result.recovered()).isZero();
         assertThat(result.abandoned()).isEqualTo(1);
+    }
+
+    @Test
+    void sweepTerminalizesExpiredTelegramClaimUsingTheObservedToken() {
+        DeliveryWorkItemEntity claimed = pendingItem("default");
+        claimed.setClaimToken("expired-token");
+        Instant now = Instant.now();
+        when(repository.findByStateAndClaimedAtBefore(DeliveryWorkItemService.STATE_CLAIMED, now.minusSeconds(600)))
+            .thenReturn(List.of(claimed));
+        when(repository.markTerminal(claimed.getId(), "expired-token", DeliveryWorkItemService.STATE_UNKNOWN,
+            now, "lease_expired", null)).thenReturn(1, 0);
+
+        var result = service().sweepStaleClaims(now, java.time.Duration.ofMinutes(10));
+        assertThat(result.unknown()).isEqualTo(1);
+        assertThat(result.recovered()).isZero();
+        assertThat(result.abandoned()).isZero();
+
+        // An old scan cannot overwrite an outcome recorded by a competing writer.
+        assertThat(service().sweepStaleClaims(now, java.time.Duration.ofMinutes(10)).unknown()).isZero();
     }
 
     @Test

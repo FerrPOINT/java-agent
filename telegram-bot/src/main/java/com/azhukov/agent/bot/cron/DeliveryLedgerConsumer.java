@@ -49,17 +49,21 @@ public class DeliveryLedgerConsumer {
 
     @Scheduled(fixedDelay = 10_000L, initialDelay = 15_000L)
     public void consume() {
+        consume(System::nanoTime);
+    }
+
+    void consume(java.util.function.LongSupplier nanoTime) {
         if (!properties.isCronDeliveryEnabled()) {
             return;
         }
         int processed = 0;
         while (processed < 10) {
-            List<ClaimedItem> batch = claimNextBatch();
-            if (batch.isEmpty()) {
+            ClaimedBatch batch = claimNextBatch(nanoTime.getAsLong());
+            if (batch.items().isEmpty()) {
                 break;
             }
-            deliverBatch(batch);
-            processed += batch.size();
+            deliverBatch(batch.items(), batch.startedNanos(), batch.leaseNanos(), nanoTime);
+            processed += batch.items().size();
         }
     }
 
@@ -92,21 +96,28 @@ public class DeliveryLedgerConsumer {
      * target and deliver them as a single coalesced message (or the plain
      * payload when there is exactly one).
      */
-    private List<ClaimedItem> claimNextBatch() {
+    private record ClaimedBatch(List<ClaimedItem> items, long startedNanos, long leaseNanos) {}
+
+    private ClaimedBatch claimNextBatch(long started) {
         try {
             String body = objectMapper.writeValueAsString(Map.of(
                 "consumer_id", consumerId(),
                 "profiles", List.of(profile()),
                 "max", 5));
             String json = restClient.post()
-                .uri("/api/v1/agent/delivery/claim-batch")
+                .uri("/api/v1/agent/delivery/claim-batch-v2")
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
                 .body(body)
                 .retrieve()
                 .body(String.class);
             JsonNode parsed = json == null ? null : objectMapper.readTree(json);
             if (parsed == null || !parsed.path("claimed").asBoolean(false)) {
-                return List.of();
+                return new ClaimedBatch(List.of(), started, 0);
+            }
+            JsonNode lease = parsed.path("lease_remaining_ms");
+            if (!lease.isIntegralNumber() || !lease.canConvertToLong() || lease.longValue() < 0) {
+                log.warn("Invalid delivery batch response: expected non-negative lease_remaining_ms");
+                return new ClaimedBatch(List.of(), started, 0);
             }
             List<ClaimedItem> items = new java.util.ArrayList<>();
             for (JsonNode node : parsed.path("items")) {
@@ -121,10 +132,13 @@ public class DeliveryLedgerConsumer {
                     node.path("payload").asText(""),
                     node.path("attempts").asInt(0)));
             }
-            return items;
+            // Anchor before the request so network and parsing delays consume budget, without
+            // comparing the bot clock to the database server clock.
+            long leaseNanos = java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(lease.longValue());
+            return new ClaimedBatch(items, started, leaseNanos);
         } catch (Exception e) {
             log.debug("Delivery batch claim failed: {}", e.getMessage());
-            return List.of();
+            return new ClaimedBatch(List.of(), started, 0);
         }
     }
 
@@ -161,7 +175,7 @@ public class DeliveryLedgerConsumer {
     }
 
     /** Deliver a coalesced batch; on failure every item gets the SAME fence. */
-    private void deliverBatch(List<ClaimedItem> batch) {
+    private void deliverBatch(List<ClaimedItem> batch, long startedNanos, long leaseNanos, java.util.function.LongSupplier nanoTime) {
         ClaimedItem first = batch.get(0);
         if (!"telegram".equals(first.platform()) || first.chatId().isBlank()) {
             for (ClaimedItem item : batch) {
@@ -171,7 +185,13 @@ public class DeliveryLedgerConsumer {
             return;
         }
         long chatId;
-        Integer threadId = first.threadId().isBlank() ? null : Integer.valueOf(first.threadId());
+        Integer threadId;
+        try {
+            threadId = first.threadId().isBlank() ? null : Integer.valueOf(first.threadId());
+        } catch (NumberFormatException e) {
+            for (ClaimedItem item : batch) outcome(item, "drop", "invalid_thread_id", null);
+            return;
+        }
         try {
             chatId = Long.parseLong(first.chatId());
         } catch (NumberFormatException e) {
@@ -184,14 +204,19 @@ public class DeliveryLedgerConsumer {
         log.info("delivery_batch_started items={} sourceIds={} chat={} attempts={}", batch.size(),
             batch.stream().map(ClaimedItem::sourceId).toList(), chatId,
             batch.stream().map(ClaimedItem::attempts).toList());
+        Long lastMessageId = null;
         try {
-            List<String> chunks = com.azhukov.agent.bot.formatting.MessageSplitter.split(text);
-            Long lastMessageId = null;
+            List<String> chunks = com.azhukov.agent.bot.formatting.MessageSplitter.splitPlainText(text);
             boolean sendFailed = false;
+            java.util.function.BooleanSupplier leaseHeld = () -> nanoTime.getAsLong() - startedNanos < leaseNanos;
             for (String chunk : chunks) {
-                Optional<Long> sent = threadId == null
-                    ? telegramClient.sendMessageChecked(chatId, chunk, null, null, null, null, false)
-                    : telegramClient.sendMessageChecked(chatId, chunk, null, null, threadId, null, false);
+                if (!leaseHeld.getAsBoolean()) {
+                    for (ClaimedItem item : batch) outcome(item, "unknown", "delivery_lease_elapsed", null);
+                    log.warn("delivery_batch_lease_elapsed items={} chat={}", batch.size(), chatId);
+                    return;
+                }
+                Optional<Long> sent = telegramClient.sendMessageChecked(chatId, chunk, null, null, threadId, null,
+                    false, leaseHeld);
                 if (sent.isEmpty()) {
                     sendFailed = true;
                     break;
@@ -200,33 +225,38 @@ public class DeliveryLedgerConsumer {
             }
             if (!sendFailed) {
                 String messageId = lastMessageId == null ? null : lastMessageId.toString();
+                int confirmed = 0;
                 for (ClaimedItem item : batch) {
-                    ack(item, messageId);
+                    if (ack(item, messageId)) confirmed++;
                 }
-                log.info("delivery_batch_acked items={} sourceIds={} chat={} chunks={} lastMessageId={}",
-                    batch.size(), batch.stream().map(ClaimedItem::sourceId).toList(), chatId, chunks.size(), lastMessageId);
-                log.info("Delivered batch of {} items ({} source types) to chat {} ({} chunks, last msg {})",
-                    batch.size(), batch.stream().map(ClaimedItem::sourceType).distinct().count(),
-                    chatId, chunks.size(), lastMessageId);
+                if (confirmed == batch.size()) {
+                    log.info("delivery_batch_acked items={} chat={} chunks={} lastMessageId={}",
+                        confirmed, chatId, chunks.size(), lastMessageId);
+                } else {
+                    log.warn("delivery_batch_ack_unconfirmed confirmed={} items={} chat={} lastMessageId={}",
+                        confirmed, batch.size(), chatId, lastMessageId);
+                }
                 return;
             }
-            for (ClaimedItem item : batch) {
-                outcome(item, "unknown",
-                    lastMessageId != null ? "partial_chunk_failure" : "empty_send_result", null);
-            }
+            String category = !leaseHeld.getAsBoolean() ? "delivery_lease_elapsed"
+                : lastMessageId != null ? "partial_chunk_failure" : "empty_send_result";
+            for (ClaimedItem item : batch) outcome(item, "unknown", category, null);
             log.warn("delivery_batch_unresolved items={} sourceIds={} chat={} category={}", batch.size(),
-                batch.stream().map(ClaimedItem::sourceId).toList(), chatId,
-                lastMessageId != null ? "partial_chunk_failure" : "empty_send_result");
+                batch.stream().map(ClaimedItem::sourceId).toList(), chatId, category);
         } catch (TelegramClient.SendRefusalException e) {
+            if (lastMessageId != null) {
+                for (ClaimedItem item : batch) outcome(item, "unknown", "partial_chunk_failure", null);
+                return;
+            }
             // Hermes delivery.py parity: the platform REFUSED the send — a
             // known failure (never ambiguous). A flood refusal (429) keeps the
-            // platform's own retry_after wait; any other definite refusal
-            // backs off normally.
+            // platform's retry_after. Retrying a rejected payload cannot fix a bad request.
+            boolean badRequest = e.getErrorCode() == 400;
             String category = e.getRetryAfterSeconds() > 0
                 ? "flood_control:" + e.getRetryAfterSeconds()
-                : "send_refused";
+                : badRequest ? "bad_request" : "send_refused";
             for (ClaimedItem item : batch) {
-                outcome(item, "release", category,
+                outcome(item, badRequest ? "drop" : "release", category,
                     e.getRetryAfterSeconds() > 0
                         ? "retry_after=" + e.getRetryAfterSeconds() + "s " + e.getMessage()
                         : e.getMessage());
@@ -236,114 +266,24 @@ public class DeliveryLedgerConsumer {
                 category, e.getRetryAfterSeconds());
         } catch (Exception e) {
             for (ClaimedItem item : batch) {
-                outcome(item, "release", "transport_error", e.getMessage());
+                outcome(item, "unknown", lastMessageId != null ? "partial_chunk_failure" : "transport_error", null);
             }
-            log.warn("delivery_batch_released items={} sourceIds={} chat={} error={}", batch.size(),
-                batch.stream().map(ClaimedItem::sourceId).toList(), chatId, e.getMessage());
+            log.warn("delivery_batch_unresolved items={} sourceIds={} chat={} category={}", batch.size(),
+                batch.stream().map(ClaimedItem::sourceId).toList(), chatId,
+                lastMessageId != null ? "partial_chunk_failure" : "transport_error");
         }
     }
 
     record ClaimedItem(String id, String claimToken, String sourceType, String sourceId,
                        String platform, String chatId, String threadId, String payload, int attempts) {}
 
-    /** Package-private delivery bridge for tests (no HTTP claim round-trip). */
-    void deliverForTest(ClaimedItem item) {
-        deliver(item);
-    }
-
     /** Package-private batch bridge for tests. */
     void deliverBatchForTest(List<ClaimedItem> batch) {
-        deliverBatch(batch);
+        deliverBatch(batch, 0, Long.MAX_VALUE, System::nanoTime);
     }
 
-    private Optional<ClaimedItem> claimNext() {
-        try {
-            String body = objectMapper.writeValueAsString(Map.of(
-                "consumerId", consumerId(),
-                "profiles", List.of(profile())));
-            String json = restClient.post()
-                .uri("/api/v1/agent/delivery/claim")
-                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                .body(body)
-                .retrieve()
-                .body(String.class);
-            JsonNode parsed = json == null ? null : objectMapper.readTree(json);
-            if (parsed == null || !parsed.path("claimed").asBoolean(false)) {
-                return Optional.empty();
-            }
-            return Optional.of(new ClaimedItem(
-                parsed.path("id").asText(),
-                parsed.path("claim_token").asText(),
-                parsed.path("source_type").asText(),
-                parsed.path("source_id").asText(),
-                parsed.path("platform").asText(""),
-                parsed.path("chat_id").asText(""),
-                parsed.path("thread_id").asText(""),
-                parsed.path("payload").asText(""),
-                parsed.path("attempts").asInt(0)));
-        } catch (Exception e) {
-            log.debug("Delivery claim failed: {}", e.getMessage());
-            return Optional.empty();
-        }
-    }
-
-    private void deliver(ClaimedItem item) {
-        if (!"telegram".equals(item.platform()) || item.chatId().isBlank()) {
-            // Unsupported platform for this consumer — release without send.
-            outcome(item, "drop", "unsupported_platform",
-                "platform=" + item.platform() + " chat=" + item.chatId());
-            return;
-        }
-        long chatId;
-        Integer threadId = item.threadId().isBlank() ? null : Integer.valueOf(item.threadId());
-        try {
-            chatId = Long.parseLong(item.chatId());
-        } catch (NumberFormatException e) {
-            outcome(item, "drop", "invalid_chat_id", item.chatId());
-            return;
-        }
-        try {
-            List<String> chunks = com.azhukov.agent.bot.formatting.MessageSplitter.split(item.payload());
-            Long lastMessageId = null;
-            boolean sendFailed = false;
-            for (String chunk : chunks) {
-                Optional<Long> sent = threadId == null
-                    ? telegramClient.sendMessage(chatId, chunk)
-                    : telegramClient.sendMessage(chatId, chunk, null, null, threadId, false);
-                if (sent.isEmpty()) {
-                    sendFailed = true;
-                    break;
-                }
-                lastMessageId = sent.get();
-            }
-            if (!sendFailed) {
-                // P-03 (Hermes delivery.py): Telegram is chunking-capable, so the
-                // FULL output is sent (MessageSplitter, UTF-16-safe); the receipt
-                // names the LAST chunk's message id.
-                ack(item, lastMessageId == null ? null : lastMessageId.toString());
-                log.info("Delivered {} item {} to chat {} ({} chunks, last msg {})",
-                    item.sourceType(), item.sourceId(), chatId, chunks.size(), lastMessageId);
-                return;
-            }
-            if (lastMessageId != null) {
-                // A chunk sent, a later chunk failed — PARTIAL delivery, the
-                // outcome is ambiguous (Hermes: unknown, never auto-retry).
-                outcome(item, "unknown", "partial_chunk_failure", null);
-            } else {
-                // First chunk returned empty — sendMessage conflates "chat not
-                // found" with "timeout after Telegram accepted" into empty, so
-                // the outcome is ambiguous (Hermes: unknown, never auto-retry
-                // a possibly-sent message).
-                outcome(item, "unknown", "empty_send_result", null);
-            }
-        } catch (Exception e) {
-            // Transport raised BEFORE Telegram accepted anything — known failure.
-            outcome(item, "release", "transport_error", e.getMessage());
-        }
-    }
-
-    private void ack(ClaimedItem item, String messageId) {
-        post("/api/v1/agent/delivery/ack", Map.of(
+    private boolean ack(ClaimedItem item, String messageId) {
+        return post("/api/v1/agent/delivery/ack", Map.of(
             "id", item.id(),
             "claim_token", item.claimToken(),
             "outbound_message_id", messageId,
@@ -363,7 +303,7 @@ public class DeliveryLedgerConsumer {
         post("/api/v1/agent/delivery/" + action, body);
     }
 
-    private void post(String path, Object body) {
+    private boolean post(String path, Object body) {
         try {
             restClient.post()
                 .uri(path)
@@ -371,10 +311,10 @@ public class DeliveryLedgerConsumer {
                 .body(objectMapper.writeValueAsString(body))
                 .retrieve()
                 .toBodilessEntity();
+            return true;
         } catch (Exception e) {
-            // The claim will expire or be re-driven on the next cycle; the
-            // backend's stale-claim policy is the safety net.
-            log.warn("Delivery outcome {} failed: {}", path, e.getMessage());
+            log.warn("Delivery outcome {} failed ({})", path, e.getClass().getSimpleName());
+            return false;
         }
     }
 
