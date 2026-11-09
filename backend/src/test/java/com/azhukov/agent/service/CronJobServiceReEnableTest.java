@@ -37,6 +37,19 @@ class CronJobServiceReEnableTest {
     private AgentProperties properties;
     private CronJobService service;
 
+    @Test
+    void cronUsesTheExactNextTickAcrossFractionalSecondsAndDst() {
+        var parser = new CronScheduleParser();
+        var utc = java.time.ZoneOffset.UTC;
+        assertThat(parser.parse("* * * * *", Instant.parse("2026-11-09T12:00:00.500Z"), utc).nextRunAt())
+            .isEqualTo(Instant.parse("2026-11-09T12:01:00Z"));
+        assertThat(parser.parse("2026-11-09T12:00:00.900Z", Instant.parse("2026-11-09T12:00:00.500Z"), utc).nextRunAt())
+            .isEqualTo(Instant.parse("2026-11-09T12:00:00.900Z"));
+        var berlin = java.time.ZoneId.of("Europe/Berlin");
+        assertThat(parser.parse("0 9 * * *", Instant.parse("2026-03-28T09:00:00Z"), berlin).nextRunAt())
+            .isEqualTo(Instant.parse("2026-03-29T07:00:00Z"));
+    }
+
     @BeforeEach
     void setUp() {
         org.mockito.Mockito.lenient().when(cronJobRepository.findByIdForUpdate(
@@ -79,7 +92,10 @@ class CronJobServiceReEnableTest {
     }
 
     @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.ValueSource(strings = {"99 9 * * *", "0 0 31 2 *"})
+    @org.junit.jupiter.params.provider.ValueSource(strings = {
+        "99 9 * * *", "0 0 31 2 *", "every 2562047788015216h",
+        "every 9223372036854775807s", "9223372036854776s", "every 5000000000s", "9999-01-01T00:00:00Z"
+    })
     void invalidScheduleDisablesOnlyThatJobOnStartupAndCannotBeResumed(String schedule) {
         var invalid = new CronJobEntity();
         invalid.setId(UUID.randomUUID());
