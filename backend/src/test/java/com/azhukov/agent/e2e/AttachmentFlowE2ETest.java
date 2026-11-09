@@ -294,6 +294,15 @@ class AttachmentFlowE2ETest extends PostgresTestContainer {
         gateway.perform(post("/api/v1/attachments/{id}/outbound", id)
                 .header("X-API-Key", "fixture-gateway-key").param("ownerId", owner).param("sessionId", session.toString()))
             .andExpect(status().isConflict());
+        var release = org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+            .delete("/api/v1/attachments/{id}/outbound", id)
+            .header("X-API-Key", "fixture-gateway-key").header("X-Outbound-Claim", response.getHeader("X-Outbound-Claim"))
+            .param("ownerId", owner).param("sessionId", session.toString());
+        gateway.perform(release).andExpect(status().isNoContent());
+        gateway.perform(post("/api/v1/attachments/{id}/outbound", id)
+                .header("X-API-Key", "fixture-gateway-key").param("ownerId", owner).param("sessionId", session.toString()))
+            .andExpect(status().isOk());
+        gateway.perform(release).andExpect(status().isConflict());
         gateway.perform(post("/api/v1/attachments/{id}/delivered", id)
                 .header("X-API-Key", "fixture-gateway-key").param("ownerId", owner).param("sessionId", session.toString())
                 .param("messageId", "420"))
