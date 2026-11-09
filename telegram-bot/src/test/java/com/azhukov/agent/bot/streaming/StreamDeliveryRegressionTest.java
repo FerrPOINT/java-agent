@@ -30,6 +30,26 @@ class StreamDeliveryRegressionTest {
         return editor;
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints = {400, -1})
+    void onlyConfirmedMissingPreviewCanBeReplaced(int code) {
+        when(client.editFinalMessage(101L, 9L, "final", "MarkdownV2")).thenThrow(
+            new TelegramApiException(code, code == 400 ? "Bad Request: message to edit not found" : "lost receipt"));
+        if (code == 400) {
+            when(client.sendMessageChecked(eq(101L), eq("final"), eq("MarkdownV2"), any(), any(), any(), anyBoolean()))
+                .thenReturn(Optional.of(17L));
+        }
+        var editor = editor(false, 0);
+        try {
+            editor.sessionFor(101L).currentMessageId.set(9L);
+            assertThat(editor.finalizeStream(101L, 9L, "final")).isEqualTo(code == 400);
+            verify(client, times(code == 400 ? 1 : 0))
+                .sendMessageChecked(eq(101L), eq("final"), eq("MarkdownV2"), any(), any(), any(), anyBoolean());
+        } finally {
+            editor.destroy();
+        }
+    }
+
     @Test
     void ambiguousRichReceiptDoesNotSendAnotherFinal() {
         var me = mock(TelegramResponse.class);

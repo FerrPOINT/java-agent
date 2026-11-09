@@ -10,7 +10,7 @@ class MessageSplitterTest {
 
     @Test
     void shortTextReturnsSingleChunk() {
-        List<String> chunks = MessageSplitter.split("Hello world");
+        List<String> chunks = MessageSplitter.splitPlainText("Hello world");
         assertThat(chunks).hasSize(1);
         assertThat(chunks.get(0)).isEqualTo("Hello world");
         // No index prefix for single chunk
@@ -25,7 +25,7 @@ class MessageSplitterTest {
             sb.append("Paragraph ").append(i).append(" with some text. ".repeat(100));
             sb.append("\n\n");
         }
-        List<String> chunks = MessageSplitter.split(sb.toString());
+        List<String> chunks = MessageSplitter.splitPlainText(sb.toString());
         assertThat(chunks.size()).isGreaterThan(1);
         // Each chunk should have "(N/M) " prefix
         assertThat(chunks.get(0)).startsWith("(1/");
@@ -49,7 +49,7 @@ class MessageSplitterTest {
         text.append("\n\n");
         text.append(code);
 
-        List<String> chunks = MessageSplitter.split(text.toString());
+        List<String> chunks = MessageSplitter.splitMarkdown(text.toString()).stream().map(MessageSplitter.TextPart::formatted).toList();
         assertThat(chunks.size()).isGreaterThanOrEqualTo(2);
 
         // The chunk containing the code block should have balanced fences
@@ -65,27 +65,10 @@ class MessageSplitterTest {
     }
 
     @Test
-    void splitOnParagraphOutsideCodeBlock() {
-        // Text with paragraph boundary outside code block
-        String text = "First paragraph.\n\nSecond paragraph.\n\n```code\nx = 1\n```";
-        // Make it large enough to split
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < 5; i++) {
-            sb.append("Paragraph ").append(i).append(" with padding. ".repeat(100));
-            sb.append("\n\n");
-        }
-        sb.append("```java\n").append("x = 1\n").append("```");
-
-        List<String> chunks = MessageSplitter.split(sb.toString());
-        // Should split — at least 2 chunks
-        assertThat(chunks.size()).isGreaterThanOrEqualTo(1);
-    }
-
-    @Test
     void longCodeFenceIsBalancedAcrossIndependentlyDeliveredChunks() {
         String text = "intro\n```python\n" + "x = 1\n".repeat(1200) + "```\nfinal";
 
-        List<String> chunks = MessageSplitter.split(text);
+        List<String> chunks = MessageSplitter.splitMarkdown(text).stream().map(MessageSplitter.TextPart::formatted).toList();
 
         assertThat(chunks).hasSizeGreaterThan(1);
         for (String chunk : chunks) {

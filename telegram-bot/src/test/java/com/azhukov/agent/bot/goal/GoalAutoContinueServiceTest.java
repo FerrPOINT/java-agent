@@ -24,6 +24,7 @@ class GoalAutoContinueServiceTest {
     private BotSessionEntity sessionWithGoal(String goal) {
         BotSessionEntity session = new BotSessionEntity();
         session.setId(UUID.randomUUID());
+        session.setBackendSessionId(UUID.randomUUID());
         session.setMetadata("_standingGoal", goal);
         return session;
     }

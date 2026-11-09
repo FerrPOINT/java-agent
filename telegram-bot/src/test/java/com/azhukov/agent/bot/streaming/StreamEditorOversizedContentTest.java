@@ -73,7 +73,7 @@ class StreamEditorOversizedContentTest {
     @Test
     void messageSplitter_doesNotSplitSurrogatePairs() {
         // H15: an emoji straddling the (1/N) shrink boundary must not be cut
-        List<String> chunks = MessageSplitter.split("a".repeat(5000) + "\uD83D\uDE00" + "b".repeat(5000));
+        List<String> chunks = MessageSplitter.splitPlainText("a".repeat(5000) + "\uD83D\uDE00" + "b".repeat(5000));
         assertThat(chunks.size()).isGreaterThan(1);
         for (String chunk : chunks) {
             // no lone surrogates at either end of any chunk

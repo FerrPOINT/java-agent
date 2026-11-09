@@ -672,10 +672,10 @@ public class StreamEditor {
         boolean fresh = freshFinalTimeoutMs > 0 && session.streamStartTime != 0
             && System.currentTimeMillis() - session.streamStartTime > freshFinalTimeoutMs;
         boolean replace = session.useDraftStreaming || preview <= 0 || fresh
-            || !fitsTelegram(finalText, formatted) || !session.floodFallbackBuffer.isEmpty();
+            || !MessageSplitter.fits(finalText, formatted) || !session.floodFallbackBuffer.isEmpty();
         List<DeliveryOperation> normal = replace
             ? formattedOperations(chatId, finalText, session, preview)
-            : List.of(editOperation(chatId, preview, finalText, formatted, parseMode));
+            : List.of(editOperation(chatId, preview, finalText, formatted, session));
         List<DeliveryOperation> operations = normal;
         if (richMessageSupport != null && richMessageSupport.shouldAttemptRich(finalText)) {
             String richText = finalText;
@@ -683,7 +683,7 @@ public class StreamEditor {
             Long reply = replyFor(session, 0);
             operations = List.of(new DeliveryOperation(
                 () -> richMessageSupport.sendRichMessage(chatId, richText, reply, topic),
-                richMessageSupport::formatWasRejected, normal, preview));
+                error -> richMessageSupport.formatWasRejected(error) ? normal : List.of(), preview));
         }
         Optional<Long> confirmed = enqueueDelivery(chatId, session, operations);
         if (confirmed.isPresent() && !hasDeferredDelivery(chatId)) {
@@ -903,9 +903,9 @@ public class StreamEditor {
             sendFormattedFinalMessage(chatId, scrubbed);
         } else {
             String formatted = formatForTelegramDelegate(scrubbed);
-            var operations = !fitsTelegram(scrubbed, formatted)
+            var operations = !MessageSplitter.fits(scrubbed, formatted)
                 ? formattedOperations(chatId, scrubbed, session, effectiveMessageId)
-                : List.of(editOperation(chatId, effectiveMessageId, scrubbed, formatted, parseMode));
+                : List.of(editOperation(chatId, effectiveMessageId, scrubbed, formatted, session));
             enqueueDelivery(chatId, session, operations);
         }
         // Clear the tool name since the tool is done
@@ -1128,17 +1128,24 @@ public class StreamEditor {
     }
 
     record DeliveryOperation(java.util.function.Supplier<Optional<Long>> send,
-                             java.util.function.Predicate<TelegramApiException> formatRefusal,
-                             List<DeliveryOperation> onFormatRefusal, long replacedPreview) {
+                             java.util.function.Function<TelegramApiException, List<DeliveryOperation>> onRefusal,
+                             long replacedPreview) {
         DeliveryOperation(java.util.function.Supplier<Optional<Long>> send, long replacedPreview) {
-            this(send, error -> false, List.of(), replacedPreview);
+            this(send, error -> List.of(), replacedPreview);
         }
     }
 
-    private DeliveryOperation editOperation(long chatId, long messageId, String plain, String formatted, String mode) {
-        var plainEdit = new DeliveryOperation(() -> telegramClient.editFinalMessage(chatId, messageId, plain, null), 0);
-        return new DeliveryOperation(() -> telegramClient.editFinalMessage(chatId, messageId, formatted, mode),
-            error -> mode != null && error.getErrorCode() == 400 && error.isParseError(), List.of(plainEdit), 0);
+    private DeliveryOperation editOperation(long chatId, long messageId, String plain, String formatted,
+                                            StreamSession session) {
+        java.util.function.Function<TelegramApiException, List<DeliveryOperation>> missingPreview = error ->
+            error.getErrorCode() == 400 && java.util.Objects.toString(error.getErrorDescription(), "")
+                .toLowerCase(java.util.Locale.ROOT).contains("message to edit not found")
+                ? formattedOperations(chatId, plain, session, 0) : List.of();
+        var plainEdit = new DeliveryOperation(() -> telegramClient.editFinalMessage(chatId, messageId, plain, null),
+            missingPreview, 0);
+        return new DeliveryOperation(() -> telegramClient.editFinalMessage(chatId, messageId, formatted, parseMode),
+            error -> parseMode != null && error.getErrorCode() == 400 && error.isParseError()
+                ? List.of(plainEdit) : missingPreview.apply(error), 0);
     }
 
     public Optional<Long> sendFormattedFinalMessage(long chatId, String text) {
@@ -1146,25 +1153,9 @@ public class StreamEditor {
         return enqueueDelivery(chatId, session, formattedOperations(chatId, text, session, 0));
     }
 
-    private static boolean fitsTelegram(String plain, String formatted) {
-        return Math.max(plain.length(), formatted.length()) <= MessageSplitter.TELEGRAM_MAX_LENGTH;
-    }
-
     private List<DeliveryOperation> formattedOperations(long chatId, String text, StreamSession session, long replacedPreview) {
-        if (text == null || text.isBlank()) return List.of();
-        String formatted = formatForTelegramDelegate(text);
         Integer topic = session.messageThreadId > 0 ? (int) session.messageThreadId : null;
-        List<MessageSplitter.TextPart> parts;
-        if (fitsTelegram(text, formatted)) {
-            parts = List.of(new MessageSplitter.TextPart(text, formatted));
-        } else if ("MarkdownV2".equalsIgnoreCase(parseMode)) {
-            parts = MessageSplitter.splitMarkdown(text);
-        } else {
-            List<String> source = "HTML".equalsIgnoreCase(parseMode)
-                ? MessageSplitter.splitHtmlSource(text) : MessageSplitter.splitPlainText(text);
-            parts = source.stream()
-                .map(part -> new MessageSplitter.TextPart(part, formatForTelegramDelegate(part))).toList();
-        }
+        var parts = MessageSplitter.prepare(text, parseMode);
         var chunks = parts.stream().filter(part -> !part.original().isBlank()).toList();
         var operations = new java.util.ArrayList<DeliveryOperation>();
         for (int i = 0; i < chunks.size(); i++) {
@@ -1178,7 +1169,7 @@ public class StreamEditor {
             operations.add(parseMode == null || payload.length() > MessageSplitter.TELEGRAM_MAX_LENGTH
                 ? plain : new DeliveryOperation(
                 () -> telegramClient.sendMessageChecked(chatId, payload, parseMode, reply, topic, null, false),
-                error -> error.getErrorCode() == 400 && error.isParseError(), List.of(plain), preview));
+                error -> error.getErrorCode() == 400 && error.isParseError() ? List.of(plain) : List.of(), preview));
         }
         return operations;
     }
@@ -1241,9 +1232,10 @@ public class StreamEditor {
                         failDelivery(session);
                         return Optional.empty();
                     }
-                    if (operation.formatRefusal().test(error)) {
+                    var replacement = operation.onRefusal().apply(error);
+                    if (!replacement.isEmpty()) {
                         session.delivery.removeFirst();
-                        for (var fallback : operation.onFormatRefusal().reversed()) session.delivery.addFirst(fallback);
+                        for (var next : replacement.reversed()) session.delivery.addFirst(next);
                         continue;
                     }
                     if (error.isRateLimit()) scheduleDelivery(chatId, session, error.getRetryAfter());

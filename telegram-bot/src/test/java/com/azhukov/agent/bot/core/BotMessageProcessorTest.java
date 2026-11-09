@@ -612,6 +612,63 @@ class BotMessageProcessorTest {
 
     @SuppressWarnings("unchecked")
     @Test
+    @org.junit.jupiter.api.Tag("slow")
+    void stopAfterFloodWaitReachesActiveContinuationAndDiscardsItsText() throws Exception {
+        properties.setStreamingTransport("off");
+        properties.getGoalAutoContinue().setEnabled(true);
+        var session = new BotSessionEntity();
+        session.setId(UUID.randomUUID());
+        UUID backendSession = UUID.randomUUID();
+        session.setBackendSessionId(backendSession);
+        session.setMetadata("_standingGoal", "test");
+        when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), any())).thenReturn(session);
+        when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
+        when(commandRegistry.get("stop")).thenReturn(
+            new com.azhukov.agent.bot.commands.impl.StopCommand(busyHandler, backendClient));
+        when(telegramClient.sendMessageChecked(eq(100L), eq("first"), any(), any(), any(), any(), anyBoolean()))
+            .thenThrow(new TelegramClient.SendRefusalException(429, 1, "rate limit")).thenReturn(Optional.of(41L));
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+            .thenAnswer(call -> {
+                ((Consumer<String>) call.getArgument(4)).accept("first");
+                var result = new AgentBackendClient.ChatResult("first", "model", 1, 10, true);
+                ((Consumer<AgentBackendClient.ChatResult>) call.getArgument(10)).accept(result);
+                return result;
+            });
+        var active = new java.util.concurrent.CountDownLatch(1);
+        var resume = new java.util.concurrent.CountDownLatch(1);
+        when(goalAutoContinueService.runAutoContinue(any(), eq("first"), any())).thenAnswer(call -> {
+            active.countDown();
+            if (!resume.await(5, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("Stop was not issued");
+            return List.of("stopped continuation");
+        });
+        try (DeliveryFixture fixture = realDeliveryFixture()) {
+            fixture.processor().accept(textEvent(1, 100L, "first"));
+            try {
+                assertThat(active.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                fixture.processor().accept(commandEvent(2, 100L, "stop", ""));
+                verify(backendClient).stop(backendSession.toString());
+            } finally {
+                resume.countDown();
+            }
+            org.awaitility.Awaitility.await().until(() -> !busyHandler.isBusy(100L));
+            verify(telegramClient, never()).sendMessage(eq(100L), eq("stopped continuation"), any(), any(), any());
+        }
+    }
+
+    @Test
+    void longReviewNotificationKeepsTheMarkerAtTheChunkBoundary() {
+        String text = "a".repeat(4090) + "MARKERz";
+        when(telegramClient.sendMessage(eq(100L), anyString(), eq("MarkdownV2"), any(), any()))
+            .thenReturn(Optional.of(42L));
+        assertThat(processor.sendReviewMessage(100L, text, 0, 0)).isTrue();
+        var chunks = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(telegramClient, atLeast(2)).sendMessage(eq(100L), chunks.capture(), eq("MarkdownV2"), any(), any());
+        assertThat(String.join("", chunks.getAllValues().stream()
+            .map(part -> part.substring(part.indexOf(' ') + 1)).toList())).isEqualTo(text);
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
     void completedToolAfterDraftTextDoesNotRestartBackendOrSendEmptyFallback() {
         properties.setStreamingTransport("draft");
         properties.getDisplay().setToolProgress("off");

@@ -477,6 +477,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
             // Persist the backend-assigned session ID for conversation history continuity
             if (!interrupted && result.backendSessionId() != null) {
                 sessionStore.updateBackendSessionId(session.getId(), result.backendSessionId());
+                session.setBackendSessionId(result.backendSessionId());
             }
 
             boolean confirmed = result.streamFinalized();
@@ -568,6 +569,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
             List<String> continuations = goalAutoContinueService.runAutoContinue(
                 session, result.content(), () -> busyHandler.isInterrupted(chatIdForLambda));
             for (String continuation : continuations) {
+                if (busyHandler.isInterrupted(chatId)) break;
                 if (continuation != null && !continuation.isBlank()) {
                     sendFormatted(chatId, continuation, event.messageId(), threadId);
                 }
@@ -583,6 +585,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         try {
             if (delivered && !busyHandler.isInterrupted(chatId)) {
                 streamEditor.afterConfirmedDelivery(chatId);
+                streamEditor.clearStream(chatId);
                 if (!busyHandler.isInterrupted(chatId)) afterTurn(chatId, event, session, result, threadId);
             }
             if (busyHandler.isInterrupted(chatId) || (result != null && result.turnCancelled())) {
@@ -1019,46 +1022,32 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
     }
 
     private boolean sendFormattedWithReceipt(long chatId, String text, long userMessageId, long messageThreadId) {
-        if (responseFilter.shouldFilter(text)) {
-            return false;
+        return sendFormattedParts(chatId, text, userMessageId, messageThreadId, true);
+    }
+
+    private boolean sendFormattedParts(long chatId, String text, long userMessageId, long messageThreadId,
+                                       boolean requireReceipt) {
+        if (responseFilter.shouldFilter(text)) return false;
+        if (properties.isMediaDeliveryEnabled()) text = mediaDeliveryService.extractMediaTags(text).cleanedText();
+        if (text == null || text.isBlank()) return false;
+
+        Integer thread = messageThreadId > 0 ? (int) messageThreadId : null;
+        String mode = properties.getParseMode();
+        String replyMode = properties.getReplyToMode();
+        var parts = MessageSplitter.prepare(StreamEditor.stripThinkTagsRegex(text), mode);
+        for (int i = 0; i < parts.size(); i++) {
+            var part = parts.get(i);
+            boolean fits = MessageSplitter.fits(part.original(), part.formatted());
+            String payload = fits ? part.formatted() : part.original();
+            String parseMode = fits ? mode : null;
+            Long reply = userMessageId > 0 && ("all".equalsIgnoreCase(replyMode)
+                || i == 0 && "first".equalsIgnoreCase(replyMode)) ? userMessageId : null;
+            var sent = thread == null
+                ? telegramClient.sendMessage(chatId, payload, parseMode, reply, null)
+                : telegramClient.sendMessage(chatId, payload, parseMode, reply, thread, false);
+            if (requireReceipt && sent.isEmpty()) return false;
         }
-        Integer threadId = messageThreadId > 0 ? (int) messageThreadId : null;
-        String textForDisplay = text;
-        if (properties.isMediaDeliveryEnabled()) {
-            MediaDeliveryService.ExtractionResult extraction = mediaDeliveryService.extractMediaTags(text);
-            textForDisplay = extraction.cleanedText();
-        }
-        if (textForDisplay == null || textForDisplay.isBlank()) {
-            return false;
-        }
-        String parseMode = properties.getParseMode();
-        String formatted = StreamEditor.stripThinkTagsRegex(textForDisplay);
-        if ("MarkdownV2".equalsIgnoreCase(parseMode)) {
-            formatted = MarkdownConverter.convert(formatted);
-        } else if ("HTML".equalsIgnoreCase(parseMode)) {
-            formatted = formatted.replace("&", "&amp;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;");
-        }
-        boolean sentAny = false;
-        List<String> chunks = MessageSplitter.split(formatted);
-        for (int i = 0; i < chunks.size(); i++) {
-            String chunk = chunks.get(i);
-            if (chunk.isBlank()) {
-                continue;
-            }
-            Long replyToMessageId = "all".equalsIgnoreCase(properties.getReplyToMode()) && userMessageId > 0
-                || "first".equalsIgnoreCase(properties.getReplyToMode()) && i == 0 && userMessageId > 0
-                ? userMessageId : null;
-            Optional<Long> sent = threadId == null
-                ? telegramClient.sendMessage(chatId, chunk, parseMode, replyToMessageId, null)
-                : telegramClient.sendMessage(chatId, chunk, parseMode, replyToMessageId, threadId, false);
-            if (sent.isEmpty()) {
-                return false;
-            }
-            sentAny = true;
-        }
-        return sentAny;
+        return !parts.isEmpty();
     }
 
     /**
@@ -1083,64 +1072,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
      * @param messageThreadId the Telegram forum thread ID (0 = no thread routing)
      */
     private void sendFormatted(long chatId, String text, long userMessageId, long messageThreadId) {
-        // B2.8: Response filter — filter silent/empty responses
-        if (responseFilter.shouldFilter(text)) {
-            log.debug("Response filtered (silent or empty) for chat {}", chatId);
-            return;
-        }
-
-        Integer threadId = messageThreadId > 0 ? (int) messageThreadId : null;
-
-        // S-2: Extract MEDIA: tags and bare file paths using MediaDeliveryService
-        String textForDisplay = text;
-        if (properties.isMediaDeliveryEnabled()) {
-            MediaDeliveryService.ExtractionResult extraction = mediaDeliveryService.extractMediaTags(text);
-            textForDisplay = extraction.cleanedText();
-        }
-
-        if (textForDisplay.isBlank()) {
-            return;
-        }
-
-        String parseMode = properties.getParseMode();
-        String formatted = textForDisplay;
-        // Audit M21: strip think blocks from non-streaming (fallback) path.
-        // StreamEditor strips them during streaming, but sendFormatted is used
-        // when streaming didn't finalize — without this, raw think tags reach the user.
-        formatted = StreamEditor.stripThinkTagsRegex(formatted);
-        if ("MarkdownV2".equalsIgnoreCase(parseMode)) {
-            formatted = MarkdownConverter.convert(formatted);
-        } else if ("HTML".equalsIgnoreCase(parseMode)) {
-            // Audit M20: escape HTML-special characters in LLM output to prevent
-            // injection of <a>, <b>, <code> and other Telegram-allowed tags.
-            formatted = formatted.replace("&", "&amp;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;");
-        }
-
-        // B1.6: Thread reply mode — off/all/first
-        String replyMode = properties.getReplyToMode();
-        Long replyToMessageId = null; // null = no reply_to by default
-
-        List<String> chunks = MessageSplitter.split(formatted);
-        for (int i = 0; i < chunks.size(); i++) {
-            String chunk = chunks.get(i);
-            if (!chunk.isBlank()) {
-                if ("all".equalsIgnoreCase(replyMode) && userMessageId > 0) {
-                    replyToMessageId = userMessageId;
-                } else if ("first".equalsIgnoreCase(replyMode) && i == 0 && userMessageId > 0) {
-                    replyToMessageId = userMessageId;
-                } else {
-                    replyToMessageId = null;
-                }
-                // Use 6-arg sendMessage when thread routing is needed, 5-arg otherwise
-                if (threadId != null) {
-                    telegramClient.sendMessage(chatId, chunk, parseMode, replyToMessageId, threadId, false);
-                } else {
-                    telegramClient.sendMessage(chatId, chunk, parseMode, replyToMessageId, null);
-                }
-            }
-        }
+        sendFormattedParts(chatId, text, userMessageId, messageThreadId, false);
     }
 
     @PostConstruct
