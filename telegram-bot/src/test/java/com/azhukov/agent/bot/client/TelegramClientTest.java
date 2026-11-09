@@ -112,7 +112,10 @@ class TelegramClientTest {
             .isInstanceOfSatisfying(TelegramClient.SendRefusalException.class,
                 ex -> assertThat(ex.getRetryAfterSeconds()).isEqualTo(37));
         assertThat(client.getLastApiErrorCode()).isEqualTo(429);
-        verify(restClient, times(1)).post();
+        assertThatThrownBy(() -> client.sendMessageChecked(1L, "again", null, null, null, null, false))
+            .isInstanceOfSatisfying(TelegramClient.SendRefusalException.class,
+                ex -> assertThat(ex.getRetryAfterSeconds()).isEqualTo(37));
+        verify(restClient, times(2)).post();
     }
 
     @Test
@@ -1231,6 +1234,19 @@ class TelegramClientTest {
                     assertThat(tae.isRateLimit()).isTrue();
                     assertThat(tae.getRetryAfter()).isEqualTo(3);
                 });
+        }
+
+        @Test
+        @DisplayName("HTTP 429 does not suppress a later request")
+        void rateLimit429DoesNotSuppressAnotherChat() {
+            var error = errorResponseWithParams(429, "Too Many Requests", Map.of("retry_after", IntNode.valueOf(1)));
+            stubPostChain(error);
+            when(responseSpec.body(TelegramResponse.class)).thenReturn(error, successResponseWithResult(true));
+
+            assertThatThrownBy(() -> client.callApi("sendMessage", Map.of("chat_id", 1)))
+                .isInstanceOf(TelegramApiException.class);
+            assertThat(client.callApi("editMessageText", Map.of("chat_id", 2))).isPresent();
+            verify(restClient, times(2)).post();
         }
 
         @Test
