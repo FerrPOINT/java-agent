@@ -25,7 +25,6 @@ class StreamSessionTest {
         assertThat(s.lastEditTime).isZero();
         assertThat(s.floodStrikes.get()).isZero();
         assertThat(s.streamingDisabled).isFalse();
-        assertThat(s.floodFallbackBuffer.length()).isZero();
         assertThat(s.lastSentText).isNull();
         assertThat(s.thinkScrubber).isNull();
         assertThat(s.streamStartTime).isZero();
@@ -49,7 +48,6 @@ class StreamSessionTest {
         s.lastEditTime = 1234L;
         s.floodStrikes.set(3);
         s.streamingDisabled = true;
-        s.floodFallbackBuffer.append("buffered");
         s.lastSentText = "sent";
         s.thinkScrubber = new ThinkTagFilter.ThinkScrubber();
         s.streamStartTime = 999L;
@@ -57,6 +55,7 @@ class StreamSessionTest {
         s.charsSinceLastEdit = 50;
         s.currentToolName = "WebSearch";
         s.currentMessageId.set(42L);
+        s.partialFinalDelivery = true;
         s.heartbeatMessageId.set(99L);
         s.useDraftStreaming = true;
         s.draftId = 7;
@@ -69,11 +68,11 @@ class StreamSessionTest {
         assertThat(s.lastEditTime).isZero();
         assertThat(s.floodStrikes.get()).isZero();
         assertThat(s.streamingDisabled).isFalse();
-        assertThat(s.floodFallbackBuffer.length()).isZero();
         assertThat(s.lastSentText).isNull();
         assertThat(s.thinkScrubber).isNull();
         assertThat(s.currentToolName).isNull();
         assertThat(s.currentMessageId.get()).isEqualTo(-1L);
+        assertThat(s.partialFinalDelivery).isFalse();
         assertThat(s.heartbeatMessageId.get()).isEqualTo(-1L);
         assertThat(s.useDraftStreaming).isFalse();
         assertThat(s.draftId).isZero();
@@ -140,15 +139,6 @@ class StreamSessionTest {
         assertThat(s.currentMessageId.get()).isEqualTo(-1L);
         s.currentMessageId.set(99L);
         assertThat(s.currentMessageId.get()).isEqualTo(99L);
-    }
-
-    @Test
-    void floodFallbackBuffer_isMutableStringBuilder() {
-        StreamSession s = new StreamSession();
-        s.floodFallbackBuffer.append("part1 ").append("part2");
-        assertThat(s.floodFallbackBuffer.toString()).isEqualTo("part1 part2");
-        s.floodFallbackBuffer.setLength(0);
-        assertThat(s.floodFallbackBuffer.length()).isZero();
     }
 
     @Test

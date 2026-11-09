@@ -65,15 +65,12 @@ import jakarta.annotation.PreDestroy;
  * streaming message is deleted and a new one is sent with the final content,
  * so the message gets a fresh timestamp.
  *
- * <p>Split during streaming: if formatted text exceeds
- * {@code streamingMaxChars}, the current message is edited with the first
- * portion and remaining text is sent as new messages (threaded as replies).
+ * <p>The preview is bounded. Only final delivery publishes the full text.
  *
  * <p>400 vs 429: distinguishes "message too long" (400) from rate limit (429).
  * 400 does NOT increment flood strikes — just truncates and retries.
  *
- * <p>finalizeStream fallback: if editMessageText returns false, tries
- * sendMessage as a new message.
+ * <p>An unconfirmed final edit leaves the existing preview in place.
  *
  * <p>ThinkScrubber: stores partial closing tags across chunks and prepends
  * to the next chunk. Supports {@code <reasoning_scratchpad>} tags.
@@ -82,6 +79,8 @@ import jakarta.annotation.PreDestroy;
 @Slf4j
 @RequiredArgsConstructor
 public class StreamEditor {
+
+    public static final long FLOOD_DELIVERY_WINDOW_SECONDS = 30;
 
     private final TelegramClient telegramClient;
     private final BotProperties properties;
@@ -105,6 +104,9 @@ public class StreamEditor {
 
     // Heartbeat
     private int heartbeatIntervalSeconds;
+    private final java.util.concurrent.ExecutorService deliveryWorkers = Executors.newVirtualThreadPerTaskExecutor();
+    private final ScheduledExecutorService deliveryExecutor =
+        Executors.newSingleThreadScheduledExecutor(Thread.ofPlatform().daemon().name("telegram-delivery").factory());
     private final ScheduledExecutorService heartbeatExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "stream-heartbeat");
         t.setDaemon(true);
@@ -139,15 +141,10 @@ public class StreamEditor {
         streamCursor = properties.getStreamCursor();
         heartbeatIntervalSeconds = properties.getHeartbeatIntervalSeconds();
         freshFinalTimeoutMs = properties.getFreshFinalTimeoutMs();
-        // BUG FIX (audit H14): clamp the streaming split threshold to the Telegram
-        // editMessageText limit. streaming-max-chars is documented as a rich-message
-        // style limit (32768) but editStreamSplit uses it to chunk edited text —
-        // anything above 4096 makes Telegram reject every edit with 400 and the
-        // stream freezes until finalize.
         int configuredMax = properties.getStreamingMaxChars();
         streamingMaxChars = configuredMax > 0
             ? Math.min(configuredMax, MessageSplitter.TELEGRAM_MAX_LENGTH)
-            : configuredMax;
+            : MessageSplitter.TELEGRAM_MAX_LENGTH;
         bufferThreshold = properties.getBufferThreshold();
         streamingTransport = properties.getStreamingTransport() != null
             ? properties.getStreamingTransport().toLowerCase() : "auto";
@@ -157,6 +154,8 @@ public class StreamEditor {
 
     @PreDestroy
     void destroy() {
+        deliveryExecutor.shutdownNow();
+        deliveryWorkers.shutdownNow();
         heartbeatExecutor.shutdownNow();
     }
 
@@ -177,8 +176,13 @@ public class StreamEditor {
      */
     void removeSession(long chatId) {
         StreamSession s = sessions.remove(chatId);
-        if (s != null && s.heartbeatFuture != null) {
-            s.heartbeatFuture.cancel(false);
+        if (s != null) {
+            stopHeartbeat(s);
+            synchronized (s) {
+                s.deliveryCancelled = true;
+                if (s.deliveryRetry != null) s.deliveryRetry.cancel(false);
+                if (!s.deliveryDraining) failDelivery(s);
+            }
         }
     }
 
@@ -232,6 +236,7 @@ public class StreamEditor {
     }
 
     Optional<Long> startStream(long chatId, String initialText, String chatType, StreamSession session) {
+        session.partialFinalDelivery = false;
         // S5: "off" transport — no streaming, just record start time and return.
         // Content will be buffered by the caller and sent on finalizeStream.
         if ("off".equals(streamingTransport)) {
@@ -314,7 +319,7 @@ public class StreamEditor {
         }
 
         // B7: Initial message — silent if configured
-        Optional<Long> messageId = sendMessageWithNotification(chatId, formatted, false);
+        Optional<Long> messageId = sendMessageWithNotification(chatId, previewText(formatted, ""), false);
         if (messageId.isPresent()) {
             session.lastEditTime = System.currentTimeMillis();
             session.lastRenderedChars = formatted.length();
@@ -347,10 +352,6 @@ public class StreamEditor {
      * <p>Streaming cursor: appends the configured cursor character to the
      * end of the text to give visual feedback that streaming is active.
      *
-     * <p>Split: if formatted text exceeds streamingMaxChars, edits the
-     * current message with the first portion and sends remaining as new
-     * messages (threaded as replies).
-     *
      * @param chatId    target chat id
      * @param messageId the message id returned by {@link #startStream}
      * @param text      the full accumulated text to display
@@ -362,17 +363,11 @@ public class StreamEditor {
     }
 
     boolean editStream(long chatId, long messageId, String text, StreamSession session) {
+        if (session.deferredDelivery != null || session.partialFinalDelivery) return false;
         // Update last token time (token arrived)
         session.lastTokenTime = System.currentTimeMillis();
 
-        // S5: "off" transport — buffer content, no streaming edits
-        if ("off".equals(streamingTransport)) {
-            String scrubbed = scrubThink(session, text);
-            String formatted = formatForTelegramDelegate(scrubbed);
-            session.floodFallbackBuffer.setLength(0);
-            session.floodFallbackBuffer.append(formatted);
-            return false;
-        }
+        if ("off".equals(streamingTransport) || session.streamingDisabled) return false;
 
         // S5: Native draft streaming — route mid-stream frames through sendDraft.
         if (session.useDraftStreaming && !session.streamingDisabled) {
@@ -386,17 +381,6 @@ public class StreamEditor {
             }
         }
 
-        // B5: Check if streaming has been disabled due to flood limits
-        if (session.streamingDisabled) {
-            // P2-16: Buffer content in fallback mode — will be sent as a new message on finalize
-            String scrubbedFallback = scrubThink(session, text);
-            String formattedFallback = formatForTelegramDelegate(scrubbedFallback);
-            session.floodFallbackBuffer.setLength(0);
-            session.floodFallbackBuffer.append(formattedFallback);
-            log.debug("Streaming edits disabled for chat {} due to flood limits, buffering ({} chars)", chatId, formattedFallback.length());
-            return false;
-        }
-
         // Hermes: if no message was sent yet (startStream returned empty because
         // initial text was <4 chars), check if we now have >=4 chars to send the first message.
         long currentMsg = session.currentMessageId.get();
@@ -406,7 +390,7 @@ public class StreamEditor {
             // Edit-based streaming sends with parseMode=null (plain text) — no MarkdownV2 escaping.
             String formatted = scrubbed;
             if (!formatted.isEmpty() && formatted.length() >= 4) {
-                Optional<Long> newMsgId = sendMessageWithNotification(chatId, formatted + streamCursor, false);
+                Optional<Long> newMsgId = sendMessageWithNotification(chatId, previewText(formatted, streamCursor), false);
                 if (newMsgId.isPresent()) {
                     session.currentMessageId.set(newMsgId.get());
                     session.lastEditTime = System.currentTimeMillis();
@@ -464,7 +448,7 @@ public class StreamEditor {
         }
 
         // Append streaming cursor
-        String withCursor = formatted + streamCursor;
+        String withCursor = previewText(formatted, streamCursor);
 
         // P2-16: Redundant edit skip — if the new text (with cursor) is identical
         // to what was last sent to Telegram, skip the edit to avoid unnecessary API calls.
@@ -472,11 +456,6 @@ public class StreamEditor {
         if (lastSent != null && lastSent.equals(withCursor)) {
             log.trace("Skipping redundant edit for chat {} (content unchanged)", chatId);
             return true;
-        }
-
-        // Split if text exceeds max chars
-        if (streamingMaxChars > 0 && withCursor.length() > streamingMaxChars) {
-            return editStreamSplit(chatId, effectiveMessageId, withCursor, session);
         }
 
         // B7: Silent notification during streaming
@@ -488,7 +467,7 @@ public class StreamEditor {
         } catch (TelegramApiException e) {
             if (e.isRateLimit()) {
                 // 429 from editMessageText — apply adaptive flood handling.
-                success = EditThrottlePolicy.handleEditFailure(telegramClient, chatId, effectiveMessageId, formatted, session, 429, minIntervalMs, streamingSilent, streamingMaxChars, this::formatForTelegramDelegate);
+                success = EditThrottlePolicy.handleEditFailure(telegramClient, chatId, effectiveMessageId, withCursor, session, 429, minIntervalMs, streamingSilent, streamingMaxChars);
             } else {
                 throw e;
             }
@@ -505,87 +484,19 @@ public class StreamEditor {
             // B5: Edit failed. BUG FIX: use the error code from the typed exception —
             // TelegramClient.getLastApiErrorCode() is a shared mutable side-channel
             // and races between concurrently streaming chats (wrong flood strikes).
-            success = EditThrottlePolicy.handleEditFailure(telegramClient, chatId, effectiveMessageId, formatted, session,
-                telegramClient.getLastApiErrorCode(), minIntervalMs, streamingSilent, streamingMaxChars, this::formatForTelegramDelegate);
+            success = EditThrottlePolicy.handleEditFailure(telegramClient, chatId, effectiveMessageId, withCursor, session,
+                telegramClient.getLastApiErrorCode(), minIntervalMs, streamingSilent, streamingMaxChars);
         }
         return success;
     }
 
-    /**
-     * Handle splitting during streaming: edit current message with first
-     * portion, send remaining as new messages (threaded as replies).
-     */
-    private boolean editStreamSplit(long chatId, long messageId, String withCursor, StreamSession session) {
-        // First portion: first streamingMaxChars chars (minus cursor space)
-        int firstLen = streamingMaxChars - streamCursor.length();
-        if (firstLen <= 0) firstLen = streamingMaxChars;
-        firstLen = Math.min(firstLen, withCursor.length());
-
-        // Hermes parity (stream_consumer.py:1146 _custom_unit_to_cp): avoid
-        // splitting a Java UTF-16 surrogate pair. If the char at firstLen-1 is
-        // a high surrogate, step back one to include the full pair in the first
-        // chunk (the remainder starts at a code point boundary).
-        if (firstLen > 0 && firstLen < withCursor.length()
-            && Character.isHighSurrogate(withCursor.charAt(firstLen - 1))) {
-            firstLen--;
+    private String previewText(String text, String cursor) {
+        String suffix = cursor.length() < streamingMaxChars ? cursor : "";
+        int end = Math.min(text.length(), streamingMaxChars - suffix.length());
+        if (end > 0 && end < text.length() && Character.isSurrogatePair(text.charAt(end - 1), text.charAt(end))) {
+            end--;
         }
-
-        // Code fence balancing: if the split point falls inside an open ``` block,
-        // close the fence at the end of the first chunk and reopen it at the start
-        // of the remainder (Hermes balance_fences_across_chunks).
-        String firstPart = withCursor.substring(0, firstLen);
-        String remainder = withCursor.length() > firstLen ? withCursor.substring(firstLen) : "";
-
-        // Count ``` (triple backtick) occurrences in firstPart
-        // If odd, we're inside an unclosed code block at the split point
-        int fenceCount = TelegramTextFormatter.countCodeFences(firstPart);
-        if (fenceCount % 2 != 0) {
-            // Inside a code block — close in firstPart, reopen in remainder
-            firstPart = firstPart + "\n```";
-            remainder = "```\n" + remainder;
-        }
-
-        boolean disableNotification = streamingSilent;
-        boolean success;
-        try {
-            // Hermes: raw text (no parse_mode) during streaming
-            success = telegramClient.editMessageText(chatId, messageId, firstPart, null, disableNotification);
-        } catch (TelegramApiException e) {
-            if (e.isRateLimit()) {
-                EditThrottlePolicy.handleEditFailure(telegramClient, chatId, messageId, firstPart, session, 429, minIntervalMs, streamingSilent, streamingMaxChars, this::formatForTelegramDelegate);
-                return false;
-            } else {
-                throw e;
-            }
-        }
-
-        if (success) {
-            session.lastEditTime = System.currentTimeMillis();
-            session.floodStrikes.set(0);
-        } else {
-            EditThrottlePolicy.handleEditFailure(telegramClient, chatId, messageId, firstPart, session, 400, minIntervalMs, streamingSilent, streamingMaxChars, this::formatForTelegramDelegate);
-            return false;
-        }
-
-        // Send remainder as new messages, threaded as replies to previous
-        long prevMsgId = messageId;
-        if (!remainder.isEmpty()) {
-            // Split remainder further if needed
-            int pos = 0;
-            while (pos < remainder.length()) {
-                int end = Math.min(pos + streamingMaxChars, remainder.length());
-                String chunk = remainder.substring(pos, end);
-                Optional<Long> newMsgId = telegramClient.sendMessage(
-                    chatId, chunk, null, prevMsgId, null);
-                if (newMsgId.isPresent()) {
-                    prevMsgId = newMsgId.get();
-                    session.currentMessageId.set(prevMsgId);
-                }
-                pos = end;
-            }
-        }
-
-        return true;
+        return text.substring(0, end) + suffix;
     }
 
     /**
@@ -602,19 +513,27 @@ public class StreamEditor {
      * old streaming message and sends a NEW one with the final content
      * (fresh timestamp).
      *
-     * <p>Fallback: if editMessageText returns false, tries sendMessage.
+     * <p>An unconfirmed edit preserves the existing preview without another send.
      *
      * @param chatId    target chat id
      * @param messageId the message id returned by {@link #startStream}
      * @param finalText the complete final text
      * @return {@code true} if the edit succeeded
      */
+    public boolean finalizeTurn(long chatId, String text, long userMessageId, long threadId) {
+        var session = sessionFor(chatId);
+        session.replyToMessageId = userMessageId;
+        session.messageThreadId = threadId;
+        return finalizeStream(chatId, -1L, text, session);
+    }
+
     public boolean finalizeStream(long chatId, long messageId, String finalText) {
         StreamSession session = sessionFor(chatId);
         return finalizeStream(chatId, messageId, finalText, session);
     }
 
     boolean finalizeStream(long chatId, long messageId, String finalText, StreamSession session) {
+        if (session.partialFinalDelivery) return false;
         // R8: close orphaned code fences BEFORE delivery (Hermes ensure_closed_code_fences)
         finalText = ensureClosedCodeFences(finalText);
         // Stop heartbeat
@@ -629,10 +548,11 @@ public class StreamEditor {
         // Silence marker suppression (Hermes parity: _is_intentional_silence_response).
         // If the final text is a silence marker, retract the streaming message instead
         // of showing NO_REPLY/[SILENT]/*** to the user.
-        if (SilenceMarkerUtils.isSilenceMarker(finalText)) {
+        if (finalText.isBlank() || SilenceMarkerUtils.isSilenceMarker(finalText)) {
+            if (session.deferredDelivery != null) return false;
             log.debug("Silence marker detected for chat {}, retracting streaming message", chatId);
             try {
-                telegramClient.deleteMessage(chatId, messageId);
+                if (messageId > 0) telegramClient.deleteMessage(chatId, messageId);
             } catch (Exception e) {
                 log.debug("Failed to delete streaming message for silence marker: {}", e.getMessage());
             }
@@ -640,197 +560,61 @@ public class StreamEditor {
             return true;
         }
 
-        // S5: Draft streaming — the draft is "committed" by sending the final
-        // text as a regular sendMessage. Drafts have no message_id to edit or
-        // delete; the draft preview clears naturally on the client when the
-        // real message arrives. Try rich message delivery first (same as the
-        // edit-based finalize path), then fall back to MarkdownV2 sendMessage.
-        if (session.useDraftStreaming) {
-            // finalText already scrubbed above (before silence marker check)
-            String scrubbed = finalText;
-
-            // P1: Try rich message delivery first
-            if (richMessageSupport != null && richMessageSupport.shouldAttemptRich(scrubbed)) {
-                Optional<Long> richMsgId = richMessageSupport.sendRichMessage(chatId, scrubbed, null, null);
-                if (richMsgId.isPresent()) {
-                    log.debug("Draft finalized via rich message for chat {}", chatId);
-                    removeSession(chatId);
-                    return true;
-                }
-                log.debug("Rich message delivery failed for chat {}, falling back to MarkdownV2", chatId);
-            }
-
-            // Send the final text as a formatted message (commits the draft)
-            // Hermes parity: apply MarkdownConverter before delivery, not raw markdown
-            Optional<Long> finalMsgId = sendFormattedFinalMessage(chatId, scrubbed);
-            removeSession(chatId);
-            if (finalMsgId.isPresent()) {
-                log.debug("Draft finalized for chat {}, messageId={}", chatId, finalMsgId.get());
-                return true;
-            } else {
-                log.warn("Draft finalize sendMessage failed for chat {}", chatId);
-                return false;
-            }
-        }
-
-        // P2-16: If we were in flood fallback mode, send the buffered content
-        // as a new message (or continuation messages) instead of editing.
-        StringBuffer buffer = session.floodFallbackBuffer;
-        if (buffer.length() > 0) {
-            log.info("Flood fallback mode: sending buffered content ({} chars) as new message for chat {}", buffer.length(), chatId);
-            String bufferedContent = buffer.toString();
-            // CRITICAL: delivery is a two-phase replacement. The old draft is
-            // the user's only visible copy until Telegram accepts the final send.
-            // Deleting it first turns a 429/transport failure into total response
-            // loss (incident 2026-09-15: Telegram retry_after=269).
-            long currentMsg = session.currentMessageId.get();
-            long oldMsgId = currentMsg >= 0 ? currentMsg : messageId;
-            Optional<Long> newMsgId = sendFormattedFinalMessage(chatId, bufferedContent, session.messageThreadId);
-            if (newMsgId.isPresent()) {
-                session.floodFallbackBuffer.setLength(0);
-                if (oldMsgId > 0) {
-                    telegramClient.deleteMessage(chatId, oldMsgId);
-                }
-                removeSession(chatId);
-                log.debug("Flood fallback sent for chat {}, new messageId={}", chatId, newMsgId.get());
-                return true;
-            }
-            // Preserve the stream session and original draft. A later completion
-            // retry / user retry can still recover it; never erase visible output
-            // merely because the replacement was rate-limited.
-            log.warn("Flood fallback sendMessage failed for chat {}; preserving draft message {}", chatId, oldMsgId);
+        long current = session.currentMessageId.get();
+        long preview = current > 0 ? current : messageId;
+        if (session.deferredDelivery != null) {
+            enqueueDelivery(chatId, session, formattedOperations(chatId, finalText, session, preview));
             return false;
         }
-
-        // Use internal currentMessageId if available (may differ from messageId
-        // parameter after a segment break created a new message).
-        long currentMsg = session.currentMessageId.get();
-        long effectiveMessageId = currentMsg >= 0 ? currentMsg : messageId;
-
-        // B6: Final scrub — also flush any remaining think-block state
-        // finalText already scrubbed above (before silence marker check)
-        String scrubbed = finalText;
-
-        // Check fresh-final: if streaming exceeded timeout, delete old message
-        // and send a new one
-        long startTime = session.streamStartTime;
-        // Hermes parity: freshFinalTimeoutMs <= 0 means DISABLED (config.py:804).
-        // Java was enabling it for any stream when timeout was 0 (elapsed > 0).
-        boolean freshFinal = freshFinalTimeoutMs > 0
-            && startTime != 0
-            && (System.currentTimeMillis() - startTime) > freshFinalTimeoutMs;
-
-        if (freshFinal) {
-            log.debug("Fresh-final for chat {} (stream exceeded {}ms), replacing old msg {} after the new delivery succeeds",
-                chatId, freshFinalTimeoutMs, effectiveMessageId);
-            // P1: Try rich message delivery first. Never delete the current visible answer first:
-            // an API failure must leave the streamed draft available.
-            if (richMessageSupport != null && richMessageSupport.shouldAttemptRich(scrubbed)) {
-                Optional<Long> richMsgId = richMessageSupport.sendRichMessage(chatId, scrubbed, null, null);
-                if (richMsgId.isPresent()) {
-                    telegramClient.deleteMessage(chatId, effectiveMessageId);
-                    removeSession(chatId);
-                    return true;
-                }
-            }
-            Optional<Long> newMsgId = sendFormattedFinalMessage(chatId, scrubbed, session.messageThreadId);
-            if (newMsgId.isPresent()) {
-                telegramClient.deleteMessage(chatId, effectiveMessageId);
-                removeSession(chatId);
-                log.debug("Fresh-final sent for chat {}, new messageId={}", chatId, newMsgId.get());
-                return true;
-            }
-            log.warn("Fresh-final sendMessage failed for chat {}; preserving draft message {}", chatId, effectiveMessageId);
-            return false;
+        String formatted = formatForTelegramDelegate(finalText);
+        boolean fresh = freshFinalTimeoutMs > 0 && session.streamStartTime != 0
+            && System.currentTimeMillis() - session.streamStartTime > freshFinalTimeoutMs;
+        boolean replace = session.useDraftStreaming || preview <= 0 || fresh
+            || !MessageSplitter.fits(finalText, formatted) || session.streamingDisabled;
+        List<DeliveryOperation> normal = replace
+            ? formattedOperations(chatId, finalText, session, preview)
+            : List.of(editOperation(chatId, preview, finalText, formatted, session));
+        List<DeliveryOperation> operations = normal;
+        if (richMessageSupport != null && richMessageSupport.shouldAttemptRich(finalText)) {
+            String richText = finalText;
+            Long topic = session.messageThreadId > 0 ? session.messageThreadId : null;
+            Long reply = replyFor(session, 0);
+            operations = List.of(new DeliveryOperation(
+                maySend -> richMessageSupport.sendRichMessage(chatId, richText, reply, topic, maySend),
+                error -> richMessageSupport.formatWasRejected(error) ? normal : List.of(), preview));
         }
-
-        // P1: Try rich message delivery first (uses raw markdown, not formatted)
-        if (richMessageSupport != null && richMessageSupport.shouldAttemptRich(scrubbed)) {
-            Optional<Long> richMsgId = richMessageSupport.sendRichMessage(chatId, scrubbed, null, null);
-            if (richMsgId.isPresent()) {
-                // Rich message sent successfully — delete the old streaming message
-                log.debug("Finalized stream via rich message for chat {}, deleting old msg {}", chatId, effectiveMessageId);
-                telegramClient.deleteMessage(chatId, effectiveMessageId);
-                removeSession(chatId);
-                return true;
-            }
-            // Rich failed — fall through to MarkdownV2 edit
-            log.debug("Rich message delivery failed for chat {}, falling back to MarkdownV2", chatId);
-        }
-
-        // Hermes: on finalize, apply MarkdownConverter formatting (raw during streaming, formatted final)
-        String formatted = formatForTelegramDelegate(scrubbed);
-        // B7: Final message — NOT silent (push notification enabled)
-        boolean success;
-        try {
-            success = telegramClient.editMessageText(chatId, effectiveMessageId, formatted, parseMode, false);
-        } catch (TelegramApiException e) {
-            if (e.isRateLimit()) {
-                // 429 on final edit — fall through to sendMessage fallback
-                log.warn("Final edit 429 rate limited for chat {}, trying sendMessage fallback", chatId);
-                success = false;
-            } else if (e.isParseError()) {
-                // 400 parse error on final edit — text may not be properly escaped;
-                // fall back to plain text edit to avoid visible backslashes.
-                log.warn("Final edit parse error for chat {}, trying plain text edit", chatId);
-                success = telegramClient.editMessageText(chatId, effectiveMessageId, scrubbed, null, false);
-            } else {
-                throw e;
-            }
-        }
-
-        // Fallback: if edit failed, try sendMessage as a new message
-        if (!success) {
-            log.warn("Final edit failed for chat {}, messageId={}, trying sendMessage fallback", chatId, effectiveMessageId);
-            Optional<Long> fallbackMsgId = sendFormattedMessage(chatId, formatted);
-            if (fallbackMsgId.isPresent()) {
-                // Optionally delete the old stale message
-                telegramClient.deleteMessage(chatId, effectiveMessageId);
-                removeSession(chatId);
-                log.debug("Finalize fallback succeeded for chat {}, new messageId={}", chatId, fallbackMsgId.get());
-                return true;
-            }
-        }
-
-        if (success) {
+        Optional<Long> confirmed = enqueueDelivery(chatId, session, operations);
+        if (confirmed.isPresent() && !hasDeferredDelivery(chatId)) {
+            afterConfirmedDelivery(chatId);
             removeSession(chatId);
-            log.debug("Finalized stream for chat {}, messageId={}", chatId, effectiveMessageId);
-        } else {
-            log.warn("Failed to finalize stream for chat {}, messageId={}; preserving visible draft", chatId, effectiveMessageId);
+            return true;
         }
-        return success;
+        return false;
     }
 
-    /**
-     * Clears throttle state for a chat (e.g. after an error or session reset).
-     *
-     * @param chatId target chat id
-     */
+    /** Remove the current preview without creating an empty Telegram message. */
+    public void discardStreamPreview(long chatId) {
+        StreamSession session = sessions.get(chatId);
+        if (session == null) return;
+        stopHeartbeat(session);
+        long messageId = session.currentMessageId.get();
+        try {
+            if (messageId > 0) telegramClient.deleteMessage(chatId, messageId);
+        } catch (RuntimeException e) {
+            log.debug("Failed to remove streaming preview for chat {}: {}", chatId, e.getMessage());
+        } finally {
+            removeSession(chatId);
+        }
+    }
+
+    public boolean hasUnconfirmedDelivery(long chatId) {
+        StreamSession session = sessions.get(chatId);
+        return session != null && session.partialFinalDelivery;
+    }
+
+    /** Clears streaming state after an error or session reset. */
     public void clearStream(long chatId) {
         removeSession(chatId);
-    }
-
-    /**
-     * Record that final stream delivery could not replace the visible draft.
-     * The caller's regular fallback send must use the complete response rather
-     * than a stale partial stream buffer.
-     */
-    public void recordFinalDeliveryFailure(long chatId, String finalText) {
-        StreamSession session = sessionFor(chatId);
-        session.pendingFinalText = finalText;
-        log.warn("final_delivery_pending chat={} chars={}", chatId,
-            finalText == null ? 0 : finalText.length());
-    }
-
-    /** Consume the full response retained after a terminal stream-delivery failure. */
-    public String takePendingFinalText(long chatId) {
-        StreamSession session = sessions.get(chatId);
-        if (session == null) {
-            return null;
-        }
-        String pending = session.pendingFinalText;
-        session.pendingFinalText = null;
-        return pending;
     }
 
     // ─── S5: Native draft streaming ───────────────────────────────
@@ -983,7 +767,7 @@ public class StreamEditor {
     }
 
     void onSegmentBreak(long chatId, long messageId, String accumulatedText, StreamSession session) {
-        if (accumulatedText == null || accumulatedText.isBlank()) {
+        if (session.partialFinalDelivery || accumulatedText == null || accumulatedText.isBlank()) {
             // No text accumulated yet — just clear the tool name
             session.currentToolName = null;
             return;
@@ -996,8 +780,7 @@ public class StreamEditor {
         if (session.useDraftStreaming) {
             // Send the accumulated text as a real message (committing the draft)
             String scrubbed = scrubThink(session, accumulatedText);
-            String formatted = formatForTelegramDelegate(scrubbed);
-            sendFormattedMessage(chatId, formatted);
+            sendFormattedFinalMessage(chatId, scrubbed);
             // Bump draftId for the next segment
             int newDraftId = draftIdCounter.incrementAndGet();
             session.draftId = newDraftId;
@@ -1010,25 +793,18 @@ public class StreamEditor {
             return;
         }
 
-        // Use session.currentMessageId (may differ from messageId parameter after
-        // a previous segment break created a new message). The caller's messageId
-        // is stale once onSegmentBreak resets currentMessageId to -1.
+        // The caller's original ID may refer to an earlier committed segment.
+        // If no current preview exists, send this segment rather than edit a stale ID.
         long effectiveMessageId = session.currentMessageId.get();
-        if (effectiveMessageId < 0) {
-            effectiveMessageId = messageId;
-        }
-
-        // Finalize the current message with MarkdownV2 formatting (Hermes parity).
-        // Hermes sends segment breaks with finalize=True (MarkdownV2 formatted).
         String scrubbed = scrubThink(session, accumulatedText);
-        String formatted = formatForTelegramDelegate(scrubbed);
-        try {
-            telegramClient.editMessageText(chatId, effectiveMessageId, formatted, "MarkdownV2", false);
-        } catch (TelegramApiException e) {
-            if (!e.isRateLimit()) {
-                throw e;
-            }
-            log.debug("Segment break edit 429 rate limited for chat {}, skipping", chatId);
+        if (effectiveMessageId <= 0) {
+            sendFormattedFinalMessage(chatId, scrubbed);
+        } else {
+            String formatted = formatForTelegramDelegate(scrubbed);
+            var operations = !MessageSplitter.fits(scrubbed, formatted)
+                ? formattedOperations(chatId, scrubbed, session, effectiveMessageId)
+                : List.of(editOperation(chatId, effectiveMessageId, scrubbed, formatted, session));
+            enqueueDelivery(chatId, session, operations);
         }
         // Clear the tool name since the tool is done
         session.currentToolName = null;
@@ -1065,6 +841,7 @@ public class StreamEditor {
     }
 
     private void checkHeartbeat(long chatId, StreamSession session) {
+        if (session.partialFinalDelivery || session.deferredDelivery != null) return;
         long startTime = session.streamStartTime;
         long lastToken = session.lastTokenTime;
         long msgId = session.currentMessageId.get();
@@ -1248,69 +1025,237 @@ public class StreamEditor {
         return telegramClient.sendMessage(chatId, text, null, replyToMessageId, threadId, disableNotification);
     }
 
-    /**
-     * Send a plain final message (no parse_mode). Used by draft finalize and
-     * flood fallback where the text has not been MarkdownV2-escaped.
-     */
-    public Optional<Long> sendPlainMessage(long chatId, String text) {
-        // BUG FIX (audit H14): split oversized finals — draft finalize / fresh-final /
-        // flood fallback send raw text that can exceed the Telegram 4096 limit.
-        if (text != null && text.length() > MessageSplitter.TELEGRAM_MAX_LENGTH) {
-            List<String> chunks = MessageSplitter.split(text);
-            Optional<Long> last = Optional.empty();
-            for (String chunk : chunks) {
-                if (chunk.isBlank()) continue;
-                last = telegramClient.sendMessage(chatId, chunk, null, null, null, false);
-            }
-            return last;
+    record DeliveryOperation(java.util.function.Function<java.util.function.BooleanSupplier, Optional<Long>> send,
+                             java.util.function.Function<TelegramApiException, List<DeliveryOperation>> onRefusal,
+                             long replacedPreview) {
+        DeliveryOperation(java.util.function.Function<java.util.function.BooleanSupplier, Optional<Long>> send, long replacedPreview) {
+            this(send, error -> List.of(), replacedPreview);
         }
-        return telegramClient.sendMessage(chatId, text, null, null, null, false);
     }
 
-    /**
-     * Send a formatted final message with MarkdownV2 conversion applied.
-     * Used by draft finalize and fresh-final paths — raw markdown from the model
-     * is converted to Telegram MarkdownV2 before sending (Hermes parity:
-     * format_message is always applied before delivery).
-     */
+    private DeliveryOperation editOperation(long chatId, long messageId, String plain, String formatted,
+                                            StreamSession session) {
+        java.util.function.Function<TelegramApiException, List<DeliveryOperation>> missingPreview = error ->
+            error.getErrorCode() == 400 && java.util.Objects.toString(error.getErrorDescription(), "")
+                .toLowerCase(java.util.Locale.ROOT).contains("message to edit not found")
+                ? formattedOperations(chatId, plain, session, 0) : List.of();
+        var plainEdit = new DeliveryOperation(maySend -> telegramClient.editFinalMessage(chatId, messageId, plain, null, maySend),
+            missingPreview, 0);
+        return new DeliveryOperation(maySend -> telegramClient.editFinalMessage(chatId, messageId, formatted, parseMode, maySend),
+            error -> parseMode != null && error.getErrorCode() == 400 && error.isParseError()
+                ? List.of(plainEdit) : missingPreview.apply(error), 0);
+    }
+
     public Optional<Long> sendFormattedFinalMessage(long chatId, String text) {
-        return sendFormattedFinalMessage(chatId, text, 0L);
+        var session = sessionFor(chatId);
+        return enqueueDelivery(chatId, session, formattedOperations(chatId, text, session, 0));
     }
 
-    /** Final delivery preserving the active forum topic when present. */
-    private Optional<Long> sendFormattedFinalMessage(long chatId, String text, long threadId) {
-        String formatted = formatForTelegramDelegate(text);
-        Integer messageThreadId = threadId > 0 ? (int) threadId : null;
-        if (formatted.length() > MessageSplitter.TELEGRAM_MAX_LENGTH) {
-            List<String> chunks = MessageSplitter.splitAndFormat(text, parseMode);
-            Optional<Long> last = Optional.empty();
-            for (String chunk : chunks) {
-                if (chunk.isBlank()) continue;
-                last = telegramClient.sendMessage(chatId, chunk, parseMode, null, messageThreadId, false);
-            }
-            return last;
+    private List<DeliveryOperation> formattedOperations(long chatId, String text, StreamSession session, long replacedPreview) {
+        Integer topic = session.messageThreadId > 0 ? (int) session.messageThreadId : null;
+        var parts = MessageSplitter.prepare(text, parseMode);
+        var chunks = parts.stream().filter(part -> !part.original().isBlank()).toList();
+        var operations = new java.util.ArrayList<DeliveryOperation>();
+        for (int i = 0; i < chunks.size(); i++) {
+            var part = chunks.get(i);
+            String chunk = part.original();
+            String payload = part.formatted();
+            Long reply = replyFor(session, i);
+            long preview = i == chunks.size() - 1 ? replacedPreview : 0;
+            var plain = new DeliveryOperation(maySend -> telegramClient.sendMessageChecked(
+                chatId, chunk, null, reply, topic, null, false, maySend), preview);
+            operations.add(parseMode == null || payload.length() > MessageSplitter.TELEGRAM_MAX_LENGTH
+                ? plain : new DeliveryOperation(
+                maySend -> telegramClient.sendMessageChecked(chatId, payload, parseMode, reply, topic, null, false, maySend),
+                error -> error.getErrorCode() == 400 && error.isParseError() ? List.of(plain) : List.of(), preview));
         }
-        return telegramClient.sendMessage(chatId, formatted, parseMode, null, messageThreadId, false);
+        return operations;
     }
 
-    /**
-     * Send a formatted final message with parse_mode enabled.
-     * Used by finalizeStream fallback paths where MarkdownV2 formatting is needed.
-     * BUG FIX (audit H14): text above the Telegram limit is split into chunks —
-     * previously a single oversized sendMessage failed with 400 and the final
-     * content was lost entirely.
-     */
-    public Optional<Long> sendFormattedMessage(long chatId, String text) {
-        if (text != null && text.length() > MessageSplitter.TELEGRAM_MAX_LENGTH) {
-            List<String> chunks = MessageSplitter.splitAndFormat(text, parseMode);
-            Optional<Long> last = Optional.empty();
-            for (String chunk : chunks) {
-                if (chunk.isBlank()) continue;
-                last = telegramClient.sendMessage(chatId, chunk, parseMode, null, null);
-            }
-            return last;
+    private Long replyFor(StreamSession session, int part) {
+        String mode = properties.getReplyToMode();
+        return session.replyToMessageId > 0 && ("all".equalsIgnoreCase(mode)
+            || part == 0 && "first".equalsIgnoreCase(mode)) ? session.replyToMessageId : null;
+    }
+
+    private Optional<Long> enqueueDelivery(long chatId, StreamSession session, List<DeliveryOperation> operations) {
+        synchronized (session) {
+            if (session.partialFinalDelivery || session.deliveryCancelled) return Optional.empty();
+            session.delivery.addAll(operations);
+            if (session.deliveryRetry != null || session.deliveryDraining) return Optional.empty();
+            session.deliveryDraining = true;
         }
-        return telegramClient.sendMessage(chatId, text, parseMode, null, null);
+        return deliverQueued(chatId, session);
+    }
+
+    private Optional<Long> deliverQueued(long chatId, StreamSession session) {
+        Optional<Long> last = Optional.empty();
+        for (;;) {
+            DeliveryOperation operation;
+            synchronized (session) {
+                if (session.deliveryCancelled || sessions.get(chatId) != session) {
+                    failDelivery(session);
+                    return Optional.empty();
+                }
+                operation = session.delivery.peekFirst();
+                if (operation == null) {
+                    session.deliveryDraining = false;
+                    if (session.deliverySealed) session.deferredDelivery.complete(true);
+                    return last;
+                }
+                if (session.deferredDelivery != null && System.nanoTime() >= session.floodDeliveryDeadlineNanos) {
+                    failDelivery(session);
+                    return Optional.empty();
+                }
+            }
+            try {
+                last = operation.send().apply(() -> mayDeliver(chatId, session));
+                synchronized (session) {
+                    if (session.deliveryCancelled) {
+                        failDelivery(session);
+                        return Optional.empty();
+                    }
+                    if (last.isEmpty()) {
+                        failDelivery(session);
+                        return Optional.empty();
+                    }
+                    session.delivery.removeFirst();
+                }
+                if (operation.replacedPreview() > 0) {
+                    removeReplacedPreview(chatId, operation.replacedPreview());
+                }
+            } catch (TelegramApiException error) {
+                synchronized (session) {
+                    if (session.deliveryCancelled) {
+                        failDelivery(session);
+                        return Optional.empty();
+                    }
+                    var replacement = operation.onRefusal().apply(error);
+                    if (!replacement.isEmpty()) {
+                        session.delivery.removeFirst();
+                        for (var next : replacement.reversed()) session.delivery.addFirst(next);
+                        continue;
+                    }
+                    if (error.isRateLimit()) scheduleDelivery(chatId, session, error.getRetryAfter());
+                    else failDelivery(session);
+                }
+                return Optional.empty();
+            } catch (RuntimeException error) {
+                log.warn("Could not confirm Telegram delivery for chat {}", chatId, error);
+                synchronized (session) { failDelivery(session); }
+                return Optional.empty();
+            }
+        }
+    }
+
+    private boolean mayDeliver(long chatId, StreamSession session) {
+        synchronized (session) {
+            return sessions.get(chatId) == session && !session.deliveryCancelled
+                && (session.deferredDelivery == null || System.nanoTime() < session.floodDeliveryDeadlineNanos);
+        }
+    }
+
+    private void scheduleDelivery(long chatId, StreamSession session, int retryAfter) {
+        session.deliveryDraining = false;
+        if (session.deliveryCancelled || retryAfter <= 0) {
+            failDelivery(session);
+            return;
+        }
+        long now = System.nanoTime();
+        if (session.deferredDelivery == null) {
+            session.deferredDelivery = new java.util.concurrent.CompletableFuture<>();
+            session.floodDeliveryDeadlineNanos = now + TimeUnit.SECONDS.toNanos(FLOOD_DELIVERY_WINDOW_SECONDS);
+        }
+        long delay = TimeUnit.SECONDS.toNanos(retryAfter);
+        if (delay >= session.floodDeliveryDeadlineNanos - now) {
+            failDelivery(session);
+            return;
+        }
+        try {
+            session.deliveryRetry = deliveryExecutor.schedule(() -> {
+                synchronized (session) {
+                    session.deliveryRetry = null;
+                    if (sessions.get(chatId) != session || session.deliveryCancelled) return;
+                    session.deliveryDraining = true;
+                    try {
+                        deliveryWorkers.execute(() -> deliverQueued(chatId, session));
+                    } catch (java.util.concurrent.RejectedExecutionException e) {
+                        failDelivery(session);
+                    }
+                }
+            }, delay, TimeUnit.NANOSECONDS);
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            failDelivery(session);
+        }
+    }
+
+    private void failDelivery(StreamSession session) {
+        session.partialFinalDelivery = true;
+        session.deliveryDraining = false;
+        session.delivery.clear();
+        if (session.deferredDelivery != null) session.deferredDelivery.complete(false);
+    }
+
+    public boolean hasDeferredDelivery(long chatId) {
+        StreamSession session = sessions.get(chatId);
+        return session != null && session.deferredDelivery != null;
+    }
+
+    public void afterDeferredDelivery(long chatId, Runnable action) {
+        StreamSession session = sessions.get(chatId);
+        if (session != null) synchronized (session) { session.afterDelivery.add(action); }
+    }
+
+    public void afterConfirmedDelivery(long chatId) {
+        StreamSession session = sessions.get(chatId);
+        if (session == null) return;
+        List<Runnable> after;
+        synchronized (session) {
+            after = List.copyOf(session.afterDelivery);
+            session.afterDelivery.clear();
+        }
+        for (Runnable action : after) {
+            if (session.deliveryCancelled || sessions.get(chatId) != session) break;
+            action.run();
+        }
+    }
+
+    private void removeReplacedPreview(long chatId, long preview) {
+        try {
+            if (telegramClient.deleteMessage(chatId, preview)) return;
+        } catch (RuntimeException error) {
+            log.debug("Telegram preview removal failed ({})", error.getClass().getSimpleName());
+        }
+        log.warn("Could not remove replaced Telegram preview {} for chat {}", preview, chatId);
+    }
+
+    public boolean isFinishingDelivery(long chatId) {
+        StreamSession session = sessions.get(chatId);
+        return session != null && session.deliverySealed;
+    }
+
+    public void cancelDeferredDelivery(long chatId) {
+        StreamSession session = sessions.get(chatId);
+        if (session == null) return;
+        synchronized (session) {
+            session.deliveryCancelled = true;
+            if (session.deliveryRetry != null) session.deliveryRetry.cancel(false);
+            // A running drain owns the HTTP call. Keep the chat busy until it returns.
+            if (!session.deliveryDraining) failDelivery(session);
+        }
+    }
+
+    public java.util.concurrent.CompletableFuture<Boolean> sealDeferredDelivery(long chatId) {
+        StreamSession session = sessions.get(chatId);
+        if (session == null) return null;
+        synchronized (session) {
+            if (session.deferredDelivery == null) return null;
+            session.deliverySealed = true;
+            if (!session.deliveryDraining && session.delivery.isEmpty()) {
+                session.deferredDelivery.complete(!session.partialFinalDelivery);
+            }
+            return session.deferredDelivery;
+        }
     }
 
     // ─── Formatting ──────────────────────────────────────────────

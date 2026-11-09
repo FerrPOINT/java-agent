@@ -6,7 +6,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.Optional;
-import java.util.function.Function;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
@@ -35,14 +34,12 @@ class EditThrottlePolicyTest {
 
     private TelegramClient client;
     private StreamSession session;
-    private Function<String, String> identityFormatter;
 
     @BeforeEach
     void setUp() {
         client = mock(TelegramClient.class);
         session = new StreamSession();
         session.resetForNewStream();
-        identityFormatter = Function.identity();
     }
 
     // ─── getEffectiveInterval ──────────────────────────────────────
@@ -121,7 +118,7 @@ class EditThrottlePolicyTest {
         // 429 should increment flood strikes and increase interval
         boolean result = EditThrottlePolicy.handleEditFailure(
             client, 123L, 42L, "some text", session, 429,
-            MIN_INTERVAL, false, 0, identityFormatter);
+            MIN_INTERVAL, false, 0);
 
         assertThat(result).isFalse();
         assertThat(session.floodStrikes.get()).isEqualTo(1);
@@ -135,7 +132,7 @@ class EditThrottlePolicyTest {
         long before = session.editInterval.get();
         EditThrottlePolicy.handleEditFailure(
             client, 123L, 42L, "text", session, 429,
-            MIN_INTERVAL, false, 0, identityFormatter);
+            MIN_INTERVAL, false, 0);
 
         long after = session.editInterval.get();
         assertThat(after).isGreaterThan(before);
@@ -147,17 +144,14 @@ class EditThrottlePolicyTest {
     @Test
     void handleEditFailure_consecutive429_disablesStreamingAfterMaxStrikes() {
         // After MAX_FLOOD_STRIKES consecutive 429s, streaming should be disabled
-        // and flood fallback buffer initialized
         for (int i = 0; i < EditThrottlePolicy.MAX_FLOOD_STRIKES; i++) {
             EditThrottlePolicy.handleEditFailure(
                 client, 123L, 42L, "text " + i, session, 429,
-                MIN_INTERVAL, false, 0, identityFormatter);
+                MIN_INTERVAL, false, 0);
         }
 
         assertThat(session.floodStrikes.get()).isEqualTo(EditThrottlePolicy.MAX_FLOOD_STRIKES);
         assertThat(session.streamingDisabled).isTrue();
-        // Flood fallback buffer should contain formatted content from the last failure
-        assertThat(session.floodFallbackBuffer.length()).isGreaterThan(0);
     }
 
     @Test
@@ -167,7 +161,7 @@ class EditThrottlePolicyTest {
         for (int i = 0; i < 2; i++) {
             EditThrottlePolicy.handleEditFailure(
                 client, 123L, 42L, "text " + i, session, 429,
-                MIN_INTERVAL, false, 0, identityFormatter);
+                MIN_INTERVAL, false, 0);
         }
 
         assertThat(session.floodStrikes.get()).isEqualTo(2);
@@ -176,7 +170,7 @@ class EditThrottlePolicyTest {
         // Third strike hits both WARN_THRESHOLD and MAX_FLOOD_STRIKES
         EditThrottlePolicy.handleEditFailure(
             client, 123L, 42L, "text 2", session, 429,
-            MIN_INTERVAL, false, 0, identityFormatter);
+            MIN_INTERVAL, false, 0);
 
         assertThat(session.floodStrikes.get()).isEqualTo(3);
         assertThat(session.streamingDisabled).isTrue();
@@ -187,13 +181,12 @@ class EditThrottlePolicyTest {
         // Only 2 strikes — streaming should still be active
         EditThrottlePolicy.handleEditFailure(
             client, 123L, 42L, "text 1", session, 429,
-            MIN_INTERVAL, false, 0, identityFormatter);
+            MIN_INTERVAL, false, 0);
         EditThrottlePolicy.handleEditFailure(
             client, 123L, 42L, "text 2", session, 429,
-            MIN_INTERVAL, false, 0, identityFormatter);
+            MIN_INTERVAL, false, 0);
 
         assertThat(session.streamingDisabled).isFalse();
-        assertThat(session.floodFallbackBuffer.length()).isZero();
     }
 
     // ─── handleEditFailure: 400 truncation retry ───────────────────
@@ -207,7 +200,7 @@ class EditThrottlePolicyTest {
         String longText = "x".repeat(5000);
         boolean result = EditThrottlePolicy.handleEditFailure(
             client, 123L, 42L, longText, session, 400,
-            MIN_INTERVAL, false, 4000, identityFormatter);
+            MIN_INTERVAL, false, 4000);
 
         assertThat(result).isTrue();
         assertThat(session.floodStrikes.get()).isZero(); // 400 doesn't increment strikes
@@ -223,7 +216,7 @@ class EditThrottlePolicyTest {
 
         boolean result = EditThrottlePolicy.handleEditFailure(
             client, 123L, 42L, "too long text", session, 400,
-            MIN_INTERVAL, false, 4000, identityFormatter);
+            MIN_INTERVAL, false, 4000);
 
         assertThat(result).isFalse();
         assertThat(session.floodStrikes.get()).isZero();
@@ -237,7 +230,7 @@ class EditThrottlePolicyTest {
 
         boolean result = EditThrottlePolicy.handleEditFailure(
             client, 123L, 42L, "text", session, 400,
-            MIN_INTERVAL, false, 4000, identityFormatter);
+            MIN_INTERVAL, false, 4000);
 
         assertThat(result).isFalse();
         // 400 path doesn't increment strikes even when retry gets 429
@@ -253,27 +246,9 @@ class EditThrottlePolicyTest {
 
         EditThrottlePolicy.handleEditFailure(
             client, 123L, 42L, "text", session, 400,
-            MIN_INTERVAL, false, 4000, identityFormatter);
+            MIN_INTERVAL, false, 4000);
 
         assertThat(session.floodStrikes.get()).isZero();
-    }
-
-    // ─── handleEditFailure: flood fallback buffer formatting ───────
-
-    @Test
-    void handleEditFailure_floodBufferUsesFormatter() {
-        // When streaming is disabled (max strikes), the fallback buffer should
-        // contain the formatted version of the text
-        Function<String, String> upperCase = s -> "[" + s + "]";
-
-        for (int i = 0; i < EditThrottlePolicy.MAX_FLOOD_STRIKES; i++) {
-            EditThrottlePolicy.handleEditFailure(
-                client, 123L, 42L, "text " + i, session, 429,
-                MIN_INTERVAL, false, 0, upperCase);
-        }
-
-        // The last failure's text should be formatted in the buffer
-        assertThat(session.floodFallbackBuffer.toString()).contains("[text 2]");
     }
 
     // ─── handleEditFailure: non-400/non-429 error code ─────────────
@@ -283,7 +258,7 @@ class EditThrottlePolicyTest {
         // Unknown error code should be treated like a flood (increment strikes)
         boolean result = EditThrottlePolicy.handleEditFailure(
             client, 123L, 42L, "text", session, 500,
-            MIN_INTERVAL, false, 0, identityFormatter);
+            MIN_INTERVAL, false, 0);
 
         assertThat(result).isFalse();
         assertThat(session.floodStrikes.get()).isEqualTo(1);

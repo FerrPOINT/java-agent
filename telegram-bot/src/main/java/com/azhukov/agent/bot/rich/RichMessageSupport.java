@@ -105,7 +105,8 @@ public class RichMessageSupport {
  * @param threadId optional message_thread_id
  * @return Optional with message ID on success, empty to signal fallback
  */
- public Optional<Long> sendRichMessage(long chatId, String content, Long replyToId, Long threadId) {
+ public Optional<Long> sendRichMessage(long chatId, String content, Long replyToId, Long threadId,
+                                       java.util.function.BooleanSupplier maySend) {
  if (!shouldAttemptRich(content)) {
  return Optional.empty();
  }
@@ -122,29 +123,18 @@ public class RichMessageSupport {
  payload.put("reply_parameters", Map.of("message_id", replyToId));
  }
 
- try {
- Optional<TelegramResponse> response = telegramClient.callApi("sendRichMessage", payload);
- if (response.isPresent() && response.get().isSuccess()) {
- return Optional.ofNullable(response.get().resultMessageIdAsLong());
+ return telegramClient.callApi("sendRichMessage", payload, maySend)
+     .filter(TelegramResponse::isSuccess)
+     .flatMap(response -> Optional.ofNullable(response.resultMessageIdAsLong()));
  }
- // API returned an error response — check if it's a capability/permanent error
- String error = response.map(TelegramResponse::errorMessage).orElse("unknown error");
- if (isRichCapabilityError(error)) {
- log.debug("[rich] sendRichMessage capability error ({}), latching off", error);
- richSendDisabled = true;
- }
- // Signal fallback for both permanent and per-message errors
- return Optional.empty();
- } catch (Exception e) {
- String msg = e.getMessage() != null ? e.getMessage().toLowerCase() : "";
- if (isRichCapabilityError(msg)) {
- log.debug("[rich] sendRichMessage capability error ({}), latching off", e.getMessage());
- richSendDisabled = true;
- } else {
- log.debug("[rich] sendRichMessage error: {}", e.getMessage());
- }
- return Optional.empty();
- }
+
+ public boolean formatWasRejected(com.azhukov.agent.bot.client.TelegramApiException error) {
+     if (error.getErrorCode() != 400 && error.getErrorCode() != 404) return false;
+     if (isRichCapabilityError(error.getMessage())) {
+         richSendDisabled = true;
+         return true;
+     }
+     return error.isParseError();
  }
 
  /**

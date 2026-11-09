@@ -48,8 +48,6 @@ public class StreamSession {
     public volatile boolean streamingDisabled = false;
 
     // ─── P2-16: Flood fallback buffer ─────────────────────────────
-    /** Buffered formatted content while streaming edits are disabled (flood fallback). */
-    public final StringBuffer floodFallbackBuffer = new StringBuffer();
 
     // ─── P2-16: Redundant edit skip ───────────────────────────────
     /** Last text (with cursor) actually sent to Telegram, to skip no-op edits. */
@@ -83,8 +81,16 @@ public class StreamSession {
     /** Current streaming message id; may differ from the caller's messageId after a split. */
     public final AtomicLong currentMessageId = new AtomicLong(-1L);
 
-    /** Complete final response retained when the last Telegram delivery attempt fails. */
-    public volatile String pendingFinalText = null;
+    /** A final part may already be visible; never replay the whole response. */
+    public volatile boolean partialFinalDelivery = false;
+    final java.util.Deque<StreamEditor.DeliveryOperation> delivery = new java.util.ArrayDeque<>();
+    volatile java.util.concurrent.CompletableFuture<Boolean> deferredDelivery;
+    java.util.concurrent.ScheduledFuture<?> deliveryRetry;
+    long floodDeliveryDeadlineNanos;
+    boolean deliveryDraining;
+    volatile boolean deliverySealed;
+    volatile boolean deliveryCancelled;
+    final java.util.List<Runnable> afterDelivery = new java.util.ArrayList<>();
 
     // ─── S5: Native draft streaming state ────────────────────────
     /** True when draft streaming is active for this chat (else edit-based). */
@@ -108,13 +114,13 @@ public class StreamSession {
         lastEditTime = 0L;
         floodStrikes.set(0);
         streamingDisabled = false;
-        floodFallbackBuffer.setLength(0);
         lastSentText = null;
         lastRenderedChars = 0;
         thinkScrubber = null;
         currentToolName = null;
         currentMessageId.set(-1L);
-        pendingFinalText = null;
+        partialFinalDelivery = false;
+
         heartbeatMessageId.set(-1L);
         replyToMessageId = 0L;
         useDraftStreaming = false;

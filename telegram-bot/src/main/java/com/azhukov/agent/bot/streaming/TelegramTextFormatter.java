@@ -1,7 +1,5 @@
 package com.azhukov.agent.bot.streaming;
 
-import com.azhukov.agent.bot.formatting.MarkdownConverter;
-
 /**
  * Telegram text formatting utilities — extracted from {@link StreamEditor}.
  *
@@ -15,20 +13,14 @@ public final class TelegramTextFormatter {
 
     /**
      * Formats text for Telegram based on the configured parse mode.
-     * For MarkdownV2, escapes special characters using {@link MarkdownConverter}.
+     * For MarkdownV2, escapes special characters using the shared delivery formatter.
      *
      * @param text     raw text from the LLM
      * @param parseMode the configured parse mode (e.g. "MarkdownV2")
      * @return formatted text safe for the configured parse mode
      */
     public static String formatForTelegram(String text, String parseMode) {
-        if (text == null || text.isEmpty()) {
-            return "";
-        }
-        if ("MarkdownV2".equalsIgnoreCase(parseMode)) {
-            return MarkdownConverter.convert(text);
-        }
-        return text;
+        return com.azhukov.agent.bot.formatting.MessageSplitter.format(text, parseMode);
     }
 
     /**

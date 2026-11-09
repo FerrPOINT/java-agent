@@ -287,27 +287,40 @@ public class TelegramClient {
                 // The platform REFUSED the send (429) — nothing was delivered.
                 // Return a known failure; the ledger's flood handling keeps the
                 // platform's own retry_after wait (Hermes flood_not_before).
-                throw new SendRefusalException(429, e.getRetryAfter(), e.getMessage());
+                throw new SendRefusalException(429, e.getRetryAfter(), e.getErrorDescription());
             }
             if (e.getErrorCode() >= 400 && e.getErrorCode() < 500) {
                 // A client-error response explicitly rejects this request.
-                throw new SendRefusalException(e.getErrorCode(), -1, e.getMessage());
+                throw new SendRefusalException(e.getErrorCode(), -1, e.getErrorDescription());
             }
             return Optional.empty();  // server or transport outcome may be ambiguous
         }
     }
 
-    /** Typed known-refusal signal for durable delivery (never ambiguous). */
-    public static class SendRefusalException extends RuntimeException {
-        private final int errorCode;
-        private final int retryAfterSeconds;
-        public SendRefusalException(int errorCode, int retryAfterSeconds, String message) {
-            super(message);
-            this.errorCode = errorCode;
-            this.retryAfterSeconds = retryAfterSeconds;
+    /** A final edit reports Telegram's explicit refusal to the delivery owner. */
+    public Optional<Long> editFinalMessage(long chatId, long messageId, String text, String parseMode,
+                                           BooleanSupplier maySend) {
+        var params = new LinkedHashMap<String, Object>();
+        params.put("chat_id", chatId);
+        params.put("message_id", messageId);
+        params.put("text", text);
+        if (parseMode != null && !parseMode.isBlank()) params.put("parse_mode", parseMode);
+        try {
+            return callApi("editMessageText", params, maySend).map(response -> messageId);
+        } catch (TelegramApiException error) {
+            if (error.getErrorCode() == 400 && error.getMessage().contains("message is not modified")) {
+                return Optional.of(messageId);
+            }
+            throw error;
         }
-        public int getErrorCode() { return errorCode; }
-        public int getRetryAfterSeconds() { return retryAfterSeconds; }
+    }
+
+    /** A confirmed rejection of a single send, distinct from an unknown outcome. */
+    public static class SendRefusalException extends TelegramApiException {
+        public SendRefusalException(int errorCode, int retryAfterSeconds, String description) {
+            super(errorCode, description, retryAfterSeconds);
+        }
+        public int getRetryAfterSeconds() { return getRetryAfter(); }
     }
 
     private Map<String, Object> baseSendParams(long chatId, String text, String parseMode,
@@ -317,7 +330,9 @@ public class TelegramClient {
         params.put("chat_id", chatId);
         params.put("text", text);
         if (parseMode != null && !parseMode.isBlank()) params.put("parse_mode", parseMode);
-        if (replyToMessageId != null) params.put("reply_to_message_id", replyToMessageId);
+        if (replyToMessageId != null) {
+            params.put("reply_parameters", Map.of("message_id", replyToMessageId, "allow_sending_without_reply", true));
+        }
         if (messageThreadId != null) params.put("message_thread_id", messageThreadId);
         if (replyMarkup != null && !replyMarkup.isBlank()) params.put("reply_markup", replyMarkup);
         if (disableNotification) params.put("disable_notification", true);
@@ -873,7 +888,7 @@ public class TelegramClient {
         return callApi(method, params, () -> true);
     }
 
-    private Optional<TelegramResponse> callApi(String method, Map<String, Object> params, BooleanSupplier maySend) {
+    public Optional<TelegramResponse> callApi(String method, Map<String, Object> params, BooleanSupplier maySend) {
         if (botToken.isBlank()) {
             log.warn("Bot token is empty; cannot call {}", method);
             return Optional.empty();
@@ -918,18 +933,18 @@ public class TelegramClient {
         } catch (Exception e) {
             // Check for HTTP 409 conflict from RestClient (comes as HttpStatusCodeException)
             if (e instanceof org.springframework.web.client.HttpClientErrorException httpError) {
-                int status = httpError.getStatusCode().value();
                 try {
                     TelegramResponse error = objectMapper.readValue(httpError.getResponseBodyAsByteArray(), TelegramResponse.class);
-                    if (error != null && !error.isSuccess() && Integer.valueOf(status).equals(error.errorCode())) {
-                        lastApiErrorCode = status;
-                        int retryAfter = status != 429 || error.parameters() == null || !error.parameters().containsKey("retry_after")
+                    int code = httpError.getStatusCode().value();
+                    if (error != null && !error.isSuccess() && Integer.valueOf(code).equals(error.errorCode())) {
+                        lastApiErrorCode = code;
+                        int retryAfter = code != 429 || error.parameters() == null || !error.parameters().containsKey("retry_after")
                             ? -1 : error.parameters().get("retry_after").asInt(-1);
-                        if (status == 409) lastCallConflict = true;
-                        throw new TelegramApiException(status, error.description(), retryAfter);
+                        if (code == 409) lastCallConflict = true;
+                        throw new TelegramApiException(code, error.description(), retryAfter);
                     }
                 } catch (java.io.IOException ignored) {
-                    // Unparseable HTTP error remains an ambiguous transport result.
+                    // A non-Telegram response does not establish the outcome.
                 }
             }
             if ("getUpdates".equals(method)

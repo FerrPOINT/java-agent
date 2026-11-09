@@ -152,7 +152,6 @@ class TelegramTransportTest {
             server.stop(0);
         }
     }
-
     @Test
     void floodWaitFromOneChatDoesNotSuppressAnotherChatsRequest() throws Exception {
         var requests = new AtomicInteger();

@@ -564,36 +564,42 @@ class AgentBackendClientTest {
     }
 
     @Test
-    void chatStream_streamEndsWithoutDone_callsOnComplete() {
+    void chatStream_streamEndsWithoutDone_reportsPartialFailure() {
         when(responseSpec.body(InputStream.class)).thenReturn(sseStream(
             "data:{\"type\":\"token\",\"token\":\"partial\"}"
         ));
 
         AtomicReference<AgentBackendClient.ChatResult> completed = new AtomicReference<>();
+        AtomicReference<Throwable> failure = new AtomicReference<>();
 
         AgentBackendClient.ChatResult result = client.chatStream("Hi", "s1",
-            t -> {}, t -> {}, (n, r) -> {}, completed::set, e -> {});
+            t -> {}, t -> {}, (n, r) -> {}, completed::set, failure::set);
 
         assertThat(result.content()).isEqualTo("partial");
-        assertThat(completed.get()).isNotNull();
-        assertThat(completed.get().content()).isEqualTo("partial");
+        assertThat(completed.get()).isNull();
+        assertThat(failure.get()).isInstanceOf(java.io.EOFException.class);
+        assertThat(result.turnSucceeded()).isFalse();
     }
 
     @Test
-    void chatStream_streamEndsWithoutDoneWithMetadata_callsOnComplete() {
+    void chatStream_streamEndsWithoutDoneWithMetadata_reportsPartialFailure() {
         when(responseSpec.body(InputStream.class)).thenReturn(sseStream(
             "data:{\"type\":\"metadata\",\"modelUsed\":\"m1\",\"contextTokens\":10,\"contextLength\":100,\"memoryUpdated\":true}",
             "data:{\"type\":\"token\",\"token\":\"answer\"}"
         ));
 
         AtomicReference<AgentBackendClient.ChatResult> completed = new AtomicReference<>();
+        AtomicReference<Throwable> failure = new AtomicReference<>();
 
         AgentBackendClient.ChatResult result = client.chatStream("Hi", "s1",
-            t -> {}, t -> {}, (n, r) -> {}, completed::set, e -> {});
+            t -> {}, t -> {}, (n, r) -> {}, completed::set, failure::set);
 
         assertThat(result.content()).isEqualTo("answer");
         assertThat(result.modelUsed()).isEqualTo("m1");
-        assertThat(result.memoryUpdated()).isTrue();
+        assertThat(result.memoryUpdated()).isFalse();
+        assertThat(result.turnSucceeded()).isFalse();
+        assertThat(completed.get()).isNull();
+        assertThat(failure.get()).isInstanceOf(java.io.EOFException.class);
     }
 
     @Test

@@ -96,13 +96,16 @@ class ReleaseVerifyTest(unittest.TestCase):
     def test_default_release_cli_leaves_slow_lane_unexecuted(self):
         commands, report = self.run_release_cli()
         self.assertFalse(any(":backend:slowTest" in command or ":backend:fullCheck" in command for command in commands))
-        gate = next(item for item in report["gates"] if item["name"] == "slow-postgresql-integration")
-        self.assertEqual(gate["status"], "NOT_RUN")
-        self.assertIn("--run-slow", gate["detail"])
+        self.assertFalse(any(":telegram-bot:streamDeliveryTest" in command for command in commands))
+        for name in ("slow-postgresql-integration", "slow-telegram-delivery"):
+            gate = next(item for item in report["gates"] if item["name"] == name)
+            self.assertEqual(gate["status"], "NOT_RUN")
+            self.assertIn("--run-slow", gate["detail"])
 
     def test_slow_lane_requires_explicit_cli_opt_in(self):
         commands, _ = self.run_release_cli("--run-slow")
         self.assertEqual(sum(":backend:fullCheck" in command for command in commands), 1)
+        self.assertEqual(sum(":telegram-bot:streamDeliveryTest" in command for command in commands), 1)
 
     def test_line_coverage_returns_percent(self) -> None:
         verify = load_module("release_verify", "release_verify.py")

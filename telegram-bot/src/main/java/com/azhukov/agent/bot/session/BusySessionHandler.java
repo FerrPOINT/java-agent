@@ -94,6 +94,15 @@ public class BusySessionHandler {
             queues.get(chatId).size());
     }
 
+    public UpdateEvent pollQueued(long chatId) {
+        var next = new java.util.concurrent.atomic.AtomicReference<UpdateEvent>();
+        queues.computeIfPresent(chatId, (id, queue) -> {
+            next.set(queue.poll());
+            return queue.isEmpty() ? null : queue;
+        });
+        return next.get();
+    }
+
     /**
      * Drain and return all queued messages for the given chat.
      *

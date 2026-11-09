@@ -51,7 +51,6 @@ public class StreamingOrchestrator {
     private final com.azhukov.agent.bot.session.BotSessionStore sessionStore;
     private final com.azhukov.agent.bot.keyboard.ClarifyInteractionRenderer clarificationInteraction;
     private final ReviewDeliveryReceiptRepository reviewDeliveryReceiptRepository;
-
     public StreamingOrchestrator(AgentBackendClient backendClient, StreamEditor streamEditor,
                                  BusySessionHandler busyHandler, RuntimeFooter runtimeFooter,
                                  BotProperties properties, MediaDeliveryService mediaDeliveryService,
@@ -81,7 +80,6 @@ public class StreamingOrchestrator {
         this.clarificationInteraction = clarificationInteraction;
         this.reviewDeliveryReceiptRepository = reviewDeliveryReceiptRepository;
     }
-
 
     /**
      * Hermes parity: tool progress renders as one accumulating bubble per turn.
@@ -289,7 +287,8 @@ public class StreamingOrchestrator {
         StringBuilder accumulated = new StringBuilder(); // clean LLM text only
         final long[] messageId = {-1};
         final boolean[] finalized = {false};
-        final boolean[] failedFinalDelivery = {false};
+        final boolean[] turnFailed = {false};
+        final boolean[] turnCancelled = {false};
         // Review notifications are read from the durable pending queue only
         // after finalizing the primary response; the SSE callback is ignored.
 
@@ -330,7 +329,9 @@ public class StreamingOrchestrator {
                     }
                     // Edit the message with accumulated text (throttled by StreamEditor)
                     // editStream handles both edit-based and draft streaming internally
-                    streamEditor.editStream(chatId, Math.max(0, messageId[0]), accumulated.toString());
+                    if (!streamEditor.hasUnconfirmedDelivery(chatId)) {
+                        streamEditor.editStream(chatId, Math.max(0, messageId[0]), accumulated.toString());
+                    }
                 },
                 // toolCallConsumer — called when backend emits tool_calls event
                 // Hermes parity: send tool call as a separate short message (progress bubble),
@@ -349,14 +350,15 @@ public class StreamingOrchestrator {
                         toolName = toolCall.substring(0, sep);
                         toolArgs = toolCall.substring(sep + 1);
                     }
-                    // The editor can create its first message after startStream returns
-                    // (delayed-start/draft transport). It owns the authoritative message id,
-                    // so always commit the text segment before rendering tool progress.
+                    // With streaming off, keep all text for the eventual final send.
+                    // Otherwise the editor owns segment commits, even after delayed start.
                     boolean contentStreamedBeforeTool = accumulated.length() > 0;
-                    if (contentStreamedBeforeTool) {
+                    if (contentStreamedBeforeTool && !"off".equalsIgnoreCase(properties.getStreamingTransport())) {
                         streamEditor.onSegmentBreak(chatId, messageId[0], accumulated.toString());
                         accumulated.setLength(0);
                     }
+                    if (streamEditor.hasUnconfirmedDelivery(chatId)) return;
+                    if (streamEditor.hasDeferredDelivery(chatId)) return;
                     streamEditor.setCurrentToolName(chatId, toolName);
                     // Hermes parity (display.tool_progress=all, grouping=accumulate):
                     // tool lines accumulate in ONE bubble — first tool sends it,
@@ -383,9 +385,7 @@ public class StreamingOrchestrator {
                 // because currentMessageId was reset to -1 by the previous segment break).
                 // Calling onSegmentBreak here with stale messageId would edit the wrong
                 // (already-finalized) message. Hermes does not break on tool_result either.
-                (toolName, toolResultPreview) -> {
-                    // Just clear accumulated text — the next tokens will start a new segment
-                },
+                (toolName, toolResultPreview) -> { },
                 // retryConsumer — called when backend emits retry/continuation events.
                 // TRANSIENT status only (Hermes parity: gateway shows retry status, it never
                 // becomes part of the answer): the display text is shown on the streaming
@@ -422,18 +422,22 @@ public class StreamingOrchestrator {
                 },
                 // onComplete
                 result -> {
-                    // A native draft stream intentionally has no message id. Its final
-                    // regular message must be sent by finalizeStream so it can cancel the
-                    // heartbeat and remove the draft session. Sending directly here leaked
-                    // the StreamSession indefinitely after a successful response.
-                    if (messageId[0] < 0 && accumulated.length() > 0) {
-                        boolean delivered = streamEditor.finalizeStream(chatId, -1L, accumulated.toString());
-                        if (!delivered) {
-                            streamEditor.recordFinalDeliveryFailure(chatId, accumulated.toString());
+                    if (busyHandler.isInterrupted(chatId)) {
+                        turnFailed[0] = true;
+                        turnCancelled[0] = true;
+                        if (streamEditor.hasDeferredDelivery(chatId)) {
+                            streamEditor.cancelDeferredDelivery(chatId);
+                        } else {
+                            streamEditor.discardStreamPreview(chatId);
                         }
-                        finalized[0] = delivered;
+                        return;
                     }
-                    if (messageId[0] >= 0 && accumulated.length() > 0) {
+                    if (streamEditor.hasUnconfirmedDelivery(chatId)) {
+                        turnFailed[0] = true;
+                        return;
+                    }
+                    // Native drafts use message ID -1; finalizeStream handles both paths.
+                    if (accumulated.length() > 0) {
                         // Append footer to the streaming message before finalizing
                         String footer = runtimeFooter.format(
                             hooks.resolveModelUsed(session, result),
@@ -482,39 +486,36 @@ public class StreamingOrchestrator {
                         if (footer != null && !footer.isEmpty()) {
                             finalText = finalText + footer;
                         }
-                        // S-2: Extract MEDIA: tags before finalizing the stream message
-                        // so the displayed text doesn't contain raw MEDIA: tags
-                        if (properties.isMediaDeliveryEnabled()) {
-                            MediaDeliveryService.ExtractionResult extraction = mediaDeliveryService.extractMediaTags(finalText);
-                            finalText = extraction.cleanedText();
-                            // Finalize the stream with cleaned text
-                            boolean delivered = streamEditor.finalizeStream(chatId, messageId[0], finalText);
-                            if (!delivered) {
-                                streamEditor.recordFinalDeliveryFailure(chatId, finalText);
-                                failedFinalDelivery[0] = true;
+                        var extraction = properties.isMediaDeliveryEnabled()
+                            ? mediaDeliveryService.extractMediaTags(finalText) : null;
+                        boolean delivered = streamEditor.finalizeStream(chatId, messageId[0],
+                            extraction == null ? finalText : extraction.cleanedText());
+                        finalized[0] = delivered;
+                        if (extraction != null && !extraction.media().isEmpty()) {
+                            Integer mediaThreadId = messageThreadId > 0 ? (int) messageThreadId : null;
+                            var mediaSessionId = result.backendSessionId() != null
+                                ? result.backendSessionId() : session.getBackendSessionId();
+                            Runnable sendArtifacts = () -> hooks.deliverMedia(chatId, extraction.media(), mediaThreadId,
+                                session.getUserId(), mediaSessionId);
+                            if (delivered) sendArtifacts.run();
+                            else if (streamEditor.hasDeferredDelivery(chatId)) {
+                                streamEditor.afterDeferredDelivery(chatId, sendArtifacts);
                             }
-                            finalized[0] = delivered;
-                            // Deliver extracted media files only after text finalization succeeds.
-                            if (delivered && !extraction.media().isEmpty()) {
-                                Integer mediaThreadId = messageThreadId > 0 ? (int) messageThreadId : null;
-                                hooks.deliverMedia(chatId, extraction.media(), mediaThreadId, session.getUserId(),
-                                    result.backendSessionId() != null ? result.backendSessionId() : session.getBackendSessionId());
-                            }
-                        } else {
-                            boolean delivered = streamEditor.finalizeStream(chatId, messageId[0], finalText);
-                            if (!delivered) {
-                                streamEditor.recordFinalDeliveryFailure(chatId, finalText);
-                                failedFinalDelivery[0] = true;
-                            }
-                            finalized[0] = delivered;
                         }
                     }
                 },
                 // onError
                 error -> {
-                    if (error instanceof StreamInterruptedException) {
+                    turnFailed[0] = true;
+                    if (streamEditor.hasUnconfirmedDelivery(chatId)) {
+                        return;
+                    }
+                    if (error instanceof StreamInterruptedException || error instanceof java.util.concurrent.CancellationException) {
+                        turnCancelled[0] = true;
                         // Interrupted — finalize with accumulated content (no raw error text)
-                        if (messageId[0] >= 0 && accumulated.length() > 0) {
+                        if (streamEditor.hasDeferredDelivery(chatId)) {
+                            streamEditor.cancelDeferredDelivery(chatId);
+                        } else if (messageId[0] >= 0 && accumulated.length() > 0) {
                             finalized[0] = streamEditor.finalizeStream(chatId, messageId[0],
                                 accumulated.toString());
                         } else if (messageId[0] < 0) {
@@ -530,7 +531,9 @@ public class StreamingOrchestrator {
                             ? accumulated + "\n\n" + userFriendlyError
                             : userFriendlyError;
                         boolean delivered;
-                        if (messageId[0] >= 0) {
+                        if (streamEditor.hasDeferredDelivery(chatId)) {
+                            delivered = streamEditor.finalizeTurn(chatId, errorText, userMessageId, messageThreadId);
+                        } else if (messageId[0] >= 0) {
                             delivered = streamEditor.finalizeStream(chatId, messageId[0], errorText);
                         } else {
                             // P0: no streaming message exists (draft streaming keeps
@@ -540,23 +543,23 @@ public class StreamingOrchestrator {
                             // the user is never left in silence. clearStream drops the
                             // draft StreamSession and its heartbeat.
                             delivered = streamEditor.sendFormattedFinalMessage(chatId, errorText).isPresent();
-                            streamEditor.clearStream(chatId);
+                            if (delivered) streamEditor.clearStream(chatId);
                         }
                         finalized[0] = delivered;
-                        if (!delivered) {
-                            streamEditor.recordFinalDeliveryFailure(chatId, errorText);
-                            failedFinalDelivery[0] = true;
-                        }
                     }
                 }
             );
 
             // If streaming produced content, return it (with metadata from the stream)
-            if (accumulated.length() > 0 || finalized[0] || failedFinalDelivery[0]) {
+            if (accumulated.length() > 0 || finalized[0]
+                    || streamEditor.hasUnconfirmedDelivery(chatId) || streamEditor.hasDeferredDelivery(chatId)) {
                 progressBubbles.remove(chatId);
                 if (shouldSchedulePendingReviewPoll(finalized[0])) {
                     schedulePendingReviewPoll(sessionId, streamResult.backendSessionId(),
                         chatId, userMessageId, messageThreadId, hooks);
+                } else if (streamEditor.hasDeferredDelivery(chatId)) {
+                    streamEditor.afterDeferredDelivery(chatId, () -> schedulePendingReviewPoll(sessionId,
+                        streamResult.backendSessionId(), chatId, userMessageId, messageThreadId, hooks));
                 }
                 return new AgentBackendClient.ChatResult(
                     accumulated.toString(),
@@ -566,27 +569,32 @@ public class StreamingOrchestrator {
                     finalized[0],
                     streamResult.memoryUpdated(),
                     streamResult.backendSessionId(),
-                    streamResult.lastReasoning()
+                    streamResult.lastReasoning(),
+                    !turnFailed[0] && streamResult.turnSucceeded(), turnCancelled[0]
                 );
             }
-            // If streaming produced no visible tokens but has metadata, prefer the sync fallback to get content
-            if (streamResult.modelUsed() != null || streamResult.contextTokens() != null) {
-                return fallbackSyncWithMetadata(fullMessage, sessionId, session, streamResult);
-            }
-            // Stream finished but produced no content and no metadata
+            // Once the streaming request was sent, an empty response does not
+            // prove the backend skipped side effects. Never issue a second turn.
+            progressBubbles.remove(chatId);
+            streamEditor.discardStreamPreview(chatId);
             return new AgentBackendClient.ChatResult(accumulated.toString(),
                 streamResult.modelUsed(), streamResult.contextTokens(), streamResult.contextLength(), false,
-                streamResult.memoryUpdated(), streamResult.backendSessionId(), streamResult.lastReasoning());
+                streamResult.memoryUpdated(), streamResult.backendSessionId(), streamResult.lastReasoning(),
+                !turnFailed[0] && streamResult.turnSucceeded(), turnCancelled[0]);
         } catch (StreamInterruptedException e) {
             // Already handled in onError callback
             progressBubbles.remove(chatId);
-            return new AgentBackendClient.ChatResult(accumulated.toString(), null, null, null, finalized[0], false);
+            return new AgentBackendClient.ChatResult(accumulated.toString(), null, null, null, finalized[0], false, null, null, false, true);
         } catch (Exception e) {
             progressBubbles.remove(chatId);
             log.warn("Streaming failed for chat {}: {}", chatId, e.getMessage());
             // A native draft owns a StreamSession despite having no message id. Always
             // remove it on an exceptional stream exit or its heartbeat keeps posting.
-            streamEditor.clearStream(chatId);
+            if (streamEditor.hasDeferredDelivery(chatId)) {
+                streamEditor.cancelDeferredDelivery(chatId);
+            } else {
+                streamEditor.clearStream(chatId);
+            }
             throw new RuntimeException("Streaming failed: " + e.getMessage(), e);
         } finally {
             // WP-b: turn ended inside THIS process — no recovery notice needed.
@@ -600,22 +608,6 @@ public class StreamingOrchestrator {
                 }
             }
         }
-    }
-
-    private AgentBackendClient.ChatResult fallbackSyncWithMetadata(String messageText, String sessionId,
-                                                                    BotSessionEntity session,
-                                                                    AgentBackendClient.ChatResult streamResult) {
-        AgentBackendClient.ChatResult syncResult = backendClient.chat(messageText, sessionId, session);
-        return new AgentBackendClient.ChatResult(
-            syncResult.content(),
-            syncResult.modelUsed() != null ? syncResult.modelUsed() : streamResult.modelUsed(),
-            syncResult.contextTokens() != null ? syncResult.contextTokens() : streamResult.contextTokens(),
-            syncResult.contextLength() != null ? syncResult.contextLength() : streamResult.contextLength(),
-            false,
-            syncResult.memoryUpdated() || streamResult.memoryUpdated(),
-            syncResult.backendSessionId() != null ? syncResult.backendSessionId() : streamResult.backendSessionId(),
-            syncResult.lastReasoning() != null ? syncResult.lastReasoning() : streamResult.lastReasoning()
-        );
     }
 
     /**

@@ -102,7 +102,6 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
      * Keyed by chatId. Used in {@link #handleTextOrMedia} to serialize work per chat.
      */
     private final ConcurrentHashMap<Long, ReentrantLock> locks = new ConcurrentHashMap<>();
-
     /**
      * B1.3: Called by TextBatchDebouncer when a batch is ready to dispatch.
      */
@@ -182,6 +181,12 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
             telegramClient.sendMessage(event.chatId(), "⛔ You don't have access to /" + commandName);
             return;
         }
+        if ("stop".equals(commandName) && streamEditor.isFinishingDelivery(event.chatId())) {
+            busyHandler.interrupt(event.chatId());
+            streamEditor.cancelDeferredDelivery(event.chatId());
+            sendFormatted(event.chatId(), "Stopped local stream (no active backend turn).");
+            return;
+        }
         CommandHandler handler = commandRegistry.get(commandName);
         if (handler == null) {
             sendError(event.chatId(), "Command /" + commandName + " is unavailable.");
@@ -189,6 +194,9 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         }
         try {
             String response = handler.handle(event, resolveSession(event));
+            if ("stop".equals(commandName) && streamEditor.hasDeferredDelivery(event.chatId())) {
+                streamEditor.cancelDeferredDelivery(event.chatId());
+            }
             if (response != null && !response.isBlank()) {
                 sendFormatted(event.chatId(), response);
             }
@@ -313,8 +321,10 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
             if (tryResolveTypedClarify(chatId, event)) {
                 return;
             }
-            handleBusyMessage(chatId, event, busyHandler.getEffectiveBusyInputMode(), resolveSession(event));
-            return;
+            if (!streamEditor.isFinishingDelivery(chatId)) {
+                handleBusyMessage(chatId, event, busyHandler.getEffectiveBusyInputMode(), resolveSession(event));
+                return;
+            }
         }
         ReentrantLock lock = locks.computeIfAbsent(chatId, k -> new ReentrantLock());
         boolean acquired;
@@ -334,6 +344,14 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
             // The old handleTextOrMediaInternal re-acquired the lock (dead code,
             // harmless under ReentrantLock but wasteful and misleading); it has
             // been removed and the body inlined below.
+            if (busyHandler.isBusy(chatId) && streamEditor.isFinishingDelivery(chatId)) {
+                busyHandler.queueMessage(chatId, event);
+                if ("interrupt".equals(busyHandler.getEffectiveBusyInputMode())) {
+                    busyHandler.interrupt(chatId);
+                    streamEditor.cancelDeferredDelivery(chatId);
+                }
+                return;
+            }
             handleTextOrMediaInternalBody(event);
             // M28: Drain queued messages inside the per-chat lock to prevent
             // new messages arriving between draining and processing
@@ -439,7 +457,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         Integer typingThreadId = event.messageThreadId() > 0 ? (int) event.messageThreadId() : null;
         typingManager.startTyping(chatId, typingThreadId);
 
-        AgentBackendClient.ChatResult result;
+        AgentBackendClient.ChatResult result = null;
         String sessionId = session.getBackendSessionId() != null
             ? session.getBackendSessionId().toString()
             : null;
@@ -453,24 +471,18 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
             result = streamingOrchestrator.streamChat(chatId, messageText, sessionId, session,
                 event.messageId(), threadId, artifactIds, this);
 
-            // A /stop or interrupt-mode replacement can arrive while the
-            // backend stream is unwinding. Do not render, persist, or continue
-            // a result belonging to that cancelled turn.
-            if (busyHandler.isInterrupted(chatId)) {
-                log.debug("Discarding interrupted turn result for chat {}", chatId);
-                reactionManager.onCancel(chatId, event.messageId());
-                typingManager.stopTyping(chatId);
-                return;
-            }
+            boolean interrupted = busyHandler.isInterrupted(chatId);
+            if (interrupted) streamEditor.cancelDeferredDelivery(chatId);
 
             // Persist the backend-assigned session ID for conversation history continuity
-            if (result.backendSessionId() != null) {
+            if (!interrupted && result.backendSessionId() != null) {
                 sessionStore.updateBackendSessionId(session.getId(), result.backendSessionId());
+                session.setBackendSessionId(result.backendSessionId());
             }
 
-            // If streaming produced content and finalized a message, don't send duplicate
-            if (!result.streamFinalized()) {
-                // Streaming didn't finalize (failed or no content) — send via sendFormatted
+            boolean confirmed = result.streamFinalized();
+            if (!interrupted && !confirmed && !result.turnCancelled() && !streamEditor.hasDeferredDelivery(chatId)
+                    && !streamEditor.hasUnconfirmedDelivery(chatId)) {
                 String footer = runtimeFooter.format(
                     resolveModelUsed(session, result),
                     result.contextTokens() != null ? result.contextTokens() : 0,
@@ -479,64 +491,117 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                     -1,
                     session == null || session.isFooterEnabled()
                 );
-                String backendResponse = streamEditor.takePendingFinalText(chatId);
-                if (backendResponse == null || backendResponse.isBlank()) {
-                    backendResponse = result.content();
-                }
-                if (footer != null && !footer.isEmpty() && !backendResponse.endsWith(footer)) {
+                String backendResponse = result.content();
+                if (footer != null && !footer.isEmpty() && backendResponse != null && !backendResponse.endsWith(footer)) {
                     backendResponse = backendResponse + footer;
                 }
 
                 typingManager.flushTyping(chatId);
-                var media = mediaDeliveryService.extractMediaTags(backendResponse);
-                if (media.media().isEmpty() || !properties.isMediaDeliveryEnabled()) {
-                    sendFormatted(chatId, backendResponse, event.messageId(), threadId);
-                } else if (media.cleanedText().isBlank() || sendFormattedWithReceipt(chatId, media.cleanedText(), event.messageId(), threadId)) {
-                    deliverMedia(chatId, media.media(), threadId > 0 ? (int) threadId : null,
-                        Long.toString(event.userId()), session.getBackendSessionId());
-                }
-            }
-
-            // Voice mode: synthesize TTS and send as voice message
-            if (session.isVoiceMode() && result.content() != null && !result.content().isBlank()) {
-                sendVoiceResponse(chatId, result.content());
-            }
-
-            // 💾 Memory updated notification 
-            if (result.memoryUpdated()) {
-                sendFormatted(chatId, "💾 Self-improvement review: Memory updated", event.messageId(), threadId);
-            }
-
-            // P0: Standing goal auto-continuation
-            if (properties.getGoalAutoContinue().isEnabled()
-                && GoalCommand.getActiveGoal(session) != null
-                && !busyHandler.isInterrupted(chatId)) {
-                final long chatIdForLambda = chatId;
-                List<String> continuations = goalAutoContinueService.runAutoContinue(
-                    session, result.content(), () -> busyHandler.isInterrupted(chatIdForLambda));
-                for (String continuation : continuations) {
-                    if (continuation != null && !continuation.isBlank()) {
-                        sendFormatted(chatId, continuation, event.messageId(), threadId);
+                if (backendResponse != null && !backendResponse.isBlank()) {
+                    var media = properties.isMediaDeliveryEnabled() ? mediaDeliveryService.extractMediaTags(backendResponse)
+                        : new MediaDeliveryService.ExtractionResult(List.of(), backendResponse);
+                    confirmed = streamEditor.finalizeTurn(chatId, media.cleanedText(), event.messageId(), threadId);
+                    if (!media.media().isEmpty()) {
+                        var sessionIdForMedia = result.backendSessionId() != null ? result.backendSessionId() : session.getBackendSessionId();
+                        Runnable sendArtifacts = () -> deliverMedia(chatId, media.media(), threadId > 0 ? (int) threadId : null,
+                            Long.toString(event.userId()), sessionIdForMedia);
+                        if (confirmed) sendArtifacts.run();
+                        else if (streamEditor.hasDeferredDelivery(chatId)) streamEditor.afterDeferredDelivery(chatId, sendArtifacts);
                     }
                 }
             }
 
+            if (streamEditor.hasDeferredDelivery(chatId)) return;
+
+            if (confirmed && !interrupted) afterTurn(chatId, event, session, result, threadId);
+
             // B1.2: Reaction — processing complete (success or cancelled)
-            if (busyHandler.isInterrupted(chatId)) {
+            if (busyHandler.isInterrupted(chatId) || result.turnCancelled()) {
                 reactionManager.onCancel(chatId, event.messageId());
             } else {
-                reactionManager.onProcessingComplete(chatId, event.messageId(), true);
+                reactionManager.onProcessingComplete(chatId, event.messageId(), confirmed && result.turnSucceeded());
             }
             typingManager.stopTyping(chatId);
         } catch (Exception e) {
             log.error("Backend call failed for chat {}: {}", chatId, e.getMessage(), e);
+            if (streamEditor.hasDeferredDelivery(chatId)) {
+                streamEditor.cancelDeferredDelivery(chatId);
+                return;
+            }
             typingManager.flushTyping(chatId);
             sendError(chatId, "Error contacting the agent backend: " + e.getMessage());
             // B1.2: Reaction — processing complete (failure)
             reactionManager.onProcessingComplete(chatId, event.messageId(), false);
             typingManager.stopTyping(chatId);
         } finally {
+            var delivery = streamEditor.hasDeferredDelivery(chatId) ? streamEditor.sealDeferredDelivery(chatId) : null;
+            if (delivery == null) {
+                streamEditor.clearStream(chatId);
+                busyHandler.markFree(chatId);
+            } else {
+                var finishedTurn = result;
+                delivery.whenComplete((delivered, failure) -> Thread.startVirtualThread(() ->
+                    finishDeferredDelivery(chatId, event, session, finishedTurn, threadId,
+                        finishedTurn != null && failure == null && Boolean.TRUE.equals(delivered))));
+            }
+        }
+    }
+
+    private void afterTurn(long chatId, UpdateEvent event, BotSessionEntity session,
+                           AgentBackendClient.ChatResult result, long threadId) {
+        // Voice mode: synthesize TTS and send as voice message
+        if (session.isVoiceMode() && result.content() != null && !result.content().isBlank()) {
+            sendVoiceResponse(chatId, result.content());
+        }
+
+        // 💾 Memory updated notification
+        if (result.memoryUpdated()) {
+            sendFormatted(chatId, "💾 Self-improvement review: Memory updated", event.messageId(), threadId);
+        }
+
+        // P0: Standing goal auto-continuation
+        if (properties.getGoalAutoContinue().isEnabled()
+            && result.turnSucceeded()
+            && result.content() != null && !result.content().isBlank()
+            && GoalCommand.getActiveGoal(session) != null
+            && !busyHandler.isInterrupted(chatId)) {
+            final long chatIdForLambda = chatId;
+            List<String> continuations = goalAutoContinueService.runAutoContinue(
+                session, result.content(), () -> busyHandler.isInterrupted(chatIdForLambda));
+            for (String continuation : continuations) {
+                if (busyHandler.isInterrupted(chatId)) break;
+                if (continuation != null && !continuation.isBlank()) {
+                    sendFormatted(chatId, continuation, event.messageId(), threadId);
+                }
+            }
+        }
+
+    }
+
+    private void finishDeferredDelivery(long chatId, UpdateEvent event, BotSessionEntity session,
+                                        AgentBackendClient.ChatResult result, long threadId, boolean delivered) {
+        var lock = locks.get(chatId);
+        lock.lock();
+        try {
+            if (delivered && !busyHandler.isInterrupted(chatId)) {
+                streamEditor.afterConfirmedDelivery(chatId);
+                streamEditor.clearStream(chatId);
+                if (!busyHandler.isInterrupted(chatId)) afterTurn(chatId, event, session, result, threadId);
+            }
+            if (busyHandler.isInterrupted(chatId) || (result != null && result.turnCancelled())) {
+                reactionManager.onCancel(chatId, event.messageId());
+            } else {
+                reactionManager.onProcessingComplete(chatId, event.messageId(), delivered && result.turnSucceeded());
+            }
+            typingManager.stopTyping(chatId);
+        } finally {
+            streamEditor.clearStream(chatId);
             busyHandler.markFree(chatId);
+            try {
+                drainQueueLocked(chatId);
+            } finally {
+                lock.unlock();
+            }
         }
     }
 
@@ -721,27 +786,15 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
     private void drainQueueLocked(long chatId) {
         int maxDrainDepth = 100;
         int drained = 0;
-        while (busyHandler.hasQueued(chatId) && drained < maxDrainDepth) {
-            List<UpdateEvent> queued = busyHandler.drainQueue(chatId);
-            // An interrupt-mode message is queued while the previous turn is
-            // still marked busy. Clear the per-turn marker BEFORE replaying it,
-            // otherwise the replay sees itself as busy, cancels itself and is
-            // queued again until the drain-depth guard intervenes.
-            if (busyHandler.isInterrupted(chatId)) {
-                busyHandler.markFree(chatId);
+        while (!busyHandler.isBusy(chatId) && drained < maxDrainDepth) {
+            UpdateEvent next = busyHandler.pollQueued(chatId);
+            if (next == null) return;
+            try {
+                handleTextOrMediaInternalBody(next);
+            } catch (Exception e) {
+                log.error("Error draining queued message for chat {}: {}", chatId, e.getMessage(), e);
             }
-            for (UpdateEvent queuedEvent : queued) {
-                try {
-                    handleTextOrMediaInternalBody(queuedEvent);
-                } catch (Exception e) {
-                    log.error("Error draining queued message for chat {}: {}", chatId, e.getMessage(), e);
-                }
-                drained++;
-                if (drained >= maxDrainDepth) {
-                    log.warn("Queue drain depth limit ({}) reached for chat {}, dropping remaining", maxDrainDepth, chatId);
-                    break;
-                }
-            }
+            drained++;
         }
     }
 
@@ -970,46 +1023,32 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
     }
 
     private boolean sendFormattedWithReceipt(long chatId, String text, long userMessageId, long messageThreadId) {
-        if (responseFilter.shouldFilter(text)) {
-            return false;
+        return sendFormattedParts(chatId, text, userMessageId, messageThreadId, true);
+    }
+
+    private boolean sendFormattedParts(long chatId, String text, long userMessageId, long messageThreadId,
+                                       boolean requireReceipt) {
+        if (responseFilter.shouldFilter(text)) return false;
+        if (properties.isMediaDeliveryEnabled()) text = mediaDeliveryService.extractMediaTags(text).cleanedText();
+        if (text == null || text.isBlank()) return false;
+
+        Integer thread = messageThreadId > 0 ? (int) messageThreadId : null;
+        String mode = properties.getParseMode();
+        String replyMode = properties.getReplyToMode();
+        var parts = MessageSplitter.prepare(StreamEditor.stripThinkTagsRegex(text), mode);
+        for (int i = 0; i < parts.size(); i++) {
+            var part = parts.get(i);
+            boolean fits = MessageSplitter.fits(part.original(), part.formatted());
+            String payload = fits ? part.formatted() : part.original();
+            String parseMode = fits ? mode : null;
+            Long reply = userMessageId > 0 && ("all".equalsIgnoreCase(replyMode)
+                || i == 0 && "first".equalsIgnoreCase(replyMode)) ? userMessageId : null;
+            var sent = thread == null
+                ? telegramClient.sendMessage(chatId, payload, parseMode, reply, null)
+                : telegramClient.sendMessage(chatId, payload, parseMode, reply, thread, false);
+            if (requireReceipt && sent.isEmpty()) return false;
         }
-        Integer threadId = messageThreadId > 0 ? (int) messageThreadId : null;
-        String textForDisplay = text;
-        if (properties.isMediaDeliveryEnabled()) {
-            MediaDeliveryService.ExtractionResult extraction = mediaDeliveryService.extractMediaTags(text);
-            textForDisplay = extraction.cleanedText();
-        }
-        if (textForDisplay == null || textForDisplay.isBlank()) {
-            return false;
-        }
-        String parseMode = properties.getParseMode();
-        String formatted = StreamEditor.stripThinkTagsRegex(textForDisplay);
-        if ("MarkdownV2".equalsIgnoreCase(parseMode)) {
-            formatted = MarkdownConverter.convert(formatted);
-        } else if ("HTML".equalsIgnoreCase(parseMode)) {
-            formatted = formatted.replace("&", "&amp;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;");
-        }
-        boolean sentAny = false;
-        List<String> chunks = MessageSplitter.split(formatted);
-        for (int i = 0; i < chunks.size(); i++) {
-            String chunk = chunks.get(i);
-            if (chunk.isBlank()) {
-                continue;
-            }
-            Long replyToMessageId = "all".equalsIgnoreCase(properties.getReplyToMode()) && userMessageId > 0
-                || "first".equalsIgnoreCase(properties.getReplyToMode()) && i == 0 && userMessageId > 0
-                ? userMessageId : null;
-            Optional<Long> sent = threadId == null
-                ? telegramClient.sendMessage(chatId, chunk, parseMode, replyToMessageId, null)
-                : telegramClient.sendMessage(chatId, chunk, parseMode, replyToMessageId, threadId, false);
-            if (sent.isEmpty()) {
-                return false;
-            }
-            sentAny = true;
-        }
-        return sentAny;
+        return !parts.isEmpty();
     }
 
     /**
@@ -1034,64 +1073,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
      * @param messageThreadId the Telegram forum thread ID (0 = no thread routing)
      */
     private void sendFormatted(long chatId, String text, long userMessageId, long messageThreadId) {
-        // B2.8: Response filter — filter silent/empty responses
-        if (responseFilter.shouldFilter(text)) {
-            log.debug("Response filtered (silent or empty) for chat {}", chatId);
-            return;
-        }
-
-        Integer threadId = messageThreadId > 0 ? (int) messageThreadId : null;
-
-        // S-2: Extract MEDIA: tags and bare file paths using MediaDeliveryService
-        String textForDisplay = text;
-        if (properties.isMediaDeliveryEnabled()) {
-            MediaDeliveryService.ExtractionResult extraction = mediaDeliveryService.extractMediaTags(text);
-            textForDisplay = extraction.cleanedText();
-        }
-
-        if (textForDisplay.isBlank()) {
-            return;
-        }
-
-        String parseMode = properties.getParseMode();
-        String formatted = textForDisplay;
-        // Audit M21: strip think blocks from non-streaming (fallback) path.
-        // StreamEditor strips them during streaming, but sendFormatted is used
-        // when streaming didn't finalize — without this, raw think tags reach the user.
-        formatted = StreamEditor.stripThinkTagsRegex(formatted);
-        if ("MarkdownV2".equalsIgnoreCase(parseMode)) {
-            formatted = MarkdownConverter.convert(formatted);
-        } else if ("HTML".equalsIgnoreCase(parseMode)) {
-            // Audit M20: escape HTML-special characters in LLM output to prevent
-            // injection of <a>, <b>, <code> and other Telegram-allowed tags.
-            formatted = formatted.replace("&", "&amp;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;");
-        }
-
-        // B1.6: Thread reply mode — off/all/first
-        String replyMode = properties.getReplyToMode();
-        Long replyToMessageId = null; // null = no reply_to by default
-
-        List<String> chunks = MessageSplitter.split(formatted);
-        for (int i = 0; i < chunks.size(); i++) {
-            String chunk = chunks.get(i);
-            if (!chunk.isBlank()) {
-                if ("all".equalsIgnoreCase(replyMode) && userMessageId > 0) {
-                    replyToMessageId = userMessageId;
-                } else if ("first".equalsIgnoreCase(replyMode) && i == 0 && userMessageId > 0) {
-                    replyToMessageId = userMessageId;
-                } else {
-                    replyToMessageId = null;
-                }
-                // Use 6-arg sendMessage when thread routing is needed, 5-arg otherwise
-                if (threadId != null) {
-                    telegramClient.sendMessage(chatId, chunk, parseMode, replyToMessageId, threadId, false);
-                } else {
-                    telegramClient.sendMessage(chatId, chunk, parseMode, replyToMessageId, null);
-                }
-            }
-        }
+        sendFormattedParts(chatId, text, userMessageId, messageThreadId, false);
     }
 
     @PostConstruct

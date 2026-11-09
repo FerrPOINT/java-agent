@@ -63,8 +63,20 @@ public class AgentBackendClient {
         boolean streamFinalized,
         boolean memoryUpdated,
         java.util.UUID backendSessionId,
-        String lastReasoning
+        String lastReasoning,
+        boolean turnSucceeded,
+        boolean turnCancelled
     ) {
+        public ChatResult(String content, String modelUsed, Integer contextTokens, Integer contextLength,
+                          boolean streamFinalized, boolean memoryUpdated, java.util.UUID backendSessionId,
+                          String lastReasoning, boolean turnSucceeded) {
+            this(content, modelUsed, contextTokens, contextLength, streamFinalized, memoryUpdated,
+                backendSessionId, lastReasoning, turnSucceeded, false);
+        }
+        public ChatResult(String content, String modelUsed, Integer contextTokens, Integer contextLength,
+                          boolean streamFinalized, boolean memoryUpdated, java.util.UUID backendSessionId, String lastReasoning) {
+            this(content, modelUsed, contextTokens, contextLength, streamFinalized, memoryUpdated, backendSessionId, lastReasoning, true);
+        }
         public ChatResult(String content) {
             this(content, null, null, null, false, false, null, null);
         }

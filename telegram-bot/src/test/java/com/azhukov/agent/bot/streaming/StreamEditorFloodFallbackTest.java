@@ -55,6 +55,246 @@ class StreamEditorFloodFallbackTest {
     // ─── 4a: Flood strikes fallback mode tests ─────────────────────
 
     @Test
+    void draftFinalRetriesConfirmedFormattingRefusalOnceWithoutParseMode() throws Exception {
+        var requests = new java.util.ArrayList<com.fasterxml.jackson.databind.JsonNode>();
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        var server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/bot-fixture/sendMessage", exchange -> {
+            try (exchange) {
+                var request = mapper.readTree(exchange.getRequestBody());
+                requests.add(request);
+                boolean formatted = request.has("parse_mode");
+                byte[] response = (formatted
+                    ? "{\"ok\":false,\"error_code\":400,\"description\":\"Bad Request: cannot parse entities\"}"
+                    : "{\"ok\":true,\"result\":{\"message_id\":91}}").getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", "application/json");
+                exchange.sendResponseHeaders(formatted ? 400 : 200, response.length);
+                exchange.getResponseBody().write(response);
+            }
+        });
+        server.start();
+        var props = new com.azhukov.agent.bot.config.BotProperties();
+        props.setParseMode("MarkdownV2");
+        var transport = new com.azhukov.agent.bot.config.BotConfig().telegramRestClient(mapper).mutate()
+            .baseUrl("http://127.0.0.1:" + server.getAddress().getPort()).build();
+        var client = new TelegramClient(transport, mapper, "-fixture", 0);
+        var editor = new StreamEditor(client, props, new MediaDeliveryService(), new RichMessageSupport(client));
+        try {
+            editor.init();
+            assertThat(editor.finalizeTurn(1L, "ordinary answer", 41L, 55L)).isTrue();
+            assertThat(requests).hasSize(2);
+            assertThat(requests.get(0).path("parse_mode").asText()).isEqualTo("MarkdownV2");
+            assertThat(requests.get(1).has("parse_mode")).isFalse();
+            assertThat(requests.get(1).path("text").asText()).isEqualTo("ordinary answer");
+            assertThat(requests.get(1).path("message_thread_id").asInt()).isEqualTo(55);
+            assertThat(requests).allSatisfy(request -> {
+                var reply = request.path("reply_parameters");
+                assertThat(reply.path("message_id").asInt()).isEqualTo(41);
+                assertThat(reply.path("allow_sending_without_reply").asBoolean()).isTrue();
+                assertThat(request.has("reply_to_message_id")).isFalse();
+            });
+        } finally {
+            editor.destroy();
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void splitHtmlFinalKeepsEveryCharacterAndCompleteEntities() {
+        var props = new BotProperties();
+        props.setParseMode("HTML");
+        var htmlEditor = new StreamEditor(client, props, new MediaDeliveryService(), new RichMessageSupport(client));
+        htmlEditor.init();
+        try {
+            String input = "&".repeat(811) + "🙂" + "<".repeat(501) + ">";
+            when(client.sendMessageChecked(eq(123L), anyString(), eq("HTML"), any(), any(), isNull(), eq(false), any()))
+                .thenReturn(Optional.of(99L));
+            assertThat(htmlEditor.finalizeTurn(123L, input, 0L, 0L)).isTrue();
+            var parts = org.mockito.ArgumentCaptor.forClass(String.class);
+            verify(client, atLeast(2)).sendMessageChecked(eq(123L), parts.capture(), eq("HTML"), any(), any(), isNull(), eq(false), any());
+            var decoded = new StringBuilder();
+            for (String part : parts.getAllValues()) {
+                assertThat(part.length()).isLessThanOrEqualTo(4096);
+                String body = part.substring(part.indexOf(' ') + 1);
+                decoded.append(body.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&"));
+            }
+            assertThat(decoded.toString()).isEqualTo(input);
+        } finally {
+            htmlEditor.destroy();
+        }
+    }
+
+    @Test
+    void discardStreamPreviewUsesCurrentMessageAndCleansSessionOnFailure() {
+        var session = editor.sessionFor(123L);
+        session.currentMessageId.set(42L);
+        when(client.deleteMessage(123L, 42L)).thenThrow(new RuntimeException("unavailable"));
+        editor.discardStreamPreview(123L);
+        verify(client).deleteMessage(123L, 42L);
+        assertThat(editor.sessionFor(123L)).isNotSameAs(session);
+    }
+
+    @Test
+    void disabledPreviewUsesFinalTextWithFooter() {
+        var session = editor.sessionFor(123L);
+        session.currentMessageId.set(42L);
+        session.streamingDisabled = true;
+        when(client.sendMessageChecked(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), isNull(), eq(false), any()))
+            .thenReturn(Optional.of(99L));
+        assertThat(editor.finalizeStream(123L, 42L, "final answer with footer")).isTrue();
+        verify(client).sendMessageChecked(eq(123L), eq("final answer with footer"), eq("MarkdownV2"), any(), any(), isNull(), eq(false), any());
+    }
+
+    @Test
+    void floodFallbackFormatsFinalMarkdownOnlyOnce() {
+        var session = editor.sessionFor(123L);
+        session.currentMessageId.set(42L);
+        session.streamingDisabled = true;
+        editor.editStream(123L, 42L, "value_with_underscore");
+        when(client.sendMessageChecked(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), isNull(), eq(false), any()))
+            .thenReturn(Optional.of(99L));
+        assertThat(editor.finalizeStream(123L, 42L, "value_with_underscore")).isTrue();
+        verify(client).sendMessageChecked(eq(123L), eq("value\\_with\\_underscore"), eq("MarkdownV2"), any(), any(), isNull(), eq(false), any());
+    }
+
+    @Test
+    void oversizedFinalPreservesForumThread() {
+        editor.sessionFor(123L).messageThreadId = 77L;
+        when(client.sendMessageChecked(eq(123L), anyString(), eq("MarkdownV2"), any(), eq(77), isNull(), eq(false), any()))
+            .thenReturn(Optional.of(1L));
+        assertThat(editor.finalizeStream(123L, 42L, "answer".repeat(900))).isTrue();
+        verify(client, atLeastOnce()).sendMessageChecked(eq(123L), contains("answer"), eq("MarkdownV2"), any(), eq(77), isNull(), eq(false), any());
+        verify(client, never()).editMessageText(eq(123L), eq(42L), anyString(), any(), anyBoolean());
+    }
+
+    @Test
+    void multipartFinalDoesNotConvertAlreadyFormattedMarkdownTwice() {
+        var session = editor.sessionFor(123L);
+        session.currentMessageId.set(42L);
+        String text = "prefix_".repeat(700);
+        when(client.sendMessageChecked(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), isNull(), eq(false), any()))
+            .thenReturn(Optional.of(1L));
+        assertThat(editor.finalizeStream(123L, 42L, text)).isTrue();
+        var sent = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(client, atLeastOnce()).sendMessageChecked(eq(123L), sent.capture(), eq("MarkdownV2"), any(), any(), isNull(), eq(false), any());
+        String restored = sent.getAllValues().stream()
+            .map(chunk -> chunk.replaceFirst("^\\\\\\(\\d+/\\d+\\\\\\) ", ""))
+            .collect(java.util.stream.Collectors.joining()).replace("\\_", "_");
+        assertThat(restored).isEqualTo(text);
+    }
+
+    @Test
+    void draftRichFinalUsesOriginalForumThread() {
+        var rich = mock(RichMessageSupport.class);
+        var props = new BotProperties();
+        var richEditor = new StreamEditor(client, props, new MediaDeliveryService(), rich);
+        richEditor.init();
+        var session = richEditor.sessionFor(123L);
+        session.useDraftStreaming = true;
+        session.messageThreadId = 77L;
+        when(rich.shouldAttemptRich(anyString())).thenReturn(true);
+        when(rich.sendRichMessage(eq(123L), anyString(), isNull(), eq(77L), any())).thenReturn(Optional.of(99L));
+        assertThat(richEditor.finalizeStream(123L, -1L, "final response")).isTrue();
+        verify(rich).sendRichMessage(eq(123L), anyString(), isNull(), eq(77L), any());
+    }
+
+    @Test
+    void draftFinalUsesOriginalForumThread() {
+        var session = editor.sessionFor(123L);
+        session.useDraftStreaming = true;
+        session.messageThreadId = 77L;
+        when(client.sendMessageChecked(eq(123L), anyString(), any(), any(), eq(77), isNull(), anyBoolean(), any()))
+            .thenReturn(Optional.of(99L));
+
+        assertThat(editor.finalizeStream(123L, -1L, "final response")).isTrue();
+        verify(client).sendMessageChecked(eq(123L), anyString(), any(), any(), eq(77), isNull(), anyBoolean(), any());
+    }
+
+    @Test
+    void multipartFinalStopsWhenMiddleChunkIsRejected() {
+        String text = "a".repeat(4000) + "b".repeat(4000) + "c".repeat(1000);
+        var session = editor.sessionFor(123L);
+        session.useDraftStreaming = true;
+        when(client.sendMessageChecked(eq(123L), anyString(), any(), any(), any(), isNull(), anyBoolean(), any()))
+            .thenReturn(Optional.of(41L), Optional.empty(), Optional.of(42L));
+        assertThat(editor.finalizeStream(123L, -1L, text)).isFalse();
+        verify(client, times(2)).sendMessageChecked(eq(123L), anyString(), any(), any(), any(), isNull(), anyBoolean(), any());
+        assertThat(editor.hasUnconfirmedDelivery(123L)).isTrue();
+        assertThat(editor.finalizeStream(123L, -1L, text)).isFalse();
+        verify(client, times(2)).sendMessageChecked(eq(123L), anyString(), any(), any(), any(), isNull(), anyBoolean(), any());
+    }
+
+    @Test
+    void partialFinalThenFloodPastDeadlineStaysPartial() {
+        var session = editor.sessionFor(123L);
+        session.useDraftStreaming = true;
+        when(client.sendMessageChecked(eq(123L), anyString(), any(), any(), any(), isNull(), anyBoolean(), any()))
+            .thenReturn(Optional.of(41L))
+            .thenThrow(new com.azhukov.agent.bot.client.TelegramApiException(429, "rate limit", 270));
+        assertThat(editor.finalizeStream(123L, -1L, "x".repeat(9000))).isFalse();
+        assertThat(editor.hasUnconfirmedDelivery(123L)).isTrue();
+        verify(client, times(2)).sendMessageChecked(eq(123L), anyString(), any(), any(), any(), isNull(), anyBoolean(), any());
+    }
+
+    @Test
+    void unknownShortFinalReceiptMarksOutcomeUncertain() {
+        var session = editor.sessionFor(123L);
+        session.useDraftStreaming = true;
+        when(client.sendMessageChecked(eq(123L), anyString(), any(), any(), any(), isNull(), anyBoolean(), any()))
+            .thenReturn(Optional.empty());
+        assertThat(editor.finalizeStream(123L, -1L, "answer")).isFalse();
+        verify(client).sendMessageChecked(eq(123L), eq("answer"), any(), any(), any(), isNull(), anyBoolean(), any());
+        assertThat(editor.hasUnconfirmedDelivery(123L)).isTrue();
+    }
+
+    @Test
+    void confirmedRefusalBeyondDeadlineCompletesWithoutReplay() {
+        editor.sessionFor(123L).useDraftStreaming = true;
+        when(client.sendMessageChecked(eq(123L), eq("answer"), any(), any(), any(), isNull(), anyBoolean(), any()))
+            .thenThrow(new TelegramClient.SendRefusalException(429, 31, "rate limited"));
+
+        assertThat(editor.finalizeStream(123L, -1L, "answer")).isFalse();
+        assertThat(editor.sealDeferredDelivery(123L)).isCompletedWithValue(false);
+        verify(client).sendMessageChecked(eq(123L), eq("answer"), any(), any(), any(), isNull(), anyBoolean(), any());
+    }
+
+    @Test
+    void cancellationDropsRejectedFragmentAndQueuedFinal() {
+        editor.sessionFor(123L).useDraftStreaming = true;
+        when(client.sendMessageChecked(eq(123L), eq("first"), any(), any(), any(), isNull(), anyBoolean(), any()))
+            .thenThrow(new TelegramClient.SendRefusalException(429, 15, "rate limited"));
+        editor.onSegmentBreak(123L, -1L, "first");
+        assertThat(editor.finalizeStream(123L, -1L, "final")).isFalse();
+        var delivery = editor.sealDeferredDelivery(123L);
+        assertThat(delivery).isNotDone();
+
+        editor.cancelDeferredDelivery(123L);
+        assertThat(delivery).isCompletedWithValue(false);
+        verify(client, never()).sendMessageChecked(eq(123L), eq("final"), any(), any(), any(), isNull(), anyBoolean(), any());
+    }
+
+    @Test
+    void draftFinalSplitsWhenMarkdownEscapingExceedsTelegramLimit() {
+        var session = editor.sessionFor(123L);
+        session.useDraftStreaming = true;
+        when(client.sendMessageChecked(eq(123L), anyString(), any(), any(), any(), isNull(), anyBoolean(), any()))
+            .thenReturn(Optional.of(42L));
+        assertThat(editor.finalizeStream(123L, -1L, "_".repeat(3000))).isTrue();
+        var sent = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(client, atLeast(2)).sendMessageChecked(eq(123L), sent.capture(), any(), any(), any(), isNull(), anyBoolean(), any());
+        assertThat(sent.getAllValues()).allSatisfy(chunk -> assertThat(chunk.length()).isLessThanOrEqualTo(4096));
+    }
+
+    @Test
+    void finalMultiChunkSendStopsAtFirstUnacceptedChunk() {
+        String text = "a".repeat(9000);
+        when(client.sendMessageChecked(eq(123L), anyString(), any(), any(), any(), isNull(), anyBoolean(), any()))
+            .thenReturn(Optional.empty(), Optional.of(99L));
+        assertThat(editor.sendFormattedFinalMessage(123L, text)).isEmpty();
+        verify(client, times(1)).sendMessageChecked(eq(123L), anyString(), any(), any(), any(), isNull(), anyBoolean(), any());
+    }
+
+    @Test
     void floodFallback_entersFallbackModeAfter3Strikes() throws InterruptedException {
         // Start stream successfully
         when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
@@ -125,7 +365,7 @@ class StreamEditorFloodFallbackTest {
         editor.editStream(123L, 42L, "Hello world final buffered content");
 
         // Finalize — should send buffered content as new message
-        when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
+        when(client.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), isNull(), anyBoolean(), any()))
             .thenReturn(Optional.of(99L));
 
         boolean result = editor.finalizeStream(123L, 42L, "Hello world final buffered content");
@@ -133,11 +373,11 @@ class StreamEditorFloodFallbackTest {
         assertThat(result).isTrue();
         // Flood fallback now sends formatted text (parseMode=MarkdownV2) — Hermes parity.
         // Anchor on the buffered content to exclude the earlier delayed-start message.
-        verify(client).sendMessage(eq(123L), contains("buffered content"), eq("MarkdownV2"), any(), any(), anyBoolean());
+        verify(client).sendMessageChecked(eq(123L), contains("buffered content"), eq("MarkdownV2"), any(), any(), isNull(), anyBoolean(), any());
         // The replacement must arrive before the draft is removed. This prevents
         // a Telegram 429 from turning into total response loss.
         var order = inOrder(client);
-        order.verify(client).sendMessage(eq(123L), contains("buffered content"), eq("MarkdownV2"), any(), any(), anyBoolean());
+        order.verify(client).sendMessageChecked(eq(123L), contains("buffered content"), eq("MarkdownV2"), any(), any(), isNull(), anyBoolean(), any());
         order.verify(client).deleteMessage(123L, 42L);
     }
 
@@ -157,12 +397,13 @@ class StreamEditorFloodFallbackTest {
         editor.editStream(123L, 42L, "three");
         Thread.sleep(1_000);
         // The final replacement is rate-limited. It must not delete the draft.
-        when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
+        when(client.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), isNull(), anyBoolean(), any()))
             .thenReturn(Optional.empty());
 
         assertThat(editor.finalizeStream(123L, 42L, "final content")).isFalse();
         verify(client, never()).deleteMessage(123L, 42L);
-        assertThat(editor.sessionFor(123L).floodFallbackBuffer).isNotEmpty();
+        assertThat(editor.sessionFor(123L).streamingDisabled).isTrue();
+        assertThat(editor.hasUnconfirmedDelivery(123L)).isTrue();
     }
 
     @Test

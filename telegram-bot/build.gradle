@@ -91,6 +91,20 @@ tasks.named('test') {
     maxHeapSize = '2g'
 }
 
+tasks.register('streamDeliveryTest', Test) {
+    description = 'Manually verify Telegram stream delivery with real FloodWait delays'
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform { includeTags 'slow' }
+    filter {
+        includeTestsMatching 'com.azhukov.agent.bot.core.BotMessageProcessorTest'
+        includeTestsMatching 'com.azhukov.agent.bot.streaming.StreamDeliveryRegressionTest'
+    }
+    jvmArgs '-XX:+EnableDynamicAgentLoading'
+    maxHeapSize = '2g'
+}
+
 tasks.register('identityOwnerTest', Test) {
     description = 'Dedicated disposable PostgreSQL migration-order and owner reference qualification'
     group = 'verification'

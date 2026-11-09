@@ -24,7 +24,6 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -46,7 +45,7 @@ class StreamEditorOversizedContentTest {
         props.setStreamEditInterval(Duration.ofMillis(0));
         props.setParseMode("MarkdownV2");
         // 32768 as shipped in application.yml — the misconfiguration that
-        // triggered H14: editStreamSplit chunks must clamp to 4096.
+        // triggered H14: preview must clamp to 4096.
         props.setStreamingMaxChars(32768);
         editor = new StreamEditor(client, props, new MediaDeliveryService(), new RichMessageSupport(client));
         editor.init();
@@ -66,54 +65,15 @@ class StreamEditorOversizedContentTest {
         boolean ok = editor.editStream(123L, 42L, "x".repeat(5000));
 
         assertThat(ok).isTrue();
-        // The edited text passed to Telegram must be within the 4096 limit (+cursor)
+        // The edited text passed to Telegram must be within the 4096 limit including the cursor
         verify(client).editMessageText(eq(123L), anyLong(),
-            argThat(t -> t != null && t.length() <= 4097), isNull(), anyBoolean());
-    }
-
-    @Test
-    void sendPlainMessage_splitsOversizedFinal() {
-        // H14: draft finalize / fresh-final sends raw text — a 9000-char final
-        // must be split into multiple <=4096 chunks instead of one failing call.
-        when(client.sendMessage(anyLong(), anyString(), isNull(), isNull(), isNull(), anyBoolean()))
-            .thenReturn(Optional.of(99L));
-
-        Optional<Long> result = editor.sendPlainMessage(123L, "y".repeat(9000));
-
-        assertThat(result).isPresent();
-        verify(client, times(3)).sendMessage(eq(123L), anyString(), isNull(), isNull(), isNull(), anyBoolean());
-    }
-
-    @Test
-    void sendPlainMessage_shortTextSingleCall() {
-        when(client.sendMessage(anyLong(), anyString(), isNull(), isNull(), isNull(), anyBoolean()))
-            .thenReturn(Optional.of(1L));
-
-        Optional<Long> result = editor.sendPlainMessage(123L, "short");
-
-        assertThat(result).isPresent();
-        verify(client, times(1)).sendMessage(eq(123L), eq("short"), isNull(), isNull(), isNull(), anyBoolean());
-    }
-
-    @Test
-    void sendFormattedMessage_splitsOversizedFinal() {
-        // H14: finalize fallback path — oversized formatted text must be chunked
-        // through splitAndFormat instead of a single 400-failing sendMessage.
-        when(client.sendMessage(anyLong(), anyString(), anyString(), isNull(), isNull()))
-            .thenReturn(Optional.of(7L));
-
-        Optional<Long> result = editor.sendFormattedMessage(123L, "z".repeat(12000));
-
-        assertThat(result).isPresent();
-        // 12000 raw chars -> multiple chunks, EACH within the Telegram limit
-        verify(client, times(6)).sendMessage(eq(123L),
-            argThat(t -> t != null && t.length() <= 4096), anyString(), isNull(), isNull());
+            argThat(t -> t != null && t.length() <= 4096), isNull(), anyBoolean());
     }
 
     @Test
     void messageSplitter_doesNotSplitSurrogatePairs() {
         // H15: an emoji straddling the (1/N) shrink boundary must not be cut
-        List<String> chunks = MessageSplitter.split("a".repeat(5000) + "\uD83D\uDE00" + "b".repeat(5000));
+        List<String> chunks = MessageSplitter.splitPlainText("a".repeat(5000) + "\uD83D\uDE00" + "b".repeat(5000));
         assertThat(chunks.size()).isGreaterThan(1);
         for (String chunk : chunks) {
             // no lone surrogates at either end of any chunk

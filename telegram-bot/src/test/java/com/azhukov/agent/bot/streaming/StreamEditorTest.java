@@ -36,7 +36,14 @@ class StreamEditorTest {
 
     @BeforeEach
     void setUp() {
-        client = mock(TelegramClient.class);
+        client = mock(TelegramClient.class, call -> {
+            if ("editFinalMessage".equals(call.getMethod().getName())) {
+                long id = call.getArgument(1);
+                return ((TelegramClient) call.getMock()).editMessageText(call.<Long>getArgument(0), id,
+                    call.getArgument(2), call.getArgument(3), false) ? Optional.of(id) : Optional.empty();
+            }
+            return RETURNS_DEFAULTS.answer(call);
+        });
         BotProperties props = new BotProperties();
         props.setStreamEditInterval(Duration.ofMillis(100));
         props.setParseMode("MarkdownV2");
@@ -120,6 +127,25 @@ class StreamEditorTest {
     }
 
     // --- Basic start/edit/finalize tests ---
+
+    @Test
+    void discardPreviewDeletesOnlyUncommittedMessageAfterToolBoundary() {
+        when(client.sendMessage(eq(123L), eq("Waiting"), isNull(), isNull(), isNull(), anyBoolean()))
+            .thenReturn(Optional.of(42L));
+        assertThat(editor.startStream(123L, "Waiting")).contains(42L);
+        editor.discardStreamPreview(123L);
+        verify(client).deleteMessage(123L, 42L);
+
+        when(client.sendMessage(eq(124L), eq("Waiting"), isNull(), isNull(), isNull(), anyBoolean()))
+            .thenReturn(Optional.of(43L));
+        when(client.editMessageText(eq(124L), eq(43L), anyString(), eq("MarkdownV2"), eq(false)))
+            .thenReturn(true);
+        assertThat(editor.startStream(124L, "Waiting")).contains(43L);
+        editor.onSegmentBreak(124L, 43L, "Already committed");
+        editor.discardStreamPreview(124L);
+        verify(client).editMessageText(eq(124L), eq(43L), contains("Already committed"), eq("MarkdownV2"), eq(false));
+        verify(client, never()).deleteMessage(124L, 43L);
+    }
 
     @Test
     void startStream_sendsMessageAndReturnsId() {
@@ -221,32 +247,17 @@ class StreamEditorTest {
     }
 
     @Test
-    void finalizeStream_returnsFalseOnFailure() {
-        when(client.editMessageText(anyLong(), anyLong(), anyString(), anyString(), anyBoolean()))
-            .thenReturn(false);
-        when(client.sendMessage(anyLong(), anyString(), anyString(), any(), any()))
-            .thenReturn(Optional.empty());
+    void finalizeStreamDoesNotResendWhenEditIsUnconfirmed() {
+        StreamSession session = editor.sessionFor(123L);
+        session.currentMessageId.set(42L);
+        doReturn(Optional.empty()).when(client).editFinalMessage(eq(123L), eq(42L), eq("Final text"), eq("MarkdownV2"), any());
 
-        boolean result = editor.finalizeStream(123L, 42L, "Final text");
+        assertThat(editor.finalizeStream(123L, 42L, "Final text")).isFalse();
 
-        assertThat(result).isFalse();
-    }
-
-    // --- finalizeStream fallback test ---
-
-    @Test
-    void finalizeStream_fallsBackToSendMessageOnEditFailure() {
-        when(client.editMessageText(anyLong(), anyLong(), anyString(), anyString(), anyBoolean()))
-            .thenReturn(false);
-        when(client.sendMessage(anyLong(), anyString(), anyString(), any(), any()))
-            .thenReturn(Optional.of(99L));
-
-        boolean result = editor.finalizeStream(123L, 42L, "Final text");
-
-        assertThat(result).isTrue();
-        verify(client).editMessageText(eq(123L), eq(42L), anyString(), eq("MarkdownV2"), eq(false));
-        verify(client).sendMessage(eq(123L), anyString(), eq("MarkdownV2"), any(), any());
-        verify(client).deleteMessage(123L, 42L);
+        assertThat(editor.hasUnconfirmedDelivery(123L)).isTrue();
+        assertThat(editor.getSession(123L)).isSameAs(session);
+        verify(client).editFinalMessage(eq(123L), eq(42L), eq("Final text"), eq("MarkdownV2"), any());
+        verifyNoMoreInteractions(client);
     }
 
     @Test
@@ -266,7 +277,7 @@ class StreamEditorTest {
         assertThat(result).isTrue();
         verify(client).editMessageText(123L, 42L, "Final text", "MarkdownV2", false);
         verify(client, never()).deleteMessage(123L, 42L);
-        verify(client, never()).sendMessage(eq(123L), eq("Final text"), any(), any(), any(), anyBoolean());
+        verify(client, never()).sendMessageChecked(eq(123L), eq("Final text"), any(), any(), any(), isNull(), anyBoolean(), any());
     }
 
     @Test
@@ -284,7 +295,7 @@ class StreamEditorTest {
 
         assertThat(result).isTrue();
         verify(client).editMessageText(eq(123L), eq(42L), anyString(), eq("MarkdownV2"), eq(false));
-        verify(client, never()).callApi(eq("sendRichMessage"), any());
+        verify(client, never()).callApi(eq("sendRichMessage"), any(), any());
         verify(client, never()).deleteMessage(123L, 42L);
     }
 
@@ -318,7 +329,7 @@ class StreamEditorTest {
         StreamSession streamSession = freshEditor.sessionFor(123L);
         streamSession.streamStartTime = System.currentTimeMillis() - 1_000L;
         streamSession.currentMessageId.set(42L);
-        when(client.sendMessage(anyLong(), anyString(), anyString(), any(), any(), anyBoolean()))
+        when(client.sendMessageChecked(anyLong(), anyString(), anyString(), any(), any(), isNull(), anyBoolean(), any()))
             .thenReturn(Optional.of(99L));
 
         boolean result = freshEditor.finalizeStream(123L, 42L, "Final text");
@@ -673,42 +684,41 @@ class StreamEditorTest {
         assertThat(b1).isTrue();
     }
 
-    // --- Split during streaming test ---
-
     @Test
-    void editStream_splitsWhenExceedingMaxChars() throws InterruptedException {
+    void longEditPreviewPublishesTheFullAnswerOnlyAtFinalization() {
         BotProperties props = new BotProperties();
-        props.setStreamEditInterval(Duration.ofMillis(100));
-        props.setParseMode("MarkdownV2");
+        props.setStreamEditInterval(Duration.ZERO);
+        props.setStreamingTransport("edit");
+        props.setParseMode(null);
         props.setStreamingMaxChars(20);
         props.setStreamCursor("|");
-        StreamEditor splitEditor = new StreamEditor(client, props, new MediaDeliveryService(), new RichMessageSupport(client));
-        splitEditor.init();
+        StreamEditor preview = new StreamEditor(client, props, new MediaDeliveryService(), new RichMessageSupport(client));
+        preview.init();
+        try {
+            when(client.sendMessage(eq(123L), anyString(), any(), any(), any(), anyBoolean()))
+                .thenReturn(Optional.of(42L));
+            when(client.editMessageText(eq(123L), eq(42L), anyString(), isNull(), anyBoolean()))
+                .thenReturn(true);
+            String text = "a".repeat(18) + "😀" + "b".repeat(4900);
+            assertThat(preview.startStream(123L, "Initial text")).contains(42L);
+            assertThat(preview.editStream(123L, 42L, text)).isTrue();
+            verify(client).editMessageText(eq(123L), eq(42L), eq("a".repeat(18) + "|"), isNull(), anyBoolean());
+            verify(client, times(1)).sendMessage(eq(123L), anyString(), any(), any(), any(), anyBoolean());
+            verify(client, never()).sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean(), any());
 
-        String text = "This is a very long text that exceeds the max chars limit";
+            when(client.sendMessageChecked(eq(123L), anyString(), isNull(), any(), any(), any(), anyBoolean(), any()))
+                .thenReturn(Optional.of(43L));
+            when(client.deleteMessage(123L, 42L)).thenReturn(true);
+            assertThat(preview.finalizeStream(123L, 42L, text)).isTrue();
 
-        // Hermes: startStream sends via sendMessage (null parse_mode)
-        when(client.sendMessage(eq(123L), anyString(), any(), any(), any(), anyBoolean()))
-            .thenReturn(Optional.of(42L));
-        // Split edit: Hermes sends raw text (null parse_mode)
-        when(client.editMessageText(eq(123L), eq(42L), anyString(), any(), anyBoolean()))
-            .thenReturn(true);
-        // Remainder sent as new messages (null parse_mode)
-        when(client.sendMessage(eq(123L), anyString(), any(), anyLong(), any(), anyBoolean()))
-            .thenReturn(Optional.of(43L));
-
-        splitEditor.startStream(123L, "Initial text");
-        // Actual timing: wait past 100ms throttle interval
-        Thread.sleep(110); // timing-assertion
-        boolean result = splitEditor.editStream(123L, 42L, text);
-        assertThat(result).isTrue();
-
-        // Hermes: streaming split uses null parse_mode for editMessageText
-        verify(client).editMessageText(eq(123L), eq(42L), anyString(), isNull(), anyBoolean());
-        // Hermes: remainder sent via sendMessage with null parse_mode.
-        // Text is 57 chars with streamingMaxChars=20 → edit keeps first 20,
-        // remainder 37 chars is sent as 2 chunked continuation messages.
-        verify(client, times(2)).sendMessage(eq(123L), anyString(), isNull(), anyLong(), any());
+            var chunks = org.mockito.ArgumentCaptor.forClass(String.class);
+            verify(client, times(2)).sendMessageChecked(eq(123L), chunks.capture(), isNull(), any(), any(), any(), anyBoolean(), any());
+            assertThat(chunks.getAllValues().stream().map(part -> part.substring(part.indexOf(' ') + 1))
+                .collect(java.util.stream.Collectors.joining())).isEqualTo(text);
+            verify(client).deleteMessage(123L, 42L);
+        } finally {
+            preview.destroy();
+        }
     }
 
     // --- ThinkScrubber partial closing tag test ---

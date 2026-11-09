@@ -10,7 +10,7 @@ class MessageSplitterTest {
 
     @Test
     void shortTextReturnsSingleChunk() {
-        List<String> chunks = MessageSplitter.split("Hello world");
+        List<String> chunks = MessageSplitter.splitPlainText("Hello world");
         assertThat(chunks).hasSize(1);
         assertThat(chunks.get(0)).isEqualTo("Hello world");
         // No index prefix for single chunk
@@ -25,7 +25,7 @@ class MessageSplitterTest {
             sb.append("Paragraph ").append(i).append(" with some text. ".repeat(100));
             sb.append("\n\n");
         }
-        List<String> chunks = MessageSplitter.split(sb.toString());
+        List<String> chunks = MessageSplitter.splitPlainText(sb.toString());
         assertThat(chunks.size()).isGreaterThan(1);
         // Each chunk should have "(N/M) " prefix
         assertThat(chunks.get(0)).startsWith("(1/");
@@ -49,7 +49,7 @@ class MessageSplitterTest {
         text.append("\n\n");
         text.append(code);
 
-        List<String> chunks = MessageSplitter.split(text.toString());
+        List<String> chunks = MessageSplitter.splitMarkdown(text.toString()).stream().map(MessageSplitter.TextPart::formatted).toList();
         assertThat(chunks.size()).isGreaterThanOrEqualTo(2);
 
         // The chunk containing the code block should have balanced fences
@@ -65,27 +65,10 @@ class MessageSplitterTest {
     }
 
     @Test
-    void splitOnParagraphOutsideCodeBlock() {
-        // Text with paragraph boundary outside code block
-        String text = "First paragraph.\n\nSecond paragraph.\n\n```code\nx = 1\n```";
-        // Make it large enough to split
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < 5; i++) {
-            sb.append("Paragraph ").append(i).append(" with padding. ".repeat(100));
-            sb.append("\n\n");
-        }
-        sb.append("```java\n").append("x = 1\n").append("```");
-
-        List<String> chunks = MessageSplitter.split(sb.toString());
-        // Should split — at least 2 chunks
-        assertThat(chunks.size()).isGreaterThanOrEqualTo(1);
-    }
-
-    @Test
     void longCodeFenceIsBalancedAcrossIndependentlyDeliveredChunks() {
         String text = "intro\n```python\n" + "x = 1\n".repeat(1200) + "```\nfinal";
 
-        List<String> chunks = MessageSplitter.split(text);
+        List<String> chunks = MessageSplitter.splitMarkdown(text).stream().map(MessageSplitter.TextPart::formatted).toList();
 
         assertThat(chunks).hasSizeGreaterThan(1);
         for (String chunk : chunks) {
@@ -107,12 +90,12 @@ class MessageSplitterTest {
         return count;
     }
 
-    // ─── splitAndFormat tests ──────────────────────────────────────
+    // ─── Delivery chunk tests ──────────────────────────────────────
 
     @Test
-    void splitAndFormat_shortTextMarkdownV2_singleChunk() {
+    void deliveryChunks_shortTextMarkdownV2_singleChunk() {
         String text = "Hello **bold** text";
-        List<String> chunks = MessageSplitter.splitAndFormat(text, "MarkdownV2");
+        List<String> chunks = MessageSplitter.splitMarkdown(text).stream().map(MessageSplitter.TextPart::formatted).toList();
         assertThat(chunks).hasSize(1);
         // Single chunk: no indicator, just formatted
         assertThat(chunks.get(0)).doesNotStartWith("(");
@@ -121,14 +104,14 @@ class MessageSplitterTest {
     }
 
     @Test
-    void splitAndFormat_multiChunkMarkdownV2_escapedIndicator() {
+    void deliveryChunks_multiChunkMarkdownV2_escapedIndicator() {
         // Create text > 4096 chars
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < 10; i++) {
             sb.append("Paragraph ").append(i).append(" with some text. ".repeat(100));
             sb.append("\n\n");
         }
-        List<String> chunks = MessageSplitter.splitAndFormat(sb.toString(), "MarkdownV2");
+        List<String> chunks = MessageSplitter.splitMarkdown(sb.toString()).stream().map(MessageSplitter.TextPart::formatted).toList();
         assertThat(chunks.size()).isGreaterThan(1);
 
         // The indicator should be escaped for MarkdownV2: ( → \(, ) → \)
@@ -147,55 +130,55 @@ class MessageSplitterTest {
     }
 
     @Test
-    void splitAndFormat_multiChunkHTML_unescapedIndicator() {
+    void deliveryChunks_multiChunkHTML_unescapedIndicator() {
         // Create text > 4096 chars
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < 10; i++) {
             sb.append("Paragraph ").append(i).append(" with some text. ".repeat(100));
             sb.append("\n\n");
         }
-        List<String> chunks = MessageSplitter.splitAndFormat(sb.toString(), "HTML");
+        List<String> chunks = MessageSplitter.splitHtmlSource(sb.toString());
         assertThat(chunks.size()).isGreaterThan(1);
         // For HTML, the indicator should NOT be escaped
         assertThat(chunks.get(0)).startsWith("(1/");
     }
 
     @Test
-    void splitAndFormat_multiChunkNullParseMode_unescapedIndicator() {
+    void deliveryChunks_multiChunkNullParseMode_unescapedIndicator() {
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < 10; i++) {
             sb.append("Paragraph ").append(i).append(" with some text. ".repeat(100));
             sb.append("\n\n");
         }
-        List<String> chunks = MessageSplitter.splitAndFormat(sb.toString(), null);
+        List<String> chunks = MessageSplitter.splitPlainText(sb.toString());
         assertThat(chunks.size()).isGreaterThan(1);
         // For null parse mode, the indicator should NOT be escaped
         assertThat(chunks.get(0)).startsWith("(1/");
     }
 
     @Test
-    void splitAndFormat_emptyText() {
-        List<String> chunks = MessageSplitter.splitAndFormat("", "MarkdownV2");
+    void deliveryChunks_emptyText() {
+        List<String> chunks = MessageSplitter.splitMarkdown("").stream().map(MessageSplitter.TextPart::formatted).toList();
         assertThat(chunks).hasSize(1);
         assertThat(chunks.get(0)).isEmpty();
     }
 
     @Test
-    void splitAndFormat_nullText() {
-        List<String> chunks = MessageSplitter.splitAndFormat(null, "MarkdownV2");
+    void deliveryChunks_nullText() {
+        List<String> chunks = MessageSplitter.splitMarkdown(null).stream().map(MessageSplitter.TextPart::formatted).toList();
         assertThat(chunks).hasSize(1);
         assertThat(chunks.get(0)).isEmpty();
     }
 
     @Test
-    void splitAndFormat_markdownV2EscapesParenthesesInIndicator() {
+    void deliveryChunks_markdownV2EscapesParenthesesInIndicator() {
         // Verify that the (1/N) indicator has escaped parens for MarkdownV2
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < 10; i++) {
             sb.append("Paragraph ").append(i).append(" with some text. ".repeat(100));
             sb.append("\n\n");
         }
-        List<String> chunks = MessageSplitter.splitAndFormat(sb.toString(), "MarkdownV2");
+        List<String> chunks = MessageSplitter.splitMarkdown(sb.toString()).stream().map(MessageSplitter.TextPart::formatted).toList();
         assertThat(chunks.size()).isGreaterThan(1);
 
         // Check that the ( character in the indicator is escaped

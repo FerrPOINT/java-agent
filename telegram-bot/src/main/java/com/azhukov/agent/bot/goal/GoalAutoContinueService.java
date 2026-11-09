@@ -86,7 +86,8 @@ public class GoalAutoContinueService {
             return continuationMessages;
         }
 
-        String sessionId = session.getId() != null ? session.getId().toString() : null;
+        if (session.getBackendSessionId() == null) return continuationMessages;
+        String sessionId = session.getBackendSessionId().toString();
         String currentResponse = lastResponse != null ? lastResponse : "";
         List<String> subgoals = GoalCommand.getSubgoals(session);
 
@@ -101,8 +102,10 @@ public class GoalAutoContinueService {
                 break;
             }
 
+            if (interruptChecker.get()) break;
             String continuePrompt = buildContinuePrompt(goal, subgoals, currentResponse);
             AgentBackendClient.ChatResult result = backendClient.chat(continuePrompt, sessionId, session);
+            if (interruptChecker.get()) break;
             if (isErrorResponse(result)) {
                 log.warn("Goal auto-continue: backend error on turn {}, stopping", i + 1);
                 break;

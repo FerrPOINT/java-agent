@@ -89,7 +89,18 @@ class BotMessageProcessorTest {
 
     @BeforeEach
     void setUp() {
-        telegramClient = mock(TelegramClient.class);
+        telegramClient = mock(TelegramClient.class, call -> {
+            if ("sendMessageChecked".equals(call.getMethod().getName())) {
+                return ((TelegramClient) call.getMock()).sendMessage(call.<Long>getArgument(0), call.getArgument(1),
+                    call.getArgument(2), call.getArgument(3), call.getArgument(4), call.<Boolean>getArgument(6));
+            }
+            if ("editFinalMessage".equals(call.getMethod().getName())) {
+                long id = call.getArgument(1);
+                return ((TelegramClient) call.getMock()).editMessageText(call.<Long>getArgument(0), id,
+                    call.getArgument(2), call.getArgument(3), false) ? Optional.of(id) : Optional.empty();
+            }
+            return RETURNS_DEFAULTS.answer(call);
+        });
         authorizationService = mock(AuthorizationService.class);
         sessionStore = mock(BotSessionStore.class);
         properties = new BotProperties();
@@ -129,6 +140,26 @@ class BotMessageProcessorTest {
         when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong())).thenReturn(Optional.of(1L));
         when(streamEditor.editStream(anyLong(), anyLong(), anyString())).thenReturn(true);
         when(streamEditor.finalizeStream(anyLong(), anyLong(), anyString())).thenReturn(true);
+        when(streamEditor.finalizeTurn(anyLong(), anyString(), anyLong(), anyLong())).thenAnswer(call -> {
+            var finalClient = mock(TelegramClient.class, request -> {
+                if (!"sendMessageChecked".equals(request.getMethod().getName())) return RETURNS_DEFAULTS.answer(request);
+                long chat = request.getArgument(0);
+                String text = request.getArgument(1);
+                String mode = request.getArgument(2);
+                Long reply = request.getArgument(3);
+                Integer topic = request.getArgument(4);
+                return topic == null ? telegramClient.sendMessage(chat, text, mode, reply, null)
+                    : telegramClient.sendMessage(chat, text, mode, reply, topic, false);
+            });
+            var finalEditor = new StreamEditor(finalClient, properties, mediaDeliveryService,
+                mock(com.azhukov.agent.bot.rich.RichMessageSupport.class));
+            org.springframework.test.util.ReflectionTestUtils.invokeMethod(finalEditor, "init");
+            try {
+                return finalEditor.finalizeTurn(call.getArgument(0), call.getArgument(1), call.getArgument(2), call.getArgument(3));
+            } finally {
+                org.springframework.test.util.ReflectionTestUtils.invokeMethod(finalEditor, "destroy");
+            }
+        });
         doNothing().when(streamEditor).clearStream(anyLong());
         when(responseFilter.shouldFilter(anyString())).thenReturn(false);
         when(slashAccessPolicy.canRun(anyLong(), anyString())).thenReturn(true);
@@ -514,12 +545,535 @@ class BotMessageProcessorTest {
         verify(telegramClient, never()).sendMessage(eq(100L), contains("Response"), anyString(), any(), any());
     }
 
+    private record DeliveryFixture(StreamEditor editor, StreamingOrchestrator orchestrator,
+                                   BotMessageProcessor processor) implements AutoCloseable {
+        @Override public void close() {
+            orchestrator.shutdownReviewPollScheduler();
+            editor.clearStream(100L);
+            org.springframework.test.util.ReflectionTestUtils.invokeMethod(editor, "destroy");
+        }
+    }
+
+    private DeliveryFixture realDeliveryFixture() {
+        StreamEditor editor = new StreamEditor(telegramClient, properties, mediaDeliveryService,
+            mock(com.azhukov.agent.bot.rich.RichMessageSupport.class));
+        org.springframework.test.util.ReflectionTestUtils.invokeMethod(editor, "init");
+        StreamingOrchestrator actual = new StreamingOrchestrator(backendClient, editor, busyHandler,
+            runtimeFooter, properties, mediaDeliveryService, telegramClient, sessionStoreMock,
+            mock(com.azhukov.agent.bot.keyboard.ClarifyInteractionRenderer.class));
+        BotMessageProcessor actualProcessor = new BotMessageProcessor(
+            telegramClient, authorizationService, sessionStore, busyHandler, typingManager, backendClient,
+            commandRegistry, callbackQueryHandler, properties, editor, inboundMediaHandler, mediaDeliveryService,
+            mock(com.azhukov.agent.bot.core.AttachmentApiClient.class), runtimeFooter, reactionManager,
+            textBatchDebouncer, photoBatchDebouncer, groupMessageFilter, slashAccessPolicy, responseFilter,
+            goalAutoContinueService, editCaptureService,
+            new UpdateDispatcher(properties, editCaptureService, textBatchDebouncer, photoBatchDebouncer), actual);
+        return new DeliveryFixture(editor, actual, actualProcessor);
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void stopDuringUnconfirmedImmediateDeliveryDoesNotCancelNextTurn() throws Exception {
+        properties.setStreamingTransport("off");
+        var started = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        when(telegramClient.sendMessageChecked(eq(100L), eq("first"), any(), any(), any(), any(), anyBoolean(), any()))
+            .thenAnswer(call -> {
+                started.countDown();
+                assertThat(release.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                return Optional.empty();
+            });
+        when(telegramClient.sendMessageChecked(eq(100L), eq("second"), any(), any(), any(), any(), anyBoolean(), any()))
+            .thenReturn(Optional.of(42L));
+        when(commandRegistry.get("stop")).thenReturn(
+            new com.azhukov.agent.bot.commands.impl.StopCommand(busyHandler, backendClient));
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+            .thenAnswer(call -> {
+                String text = call.getArgument(0);
+                ((Consumer<String>) call.getArgument(4)).accept(text);
+                var result = new AgentBackendClient.ChatResult(text, "model", 1, 10, true);
+                ((Consumer<AgentBackendClient.ChatResult>) call.getArgument(10)).accept(result);
+                return result;
+            });
+        try (DeliveryFixture fixture = realDeliveryFixture();
+             var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var first = executor.submit(() -> fixture.processor().accept(textEvent(1, 100L, "first")));
+            try {
+                assertThat(started.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                fixture.processor().accept(commandEvent(2, 100L, "stop", ""));
+            } finally {
+                release.countDown();
+            }
+            first.get(5, java.util.concurrent.TimeUnit.SECONDS);
+            fixture.processor().accept(textEvent(3, 100L, "second"));
+            verify(telegramClient).sendMessageChecked(eq(100L), eq("second"), any(), any(), any(), any(), anyBoolean(), any());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    @org.junit.jupiter.api.Tag("slow")
+    void stopAfterFloodWaitReachesActiveContinuationAndDiscardsItsText() throws Exception {
+        properties.setStreamingTransport("off");
+        properties.getGoalAutoContinue().setEnabled(true);
+        var session = new BotSessionEntity();
+        session.setId(UUID.randomUUID());
+        UUID backendSession = UUID.randomUUID();
+        session.setBackendSessionId(backendSession);
+        session.setMetadata("_standingGoal", "test");
+        when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), any())).thenReturn(session);
+        when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
+        when(commandRegistry.get("stop")).thenReturn(
+            new com.azhukov.agent.bot.commands.impl.StopCommand(busyHandler, backendClient));
+        when(telegramClient.sendMessageChecked(eq(100L), eq("first"), any(), any(), any(), any(), anyBoolean(), any()))
+            .thenThrow(new TelegramClient.SendRefusalException(429, 1, "rate limit")).thenReturn(Optional.of(41L));
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+            .thenAnswer(call -> {
+                ((Consumer<String>) call.getArgument(4)).accept("first");
+                var result = new AgentBackendClient.ChatResult("first", "model", 1, 10, true);
+                ((Consumer<AgentBackendClient.ChatResult>) call.getArgument(10)).accept(result);
+                return result;
+            });
+        var active = new java.util.concurrent.CountDownLatch(1);
+        var resume = new java.util.concurrent.CountDownLatch(1);
+        when(goalAutoContinueService.runAutoContinue(any(), eq("first"), any())).thenAnswer(call -> {
+            active.countDown();
+            if (!resume.await(5, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("Stop was not issued");
+            return List.of("stopped continuation");
+        });
+        try (DeliveryFixture fixture = realDeliveryFixture()) {
+            fixture.processor().accept(textEvent(1, 100L, "first"));
+            try {
+                assertThat(active.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                fixture.processor().accept(commandEvent(2, 100L, "stop", ""));
+                verify(backendClient).stop(backendSession.toString());
+            } finally {
+                resume.countDown();
+            }
+            org.awaitility.Awaitility.await().until(() -> !busyHandler.isBusy(100L));
+            verify(telegramClient, never()).sendMessage(eq(100L), eq("stopped continuation"), any(), any(), any());
+        }
+    }
+
+    @Test
+    void longReviewNotificationKeepsTheMarkerAtTheChunkBoundary() {
+        String text = "a".repeat(4090) + "MARKERz";
+        when(telegramClient.sendMessage(eq(100L), anyString(), eq("MarkdownV2"), any(), any()))
+            .thenReturn(Optional.of(42L));
+        assertThat(processor.sendReviewMessage(100L, text, 0, 0)).isTrue();
+        var chunks = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(telegramClient, atLeast(2)).sendMessage(eq(100L), chunks.capture(), eq("MarkdownV2"), any(), any());
+        assertThat(String.join("", chunks.getAllValues().stream()
+            .map(part -> part.substring(part.indexOf(' ') + 1)).toList())).isEqualTo(text);
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void completedToolAfterDraftTextDoesNotRestartBackendOrSendEmptyFallback() {
+        properties.setStreamingTransport("draft");
+        properties.getDisplay().setToolProgress("off");
+        when(telegramClient.supportsDraftStreaming(anyString())).thenReturn(true);
+        when(telegramClient.sendDraft(anyLong(), anyString(), anyInt())).thenReturn(true);
+        when(telegramClient.sendMessage(eq(100L), anyString(), eq("MarkdownV2"), any(), any(), eq(false)))
+            .thenReturn(Optional.of(41L));
+        when(backendClient.chat(anyString(), any(), any())).thenReturn(new AgentBackendClient.ChatResult("duplicate"));
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+            .thenAnswer(inv -> {
+                ((Consumer<String>) inv.getArgument(4)).accept("Before tool");
+                ((Consumer<String>) inv.getArgument(5)).accept("search");
+                var result = new AgentBackendClient.ChatResult("Before tool", "model", 1, 10, true);
+                ((Consumer<AgentBackendClient.ChatResult>) inv.getArgument(10)).accept(result);
+                return result;
+            });
+        try (DeliveryFixture fixture = realDeliveryFixture()) {
+            fixture.processor().accept(textEvent(1, 100L, "Hello"));
+            verify(backendClient, never()).chat(anyString(), any(), any());
+            verify(telegramClient).sendMessage(eq(100L), eq("Before tool"), eq("MarkdownV2"), any(), any(), eq(false));
+            verify(telegramClient, never()).sendMessage(eq(100L), eq("duplicate"), any(), any(), any());
+            verify(telegramClient, never()).sendMessage(eq(100L), eq(""), any(), any(), any());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void shortTextBeforeToolIsDeliveredWithoutInvalidEdit() {
+        properties.setStreamingTransport("edit");
+        properties.getDisplay().setToolProgress("off");
+        when(telegramClient.sendMessage(eq(100L), eq("Hi"), eq("MarkdownV2"), any(), any(), anyBoolean()))
+            .thenReturn(Optional.of(41L));
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+            .thenAnswer(inv -> {
+                ((Consumer<String>) inv.getArgument(4)).accept("Hi");
+                ((Consumer<String>) inv.getArgument(5)).accept("search");
+                var result = new AgentBackendClient.ChatResult("Hi", "model", 1, 10, true);
+                ((Consumer<AgentBackendClient.ChatResult>) inv.getArgument(10)).accept(result);
+                return result;
+            });
+        try (DeliveryFixture fixture = realDeliveryFixture()) {
+            fixture.processor().accept(textEvent(1, 100L, "Hello"));
+            verify(telegramClient).sendMessage(eq(100L), eq("Hi"), eq("MarkdownV2"), any(), any(), anyBoolean());
+            verify(telegramClient, never()).editMessageText(eq(100L), eq(-1L), anyString(), any(), anyBoolean());
+            verify(backendClient, never()).chat(anyString(), any(), any());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    @org.junit.jupiter.api.Tag("slow")
+    void rateLimitedShortSegmentIsNotSilentlyDiscarded() {
+        properties.setStreamingTransport("edit");
+        properties.getDisplay().setToolProgress("off");
+        when(telegramClient.sendMessageChecked(eq(100L), eq("Hi"), eq("MarkdownV2"), any(), any(), isNull(), anyBoolean(), any()))
+            .thenThrow(new TelegramClient.SendRefusalException(429, 1, "rate limit")).thenReturn(Optional.of(41L));
+        when(telegramClient.sendMessage(eq(100L), eq("Hi"), eq("MarkdownV2"), any(), any()))
+            .thenReturn(Optional.of(41L));
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+            .thenAnswer(inv -> {
+                ((Consumer<String>) inv.getArgument(4)).accept("Hi");
+                ((Consumer<String>) inv.getArgument(5)).accept("search");
+                var result = new AgentBackendClient.ChatResult("Hi", "model", 1, 10, true);
+                ((Consumer<AgentBackendClient.ChatResult>) inv.getArgument(10)).accept(result);
+                return result;
+            });
+        try (DeliveryFixture fixture = realDeliveryFixture()) {
+            fixture.processor().accept(textEvent(1, 100L, "Hello"));
+            verify(telegramClient, timeout(4500).times(2)).sendMessageChecked(eq(100L), eq("Hi"), eq("MarkdownV2"), any(), any(), isNull(), anyBoolean(), any());
+            verify(backendClient, never()).chat(anyString(), any(), any());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    @org.junit.jupiter.api.Tag("slow")
+    void rejectedSegmentMustArriveBeforeSubsequentFinalAnswer() {
+        properties.setStreamingTransport("edit");
+        properties.getDisplay().setToolProgress("off");
+        var accepted = new java.util.concurrent.CopyOnWriteArrayList<String>();
+        var attempts = new java.util.concurrent.atomic.AtomicInteger();
+        when(telegramClient.sendMessageChecked(eq(100L), eq("Hi"), eq("MarkdownV2"), any(), any(), isNull(), anyBoolean(), any()))
+            .thenAnswer(inv -> { if (attempts.incrementAndGet() == 1) throw new TelegramClient.SendRefusalException(429, 1, "rate limit"); accepted.add("Hi"); return Optional.of(41L); });
+        when(telegramClient.sendMessage(eq(100L), eq("Hi"), eq("MarkdownV2"), any(), any()))
+            .thenAnswer(inv -> { accepted.add("Hi"); return Optional.of(41L); });
+        when(telegramClient.sendMessageChecked(eq(100L), startsWith("Final answer"), isNull(), any(), any(), isNull(), anyBoolean(), any()))
+            .thenAnswer(inv -> { accepted.add("Final answer"); return Optional.of(42L); });
+        when(telegramClient.sendMessage(eq(100L), eq("Final answer"), eq("MarkdownV2"), any(), any()))
+            .thenAnswer(inv -> { accepted.add("Final answer"); return Optional.of(42L); });
+        when(telegramClient.sendMessageChecked(eq(100L), eq("Final answer"), eq("MarkdownV2"), any(), any(), isNull(), anyBoolean(), any()))
+            .thenAnswer(inv -> { accepted.add("Final answer"); return Optional.of(42L); });
+        when(telegramClient.editMessageText(eq(100L), eq(42L), anyString(), eq("MarkdownV2"), eq(false)))
+            .thenReturn(true);
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+            .thenAnswer(inv -> {
+                Consumer<String> token = inv.getArgument(4);
+                token.accept("Hi");
+                ((Consumer<String>) inv.getArgument(5)).accept("search");
+                token.accept("Final answer");
+                var result = new AgentBackendClient.ChatResult("HiFinal answer", "model", 1, 10, true);
+                ((Consumer<AgentBackendClient.ChatResult>) inv.getArgument(10)).accept(result);
+                return result;
+            });
+        try (DeliveryFixture fixture = realDeliveryFixture()) {
+            fixture.processor().accept(textEvent(1, 100L, "Hello"));
+            org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(5))
+                .untilAsserted(() -> assertThat(accepted).containsExactly("Hi", "Final answer"));
+            verify(backendClient, never()).chat(anyString(), any(), any());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"queue", "steer", "interrupt"})
+    void floodWaitAllowsAnotherChatAndPreservesBusyInputMode(String mode) {
+        properties.setStreamingTransport("draft");
+        properties.setBusyMode(mode);
+        properties.getDisplay().setToolProgress("off");
+        when(telegramClient.supportsDraftStreaming(anyString())).thenReturn(true);
+        when(telegramClient.sendDraft(anyLong(), anyString(), anyInt())).thenReturn(true);
+        when(telegramClient.sendMessageChecked(eq(100L), eq("first"), any(), any(), any(), isNull(), anyBoolean(), any()))
+            .thenThrow(new TelegramClient.SendRefusalException(429, 15, "rate limit"));
+        when(telegramClient.sendMessageChecked(eq(200L), eq("independent"), any(), any(), any(), isNull(), anyBoolean(), any()))
+            .thenReturn(Optional.of(42L));
+        when(telegramClient.sendMessageChecked(eq(100L), eq("queued"), any(), any(), any(), isNull(), anyBoolean(), any()))
+            .thenReturn(Optional.of(43L));
+        var queuedRuns = new java.util.concurrent.atomic.AtomicInteger();
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+            .thenAnswer(call -> {
+                String message = call.getArgument(0);
+                if (message.equals("queued")) queuedRuns.incrementAndGet();
+                ((Consumer<String>) call.getArgument(4)).accept(message);
+                var result = new AgentBackendClient.ChatResult(message, "model", 1, 10, true);
+                ((Consumer<AgentBackendClient.ChatResult>) call.getArgument(10)).accept(result);
+                return result;
+            });
+        try (DeliveryFixture fixture = realDeliveryFixture()) {
+            fixture.processor().accept(textEvent(1, 100L, "first"));
+            assertThat(busyHandler.isBusy(100L)).isTrue();
+            fixture.processor().accept(textEvent(3, 200L, "independent"));
+            verify(telegramClient).sendMessageChecked(eq(200L), eq("independent"), any(), any(), any(), isNull(), anyBoolean(), any());
+
+            fixture.processor().accept(textEvent(2, 100L, "queued"));
+            if (!"interrupt".equals(mode)) {
+                assertThat(busyHandler.hasQueued(100L)).isTrue();
+                assertThat(queuedRuns.get()).isZero();
+                fixture.processor().accept(commandEvent(4, 100L, "stop", ""));
+            }
+            verify(backendClient, never()).steer(anyString(), anyString());
+            verify(telegramClient, timeout(2000)).sendMessageChecked(eq(100L), eq("queued"), any(), any(), any(), isNull(), anyBoolean(), any());
+            verify(telegramClient).sendMessageChecked(eq(100L), eq("first"), any(), any(), any(), isNull(), anyBoolean(), any());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    @org.junit.jupiter.api.Tag("slow")
+    void floodWaitAfterFirstMultipartChunkRetriesOnlyRejectedRemainder() {
+        properties.setStreamingTransport("draft");
+        properties.getDisplay().setToolProgress("off");
+        when(telegramClient.supportsDraftStreaming(anyString())).thenReturn(true);
+        when(telegramClient.sendDraft(anyLong(), anyString(), anyInt())).thenReturn(true);
+        String segment = "a".repeat(4000) + "b".repeat(4000) + "c".repeat(1000);
+        var chunks = com.azhukov.agent.bot.formatting.MessageSplitter.splitMarkdown(segment).stream()
+            .map(com.azhukov.agent.bot.formatting.MessageSplitter.TextPart::formatted).toList();
+        assertThat(chunks.size()).isGreaterThan(1);
+        when(telegramClient.sendMessageChecked(eq(100L), anyString(), eq("MarkdownV2"), any(), any(), isNull(), eq(false), any()))
+            .thenReturn(Optional.of(40L)).thenThrow(new TelegramClient.SendRefusalException(429, 1, "rate limit")).thenReturn(Optional.of(41L));
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+            .thenAnswer(inv -> {
+                ((Consumer<String>) inv.getArgument(4)).accept(segment);
+                ((Consumer<String>) inv.getArgument(5)).accept("search");
+                var result = new AgentBackendClient.ChatResult(segment, "model", 1, 10, true);
+                ((Consumer<AgentBackendClient.ChatResult>) inv.getArgument(10)).accept(result);
+                return result;
+            });
+        try (DeliveryFixture fixture = realDeliveryFixture()) {
+            fixture.processor().accept(textEvent(1, 100L, "Hello"));
+            verify(telegramClient, timeout(4500).times(2)).sendMessageChecked(eq(100L), eq(chunks.get(1)), eq("MarkdownV2"), any(), any(), isNull(), eq(false), any());
+            verify(telegramClient, times(1)).sendMessageChecked(eq(100L), eq(chunks.get(0)), eq("MarkdownV2"), any(), any(), isNull(), eq(false), any());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    @org.junit.jupiter.api.Tag("slow")
+    void ambiguousShortSegmentIsNotRetried() throws InterruptedException {
+        properties.setStreamingTransport("edit");
+        properties.getDisplay().setToolProgress("off");
+        when(telegramClient.sendMessage(eq(100L), eq("Hi"), eq("MarkdownV2"), any(), any(), anyBoolean()))
+            .thenReturn(Optional.empty());
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+            .thenAnswer(inv -> {
+                ((Consumer<String>) inv.getArgument(4)).accept("Hi");
+                ((Consumer<String>) inv.getArgument(5)).accept("search");
+                var result = new AgentBackendClient.ChatResult("Hi", "model", 1, 10, true);
+                ((Consumer<AgentBackendClient.ChatResult>) inv.getArgument(10)).accept(result);
+                return result;
+            });
+        try (DeliveryFixture fixture = realDeliveryFixture()) {
+            fixture.processor().accept(textEvent(1, 100L, "Hello"));
+            Thread.sleep(2300);
+            verify(telegramClient, times(1)).sendMessage(eq(100L), eq("Hi"), eq("MarkdownV2"), any(), any(), anyBoolean());
+            verify(telegramClient, never()).sendMessage(eq(100L), eq("Hi"), eq("MarkdownV2"), any(), any());
+            verify(backendClient, never()).chat(anyString(), any(), any());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void shortSecondSegmentDoesNotOverwriteFirstSegment() {
+        properties.setStreamingTransport("edit");
+        properties.getDisplay().setToolProgress("off");
+        when(telegramClient.sendMessage(eq(100L), startsWith("First segment"), isNull(), any(), any(), anyBoolean()))
+            .thenReturn(Optional.of(41L));
+        when(telegramClient.editMessageText(eq(100L), eq(41L), anyString(), eq("MarkdownV2"), eq(false)))
+            .thenReturn(true);
+        when(telegramClient.sendMessage(eq(100L), eq("Hi"), eq("MarkdownV2"), any(), any(), anyBoolean()))
+            .thenReturn(Optional.of(42L));
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+            .thenAnswer(inv -> {
+                Consumer<String> token = inv.getArgument(4);
+                Consumer<String> tool = inv.getArgument(5);
+                token.accept("First segment");
+                tool.accept("first");
+                token.accept("Hi");
+                tool.accept("second");
+                var result = new AgentBackendClient.ChatResult("", "model", 1, 10, true);
+                ((Consumer<AgentBackendClient.ChatResult>) inv.getArgument(10)).accept(result);
+                return result;
+            });
+        try (DeliveryFixture fixture = realDeliveryFixture()) {
+            fixture.processor().accept(textEvent(1, 100L, "Hello"));
+            verify(telegramClient).editMessageText(eq(100L), eq(41L), eq("First segment"), eq("MarkdownV2"), eq(false));
+            verify(telegramClient, never()).editMessageText(eq(100L), eq(41L), eq("Hi"), any(), anyBoolean());
+            verify(telegramClient).sendMessage(eq(100L), eq("Hi"), eq("MarkdownV2"), any(), any(), anyBoolean());
+            verify(telegramClient, never()).deleteMessage(100L, 41L);
+            verify(backendClient, never()).chat(anyString(), any(), any());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void cancelledAfterToolKeepsCommittedSegmentAndClearsReaction() {
+        properties.setStreamingTransport("edit");
+        properties.getDisplay().setToolProgress("off");
+        when(telegramClient.sendMessage(eq(100L), startsWith("Before tool"), isNull(), any(), any(), anyBoolean()))
+            .thenReturn(Optional.of(41L));
+        when(telegramClient.editMessageText(eq(100L), eq(41L), anyString(), eq("MarkdownV2"), eq(false)))
+            .thenReturn(true);
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+            .thenAnswer(inv -> {
+                ((Consumer<String>) inv.getArgument(4)).accept("Before tool");
+                ((Consumer<String>) inv.getArgument(5)).accept("search");
+                ((Consumer<Throwable>) inv.getArgument(11)).accept(new java.util.concurrent.CancellationException("cancelled"));
+                return new AgentBackendClient.ChatResult("Before tool", "model", 1, 10, false, false, null, null, false);
+            });
+        try (DeliveryFixture fixture = realDeliveryFixture()) {
+            fixture.processor().accept(textEvent(1, 100L, "Hello"));
+            verify(telegramClient).editMessageText(eq(100L), eq(41L), contains("Before tool"), eq("MarkdownV2"), eq(false));
+            verify(telegramClient, never()).deleteMessage(100L, 41L);
+            verify(reactionManager).onCancel(100L, 101L);
+            verify(backendClient, never()).chat(anyString(), any(), any());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void streamingOffPreservesAnswerBeforeToolAndFinalAnswer() {
+        properties.setStreamingTransport("off");
+        properties.getDisplay().setToolProgress("off");
+        when(telegramClient.sendMessage(eq(100L), anyString(), eq("MarkdownV2"), any(), any(), eq(false)))
+            .thenReturn(Optional.of(41L));
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+            .thenAnswer(inv -> {
+                ((Consumer<String>) inv.getArgument(4)).accept("Before tool ");
+                ((Consumer<String>) inv.getArgument(5)).accept("search");
+                ((Consumer<String>) inv.getArgument(4)).accept("after tool");
+                var result = new AgentBackendClient.ChatResult("Before tool after tool", "model", 1, 10, true);
+                ((Consumer<AgentBackendClient.ChatResult>) inv.getArgument(10)).accept(result);
+                return result;
+            });
+        try (DeliveryFixture fixture = realDeliveryFixture()) {
+            fixture.processor().accept(textEvent(1, 100L, "Hello"));
+            verify(telegramClient).sendMessage(eq(100L), eq("Before tool after tool"), eq("MarkdownV2"), any(), any(), eq(false));
+            verify(telegramClient, never()).editMessageText(eq(100L), eq(-1L), anyString(), any(), anyBoolean());
+        }
+    }
+
+    @Test
+    void realEditorPartialFallbackDoesNotResendTheWholeAnswer() {
+        String content = "x".repeat(9000);
+        when(telegramClient.sendMessage(eq(100L), anyString(), any(), any(), any(), anyBoolean()))
+            .thenReturn(Optional.of(10L), Optional.of(41L), Optional.empty(), Optional.of(42L));
+        stubStreamingWithTokensAndFinalize(content, "test-model", false);
+        try (DeliveryFixture fixture = realDeliveryFixture()) {
+            fixture.processor().accept(textEvent(1, 100L, "Hello"));
+            verify(telegramClient, times(3)).sendMessage(eq(100L), anyString(), any(), any(), any(), anyBoolean());
+            verify(telegramClient, never()).sendMessage(eq(100L), anyString(), any(), any(), any());
+            verify(telegramClient, never()).deleteMessage(100L, 10L);
+        }
+    }
+
+    @Test
+    void firstUnknownFinalPartDoesNotTriggerWholeResponseFallback() {
+        String content = "x".repeat(9000);
+        when(telegramClient.sendMessage(eq(100L), anyString(), any(), any(), any(), anyBoolean()))
+            .thenReturn(Optional.of(10L), Optional.empty(), Optional.of(42L));
+        stubStreamingWithTokensAndFinalize(content, "test-model", false);
+        try (DeliveryFixture fixture = realDeliveryFixture()) {
+            fixture.processor().accept(textEvent(1, 100L, "Hello"));
+            verify(telegramClient, times(2)).sendMessage(eq(100L), anyString(), any(), any(), any(), anyBoolean());
+            verify(telegramClient, never()).sendMessage(eq(100L), anyString(), any(), any(), any());
+            verify(telegramClient, never()).deleteMessage(100L, 10L);
+        }
+    }
+
+    @Test
+    void firstUnknownShortFinalDoesNotTriggerWholeResponseFallback() {
+        String content = "short response";
+        when(telegramClient.sendMessage(eq(100L), anyString(), any(), any(), any(), anyBoolean()))
+            .thenReturn(Optional.of(10L), Optional.empty());
+        stubStreamingWithTokensAndFinalize(content, "test-model", false);
+        try (DeliveryFixture fixture = realDeliveryFixture()) {
+            fixture.processor().accept(textEvent(1, 100L, "Hello"));
+            verify(telegramClient, never()).sendMessage(eq(100L), anyString(), any(), any(), any());
+        }
+    }
+
+    @Test
+    void exceptionAfterAcceptedPartDoesNotReplayWholeAnswer() {
+        String content = "x".repeat(9000);
+        when(telegramClient.sendMessage(eq(100L), anyString(), any(), any(), any(), anyBoolean()))
+            .thenReturn(Optional.of(10L), Optional.of(41L))
+            .thenThrow(new com.azhukov.agent.bot.client.TelegramApiException(500, "server error"));
+        stubStreamingWithTokensAndFinalize(content, "test-model", false);
+        try (DeliveryFixture fixture = realDeliveryFixture()) {
+            fixture.processor().accept(textEvent(1, 100L, "Hello"));
+            verify(telegramClient, times(3)).sendMessage(eq(100L), anyString(), any(), any(), any(), anyBoolean());
+            verify(telegramClient, never()).sendMessage(eq(100L), anyString(), any(), any(), any());
+            verify(telegramClient, never()).deleteMessage(100L, 10L);
+        }
+    }
+
+    @Test
+    void laterTurnDoesNotInheritPriorUncertainDelivery() {
+        String first = "x".repeat(9000);
+        when(telegramClient.sendMessage(eq(100L), anyString(), any(), any(), any(), anyBoolean()))
+            .thenReturn(Optional.of(10L), Optional.of(41L), Optional.empty(), Optional.of(11L));
+        stubStreamingWithTokensAndFinalize(first, "test-model", false);
+        try (DeliveryFixture fixture = realDeliveryFixture()) {
+            fixture.processor().accept(textEvent(1, 100L, "First"));
+            reset(telegramClient);
+            when(telegramClient.sendMessage(eq(100L), anyString(), any(), any(), any(), anyBoolean()))
+                .thenReturn(Optional.of(11L), Optional.of(12L));
+            when(telegramClient.editMessageText(100L, 11L, "second response", "MarkdownV2", false))
+                .thenReturn(true);
+            reset(backendClient);
+            stubStreamingWithTokensAndFinalize("second response", "test-model", false);
+            fixture.processor().accept(textEvent(2, 100L, "Second"));
+            verify(telegramClient).editMessageText(100L, 11L, "second response", "MarkdownV2", false);
+        }
+    }
+
+    @Test
+    void partialStreamFinalMustNotReplayTheWholeAnswer() {
+        stubStreamingResult("Long response", false);
+        when(streamEditor.hasUnconfirmedDelivery(100L)).thenReturn(true);
+        processor.accept(textEvent(1, 100L, "Hello"));
+        verify(telegramClient, never()).sendMessage(eq(100L), contains("Long response"), anyString(), any(), any());
+    }
+
     @Test
     void textMessageStreamNotFinalizedSendsFormatted() {
         stubStreamingResult("Response text", false);
         processor.accept(textEvent(1, 100L, "Hello"));
         // When streamFinalized is false, sendFormatted IS called (5-arg sendMessage)
         verify(telegramClient).sendMessage(eq(100L), contains("Response text"), anyString(), any(), any());
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void previousAmbiguousDraftSegmentPreventsTheFinalDelivery() {
+        properties.setStreamingTransport("draft");
+        properties.setHeartbeatIntervalSeconds(0);
+        properties.getDisplay().setToolProgress("off");
+        when(telegramClient.supportsDraftStreaming(anyString())).thenReturn(true);
+        when(telegramClient.sendDraft(anyLong(), anyString(), anyInt())).thenReturn(true);
+        when(telegramClient.sendMessage(eq(100L), anyString(), eq("MarkdownV2"), any(), any(), eq(false)))
+            .thenReturn(Optional.empty(), Optional.empty());
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+            .thenAnswer(inv -> {
+                ((Consumer<String>) inv.getArgument(4)).accept("Previous segment");
+                ((Consumer<String>) inv.getArgument(5)).accept("search");
+                ((Consumer<String>) inv.getArgument(4)).accept("Final answer");
+                var result = new AgentBackendClient.ChatResult("Final answer", "model", 1, 10, true);
+                ((Consumer<AgentBackendClient.ChatResult>) inv.getArgument(10)).accept(result);
+                return result;
+            });
+        try (DeliveryFixture fixture = realDeliveryFixture()) {
+            fixture.processor().accept(textEvent(1, 100L, "Hello"));
+            verify(telegramClient, never()).sendMessage(eq(100L), eq("Final answer"), eq("MarkdownV2"), any(), any());
+            verify(telegramClient, never()).sendMessage(eq(100L), eq("Final answer"), eq("MarkdownV2"), any(), any(), eq(false));
+            verify(telegramClient, times(1)).sendMessage(eq(100L), eq("Previous segment"), eq("MarkdownV2"), any(), any(), eq(false));
+        }
     }
 
     @Test
@@ -991,20 +1545,12 @@ class BotMessageProcessorTest {
     // ─── Streaming fallback ─────────────────────────────────────
 
     @Test
-    void streamingFailsToStartFallsBackToSyncChat() {
-        when(streamEditor.startStream(anyLong(), anyString())).thenReturn(Optional.empty());
-        when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong())).thenReturn(Optional.empty());
+    void streamingPreviewUnavailableDoesNotRepeatBackendRequest() {
         when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong())).thenReturn(Optional.empty());
-        // When startStream returns empty, messageId stays -1, so no tokens are delivered,
-        // accumulated is empty, and the code falls through to sync fallback
         when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenReturn(new AgentBackendClient.ChatResult("", "test-model", 100, 1000, false, false));
-        when(backendClient.chat(anyString(), nullable(String.class), any()))
-            .thenReturn(new AgentBackendClient.ChatResult("Sync response", "sync-model", 50, 500, false, false));
-
         processor.accept(textEvent(1, 100L, "hello"));
-        verify(backendClient).chat(anyString(), nullable(String.class), any());
-        verify(telegramClient).sendMessage(eq(100L), contains("Sync response"), anyString(), any(), any());
+        verify(backendClient, never()).chat(anyString(), nullable(String.class), any());
     }
 
     @Test
@@ -1022,19 +1568,16 @@ class BotMessageProcessorTest {
             .thenThrow(new RuntimeException("connection refused"));
 
         processor.accept(textEvent(1, 100L, "hello"));
-        verify(streamEditor).clearStream(100L);
+        verify(streamEditor, atLeastOnce()).clearStream(100L);
     }
 
     @Test
-    void streamingNoContentButHasMetadataFallsBackToSync() {
+    void streamingNoContentWithMetadataDoesNotRepeatRequest() {
         when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenReturn(new AgentBackendClient.ChatResult("", "test-model", 100, 1000, false, false));
-        when(backendClient.chat(anyString(), nullable(String.class), any()))
-            .thenReturn(new AgentBackendClient.ChatResult("Sync fallback", "sync-model", 50, 500, false, false));
-
         processor.accept(textEvent(1, 100L, "hello"));
-        verify(backendClient).chat(anyString(), nullable(String.class), any());
-        verify(telegramClient).sendMessage(eq(100L), contains("Sync fallback"), anyString(), any(), any());
+        verify(backendClient, never()).chat(anyString(), nullable(String.class), any());
+        verify(runtimeFooter).format(eq("test-model"), eq(100), eq(1000), anyString(), anyLong(), anyBoolean());
     }
 
     @Test
@@ -1244,6 +1787,64 @@ class BotMessageProcessorTest {
         processor.accept(textEvent(1, 100L, "hello"));
         verify(telegramClient).sendMessage(eq(100L), contains("Continuation 1"), anyString(), any(), any());
         verify(telegramClient).sendMessage(eq(100L), contains("Continuation 2"), anyString(), any(), any());
+        verify(reactionManager).onProcessingComplete(100L, 101L, true);
+    }
+
+    @Test
+    void interruptedBackendTurnDoesNotStartGoalAutoContinuation() {
+        properties.getGoalAutoContinue().setEnabled(true);
+        BotSessionEntity session = new BotSessionEntity();
+        session.setId(UUID.randomUUID());
+        session.setMetadata("_standingGoal", "Complete the task");
+        when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), any())).thenReturn(session);
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+            .thenAnswer(inv -> {
+                Consumer<String> token = inv.getArgument(4);
+                Consumer<Throwable> error = inv.getArgument(11);
+                token.accept("Partial response");
+                error.accept(new java.util.concurrent.CancellationException("cancelled"));
+                return new AgentBackendClient.ChatResult("Partial response", "model", 1, 10, false, false, null, null, false);
+            });
+        processor.accept(textEvent(1, 100L, "hello"));
+        verify(goalAutoContinueService, never()).runAutoContinue(any(), any(), any());
+        verify(streamEditor).finalizeStream(eq(100L), anyLong(), eq("Partial response"));
+        verify(reactionManager).onCancel(100L, 101L);
+        verify(reactionManager, never()).onProcessingComplete(eq(100L), eq(101L), anyBoolean());
+    }
+
+    @Test
+    void failedPartialStreamDoesNotStartGoalAutoContinuation() {
+        properties.getGoalAutoContinue().setEnabled(true);
+        BotSessionEntity session = new BotSessionEntity();
+        session.setId(UUID.randomUUID());
+        session.setMetadata("_standingGoal", "Complete the task");
+        when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), any())).thenReturn(session);
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+            .thenAnswer(inv -> {
+                Consumer<String> token = inv.getArgument(4);
+                Consumer<Throwable> error = inv.getArgument(11);
+                token.accept("Partial response");
+                error.accept(new RuntimeException("stream failed"));
+                return new AgentBackendClient.ChatResult("Partial response", "model", 1, 10, false, false);
+            });
+        processor.accept(textEvent(1, 100L, "hello"));
+        verify(goalAutoContinueService, never()).runAutoContinue(any(), any(), any());
+        verify(reactionManager).onProcessingComplete(100L, 101L, false);
+    }
+
+    @Test
+    void emptyStreamDoesNotStartGoalAutoContinuation() {
+        properties.getGoalAutoContinue().setEnabled(true);
+        BotSessionEntity session = new BotSessionEntity();
+        session.setId(UUID.randomUUID());
+        session.setMetadata("_standingGoal", "Complete the task");
+        when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), any())).thenReturn(session);
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+            .thenReturn(new AgentBackendClient.ChatResult("", "model", 1, 10, false, false));
+
+        processor.accept(textEvent(1, 100L, "hello"));
+
+        verify(goalAutoContinueService, never()).runAutoContinue(any(), any(), any());
     }
 
     @Test
@@ -1754,11 +2355,8 @@ class BotMessageProcessorTest {
         when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
                 callOrder.add("chatStream");
-                return new AgentBackendClient.ChatResult("reply", null, 100, 1000, false);
-            });
-        when(backendClient.chat(anyString(), nullable(String.class), any()))
-            .thenAnswer(inv -> {
-                callOrder.add("chat");
+                Consumer<String> tokenConsumer = inv.getArgument(4);
+                tokenConsumer.accept("reply");
                 return new AgentBackendClient.ChatResult("reply", "test-model", 100, 1000, false);
             });
 
@@ -1856,58 +2454,21 @@ class BotMessageProcessorTest {
     // ─── StreamEditor startStream returns empty ─────────────────
 
     @Test
-    void startStreamReturnsEmptyUsesSyncFallback() {
-        when(streamEditor.startStream(anyLong(), anyString())).thenReturn(Optional.empty());
-        when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong())).thenReturn(Optional.empty());
-        when(streamEditor.startStream(anyLong(), anyString(), anyString(), anyLong(), anyLong())).thenReturn(Optional.empty());
+    void emptyStreamDiscardsPreviewWithoutSyncFallback() {
         when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenReturn(new AgentBackendClient.ChatResult("", "test-model", 100, 1000, false, false));
-        when(backendClient.chat(anyString(), nullable(String.class), any()))
-            .thenReturn(new AgentBackendClient.ChatResult("sync response", "sync-model", 100, 1000, false, false));
-
         processor.accept(textEvent(1, 100L, "hello"));
-        verify(backendClient).chat(anyString(), nullable(String.class), any());
-        verify(telegramClient).sendMessage(eq(100L), contains("sync response"), anyString(), any(), any());
+        verify(streamEditor).discardStreamPreview(100L);
+        verify(backendClient, never()).chat(anyString(), nullable(String.class), any());
     }
 
     // ─── Sync fallback with metadata merge ───────────────────────
 
-    @Test
-    void syncFallbackMergesMetadataFromStreamAndSync() {
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
-            .thenReturn(new AgentBackendClient.ChatResult("", "stream-model", 200, 2000, false, true));
-        when(backendClient.chat(anyString(), nullable(String.class), any()))
-            .thenReturn(new AgentBackendClient.ChatResult("sync content", null, 100, 1000, false, false));
 
-        processor.accept(textEvent(1, 100L, "hello"));
-        // Should prefer sync content but merge metadata
-        verify(telegramClient).sendMessage(eq(100L), contains("sync content"), anyString(), any(), any());
-        // Footer should use stream-model (since sync modelUsed is null, stream model is used)
-        verify(runtimeFooter).format(eq("stream-model"), eq(100), eq(1000), anyString(), anyLong(), anyBoolean());
-    }
 
-    @Test
-    void syncFallbackPrefersSyncMetadata() {
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
-            .thenReturn(new AgentBackendClient.ChatResult("", "stream-model", 200, 2000, false, false));
-        when(backendClient.chat(anyString(), nullable(String.class), any()))
-            .thenReturn(new AgentBackendClient.ChatResult("sync content", "sync-model", 100, 1000, false, true));
 
-        processor.accept(textEvent(1, 100L, "hello"));
-        verify(runtimeFooter).format(eq("sync-model"), eq(100), eq(1000), anyString(), anyLong(), anyBoolean());
-    }
 
-    @Test
-    void syncFallbackMergesMemoryUpdated() {
-        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
-            .thenReturn(new AgentBackendClient.ChatResult("", "stream-model", 200, 2000, false, true));
-        when(backendClient.chat(anyString(), nullable(String.class), any()))
-            .thenReturn(new AgentBackendClient.ChatResult("sync content", "sync-model", 100, 1000, false, false));
 
-        processor.accept(textEvent(1, 100L, "hello"));
-        // memoryUpdated should be true (stream) || false (sync) = true
-        verify(telegramClient).sendMessage(eq(100L), contains("Memory updated"), anyString(), any(), any());
-    }
 
     // ─── MarkdownV2 conversion in sendFormatted ──────────────────
 
@@ -1994,6 +2555,8 @@ class BotMessageProcessorTest {
     void longTextSplitIntoMultipleChunks() {
         String longText = "A".repeat(5000); // Exceeds 4096 limit
         stubStreamingResult(longText, false);
+        when(telegramClient.sendMessage(eq(100L), anyString(), anyString(), any(), any()))
+            .thenReturn(Optional.of(1L));
         processor.accept(textEvent(1, 100L, "hello"));
         // MessageSplitter should split into at least 2 chunks
         verify(telegramClient, atLeast(2)).sendMessage(eq(100L), anyString(), anyString(), any(), any());

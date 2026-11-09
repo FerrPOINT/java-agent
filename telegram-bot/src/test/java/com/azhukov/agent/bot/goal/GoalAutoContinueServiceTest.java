@@ -24,6 +24,7 @@ class GoalAutoContinueServiceTest {
     private BotSessionEntity sessionWithGoal(String goal) {
         BotSessionEntity session = new BotSessionEntity();
         session.setId(UUID.randomUUID());
+        session.setBackendSessionId(UUID.randomUUID());
         session.setMetadata("_standingGoal", goal);
         return session;
     }
@@ -173,8 +174,13 @@ class GoalAutoContinueServiceTest {
     @Test
     void interruptStopsLoop() {
         AgentBackendClient client = mock(AgentBackendClient.class);
+        AtomicBoolean interrupted = new AtomicBoolean(false);
         when(client.chat(anyString(), isNull(), isNull()))
-            .thenReturn(new AgentBackendClient.ChatResult("NO"));
+            .thenReturn(new AgentBackendClient.ChatResult("NO"))
+            .thenAnswer(invocation -> {
+                interrupted.set(true);
+                return new AgentBackendClient.ChatResult("NO");
+            });
         when(client.chat(anyString(), anyString(), any()))
             .thenReturn(new AgentBackendClient.ChatResult("step 1"));
 
@@ -185,17 +191,10 @@ class GoalAutoContinueServiceTest {
 
         BotSessionEntity session = sessionWithGoal("deploy app");
 
-        // Interrupt after first continuation
-        AtomicBoolean interrupted = new AtomicBoolean(false);
-        List<String> result = service.runAutoContinue(session, "working", () -> {
-            if (interrupted.get()) return true;
-            interrupted.set(true);
-            return false;
-        });
+        List<String> result = service.runAutoContinue(session, "working", interrupted::get);
 
-        // Should produce exactly 1 continuation, then interrupt on next iteration
-        assertThat(result).hasSize(1);
         assertThat(result).containsExactly("step 1");
+        verify(client, times(1)).chat(anyString(), anyString(), same(session));
     }
 
     @Test
