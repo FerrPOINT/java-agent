@@ -18,6 +18,7 @@ import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.BasicFileAttributeView;
 import java.nio.file.attribute.PosixFileAttributeView;
+import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.Set;
 import java.util.UUID;
@@ -62,7 +63,11 @@ public final class SecureFileAccess {
                     next = linux.open(current.fd, name, flags);
                 } catch (NoSuchFileException missing) {
                     if (!create) throw missing;
-                    linux.mkdir(current.fd, name);
+                    try {
+                        linux.mkdir(current.fd, name, 0777);
+                    } catch (FileAlreadyExistsException createdConcurrently) {
+                        // openat below still checks the entry without following a link.
+                    }
                     next = linux.open(current.fd, name, flags);
                 }
                 var previous = current;
@@ -143,24 +148,47 @@ public final class SecureFileAccess {
                 // A new file starts private.
             }
 
-            Path temp = Path.of(".java-agent-write-" + UUID.randomUUID() + ".tmp");
+            Path stageName = Path.of(".java-agent-stage-" + UUID.randomUUID());
+            descriptor.linux.mkdir(descriptor.fd, componentName(stageName), 0700);
+            try (var stage = openDirectory(stageName, false)) {
+                writeStagedFile(stage, name, bytes, permissions, check);
+            } catch (IOException | RuntimeException failure) {
+                try {
+                    entries.deleteDirectory(stageName);
+                } catch (IOException cleanup) {
+                    failure.addSuppressed(cleanup);
+                }
+                throw failure;
+            }
+            entries.deleteDirectory(stageName);
+        }
+
+        private void writeStagedFile(Directory stage, Path name, byte[] bytes,
+                                     Set<PosixFilePermission> permissions,
+                                     BeforeReplace check) throws IOException {
+            Path payload = Path.of(".payload");
             boolean created = false;
             try {
-                try (var channel = entries.newByteChannel(temp,
+                try (var channel = stage.entries.newByteChannel(payload,
                         Set.of(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS),
                         PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")))) {
                     created = true;
                     var buffer = ByteBuffer.wrap(bytes);
                     while (buffer.hasRemaining()) channel.write(buffer);
                 }
-                entries.getFileAttributeView(temp, PosixFileAttributeView.class, LinkOption.NOFOLLOW_LINKS)
+                Object writtenFile = stage.attributes(payload).fileKey();
+                stage.entries.getFileAttributeView(payload, PosixFileAttributeView.class, LinkOption.NOFOLLOW_LINKS)
                     .setPermissions(permissions);
                 check.run();
-                entries.move(temp, entries, name);
+                var current = stage.attributes(payload);
+                if (!current.isRegularFile() || writtenFile == null || !writtenFile.equals(current.fileKey())) {
+                    throw new IOException("Staged file changed before replacement: " + name);
+                }
+                stage.entries.move(payload, entries, name);
             } catch (IOException | RuntimeException failure) {
                 if (created) {
                     try {
-                        entries.deleteFile(temp);
+                        stage.entries.deleteFile(payload);
                     } catch (IOException cleanup) {
                         failure.addSuppressed(cleanup);
                     }
@@ -228,7 +256,7 @@ public final class SecureFileAccess {
                 FunctionDescriptor.of(JAVA_INT, JAVA_INT, ADDRESS, JAVA_INT),
                 Linker.Option.firstVariadicArg(3), Linker.Option.captureCallState("errno"));
             mkdir = linker.downcallHandle(libc.find("mkdirat").orElseThrow(),
-                FunctionDescriptor.of(JAVA_INT, JAVA_INT, ADDRESS, JAVA_INT));
+                FunctionDescriptor.of(JAVA_INT, JAVA_INT, ADDRESS, JAVA_INT), Linker.Option.captureCallState("errno"));
             renameNoReplace = libc.find("renameat2").map(symbol -> linker.downcallHandle(symbol,
                 FunctionDescriptor.of(JAVA_INT, JAVA_INT, ADDRESS, JAVA_INT, ADDRESS, JAVA_INT),
                 Linker.Option.captureCallState("errno"))).orElse(null);
@@ -263,11 +291,14 @@ public final class SecureFileAccess {
             }
         }
 
-        void mkdir(int parent, String name) throws IOException {
+        void mkdir(int parent, String name, int mode) throws IOException {
             try (var arena = Arena.ofConfined()) {
-                // The following openat validates the result, including concurrent creation.
-                int ignored = (int) mkdir.invokeExact(parent, arena.allocateFrom(name), 0777);
-            } catch (RuntimeException | Error failure) {
+                var state = arena.allocate(callState);
+                int result = (int) mkdir.invokeExact(state, parent, arena.allocateFrom(name), mode);
+                if (result == 0) return;
+                if (state.get(JAVA_INT, errno) == 17) throw new FileAlreadyExistsException(name);
+                throw new IOException("Could not safely create directory " + name);
+            } catch (IOException | RuntimeException | Error failure) {
                 throw failure;
             } catch (Throwable failure) {
                 throw new IOException("Secure directory creation failed", failure);
