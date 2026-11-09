@@ -114,7 +114,6 @@ public class AgentProperties {
         /** Maximum size in bytes per image before shrinking (default 4 MB). */
         private int maxImageSizeBytes = 4 * 1024 * 1024;
         /** Maximum total image payload in bytes before shrinking (default 20 MB). */
-        private int maxTotalImageSizeBytes = 20 * 1024 * 1024;
         /** JPEG quality (0.0–1.0) used when re-encoding shrunk images (default 0.85). */
         private double imageJpegQuality = 0.85;
     }

@@ -497,14 +497,13 @@ public class LangChain4jModelClient implements ModelClient {
     }
 
     public String analyzeImage(String base64Image, String prompt, ModelRequestOptions options) {
-        // P2-15: shrink image if it exceeds provider payload limits
-        String effectiveBase64 = base64Image;
-        if (imageShrinker != null) {
-            effectiveBase64 = imageShrinker.shrinkIfNeeded(base64Image);
+        if (imageShrinker == null) {
+            throw new IllegalStateException("Image preparation is not configured");
         }
+        var image = imageShrinker.prepareImage(base64Image);
         UserMessage message = UserMessage.from(
             dev.langchain4j.data.message.TextContent.from(prompt),
-            dev.langchain4j.data.message.ImageContent.from(effectiveBase64, "image/png")
+            dev.langchain4j.data.message.ImageContent.from(image.base64(), image.mimeType())
         );
         ChatRequest request = ChatRequest.builder()
             .messages(List.of(message))

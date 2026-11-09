@@ -193,8 +193,8 @@ class ImageTranscodeServiceTest {
         ImageShrinkerService shrinker = new ImageShrinkerService(props, service);
         byte[] png = pngBytes();
         String base64 = Base64.getEncoder().encodeToString(png);
-        // Decodable input returns re-encoded (or same) bytes, never garbage.
-        String out = shrinker.shrinkIfNeeded(base64);
-        assertThat(ImageIO.read(new ByteArrayInputStream(Base64.getDecoder().decode(out)))).isNotNull();
+        var out = shrinker.prepareImage(base64);
+        assertThat(out.mimeType()).isEqualTo("image/png");
+        assertThat(ImageIO.read(new ByteArrayInputStream(Base64.getDecoder().decode(out.base64())))).isNotNull();
     }
 }

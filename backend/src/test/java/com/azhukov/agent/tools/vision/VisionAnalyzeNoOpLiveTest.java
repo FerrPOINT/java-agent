@@ -2,7 +2,6 @@ package com.azhukov.agent.tools.vision;
 
 import com.azhukov.agent.client.NoOpModelClient;
 import com.azhukov.agent.config.AgentProperties;
-import com.azhukov.agent.service.ImageShrinkerService;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
@@ -16,7 +15,7 @@ class VisionAnalyzeNoOpLiveTest {
     @Test
     void noOpVisionReturnsPlaceholder() {
         var properties = new AgentProperties();
-        VisionAnalyzeTool tool = new VisionAnalyzeTool(new NoOpModelClient(), new ImageShrinkerService(properties),
+        VisionAnalyzeTool tool = new VisionAnalyzeTool(new NoOpModelClient(),
             new com.azhukov.agent.core.security.DefaultUrlSafety(properties), properties,
             new com.azhukov.agent.core.security.DefaultFileSafety(properties));
         var result = tool.execute(
