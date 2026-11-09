@@ -23,7 +23,8 @@ class AttachmentFlywayConfigTest {
             sql.execute("INSERT INTO attachment_artifacts VALUES (1,'owner','hash','photo',NULL)");
 
             var migration = Flyway.configure().dataSource(source)
-                .locations("classpath:db/migration", "classpath:db/h2").baselineVersion("74").load();
+                // This fixture models only the attachment table just before V75.
+                .locations("classpath:db/migration", "classpath:db/h2").baselineVersion("74.1").load();
             migration.baseline();
             migration.migrate();
 
