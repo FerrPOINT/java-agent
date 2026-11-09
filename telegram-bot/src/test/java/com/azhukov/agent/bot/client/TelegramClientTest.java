@@ -114,8 +114,8 @@ class TelegramClientTest {
         assertThat(client.getLastApiErrorCode()).isEqualTo(429);
         assertThatThrownBy(() -> client.sendMessageChecked(1L, "again", null, null, null, null, false))
             .isInstanceOfSatisfying(TelegramClient.SendRefusalException.class,
-                ex -> assertThat(ex.getRetryAfterSeconds()).isPositive());
-        verify(restClient, times(1)).post();
+                ex -> assertThat(ex.getRetryAfterSeconds()).isEqualTo(37));
+        verify(restClient, times(2)).post();
     }
 
     @Test
@@ -1237,22 +1237,16 @@ class TelegramClientTest {
         }
 
         @Test
-        @DisplayName("HTTP 429 cooldown suppresses later Telegram calls")
-        void rateLimit429BlocksLaterCallsUntilRetryAfter() {
-            TelegramResponse error429 = errorResponseWithParams(429, "Too Many Requests",
-                Map.of("retry_after", IntNode.valueOf(1)));
-            stubPostChain(error429);
+        @DisplayName("HTTP 429 does not suppress a later request")
+        void rateLimit429DoesNotSuppressAnotherChat() {
+            var error = errorResponseWithParams(429, "Too Many Requests", Map.of("retry_after", IntNode.valueOf(1)));
+            stubPostChain(error);
+            when(responseSpec.body(TelegramResponse.class)).thenReturn(error, successResponseWithResult(true));
 
             assertThatThrownBy(() -> client.callApi("sendMessage", Map.of("chat_id", 1)))
                 .isInstanceOf(TelegramApiException.class);
-            assertThatThrownBy(() -> client.callApi("editMessageText", Map.of("chat_id", 1)))
-                .isInstanceOf(TelegramApiException.class)
-                .satisfies(ex -> {
-                    TelegramApiException rateLimit = (TelegramApiException) ex;
-                    assertThat(rateLimit.getRetryAfter()).isPositive();
-                    assertThat(rateLimit.getMessage()).contains("flood cooldown");
-                });
-            verify(restClient, times(1)).post();
+            assertThat(client.callApi("editMessageText", Map.of("chat_id", 2))).isPresent();
+            verify(restClient, times(2)).post();
         }
 
         @Test
