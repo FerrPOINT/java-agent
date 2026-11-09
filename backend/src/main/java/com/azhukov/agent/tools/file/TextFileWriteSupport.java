@@ -19,14 +19,8 @@ import java.nio.charset.StandardCharsets;
 import com.azhukov.agent.core.security.SecureFileAccess;
 import java.nio.ByteBuffer;
 import java.nio.channels.Channels;
-import java.nio.file.LinkOption;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
-import java.nio.file.SecureDirectoryStream;
-import java.nio.file.StandardOpenOption;
-import java.nio.file.attribute.PosixFileAttributeView;
-import java.util.Set;
-import java.util.UUID;
 
 final class TextFileWriteSupport {
 
@@ -50,7 +44,6 @@ final class TextFileWriteSupport {
 
     private static WriteOutcome writeValidated(SecureFileAccess.Directory parent, Path path, String expected,
                                                String content) throws IOException {
-        var entries = parent.entries();
         Path name = path.getFileName();
         byte[] existing = readExistingBytes(parent, name);
         if (expected != null && (existing == null || !expected.equals(decode(existing)))) {
@@ -58,37 +51,15 @@ final class TextFileWriteSupport {
         }
         String adjusted = preserveExistingEncodingShape(existing, content);
         byte[] bytes = adjusted.getBytes(StandardCharsets.UTF_8);
-        Path temp = Path.of(".java-agent-write-" + UUID.randomUUID() + ".tmp");
-        boolean created = false;
-        try {
-            try (var channel = entries.newByteChannel(temp,
-                    Set.of(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS),
-                    java.nio.file.attribute.PosixFilePermissions.asFileAttribute(
-                        java.nio.file.attribute.PosixFilePermissions.fromString("rw-------")))) {
-                created = true;
-                if (existing != null) copyExistingPermissions(entries, name, temp);
-                var buffer = ByteBuffer.wrap(bytes);
-                while (buffer.hasRemaining()) channel.write(buffer);
-            }
+        parent.replaceFile(name, bytes, () -> {
             if (expected != null && !Arrays.equals(existing, readExistingBytes(parent, name))) {
                 throw new IOException("File changed before applying patch: " + path);
             }
-            entries.move(temp, entries, name);
-            created = false;
-            if (!Arrays.equals(bytes, readExistingBytes(parent, name))) {
-                throw new IOException("Post-write verification failed for " + path + ": re-read it before retrying.");
-            }
-            return new WriteOutcome(path, adjusted, bytes.length, true);
-        } catch (IOException | RuntimeException error) {
-            if (created) {
-                try {
-                    entries.deleteFile(temp);
-                } catch (IOException cleanup) {
-                    error.addSuppressed(cleanup);
-                }
-            }
-            throw error;
+        });
+        if (!Arrays.equals(bytes, readExistingBytes(parent, name))) {
+            throw new IOException("Post-write verification failed for " + path + ": re-read it before retrying.");
         }
+        return new WriteOutcome(path, adjusted, bytes.length, true);
     }
 
     static String read(SecureFileAccess.Directory parent, Path name) throws IOException {
@@ -242,14 +213,6 @@ final class TextFileWriteSupport {
             if (Character.isLowSurrogate(c)) {
                 throw new IOException("Content contains an unpaired Unicode surrogate at index " + i);
             }
-        }
-    }
-
-    private static void copyExistingPermissions(SecureDirectoryStream<Path> parent, Path name, Path temp) throws IOException {
-        var original = parent.getFileAttributeView(name, PosixFileAttributeView.class, LinkOption.NOFOLLOW_LINKS);
-        if (original != null) {
-            parent.getFileAttributeView(temp, PosixFileAttributeView.class, LinkOption.NOFOLLOW_LINKS)
-                .setPermissions(original.readAttributes().permissions());
         }
     }
 
