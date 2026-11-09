@@ -77,6 +77,16 @@ class ImageShrinkerServiceTest {
     }
 
     @Test
+    void rejectsPngWithValidHeaderButMissingImageData() throws Exception {
+        byte[] png = Base64.getDecoder().decode(createTestImageBase64(20, 20));
+        byte[] headerOnly = java.util.Arrays.copyOf(png, 33);
+        String truncated = Base64.getEncoder().encodeToString(headerOnly);
+
+        assertThatIllegalArgumentException().isThrownBy(() -> createShrinker().prepareImage(truncated))
+            .withMessageContaining("Image preparation failed");
+    }
+
+    @Test
     void rejectsEmptyImageData() {
         var shrinker = createShrinker();
         assertThatIllegalArgumentException().isThrownBy(() -> shrinker.prepareImage(null));

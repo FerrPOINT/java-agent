@@ -66,9 +66,10 @@ public class ImageShrinkerService {
             try {
                 reader.setInput(input, true, true);
                 ImageTranscodeService.verifyPixelCount(reader.getWidth(0), reader.getHeight(0));
+                BufferedImage image = reader.read(0);
                 if (fits) return prepared(bytes, reader.getOriginatingProvider().getMIMETypes()[0]);
 
-                byte[] shrunk = shrinkToJpeg(reader.read(0), maxImageSizeBytes);
+                byte[] shrunk = shrinkToJpeg(image, maxImageSizeBytes);
                 if (shrunk == null) {
                     throw new IllegalArgumentException("Image could not be reduced to " + maxImageSizeBytes + " bytes");
                 }

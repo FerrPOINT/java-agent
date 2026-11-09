@@ -893,21 +893,14 @@ public class TelegramClient {
                 return Optional.empty();
             }
             if (!response.isSuccess()) {
-                int code = response.errorCode() != null ? response.errorCode() : 0;
-                String desc = response.description();
-                lastApiErrorCode = code;
+                var refusal = apiFailure(response);
+                lastApiErrorCode = refusal.getErrorCode();
                 // B3: Detect HTTP 409 conflict (another polling instance)
-                if (code == 409) {
+                if (refusal.getErrorCode() == 409) {
                     lastCallConflict = true;
-                    log.warn("Telegram {} returned 409 Conflict: {}", method, desc);
+                    log.warn("Telegram {} returned 409 Conflict: {}", method, refusal.getErrorDescription());
                 }
-                // Determine retry_after for 429 responses
-                int retryAfter = -1;
-                if (code == 429 && response.parameters() != null
-                    && response.parameters().containsKey("retry_after")) {
-                    retryAfter = response.parameters().get("retry_after").asInt(1);
-                }
-                throw new TelegramApiException(code, desc, retryAfter);
+                throw refusal;
             }
             return Optional.of(response);
         } catch (TelegramApiException e) {
@@ -960,14 +953,7 @@ public class TelegramClient {
                 return Optional.empty();
             }
             if (!response.isSuccess()) {
-                int code = response.errorCode() != null ? response.errorCode() : 0;
-                String desc = response.description();
-                int retryAfter = -1;
-                if (code == 429 && response.parameters() != null
-                    && response.parameters().containsKey("retry_after")) {
-                    retryAfter = response.parameters().get("retry_after").asInt(1);
-                }
-                throw new TelegramApiException(code, desc, retryAfter);
+                throw apiFailure(response);
             }
             return Optional.of(response);
         } catch (TelegramApiException e) {
@@ -985,15 +971,26 @@ public class TelegramClient {
             : error;
     }
 
+    private static TelegramApiException apiFailure(TelegramResponse response) {
+        int code = response.errorCode() != null ? response.errorCode() : 0;
+        int retryAfter = -1;
+        if (code == 429 && response.parameters() != null) {
+            var seconds = response.parameters().get("retry_after");
+            if (seconds != null && seconds.isIntegralNumber() && seconds.canConvertToInt()
+                    && seconds.intValue() >= 0) {
+                retryAfter = seconds.intValue();
+            }
+        }
+        return new TelegramApiException(code, response.description(), retryAfter);
+    }
+
     private TelegramApiException telegramHttpRefusal(Exception failure) {
         if (failure instanceof org.springframework.web.client.HttpClientErrorException httpError) {
             try {
                 TelegramResponse error = objectMapper.readValue(httpError.getResponseBodyAsByteArray(), TelegramResponse.class);
                 int code = httpError.getStatusCode().value();
                 if (error != null && Boolean.FALSE.equals(error.ok()) && Integer.valueOf(code).equals(error.errorCode())) {
-                    int retryAfter = code == 429 && error.parameters() != null && error.parameters().containsKey("retry_after")
-                        ? error.parameters().get("retry_after").asInt(-1) : -1;
-                    return new TelegramApiException(code, error.description(), retryAfter);
+                    return apiFailure(error);
                 }
             } catch (java.io.IOException ignored) {
                 // A non-Telegram response does not establish the send outcome.

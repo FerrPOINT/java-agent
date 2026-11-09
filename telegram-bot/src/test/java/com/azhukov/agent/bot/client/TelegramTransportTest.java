@@ -47,14 +47,19 @@ class TelegramTransportTest {
     }
 
     @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.ValueSource(ints = {200, 429})
-    void sendsPreserveConfirmedFloodControl(int status) {
+    @org.junit.jupiter.params.provider.CsvSource({
+        "200, 17, 17", "429, 17, 17",
+        "200, 0, 0", "429, 0, 0",
+        "200, \"invalid\", -1", "429, \"invalid\", -1",
+        "200, null, -1", "429, null, -1"
+    })
+    void sendsPreserveConfirmedFloodControl(int status, String retryAfterJson, int expectedRetryAfter) {
         var mapper = new ObjectMapper();
         var transport = new BotConfig().telegramRestClient(mapper).mutate()
             .requestInterceptor((request, bytes, execution) -> {
                 String body = """
-                    {"ok":false,"error_code":429,"description":"Flood control","parameters":{"retry_after":17}}
-                    """;
+                    {"ok":false,"error_code":429,"description":"Flood control","parameters":{"retry_after":%s}}
+                    """.formatted(retryAfterJson);
                 var response = new org.springframework.mock.http.client.MockClientHttpResponse(
                     body.getBytes(java.nio.charset.StandardCharsets.UTF_8), org.springframework.http.HttpStatus.valueOf(status));
                 response.getHeaders().setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
@@ -64,12 +69,12 @@ class TelegramTransportTest {
         assertThatThrownBy(() -> client.sendMessageChecked(1L, "report", null, null, null, null, false))
             .isInstanceOfSatisfying(TelegramClient.SendRefusalException.class, refusal -> {
                 assertThat(refusal.getErrorCode()).isEqualTo(429);
-                assertThat(refusal.getRetryAfterSeconds()).isEqualTo(17);
+                assertThat(refusal.getRetryAfterSeconds()).isEqualTo(expectedRetryAfter);
             });
         assertThatThrownBy(() -> client.sendDocument(1L, new byte[] {1}, "report.txt", null, null))
             .isInstanceOfSatisfying(TelegramClient.SendRefusalException.class, refusal -> {
                 assertThat(refusal.getErrorCode()).isEqualTo(429);
-                assertThat(refusal.getRetryAfterSeconds()).isEqualTo(17);
+                assertThat(refusal.getRetryAfterSeconds()).isEqualTo(expectedRetryAfter);
             });
     }
 
