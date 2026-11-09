@@ -24,7 +24,6 @@ import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.SecureDirectoryStream;
 import java.nio.file.StandardOpenOption;
-import java.nio.file.attribute.BasicFileAttributeView;
 import java.nio.file.attribute.PosixFileAttributeView;
 import java.util.Set;
 import java.util.UUID;
@@ -40,49 +39,66 @@ final class TextFileWriteSupport {
     static WriteOutcome write(Path path, String content) throws IOException {
         validateCandidate(path, content);
         try (var parent = SecureFileAccess.openOrCreateDirectory(path.getParent())) {
-            Path name = path.getFileName();
-            byte[] existing = readExistingBytes(parent, name);
-            String adjusted = preserveExistingEncodingShape(existing, content);
-            byte[] bytes = adjusted.getBytes(StandardCharsets.UTF_8);
-            Path temp = Path.of(".java-agent-write-" + UUID.randomUUID() + ".tmp");
-            boolean created = false;
-            try {
-                try (var channel = parent.newByteChannel(temp,
-                        Set.of(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS),
-                        java.nio.file.attribute.PosixFilePermissions.asFileAttribute(
-                            java.nio.file.attribute.PosixFilePermissions.fromString("rw-------")))) {
-                    created = true;
-                    if (existing != null) copyExistingPermissions(parent, name, temp);
-                    var buffer = ByteBuffer.wrap(bytes);
-                    while (buffer.hasRemaining()) channel.write(buffer);
-                }
-                parent.move(temp, parent, name);
-                created = false;
-                if (!Arrays.equals(bytes, readExistingBytes(parent, name))) {
-                    throw new IOException("Post-write verification failed for " + path + ": re-read it before retrying.");
-                }
-                return new WriteOutcome(path, adjusted, bytes.length, true);
-            } catch (IOException | RuntimeException error) {
-                if (created) {
-                    try {
-                        parent.deleteFile(temp);
-                    } catch (IOException cleanup) {
-                        error.addSuppressed(cleanup);
-                    }
-                }
-                throw error;
-            }
+            return writeValidated(parent, path, null, content);
         }
     }
 
-    static String read(Path path) throws IOException {
-        try (var channel = SecureFileAccess.openRead(path);
-             var reader = Channels.newReader(channel, StandardCharsets.UTF_8.newDecoder(), -1)) {
-            var text = new StringBuilder();
-            char[] buffer = new char[4096];
-            for (int n; (n = reader.read(buffer)) != -1;) text.append(buffer, 0, n);
-            return text.toString();
+    static WriteOutcome write(SecureFileAccess.Directory parent, Path path, String expected, String content) throws IOException {
+        validateCandidate(path, content);
+        return writeValidated(parent, path, expected, content);
+    }
+
+    private static WriteOutcome writeValidated(SecureFileAccess.Directory parent, Path path, String expected,
+                                               String content) throws IOException {
+        var entries = parent.entries();
+        Path name = path.getFileName();
+        byte[] existing = readExistingBytes(parent, name);
+        if (expected != null && (existing == null || !expected.equals(decode(existing)))) {
+            throw new IOException("File changed while preparing patch: " + path);
         }
+        String adjusted = preserveExistingEncodingShape(existing, content);
+        byte[] bytes = adjusted.getBytes(StandardCharsets.UTF_8);
+        Path temp = Path.of(".java-agent-write-" + UUID.randomUUID() + ".tmp");
+        boolean created = false;
+        try {
+            try (var channel = entries.newByteChannel(temp,
+                    Set.of(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS),
+                    java.nio.file.attribute.PosixFilePermissions.asFileAttribute(
+                        java.nio.file.attribute.PosixFilePermissions.fromString("rw-------")))) {
+                created = true;
+                if (existing != null) copyExistingPermissions(entries, name, temp);
+                var buffer = ByteBuffer.wrap(bytes);
+                while (buffer.hasRemaining()) channel.write(buffer);
+            }
+            if (expected != null && !Arrays.equals(existing, readExistingBytes(parent, name))) {
+                throw new IOException("File changed before applying patch: " + path);
+            }
+            entries.move(temp, entries, name);
+            created = false;
+            if (!Arrays.equals(bytes, readExistingBytes(parent, name))) {
+                throw new IOException("Post-write verification failed for " + path + ": re-read it before retrying.");
+            }
+            return new WriteOutcome(path, adjusted, bytes.length, true);
+        } catch (IOException | RuntimeException error) {
+            if (created) {
+                try {
+                    entries.deleteFile(temp);
+                } catch (IOException cleanup) {
+                    error.addSuppressed(cleanup);
+                }
+            }
+            throw error;
+        }
+    }
+
+    static String read(SecureFileAccess.Directory parent, Path name) throws IOException {
+        byte[] bytes = readExistingBytes(parent, name);
+        if (bytes == null) throw new NoSuchFileException(name.toString());
+        return decode(bytes);
+    }
+
+    private static String decode(byte[] bytes) throws IOException {
+        return StandardCharsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(bytes)).toString();
     }
 
     static void validateCandidate(Path requestedPath, String content) throws IOException {
@@ -159,17 +175,11 @@ final class TextFileWriteSupport {
         return flattened.substring(0, 297) + "...";
     }
 
-    private static byte[] readExistingBytes(SecureDirectoryStream<Path> parent, Path name) throws IOException {
-        try {
-            var attributes = parent.getFileAttributeView(name, BasicFileAttributeView.class, LinkOption.NOFOLLOW_LINKS);
-            if (!attributes.readAttributes().isRegularFile()) {
-                throw new IOException("Target is not a regular file: " + name);
-            }
+    private static byte[] readExistingBytes(SecureFileAccess.Directory parent, Path name) throws IOException {
+        try (var channel = parent.openRead(name)) {
+            return Channels.newInputStream(channel).readAllBytes();
         } catch (NoSuchFileException missing) {
             return null;
-        }
-        try (var channel = parent.newByteChannel(name, Set.of(StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS))) {
-            return Channels.newInputStream(channel).readAllBytes();
         }
     }
 

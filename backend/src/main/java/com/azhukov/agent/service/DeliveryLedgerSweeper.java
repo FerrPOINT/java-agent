@@ -6,7 +6,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
-import java.time.Duration;
 import java.time.Instant;
 
 /**
@@ -20,16 +19,13 @@ import java.time.Instant;
 @Slf4j
 public class DeliveryLedgerSweeper {
 
-    /** Claim lease: a claimed item with no outcome for this long is orphaned. */
-    private static final Duration LEASE_CUTOFF = Duration.ofMinutes(10);
-
     private final DeliveryWorkItemService deliveryService;
 
     @Scheduled(fixedDelay = 60_000L, initialDelay = 45_000L)
     public void sweep() {
         try {
             DeliveryWorkItemService.SweepResult result =
-                deliveryService.sweepStaleClaims(Instant.now(), LEASE_CUTOFF);
+                deliveryService.sweepStaleClaims(Instant.now(), DeliveryWorkItemService.CLAIM_LEASE);
             if (result.recovered() > 0 || result.abandoned() > 0 || result.unknown() > 0) {
                 log.info("Delivery ledger sweep: {} claims recovered, {} abandoned, {} unknown",
                     result.recovered(), result.abandoned(), result.unknown());

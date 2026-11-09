@@ -49,17 +49,21 @@ public class DeliveryLedgerConsumer {
 
     @Scheduled(fixedDelay = 10_000L, initialDelay = 15_000L)
     public void consume() {
+        consume(System::nanoTime);
+    }
+
+    void consume(java.util.function.LongSupplier nanoTime) {
         if (!properties.isCronDeliveryEnabled()) {
             return;
         }
         int processed = 0;
         while (processed < 10) {
-            List<ClaimedItem> batch = claimNextBatch();
-            if (batch.isEmpty()) {
+            ClaimedBatch batch = claimNextBatch(nanoTime.getAsLong());
+            if (batch.items().isEmpty()) {
                 break;
             }
-            deliverBatch(batch);
-            processed += batch.size();
+            deliverBatch(batch.items(), batch.startedNanos(), batch.leaseNanos(), nanoTime);
+            processed += batch.items().size();
         }
     }
 
@@ -92,7 +96,9 @@ public class DeliveryLedgerConsumer {
      * target and deliver them as a single coalesced message (or the plain
      * payload when there is exactly one).
      */
-    private List<ClaimedItem> claimNextBatch() {
+    private record ClaimedBatch(List<ClaimedItem> items, long startedNanos, long leaseNanos) {}
+
+    private ClaimedBatch claimNextBatch(long started) {
         try {
             String body = objectMapper.writeValueAsString(Map.of(
                 "consumer_id", consumerId(),
@@ -106,7 +112,7 @@ public class DeliveryLedgerConsumer {
                 .body(String.class);
             JsonNode parsed = json == null ? null : objectMapper.readTree(json);
             if (parsed == null || !parsed.path("claimed").asBoolean(false)) {
-                return List.of();
+                return new ClaimedBatch(List.of(), started, 0);
             }
             List<ClaimedItem> items = new java.util.ArrayList<>();
             for (JsonNode node : parsed.path("items")) {
@@ -121,10 +127,13 @@ public class DeliveryLedgerConsumer {
                     node.path("payload").asText(""),
                     node.path("attempts").asInt(0)));
             }
-            return items;
+            // Anchor before the request so network and parsing delays consume budget, without
+            // comparing the bot clock to the database server clock.
+            long leaseNanos = java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(parsed.path("lease_remaining_ms").asLong(0));
+            return new ClaimedBatch(items, started, leaseNanos);
         } catch (Exception e) {
             log.debug("Delivery batch claim failed: {}", e.getMessage());
-            return List.of();
+            return new ClaimedBatch(List.of(), started, 0);
         }
     }
 
@@ -161,7 +170,7 @@ public class DeliveryLedgerConsumer {
     }
 
     /** Deliver a coalesced batch; on failure every item gets the SAME fence. */
-    private void deliverBatch(List<ClaimedItem> batch) {
+    private void deliverBatch(List<ClaimedItem> batch, long startedNanos, long leaseNanos, java.util.function.LongSupplier nanoTime) {
         ClaimedItem first = batch.get(0);
         if (!"telegram".equals(first.platform()) || first.chatId().isBlank()) {
             for (ClaimedItem item : batch) {
@@ -195,6 +204,11 @@ public class DeliveryLedgerConsumer {
             List<String> chunks = com.azhukov.agent.bot.formatting.MessageSplitter.splitPlainText(text);
             boolean sendFailed = false;
             for (String chunk : chunks) {
+                if (nanoTime.getAsLong() - startedNanos >= leaseNanos) {
+                    for (ClaimedItem item : batch) outcome(item, "unknown", "delivery_lease_elapsed", null);
+                    log.warn("delivery_batch_lease_elapsed items={} chat={}", batch.size(), chatId);
+                    return;
+                }
                 Optional<Long> sent = threadId == null
                     ? telegramClient.sendMessageChecked(chatId, chunk, null, null, null, null, false)
                     : telegramClient.sendMessageChecked(chatId, chunk, null, null, threadId, null, false);
@@ -262,7 +276,7 @@ public class DeliveryLedgerConsumer {
 
     /** Package-private batch bridge for tests. */
     void deliverBatchForTest(List<ClaimedItem> batch) {
-        deliverBatch(batch);
+        deliverBatch(batch, 0, Long.MAX_VALUE, System::nanoTime);
     }
 
     private boolean ack(ClaimedItem item, String messageId) {
