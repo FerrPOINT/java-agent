@@ -21,10 +21,8 @@ public class BotProperties {
     private String agentName = "Джава агент";
     private String backendUrl = "http://localhost:8090";
     /**
-     * Optional API key forwarded as {@code X-API-Key} on every backend call.
-     * Required when the backend runs with {@code agent.security.api-key} set
-     * — without it the bot receives 401 on all requests.
-     * Empty in dev mode where backend auth is disabled.
+     * Telegram gateway key, forwarded as {@code X-API-Key} on backend calls.
+     * Required when the Telegram token is configured.
      */
     private String backendApiKey = "";
     @Min(1)

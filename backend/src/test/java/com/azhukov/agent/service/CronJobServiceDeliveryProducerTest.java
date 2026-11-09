@@ -24,6 +24,8 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -45,9 +47,13 @@ class CronJobServiceDeliveryProducerTest {
     @Mock private AgentRuntimeService runtime;
 
     private CronJobService service(AgentProperties properties) {
+        return service(properties, new TransactionTemplate(mock(org.springframework.transaction.PlatformTransactionManager.class)));
+    }
+
+    private CronJobService service(AgentProperties properties, TransactionTemplate transactions) {
         return new CronJobService(cronJobRepository, agentRuntimeServiceProvider, properties,
             skillManager, cronExecutionLogRepository, messageRepository,
-            new TransactionTemplate(), new CronScheduleParser(),
+            transactions, new CronScheduleParser(),
             deliveryProvider, sessionRepositoryProvider, null);
     }
 
@@ -65,20 +71,118 @@ class CronJobServiceDeliveryProducerTest {
     }
 
     private void prepareFailingRun(CronJobEntity job) {
-        when(cronJobRepository.findById(job.getId())).thenReturn(Optional.of(job));
-        when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(agentRuntimeServiceProvider.getIfAvailable()).thenReturn(runtime);
-        // Default-profile jobs run the 3-arg overload (metadata empty); non-default
-        // profiles stamp "profile" into metadata and run the 4-arg one.
+        prepareRun(job);
         when(runtime.runBackground(any(), any(), anyBoolean()))
             .thenThrow(new IllegalStateException("provider timed out"));
+    }
+
+    private void prepareRun(CronJobEntity job) {
+        lenient().when(cronJobRepository.recordRun(job)).thenReturn(1);
+        when(cronJobRepository.findById(job.getId())).thenReturn(Optional.of(job));
+        when(agentRuntimeServiceProvider.getIfAvailable()).thenReturn(runtime);
         when(cronExecutionLogRepository.save(any(CronExecutionLogEntity.class))).thenAnswer(inv -> {
             CronExecutionLogEntity entity = inv.getArgument(0);
             entity.setId(42L);
             return entity;
         });
-        when(deliveryProvider.getIfAvailable()).thenReturn(deliveryService);
-        when(deliveryService.enqueue(any())).thenAnswer(inv -> inv.getArgument(0));
+        lenient().when(deliveryProvider.getIfAvailable()).thenReturn(deliveryService);
+    }
+
+    @Test
+    void rejectedLedgerWriteRollsBackRunProjectionAndIsReportedToCaller() {
+        var dataSource = new org.springframework.jdbc.datasource.SingleConnectionDataSource(
+            "jdbc:h2:mem:" + UUID.randomUUID(), true);
+        try {
+            var jdbc = new org.springframework.jdbc.core.JdbcTemplate(dataSource);
+            jdbc.execute("create table recorded_run (id integer)");
+            var transactions = new TransactionTemplate(
+                new org.springframework.jdbc.datasource.DataSourceTransactionManager(dataSource));
+            var job = jobWithDeliverTo("telegram:111");
+            var properties = new AgentProperties();
+            properties.getCron().setEnabled(false);
+            prepareFailingRun(job);
+            when(cronJobRepository.recordRun(job))
+                .thenAnswer(invocation -> jdbc.update("insert into recorded_run values (1)"));
+            when(deliveryService.enqueue(any())).thenThrow(new IllegalArgumentException("ledger payload rejected"));
+
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> service(properties, transactions).runNow(job.getId()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Cron execution result could not be committed");
+            assertThat(jdbc.queryForObject("select count(*) from recorded_run", Integer.class)).isZero();
+            verify(cronExecutionLogRepository).save(any(CronExecutionLogEntity.class));
+        } finally {
+            dataSource.destroy();
+        }
+    }
+
+    @Test
+    void missingHistoryStopsBeforeReportingACommittedRun() {
+        var job = jobWithDeliverTo("telegram:111");
+        var properties = new AgentProperties();
+        properties.getCron().setEnabled(false);
+        when(cronJobRepository.findById(job.getId())).thenReturn(Optional.of(job));
+        when(cronExecutionLogRepository.save(any(CronExecutionLogEntity.class)))
+            .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("history unavailable"));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service(properties).runNow(job.getId()))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("Cron execution result could not be committed");
+        verify(cronJobRepository, org.mockito.Mockito.never()).recordRun(any());
+        verify(deliveryService, org.mockito.Mockito.never()).enqueue(any());
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"enqueue", "delete", "success"})
+    void oneShotConsumesItsTimerBeforeExecutingAndCleansUpOnDeletion(String scenario) {
+        var job = jobWithDeliverTo("telegram:111");
+        job.setRepeatCount(1);
+        var properties = new AgentProperties();
+        properties.getCron().setEnabled(true);
+        prepareRun(job);
+        var session = UUID.randomUUID();
+        when(runtime.runBackground(any(), any(), anyBoolean())).thenAnswer(invocation -> {
+            assertThat(job.isEnabled()).isFalse();
+            assertThat(job.getNextRunAt()).isNull();
+            return session.toString();
+        });
+        var message = new com.azhukov.agent.persistence.entity.MessageEntity();
+        message.setRole("assistant");
+        message.setContent("completed side effect");
+        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(session)).thenReturn(List.of(message));
+        if ("enqueue".equals(scenario)) {
+            when(deliveryService.enqueue(any())).thenThrow(new IllegalArgumentException("ledger rejected output"));
+        } else if ("delete".equals(scenario)) {
+            org.mockito.Mockito.doThrow(new org.springframework.dao.DataAccessResourceFailureException("completion write failed"))
+                .when(cronJobRepository).delete(job);
+        }
+        when(cronJobRepository.findByEnabledTrue()).thenReturn(List.of(job));
+        when(cronJobRepository.findByIdForUpdate(job.getId())).thenReturn(Optional.of(job));
+
+        var service = service(properties);
+        var scheduler = mock(java.util.concurrent.ScheduledExecutorService.class);
+        var timer = mock(java.util.concurrent.ScheduledFuture.class);
+        var callback = ArgumentCaptor.forClass(Runnable.class);
+        org.mockito.Mockito.doReturn(timer).when(scheduler)
+            .schedule(callback.capture(), org.mockito.ArgumentMatchers.anyLong(), any());
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "scheduler", scheduler);
+
+        service.init();
+        callback.getValue().run();
+
+        assertThat(job.isEnabled()).isFalse();
+        assertThat(job.getNextRunAt()).isNull();
+        assertThat(job.getRepeatCompleted()).isZero();
+        verify(cronJobRepository, org.mockito.Mockito.times("enqueue".equals(scenario) ? 0 : 1))
+            .delete(any(CronJobEntity.class));
+        var locks = (Map<?, ?>) org.springframework.test.util.ReflectionTestUtils.getField(service, "jobLocks");
+        assertThat(locks.containsKey(job.getId())).isEqualTo(!"success".equals(scenario));
+        verify(timer).cancel(false);
+        verify(scheduler).schedule(any(Runnable.class), org.mockito.ArgumentMatchers.anyLong(), any());
+        verify(runtime).runBackground(any(), any(), anyBoolean());
+
+        when(cronJobRepository.findByEnabledTrue()).thenReturn(List.of());
+        service.init();
+        verify(scheduler).schedule(any(Runnable.class), org.mockito.ArgumentMatchers.anyLong(), any());
     }
 
     @Test

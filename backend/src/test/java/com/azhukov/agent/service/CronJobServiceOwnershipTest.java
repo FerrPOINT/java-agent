@@ -44,11 +44,14 @@ class CronJobServiceOwnershipTest {
 
     @BeforeEach
     void setUp() {
+        org.mockito.Mockito.lenient().when(cronJobRepository.findByIdForUpdate(
+                org.mockito.ArgumentMatchers.any(java.util.UUID.class)))
+            .thenAnswer(call -> cronJobRepository.findById(call.getArgument(0)));
         properties = new AgentProperties();
         properties.getCron().setEnabled(false);
         service = new CronJobService(cronJobRepository, agentRuntimeServiceProvider,
             properties, skillManager, cronExecutionLogRepository, messageRepository,
-            new org.springframework.transaction.support.TransactionTemplate(),
+            CronJobServiceTest.unitTransaction(),
             new com.azhukov.agent.service.CronScheduleParser());
 
         foreignJob = new CronJobEntity();

@@ -35,17 +35,17 @@ public class CronApiClient extends BaseBackendClient {
     }
 
     /** List pending automation suggestions (Hermes /suggestions parity). */
-    public JsonNode listSuggestions() {
+    public JsonNode listSuggestions(String ownerId) {
         try {
             String json = restClient.get()
-                .uri("/api/v1/agent/cron/suggestions")
+                .uri(uri -> uri.path("/api/v1/agent/cron/suggestions").queryParam("ownerId", ownerId).build())
                 .retrieve()
                 .body(String.class);
             JsonNode parsed = readTree(json);
-            return parsed != null ? parsed : arrayNode();
+            return parsed != null && parsed.isArray() ? parsed : null;
         } catch (Exception e) {
             log.warn("listSuggestions failed: {}", e.getMessage());
-            return arrayNode();
+            return null;
         }
     }
 
@@ -86,6 +86,18 @@ public class CronApiClient extends BaseBackendClient {
                 .uri(path)
                 .retrieve()
                 .body(String.class);
+            return readTree(json);
+        } catch (Exception e) {
+            log.warn("suggestionPost {} failed: {}", path, e.getMessage());
+            return null;
+        }
+    }
+
+    public JsonNode suggestionPost(String path, String ownerId) {
+        try {
+            String json = restClient.post()
+                .uri(uri -> uri.path(path).queryParam("ownerId", ownerId).build())
+                .retrieve().body(String.class);
             return readTree(json);
         } catch (Exception e) {
             log.warn("suggestionPost {} failed: {}", path, e.getMessage());
