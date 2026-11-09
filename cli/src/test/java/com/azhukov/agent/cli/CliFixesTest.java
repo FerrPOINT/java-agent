@@ -53,6 +53,14 @@ class CliFixesTest {
                         .getBytes(java.nio.charset.StandardCharsets.UTF_8));
                 }
             });
+            server.createContext("/latin1", exchange -> {
+                try (exchange) {
+                    byte[] body = "café".repeat(55_000).getBytes(java.nio.charset.StandardCharsets.ISO_8859_1);
+                    exchange.getResponseHeaders().add("Content-Type", "text/plain; charset=ISO-8859-1");
+                    exchange.sendResponseHeaders(200, 0);
+                    exchange.getResponseBody().write(body);
+                }
+            });
             server.createContext("/stalled", exchange -> {
                 try (exchange) {
                     exchange.sendResponseHeaders(200, 0);
@@ -69,6 +77,9 @@ class CliFixesTest {
                 org.assertj.core.api.Assertions.assertThat(new ContextReferenceExpander().expand("@url:" + origin + "/large"))
                     .contains("a".repeat(49_999) + "\n... [truncated]")
                     .doesNotContain("🌱", "�", "zzzz");
+                assertThat(new ContextReferenceExpander().expand("@url:" + origin + "/latin1"))
+                    .contains("café".repeat(12_500) + "\n... [truncated]")
+                    .doesNotContain("�");
                 org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(java.time.Duration.ofSeconds(3), () ->
                     org.assertj.core.api.Assertions.assertThat(
                         new ContextReferenceExpander(java.time.Duration.ofMillis(250)).expand("@url:" + origin + "/stalled"))

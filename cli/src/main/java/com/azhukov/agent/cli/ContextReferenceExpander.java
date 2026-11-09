@@ -1,6 +1,7 @@
 package com.azhukov.agent.cli;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.MediaType;
 
 import java.io.IOException;
 import java.net.URI;
@@ -10,6 +11,7 @@ import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
+import java.nio.charset.Charset;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -135,7 +137,7 @@ public class ContextReferenceExpander {
                 } else {
                     try (var file = Files.newInputStream(path)) {
                         byte[] bytes = file.readNBytes(CONTENT_LIMIT + 1);
-                        content = decodePrefix(bytes, CONTENT_LIMIT);
+                        content = decodePrefix(bytes, CONTENT_LIMIT, StandardCharsets.UTF_8);
                         if (bytes.length > CONTENT_LIMIT) {
                             content += "\n... [truncated]";
                         }
@@ -236,16 +238,17 @@ public class ContextReferenceExpander {
 
     private String fetchUrl(String urlString) throws IOException, InterruptedException {
         HttpRequest request = HttpRequest.newBuilder(URI.create(urlString)).timeout(urlTimeout).GET().build();
+        record UrlBody(byte[] bytes, Charset charset) {}
         var fetch = new FutureTask<>(() -> {
             var response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
             try (var body = response.body()) {
-                return body.readNBytes(URL_READ_LIMIT + 1);
+                return new UrlBody(body.readNBytes(URL_READ_LIMIT + 1), responseCharset(response));
             }
         });
         Thread.ofVirtual().name("cli-context-url").start(fetch);
-        byte[] bytes;
+        UrlBody body;
         try {
-            bytes = fetch.get(urlTimeout.toNanos(), TimeUnit.NANOSECONDS);
+            body = fetch.get(urlTimeout.toNanos(), TimeUnit.NANOSECONDS);
         } catch (TimeoutException e) {
             throw new HttpTimeoutException("request timed out");
         } catch (ExecutionException e) {
@@ -253,19 +256,33 @@ public class ContextReferenceExpander {
         } finally {
             fetch.cancel(true);
         }
-        String content = decodePrefix(bytes, URL_READ_LIMIT).strip();
+        String content = decodePrefix(body.bytes(), URL_READ_LIMIT, body.charset()).strip();
         if (content.length() > CONTENT_LIMIT) {
             int end = Character.isHighSurrogate(content.charAt(CONTENT_LIMIT - 1))
                 ? CONTENT_LIMIT - 1 : CONTENT_LIMIT;
             return content.substring(0, end) + "\n... [truncated]";
         }
-        return bytes.length > URL_READ_LIMIT ? content + "\n... [truncated]" : content;
+        return body.bytes().length > URL_READ_LIMIT ? content + "\n... [truncated]" : content;
     }
 
-    private static String decodePrefix(byte[] bytes, int limit) {
-        if (bytes.length <= limit) return new String(bytes, StandardCharsets.UTF_8);
-        var output = CharBuffer.allocate(limit);
-        StandardCharsets.UTF_8.newDecoder()
+    private static Charset responseCharset(HttpResponse<?> response) {
+        String contentType = response.headers().firstValue("Content-Type").orElse(null);
+        if (contentType != null) {
+            try {
+                Charset charset = MediaType.parseMediaType(contentType).getCharset();
+                if (charset != null) return charset;
+            } catch (IllegalArgumentException ignored) {
+                // As with the default HTTP string handler, a malformed charset falls back to UTF-8.
+            }
+        }
+        return StandardCharsets.UTF_8;
+    }
+
+    private static String decodePrefix(byte[] bytes, int limit, Charset charset) {
+        if (bytes.length <= limit) return new String(bytes, charset);
+        var decoder = charset.newDecoder();
+        var output = CharBuffer.allocate((int) Math.ceil(limit * decoder.maxCharsPerByte()));
+        decoder
             .onMalformedInput(CodingErrorAction.REPLACE)
             .onUnmappableCharacter(CodingErrorAction.REPLACE)
             .decode(ByteBuffer.wrap(bytes, 0, limit), output, false);
