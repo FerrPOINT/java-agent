@@ -97,7 +97,7 @@ class StreamDeliveryRegressionTest {
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(ints = {400, -1})
     void onlyConfirmedMissingPreviewCanBeReplaced(int code) {
-        when(client.editFinalMessage(eq(101L), eq(9L), eq("final"), eq("MarkdownV2"), any())).thenThrow(
+        when(client.editMessageChecked(eq(101L), eq(9L), eq("final"), eq("MarkdownV2"), anyBoolean(), any())).thenThrow(
             new TelegramApiException(code, code == 400 ? "Bad Request: message to edit not found" : "lost receipt"));
         if (code == 400) {
             when(client.sendMessageChecked(eq(101L), eq("final"), eq("MarkdownV2"), any(), any(), any(), anyBoolean(), any()))
@@ -190,7 +190,7 @@ class StreamDeliveryRegressionTest {
             assertThat(parts.getAllValues()).allMatch(part -> part.length() <= 4096);
             assertThat(String.join("", parts.getAllValues().stream()
                 .map(part -> part.replaceFirst("^\\(\\d+/\\d+\\) ", "")).toList())).isEqualTo(text);
-            verify(client, never()).editFinalMessage(anyLong(), anyLong(), anyString(), any(), any());
+            verify(client, never()).editMessageChecked(anyLong(), anyLong(), anyString(), any(), anyBoolean(), any());
         } finally {
             editor.destroy();
         }

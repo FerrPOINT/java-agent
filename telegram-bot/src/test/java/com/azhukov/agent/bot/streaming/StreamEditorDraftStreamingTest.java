@@ -50,7 +50,6 @@ class StreamEditorDraftStreamingTest {
         when(meResponse.isSuccess()).thenReturn(true);
         when(meResponse.resultAsMap()).thenReturn(Map.of());
         when(client.callApi("getMe", Map.of())).thenReturn(Optional.of(meResponse));
-        when(client.getLastApiErrorCode()).thenReturn(0);
         // Default: supportsDraftStreaming returns true for DMs
         when(client.supportsDraftStreaming(anyString())).thenReturn(true);
         // Default: sendDraft succeeds
@@ -173,7 +172,7 @@ class StreamEditorDraftStreamingTest {
         // Should have called sendDraft at least twice (initial + edit)
         verify(client, atLeast(2)).sendDraft(eq(123L), anyString(), anyInt());
         // Should NOT have called editMessageText
-        verify(client, never()).editMessageText(anyLong(), anyLong(), anyString(), any(), anyBoolean());
+        verify(client, never()).editMessageChecked(anyLong(), anyLong(), anyString(), any(), anyBoolean(), any());
     }
 
     @Test
@@ -190,7 +189,7 @@ class StreamEditorDraftStreamingTest {
         // format_message is always applied before delivery, even for draft finalize.
         verify(client).sendMessageChecked(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), isNull(), anyBoolean(), any());
         // Should NOT call editMessageText (drafts have no message_id)
-        verify(client, never()).editMessageText(anyLong(), anyLong(), anyString(), any(), anyBoolean());
+        verify(client, never()).editMessageChecked(anyLong(), anyLong(), anyString(), any(), anyBoolean(), any());
         // Draft streaming should be cleaned up
         assertThat(editor.isDraftStreamingActive(123L)).isFalse();
     }
@@ -316,7 +315,7 @@ class StreamEditorDraftStreamingTest {
 
         assertThat(result).isFalse();
         verify(client, never()).sendDraft(anyLong(), anyString(), anyInt());
-        verify(client, never()).editMessageText(anyLong(), anyLong(), anyString(), any(), anyBoolean());
+        verify(client, never()).editMessageChecked(anyLong(), anyLong(), anyString(), any(), anyBoolean(), any());
     }
 
     @Test

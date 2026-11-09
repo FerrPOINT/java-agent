@@ -458,34 +458,22 @@ public class StreamEditor {
             return true;
         }
 
-        // B7: Silent notification during streaming
-        // Hermes: send raw text (no parse_mode) during streaming edits
-        boolean disableNotification = streamingSilent;
         boolean success;
         try {
-            success = telegramClient.editMessageText(chatId, effectiveMessageId, withCursor, null, disableNotification);
-        } catch (TelegramApiException e) {
-            if (e.isRateLimit()) {
-                // 429 from editMessageText — apply adaptive flood handling.
-                success = EditThrottlePolicy.handleEditFailure(telegramClient, chatId, effectiveMessageId, withCursor, session, 429, minIntervalMs, streamingSilent, streamingMaxChars);
-            } else {
-                throw e;
-            }
+            success = telegramClient.editMessageChecked(chatId, effectiveMessageId, withCursor, null, streamingSilent, () -> true)
+                .isPresent();
+        } catch (TelegramApiException error) {
+            int code = error.getErrorCode();
+            success = (code == 400 || error.isRateLimit())
+                && EditThrottlePolicy.handleEditFailure(telegramClient, chatId, effectiveMessageId, withCursor,
+                    session, code, minIntervalMs, streamingSilent, streamingMaxChars);
         }
 
         if (success) {
             session.lastEditTime = now;
             session.lastRenderedChars = charsAccumulated;
-            // P2-16: Track last sent text for redundant edit skip
             session.lastSentText = withCursor;
-            // Hermes: on success, only reset flood strikes — interval stays at backoff level
             session.floodStrikes.set(0);
-        } else {
-            // B5: Edit failed. BUG FIX: use the error code from the typed exception —
-            // TelegramClient.getLastApiErrorCode() is a shared mutable side-channel
-            // and races between concurrently streaming chats (wrong flood strikes).
-            success = EditThrottlePolicy.handleEditFailure(telegramClient, chatId, effectiveMessageId, withCursor, session,
-                telegramClient.getLastApiErrorCode(), minIntervalMs, streamingSilent, streamingMaxChars);
         }
         return success;
     }
@@ -1039,9 +1027,9 @@ public class StreamEditor {
             error.getErrorCode() == 400 && java.util.Objects.toString(error.getErrorDescription(), "")
                 .toLowerCase(java.util.Locale.ROOT).contains("message to edit not found")
                 ? formattedOperations(chatId, plain, session, 0) : List.of();
-        var plainEdit = new DeliveryOperation(maySend -> telegramClient.editFinalMessage(chatId, messageId, plain, null, maySend),
+        var plainEdit = new DeliveryOperation(maySend -> telegramClient.editMessageChecked(chatId, messageId, plain, null, false, maySend),
             missingPreview, 0);
-        return new DeliveryOperation(maySend -> telegramClient.editFinalMessage(chatId, messageId, formatted, parseMode, maySend),
+        return new DeliveryOperation(maySend -> telegramClient.editMessageChecked(chatId, messageId, formatted, parseMode, false, maySend),
             error -> parseMode != null && error.getErrorCode() == 400 && error.isParseError()
                 ? List.of(plainEdit) : missingPreview.apply(error), 0);
     }

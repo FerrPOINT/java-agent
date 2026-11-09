@@ -45,11 +45,6 @@ public class TelegramClient {
     // B3: Track whether the last API call returned HTTP 409 (conflict)
     private volatile boolean lastCallConflict = false;
 
-    // Track the last API call's error code (e.g. 400, 429) so callers can
-    // distinguish failure reasons (message-too-long vs flood vs other).
-    // Cleared at the start of each callApi invocation. 0 means "no error / success".
-    private volatile int lastApiErrorCode = 0;
-
     public TelegramClient(RestClient restClient, ObjectMapper objectMapper, String botToken, int rateLimitPerSecond) {
         this(restClient, objectMapper, botToken, rateLimitPerSecond, true);
     }
@@ -84,18 +79,6 @@ public class TelegramClient {
      */
     public boolean isLastCallConflict() {
         return lastCallConflict;
-    }
-
-    /**
-     * Returns the error code from the last callApi invocation.
-     * 0 means success (no error). Non-zero values are Telegram API error codes
-     * (e.g. 400 for bad request / message too long, 429 for rate limit).
-     * Cleared at the start of each callApi invocation.
-     *
-     * @return the last API error code, or 0 if the last call succeeded
-     */
-    public int getLastApiErrorCode() {
-        return lastApiErrorCode;
     }
 
     /** Mask token for logging — show first 4 and last 4 chars only. */
@@ -271,14 +254,15 @@ public class TelegramClient {
         }
     }
 
-    /** A final edit reports Telegram's explicit refusal to the delivery owner. */
-    public Optional<Long> editFinalMessage(long chatId, long messageId, String text, String parseMode,
-                                           BooleanSupplier maySend) {
+    /** An edit reports Telegram's explicit refusal to the delivery owner. */
+    public Optional<Long> editMessageChecked(long chatId, long messageId, String text, String parseMode,
+                                            boolean disableNotification, BooleanSupplier maySend) {
         var params = new LinkedHashMap<String, Object>();
         params.put("chat_id", chatId);
         params.put("message_id", messageId);
         params.put("text", text);
         if (parseMode != null && !parseMode.isBlank()) params.put("parse_mode", parseMode);
+        if (disableNotification) params.put("disable_notification", true);
         try {
             return callApi("editMessageText", params, maySend).map(response -> messageId);
         } catch (TelegramApiException error) {
@@ -855,8 +839,7 @@ public class TelegramClient {
      * throwing) only when the bot token is blank or the HTTP body is null
      * (e.g. network-level null response).
      *
-     * <p>The {@link #isLastCallConflict()} and {@link #getLastApiErrorCode()}
-     * side channels are still updated for backward compatibility, but new
+     * <p>The {@link #isLastCallConflict()} flag is retained for compatibility. New
      * code should prefer catching {@link TelegramApiException}.
      *
      * @param method Telegram Bot API method name
@@ -875,7 +858,6 @@ public class TelegramClient {
             return Optional.empty();
         }
         lastCallConflict = false; // B3: clear at start of each call
-        lastApiErrorCode = 0; // Clear error code at start of each call
         if (!maySend.getAsBoolean()) return Optional.empty();
         if (!"getUpdates".equals(method)) acquireRateLimit();
         try {
@@ -894,7 +876,6 @@ public class TelegramClient {
             }
             if (!response.isSuccess()) {
                 var refusal = apiFailure(response);
-                lastApiErrorCode = refusal.getErrorCode();
                 // B3: Detect HTTP 409 conflict (another polling instance)
                 if (refusal.getErrorCode() == 409) {
                     lastCallConflict = true;
@@ -908,7 +889,6 @@ public class TelegramClient {
         } catch (Exception e) {
             var refusal = telegramHttpRefusal(e);
             if (refusal != null) {
-                lastApiErrorCode = refusal.getErrorCode();
                 lastCallConflict = refusal.getErrorCode() == 409;
                 throw refusal;
             }
@@ -916,11 +896,9 @@ public class TelegramClient {
                     && e instanceof org.springframework.web.client.HttpClientErrorException httpError
                     && httpError.getStatusCode().value() == 409) {
                 lastCallConflict = true;
-                lastApiErrorCode = 409;
                 log.warn("Telegram {} returned HTTP 409", method);
                 throw new TelegramApiException(409, "Telegram polling conflict", -1);
             }
-            lastApiErrorCode = -1;
             throw transportFailure(method, e);
         }
     }

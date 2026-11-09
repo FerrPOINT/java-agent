@@ -56,8 +56,8 @@ class StreamEditorOversizedContentTest {
         // H14: streamingMaxChars 32768 must clamp to 4096 (editMessageText limit)
         // via package-private access checked indirectly: a 5000-char stream must
         // go through editMessageText successfully (not be rejected as oversized).
-        when(client.editMessageText(anyLong(), anyLong(), anyString(), isNull(), anyBoolean()))
-            .thenReturn(true);
+        when(client.editMessageChecked(anyLong(), anyLong(), anyString(), isNull(), anyBoolean(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(Optional.of(42L));
         when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(42L));
 
@@ -66,8 +66,8 @@ class StreamEditorOversizedContentTest {
 
         assertThat(ok).isTrue();
         // The edited text passed to Telegram must be within the 4096 limit including the cursor
-        verify(client).editMessageText(eq(123L), anyLong(),
-            argThat(t -> t != null && t.length() <= 4096), isNull(), anyBoolean());
+        verify(client).editMessageChecked(eq(123L), anyLong(),
+            argThat(t -> t != null && t.length() <= 4096), isNull(), anyBoolean(), org.mockito.ArgumentMatchers.any());
     }
 
     @Test

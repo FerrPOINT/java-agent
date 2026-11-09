@@ -36,7 +36,14 @@ class StreamEditorFloodFallbackTest {
 
     @BeforeEach
     void setUp() {
-        client = mock(TelegramClient.class);
+        client = mock(TelegramClient.class, call -> {
+            if ("editMessageChecked".equals(call.getMethod().getName())) {
+                long id = call.getArgument(1);
+                return ((TelegramClient) call.getMock()).editMessageText(call.<Long>getArgument(0), id,
+                    call.getArgument(2), call.getArgument(3), call.getArgument(4)) ? Optional.of(id) : Optional.empty();
+            }
+            return RETURNS_DEFAULTS.answer(call);
+        });
         BotProperties props = new BotProperties();
         props.setStreamEditInterval(Duration.ofMillis(100));
         props.setParseMode("MarkdownV2");
@@ -49,7 +56,6 @@ class StreamEditorFloodFallbackTest {
         when(meResponse.isSuccess()).thenReturn(true);
         when(meResponse.resultAsMap()).thenReturn(Map.of());
         when(client.callApi("getMe", Map.of())).thenReturn(Optional.of(meResponse));
-        when(client.getLastApiErrorCode()).thenReturn(0);
     }
 
     // ─── 4a: Flood strikes fallback mode tests ─────────────────────
@@ -304,9 +310,8 @@ class StreamEditorFloodFallbackTest {
         Thread.sleep(110); // timing-assertion
 
         // All edits fail with 429
-        when(client.getLastApiErrorCode()).thenReturn(429);
-        when(client.editMessageText(anyLong(), anyLong(), anyString(), any(), anyBoolean()))
-            .thenReturn(false);
+        doThrow(new com.azhukov.agent.bot.client.TelegramApiException(429, "Too Many Requests")).when(client)
+            .editMessageText(anyLong(), anyLong(), anyString(), any(), anyBoolean());
 
         // First flood failure
         editor.editStream(123L, 42L, "Hello world update 1");
@@ -344,9 +349,8 @@ class StreamEditorFloodFallbackTest {
         Thread.sleep(110); // timing-assertion
 
         // All edits fail with 429
-        when(client.getLastApiErrorCode()).thenReturn(429);
-        when(client.editMessageText(anyLong(), anyLong(), anyString(), any(), anyBoolean()))
-            .thenReturn(false);
+        doThrow(new com.azhukov.agent.bot.client.TelegramApiException(429, "Too Many Requests")).when(client)
+            .editMessageText(anyLong(), anyLong(), anyString(), any(), anyBoolean());
 
         // Trigger 3 flood failures to enter fallback mode
         editor.editStream(123L, 42L, "Hello world update 1");
@@ -387,9 +391,8 @@ class StreamEditorFloodFallbackTest {
             .thenReturn(Optional.of(42L));
         editor.startStream(123L, "visible draft");
         Thread.sleep(110);
-        when(client.getLastApiErrorCode()).thenReturn(429);
-        when(client.editMessageText(anyLong(), anyLong(), anyString(), any(), anyBoolean()))
-            .thenReturn(false);
+        doThrow(new com.azhukov.agent.bot.client.TelegramApiException(429, "Too Many Requests")).when(client)
+            .editMessageText(anyLong(), anyLong(), anyString(), any(), anyBoolean());
         editor.editStream(123L, 42L, "one");
         Thread.sleep(110);
         editor.editStream(123L, 42L, "two");
@@ -410,9 +413,8 @@ class StreamEditorFloodFallbackTest {
     void floodFallback_resetsStrikesOnSuccess() throws InterruptedException {
         when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(42L));
-        when(client.editMessageText(anyLong(), anyLong(), anyString(), any(), anyBoolean()))
-            .thenReturn(false);
-        when(client.getLastApiErrorCode()).thenReturn(429);
+        doThrow(new com.azhukov.agent.bot.client.TelegramApiException(429, "Too Many Requests")).when(client)
+            .editMessageText(anyLong(), anyLong(), anyString(), any(), anyBoolean());
 
         editor.startStream(123L, "Hello world");
         // Actual timing: wait past 100ms throttle interval
@@ -427,9 +429,8 @@ class StreamEditorFloodFallbackTest {
         Thread.sleep(110); // timing-assertion
 
         // Now a successful edit — should reset flood strikes
-        when(client.getLastApiErrorCode()).thenReturn(0);
-        when(client.editMessageText(anyLong(), anyLong(), anyString(), any(), anyBoolean()))
-            .thenReturn(true);
+        doReturn(true).when(client)
+            .editMessageText(anyLong(), anyLong(), anyString(), any(), anyBoolean());
 
         // Actual timing: wait long enough for the increased interval
         Thread.sleep(500); // timing-assertion
@@ -437,9 +438,8 @@ class StreamEditorFloodFallbackTest {
         assertThat(success).isTrue();
 
         // After reset, 2 more failures should NOT trigger fallback (strikes were reset)
-        when(client.getLastApiErrorCode()).thenReturn(429);
-        when(client.editMessageText(anyLong(), anyLong(), anyString(), any(), anyBoolean()))
-            .thenReturn(false);
+        doThrow(new com.azhukov.agent.bot.client.TelegramApiException(429, "Too Many Requests")).when(client)
+            .editMessageText(anyLong(), anyLong(), anyString(), any(), anyBoolean());
 
         // Actual timing: wait for adaptive interval
         Thread.sleep(500); // timing-assertion
@@ -449,9 +449,8 @@ class StreamEditorFloodFallbackTest {
         editor.editStream(123L, 42L, "Update 5");
 
         // Next edit should still try to edit (not in fallback mode yet — only 2 strikes)
-        when(client.getLastApiErrorCode()).thenReturn(0);
-        when(client.editMessageText(anyLong(), anyLong(), anyString(), any(), anyBoolean()))
-            .thenReturn(true);
+        doReturn(true).when(client)
+            .editMessageText(anyLong(), anyLong(), anyString(), any(), anyBoolean());
         // Actual timing: wait for increased interval after 2 failures
         Thread.sleep(2000); // timing-assertion
         boolean stillEditing = editor.editStream(123L, 42L, "Update 6");
@@ -464,8 +463,8 @@ class StreamEditorFloodFallbackTest {
     void redundantEditSkip_skipsIdenticalContent() throws InterruptedException {
         when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(42L));
-        when(client.editMessageText(anyLong(), anyLong(), anyString(), any(), anyBoolean()))
-            .thenReturn(true);
+        doReturn(true).when(client)
+            .editMessageText(anyLong(), anyLong(), anyString(), any(), anyBoolean());
 
         editor.startStream(123L, "Hello world");
         // Actual timing: wait past 100ms throttle interval
@@ -492,8 +491,8 @@ class StreamEditorFloodFallbackTest {
     void redundantEditSkip_allowsDifferentContent() throws InterruptedException {
         when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(42L));
-        when(client.editMessageText(anyLong(), anyLong(), anyString(), any(), anyBoolean()))
-            .thenReturn(true);
+        doReturn(true).when(client)
+            .editMessageText(anyLong(), anyLong(), anyString(), any(), anyBoolean());
 
         editor.startStream(123L, "Hello world");
         // Actual timing: wait past 100ms throttle interval
@@ -517,8 +516,8 @@ class StreamEditorFloodFallbackTest {
         // the cursor makes the full text the same too — so it should still skip.
         when(client.sendMessage(anyLong(), anyString(), any(), any(), any(), anyBoolean()))
             .thenReturn(Optional.of(42L));
-        when(client.editMessageText(anyLong(), anyLong(), anyString(), any(), anyBoolean()))
-            .thenReturn(true);
+        doReturn(true).when(client)
+            .editMessageText(anyLong(), anyLong(), anyString(), any(), anyBoolean());
 
         editor.startStream(123L, "Hello world");
         // Actual timing: wait past 100ms throttle interval
