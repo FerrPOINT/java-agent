@@ -67,6 +67,8 @@ class TelegramMediaClient {
         try {
             return client.callMultipartApi("sendPhoto", builder.build())
                     .flatMap(r -> Optional.ofNullable(r.resultMessageIdAsLong()));
+        } catch (TelegramClient.SendRefusalException e) {
+            throw e;
         } catch (TelegramApiException e) {
             log.warn("sendPhoto failed: {}", e.getMessage());
             return Optional.empty();
@@ -94,6 +96,8 @@ class TelegramMediaClient {
         try {
             return client.callMultipartApi("sendDocument", builder.build())
                     .flatMap(r -> Optional.ofNullable(r.resultMessageIdAsLong()));
+        } catch (TelegramClient.SendRefusalException e) {
+            throw e;
         } catch (TelegramApiException e) {
             log.warn("sendDocument failed: {}", e.getMessage());
             return Optional.empty();
@@ -139,6 +143,8 @@ class TelegramMediaClient {
         try {
             return client.callMultipartApi("sendVideo", builder.build())
                     .flatMap(r -> Optional.ofNullable(r.resultMessageIdAsLong()));
+        } catch (TelegramClient.SendRefusalException e) {
+            throw e;
         } catch (TelegramApiException e) {
             log.warn("sendVideo failed: {}", e.getMessage());
             return Optional.empty();
@@ -191,6 +197,8 @@ class TelegramMediaClient {
             try {
                 return client.callMultipartApi("sendVoice", builder.build())
                         .flatMap(r -> Optional.ofNullable(r.resultMessageIdAsLong()));
+            } catch (TelegramClient.SendRefusalException e) {
+                throw e;
             } catch (TelegramApiException e) {
                 if (modes.get(i) != null && e.isParseError()) {
                     log.warn("sendAudioAsVoice MarkdownV2 caption rejected, retrying plain text: {}", e.getMessage());
@@ -268,6 +276,8 @@ class TelegramMediaClient {
                 }
             }
             return List.of();
+        } catch (TelegramClient.SendRefusalException e) {
+            throw e;
         } catch (TelegramApiException e) {
             log.warn("sendMediaGroup failed: {}", e.getMessage());
             return List.of();

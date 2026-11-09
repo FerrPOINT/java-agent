@@ -106,6 +106,26 @@ class AttachmentArtifactRepositoryTest extends PostgresTestContainer {
     }
 
     @Test
+    void onlyTheCurrentUndeliveredClaimCanBeReleased() {
+        UUID session = UUID.randomUUID();
+        var artifact = entity("alice", "release", "photo");
+        artifact.setSessionId(session);
+        repository.saveAndFlush(artifact);
+        String id = artifact.getId();
+        Instant first = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+        Instant second = first.plus(1, java.time.temporal.ChronoUnit.MICROS);
+
+        assertThat(repository.claimOutbound(id, "alice", session, first)).isOne();
+        assertThat(repository.releaseOutbound(id, "bob", session, first)).isZero();
+        assertThat(repository.releaseOutbound(id, "alice", UUID.randomUUID(), first)).isZero();
+        assertThat(repository.releaseOutbound(id, "alice", session, first)).isOne();
+        assertThat(repository.claimOutbound(id, "alice", session, second)).isOne();
+        assertThat(repository.releaseOutbound(id, "alice", session, first)).isZero();
+        assertThat(repository.recordOutboundReceipt(id, "alice", session, "42", second)).isOne();
+        assertThat(repository.releaseOutbound(id, "alice", session, second)).isZero();
+    }
+
+    @Test
     void concurrentReceiptsPreserveTheFirstAcceptedMessage() throws Exception {
         UUID session = UUID.randomUUID();
         var artifact = entity("alice", "receipt-race", "photo");
