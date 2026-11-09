@@ -84,7 +84,7 @@ class AgentConfigBeanMethodsTest {
     @Test
     void openAiCompatibleModelClient_bean() {
         properties.getModel().setProvider("openai-compatible");
-        assertThat(modelClientConfig.openAiCompatibleModelClient(properties, mock(TurnUsageCollector.class), new ErrorClassifier(), new RateLimitTracker(), new ImageShrinkerService(properties))).isInstanceOfAny(LangChain4jModelClient.class, ModelClient.class);
+        assertThat(modelClientConfig.openAiCompatibleModelClient(properties, mock(TurnUsageCollector.class), new ErrorClassifier(), new RateLimitTracker(), mock(ImageShrinkerService.class))).isInstanceOfAny(LangChain4jModelClient.class, ModelClient.class);
     }
 
     @Test

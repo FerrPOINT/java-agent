@@ -44,8 +44,11 @@ class StreamDeliveryRegressionTest {
                 String path = request.getURI().getPath();
                 String apiMethod = path.substring(path.lastIndexOf('/') + 1);
                 requests.add(apiMethod);
-                String result = apiMethod.equals("getMe")
-                    ? "{\"supports_rich_messages\":true}" : "{\"message_id\":42}";
+                String result = switch (apiMethod) {
+                    case "getMe" -> "{\"supports_rich_messages\":true}";
+                    case "editMessageText" -> "{\"message_id\":" + mapper.readTree(body).get("message_id").asLong() + "}";
+                    default -> "{\"message_id\":42}";
+                };
                 var response = new org.springframework.mock.http.client.MockClientHttpResponse(
                     ("{\"ok\":true,\"result\":" + result + "}").getBytes(java.nio.charset.StandardCharsets.UTF_8),
                     org.springframework.http.HttpStatus.OK);

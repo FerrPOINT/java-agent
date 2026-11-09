@@ -14,6 +14,7 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Optional;
@@ -280,19 +281,27 @@ public class AttachmentArtifactService {
     /** Internal body shared by direct calls and the scheduler's proxy entry point. */
     private int sweepExpiredWithinTransaction() {
         AttachmentArtifactRepository repository = repository();
-        List<AttachmentArtifactEntity> expired = repository
-            .findByExpiresAtBefore(Instant.now());
-        for (AttachmentArtifactEntity entity : expired) {
+        Instant cutoff = Instant.now();
+        List<String> removed = new ArrayList<>();
+        for (AttachmentArtifactEntity entity : repository.findByExpiresAtBefore(cutoff)) {
             try {
                 if (entity.getCachePath() != null) {
-                    Files.deleteIfExists(safeCachePath(entity.getCachePath()));
+                    Path path = safeCachePath(entity.getCachePath());
+                    if (Files.isDirectory(path, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                        throw new IOException("Attachment blob is a directory");
+                    }
+                    Files.deleteIfExists(path);
                 }
-            } catch (Exception e) {
-                log.debug("Attachment blob cleanup failed for {}: {}",
-                    entity.getId(), e.getMessage());
+                removed.add(entity.getId());
+            } catch (IOException | IllegalArgumentException | SecurityException e) {
+                log.warn("Attachment blob cleanup failed for {}", entity.getId());
             }
         }
-        return repository.deleteExpired(Instant.now());
+        int deleted = 0;
+        for (int from = 0; from < removed.size(); from += 500) {
+            deleted += repository.deleteExpiredByIds(removed.subList(from, Math.min(from + 500, removed.size())), cutoff);
+        }
+        return deleted;
     }
 
     /**

@@ -124,6 +124,44 @@ class FilesystemDashboardControllerTest {
     }
 
     @Test
+    void writeTextDoesNotFollowPrecreatedTemporarySymlink() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path outside = Files.writeString(tempDir.resolve("sentinel"), "untouched");
+        Path target = workspace.resolve("document.txt");
+        Files.createSymbolicLink(workspace.resolve(".document.txt.java-agent-tmp-" + ProcessHandle.current().pid()), outside);
+        String request = "{\"path\":\"" + target + "\",\"content\":\"updated\"}";
+
+        mockMvc.perform(post("/api/fs/write-text").contentType(MediaType.APPLICATION_JSON).content(request))
+            .andExpect(status().isOk());
+
+        assertThat(Files.readString(outside)).isEqualTo("untouched");
+        assertThat(Files.readString(target)).isEqualTo("updated");
+    }
+
+    @Test
+    void concurrentWritesLeaveOneCompleteVersion() throws Exception {
+        Path file = tempDir.resolve("concurrent.txt");
+        String first = "A".repeat(100_000);
+        String second = "B".repeat(100_000);
+        try (var pool = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var start = new java.util.concurrent.CountDownLatch(1);
+            java.util.function.Function<String, java.util.concurrent.Callable<Void>> write = text -> () -> {
+                start.await();
+                String json = "{\"path\":\"" + file + "\",\"content\":\"" + text + "\"}";
+                mockMvc.perform(post("/api/fs/write-text").contentType(MediaType.APPLICATION_JSON).content(json))
+                    .andExpect(status().isOk());
+                return null;
+            };
+            var left = pool.submit(write.apply(first));
+            var right = pool.submit(write.apply(second));
+            start.countDown();
+            left.get(5, java.util.concurrent.TimeUnit.SECONDS);
+            right.get(5, java.util.concurrent.TimeUnit.SECONDS);
+        }
+        assertThat(Files.readString(file)).isIn(first, second);
+    }
+
+    @Test
     void writeTextIsBoundedToAllowedRegularFiles() throws Exception {
         Path file = tempDir.resolve("saved.txt");
         String json = "{\"path\":\"" + file.toString().replace("\\", "\\\\") + "\",\"content\":\"saved\"}";

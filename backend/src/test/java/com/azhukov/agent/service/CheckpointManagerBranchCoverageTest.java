@@ -204,7 +204,6 @@ class CheckpointManagerBranchCoverageTest {
         entity.setFileCount(0);
 
         when(checkpointRepository.findById(id)).thenReturn(Optional.of(entity));
-        when(checkpointFileRepository.findByCheckpointId(id)).thenReturn(List.of());
 
         org.junit.jupiter.api.Assertions.assertThrows(
             RuntimeException.class,
