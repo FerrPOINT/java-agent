@@ -725,9 +725,10 @@ private static final String CRON_EXECUTION_HINT = """
         transactionTemplate.executeWithoutResult(status ->
             lockedSchedule(id).ifPresent(job -> {
                 if (!job.isEnabled()) return;
-                long delay;
+                Instant now = Instant.now();
+                Instant next;
                 try {
-                    delay = scheduleParser.calculateDelaySeconds(job.getSchedule());
+                    next = scheduleParser.parse(job.getSchedule(), now, java.time.ZoneId.systemDefault()).nextRunAt();
                 } catch (IllegalArgumentException invalid) {
                     job.setEnabled(false);
                     job.setLastStatus("error");
@@ -743,8 +744,8 @@ private static final String CRON_EXECUTION_HINT = """
                 }
                 Instant due = job.getNextRunAt();
                 // Only one-shot execution consumes its deadline before any side effect.
-                if (due == null || (!due.isAfter(Instant.now()) && !Integer.valueOf(1).equals(job.getRepeatCount()))) {
-                    due = nextRunAt(delay);
+                if (due == null || (!due.isAfter(now) && !Integer.valueOf(1).equals(job.getRepeatCount()))) {
+                    due = databasePrecision(next);
                 }
                 scheduleJob(job, due);
             }));
@@ -756,9 +757,10 @@ private static final String CRON_EXECUTION_HINT = """
 
     private void updateSchedule(CronJobEntity job, CronExecutionOutcome outcome) {
         if (job.isEnabled() && properties.getCron().isEnabled()) {
-            long delay = scheduleParser.calculateDelaySeconds(job.getSchedule());
-            if (outcome != null) delay = delayAfterExecution(job, outcome, delay);
-            scheduleJob(job, nextRunAt(delay));
+            Instant now = Instant.now();
+            Instant due = scheduleParser.parse(job.getSchedule(), now, java.time.ZoneId.systemDefault()).nextRunAt();
+            if (outcome != null) due = dueAfterExecution(job, outcome, now, due);
+            scheduleJob(job, databasePrecision(due));
         } else {
             job.setNextRunAt(null);
             cronJobRepository.save(job);
@@ -766,8 +768,9 @@ private static final String CRON_EXECUTION_HINT = """
         }
     }
 
-    private Instant nextRunAt(long delay) {
-        return Instant.now().plusSeconds(delay).truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+    private static Instant databasePrecision(Instant due) {
+        Instant truncated = due.truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+        return due.equals(truncated) ? due : truncated.plusNanos(1_000);
     }
 
     private void cancelAfterCommit(UUID id) {
@@ -779,7 +782,9 @@ private static final String CRON_EXECUTION_HINT = """
 
     private void scheduleJob(CronJobEntity job, Instant due) {
         // A missed one-shot that has not been claimed runs when the service comes back.
-        long delayMillis = Math.max(0, Duration.between(Instant.now(), due).toMillis());
+        Duration delay = Duration.between(Instant.now(), due);
+        long delayMillis = delay.isNegative() ? 0
+            : delay.toMillis() + (delay.getNano() % 1_000_000 == 0 ? 0 : 1);
         UUID id = job.getId();
         long revision = job.getConfigurationRevision();
         var persisted = new CompletableFuture<ScheduledFuture<?>>();
@@ -1167,12 +1172,16 @@ private static final String CRON_EXECUTION_HINT = """
         }
     }
 
-    private long delayAfterExecution(CronJobEntity job, CronExecutionOutcome outcome, long regularDelay) {
+    private Instant dueAfterExecution(CronJobEntity job, CronExecutionOutcome outcome, Instant now, Instant regularDue) {
         if (outcome.unreachableBeforeModel() && retryUnreachableEnabled() && isRecurring(job)) {
-            return Math.min(regularDelay, unreachableRetryLadderSeconds(job));
+            Instant retry = now.plusSeconds(unreachableRetryLadderSeconds(job));
+            return retry.isBefore(regularDue) ? retry : regularDue;
         }
-        return outcome.failed() && job.getConsecutiveFailures() >= MAX_CONSECUTIVE_FAILURES
-            ? Math.max(regularDelay, failureBackoffSeconds(job)) : regularDelay;
+        if (outcome.failed() && job.getConsecutiveFailures() >= MAX_CONSECUTIVE_FAILURES) {
+            Instant retry = now.plusSeconds(failureBackoffSeconds(job));
+            return retry.isAfter(regularDue) ? retry : regularDue;
+        }
+        return regularDue;
     }
 
     private static final long[] UNREACHABLE_LADDER_SECONDS = {5 * 60L, 15 * 60L, 30 * 60L};
