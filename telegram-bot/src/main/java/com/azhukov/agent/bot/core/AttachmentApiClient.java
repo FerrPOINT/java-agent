@@ -98,14 +98,13 @@ public class AttachmentApiClient extends BaseBackendClient {
             var response = restClient.post().uri(uri -> uri.path("/api/v1/attachments/{id}/outbound")
                 .queryParam("ownerId", owner).queryParam("sessionId", sessionId).build(id))
                 .retrieve().toEntity(byte[].class);
+            if (response.getStatusCode().value() == 204) return java.util.Optional.empty();
             byte[] bytes = response.getBody();
             if (bytes == null || bytes.length == 0) throw new IllegalStateException("Empty artifact body");
             var headers = response.getHeaders();
             var type = headers.getContentType();
             return java.util.Optional.of(new Outbound(id, sanitize(headers.getContentDisposition().getFilename()),
                 type == null ? MediaType.APPLICATION_OCTET_STREAM_VALUE : type.toString(), bytes));
-        } catch (org.springframework.web.client.HttpClientErrorException.Conflict alreadyClaimed) {
-            return java.util.Optional.empty();
         } catch (org.springframework.web.client.RestClientException | IllegalStateException e) {
             log.warn("Outbound artifact {} unavailable ({})", id, e.getClass().getSimpleName());
             throw new OutboundUnavailable(e);

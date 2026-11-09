@@ -61,6 +61,28 @@ class WriteFileToolTest {
         assertThat(r.success()).isFalse();
     }
 
+    @Test
+    void rejectsParentSubstitutionAfterAuthorization(@TempDir Path dir) throws Exception {
+        Path workspace = Files.createDirectory(dir.resolve("workspace"));
+        Path parent = Files.createDirectory(workspace.resolve("nested"));
+        Path outside = Files.createDirectory(dir.resolve("outside"));
+        Path protectedFile = Files.writeString(outside.resolve("a.txt"), "protected");
+        var safety = org.mockito.Mockito.mock(com.azhukov.agent.core.security.FileSafety.class);
+        var swapped = new java.util.concurrent.atomic.AtomicBoolean();
+        org.mockito.Mockito.when(safety.isPathAllowed(org.mockito.ArgumentMatchers.any())).thenAnswer(call -> {
+            if (swapped.compareAndSet(false, true)) {
+                Files.move(parent, workspace.resolve("original"));
+                Files.createSymbolicLink(parent, outside);
+            }
+            return true;
+        });
+        var result = new WriteFileTool(safety).execute(
+            "{\"path\":\"" + parent.resolve("a.txt") + "\",\"content\":\"replacement\"}", null, null);
+        assertThat(result.success()).isFalse();
+        assertThat(Files.readString(protectedFile)).isEqualTo("protected");
+        assertThat(outside.toFile().list()).containsExactly("a.txt");
+    }
+
     private static com.azhukov.agent.core.security.DefaultFileSafety fileSafety() {
         com.azhukov.agent.config.AgentProperties props = new com.azhukov.agent.config.AgentProperties();
         props.getSecurity().setFileSafetyEnabled(true);

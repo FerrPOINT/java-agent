@@ -250,7 +250,7 @@ public class DefaultFileSafety implements FileSafety {
  return false;
  }
  Path resolved = resolveExistingPath(path);
- if (matchesDenylist(resolved)) {
+ if (isArtifactPath(path.toAbsolutePath().normalize()) || matchesDenylist(resolved)) {
  return false;
  }
  if (!properties.getSecurity().isFileSafetyEnabled()) {

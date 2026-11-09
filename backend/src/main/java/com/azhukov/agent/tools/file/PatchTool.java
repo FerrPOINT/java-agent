@@ -13,11 +13,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.AtomicMoveNotSupportedException;
+import com.azhukov.agent.core.security.SecureFileAccess;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -104,7 +102,7 @@ public class PatchTool implements ToolHandler {
     }
 
     private ToolResult replace(Path path, String oldString, String newString, boolean replaceAll) throws IOException {
-        String content = Files.readString(path, StandardCharsets.UTF_8);
+        String content = TextFileWriteSupport.read(path);
 
         // p7: Check if new_string is already present in the file content.
         // If so, the patch was likely already applied — return success with info.
@@ -244,7 +242,7 @@ public class PatchTool implements ToolHandler {
     }
 
     private ToolResult writePatched(Path path, String updated, String label) throws IOException {
-        String before = Files.readString(path, StandardCharsets.UTF_8);
+        String before = TextFileWriteSupport.read(path);
         TextFileWriteSupport.WriteOutcome write = TextFileWriteSupport.write(path, updated);
         Map<String, Object> result = patchResult(true);
         result.put("diff", compactDiff(write.path(), before, write.content()));
@@ -307,10 +305,12 @@ public class PatchTool implements ToolHandler {
                 TextFileWriteSupport.write(path, content);
                 filesCreated.add(pathStr);
             } else if ("Delete".equals(op)) {
-                Files.delete(path);
+                try (var parent = SecureFileAccess.openDirectory(path.getParent())) {
+                    parent.deleteFile(path.getFileName());
+                }
                 filesDeleted.add(pathStr);
             } else if ("Update".equals(op)) {
-                String content = Files.readString(path, StandardCharsets.UTF_8);
+                String content = TextFileWriteSupport.read(path);
                 String updated = applyHunks(content, parseHunks(extractDiff(patchText, operation.contentStart())));
                 TextFileWriteSupport.WriteOutcome write = TextFileWriteSupport.write(path, updated);
                 appendDiff(diff, compactDiff(write.path(), content, write.content()));
@@ -539,7 +539,7 @@ public class PatchTool implements ToolHandler {
             return;
         }
         try {
-            String content = Files.readString(operation.path(), StandardCharsets.UTF_8);
+            String content = TextFileWriteSupport.read(operation.path());
             String updated = applyHunks(content, parseHunks(extractDiff(patchText, operation.contentStart())));
             TextFileWriteSupport.validateCandidate(operation.path(), updated);
         } catch (Exception e) {
@@ -561,13 +561,9 @@ public class PatchTool implements ToolHandler {
     }
 
     private void moveFile(Path source, Path destination) throws IOException {
-        if (destination.getParent() != null) {
-            Files.createDirectories(destination.getParent());
-        }
-        try {
-            Files.move(source, destination, StandardCopyOption.ATOMIC_MOVE);
-        } catch (AtomicMoveNotSupportedException e) {
-            Files.move(source, destination);
+        try (var sourceParent = SecureFileAccess.openDirectory(source.getParent());
+             var destinationParent = SecureFileAccess.openOrCreateDirectory(destination.getParent())) {
+            sourceParent.move(source.getFileName(), destinationParent, destination.getFileName());
         }
     }
 

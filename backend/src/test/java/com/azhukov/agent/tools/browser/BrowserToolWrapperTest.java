@@ -51,15 +51,16 @@ class BrowserToolWrapperTest {
     }
 
     @Test
-    void visionReturnsScreenshotPathAndMediaTag() throws Exception {
+    void visionReturnsLocalScreenshotPath() throws Exception {
         BrowserService browserService = mock(BrowserService.class);
         when(browserService.captureScreenshot()).thenReturn(new BrowserService.BrowserScreenshot(
             true,
             "data:image/png;base64,AQID",
-            "C:\\tmp\\browser_screenshot_1.png",
+            new byte[] {1, 2, 3},
             "image/png",
             null));
 
+        when(browserService.writeScreenshot(any())).thenReturn(java.nio.file.Path.of("C:\\tmp\\browser_screenshot_1.png"));
         BrowserVisionTool tool = new BrowserVisionTool(browserService, mock(com.azhukov.agent.service.AttachmentArtifactService.class));
         ToolResult result = tool.execute("{\"question\":\"what is visible?\"}", null, null);
 
@@ -70,6 +71,25 @@ class BrowserToolWrapperTest {
         assertThat(json.path("screenshot_path").asText()).isEqualTo("C:\\tmp\\browser_screenshot_1.png");
         assertThat(json.path("mime_type").asText()).isEqualTo("image/png");
         verify(browserService).captureScreenshot();
+    }
+
+    @Test
+    void telegramVisionPublishesBytesWithoutWritingLocalScreenshot() throws Exception {
+        var browserService = mock(BrowserService.class);
+        var artifacts = mock(com.azhukov.agent.service.AttachmentArtifactService.class);
+        byte[] png = {1, 2, 3};
+        var session = com.azhukov.agent.core.model.Session.create("42", "default", "test")
+            .withMetadata("platform", "telegram");
+        when(browserService.captureScreenshot()).thenReturn(new BrowserService.BrowserScreenshot(
+            true, "data:image/png;base64,AQID", png, "image/png", null));
+        when(artifacts.publishGenerated(session, "photo", "image/png", "screenshot.png", png))
+            .thenReturn("MEDIA:artifact:att_test");
+        var result = new BrowserVisionTool(browserService, artifacts).execute("{\"question\":\"what is visible?\"}", null, session);
+        assertThat(result.success()).isTrue();
+        var body = JSON.readTree(result.content());
+        assertThat(body.path("media_tag").asText()).isEqualTo("MEDIA:artifact:att_test");
+        assertThat(body.has("screenshot_path")).isFalse();
+        verify(browserService, never()).writeScreenshot(any());
     }
 
     @Test
