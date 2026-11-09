@@ -40,6 +40,18 @@ class CommandGroupTest {
         assertThat(new UtilityCommands(cliState)).isInstanceOf(CommandGroup.class);
     }
 
+    @Test
+    void acceptedSuggestionReportsSchedulingFailureSeparately() {
+        var response = SharedObjectMapper.get().createObjectNode().put("accepted", true).put("name", "Daily report");
+        when(client.executePost("/api/v1/agent/cron/suggestions/id/accept", java.util.Map.of())).thenReturn(response);
+        response.put("schedulingStatus", "failed");
+        assertThat(registry.execute("/suggestions accept id", client, "session"))
+            .contains("Daily report", "Scheduling failed");
+        response.put("schedulingStatus", "scheduled");
+        assertThat(registry.execute("/suggestions accept id", client, "session"))
+            .isEqualTo("Suggestion accepted: cron job 'Daily report' created.");
+    }
+
     // ── Registry delegates to all groups (full command set still registered) ──
 
     @Test

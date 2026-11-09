@@ -43,7 +43,8 @@ class CronJobServiceDaemonTest {
         properties = new AgentProperties();
         properties.getCron().setEnabled(false);
         lenient().when(agentRuntimeServiceProvider.getIfAvailable()).thenReturn(agentRuntimeService);
-        service = new CronJobService(cronJobRepository, agentRuntimeServiceProvider, properties, skillManager, cronExecutionLogRepository, messageRepository, new org.springframework.transaction.support.TransactionTemplate(), new CronScheduleParser());
+        CronJobServiceTest.stubExecutionHistory(cronExecutionLogRepository);
+        service = new CronJobService(cronJobRepository, agentRuntimeServiceProvider, properties, skillManager, cronExecutionLogRepository, messageRepository, new org.springframework.transaction.support.TransactionTemplate(org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class)), new CronScheduleParser());
     }
 
     @Test
@@ -74,7 +75,6 @@ class CronJobServiceDaemonTest {
         job.setCreatedAt(Instant.now());
 
         when(cronJobRepository.findById(jobId)).thenReturn(java.util.Optional.of(job));
-        when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(agentRuntimeService.runBackground(any(), any(), org.mockito.ArgumentMatchers.anyBoolean())).thenReturn("session-id");
 
         // Execute job — should work without error

@@ -50,6 +50,9 @@ class CronJobServiceCrudBranchTest {
 
     @BeforeEach
     void setUp() {
+        org.mockito.Mockito.lenient().when(cronJobRepository.findByIdForUpdate(
+                org.mockito.ArgumentMatchers.any(java.util.UUID.class)))
+            .thenAnswer(call -> cronJobRepository.findById(call.getArgument(0)));
         properties = new AgentProperties();
         service = new CronJobService(
             cronJobRepository,
@@ -58,7 +61,7 @@ class CronJobServiceCrudBranchTest {
             skillManager,
             cronExecutionLogRepository,
             messageRepository,
-            new org.springframework.transaction.support.TransactionTemplate(),
+            CronJobServiceTest.unitTransaction(),
             new CronScheduleParser());
         lenient().when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(inv -> {
             CronJobEntity e = inv.getArgument(0);
