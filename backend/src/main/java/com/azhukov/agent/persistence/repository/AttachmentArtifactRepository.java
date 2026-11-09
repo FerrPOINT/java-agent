@@ -37,6 +37,16 @@ public interface AttachmentArtifactRepository extends JpaRepository<AttachmentAr
     @org.springframework.transaction.annotation.Transactional
     @Modifying
     @Query("""
+        UPDATE AttachmentArtifactEntity a SET a.outboundClaimedAt = NULL
+        WHERE a.id = :id AND a.ownerId = :owner AND a.sessionId = :session
+          AND a.state = 'received' AND a.outboundClaimedAt = :claimedAt
+        """)
+    int releaseOutbound(@Param("id") String id, @Param("owner") String owner,
+                        @Param("session") UUID session, @Param("claimedAt") Instant claimedAt);
+
+    @org.springframework.transaction.annotation.Transactional
+    @Modifying
+    @Query("""
         UPDATE AttachmentArtifactEntity a SET a.state = 'delivered',
             a.deliveredMessageId = :messageId, a.deliveredAt = COALESCE(a.deliveredAt, :now)
         WHERE a.id = :id AND a.ownerId = :owner AND a.sessionId = :session

@@ -56,7 +56,9 @@ class AttachmentApiClientTest {
             .andExpect(org.springframework.test.web.client.match.MockRestRequestMatchers.method(
                 org.springframework.http.HttpMethod.POST))
             .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators
-                .withSuccess(new byte[] {1, 2}, type).header("Content-Disposition", "inline; filename=\"report.pdf\""));
+                .withSuccess(new byte[] {1, 2}, type)
+                .header("Content-Disposition", "inline; filename=\"report.pdf\"")
+                .header("X-Outbound-Claim", "2026-01-01T12:00:00Z"));
         server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(uri))
             .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators
                 .withNoContent());
@@ -70,6 +72,11 @@ class AttachmentApiClientTest {
                 org.springframework.http.HttpMethod.POST))
             .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withNoContent());
 
+        server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(uri))
+            .andExpect(org.springframework.test.web.client.match.MockRestRequestMatchers.method(org.springframework.http.HttpMethod.DELETE))
+            .andExpect(org.springframework.test.web.client.match.MockRestRequestMatchers.header("X-Outbound-Claim", "2026-01-01T12:00:00Z"))
+            .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withNoContent());
+
         var artifact = api.claimOutbound("att_test", "101", session).orElseThrow();
         assertThat(artifact.fileName()).isEqualTo("report.pdf");
         assertThat(artifact.mimeType()).isEqualTo("application/pdf");
@@ -78,6 +85,7 @@ class AttachmentApiClientTest {
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> api.claimOutbound("att_test", "101", session))
             .isInstanceOf(AttachmentApiClient.OutboundUnavailable.class);
         api.markOutboundDelivered("att_test", "101", session, 12);
+        api.releaseOutbound(artifact, "101", session);
         server.verify();
     }
 

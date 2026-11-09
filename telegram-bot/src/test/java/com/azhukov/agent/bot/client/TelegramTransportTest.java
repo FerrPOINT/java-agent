@@ -72,9 +72,7 @@ class TelegramTransportTest {
                 assertThat(refusal.getErrorCode()).isEqualTo(429);
                 assertThat(refusal.getRetryAfterSeconds()).isEqualTo(expectedRetryAfter);
             });
-        var multipart = new org.springframework.http.client.MultipartBodyBuilder();
-        multipart.part("chat_id", "1");
-        assertThatThrownBy(() -> client.callMultipartApi("sendDocument", multipart.build()))
+        assertThatThrownBy(() -> client.sendDocument(1L, new byte[] {1}, "report.txt", null, null))
             .isInstanceOfSatisfying(TelegramClient.SendRefusalException.class, refusal -> {
                 assertThat(refusal.getErrorCode()).isEqualTo(429);
                 assertThat(refusal.getRetryAfterSeconds()).isEqualTo(expectedRetryAfter);

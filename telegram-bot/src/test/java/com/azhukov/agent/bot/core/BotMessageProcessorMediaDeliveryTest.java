@@ -211,9 +211,9 @@ class BotMessageProcessorMediaDeliveryTest {
         UUID sessionId = UUID.randomUUID();
         byte[] bytes = {1, 2};
         when(attachmentApiClient.claimOutbound("photo", "101", sessionId))
-            .thenReturn(Optional.of(new AttachmentApiClient.Outbound("photo", "photo.png", "image/png", bytes)));
+            .thenReturn(Optional.of(new AttachmentApiClient.Outbound("photo", "photo.png", "image/png", bytes, "claim")));
         when(attachmentApiClient.claimOutbound("voice", "101", sessionId))
-            .thenReturn(Optional.of(new AttachmentApiClient.Outbound("voice", "voice.ogg", "audio/ogg", bytes)));
+            .thenReturn(Optional.of(new AttachmentApiClient.Outbound("voice", "voice.ogg", "audio/ogg", bytes, "claim")));
         when(telegramClient.sendPhoto(100L, bytes, null, null, 55)).thenReturn(Optional.of(17L));
         when(telegramClient.sendAudioAsVoice(100L, bytes, "voice.ogg", null, 55)).thenReturn(Optional.empty());
         processor.deliverMedia(100L, List.of(new MediaDeliveryService.MediaDescriptor("photo", false, false),
@@ -235,7 +235,7 @@ class BotMessageProcessorMediaDeliveryTest {
                 default -> "image/png";
             };
             when(attachmentApiClient.claimOutbound(id, "101", sessionId))
-                .thenReturn(Optional.of(new AttachmentApiClient.Outbound(id, id, mime, bytes)));
+                .thenReturn(Optional.of(new AttachmentApiClient.Outbound(id, id, mime, bytes, "claim")));
         }
         when(attachmentApiClient.markOutboundDelivered(anyString(), eq("101"), eq(sessionId), anyLong()))
             .thenReturn(true);
@@ -262,7 +262,7 @@ class BotMessageProcessorMediaDeliveryTest {
         byte[] bytes = {1, 2};
         for (String id : List.of("first", "second")) {
             when(attachmentApiClient.claimOutbound(id, "101", sessionId))
-                .thenReturn(Optional.of(new AttachmentApiClient.Outbound(id, id, "image/png", bytes)));
+                .thenReturn(Optional.of(new AttachmentApiClient.Outbound(id, id, "image/png", bytes, "claim")));
         }
         when(telegramClient.sendMediaGroup(eq(100L), anyList(), eq(55))).thenReturn(List.of(20L, 21L));
         when(attachmentApiClient.markOutboundDelivered("second", "101", sessionId, 21L)).thenReturn(true);
@@ -278,12 +278,34 @@ class BotMessageProcessorMediaDeliveryTest {
         verifyNoMoreInteractions(telegramClient);
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void confirmedRefusalReleasesEveryClaimInAnUnsentAlbum(boolean telegramRateLimit) {
+        UUID session = UUID.randomUUID();
+        byte[] bytes = {1, 2};
+        var first = new AttachmentApiClient.Outbound("first", "first.png", "image/png", bytes, "claim-1");
+        var second = new AttachmentApiClient.Outbound("second", "second.png", "image/png", bytes, "claim-2");
+        when(attachmentApiClient.claimOutbound("first", "101", session)).thenReturn(Optional.of(first));
+        when(attachmentApiClient.claimOutbound("second", "101", session)).thenReturn(Optional.of(second));
+        var refusal = telegramRateLimit
+            ? new TelegramClient.SendRefusalException(429, 17, "Flood control")
+            : mock(TelegramClient.LocalSendRefusalException.class);
+        when(telegramClient.sendMediaGroup(eq(100L), anyList(), eq(55))).thenThrow(refusal);
+
+        processor.deliverMedia(100L, List.of(new MediaDeliveryService.MediaDescriptor("first", false, false),
+            new MediaDeliveryService.MediaDescriptor("second", false, false)), 55, "101", session);
+
+        verify(attachmentApiClient).releaseOutbound(first, "101", session);
+        verify(attachmentApiClient).releaseOutbound(second, "101", session);
+        verify(attachmentApiClient, never()).markOutboundDelivered(anyString(), anyString(), any(), anyLong());
+    }
+
     @Test
     void uncertainDeliveryHasNoReceiptAndClaimPreventsAnotherSend() {
         UUID sessionId = UUID.randomUUID();
         byte[] bytes = {1, 2};
         when(attachmentApiClient.claimOutbound("document", "101", sessionId))
-            .thenReturn(Optional.of(new AttachmentApiClient.Outbound("document", "report.pdf", "application/pdf", bytes)))
+            .thenReturn(Optional.of(new AttachmentApiClient.Outbound("document", "report.pdf", "application/pdf", bytes, "claim")))
             .thenReturn(Optional.empty());
         when(telegramClient.sendDocument(100L, bytes, "report.pdf", null, null, 55))
             .thenReturn(Optional.empty());
@@ -292,6 +314,7 @@ class BotMessageProcessorMediaDeliveryTest {
         processor.deliverMedia(100L, media, 55, "101", sessionId);
         processor.deliverMedia(100L, media, 55, "101", sessionId);
 
+        verify(attachmentApiClient, never()).releaseOutbound(any(), any(), any());
         verify(telegramClient).sendDocument(100L, bytes, "report.pdf", null, null, 55);
         verify(attachmentApiClient, never()).markOutboundDelivered(anyString(), anyString(), any(), anyLong());
     }
@@ -303,7 +326,7 @@ class BotMessageProcessorMediaDeliveryTest {
         when(attachmentApiClient.claimOutbound("missing", "101", sessionId))
             .thenThrow(new AttachmentApiClient.OutboundUnavailable(new IllegalStateException()));
         when(attachmentApiClient.claimOutbound("large", "101", sessionId))
-            .thenReturn(Optional.of(new AttachmentApiClient.Outbound("large", "large.png", "image/png", image)));
+            .thenReturn(Optional.of(new AttachmentApiClient.Outbound("large", "large.png", "image/png", image, "claim")));
         when(telegramClient.sendDocument(100L, image, "large.png", null, null, 55)).thenReturn(Optional.of(18L));
 
         processor.deliverMedia(100L, List.of(new MediaDeliveryService.MediaDescriptor("missing", false, false),

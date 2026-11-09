@@ -14,7 +14,9 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -27,6 +29,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.net.URLConnection;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -131,13 +134,28 @@ public class AttachmentController {
         var content = service().verifiedContent(id, owner)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Artifact content is unavailable"));
         var response = contentResponse(content.artifact(), new org.springframework.core.io.ByteArrayResource(content.bytes()));
-        if (!service().claimOutbound(id, owner, sessionId)) {
+        var claim = service().claimOutbound(id, owner, sessionId);
+        if (claim.isEmpty()) {
             if (requireOutboundArtifact(id, owner, sessionId) == OutboundStatus.DELIVERED) {
                 return ResponseEntity.noContent().build();
             }
             throw alreadyClaimed();
         }
-        return response;
+        return ResponseEntity.ok().headers(response.getHeaders())
+            .header("X-Outbound-Claim", claim.get().toString()).body(response.getBody());
+    }
+
+    @DeleteMapping("/{id}/outbound")
+    public ResponseEntity<Void> releaseOutbound(@PathVariable("id") String id,
+            @RequestParam(name = "ownerId", required = false) String ownerId,
+            @RequestParam("sessionId") UUID sessionId,
+            @RequestHeader("X-Outbound-Claim") Instant claimedAt) {
+        String owner = requireGatewayOwner(ownerId);
+        requireOutboundArtifact(id, owner, sessionId);
+        if (!service().releaseOutbound(id, owner, sessionId, claimedAt)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "No matching outbound claim");
+        }
+        return ResponseEntity.noContent().build();
     }
 
     private static ResponseStatusException alreadyClaimed() {
@@ -172,13 +190,13 @@ public class AttachmentController {
     public Map<String, Object> delivered(@PathVariable("id") String id,
             @RequestParam(name = "ownerId", required = false) String ownerId,
             @RequestParam("sessionId") UUID sessionId,
-            @RequestParam("messageId") String messageId) {
-        if (messageId.isBlank()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Telegram message ID required");
+            @RequestParam("messageId") long messageId) {
+        if (messageId <= 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Positive Telegram message ID required");
         }
         String owner = requireGatewayOwner(ownerId);
         requireOutboundArtifact(id, owner, sessionId);
-        if (!service().markDelivered(id, owner, sessionId, messageId)) {
+        if (!service().markDelivered(id, owner, sessionId, Long.toString(messageId))) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "No matching outbound attempt or receipt");
         }
         return Map.of("ok", true, "id", id, "state", "delivered");
