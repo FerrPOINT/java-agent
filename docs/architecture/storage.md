@@ -86,21 +86,20 @@ native access JVM, уже включённое в образе backend.
 записи из собственного дочернего процесса. При неверном корне или провале
 проверки команда `POST /outbound` возвращает 503 до расходования права на отправку.
 
-Для Kubernetes с containerd загрузите тот же профиль на целевые узлы. На
-каждом узле должен быть загружен также стандартный профиль CRI
-`cri-containerd.apparmor.d`. Его применяет обычный контейнер с
-`appArmorProfile.type: RuntimeDefault`. Укажите для Java Agent в values
-платформенного chart Base:
+Для Kubernetes с containerd загрузите тот же профиль на целевые узлы.
+Профиль `pdlc-java-agent` включает ограничения контейнера и переход OpenJDK
+в дополнительный worker-профиль. CRI принимает имя загруженного профиля
+в `localhostProfile`. Укажите для Java Agent в values платформенного chart Base:
 
 ~~~yaml
 components:
   java-agent:
-    appArmorLocalhostProfile: "cri-containerd.apparmor.d//&pdlc-java-agent"
+    appArmorLocalhostProfile: pdlc-java-agent
 ~~~
 
-Имя задаёт стек двух политик. Перед включением выдачи проверьте в Pod
-активный label backend, worker-ограничение записи в `/artifacts` и доступную
-запись в `/workspace`. Проверка в Docker эту приёмку не заменяет.
+Перед включением выдачи проверьте в Pod активный профиль backend, запрет
+чтения и записи в `/artifacts` из дочернего процесса JVM и доступную запись
+в `/workspace`. Отдельно проверьте запрет исходящего доступа без профиля.
 Standalone JVM без изоляции сохраняет локальные инструменты, а scoped выдача
 артефактов недоступна.
 
