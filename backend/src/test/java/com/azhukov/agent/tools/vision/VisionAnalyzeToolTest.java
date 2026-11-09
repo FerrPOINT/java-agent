@@ -181,7 +181,7 @@ class VisionAnalyzeToolTest {
     void deniesArtifactPathsBeforeVisionProvider() {
         var result = tool.execute("{\"image_url\":\"/artifacts/protected.png\"}", null, null);
         assertThat(result.success()).isFalse();
-        assertThat(result.error()).containsIgnoringCase("blocked");
+        assertThat(result.error()).contains("Reading this path is not allowed");
         verifyNoInteractions(imageShrinker, modelClient);
     }
 
