@@ -76,7 +76,7 @@ class CronJobServiceTest {
         job.setId(UUID.randomUUID());
         job.setName("job");
         org.assertj.core.api.Assertions.assertThatThrownBy(() ->
-            org.springframework.test.util.ReflectionTestUtils.invokeMethod(service, "scheduleJob", job, 3600L))
+            org.springframework.test.util.ReflectionTestUtils.invokeMethod(service, "scheduleJob", job, java.time.Instant.now().plusSeconds(3600)))
             .hasMessageContaining("database unavailable");
         verify(future).cancel(false);
         @SuppressWarnings("unchecked")
@@ -98,7 +98,7 @@ class CronJobServiceTest {
         job.setId(UUID.randomUUID());
         job.setName("job");
         org.assertj.core.api.Assertions.assertThatThrownBy(() ->
-            org.springframework.test.util.ReflectionTestUtils.invokeMethod(service, "scheduleJob", job, 0L))
+            org.springframework.test.util.ReflectionTestUtils.invokeMethod(service, "scheduleJob", job, java.time.Instant.now()))
             .hasMessageContaining("database unavailable");
         verify(cronJobRepository, never()).findById(job.getId());
     }
