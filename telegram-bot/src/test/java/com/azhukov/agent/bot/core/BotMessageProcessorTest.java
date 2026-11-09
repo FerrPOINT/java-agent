@@ -577,13 +577,13 @@ class BotMessageProcessorTest {
         properties.setStreamingTransport("off");
         var started = new java.util.concurrent.CountDownLatch(1);
         var release = new java.util.concurrent.CountDownLatch(1);
-        when(telegramClient.sendMessageChecked(eq(100L), eq("first"), any(), any(), any(), any(), anyBoolean()))
+        when(telegramClient.sendMessageChecked(eq(100L), eq("first"), any(), any(), any(), any(), anyBoolean(), any()))
             .thenAnswer(call -> {
                 started.countDown();
                 assertThat(release.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
                 return Optional.empty();
             });
-        when(telegramClient.sendMessageChecked(eq(100L), eq("second"), any(), any(), any(), any(), anyBoolean()))
+        when(telegramClient.sendMessageChecked(eq(100L), eq("second"), any(), any(), any(), any(), anyBoolean(), any()))
             .thenReturn(Optional.of(42L));
         when(commandRegistry.get("stop")).thenReturn(
             new com.azhukov.agent.bot.commands.impl.StopCommand(busyHandler, backendClient));
@@ -606,7 +606,7 @@ class BotMessageProcessorTest {
             }
             first.get(5, java.util.concurrent.TimeUnit.SECONDS);
             fixture.processor().accept(textEvent(3, 100L, "second"));
-            verify(telegramClient).sendMessageChecked(eq(100L), eq("second"), any(), any(), any(), any(), anyBoolean());
+            verify(telegramClient).sendMessageChecked(eq(100L), eq("second"), any(), any(), any(), any(), anyBoolean(), any());
         }
     }
 
@@ -625,7 +625,7 @@ class BotMessageProcessorTest {
         when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
         when(commandRegistry.get("stop")).thenReturn(
             new com.azhukov.agent.bot.commands.impl.StopCommand(busyHandler, backendClient));
-        when(telegramClient.sendMessageChecked(eq(100L), eq("first"), any(), any(), any(), any(), anyBoolean()))
+        when(telegramClient.sendMessageChecked(eq(100L), eq("first"), any(), any(), any(), any(), anyBoolean(), any()))
             .thenThrow(new TelegramClient.SendRefusalException(429, 1, "rate limit")).thenReturn(Optional.of(41L));
         when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(call -> {
@@ -723,7 +723,7 @@ class BotMessageProcessorTest {
     void rateLimitedShortSegmentIsNotSilentlyDiscarded() {
         properties.setStreamingTransport("edit");
         properties.getDisplay().setToolProgress("off");
-        when(telegramClient.sendMessageChecked(eq(100L), eq("Hi"), eq("MarkdownV2"), any(), any(), isNull(), anyBoolean()))
+        when(telegramClient.sendMessageChecked(eq(100L), eq("Hi"), eq("MarkdownV2"), any(), any(), isNull(), anyBoolean(), any()))
             .thenThrow(new TelegramClient.SendRefusalException(429, 1, "rate limit")).thenReturn(Optional.of(41L));
         when(telegramClient.sendMessage(eq(100L), eq("Hi"), eq("MarkdownV2"), any(), any()))
             .thenReturn(Optional.of(41L));
@@ -737,7 +737,7 @@ class BotMessageProcessorTest {
             });
         try (DeliveryFixture fixture = realDeliveryFixture()) {
             fixture.processor().accept(textEvent(1, 100L, "Hello"));
-            verify(telegramClient, timeout(4500).times(2)).sendMessageChecked(eq(100L), eq("Hi"), eq("MarkdownV2"), any(), any(), isNull(), anyBoolean());
+            verify(telegramClient, timeout(4500).times(2)).sendMessageChecked(eq(100L), eq("Hi"), eq("MarkdownV2"), any(), any(), isNull(), anyBoolean(), any());
             verify(backendClient, never()).chat(anyString(), any(), any());
         }
     }
@@ -750,15 +750,15 @@ class BotMessageProcessorTest {
         properties.getDisplay().setToolProgress("off");
         var accepted = new java.util.concurrent.CopyOnWriteArrayList<String>();
         var attempts = new java.util.concurrent.atomic.AtomicInteger();
-        when(telegramClient.sendMessageChecked(eq(100L), eq("Hi"), eq("MarkdownV2"), any(), any(), isNull(), anyBoolean()))
+        when(telegramClient.sendMessageChecked(eq(100L), eq("Hi"), eq("MarkdownV2"), any(), any(), isNull(), anyBoolean(), any()))
             .thenAnswer(inv -> { if (attempts.incrementAndGet() == 1) throw new TelegramClient.SendRefusalException(429, 1, "rate limit"); accepted.add("Hi"); return Optional.of(41L); });
         when(telegramClient.sendMessage(eq(100L), eq("Hi"), eq("MarkdownV2"), any(), any()))
             .thenAnswer(inv -> { accepted.add("Hi"); return Optional.of(41L); });
-        when(telegramClient.sendMessageChecked(eq(100L), startsWith("Final answer"), isNull(), any(), any(), isNull(), anyBoolean()))
+        when(telegramClient.sendMessageChecked(eq(100L), startsWith("Final answer"), isNull(), any(), any(), isNull(), anyBoolean(), any()))
             .thenAnswer(inv -> { accepted.add("Final answer"); return Optional.of(42L); });
         when(telegramClient.sendMessage(eq(100L), eq("Final answer"), eq("MarkdownV2"), any(), any()))
             .thenAnswer(inv -> { accepted.add("Final answer"); return Optional.of(42L); });
-        when(telegramClient.sendMessageChecked(eq(100L), eq("Final answer"), eq("MarkdownV2"), any(), any(), isNull(), anyBoolean()))
+        when(telegramClient.sendMessageChecked(eq(100L), eq("Final answer"), eq("MarkdownV2"), any(), any(), isNull(), anyBoolean(), any()))
             .thenAnswer(inv -> { accepted.add("Final answer"); return Optional.of(42L); });
         when(telegramClient.editMessageText(eq(100L), eq(42L), anyString(), eq("MarkdownV2"), eq(false)))
             .thenReturn(true);
@@ -789,11 +789,11 @@ class BotMessageProcessorTest {
         properties.getDisplay().setToolProgress("off");
         when(telegramClient.supportsDraftStreaming(anyString())).thenReturn(true);
         when(telegramClient.sendDraft(anyLong(), anyString(), anyInt())).thenReturn(true);
-        when(telegramClient.sendMessageChecked(eq(100L), eq("first"), any(), any(), any(), isNull(), anyBoolean()))
+        when(telegramClient.sendMessageChecked(eq(100L), eq("first"), any(), any(), any(), isNull(), anyBoolean(), any()))
             .thenThrow(new TelegramClient.SendRefusalException(429, 15, "rate limit"));
-        when(telegramClient.sendMessageChecked(eq(200L), eq("independent"), any(), any(), any(), isNull(), anyBoolean()))
+        when(telegramClient.sendMessageChecked(eq(200L), eq("independent"), any(), any(), any(), isNull(), anyBoolean(), any()))
             .thenReturn(Optional.of(42L));
-        when(telegramClient.sendMessageChecked(eq(100L), eq("queued"), any(), any(), any(), isNull(), anyBoolean()))
+        when(telegramClient.sendMessageChecked(eq(100L), eq("queued"), any(), any(), any(), isNull(), anyBoolean(), any()))
             .thenReturn(Optional.of(43L));
         var queuedRuns = new java.util.concurrent.atomic.AtomicInteger();
         when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
@@ -809,7 +809,7 @@ class BotMessageProcessorTest {
             fixture.processor().accept(textEvent(1, 100L, "first"));
             assertThat(busyHandler.isBusy(100L)).isTrue();
             fixture.processor().accept(textEvent(3, 200L, "independent"));
-            verify(telegramClient).sendMessageChecked(eq(200L), eq("independent"), any(), any(), any(), isNull(), anyBoolean());
+            verify(telegramClient).sendMessageChecked(eq(200L), eq("independent"), any(), any(), any(), isNull(), anyBoolean(), any());
 
             fixture.processor().accept(textEvent(2, 100L, "queued"));
             if (!"interrupt".equals(mode)) {
@@ -818,8 +818,8 @@ class BotMessageProcessorTest {
                 fixture.processor().accept(commandEvent(4, 100L, "stop", ""));
             }
             verify(backendClient, never()).steer(anyString(), anyString());
-            verify(telegramClient, timeout(2000)).sendMessageChecked(eq(100L), eq("queued"), any(), any(), any(), isNull(), anyBoolean());
-            verify(telegramClient).sendMessageChecked(eq(100L), eq("first"), any(), any(), any(), isNull(), anyBoolean());
+            verify(telegramClient, timeout(2000)).sendMessageChecked(eq(100L), eq("queued"), any(), any(), any(), isNull(), anyBoolean(), any());
+            verify(telegramClient).sendMessageChecked(eq(100L), eq("first"), any(), any(), any(), isNull(), anyBoolean(), any());
         }
     }
 
@@ -835,7 +835,7 @@ class BotMessageProcessorTest {
         var chunks = com.azhukov.agent.bot.formatting.MessageSplitter.splitMarkdown(segment).stream()
             .map(com.azhukov.agent.bot.formatting.MessageSplitter.TextPart::formatted).toList();
         assertThat(chunks.size()).isGreaterThan(1);
-        when(telegramClient.sendMessageChecked(eq(100L), anyString(), eq("MarkdownV2"), any(), any(), isNull(), eq(false)))
+        when(telegramClient.sendMessageChecked(eq(100L), anyString(), eq("MarkdownV2"), any(), any(), isNull(), eq(false), any()))
             .thenReturn(Optional.of(40L)).thenThrow(new TelegramClient.SendRefusalException(429, 1, "rate limit")).thenReturn(Optional.of(41L));
         when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
             .thenAnswer(inv -> {
@@ -847,8 +847,8 @@ class BotMessageProcessorTest {
             });
         try (DeliveryFixture fixture = realDeliveryFixture()) {
             fixture.processor().accept(textEvent(1, 100L, "Hello"));
-            verify(telegramClient, timeout(4500).times(2)).sendMessageChecked(eq(100L), eq(chunks.get(1)), eq("MarkdownV2"), any(), any(), isNull(), eq(false));
-            verify(telegramClient, times(1)).sendMessageChecked(eq(100L), eq(chunks.get(0)), eq("MarkdownV2"), any(), any(), isNull(), eq(false));
+            verify(telegramClient, timeout(4500).times(2)).sendMessageChecked(eq(100L), eq(chunks.get(1)), eq("MarkdownV2"), any(), any(), isNull(), eq(false), any());
+            verify(telegramClient, times(1)).sendMessageChecked(eq(100L), eq(chunks.get(0)), eq("MarkdownV2"), any(), any(), isNull(), eq(false), any());
         }
     }
 
