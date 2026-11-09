@@ -18,6 +18,40 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 class DeliveryLedgerConsumerHttpTest {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void batchStopsSendingWhenServerLeaseExpires(boolean expires) {
+        var builder = RestClient.builder().baseUrl("http://backend");
+        var server = org.springframework.test.web.client.MockRestServiceServer.bindTo(builder).build();
+        var mapper = new ObjectMapper();
+        String prefix = "http://backend/api/v1/agent/delivery/";
+        var json = org.springframework.http.MediaType.APPLICATION_JSON;
+        var item = mapper.createObjectNode().put("id", "id").put("claim_token", "token")
+            .put("source_type", "cron_execution").put("source_id", "source")
+            .put("platform", "telegram").put("chat_id", "123").put("payload", "x".repeat(6000));
+        var claim = mapper.createObjectNode().put("claimed", true).put("lease_remaining_ms", 60_000);
+        claim.putArray("items").add(item);
+        server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(prefix + "claim-batch"))
+            .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess(claim.toString(), json));
+        server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(prefix + (expires ? "unknown" : "ack")))
+            .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess());
+        server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(prefix + "claim-batch"))
+            .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess("{\"claimed\":false}", json));
+        var telegram = mock(TelegramClient.class);
+        var time = new java.util.concurrent.atomic.AtomicLong();
+        when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean()))
+            .thenAnswer(call -> {
+                if (expires) time.set(java.util.concurrent.TimeUnit.MINUTES.toNanos(1));
+                return Optional.of(42L);
+            });
+        var properties = new BotProperties();
+        properties.setCronDeliveryEnabled(true);
+        new DeliveryLedgerConsumer(builder.build(), telegram, properties, mapper).consume(time::get);
+        verify(telegram, times(expires ? 1 : 2))
+            .sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean());
+        server.verify();
+    }
+
     @Test
     @org.junit.jupiter.api.extension.ExtendWith(org.springframework.boot.test.system.OutputCaptureExtension.class)
     void partialAckIsReportedWithoutRepeatingSend(org.springframework.boot.test.system.CapturedOutput output) {

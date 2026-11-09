@@ -86,7 +86,13 @@ public class DeliveryWorkItemController {
             body.put("attempts", claimed.item().getAttempts());
             items.add(body);
         }
-        return ResponseEntity.ok(Map.of("claimed", !items.isEmpty(), "items", items));
+        var now = java.time.Instant.now();
+        long leaseMillis = batch.stream().mapToLong(claim -> {
+            var at = claim.item().getClaimedAt();
+            return at == null ? 0 : java.time.Duration.between(now, at.plus(DeliveryWorkItemService.CLAIM_LEASE)).toMillis();
+        }).min().orElse(0);
+        return ResponseEntity.ok(Map.of("claimed", !items.isEmpty(), "items", items,
+            "lease_remaining_ms", Math.max(0, leaseMillis)));
     }
 
     @PostMapping("/claim")
