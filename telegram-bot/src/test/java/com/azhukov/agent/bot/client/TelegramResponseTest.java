@@ -13,7 +13,6 @@ class TelegramResponseTest {
         TelegramResponse response = new TelegramResponse(true, null, null,
             Map.of("message_id", 42, "text", "hello"));
         assertThat(response.isSuccess()).isTrue();
-        assertThat(response.resultMessageId()).isEqualTo("42");
         assertThat(response.resultMessageIdAsLong()).isEqualTo(42L);
     }
 

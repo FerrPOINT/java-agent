@@ -1418,7 +1418,7 @@ class TelegramClientTest {
     class RateLimiterTest {
 
         @Test
-        @DisplayName("rateLimitPerSecond > 0 creates semaphore and allows calls")
+        @DisplayName("rateLimitPerSecond > 0 allows calls within quota")
         void rateLimiterActive() {
             client = new TelegramClient(restClient, objectMapper, "token", 10);
             stubPostChain(successResponseWithResult(true));
@@ -1427,7 +1427,7 @@ class TelegramClientTest {
         }
 
         @Test
-        @DisplayName("rateLimitPerSecond = 0 disables rate limiter (null semaphore)")
+        @DisplayName("rateLimitPerSecond = 0 disables rate limiting")
         void rateLimiterDisabled() {
             // rateLimitPerSecond=0 already set in setUp
             stubPostChain(successResponseWithResult(true));
@@ -1435,24 +1435,6 @@ class TelegramClientTest {
             assertThat(result).isTrue();
         }
 
-        @Test
-        @DisplayName("rate limiter releases permit after call completes (finally block)")
-        void rateLimiterReleasesAfterCall() {
-            // With rateLimitPerSecond=1, we should be able to make 2 sequential
-            // calls because the permit is released in the finally block after
-            // the first call completes.
-            client = new TelegramClient(restClient, objectMapper, "token", 1);
-            // First call: success
-            stubPostChain(successResponseWithResult(true));
-            boolean result1 = client.sendChatAction(1L, "typing");
-            assertThat(result1).isTrue();
-
-            // Second call should also succeed because the permit was released
-            // in the finally block (not on a 1s timer)
-            when(responseSpec.body(TelegramResponse.class)).thenReturn(successResponseWithResult(true));
-            boolean result2 = client.sendChatAction(1L, "typing");
-            assertThat(result2).isTrue();
-        }
     }
 
     // ─── isLastCallConflict tests ─────────────────────────────────

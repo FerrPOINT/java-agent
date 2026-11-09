@@ -2,6 +2,7 @@ package com.azhukov.agent.bot.client;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.azhukov.agent.bot.config.BotProperties;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.client.RestClient;
@@ -11,8 +12,9 @@ public class TelegramClientConfig {
 
     @Bean
     public TelegramClient telegramClient(RestClient telegramRestClient,
-                                          ObjectMapper objectMapper,
+                                          @Qualifier("telegramObjectMapper") ObjectMapper telegramObjectMapper,
                                           BotProperties properties) {
-        return new TelegramClient(telegramRestClient, objectMapper, properties.getToken(), properties.getRateLimitPerSecond(), properties.isLinkPreview());
+        return new TelegramClient(telegramRestClient, telegramObjectMapper, properties.getToken(),
+            properties.getRateLimitPerSecond(), properties.isLinkPreview());
     }
 }

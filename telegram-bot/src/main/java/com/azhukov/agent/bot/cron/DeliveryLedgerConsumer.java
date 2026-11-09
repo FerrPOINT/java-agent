@@ -254,6 +254,7 @@ public class DeliveryLedgerConsumer {
             boolean badRequest = e.getErrorCode() == 400;
             String category = e.getRetryAfterSeconds() > 0
                 ? "flood_control:" + e.getRetryAfterSeconds()
+                : e instanceof TelegramClient.LocalSendRefusalException ? "local_send_refused"
                 : badRequest ? "bad_request" : "send_refused";
             for (ClaimedItem item : batch) {
                 outcome(item, badRequest ? "drop" : "release", category,

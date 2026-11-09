@@ -6,13 +6,17 @@ import com.azhukov.agent.bot.polling.UpdateEvent;
 import com.azhukov.agent.bot.polling.ReconnectWatcher;
 import com.azhukov.agent.bot.webhook.WebhookSecretValidator;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.http.converter.json.JacksonJsonHttpMessageConverter;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
 import org.springframework.web.client.RestClient;
 
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.time.Duration;
@@ -28,14 +32,21 @@ public class BotConfig {
         return SharedObjectMapper.get();
     }
 
+    @Bean(defaultCandidate = false)
+    public ObjectMapper telegramObjectMapper(ObjectMapper objectMapper) {
+        return objectMapper.copy()
+            .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
+            .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
+    }
+
     @Bean
-    public RestClient telegramRestClient(ObjectMapper objectMapper) {
+    public RestClient telegramRestClient(@Qualifier("telegramObjectMapper") ObjectMapper telegramObjectMapper) {
         // Telegram long-polling intermittently returns Content-Type: application/octet-stream
         // instead of application/json. The ContentTypeNormalizingInterceptor inspects the
         // response body and rewrites the Content-Type to application/json when the body is
         // valid JSON, so Spring's standard Jackson message converter handles deserialization.
         MappingJackson2HttpMessageConverter jacksonConverter =
-            new MappingJackson2HttpMessageConverter(objectMapper);
+            new MappingJackson2HttpMessageConverter(telegramObjectMapper);
 
         // Keep the canonical hostname for SNI and normal TLS peer verification.
         SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
@@ -46,7 +57,9 @@ public class BotConfig {
             .baseUrl("https://api.telegram.org")
             .requestFactory(requestFactory)
             .messageConverters(converters -> {
-                converters.removeIf(c -> c instanceof MappingJackson2HttpMessageConverter);
+                // TelegramResponse contains Jackson 2 JsonNode values.
+                converters.removeIf(c -> c instanceof JacksonJsonHttpMessageConverter
+                    || c instanceof MappingJackson2HttpMessageConverter);
                 converters.add(jacksonConverter);
             })
             .requestInterceptor(new ContentTypeNormalizingInterceptor())
