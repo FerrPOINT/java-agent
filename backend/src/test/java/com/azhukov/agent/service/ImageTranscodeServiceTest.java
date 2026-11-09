@@ -110,6 +110,17 @@ class ImageTranscodeServiceTest {
 
     @Test
     @EnabledOnOs(OS.LINUX)
+    void converterDoesNotOpenPipeAsPngOutput(@org.junit.jupiter.api.io.TempDir java.nio.file.Path dir)
+            throws Exception {
+        var pipe = dir.resolve("result.png");
+        assertThat(new ProcessBuilder("mkfifo", pipe.toString()).start().waitFor()).isZero();
+        assertThatThrownBy(() -> ImageTranscodeService.runConverter(
+            java.util.List.of("true"), pipe, java.time.Duration.ofSeconds(2)))
+            .isInstanceOf(java.io.IOException.class).hasMessageContaining("Not a regular file");
+    }
+
+    @Test
+    @EnabledOnOs(OS.LINUX)
     void converterTimeoutStopsChildAfterParentExits(
         @org.junit.jupiter.api.io.TempDir java.nio.file.Path dir
     ) throws Exception {

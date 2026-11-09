@@ -1,18 +1,23 @@
 package com.azhukov.agent.service;
 
+import com.azhukov.agent.core.security.SecureFileAccess;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import javax.imageio.ImageIO;
+import javax.imageio.stream.MemoryCacheImageInputStream;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.SequenceInputStream;
+import java.nio.channels.Channels;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeoutException;
@@ -36,6 +41,7 @@ public class ImageTranscodeService {
 
     private static final int DIAGNOSTIC_BYTES = 16 * 1024;
     private static final int MAX_PNG_BYTES = 64 * 1024 * 1024;
+    private static final int PNG_HEADER_BYTES = 33; // signature and complete IHDR chunk
     private static final long MAX_PNG_PIXELS = 40_000_000;
     private static final Duration CONVERTER_TIMEOUT = Duration.ofSeconds(60);
 
@@ -167,33 +173,52 @@ public class ImageTranscodeService {
                 .redirectOutput(ProcessBuilder.Redirect.DISCARD)
                 .redirectError(ProcessBuilder.Redirect.DISCARD)
                 .start();
-            signal.onExit().join();
+            if (!awaitExit(signal) || signal.exitValue() != 0) {
+                log.warn("Could not confirm signal delivery to image converter process group {}", process.pid());
+            }
         } catch (IOException failure) {
             log.warn("Could not signal image converter process group {}", process.pid(), failure);
         } finally {
-            process.onExit().join();
+            if (!awaitExit(process)) {
+                log.warn("Could not confirm exit of image converter {}", process.pid());
+            }
+        }
+    }
+
+    private static boolean awaitExit(Process process) {
+        try {
+            process.onExit().orTimeout(1, TimeUnit.SECONDS).join();
+            return true;
+        } catch (CompletionException failure) {
+            return false;
         }
     }
 
     private static byte[] readConvertedPng(Path output) throws IOException {
-        if (Files.size(output) > MAX_PNG_BYTES) throw new IOException("converter output exceeds 64 MiB");
-        try (var input = ImageIO.createImageInputStream(output.toFile())) {
-            var readers = ImageIO.getImageReadersByFormatName("png");
-            if (!readers.hasNext()) throw new IOException("PNG image reader is unavailable");
-            var reader = readers.next();
-            try {
-                reader.setInput(input);
-                if ((long) reader.getWidth(0) * reader.getHeight(0) > MAX_PNG_PIXELS) {
-                    throw new IOException("converter output exceeds 40 megapixels");
-                }
-            } finally {
-                reader.dispose();
+        try (var file = SecureFileAccess.openRead(output); var input = Channels.newInputStream(file)) {
+            if (file.size() > MAX_PNG_BYTES) throw new IOException("converter output exceeds 64 MiB");
+            byte[] header = input.readNBytes(PNG_HEADER_BYTES);
+            verifyPngDimensions(header);
+            // Decode the same header that passed the pixel limit, even if the file changes.
+            try (var png = new SequenceInputStream(new ByteArrayInputStream(header), input)) {
+                byte[] bytes = png.readNBytes(MAX_PNG_BYTES + 1);
+                if (bytes.length > MAX_PNG_BYTES) throw new IOException("converter output exceeds 64 MiB");
+                return bytes;
             }
         }
-        try (var input = Files.newInputStream(output)) {
-            byte[] bytes = input.readNBytes(MAX_PNG_BYTES + 1);
-            if (bytes.length > MAX_PNG_BYTES) throw new IOException("converter output exceeds 64 MiB");
-            return bytes;
+    }
+
+    private static void verifyPngDimensions(byte[] header) throws IOException {
+        var readers = ImageIO.getImageReadersByFormatName("png");
+        if (!readers.hasNext()) throw new IOException("PNG image reader is unavailable");
+        var reader = readers.next();
+        try (var input = new MemoryCacheImageInputStream(new ByteArrayInputStream(header))) {
+            reader.setInput(input);
+            if ((long) reader.getWidth(0) * reader.getHeight(0) > MAX_PNG_PIXELS) {
+                throw new IOException("converter output exceeds 40 megapixels");
+            }
+        } finally {
+            reader.dispose();
         }
     }
 

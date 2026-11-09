@@ -19,6 +19,8 @@ profile pdlc-java-agent flags=(attach_disconnected,mediate_deleted) {
   signal (receive),
   signal (send) peer=pdlc-java-agent,
   signal (send) peer=pdlc-java-agent-worker,
+  signal (send) set=(kill) peer="pdlc-java-agent//&pdlc-java-agent-worker",
+  signal (send) set=(kill) peer="pdlc-java-agent//&pdlc-java-agent-worker//&unconfined",
   ptrace peer=pdlc-java-agent,
   /opt/java/openjdk/lib/jspawnhelper Px -> "pdlc-java-agent//&pdlc-java-agent-worker",
 }
@@ -30,6 +32,8 @@ profile pdlc-java-agent-worker flags=(attach_disconnected,mediate_deleted) {
   network,
   signal (receive),
   signal (send) peer=pdlc-java-agent-worker,
+  signal (send) set=(kill) peer="pdlc-java-agent//&pdlc-java-agent-worker",
+  signal (send) set=(kill) peer="pdlc-java-agent//&pdlc-java-agent-worker//&unconfined",
   deny /artifacts{,/**} rwklm,
   # Atomic writes stage on the target filesystem. Workers share the UID but cannot alter that staging area.
   deny /**/.java-agent-stage-*/ rwklm,
