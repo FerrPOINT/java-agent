@@ -51,7 +51,7 @@ class DeliveryLedgerConsumerChunkingTest {
             sb.append("Строка #").append(i).append(" 🚀🎯 — данные długie текст.\n");
         }
         String payload = sb.toString();
-        when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean()))
+        when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean(), any()))
             .thenReturn(Optional.of(1L));
 
         consumer().deliverBatchForTest(List.of(item(payload)));
@@ -66,7 +66,7 @@ class DeliveryLedgerConsumerChunkingTest {
                 "id-" + i, "token-" + i, "cron_execution", String.valueOf(i),
                 "telegram", "100200300", "", "🚀 ".repeat(250) + "RESULT-" + i, 1))
             .toList();
-        when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean()))
+        when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean(), any()))
             .thenReturn(Optional.of(1L));
 
         consumer().deliverBatchForTest(batch);
@@ -77,7 +77,7 @@ class DeliveryLedgerConsumerChunkingTest {
     private void assertSentText(String expected) {
         ArgumentCaptor<String> sent = ArgumentCaptor.forClass(String.class);
         verify(telegram, org.mockito.Mockito.atLeast(2))
-            .sendMessageChecked(anyLong(), sent.capture(), any(), any(), any(), any(), anyBoolean());
+            .sendMessageChecked(anyLong(), sent.capture(), any(), any(), any(), any(), anyBoolean(), any());
         StringBuilder delivered = new StringBuilder();
         for (String chunk : sent.getAllValues()) {
             assertThat(chunk.length()).isLessThanOrEqualTo(MessageSplitter.TELEGRAM_MAX_LENGTH);
@@ -89,13 +89,13 @@ class DeliveryLedgerConsumerChunkingTest {
 
     @Test
     void firstChunkFailureFencesItemAsUnknownNotRetried() {
-        when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean()))
+        when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean(), any()))
             .thenReturn(Optional.empty());
 
         consumer().deliverBatchForTest(List.of(item("short payload")));
 
         // An empty result may mean a timeout after acceptance; do not retry blindly.
-        verify(telegram, times(1)).sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean());
+        verify(telegram, times(1)).sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean(), any());
     }
 
     @Test
@@ -106,6 +106,6 @@ class DeliveryLedgerConsumerChunkingTest {
 
         consumer().deliverBatchForTest(List.of(local));
 
-        verify(telegram, never()).sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean());
+        verify(telegram, never()).sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean(), any());
     }
 }
