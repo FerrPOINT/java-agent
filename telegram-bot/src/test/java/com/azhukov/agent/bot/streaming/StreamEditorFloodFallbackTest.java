@@ -135,10 +135,10 @@ class StreamEditorFloodFallbackTest {
     }
 
     @Test
-    void floodFallbackUsesFinalTextRatherThanStaleFormattedBuffer() {
+    void disabledPreviewUsesFinalTextWithFooter() {
         var session = editor.sessionFor(123L);
         session.currentMessageId.set(42L);
-        session.floodFallbackBuffer.append("raw\\_buffer");
+        session.streamingDisabled = true;
         when(client.sendMessageChecked(eq(123L), anyString(), eq("MarkdownV2"), any(), any(), isNull(), eq(false)))
             .thenReturn(Optional.of(99L));
         assertThat(editor.finalizeStream(123L, 42L, "final answer with footer")).isTrue();
@@ -402,7 +402,8 @@ class StreamEditorFloodFallbackTest {
 
         assertThat(editor.finalizeStream(123L, 42L, "final content")).isFalse();
         verify(client, never()).deleteMessage(123L, 42L);
-        assertThat(editor.sessionFor(123L).floodFallbackBuffer).isNotEmpty();
+        assertThat(editor.sessionFor(123L).streamingDisabled).isTrue();
+        assertThat(editor.hasUnconfirmedDelivery(123L)).isTrue();
     }
 
     @Test

@@ -65,9 +65,7 @@ import jakarta.annotation.PreDestroy;
  * streaming message is deleted and a new one is sent with the final content,
  * so the message gets a fresh timestamp.
  *
- * <p>Split during streaming: if formatted text exceeds
- * {@code streamingMaxChars}, the current message is edited with the first
- * portion and remaining text is sent as new messages (threaded as replies).
+ * <p>The preview is bounded. Only final delivery publishes the full text.
  *
  * <p>400 vs 429: distinguishes "message too long" (400) from rate limit (429).
  * 400 does NOT increment flood strikes — just truncates and retries.
@@ -143,15 +141,10 @@ public class StreamEditor {
         streamCursor = properties.getStreamCursor();
         heartbeatIntervalSeconds = properties.getHeartbeatIntervalSeconds();
         freshFinalTimeoutMs = properties.getFreshFinalTimeoutMs();
-        // BUG FIX (audit H14): clamp the streaming split threshold to the Telegram
-        // editMessageText limit. streaming-max-chars is documented as a rich-message
-        // style limit (32768) but editStreamSplit uses it to chunk edited text —
-        // anything above 4096 makes Telegram reject every edit with 400 and the
-        // stream freezes until finalize.
         int configuredMax = properties.getStreamingMaxChars();
         streamingMaxChars = configuredMax > 0
             ? Math.min(configuredMax, MessageSplitter.TELEGRAM_MAX_LENGTH)
-            : configuredMax;
+            : MessageSplitter.TELEGRAM_MAX_LENGTH;
         bufferThreshold = properties.getBufferThreshold();
         streamingTransport = properties.getStreamingTransport() != null
             ? properties.getStreamingTransport().toLowerCase() : "auto";
@@ -326,7 +319,7 @@ public class StreamEditor {
         }
 
         // B7: Initial message — silent if configured
-        Optional<Long> messageId = sendMessageWithNotification(chatId, formatted, false);
+        Optional<Long> messageId = sendMessageWithNotification(chatId, previewText(formatted, ""), false);
         if (messageId.isPresent()) {
             session.lastEditTime = System.currentTimeMillis();
             session.lastRenderedChars = formatted.length();
@@ -359,10 +352,6 @@ public class StreamEditor {
      * <p>Streaming cursor: appends the configured cursor character to the
      * end of the text to give visual feedback that streaming is active.
      *
-     * <p>Split: if formatted text exceeds streamingMaxChars, edits the
-     * current message with the first portion and sends remaining as new
-     * messages (threaded as replies).
-     *
      * @param chatId    target chat id
      * @param messageId the message id returned by {@link #startStream}
      * @param text      the full accumulated text to display
@@ -378,14 +367,7 @@ public class StreamEditor {
         // Update last token time (token arrived)
         session.lastTokenTime = System.currentTimeMillis();
 
-        // S5: "off" transport — buffer content, no streaming edits
-        if ("off".equals(streamingTransport)) {
-            String scrubbed = scrubThink(session, text);
-            String formatted = formatForTelegramDelegate(scrubbed);
-            session.floodFallbackBuffer.setLength(0);
-            session.floodFallbackBuffer.append(formatted);
-            return false;
-        }
+        if ("off".equals(streamingTransport) || session.streamingDisabled) return false;
 
         // S5: Native draft streaming — route mid-stream frames through sendDraft.
         if (session.useDraftStreaming && !session.streamingDisabled) {
@@ -399,17 +381,6 @@ public class StreamEditor {
             }
         }
 
-        // B5: Check if streaming has been disabled due to flood limits
-        if (session.streamingDisabled) {
-            // P2-16: Buffer content in fallback mode — will be sent as a new message on finalize
-            String scrubbedFallback = scrubThink(session, text);
-            String formattedFallback = formatForTelegramDelegate(scrubbedFallback);
-            session.floodFallbackBuffer.setLength(0);
-            session.floodFallbackBuffer.append(formattedFallback);
-            log.debug("Streaming edits disabled for chat {} due to flood limits, buffering ({} chars)", chatId, formattedFallback.length());
-            return false;
-        }
-
         // Hermes: if no message was sent yet (startStream returned empty because
         // initial text was <4 chars), check if we now have >=4 chars to send the first message.
         long currentMsg = session.currentMessageId.get();
@@ -419,7 +390,7 @@ public class StreamEditor {
             // Edit-based streaming sends with parseMode=null (plain text) — no MarkdownV2 escaping.
             String formatted = scrubbed;
             if (!formatted.isEmpty() && formatted.length() >= 4) {
-                Optional<Long> newMsgId = sendMessageWithNotification(chatId, formatted + streamCursor, false);
+                Optional<Long> newMsgId = sendMessageWithNotification(chatId, previewText(formatted, streamCursor), false);
                 if (newMsgId.isPresent()) {
                     session.currentMessageId.set(newMsgId.get());
                     session.lastEditTime = System.currentTimeMillis();
@@ -477,7 +448,7 @@ public class StreamEditor {
         }
 
         // Append streaming cursor
-        String withCursor = formatted + streamCursor;
+        String withCursor = previewText(formatted, streamCursor);
 
         // P2-16: Redundant edit skip — if the new text (with cursor) is identical
         // to what was last sent to Telegram, skip the edit to avoid unnecessary API calls.
@@ -485,11 +456,6 @@ public class StreamEditor {
         if (lastSent != null && lastSent.equals(withCursor)) {
             log.trace("Skipping redundant edit for chat {} (content unchanged)", chatId);
             return true;
-        }
-
-        // Split if text exceeds max chars
-        if (streamingMaxChars > 0 && withCursor.length() > streamingMaxChars) {
-            return editStreamSplit(chatId, effectiveMessageId, withCursor, session);
         }
 
         // B7: Silent notification during streaming
@@ -501,7 +467,7 @@ public class StreamEditor {
         } catch (TelegramApiException e) {
             if (e.isRateLimit()) {
                 // 429 from editMessageText — apply adaptive flood handling.
-                success = EditThrottlePolicy.handleEditFailure(telegramClient, chatId, effectiveMessageId, formatted, session, 429, minIntervalMs, streamingSilent, streamingMaxChars, this::formatForTelegramDelegate);
+                success = EditThrottlePolicy.handleEditFailure(telegramClient, chatId, effectiveMessageId, withCursor, session, 429, minIntervalMs, streamingSilent, streamingMaxChars);
             } else {
                 throw e;
             }
@@ -518,87 +484,19 @@ public class StreamEditor {
             // B5: Edit failed. BUG FIX: use the error code from the typed exception —
             // TelegramClient.getLastApiErrorCode() is a shared mutable side-channel
             // and races between concurrently streaming chats (wrong flood strikes).
-            success = EditThrottlePolicy.handleEditFailure(telegramClient, chatId, effectiveMessageId, formatted, session,
-                telegramClient.getLastApiErrorCode(), minIntervalMs, streamingSilent, streamingMaxChars, this::formatForTelegramDelegate);
+            success = EditThrottlePolicy.handleEditFailure(telegramClient, chatId, effectiveMessageId, withCursor, session,
+                telegramClient.getLastApiErrorCode(), minIntervalMs, streamingSilent, streamingMaxChars);
         }
         return success;
     }
 
-    /**
-     * Handle splitting during streaming: edit current message with first
-     * portion, send remaining as new messages (threaded as replies).
-     */
-    private boolean editStreamSplit(long chatId, long messageId, String withCursor, StreamSession session) {
-        // First portion: first streamingMaxChars chars (minus cursor space)
-        int firstLen = streamingMaxChars - streamCursor.length();
-        if (firstLen <= 0) firstLen = streamingMaxChars;
-        firstLen = Math.min(firstLen, withCursor.length());
-
-        // Hermes parity (stream_consumer.py:1146 _custom_unit_to_cp): avoid
-        // splitting a Java UTF-16 surrogate pair. If the char at firstLen-1 is
-        // a high surrogate, step back one to include the full pair in the first
-        // chunk (the remainder starts at a code point boundary).
-        if (firstLen > 0 && firstLen < withCursor.length()
-            && Character.isHighSurrogate(withCursor.charAt(firstLen - 1))) {
-            firstLen--;
+    private String previewText(String text, String cursor) {
+        String suffix = cursor.length() < streamingMaxChars ? cursor : "";
+        int end = Math.min(text.length(), streamingMaxChars - suffix.length());
+        if (end > 0 && end < text.length() && Character.isSurrogatePair(text.charAt(end - 1), text.charAt(end))) {
+            end--;
         }
-
-        // Code fence balancing: if the split point falls inside an open ``` block,
-        // close the fence at the end of the first chunk and reopen it at the start
-        // of the remainder (Hermes balance_fences_across_chunks).
-        String firstPart = withCursor.substring(0, firstLen);
-        String remainder = withCursor.length() > firstLen ? withCursor.substring(firstLen) : "";
-
-        // Count ``` (triple backtick) occurrences in firstPart
-        // If odd, we're inside an unclosed code block at the split point
-        int fenceCount = TelegramTextFormatter.countCodeFences(firstPart);
-        if (fenceCount % 2 != 0) {
-            // Inside a code block — close in firstPart, reopen in remainder
-            firstPart = firstPart + "\n```";
-            remainder = "```\n" + remainder;
-        }
-
-        boolean disableNotification = streamingSilent;
-        boolean success;
-        try {
-            // Hermes: raw text (no parse_mode) during streaming
-            success = telegramClient.editMessageText(chatId, messageId, firstPart, null, disableNotification);
-        } catch (TelegramApiException e) {
-            if (e.isRateLimit()) {
-                EditThrottlePolicy.handleEditFailure(telegramClient, chatId, messageId, firstPart, session, 429, minIntervalMs, streamingSilent, streamingMaxChars, this::formatForTelegramDelegate);
-                return false;
-            } else {
-                throw e;
-            }
-        }
-
-        if (success) {
-            session.lastEditTime = System.currentTimeMillis();
-            session.floodStrikes.set(0);
-        } else {
-            EditThrottlePolicy.handleEditFailure(telegramClient, chatId, messageId, firstPart, session, 400, minIntervalMs, streamingSilent, streamingMaxChars, this::formatForTelegramDelegate);
-            return false;
-        }
-
-        // Send remainder as new messages, threaded as replies to previous
-        long prevMsgId = messageId;
-        if (!remainder.isEmpty()) {
-            // Split remainder further if needed
-            int pos = 0;
-            while (pos < remainder.length()) {
-                int end = Math.min(pos + streamingMaxChars, remainder.length());
-                String chunk = remainder.substring(pos, end);
-                Optional<Long> newMsgId = telegramClient.sendMessage(
-                    chatId, chunk, null, prevMsgId, null);
-                if (newMsgId.isPresent()) {
-                    prevMsgId = newMsgId.get();
-                    session.currentMessageId.set(prevMsgId);
-                }
-                pos = end;
-            }
-        }
-
-        return true;
+        return text.substring(0, end) + suffix;
     }
 
     /**
@@ -672,7 +570,7 @@ public class StreamEditor {
         boolean fresh = freshFinalTimeoutMs > 0 && session.streamStartTime != 0
             && System.currentTimeMillis() - session.streamStartTime > freshFinalTimeoutMs;
         boolean replace = session.useDraftStreaming || preview <= 0 || fresh
-            || !MessageSplitter.fits(finalText, formatted) || !session.floodFallbackBuffer.isEmpty();
+            || !MessageSplitter.fits(finalText, formatted) || session.streamingDisabled;
         List<DeliveryOperation> normal = replace
             ? formattedOperations(chatId, finalText, session, preview)
             : List.of(editOperation(chatId, preview, finalText, formatted, session));

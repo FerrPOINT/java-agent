@@ -45,7 +45,7 @@ class StreamEditorOversizedContentTest {
         props.setStreamEditInterval(Duration.ofMillis(0));
         props.setParseMode("MarkdownV2");
         // 32768 as shipped in application.yml — the misconfiguration that
-        // triggered H14: editStreamSplit chunks must clamp to 4096.
+        // triggered H14: preview must clamp to 4096.
         props.setStreamingMaxChars(32768);
         editor = new StreamEditor(client, props, new MediaDeliveryService(), new RichMessageSupport(client));
         editor.init();
@@ -65,9 +65,9 @@ class StreamEditorOversizedContentTest {
         boolean ok = editor.editStream(123L, 42L, "x".repeat(5000));
 
         assertThat(ok).isTrue();
-        // The edited text passed to Telegram must be within the 4096 limit (+cursor)
+        // The edited text passed to Telegram must be within the 4096 limit including the cursor
         verify(client).editMessageText(eq(123L), anyLong(),
-            argThat(t -> t != null && t.length() <= 4097), isNull(), anyBoolean());
+            argThat(t -> t != null && t.length() <= 4096), isNull(), anyBoolean());
     }
 
     @Test

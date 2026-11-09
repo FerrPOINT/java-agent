@@ -684,42 +684,41 @@ class StreamEditorTest {
         assertThat(b1).isTrue();
     }
 
-    // --- Split during streaming test ---
-
     @Test
-    void editStream_splitsWhenExceedingMaxChars() throws InterruptedException {
+    void longEditPreviewPublishesTheFullAnswerOnlyAtFinalization() {
         BotProperties props = new BotProperties();
-        props.setStreamEditInterval(Duration.ofMillis(100));
-        props.setParseMode("MarkdownV2");
+        props.setStreamEditInterval(Duration.ZERO);
+        props.setStreamingTransport("edit");
+        props.setParseMode(null);
         props.setStreamingMaxChars(20);
         props.setStreamCursor("|");
-        StreamEditor splitEditor = new StreamEditor(client, props, new MediaDeliveryService(), new RichMessageSupport(client));
-        splitEditor.init();
+        StreamEditor preview = new StreamEditor(client, props, new MediaDeliveryService(), new RichMessageSupport(client));
+        preview.init();
+        try {
+            when(client.sendMessage(eq(123L), anyString(), any(), any(), any(), anyBoolean()))
+                .thenReturn(Optional.of(42L));
+            when(client.editMessageText(eq(123L), eq(42L), anyString(), isNull(), anyBoolean()))
+                .thenReturn(true);
+            String text = "a".repeat(18) + "😀" + "b".repeat(4900);
+            assertThat(preview.startStream(123L, "Initial text")).contains(42L);
+            assertThat(preview.editStream(123L, 42L, text)).isTrue();
+            verify(client).editMessageText(eq(123L), eq(42L), eq("a".repeat(18) + "|"), isNull(), anyBoolean());
+            verify(client, times(1)).sendMessage(eq(123L), anyString(), any(), any(), any(), anyBoolean());
+            verify(client, never()).sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean());
 
-        String text = "This is a very long text that exceeds the max chars limit";
+            when(client.sendMessageChecked(eq(123L), anyString(), isNull(), any(), any(), any(), anyBoolean()))
+                .thenReturn(Optional.of(43L));
+            when(client.deleteMessage(123L, 42L)).thenReturn(true);
+            assertThat(preview.finalizeStream(123L, 42L, text)).isTrue();
 
-        // Hermes: startStream sends via sendMessage (null parse_mode)
-        when(client.sendMessage(eq(123L), anyString(), any(), any(), any(), anyBoolean()))
-            .thenReturn(Optional.of(42L));
-        // Split edit: Hermes sends raw text (null parse_mode)
-        when(client.editMessageText(eq(123L), eq(42L), anyString(), any(), anyBoolean()))
-            .thenReturn(true);
-        // Remainder sent as new messages (null parse_mode)
-        when(client.sendMessage(eq(123L), anyString(), any(), anyLong(), any(), anyBoolean()))
-            .thenReturn(Optional.of(43L));
-
-        splitEditor.startStream(123L, "Initial text");
-        // Actual timing: wait past 100ms throttle interval
-        Thread.sleep(110); // timing-assertion
-        boolean result = splitEditor.editStream(123L, 42L, text);
-        assertThat(result).isTrue();
-
-        // Hermes: streaming split uses null parse_mode for editMessageText
-        verify(client).editMessageText(eq(123L), eq(42L), anyString(), isNull(), anyBoolean());
-        // Hermes: remainder sent via sendMessage with null parse_mode.
-        // Text is 57 chars with streamingMaxChars=20 → edit keeps first 20,
-        // remainder 37 chars is sent as 2 chunked continuation messages.
-        verify(client, times(2)).sendMessage(eq(123L), anyString(), isNull(), anyLong(), any());
+            var chunks = org.mockito.ArgumentCaptor.forClass(String.class);
+            verify(client, times(2)).sendMessageChecked(eq(123L), chunks.capture(), isNull(), any(), any(), any(), anyBoolean());
+            assertThat(chunks.getAllValues().stream().map(part -> part.substring(part.indexOf(' ') + 1))
+                .collect(java.util.stream.Collectors.joining())).isEqualTo(text);
+            verify(client).deleteMessage(123L, 42L);
+        } finally {
+            preview.destroy();
+        }
     }
 
     // --- ThinkScrubber partial closing tag test ---

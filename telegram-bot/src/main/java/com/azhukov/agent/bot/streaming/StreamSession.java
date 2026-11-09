@@ -48,8 +48,6 @@ public class StreamSession {
     public volatile boolean streamingDisabled = false;
 
     // ─── P2-16: Flood fallback buffer ─────────────────────────────
-    /** Buffered formatted content while streaming edits are disabled (flood fallback). */
-    public final StringBuffer floodFallbackBuffer = new StringBuffer();
 
     // ─── P2-16: Redundant edit skip ───────────────────────────────
     /** Last text (with cursor) actually sent to Telegram, to skip no-op edits. */
@@ -116,7 +114,6 @@ public class StreamSession {
         lastEditTime = 0L;
         floodStrikes.set(0);
         streamingDisabled = false;
-        floodFallbackBuffer.setLength(0);
         lastSentText = null;
         lastRenderedChars = 0;
         thinkScrubber = null;

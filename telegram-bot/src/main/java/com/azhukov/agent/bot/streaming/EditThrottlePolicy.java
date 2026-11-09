@@ -96,7 +96,6 @@ final class EditThrottlePolicy {
      * @param minIntervalMs      the configured minimum interval (ms)
      * @param streamingSilent    whether streaming edits are sent silently
      * @param streamingMaxChars  the configured max chars for truncation fallback
-     * @param formatForTelegram  function to format text for Telegram (MarkdownV2 escaping)
      * @return {@code true} if the failure was handled successfully (e.g. truncated
      *         retry succeeded), {@code false} otherwise
      */
@@ -109,8 +108,7 @@ final class EditThrottlePolicy {
             int errorCode,
             long minIntervalMs,
             boolean streamingSilent,
-            int streamingMaxChars,
-            java.util.function.Function<String, String> formatForTelegram) {
+            int streamingMaxChars) {
 
         if (errorCode == 400) {
             // Message too long — don't increment flood strikes, just truncate and retry.
@@ -159,10 +157,6 @@ final class EditThrottlePolicy {
             log.warn("Max flood strikes ({}) exceeded for chat {}, disabling streaming edits — buffering until final",
                 MAX_FLOOD_STRIKES, chatId);
             session.streamingDisabled = true;
-            // P2-16: Initialize the flood fallback buffer with the current content.
-            // The buffer is sent via sendFormattedMessage (parseMode=MarkdownV2) on finalize,
-            // so apply formatForTelegram here to escape special chars correctly.
-            session.floodFallbackBuffer.append(formatForTelegram.apply(formatted));
         }
         return false;
     }
