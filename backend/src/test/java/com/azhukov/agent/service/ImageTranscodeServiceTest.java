@@ -1,8 +1,11 @@
 package com.azhukov.agent.service;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIf;
 import org.junit.jupiter.api.condition.EnabledOnOs;
 import org.junit.jupiter.api.condition.OS;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
@@ -71,36 +74,27 @@ class ImageTranscodeServiceTest {
             .isInstanceOf(java.io.IOException.class).hasMessageContaining("HEIF image dimensions");
     }
 
-    @Test
+    @ParameterizedTest
+    @ValueSource(strings = {"sample.heic", "sample.avif"})
     @EnabledOnOs(OS.LINUX)
-    void realHeicFileTranscodesToDecodablePng() throws Exception {
-        // Generate a real HEIC through libheif's own encoder, then transcode back.
-        byte[] png = pngBytes();
-        java.nio.file.Path src = java.nio.file.Files.createTempFile("t", ".png");
-        java.nio.file.Files.write(src, png);
-        java.nio.file.Path heic = java.nio.file.Path.of(src + ".heic");
-        Process enc;
-        try {
-            enc = new ProcessBuilder("heif-enc", src.toString(), "-o", heic.toString())
-                .redirectErrorStream(true).start();
-        } catch (java.io.IOException binaryMissing) {
-            // Encoder binary not installed in this environment — skip, not fail.
-            org.junit.jupiter.api.Assumptions.assumeTrue(false, "heif-enc unavailable");
-            return;
+    @EnabledIf("hasVips")
+    void decodesRealHeifFixture(String name) throws Exception {
+        // Synthetic 32x32 gradient, encoded once with heif-enc and FFmpeg/libaom.
+        try (var fixture = getClass().getResourceAsStream("/fixtures/vision/" + name)) {
+            assertThat(fixture).isNotNull();
+            var bytes = fixture.readAllBytes();
+            assertThat(ImageTranscodeService.isHeifFamily(bytes)).isTrue();
+            var png = ImageIO.read(new ByteArrayInputStream(service.toDecodablePng(bytes)));
+            assertThat(png).isNotNull();
+            assertThat(png.getWidth()).isEqualTo(32);
+            assertThat(png.getHeight()).isEqualTo(32);
         }
-        enc.getInputStream().readAllBytes();
-        assertThat(enc.waitFor(30, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
-        if (enc.exitValue() != 0 || !java.nio.file.Files.exists(heic)) {
-            // Encoder not installed in this environment — skip, not fail.
-            org.junit.jupiter.api.Assumptions.assumeTrue(false, "heif-enc unavailable");
-        }
-        byte[] heicBytes = java.nio.file.Files.readAllBytes(heic);
-        assertThat(ImageTranscodeService.isHeifFamily(heicBytes)).isTrue();
+    }
 
-        byte[] out = service.toDecodablePng(heicBytes);
-        assertThat(ImageIO.read(new ByteArrayInputStream(out))).isNotNull();
-        java.nio.file.Files.deleteIfExists(src);
-        java.nio.file.Files.deleteIfExists(heic);
+    private static boolean hasVips() {
+        return java.util.stream.Stream.of("vips", "vipsheader").allMatch(binary ->
+            java.util.Arrays.stream(System.getenv("PATH").split(java.io.File.pathSeparator))
+                .map(dir -> java.nio.file.Path.of(dir, binary)).anyMatch(java.nio.file.Files::isExecutable));
     }
 
     @Test
