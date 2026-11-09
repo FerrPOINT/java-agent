@@ -1,7 +1,7 @@
 abi <abi/4.0>,
 
-# Kubernetes CRI requires a loaded profile name. Keep container-level
-# restrictions in this profile as well as the JVM subprocess transition.
+# Docker and Kubernetes use the same named profile. The container policy
+# retains the Docker baseline restrictions alongside the JVM worker boundary.
 profile pdlc-java-agent flags=(attach_disconnected,mediate_deleted) {
   # Descriptor-relative file access opens the root directory for traversal.
   / r,
@@ -12,13 +12,20 @@ profile pdlc-java-agent flags=(attach_disconnected,mediate_deleted) {
   deny network vsock,
   deny mount,
   deny /proc/* w,
+  # Retain the Moby AppArmor v0.1.0 deny for non-PID procfs entries.
+  deny /proc/{[^1-9],[^1-9][^0-9],[^1-9s][^0-9y][^0-9s],[^1-9][^0-9][^0-9][^0-9/]*}/** w,
   deny /proc/sys/** wklx,
   deny /proc/{sysrq-trigger,kcore,mem,kmem} rwklx,
   deny /sys/** wklx,
   deny /sys/{firmware,kernel/security,devices/virtual/powercap}/** rwklx,
-  signal (receive),
-  signal (send) peer=pdlc-java-agent,
+  signal (receive) peer=unconfined,
+  signal (receive) peer=runc,
+  signal (receive) peer=crun,
+  signal (send,receive) peer=pdlc-java-agent,
+  signal (send,receive) peer="pdlc-java-agent//&unconfined",
   signal (send) peer=pdlc-java-agent-worker,
+  signal (send,receive) set=(kill) peer="pdlc-java-agent//&pdlc-java-agent-worker",
+  signal (send,receive) set=(kill) peer="pdlc-java-agent//&pdlc-java-agent-worker//&unconfined",
   ptrace peer=pdlc-java-agent,
   /opt/java/openjdk/lib/jspawnhelper Px -> "pdlc-java-agent//&pdlc-java-agent-worker",
 }
@@ -30,6 +37,8 @@ profile pdlc-java-agent-worker flags=(attach_disconnected,mediate_deleted) {
   network,
   signal (receive),
   signal (send) peer=pdlc-java-agent-worker,
+  signal (send,receive) set=(kill) peer="pdlc-java-agent//&pdlc-java-agent-worker",
+  signal (send,receive) set=(kill) peer="pdlc-java-agent//&pdlc-java-agent-worker//&unconfined",
   deny /artifacts{,/**} rwklm,
   # Atomic writes stage on the target filesystem. Workers share the UID but cannot alter that staging area.
   deny /**/.java-agent-stage-*/ rwklm,
