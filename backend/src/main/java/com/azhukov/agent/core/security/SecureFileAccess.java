@@ -1,6 +1,7 @@
 package com.azhukov.agent.core.security;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.lang.foreign.Arena;
 import java.lang.foreign.FunctionDescriptor;
 import java.lang.foreign.Linker;
@@ -9,16 +10,25 @@ import java.lang.invoke.MethodHandle;
 import java.nio.channels.SeekableByteChannel;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.SecureDirectoryStream;
+import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.nio.file.attribute.BasicFileAttributeView;
+import java.nio.file.attribute.PosixFileAttributeView;
+import java.nio.file.attribute.PosixFilePermission;
+import java.nio.file.attribute.PosixFilePermissions;
+import java.util.Set;
+import java.util.UUID;
 
 import static java.lang.foreign.ValueLayout.ADDRESS;
 import static java.lang.foreign.ValueLayout.JAVA_INT;
 
 /** Descriptor-relative Linux file access for paths already authorized by the caller. */
 public final class SecureFileAccess {
+    private static final System.Logger LOG = System.getLogger(SecureFileAccess.class.getName());
     private static final int AT_FDCWD = -100;
     private static final int O_NONBLOCK = 00004000;
     private static final int O_CLOEXEC = 02000000;
@@ -39,17 +49,26 @@ public final class SecureFileAccess {
             throw new IOException("Expected an absolute normalized directory path");
         }
         var linux = Linux.current();
+        return openDirectories(linux.open(AT_FDCWD, "/", linux.directory | linux.noFollow | O_CLOEXEC),
+            path, create);
+    }
+
+    private static Directory openDirectories(Descriptor current, Path path, boolean create) throws IOException {
+        var linux = current.linux;
         int flags = linux.directory | linux.noFollow | O_CLOEXEC;
-        Descriptor current = linux.open(AT_FDCWD, "/", flags);
         try {
             for (Path component : path) {
                 Descriptor next;
-                String name = component.toString();
+                String name = Directory.componentName(component);
                 try {
                     next = linux.open(current.fd, name, flags);
                 } catch (NoSuchFileException missing) {
                     if (!create) throw missing;
-                    linux.mkdir(current.fd, name);
+                    try {
+                        linux.mkdir(current.fd, name, 0777);
+                    } catch (FileAlreadyExistsException createdConcurrently) {
+                        // openat below still checks the entry without following a link.
+                    }
                     next = linux.open(current.fd, name, flags);
                 }
                 var previous = current;
@@ -97,6 +116,102 @@ public final class SecureFileAccess {
                 // The open descriptor pins the inode until Java has opened its own channel.
                 return Files.newByteChannel(pinned);
             }
+        }
+
+        public Directory openDirectory(Path path, boolean create) throws IOException {
+            if (path.isAbsolute() || path.toString().isEmpty()) {
+                throw new IOException("Expected a relative directory path");
+            }
+            var linux = descriptor.linux;
+            return openDirectories(linux.open(descriptor.fd, ".", linux.directory | linux.noFollow | O_CLOEXEC),
+                path, create);
+        }
+
+        public BasicFileAttributes attributes(Path name) throws IOException {
+            componentName(name);
+            return entries.getFileAttributeView(name, BasicFileAttributeView.class, LinkOption.NOFOLLOW_LINKS)
+                .readAttributes();
+        }
+
+        public void replaceFile(Path name, byte[] bytes) throws IOException {
+            replaceFile(name, bytes, () -> {});
+        }
+
+        public void replaceFile(Path name, byte[] bytes, BeforeReplace check) throws IOException {
+            componentName(name);
+            var permissions = PosixFilePermissions.fromString("rw-------");
+            try {
+                var original = entries.getFileAttributeView(name, PosixFileAttributeView.class, LinkOption.NOFOLLOW_LINKS)
+                    .readAttributes();
+                if (!original.isRegularFile()) throw new IOException("Not a regular file: " + name);
+                permissions = original.permissions();
+            } catch (NoSuchFileException missing) {
+                // A new file starts private.
+            }
+
+            Path stageName = Path.of(".java-agent-stage-" + UUID.randomUUID());
+            descriptor.linux.mkdir(descriptor.fd, componentName(stageName), 0700);
+            boolean published = false;
+            Throwable writeFailure = null;
+            try (var stage = openDirectory(stageName, false)) {
+                writeStagedFile(stage, name, bytes, permissions, check);
+                published = true;
+            } catch (IOException | RuntimeException failure) {
+                if (!published) {
+                    writeFailure = failure;
+                    throw failure;
+                }
+                LOG.log(System.Logger.Level.WARNING, "Could not close staging after publishing " + name, failure);
+            } finally {
+                try {
+                    entries.deleteDirectory(stageName);
+                } catch (IOException | RuntimeException cleanup) {
+                    if (writeFailure != null) {
+                        writeFailure.addSuppressed(cleanup);
+                    } else {
+                        LOG.log(System.Logger.Level.WARNING, "Could not remove file staging " + stageName, cleanup);
+                    }
+                }
+            }
+        }
+
+        private void writeStagedFile(Directory stage, Path name, byte[] bytes,
+                                     Set<PosixFilePermission> permissions,
+                                     BeforeReplace check) throws IOException {
+            Path payload = Path.of(".payload");
+            boolean created = false;
+            try {
+                try (var channel = stage.entries.newByteChannel(payload,
+                        Set.of(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS),
+                        PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")))) {
+                    created = true;
+                    var buffer = ByteBuffer.wrap(bytes);
+                    while (buffer.hasRemaining()) channel.write(buffer);
+                }
+                Object writtenFile = stage.attributes(payload).fileKey();
+                stage.entries.getFileAttributeView(payload, PosixFileAttributeView.class, LinkOption.NOFOLLOW_LINKS)
+                    .setPermissions(permissions);
+                check.run();
+                var current = stage.attributes(payload);
+                if (!current.isRegularFile() || writtenFile == null || !writtenFile.equals(current.fileKey())) {
+                    throw new IOException("Staged file changed before replacement: " + name);
+                }
+                stage.entries.move(payload, entries, name);
+            } catch (IOException | RuntimeException failure) {
+                if (created) {
+                    try {
+                        stage.entries.deleteFile(payload);
+                    } catch (IOException cleanup) {
+                        failure.addSuppressed(cleanup);
+                    }
+                }
+                throw failure;
+            }
+        }
+
+        @FunctionalInterface
+        public interface BeforeReplace {
+            void run() throws IOException;
         }
 
         public void moveWithoutReplace(Path name, Directory target, Path targetName) throws IOException {
@@ -153,7 +268,7 @@ public final class SecureFileAccess {
                 FunctionDescriptor.of(JAVA_INT, JAVA_INT, ADDRESS, JAVA_INT),
                 Linker.Option.firstVariadicArg(3), Linker.Option.captureCallState("errno"));
             mkdir = linker.downcallHandle(libc.find("mkdirat").orElseThrow(),
-                FunctionDescriptor.of(JAVA_INT, JAVA_INT, ADDRESS, JAVA_INT));
+                FunctionDescriptor.of(JAVA_INT, JAVA_INT, ADDRESS, JAVA_INT), Linker.Option.captureCallState("errno"));
             renameNoReplace = libc.find("renameat2").map(symbol -> linker.downcallHandle(symbol,
                 FunctionDescriptor.of(JAVA_INT, JAVA_INT, ADDRESS, JAVA_INT, ADDRESS, JAVA_INT),
                 Linker.Option.captureCallState("errno"))).orElse(null);
@@ -188,11 +303,14 @@ public final class SecureFileAccess {
             }
         }
 
-        void mkdir(int parent, String name) throws IOException {
+        void mkdir(int parent, String name, int mode) throws IOException {
             try (var arena = Arena.ofConfined()) {
-                // The following openat validates the result, including concurrent creation.
-                int ignored = (int) mkdir.invokeExact(parent, arena.allocateFrom(name), 0777);
-            } catch (RuntimeException | Error failure) {
+                var state = arena.allocate(callState);
+                int result = (int) mkdir.invokeExact(state, parent, arena.allocateFrom(name), mode);
+                if (result == 0) return;
+                if (state.get(JAVA_INT, errno) == 17) throw new FileAlreadyExistsException(name);
+                throw new IOException("Could not safely create directory " + name);
+            } catch (IOException | RuntimeException | Error failure) {
                 throw failure;
             } catch (Throwable failure) {
                 throw new IOException("Secure directory creation failed", failure);

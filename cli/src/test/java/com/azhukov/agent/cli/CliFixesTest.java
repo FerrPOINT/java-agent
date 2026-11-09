@@ -27,6 +27,71 @@ class CliFixesTest {
     // ── C1: Model switching ──
 
     @Test
+    void fileReferenceDoesNotSplitUtf8AtTheByteLimit(
+        @org.junit.jupiter.api.io.TempDir java.nio.file.Path directory
+    ) throws Exception {
+        var file = directory.resolve("context.txt");
+        java.nio.file.Files.writeString(file, "a".repeat(49_999) + "🌱" + "z".repeat(300_000));
+
+        String expanded = new ContextReferenceExpander().expand("@file:" + file);
+        org.assertj.core.api.Assertions.assertThat(expanded)
+            .contains("a".repeat(49_999) + "\n... [truncated]")
+            .doesNotContain("🌱", "�", "zzzz");
+    }
+
+    @Test
+    void urlReferenceBoundsChunkedBodyAndTimesOutAfterHeaders() throws Exception {
+        var server = com.sun.net.httpserver.HttpServer.create(
+            new java.net.InetSocketAddress(java.net.InetAddress.getLoopbackAddress(), 0), 0);
+        var stalled = new java.util.concurrent.CountDownLatch(1);
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            server.setExecutor(executor);
+            server.createContext("/large", exchange -> {
+                try (exchange) {
+                    exchange.sendResponseHeaders(200, 0);
+                    exchange.getResponseBody().write(("a".repeat(49_999) + "🌱" + "z".repeat(300_000))
+                        .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                }
+            });
+            server.createContext("/latin1", exchange -> {
+                try (exchange) {
+                    byte[] body = "café".repeat(55_000).getBytes(java.nio.charset.StandardCharsets.ISO_8859_1);
+                    exchange.getResponseHeaders().add("Content-Type", "text/plain; charset=ISO-8859-1");
+                    exchange.sendResponseHeaders(200, 0);
+                    exchange.getResponseBody().write(body);
+                }
+            });
+            server.createContext("/stalled", exchange -> {
+                try (exchange) {
+                    exchange.sendResponseHeaders(200, 0);
+                    exchange.getResponseBody().write('a');
+                    exchange.getResponseBody().flush();
+                    stalled.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            });
+            server.start();
+            String origin = "http://localhost:" + server.getAddress().getPort();
+            try {
+                org.assertj.core.api.Assertions.assertThat(new ContextReferenceExpander().expand("@url:" + origin + "/large"))
+                    .contains("a".repeat(49_999) + "\n... [truncated]")
+                    .doesNotContain("🌱", "�", "zzzz");
+                assertThat(new ContextReferenceExpander().expand("@url:" + origin + "/latin1"))
+                    .contains("café".repeat(12_500) + "\n... [truncated]")
+                    .doesNotContain("�");
+                org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(java.time.Duration.ofSeconds(3), () ->
+                    org.assertj.core.api.Assertions.assertThat(
+                        new ContextReferenceExpander(java.time.Duration.ofMillis(250)).expand("@url:" + origin + "/stalled"))
+                        .contains("request timed out"));
+            } finally {
+                stalled.countDown();
+                server.stop(0);
+            }
+        }
+    }
+
+    @Test
     void modelCommandWithArgsCallsSwitchModel() {
         when(client.switchModel("sid", "gpt-4o", null)).thenReturn("Model switched to: gpt-4o");
         String result = registry.execute("/model gpt-4o", client, "sid");

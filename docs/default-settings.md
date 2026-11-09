@@ -98,7 +98,6 @@ Authoritative source: `backend/src/main/resources/application.yml`. The value is
 | `agent.model.return-thinking` | `${AGENT_MODEL_RETURN_THINKING:false}` |
 | `agent.model.thinking-field-name` | `${AGENT_MODEL_THINKING_FIELD_NAME:reasoning_content}` |
 | `agent.model.max-image-size-bytes` | `${AGENT_MODEL_MAX_IMAGE_SIZE_BYTES:4194304}` |
-| `agent.model.max-total-image-size-bytes` | `${AGENT_MODEL_MAX_TOTAL_IMAGE_SIZE_BYTES:20971520}` |
 | `agent.model.image-jpeg-quality` | `${AGENT_MODEL_IMAGE_JPEG_QUALITY:0.85}` |
 | `agent.auxiliary.enabled` | `${AGENT_AUXILIARY_ENABLED:false}` |
 | `agent.auxiliary.provider` | `${AGENT_AUXILIARY_PROVIDER:openai-compatible}` |
@@ -524,7 +523,6 @@ Authoritative source: `backend/src/main/java/com/azhukov/agent/config/AgentPrope
 | `AgentProperties.ModelProperties.returnThinking` | `false` |
 | `AgentProperties.ModelProperties.thinkingFieldName` | `"reasoning_content"` |
 | `AgentProperties.ModelProperties.maxImageSizeBytes` | `4 * 1024 * 1024` |
-| `AgentProperties.ModelProperties.maxTotalImageSizeBytes` | `20 * 1024 * 1024` |
 | `AgentProperties.ModelProperties.imageJpegQuality` | `0.85` |
 | `AgentProperties.AuxiliaryProperties.enabled` | `false` |
 | `AgentProperties.AuxiliaryProperties.provider` | `"openai-compatible"` |

@@ -6,6 +6,8 @@ import com.azhukov.agent.core.client.StreamingResponseHandler;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.model.ToolDefinition;
+import com.azhukov.agent.service.ImageShrinkerService;
+import com.azhukov.agent.service.ImageTranscodeService;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.model.chat.ChatModel;
@@ -514,11 +516,13 @@ class LangChain4jModelClientExtraTest {
     @Test
     void analyzeImageAsyncReturnsText() throws Exception {
         properties.getModel().setModelName("gpt-4o");
-        LangChain4jModelClient client = client();
+        var client = new LangChain4jModelClient(chatModel, streamingChatModel, properties, null,
+            null, null, null, new ImageShrinkerService(properties, new ImageTranscodeService()));
 
         when(chatModel.chat(any(ChatRequest.class))).thenReturn(lcResponse("image desc"));
 
-        String result = client.analyzeImageAsync("data:image/png;base64,abc", "describe").get();
+        String result = client.analyzeImageAsync(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=", "describe").get();
         assertThat(result).isEqualTo("image desc");
     }
 }

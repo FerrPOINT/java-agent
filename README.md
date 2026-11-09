@@ -66,6 +66,9 @@
 | Тесты | 6221 (backend 4710 + bot 1511), 567 файлов, 0 падений |
 | License | FerrPOINT Proprietary Source-Available Evaluation License v1.0 |
 
+Для анализа HEIC и AVIF при запуске backend напрямую на Linux нужны
+`libvips-tools`, декодеры libheif для HEVC и AV1 и `util-linux`. Образы backend уже включают эти зависимости.
+
 <a name="capabilities"></a>
 
 ## ✨ Features

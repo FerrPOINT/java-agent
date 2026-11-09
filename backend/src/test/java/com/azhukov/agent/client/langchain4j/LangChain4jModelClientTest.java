@@ -6,6 +6,9 @@ import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.model.ToolDefinition;
+import com.azhukov.agent.service.ImageShrinkerService;
+import com.azhukov.agent.service.ImageTranscodeService;
+import dev.langchain4j.data.message.ImageContent;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.agent.tool.ToolSpecification;
 import dev.langchain4j.data.message.AiMessage;
@@ -70,18 +73,30 @@ class LangChain4jModelClientTest {
     }
 
     @Test
-    void analyzeImageReturnsText() {
+    void analyzeImageUsesTheActualImageFormat() throws Exception {
         properties.getModel().setProvider("openai-compatible");
         properties.getModel().setModelName("gpt-4o");
-        LangChain4jModelClient client = client();
+        var shrinker = new ImageShrinkerService(properties, new ImageTranscodeService());
+        var client = new LangChain4jModelClient(chatModel, streamingChatModel, properties, usage::set,
+            null, null, null, shrinker);
+        var bytes = new java.io.ByteArrayOutputStream();
+        javax.imageio.ImageIO.write(new java.awt.image.BufferedImage(2, 2, java.awt.image.BufferedImage.TYPE_INT_RGB),
+            "jpeg", bytes);
+        var base64 = java.util.Base64.getEncoder().encodeToString(bytes.toByteArray());
 
         dev.langchain4j.model.chat.response.ChatResponse response = dev.langchain4j.model.chat.response.ChatResponse.builder()
             .aiMessage(AiMessage.from("an image"))
             .build();
         when(chatModel.chat(any(ChatRequest.class))).thenReturn(response);
 
-        String r = client.analyzeImage("data:image/png;base64,abc", "describe");
+        String r = client.analyzeImage(base64, "describe");
         assertThat(r).isEqualTo("an image");
+        var request = org.mockito.ArgumentCaptor.forClass(ChatRequest.class);
+        verify(chatModel).chat(request.capture());
+        var message = (UserMessage) request.getValue().messages().getFirst();
+        var image = (ImageContent) message.contents().get(1);
+        assertThat(image.image().mimeType()).isEqualTo("image/jpeg");
+        assertThat(image.image().base64Data()).isEqualTo(base64);
     }
 
     @Test
