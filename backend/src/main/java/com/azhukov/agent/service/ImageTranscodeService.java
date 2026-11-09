@@ -6,13 +6,15 @@ import org.springframework.stereotype.Service;
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Base64;
+import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -30,6 +32,11 @@ import java.util.concurrent.TimeUnit;
 @Slf4j
 @Service
 public class ImageTranscodeService {
+
+    private static final int DIAGNOSTIC_BYTES = 16 * 1024;
+    private static final int MAX_PNG_BYTES = 64 * 1024 * 1024;
+    private static final long MAX_PNG_PIXELS = 40_000_000;
+    private static final Duration CONVERTER_TIMEOUT = Duration.ofSeconds(60);
 
     /** Magic-byte sniffing — source of truth is the file, not the extension. */
     static boolean isHeifFamily(byte[] bytes) {
@@ -79,10 +86,10 @@ public class ImageTranscodeService {
             tmp = Files.createTempFile("vision-heif-", ".heic");
             Files.write(tmp, heifBytes);
             if (isHeifConvertAvailable()) {
-                return runConverter(List.of("heif-convert", tmp.toString(), tmp + ".png"), tmp + ".png");
+                return runConverter(List.of("heif-convert", tmp.toString(), tmp + ".png"), Path.of(tmp + ".png"), CONVERTER_TIMEOUT);
             }
             if (isMagickAvailable()) {
-                return runConverter(List.of("convert", tmp.toString(), "png:" + tmp + ".png"), tmp + ".png");
+                return runConverter(List.of("convert", tmp.toString(), "png:" + tmp + ".png"), Path.of(tmp + ".png"), CONVERTER_TIMEOUT);
             }
             throw new IOException("image is HEIC/HEIF/AVIF but no system converter is installed "
                 + "(install libheif-examples for heif-convert)");
@@ -108,26 +115,64 @@ public class ImageTranscodeService {
         return magickAvailable;
     }
 
-    private byte[] runConverter(List<String> command, String output) throws IOException {
-        try {
-            Process p = new ProcessBuilder(command).redirectErrorStream(true).start();
-            byte[] allOut = p.getInputStream().readAllBytes();
-            if (!p.waitFor(60, TimeUnit.SECONDS)) {
-                p.destroyForcibly();
-                throw new IOException("converter timed out: " + command.get(0));
+    static byte[] runConverter(List<String> command, Path output, Duration timeout) throws IOException {
+        long deadline = System.nanoTime() + timeout.toNanos();
+        Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
+        try (var pipe = process.getInputStream()) {
+            var diagnostics = new FutureTask<>(() -> {
+                byte[] prefix = pipe.readNBytes(DIAGNOSTIC_BYTES);
+                pipe.transferTo(java.io.OutputStream.nullOutputStream());
+                return prefix;
+            });
+            Thread.ofVirtual().name("image-converter-output").start(diagnostics);
+            try {
+                process.getOutputStream().close();
+                if (!process.waitFor(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS)) {
+                    throw new TimeoutException();
+                }
+                byte[] prefix = diagnostics.get(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
+                if (process.exitValue() != 0) {
+                    throw new IOException("converter failed (" + process.exitValue() + "): "
+                        + new String(prefix, StandardCharsets.UTF_8).trim());
+                }
+                return readConvertedPng(output);
+            } catch (TimeoutException e) {
+                throw new IOException("converter timed out: " + command.getFirst(), e);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IOException("converter interrupted", e);
+            } catch (ExecutionException e) {
+                throw new IOException("could not read converter diagnostics", e.getCause());
+            } finally {
+                if (process.isAlive()) {
+                    process.descendants().forEach(ProcessHandle::destroyForcibly);
+                    process.destroyForcibly();
+                    process.onExit().join();
+                }
+                diagnostics.cancel(true);
             }
-            if (p.exitValue() != 0) {
-                throw new IOException("converter failed (" + p.exitValue() + "): "
-                    + new String(allOut, StandardCharsets.UTF_8).trim());
+        }
+    }
+
+    private static byte[] readConvertedPng(Path output) throws IOException {
+        if (Files.size(output) > MAX_PNG_BYTES) throw new IOException("converter output exceeds 64 MiB");
+        try (var input = ImageIO.createImageInputStream(output.toFile())) {
+            var readers = ImageIO.getImageReadersByFormatName("png");
+            if (!readers.hasNext()) throw new IOException("PNG image reader is unavailable");
+            var reader = readers.next();
+            try {
+                reader.setInput(input);
+                if ((long) reader.getWidth(0) * reader.getHeight(0) > MAX_PNG_PIXELS) {
+                    throw new IOException("converter output exceeds 40 megapixels");
+                }
+            } finally {
+                reader.dispose();
             }
-            Path out = Path.of(output);
-            if (!Files.exists(out) || Files.size(out) == 0) {
-                throw new IOException("converter produced no output: " + command.get(0));
-            }
-            return Files.readAllBytes(out);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IOException("converter interrupted", e);
+        }
+        try (var input = Files.newInputStream(output)) {
+            byte[] bytes = input.readNBytes(MAX_PNG_BYTES + 1);
+            if (bytes.length > MAX_PNG_BYTES) throw new IOException("converter output exceeds 64 MiB");
+            return bytes;
         }
     }
 

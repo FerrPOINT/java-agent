@@ -157,20 +157,61 @@ class AttachmentArtifactRepositoryTest extends PostgresTestContainer {
     }
 
     @Test
-    void expirySweepDeletesOnlyExpired() {
-        AttachmentArtifactEntity fresh = entity("alice", "fresh", "photo");
+    void expirySweepDeletesOnlyConfirmedFilesAndRetriesFailures(
+        @org.junit.jupiter.api.io.TempDir java.nio.file.Path cache
+    ) throws Exception {
+        var fresh = entity("alice", "fresh", "photo");
         fresh.setExpiresAt(Instant.now().plusSeconds(3600));
-        AttachmentArtifactEntity stale = entity("alice", "stale", "photo");
+        fresh.setCachePath("fresh.bin");
+        var stale = entity("alice", "stale", "photo");
         stale.setExpiresAt(Instant.now().minusSeconds(60));
-        repository.save(fresh);
-        repository.save(stale);
+        stale.setCachePath("stale.bin");
+        var blocked = entity("alice", "blocked", "photo");
+        blocked.setExpiresAt(stale.getExpiresAt());
+        blocked.setCachePath("blocked.bin");
+        var missing = entity("alice", "missing", "photo");
+        missing.setExpiresAt(stale.getExpiresAt());
+        missing.setCachePath("missing.bin");
+        java.nio.file.Files.writeString(cache.resolve("fresh.bin"), "fresh");
+        java.nio.file.Files.writeString(cache.resolve("stale.bin"), "stale");
+        java.nio.file.Files.createDirectory(cache.resolve("blocked.bin"));
+        repository.saveAllAndFlush(List.of(fresh, stale, blocked, missing));
+        var service = new com.azhukov.agent.service.AttachmentArtifactService(
+            new org.springframework.beans.factory.ObjectProvider<>() {
+                @Override public AttachmentArtifactRepository getObject() { return repository; }
+                @Override public AttachmentArtifactRepository getIfAvailable() { return repository; }
+            }, null);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "cacheRootConfig", cache.toString());
 
-        int removed = transactionTemplate.execute(tx ->
-            repository.deleteExpired(Instant.now()));
-
-        assertThat(removed).isEqualTo(1);
-        assertThat(repository.findById(fresh.getId())).isPresent();
+        assertThat(transactionTemplate.<Integer>execute(tx -> service.sweepExpired())).isEqualTo(2);
         assertThat(repository.findById(stale.getId())).isEmpty();
+        assertThat(repository.findById(missing.getId())).isEmpty();
+        assertThat(repository.findById(blocked.getId())).isPresent();
+        assertThat(repository.findById(fresh.getId())).isPresent();
+        assertThat(cache.resolve("fresh.bin")).exists();
+
+        java.nio.file.Files.delete(cache.resolve("blocked.bin"));
+        java.nio.file.Files.writeString(cache.resolve("blocked.bin"), "retry");
+        assertThat(transactionTemplate.<Integer>execute(tx -> service.sweepExpired())).isEqualTo(1);
+        assertThat(repository.findById(blocked.getId())).isEmpty();
+        assertThat(cache.resolve("blocked.bin")).doesNotExist();
+    }
+
+    @Test
+    void sweepDeleteDoesNotPickUpARecordThatExpiredAfterSelection() {
+        Instant cutoff = Instant.now();
+        var selected = entity("alice", "selected", "photo");
+        selected.setExpiresAt(cutoff.minusSeconds(1));
+        var later = entity("alice", "later", "photo");
+        later.setExpiresAt(cutoff.plusSeconds(1));
+        repository.saveAllAndFlush(List.of(selected, later));
+        var ids = repository.findByExpiresAtBefore(cutoff).stream().map(AttachmentArtifactEntity::getId).toList();
+
+        int removed = transactionTemplate.execute(tx -> repository.deleteExpiredByIds(ids, cutoff));
+        assertThat(removed).isEqualTo(1);
+        assertThat(repository.findById(later.getId())).isPresent();
+        assertThat(repository.findByExpiresAtBefore(cutoff.plusSeconds(2))).extracting(AttachmentArtifactEntity::getId)
+            .containsExactly(later.getId());
     }
 
     // ── V65: outbound delivery receipt columns ──

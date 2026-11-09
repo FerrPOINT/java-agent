@@ -64,15 +64,18 @@ class StreamDeliveryRegressionTest {
             var session = editor.sessionFor(101L);
             long preview = method.equals("editMessageText") ? 9L : -1L;
             session.currentMessageId.set(preview);
-            var permit = (java.util.concurrent.Semaphore) org.springframework.test.util.ReflectionTestUtils
-                .getField(telegram, "rateLimiter");
+            var permit = org.mockito.Mockito.mock(io.github.resilience4j.ratelimiter.RateLimiter.class);
+            var waiting = new java.util.concurrent.CountDownLatch(1);
+            var release = new java.util.concurrent.CountDownLatch(1);
+            org.mockito.Mockito.when(permit.acquirePermission()).thenAnswer(call -> {
+                waiting.countDown();
+                return release.await(2, java.util.concurrent.TimeUnit.SECONDS);
+            });
+            org.springframework.test.util.ReflectionTestUtils.setField(telegram, "rateLimiter", permit);
             var send = new java.util.concurrent.FutureTask<>(() -> editor.finalizeStream(101L, preview, "final"));
-            permit.acquire();
             try {
                 Thread.startVirtualThread(send);
-                long limit = System.nanoTime() + SECONDS.toNanos(2);
-                while (!permit.hasQueuedThreads() && System.nanoTime() < limit) Thread.sleep(1);
-                assertThat(permit.hasQueuedThreads()).isTrue();
+                assertThat(waiting.await(2, SECONDS)).isTrue();
                 if (state.equals("stop")) editor.cancelDeferredDelivery(101L);
                 if (state.equals("expired")) {
                     synchronized (session) {
@@ -81,7 +84,7 @@ class StreamDeliveryRegressionTest {
                     }
                 }
             } finally {
-                permit.release();
+                release.countDown();
             }
             boolean allowed = state.equals("allowed");
             assertThat(send.get(2, SECONDS)).isEqualTo(allowed);

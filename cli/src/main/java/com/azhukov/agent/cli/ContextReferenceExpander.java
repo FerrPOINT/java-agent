@@ -3,9 +3,22 @@ package com.azhukov.agent.cli;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
+import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -27,6 +40,22 @@ public class ContextReferenceExpander {
 
     private static final Pattern REF_PATTERN = Pattern.compile(
         "@(diff|staged|git|file:|folder:|url:)");
+
+    private static final int CONTENT_LIMIT = 50_000;
+    private static final int URL_READ_LIMIT = 4 * CONTENT_LIMIT;
+    private final HttpClient http = HttpClient.newBuilder()
+        .connectTimeout(Duration.ofSeconds(5))
+        .followRedirects(HttpClient.Redirect.NORMAL)
+        .build();
+    private final Duration urlTimeout;
+
+    public ContextReferenceExpander() {
+        this(Duration.ofSeconds(10));
+    }
+
+    ContextReferenceExpander(Duration urlTimeout) {
+        this.urlTimeout = urlTimeout;
+    }
 
     /**
      * Expand all @-references in the input text.
@@ -101,14 +130,15 @@ public class ContextReferenceExpander {
                     content = "[File not found: " + filePath + "]";
                 } else if (Files.isDirectory(path)) {
                     content = "[Path is a directory, use @folder: instead: " + filePath + "]";
+                } else if (!Files.isRegularFile(path)) {
+                    content = "[Path is not a regular file: " + filePath + "]";
                 } else {
-                    byte[] bytes = Files.readAllBytes(path);
-                    // Limit to 50KB
-                    if (bytes.length > 50_000) {
-                        content = new String(bytes, 0, 50_000, StandardCharsets.UTF_8)
-                            + "\n... [truncated, " + bytes.length + " bytes total]";
-                    } else {
-                        content = new String(bytes, StandardCharsets.UTF_8);
+                    try (var file = Files.newInputStream(path)) {
+                        byte[] bytes = file.readNBytes(CONTENT_LIMIT + 1);
+                        content = decodePrefix(bytes, CONTENT_LIMIT);
+                        if (bytes.length > CONTENT_LIMIT) {
+                            content += "\n... [truncated]";
+                        }
                     }
                 }
             } catch (IOException e) {
@@ -165,15 +195,14 @@ public class ContextReferenceExpander {
             String content;
             try {
                 content = fetchUrl(url);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                content = "[Error fetching " + url + ": interrupted]";
             } catch (Exception e) {
                 content = "[Error fetching " + url + ": " + e.getMessage() + "]";
             }
             if (content == null || content.isBlank()) {
                 content = "[No content from " + url + "]";
-            }
-            // Limit content to 50KB
-            if (content.length() > 50_000) {
-                content = content.substring(0, 50_000) + "\n... [truncated]";
             }
             m.appendReplacement(sb, Matcher.quoteReplacement(
                 "\n--- @url:" + url + " ---\n" + content + "\n--- end ---\n"));
@@ -205,22 +234,42 @@ public class ContextReferenceExpander {
         }
     }
 
-    /**
-     * m28: fetch URL via JDK HttpClient instead of shelling out to curl —
-     * no external process, no shell-injection surface, same 10s timeout.
-     */
     private String fetchUrl(String urlString) throws IOException, InterruptedException {
-        java.net.http.HttpClient client = java.net.http.HttpClient.newBuilder()
-            .connectTimeout(java.time.Duration.ofSeconds(5))
-            .followRedirects(java.net.http.HttpClient.Redirect.NORMAL)
-            .build();
-        java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder()
-            .uri(java.net.URI.create(urlString))
-            .timeout(java.time.Duration.ofSeconds(10))
-            .GET()
-            .build();
-        java.net.http.HttpResponse<String> response =
-            client.send(request, java.net.http.HttpResponse.BodyHandlers.ofString());
-        return response.body().strip();
+        HttpRequest request = HttpRequest.newBuilder(URI.create(urlString)).timeout(urlTimeout).GET().build();
+        var fetch = new FutureTask<>(() -> {
+            var response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
+            try (var body = response.body()) {
+                return body.readNBytes(URL_READ_LIMIT + 1);
+            }
+        });
+        Thread.ofVirtual().name("cli-context-url").start(fetch);
+        byte[] bytes;
+        try {
+            bytes = fetch.get(urlTimeout.toNanos(), TimeUnit.NANOSECONDS);
+        } catch (TimeoutException e) {
+            throw new HttpTimeoutException("request timed out");
+        } catch (ExecutionException e) {
+            throw new IOException("could not read response", e.getCause());
+        } finally {
+            fetch.cancel(true);
+        }
+        String content = decodePrefix(bytes, URL_READ_LIMIT).strip();
+        if (content.length() > CONTENT_LIMIT) {
+            int end = Character.isHighSurrogate(content.charAt(CONTENT_LIMIT - 1))
+                ? CONTENT_LIMIT - 1 : CONTENT_LIMIT;
+            return content.substring(0, end) + "\n... [truncated]";
+        }
+        return bytes.length > URL_READ_LIMIT ? content + "\n... [truncated]" : content;
     }
+
+    private static String decodePrefix(byte[] bytes, int limit) {
+        if (bytes.length <= limit) return new String(bytes, StandardCharsets.UTF_8);
+        var output = CharBuffer.allocate(limit);
+        StandardCharsets.UTF_8.newDecoder()
+            .onMalformedInput(CodingErrorAction.REPLACE)
+            .onUnmappableCharacter(CodingErrorAction.REPLACE)
+            .decode(ByteBuffer.wrap(bytes, 0, limit), output, false);
+        return output.flip().toString();
+    }
+
 }

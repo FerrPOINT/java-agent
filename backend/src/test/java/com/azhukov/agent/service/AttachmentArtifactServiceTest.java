@@ -185,13 +185,13 @@ class AttachmentArtifactServiceTest {
         ReflectionTestUtils.setField(delivered, "state", "delivered");
         ReflectionTestUtils.setField(delivered, "cachePath", "att_expired_delivered.bin");
         when(repository.findByExpiresAtBefore(any(Instant.class))).thenReturn(List.of(delivered));
-        when(repository.deleteExpired(any(Instant.class))).thenReturn(1);
+        when(repository.deleteExpiredByIds(eq(List.of(delivered.getId())), any(Instant.class))).thenReturn(1);
 
         int removed = service().sweepExpired();
 
         assertThat(removed).isEqualTo(1);
         assertThat(blob).doesNotExist();
-        verify(repository).deleteExpired(any(Instant.class));
+        verify(repository).deleteExpiredByIds(eq(List.of(delivered.getId())), any(Instant.class));
     }
 
     @Test

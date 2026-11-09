@@ -95,6 +95,46 @@ class ImageTranscodeServiceTest {
     }
 
     @Test
+    @EnabledOnOs(OS.LINUX)
+    void converterDeadlineCoversSilentProcessAndReapsIt(
+        @org.junit.jupiter.api.io.TempDir java.nio.file.Path dir
+    ) throws Exception {
+        var pidFile = dir.resolve("pid");
+        assertThatThrownBy(() -> ImageTranscodeService.runConverter(
+            java.util.List.of("sh", "-c", "echo $$ > \"$1\"; exec sleep 30", "test", pidFile.toString()),
+            dir.resolve("result.png"), java.time.Duration.ofMillis(500)))
+            .isInstanceOf(java.io.IOException.class).hasMessageContaining("timed out");
+        long pid = Long.parseLong(java.nio.file.Files.readString(pidFile).strip());
+        assertThat(ProcessHandle.of(pid).filter(ProcessHandle::isAlive)).isEmpty();
+    }
+
+    @Test
+    @EnabledOnOs(OS.LINUX)
+    void converterDrainsNoisyOutputAndRejectsOversizedPng(
+        @org.junit.jupiter.api.io.TempDir java.nio.file.Path dir
+    ) throws Exception {
+        var output = dir.resolve("result.png");
+        byte[] png = pngBytes();
+        java.nio.file.Files.write(output, png);
+        var noisy = java.util.List.of("sh", "-c", "head -c 1048576 /dev/zero");
+        assertThat(ImageTranscodeService.runConverter(noisy, output, java.time.Duration.ofSeconds(3)))
+            .isEqualTo(png);
+
+        java.nio.ByteBuffer.wrap(png).putInt(16, 10_000).putInt(20, 10_000);
+        java.nio.file.Files.write(output, png);
+        assertThatThrownBy(() -> ImageTranscodeService.runConverter(
+            java.util.List.of("true"), output, java.time.Duration.ofSeconds(2)))
+            .isInstanceOf(java.io.IOException.class).hasMessageContaining("40 megapixels");
+
+        try (var file = new java.io.RandomAccessFile(output.toFile(), "rw")) {
+            file.setLength(64L * 1024 * 1024 + 1);
+        }
+        assertThatThrownBy(() -> ImageTranscodeService.runConverter(
+            java.util.List.of("true"), output, java.time.Duration.ofSeconds(2)))
+            .isInstanceOf(java.io.IOException.class).hasMessageContaining("64 MiB");
+    }
+
+    @Test
     void shrinkerIntegratesTranscode() throws Exception {
         com.azhukov.agent.config.AgentProperties props = new com.azhukov.agent.config.AgentProperties();
         ImageShrinkerService shrinker = new ImageShrinkerService(props, service);

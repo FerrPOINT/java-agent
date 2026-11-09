@@ -1,6 +1,7 @@
 package com.azhukov.agent.service;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.security.SecureFileAccess;
 import com.azhukov.agent.persistence.entity.CheckpointEntity;
 import com.azhukov.agent.persistence.entity.CheckpointFileEntity;
 import com.azhukov.agent.persistence.repository.CheckpointFileRepository;
@@ -16,14 +17,14 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.io.IOException;
+import java.nio.channels.Channels;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.*;
-import java.util.stream.Stream;
 
 /**
  * Filesystem checkpoint manager — takes snapshots storing file hashes and content,
@@ -65,20 +66,18 @@ public class CheckpointManager {
 
 
     /** Raw .gitignore lines of the walk root (comments/empty/negations dropped). */
-    private static java.util.List<String> readGitignoreRules(Path root) {
-        java.util.List<String> rules = new java.util.ArrayList<>();
-        Path gi = root.resolve(".gitignore");
-        if (Files.isRegularFile(gi)) {
-            try {
-                for (String line : Files.readAllLines(gi)) {
-                    String t = line.strip();
-                    if (!t.isEmpty() && !t.startsWith("#") && !t.startsWith("!")) {
-                        rules.add(t);
-                    }
-                }
-            } catch (Exception ignore) { /* unreadable → no extra excludes */ }
+    private static List<String> readGitignoreRules(SecureFileAccess.Directory root) {
+        try {
+            byte[] bytes = readFile(root, Path.of(".gitignore"));
+            if (bytes != null) {
+                return new String(bytes, StandardCharsets.UTF_8).lines().map(String::strip)
+                    .filter(line -> !line.isEmpty() && !line.startsWith("#") && !line.startsWith("!"))
+                    .toList();
+            }
+        } catch (IOException e) {
+            log.debug("Skipping unreadable .gitignore", e);
         }
-        return rules;
+        return List.of();
     }
 
     /** gitignore-pattern check for one root-relative path (dir suffix aware). */
@@ -106,28 +105,47 @@ public class CheckpointManager {
         }
     }
 
-    /** Recursive walk that never descends into excluded/gitignored directories. */
-    private static void collectFiles(Path root, Path dir, java.util.List<String> ignoreRules, List<Path> out) {
-        String relDir = root.relativize(dir).toString().replace('\\', '/');
-        if (!relDir.isEmpty()
-            && (EXCLUDED_DIRS.contains(dir.getFileName().toString())
-                || ignoreRules.stream().anyMatch(r -> matchesGitignore(relDir, r)))) {
-            return; // pruned
-        }
-        try (Stream<Path> children = Files.list(dir)) {
-            for (Path child : (Iterable<Path>) children::iterator) {
-                if (Files.isDirectory(child)) {
-                    collectFiles(root, child, ignoreRules, out);
-                } else if (Files.isRegularFile(child)) {
-                    String rel = root.relativize(child).toString().replace('\\', '/');
-                    boolean suffixHit = EXCLUDED_SUFFIXES.stream().anyMatch(s -> child.getFileName().toString().endsWith(s));
-                    boolean ignoreHit = ignoreRules.stream().anyMatch(r -> matchesGitignore(rel, r));
-                    if (!suffixHit && !ignoreHit) {
-                        out.add(child);
+    private static void collectFiles(SecureFileAccess.Directory directory, Path relative,
+                                     List<String> ignoreRules, List<CollectedFile> out) {
+        for (Path entry : directory.entries()) {
+            if (out.size() >= MAX_FILES) return;
+            Path name = entry.getFileName();
+            Path path = relative.resolve(name);
+            String pathText = path.toString();
+            // Keep the path length supported by the historical Linux pathname-based walker.
+            if (pathText.getBytes(StandardCharsets.UTF_8).length >= 4096
+                || ignoreRules.stream().anyMatch(rule -> matchesGitignore(pathText, rule))) {
+                continue;
+            }
+            try {
+                var attributes = directory.attributes(name);
+                if (attributes.isDirectory()) {
+                    if (!EXCLUDED_DIRS.contains(name.toString())) {
+                        try (var child = directory.openDirectory(name, false)) {
+                            collectFiles(child, path, ignoreRules, out);
+                        }
+                    }
+                } else if (attributes.isRegularFile() && !isHidden(path)
+                    && EXCLUDED_SUFFIXES.stream().noneMatch(suffix -> name.toString().endsWith(suffix))) {
+                    byte[] bytes = readFile(directory, name);
+                    if (bytes != null) {
+                        String content = bytes.length <= MAX_STORED_CONTENT_SIZE
+                            ? Base64.getEncoder().encodeToString(bytes) : null;
+                        out.add(new CollectedFile(pathText, hashBytes(bytes), bytes.length, content));
                     }
                 }
+            } catch (IOException e) {
+                log.debug("Skipping unreadable checkpoint entry {}", path);
             }
-        } catch (Exception ignore) { /* unreadable dir → skip */ }
+        }
+    }
+
+    private static byte[] readFile(SecureFileAccess.Directory directory, Path name) throws IOException {
+        try (var channel = directory.openRead(name)) {
+            if (channel.size() > MAX_FILE_SIZE) return null;
+            byte[] bytes = Channels.newInputStream(channel).readNBytes((int) MAX_FILE_SIZE + 1);
+            return bytes.length > MAX_FILE_SIZE ? null : bytes;
+        }
     }
 
     /**
@@ -168,51 +186,14 @@ public class CheckpointManager {
      */
     private List<CollectedFile> collectFilesForSnapshot(String description) {
         String workingDir = properties.getCore().getWorkingDirectory();
-        Path root = Paths.get(workingDir);
+        Path root = Paths.get(workingDir).toAbsolutePath().normalize();
         log.info("Taking checkpoint snapshot of {} — {}", workingDir, description);
-
-        // Root-relative .gitignore rules + dir pruning: Files.walk with a
-        // per-file filter still DESCENDS into excluded dirs (and nested git
-        // repos resolve their own root). Walk with pruning instead.
-        java.util.List<String> ignoreRules = readGitignoreRules(root);
-        List<Path> fileList = new java.util.ArrayList<>();
-        collectFiles(root, root, ignoreRules, fileList);
-
-        List<CollectedFile> collected = new java.util.ArrayList<>();
-
-        try (Stream<Path> paths = fileList.stream()) {
-            List<Path> filtered = paths
-                .filter(p -> !isHidden(p))
-                .limit(MAX_FILES)
-                .toList();
-
-            for (Path p : filtered) {
-                try {
-                    long size = Files.size(p);
-                    if (size > MAX_FILE_SIZE) {
-                        log.debug("Skipping large file: {} ({} bytes)", p, size);
-                        continue;
-                    }
-                    String hash = hashFile(p);
-                    String relativePath = root.relativize(p).toString();
-
-                    String contentBase64 = null;
-                    if (size <= MAX_STORED_CONTENT_SIZE) {
-                        byte[] content = Files.readAllBytes(p);
-                        contentBase64 = Base64.getEncoder().encodeToString(content);
-                    } else {
-                        log.debug("File {} ({} bytes) exceeds content storage limit, storing hash only", relativePath, size);
-                    }
-
-                    collected.add(new CollectedFile(relativePath, hash, size, contentBase64));
-                } catch (Exception e) {
-                    log.debug("Failed to hash file {}: {}", p, e.getMessage());
-                }
-            }
-        } catch (Exception e) {
-            log.error("Snapshot walk failed for {}: {}", workingDir, e.getMessage());
+        List<CollectedFile> collected = new ArrayList<>();
+        try (var directory = SecureFileAccess.openDirectory(root)) {
+            collectFiles(directory, Path.of(""), readGitignoreRules(directory), collected);
+        } catch (IOException e) {
+            throw new java.io.UncheckedIOException("Could not snapshot workspace " + root, e);
         }
-
         return collected;
     }
 
@@ -308,70 +289,69 @@ public class CheckpointManager {
     private void restoreCheckpoint(UUID id, CheckpointEntity checkpoint) {
         log.info("Restoring checkpoint {} — {} ({} files)", id, checkpoint.getDescription(), checkpoint.getFileCount());
 
+        List<Path> restored = new ArrayList<>();
+        Path root = Paths.get(properties.getCore().getWorkingDirectory()).toAbsolutePath().normalize();
         try {
-            String workingDir = properties.getCore().getWorkingDirectory();
-            Path root = Paths.get(workingDir);
-
-            // Load stored file content entries
-            List<CheckpointFileEntity> storedFiles = checkpointFileRepository.findByCheckpointId(id);
-            Map<String, CheckpointFileEntity> contentByPath = new HashMap<>();
-            for (CheckpointFileEntity fe : storedFiles) {
-                contentByPath.put(fe.getFilePath(), fe);
-            }
-
-            // Parse the lightweight file list (hashes) for verification
             ArrayNode files = (ArrayNode) objectMapper.readTree(checkpoint.getFilesJson());
-            int restored = 0;
-            int verified = 0;
-            int changed = 0;
-            int missing = 0;
-            int skippedNoContent = 0;
-
+            // Validate the complete historical manifest before making any changes.
             for (var node : files) {
-                String path = node.get("path").asText();
-                String expectedHash = node.get("hash").asText();
-                Path filePath = root.resolve(path);
+                checkpointPath(node.path("path").asText());
+            }
+            Map<String, CheckpointFileEntity> contentByPath = new HashMap<>();
+            for (CheckpointFileEntity file : checkpointFileRepository.findByCheckpointId(id)) {
+                checkpointPath(file.getFilePath());
+                contentByPath.put(file.getFilePath(), file);
+            }
 
-                CheckpointFileEntity storedFile = contentByPath.get(path);
-
-                if (!Files.exists(filePath)) {
-                    // File is missing on disk — try to restore from checkpoint content
-                    if (storedFile != null && storedFile.getContentBase64() != null) {
-                        Files.createDirectories(filePath.getParent());
-                        Files.write(filePath, Base64.getDecoder().decode(storedFile.getContentBase64()));
-                        log.info("Restored missing file: {}", path);
-                        restored++;
+            try (var directory = SecureFileAccess.openDirectory(root)) {
+                for (var node : files) {
+                    Path path = checkpointPath(node.path("path").asText());
+                    CheckpointFileEntity stored = contentByPath.get(path.toString());
+                    String content = stored == null ? null : stored.getContentBase64();
+                    if (path.getParent() == null) {
+                        restoreFile(directory, path, node.path("hash").asText(), content, restored);
                     } else {
-                        log.warn("Missing file, no stored content to restore: {}", path);
-                        missing++;
-                    }
-                    continue;
-                }
-
-                String actualHash = hashFile(filePath);
-                if (actualHash.equals(expectedHash)) {
-                    verified++;
-                } else {
-                    // File changed — restore from checkpoint content
-                    if (storedFile != null && storedFile.getContentBase64() != null) {
-                        Files.write(filePath, Base64.getDecoder().decode(storedFile.getContentBase64()));
-                        log.info("Restored changed file: {}", path);
-                        restored++;
-                    } else {
-                        log.warn("Changed file, no stored content to restore: {} (expected: {}, actual: {})",
-                            path, expectedHash, actualHash);
-                        changed++;
-                        skippedNoContent++;
+                        try (var parent = directory.openDirectory(path.getParent(), content != null)) {
+                            restoreFile(parent, path, node.path("hash").asText(), content, restored);
+                        } catch (NoSuchFileException missing) {
+                            if (content != null) throw missing;
+                            log.warn("Missing file, no stored content to restore: {}", path);
+                        }
                     }
                 }
             }
-
-            log.info("Restore complete: {} restored, {} verified, {} changed (no content), {} missing (no content)",
-                restored, verified, skippedNoContent, missing);
+            log.info("Checkpoint restore complete: {} files restored", restored.size());
         } catch (Exception e) {
-            log.error("Failed to restore checkpoint {}: {}", id, e.getMessage());
-            throw new RuntimeException("Restore failed: " + e.getMessage(), e);
+            log.error("Failed to restore checkpoint {} after restoring {}: {}", id, restored, e.getMessage());
+            throw new IllegalStateException("Restore failed after restoring " + restored + ": " + e.getMessage(), e);
         }
+    }
+
+    private static Path checkpointPath(String raw) {
+        Path path = Path.of(raw);
+        if (raw.isEmpty() || path.isAbsolute() || path.startsWith("..")
+            || !path.normalize().toString().equals(raw)) {
+            throw new IllegalArgumentException("Invalid checkpoint path: " + raw);
+        }
+        return path;
+    }
+
+    private static void restoreFile(SecureFileAccess.Directory parent, Path path, String expectedHash,
+                                    String content, List<Path> restored) throws IOException {
+        Path name = path.getFileName();
+        byte[] current = null;
+        try {
+            current = readFile(parent, name);
+        } catch (NoSuchFileException missing) {
+            // A stored file can be recreated.
+        }
+        if (current != null && expectedHash.equals(hashBytes(current))) return;
+        if (content == null) {
+            log.warn("File differs, no stored content to restore: {}", path);
+            return;
+        }
+        parent.replaceFile(name, Base64.getDecoder().decode(content));
+        restored.add(path);
     }
 
     @Transactional
@@ -412,22 +392,16 @@ public class CheckpointManager {
         log.info("Removed checkpoint: {}", id);
     }
 
-    private String hashFile(Path file) {
+    private static String hashBytes(byte[] bytes) {
         try {
-            MessageDigest md = MessageDigest.getInstance("SHA-256");
-            byte[] hash = md.digest(Files.readAllBytes(file));
-            StringBuilder sb = new StringBuilder();
-            for (byte b : hash) {
-                sb.append(String.format("%02x", b));
-            }
-            return sb.toString().substring(0, 16); // First 16 chars for lightweight
-        } catch (Exception e) {
-            log.warn("Failed to hash file {}: {}", file, e.getMessage());
-            return "ERROR";
+            byte[] hash = MessageDigest.getInstance("SHA-256").digest(bytes);
+            return HexFormat.of().formatHex(hash, 0, 8);
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
         }
     }
 
-    private boolean isHidden(Path path) {
+    private static boolean isHidden(Path path) {
         String name = path.getFileName().toString();
         return name.startsWith(".") || name.startsWith("__")
             || path.toString().contains("/.git/") || path.toString().contains("/.gradle/")

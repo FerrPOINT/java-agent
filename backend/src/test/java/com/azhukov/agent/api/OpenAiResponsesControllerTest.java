@@ -52,6 +52,7 @@ import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -127,6 +128,11 @@ class OpenAiResponsesControllerTest {
             .thenReturn(sessionContext);
         lenient().when(openAiSessionService.resolveStoredResponseSession(any(UUID.class), any()))
             .thenReturn(sessionContext);
+        lenient().when(openAiSessionService.idempotencyScope(anyString(), any())).thenAnswer(call -> {
+            String principal = UserContext.getUserId();
+            return principal == null ? null : new OpenAiIdempotencyCache.Scope(
+                principal, "test", UserContext.getRole(), UserContext.effectiveUserId(call.getArgument(1)), call.getArgument(0));
+        });
         lenient().when(openAiSessionService.historyFor(any()))
             .thenReturn(List.of());
         lenient().when(promptBuilder.buildSystemMessage(any(), any()))
@@ -349,6 +355,7 @@ class OpenAiResponsesControllerTest {
 
     @Test
     void idempotencyKeyReusesNonStreamingResponseWithoutRerunningAgent() throws Exception {
+        UserContext.set("user-1", UserContext.ROLE_USER);
         when(agentRuntime.runMessages(anyList(), anyList(), any(ModelRequestOptions.class)))
             .thenReturn(new TurnResult(
                 List.of(Message.assistant("cached response", 1)),
@@ -386,7 +393,90 @@ class OpenAiResponsesControllerTest {
     }
 
     @Test
+    void idempotencyKeyCannotReplayAnotherUsersResponse() throws Exception {
+        when(agentRuntime.runMessages(anyList(), anyList(), any(ModelRequestOptions.class)))
+            .thenReturn(new TurnResult(List.of(Message.assistant("first user", 1)), true, null))
+            .thenReturn(new TurnResult(List.of(Message.assistant("second user", 1)), true, null));
+        var request = post("/v1/responses").header("Idempotency-Key", "shared-key")
+            .contentType(MediaType.APPLICATION_JSON).content("{\"model\":\"gpt-resp\",\"input\":\"same\"}");
+
+        UserContext.set("user-1", UserContext.ROLE_USER);
+        mockMvc.perform(request).andExpect(status().isOk())
+            .andExpect(jsonPath("$.output[0].content[0].text").value("first user"));
+
+        UserContext.set("user-2", UserContext.ROLE_USER);
+        mockMvc.perform(request).andExpect(status().isOk())
+            .andExpect(jsonPath("$.output[0].content[0].text").value("second user"));
+        verify(agentRuntime, times(2)).runMessages(anyList(), anyList(), any(ModelRequestOptions.class));
+    }
+
+    @Test
+    void simultaneousRetriesShareOneExecutionAndRecheckSessionAccess() throws Exception {
+        var providerStarted = new java.util.concurrent.CountDownLatch(1);
+        var releaseProvider = new java.util.concurrent.CountDownLatch(1);
+        when(agentRuntime.runMessages(anyList(), anyList(), any(ModelRequestOptions.class))).thenAnswer(call -> {
+            providerStarted.countDown();
+            assertThat(releaseProvider.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            return new TurnResult(List.of(Message.assistant("response", 1)), true, null);
+        });
+        java.util.function.Supplier<org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder> retry = () ->
+            post("/v1/responses").header("Idempotency-Key", "concurrent")
+                .contentType(MediaType.APPLICATION_JSON).content("{\"model\":\"gpt-resp\",\"input\":\"same\"}");
+        java.util.concurrent.Callable<String> call = () -> {
+            UserContext.set("user-1", UserContext.ROLE_USER);
+            try {
+                return mockMvc.perform(retry.get()).andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+            } finally {
+                UserContext.clear();
+            }
+        };
+        var first = new java.util.concurrent.FutureTask<>(call);
+        var second = new java.util.concurrent.FutureTask<>(call);
+        Thread.startVirtualThread(first);
+        try {
+            assertThat(providerStarted.await(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            var follower = Thread.startVirtualThread(second);
+            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(2);
+            while (follower.getState() != Thread.State.WAITING && System.nanoTime() < deadline) {
+                Thread.sleep(1);
+            }
+            assertThat(follower.getState()).isEqualTo(Thread.State.WAITING);
+        } finally {
+            releaseProvider.countDown();
+        }
+        assertThat(second.get(5, java.util.concurrent.TimeUnit.SECONDS))
+            .isEqualTo(first.get(5, java.util.concurrent.TimeUnit.SECONDS));
+        verify(agentRuntime).runMessages(anyList(), anyList(), any(ModelRequestOptions.class));
+        verify(openAiSessionService).resolve(null, null, "gpt-resp");
+        verify(openAiSessionService).resolveStoredResponseSession(SESSION_ID, null);
+
+        UserContext.set("user-1", UserContext.ROLE_USER);
+        when(openAiSessionService.resolveStoredResponseSession(SESSION_ID, null))
+            .thenThrow(new IllegalArgumentException("Session not found"));
+        mockMvc.perform(retry.get()).andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.error").value("Session not found"));
+        verifyNoMoreInteractions(agentRuntime);
+    }
+
+    @Test
+    void retryAfterRunAdmissionRefusalExecutesNormally() throws Exception {
+        UserContext.set("user-1", UserContext.ROLE_USER);
+        properties.getApi().setMaxConcurrentRuns(1);
+        var request = post("/v1/responses").header("Idempotency-Key", "after-refusal")
+            .contentType(MediaType.APPLICATION_JSON).content("{\"model\":\"gpt-resp\",\"input\":\"same\"}");
+        try (var ignored = runAdmissionService.tryAcquire().orElseThrow()) {
+            mockMvc.perform(request).andExpect(status().isTooManyRequests());
+        }
+        when(agentRuntime.runMessages(anyList(), anyList(), any(ModelRequestOptions.class)))
+            .thenReturn(new TurnResult(List.of(Message.assistant("recovered", 1)), true, null));
+        mockMvc.perform(request).andExpect(status().isOk())
+            .andExpect(jsonPath("$.output[0].content[0].text").value("recovered"));
+        verify(agentRuntime).runMessages(anyList(), anyList(), any(ModelRequestOptions.class));
+    }
+
+    @Test
     void idempotencyFingerprintIncludesSessionKeyScope() throws Exception {
+        UserContext.set("user-1", UserContext.ROLE_USER);
         when(agentRuntime.runMessages(anyList(), anyList(), any(ModelRequestOptions.class)))
             .thenReturn(new TurnResult(List.of(Message.assistant("first response scope", 1)), true, null))
             .thenReturn(new TurnResult(List.of(Message.assistant("second response scope", 1)), true, null));

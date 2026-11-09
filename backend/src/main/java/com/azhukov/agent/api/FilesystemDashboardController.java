@@ -2,6 +2,7 @@ package com.azhukov.agent.api;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.security.FileSafety;
+import com.azhukov.agent.core.security.SecureFileAccess;
 import com.azhukov.agent.core.security.UserContext;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.servlet.http.HttpServletRequest;
@@ -514,7 +515,8 @@ public class FilesystemDashboardController {
         } catch (IllegalArgumentException e) {
             return badRequest(e.getMessage());
         }
-        int byteSize = content.getBytes(StandardCharsets.UTF_8).length;
+        byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
+        int byteSize = bytes.length;
         if (byteSize > TEXT_WRITE_MAX_BYTES) {
             return status(HttpStatus.CONTENT_TOO_LARGE, "Content too large");
         }
@@ -532,18 +534,8 @@ public class FilesystemDashboardController {
             if (parent == null || !Files.isDirectory(parent)) {
                 return badRequest("Parent directory does not exist");
             }
-            Path tmp = target.resolveSibling("." + target.getFileName() + ".java-agent-tmp-" + ProcessHandle.current().pid());
-            try {
-                Files.writeString(
-                    tmp,
-                    content,
-                    StandardCharsets.UTF_8,
-                    StandardOpenOption.CREATE,
-                    StandardOpenOption.TRUNCATE_EXISTING,
-                    StandardOpenOption.WRITE);
-                moveReplace(tmp, target);
-            } finally {
-                Files.deleteIfExists(tmp);
+            try (var directory = SecureFileAccess.openDirectory(parent)) {
+                directory.replaceFile(target.getFileName(), bytes);
             }
             return ResponseEntity.ok(Map.of("ok", true, "path", target.toString(), "byteSize", byteSize));
         } catch (IOException | SecurityException e) {

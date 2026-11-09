@@ -9,6 +9,7 @@ import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.security.UserContext;
+import com.azhukov.agent.core.security.NativeIdentityOrigin;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.mapper.MessageMapper;
 import com.azhukov.agent.persistence.repository.MessageRepository;
@@ -328,6 +329,17 @@ public class OpenAiSessionService {
 
     private String preview(String content) {
         return content.length() > 200 ? content.substring(0, 197) + "..." : content;
+    }
+
+    public OpenAiIdempotencyCache.Scope idempotencyScope(String route, String sessionKeyHeader) {
+        String principal = UserContext.getUserId();
+        var nativeOrigin = NativeIdentityOrigin.current();
+        if (principal == null || (nativeOrigin != null && nativeOrigin.kind() == NativeIdentityOrigin.Kind.DEVELOPMENT)) {
+            return null;
+        }
+        String origin = nativeOrigin != null ? nativeOrigin.kind().name() : "central";
+        return new OpenAiIdempotencyCache.Scope(principal, origin, UserContext.getRole(),
+            effectiveSessionUserId(parseSessionKey(sessionKeyHeader)), route);
     }
 
     private String effectiveSessionUserId(String sessionKey) {

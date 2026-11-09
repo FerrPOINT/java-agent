@@ -24,24 +24,57 @@ class TelegramTransportTest {
                     new byte[0], org.springframework.http.HttpStatus.OK);
             }).build();
         var client = new TelegramClient(transport, mapper, "fixture", 1);
-        var permit = (java.util.concurrent.Semaphore) org.springframework.test.util.ReflectionTestUtils
-            .getField(client, "rateLimiter");
+        var permit = org.mockito.Mockito.mock(io.github.resilience4j.ratelimiter.RateLimiter.class);
+        var waiting = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        org.mockito.Mockito.when(permit.acquirePermission()).thenAnswer(call -> {
+            waiting.countDown();
+            return release.await(2, java.util.concurrent.TimeUnit.SECONDS);
+        });
+        org.springframework.test.util.ReflectionTestUtils.setField(client, "rateLimiter", permit);
         var allowed = new java.util.concurrent.atomic.AtomicBoolean(true);
         var send = new java.util.concurrent.FutureTask<>(() ->
             client.sendMessageChecked(1L, "fixture", null, null, null, null, false, allowed::get));
-        permit.acquire();
         try {
             Thread.startVirtualThread(send);
-            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(2);
-            while (!permit.hasQueuedThreads() && System.nanoTime() < deadline) Thread.sleep(1);
-            assertThat(permit.hasQueuedThreads()).isTrue();
+            assertThat(waiting.await(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
             allowed.set(false);
         } finally {
-            permit.release();
+            release.countDown();
         }
         assertThat(send.get(2, java.util.concurrent.TimeUnit.SECONDS)).isEmpty();
         assertThat(requests).hasValue(0);
-        assertThat(permit.availablePermits()).isEqualTo(1);
+    }
+
+    @Test
+    void jsonAndMultipartShareQuotaWhilePollingRemainsIndependent() {
+        var requests = new AtomicInteger();
+        var mapper = new ObjectMapper();
+        var transport = new BotConfig().telegramRestClient(mapper).mutate()
+            .requestInterceptor((request, bytes, execution) -> {
+                requests.incrementAndGet();
+                var response = new org.springframework.mock.http.client.MockClientHttpResponse(
+                    "{\"ok\":true,\"result\":{\"message_id\":42}}".getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                    org.springframework.http.HttpStatus.OK);
+                response.getHeaders().setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
+                return response;
+            }).build();
+        var client = new TelegramClient(transport, mapper, "fixture", 2);
+        var quota = io.github.resilience4j.ratelimiter.RateLimiter.of("fixture",
+            io.github.resilience4j.ratelimiter.RateLimiterConfig.custom()
+                .limitForPeriod(2).limitRefreshPeriod(java.time.Duration.ofDays(1))
+                .timeoutDuration(java.time.Duration.ZERO).build());
+        org.springframework.test.util.ReflectionTestUtils.setField(client, "rateLimiter", quota);
+
+        assertThat(client.callApi("sendMessage", Map.of("text", "fixture"))).isPresent();
+        var multipart = new org.springframework.http.client.MultipartBodyBuilder();
+        multipart.part("chat_id", "1");
+        assertThat(client.callMultipartApi("sendPhoto", multipart.build())).isPresent();
+        assertThatThrownBy(() -> client.sendMessageChecked(1, "blocked", null, null, null, null, false))
+            .isInstanceOfSatisfying(TelegramClient.LocalSendRefusalException.class, e ->
+                assertThat(e.isRateLimit()).isFalse());
+        assertThat(client.callApi("getUpdates", Map.of())).isPresent();
+        assertThat(requests).hasValue(3);
     }
 
     @Test

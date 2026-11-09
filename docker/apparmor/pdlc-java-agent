@@ -3,6 +3,8 @@ abi <abi/4.0>,
 # Kubernetes CRI requires a loaded profile name. Keep container-level
 # restrictions in this profile as well as the JVM subprocess transition.
 profile pdlc-java-agent flags=(attach_disconnected,mediate_deleted) {
+  # Descriptor-relative file access opens the root directory for traversal.
+  / r,
   /** rwklm,
   /** ix,
   network,

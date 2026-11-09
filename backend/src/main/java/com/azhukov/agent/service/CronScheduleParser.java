@@ -4,7 +4,6 @@ import com.cronutils.model.CronType;
 import com.cronutils.model.definition.CronDefinitionBuilder;
 import com.cronutils.model.time.ExecutionTime;
 import com.cronutils.parser.CronParser;
-import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -15,7 +14,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.springframework.stereotype.Component;
 
-/** Parses user-facing cron schedules and calculates the next delay. */
+/** Parses user-facing schedules and resolves the exact next execution time. */
 @Component
 public class CronScheduleParser {
     static final String KIND_ONCE = "once";
@@ -33,53 +32,54 @@ public class CronScheduleParser {
     private final CronParser cronParser = new CronParser(
         CronDefinitionBuilder.instanceDefinitionFor(CronType.UNIX));
 
-    public record ScheduleInfo(String kind, long delaySeconds) {}
+    public record ScheduleInfo(String kind, Instant nextRunAt) {}
 
     ScheduleInfo parse(String schedule) {
+        return parse(schedule, Instant.now(), ZoneId.systemDefault());
+    }
+
+    ScheduleInfo parse(String schedule, Instant now, ZoneId zone) {
         if (schedule == null || schedule.isBlank()) {
             throw new IllegalArgumentException("Schedule must not be blank");
         }
         String trimmed = schedule.trim();
         Matcher everyMatcher = EVERY_PREFIX.matcher(trimmed);
         if (everyMatcher.matches()) {
-            return new ScheduleInfo(KIND_INTERVAL, parseDurationSeconds(everyMatcher.group(1)));
+            return new ScheduleInfo(KIND_INTERVAL, now.plusSeconds(parseDurationSeconds(everyMatcher.group(1))));
         }
         if (ISO_TIMESTAMP_PATTERN.matcher(trimmed).matches()) {
             try {
-                LocalDateTime dateTime = parseIsoTimestamp(trimmed);
-                return new ScheduleInfo(KIND_ONCE, Math.max(1,
-                    Duration.between(LocalDateTime.now(), dateTime).getSeconds()));
+                return oneShot(parseIsoTimestamp(trimmed, zone), now);
             } catch (DateTimeParseException ignored) {
                 // Continue to the other schedule forms for a useful error below.
             }
         }
         try {
             Instant instant = Instant.parse(trimmed);
-            return new ScheduleInfo(KIND_ONCE, Math.max(1, Duration.between(Instant.now(), instant).getSeconds()));
+            return oneShot(instant, now);
         } catch (DateTimeParseException ignored) {
             // Not an offset timestamp.
         }
         if (trimmed.matches("\\d{4}-\\d{2}-\\d{2}")) {
             try {
                 LocalDateTime dateTime = LocalDateTime.parse(trimmed + "T00:00:00");
-                return new ScheduleInfo(KIND_ONCE, Math.max(1,
-                    Duration.between(LocalDateTime.now(), dateTime).getSeconds()));
+                return oneShot(dateTime.atZone(zone).toInstant(), now);
             } catch (DateTimeParseException invalid) {
                 throw new IllegalArgumentException("Invalid schedule date: " + trimmed, invalid);
             }
         }
         if (DURATION_PATTERN.matcher(trimmed).matches()) {
-            return new ScheduleInfo(KIND_ONCE, parseDurationSeconds(trimmed));
+            return new ScheduleInfo(KIND_ONCE, now.plusSeconds(parseDurationSeconds(trimmed)));
         }
         String[] parts = trimmed.split("\\s+");
         if (parts.length >= 5 && isCronExpression(parts)) {
-            return new ScheduleInfo(KIND_CRON, calculateCronDelaySeconds(trimmed));
+            return new ScheduleInfo(KIND_CRON, nextCronExecution(trimmed, now.atZone(zone)));
         }
         throw new IllegalArgumentException("Invalid schedule: " + schedule);
     }
 
-    long calculateDelaySeconds(String schedule) {
-        return Math.max(1, parse(schedule).delaySeconds());
+    private static ScheduleInfo oneShot(Instant due, Instant now) {
+        return new ScheduleInfo(KIND_ONCE, due.isAfter(now) ? due : now.plusSeconds(1));
     }
 
     void validate(String schedule) {
@@ -93,12 +93,11 @@ public class CronScheduleParser {
         return true;
     }
 
-    private LocalDateTime parseIsoTimestamp(String value) {
+    private Instant parseIsoTimestamp(String value, ZoneId zone) {
         try {
-            return ZonedDateTime.parse(value, DateTimeFormatter.ISO_DATE_TIME)
-                .withZoneSameInstant(ZoneId.systemDefault()).toLocalDateTime();
+            return ZonedDateTime.parse(value, DateTimeFormatter.ISO_DATE_TIME).toInstant();
         } catch (DateTimeParseException ignored) {
-            return LocalDateTime.parse(value, DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+            return LocalDateTime.parse(value, DateTimeFormatter.ISO_LOCAL_DATE_TIME).atZone(zone).toInstant();
         }
     }
 
@@ -106,20 +105,19 @@ public class CronScheduleParser {
         Matcher matcher = DURATION_PATTERN.matcher(value.trim());
         if (!matcher.matches()) throw new IllegalArgumentException("Invalid duration: " + value);
         long amount = Long.parseLong(matcher.group(1));
-        return switch (matcher.group(2).toLowerCase()) {
+        long seconds = switch (matcher.group(2).toLowerCase(java.util.Locale.ROOT)) {
             case "s" -> amount;
             case "m" -> amount * 60;
             case "h" -> amount * 3600;
             case "d" -> amount * 86400;
             default -> throw new IllegalArgumentException("Invalid duration unit: " + value);
         };
+        return Math.max(1, seconds);
     }
 
-    private long calculateCronDelaySeconds(String expression) {
-        ZonedDateTime now = ZonedDateTime.now();
+    private Instant nextCronExecution(String expression, ZonedDateTime now) {
         ExecutionTime executionTime = ExecutionTime.forCron(cronParser.parse(expression).validate());
-        ZonedDateTime next = executionTime.nextExecution(now)
+        return executionTime.nextExecution(now).map(ZonedDateTime::toInstant)
             .orElseThrow(() -> new IllegalArgumentException("Cron expression has no next execution: " + expression));
-        return Math.max(1, Duration.between(now, next).getSeconds());
     }
 }

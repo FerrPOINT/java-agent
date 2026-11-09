@@ -48,6 +48,69 @@ class CheckpointManagerTest {
     }
 
     @Test
+    void snapshotDoesNotReadOutsideViaLinksOrBlockOnFifo() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        properties.getCore().setWorkingDirectory(workspace.toString());
+        Path outside = Files.createDirectory(tempDir.resolve("outside"));
+        Files.writeString(outside.resolve("private.txt"), "secret");
+        Files.writeString(workspace.resolve("normal.txt"), "visible");
+        Files.createSymbolicLink(workspace.resolve("linked-dir"), outside);
+        Files.createSymbolicLink(workspace.resolve("linked-file"), outside.resolve("private.txt"));
+        assertThat(new ProcessBuilder("mkfifo", workspace.resolve("named-pipe").toString()).start().waitFor()).isZero();
+        when(checkpointRepository.save(any(CheckpointEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(checkpointRepository.findAll(any(org.springframework.data.domain.Sort.class))).thenReturn(List.of());
+
+        CheckpointEntity saved = org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(
+            java.time.Duration.ofSeconds(3), () -> manager.snapshot("workspace"));
+
+        assertThat(saved.getFiles()).extracting(CheckpointFileEntity::getFilePath).containsExactly("normal.txt");
+    }
+
+    @Test
+    void replacedCheckpointDirectoryCannotRedirectRestore() throws Exception {
+        var root = Files.createDirectory(tempDir.resolve("workspace"));
+        var directory = Files.createDirectory(root.resolve("directory"));
+        Files.writeString(directory.resolve("document"), "original");
+        var outside = Files.createDirectory(tempDir.resolve("outside"));
+        var sentinel = Files.writeString(outside.resolve("document"), "untouched");
+        properties.getCore().setWorkingDirectory(root.toString());
+        when(checkpointRepository.save(any(CheckpointEntity.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(checkpointRepository.findAll(any(org.springframework.data.domain.Sort.class))).thenReturn(List.of());
+        CheckpointEntity checkpoint = manager.snapshot("checkpoint");
+        UUID id = UUID.randomUUID();
+        when(checkpointRepository.findById(id)).thenReturn(java.util.Optional.of(checkpoint));
+        when(checkpointFileRepository.findByCheckpointId(id)).thenReturn(checkpoint.getFiles());
+
+        Files.move(directory, root.resolve("old-directory"));
+        Files.createSymbolicLink(directory, outside);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> manager.restore(id))
+            .isInstanceOf(IllegalStateException.class).hasMessageContaining("Restore failed after restoring []");
+        assertThat(Files.readString(sentinel)).isEqualTo("untouched");
+    }
+
+    @Test
+    void invalidHistoricalPathIsRejectedBeforeRestoringAnyFile() throws Exception {
+        Path outside = Files.writeString(tempDir.resolve("outside"), "untouched");
+        Path root = Files.createDirectory(tempDir.resolve("workspace"));
+        properties.getCore().setWorkingDirectory(root.toString());
+        Path normal = Files.writeString(root.resolve("normal.txt"), "current");
+        for (String invalid : List.of("../outside", outside.toString())) {
+            UUID id = UUID.randomUUID();
+            CheckpointEntity checkpoint = new CheckpointEntity();
+            var manifest = new ObjectMapper().createArrayNode();
+            manifest.addObject().put("path", "normal.txt").put("hash", "old");
+            manifest.addObject().put("path", invalid).put("hash", "old");
+            checkpoint.setFilesJson(manifest.toString());
+            when(checkpointRepository.findById(id)).thenReturn(java.util.Optional.of(checkpoint));
+
+            org.junit.jupiter.api.Assertions.assertThrows(RuntimeException.class, () -> manager.restore(id));
+            verifyNoInteractions(checkpointFileRepository);
+            assertThat(Files.readString(normal)).isEqualTo("current");
+            assertThat(Files.readString(outside)).isEqualTo("untouched");
+        }
+    }
+
+    @Test
     void snapshotCreatesEntity() {
         when(checkpointRepository.save(any(CheckpointEntity.class))).thenAnswer(inv -> inv.getArgument(0));
         when(checkpointRepository.findAll(org.mockito.ArgumentMatchers.any(org.springframework.data.domain.Sort.class))).thenReturn(List.of());

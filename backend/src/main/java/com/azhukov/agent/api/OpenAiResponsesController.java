@@ -18,6 +18,7 @@ import com.azhukov.agent.core.security.ApiErrorTextRedactor;
 import com.azhukov.agent.core.security.Redactor;
 import com.azhukov.agent.core.tool.ToolRegistry;
 import com.azhukov.agent.service.OpenAiIdempotencyCache;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.service.ApiRunAdmissionService;
 import com.azhukov.agent.service.OpenAiResponseStore;
 import com.azhukov.agent.service.OpenAiResponseStore.StoredResponse;
@@ -152,24 +153,21 @@ public class OpenAiResponsesController {
             StoredResponse storedPrevious = previous;
             List<Message> storedPriorHistory = priorHistory;
             String storedInstructions = instructions;
+            var scope = hasText(idempotencyKey)
+                ? openAiSessionService.idempotencyScope("responses", sessionKeyHeader) : null;
             return idempotencyCache.getOrCompute(
+                scope,
                 idempotencyKey,
-                () -> idempotencyCache.fingerprint(
-                    "responses",
-                    objectMapper,
-                    request,
-                    sessionIdHeader,
-                    sessionKeyHeader),
-                () -> syncResponse(
-                    request,
-                    sessionIdHeader,
-                    sessionKeyHeader,
-                    inputMessages,
-                    storedPriorHistory,
-                    storedInstructions,
-                    requestedModel,
-                    storedPrevious)
-            );
+                () -> idempotencyCache.fingerprint("responses", objectMapper, request, sessionIdHeader, sessionKeyHeader),
+                () -> syncResponse(request, sessionIdHeader, sessionKeyHeader, inputMessages,
+                    storedPriorHistory, storedInstructions, requestedModel, storedPrevious),
+                replay -> {
+                    UserContext.requireCurrentAccess();
+                    if (replay.sessionId() != null) {
+                        openAiSessionService.resolveStoredResponseSession(replay.sessionId(), sessionKeyHeader);
+                    }
+                }
+            ).response();
         }
         OpenAiSessionContext sessionContext = resolveSession(
             sessionIdHeader,
@@ -193,7 +191,7 @@ public class OpenAiResponsesController {
             requestedModel);
     }
 
-    private ResponseEntity<?> syncResponse(OpenAiResponsesRequest request,
+    private OpenAiIdempotencyCache.Result syncResponse(OpenAiResponsesRequest request,
                                            String sessionIdHeader,
                                            String sessionKeyHeader,
                                            List<Message> inputMessages,
@@ -212,7 +210,7 @@ public class OpenAiResponsesController {
         ModelRequestOptions requestOptions = requestOptions(request, requestedModel);
         var reservation = runAdmissionService.tryAcquire();
         if (reservation.isEmpty()) {
-            return concurrencyLimitedResponse();
+            return new OpenAiIdempotencyCache.Result(concurrencyLimitedResponse(), null);
         }
         AgentCallResult result;
         try (ApiRunAdmissionService.Reservation ignored = reservation.get()) {
@@ -236,10 +234,10 @@ public class OpenAiResponsesController {
             ), request.conversation());
         }
 
-        return ResponseEntity.ok()
+        return new OpenAiIdempotencyCache.Result(ResponseEntity.ok()
             .headers(responseHeaders(sessionContext))
             .contentType(MediaType.APPLICATION_JSON)
-            .body(responseBody);
+            .body(responseBody), sessionContext.session().id());
     }
 
     private ResponseEntity<?> streamResponse(OpenAiResponsesRequest request,
