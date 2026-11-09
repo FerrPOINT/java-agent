@@ -2,20 +2,22 @@ package com.azhukov.agent.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 @Service
@@ -24,12 +26,12 @@ public class OpenAiIdempotencyCache {
     private static final int MAX_ITEMS = 1_000;
     private static final Duration TTL = Duration.ofMinutes(5);
 
-    private final Map<String, CachedEntry> store = new LinkedHashMap<>(16, 0.75f, true);
-    private final ConcurrentMap<CacheKey, CompletableFuture<CachedValue>> inflight = new ConcurrentHashMap<>();
+    private final Map<RequestKey, CachedEntry> store = new LinkedHashMap<>(16, 0.75f, true);
+    private final Map<InFlightKey, CompletableFuture<Result>> inflight = new HashMap<>();
 
-    public String fingerprint(String scope, Object request, ObjectMapper objectMapper) {
-        return fingerprint(scope, objectMapper, request);
-    }
+    public record Scope(String principal, String origin, String role, String owner, String route) {}
+
+    public record Result(ResponseEntity<?> response, UUID sessionId) {}
 
     public String fingerprint(String scope, ObjectMapper objectMapper, Object... parts) {
         try {
@@ -47,59 +49,62 @@ public class OpenAiIdempotencyCache {
         }
     }
 
-    public <T> T getOrCompute(String idempotencyKey, Supplier<String> fingerprintSupplier, Supplier<T> supplier) {
-        if (idempotencyKey == null || idempotencyKey.isBlank()) {
+    public Result getOrCompute(Scope scope, String idempotencyKey, Supplier<String> fingerprintSupplier,
+                               Supplier<Result> supplier, Consumer<Result> verifyReplay) {
+        if (scope == null || idempotencyKey == null || idempotencyKey.isBlank()) {
             return supplier.get();
         }
-        return getOrCompute(idempotencyKey, fingerprintSupplier.get(), supplier);
-    }
-
-    public <T> T getOrCompute(String idempotencyKey, String fingerprint, Supplier<T> supplier) {
-        if (idempotencyKey == null || idempotencyKey.isBlank()) {
-            return supplier.get();
-        }
-        String key = idempotencyKey.trim();
-        CachedEntry cached;
+        String fingerprint = fingerprintSupplier.get();
+        RequestKey key = new RequestKey(scope, idempotencyKey.trim());
+        InFlightKey runningKey = new InFlightKey(key, fingerprint);
+        CompletableFuture<Result> created = new CompletableFuture<>();
+        CompletableFuture<Result> running = null;
+        Result hit = null;
         synchronized (store) {
             purgeExpiredLocked();
-            cached = store.get(key);
+            CachedEntry cached = store.get(key);
             if (cached != null && cached.fingerprint().equals(fingerprint)) {
-                return cached.value().get();
+                hit = cached.value();
+            } else {
+                running = inflight.putIfAbsent(runningKey, created);
             }
         }
-
-        CacheKey inflightKey = new CacheKey(key, fingerprint);
-        CompletableFuture<CachedValue> created = new CompletableFuture<>();
-        CompletableFuture<CachedValue> running = inflight.putIfAbsent(inflightKey, created);
-        if (running == null) {
-            try {
-                T result = supplier.get();
-                CachedValue value = new CachedValue(result);
-                synchronized (store) {
-                    store.put(key, new CachedEntry(fingerprint, value, Instant.now()));
-                    purgeExpiredLocked();
+        if (hit != null) {
+            verifyReplay.accept(hit);
+            return hit;
+        }
+        if (running != null) {
+            Result result = await(running);
+            verifyReplay.accept(result);
+            return result;
+        }
+        try {
+            Result result = supplier.get();
+            synchronized (store) {
+                if (result.response().getStatusCode().is2xxSuccessful()) {
+                    store.put(key, new CachedEntry(fingerprint, result, Instant.now()));
                     evictOldestLocked();
                 }
-                created.complete(value);
-                return result;
-            } catch (RuntimeException | Error e) {
-                created.completeExceptionally(e);
-                throw e;
-            } finally {
-                inflight.remove(inflightKey, created);
+            }
+            created.complete(result);
+            return result;
+        } catch (RuntimeException | Error e) {
+            created.completeExceptionally(e);
+            throw e;
+        } finally {
+            synchronized (store) {
+                inflight.remove(runningKey);
             }
         }
+    }
 
+    private static Result await(CompletableFuture<Result> running) {
         try {
-            return running.join().get();
+            return running.join();
         } catch (CompletionException e) {
             Throwable cause = e.getCause();
-            if (cause instanceof RuntimeException runtimeException) {
-                throw runtimeException;
-            }
-            if (cause instanceof Error error) {
-                throw error;
-            }
+            if (cause instanceof RuntimeException runtimeException) throw runtimeException;
+            if (cause instanceof Error error) throw error;
             throw e;
         }
     }
@@ -115,21 +120,16 @@ public class OpenAiIdempotencyCache {
     }
 
     private void evictOldestLocked() {
-        Iterator<String> keys = store.keySet().iterator();
+        Iterator<RequestKey> keys = store.keySet().iterator();
         while (store.size() > MAX_ITEMS && keys.hasNext()) {
             keys.next();
             keys.remove();
         }
     }
 
-    @SuppressWarnings("unchecked")
-    private record CachedValue(Object value) {
-        <T> T get() {
-            return (T) value;
-        }
-    }
+    private record CachedEntry(String fingerprint, Result value, Instant createdAt) {}
 
-    private record CachedEntry(String fingerprint, CachedValue value, Instant createdAt) {}
+    private record RequestKey(Scope scope, String key) {}
 
-    private record CacheKey(String key, String fingerprint) {}
+    private record InFlightKey(RequestKey key, String fingerprint) {}
 }
