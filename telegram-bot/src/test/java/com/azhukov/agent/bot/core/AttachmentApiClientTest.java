@@ -59,6 +59,9 @@ class AttachmentApiClientTest {
                 .withSuccess(new byte[] {1, 2}, type).header("Content-Disposition", "inline; filename=\"report.pdf\""));
         server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(uri))
             .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators
+                .withNoContent());
+        server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(uri))
+            .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators
                 .withStatus(org.springframework.http.HttpStatus.CONFLICT));
 
         server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(
@@ -72,6 +75,8 @@ class AttachmentApiClientTest {
         assertThat(artifact.mimeType()).isEqualTo("application/pdf");
         assertThat(artifact.bytes()).containsExactly(1, 2);
         assertThat(api.claimOutbound("att_test", "101", session)).isEmpty();
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> api.claimOutbound("att_test", "101", session))
+            .isInstanceOf(AttachmentApiClient.OutboundUnavailable.class);
         api.markOutboundDelivered("att_test", "101", session, 12);
         server.verify();
     }

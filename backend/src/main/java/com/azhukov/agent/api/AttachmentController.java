@@ -123,6 +123,7 @@ public class AttachmentController {
             @RequestParam("sessionId") UUID sessionId) {
         String owner = requireGatewayOwner(ownerId);
         OutboundStatus status = requireOutboundArtifact(id, owner, sessionId);
+        if (status == OutboundStatus.DELIVERED) return ResponseEntity.noContent().build();
         requireProtectedOutbound();
         if (status == OutboundStatus.CLAIMED) {
             throw alreadyClaimed();
@@ -131,6 +132,9 @@ public class AttachmentController {
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Artifact content is unavailable"));
         var response = contentResponse(content.artifact(), new org.springframework.core.io.ByteArrayResource(content.bytes()));
         if (!service().claimOutbound(id, owner, sessionId)) {
+            if (requireOutboundArtifact(id, owner, sessionId) == OutboundStatus.DELIVERED) {
+                return ResponseEntity.noContent().build();
+            }
             throw alreadyClaimed();
         }
         return response;

@@ -16,12 +16,18 @@ import java.io.IOException;
 import java.util.Arrays;
 import java.util.Locale;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.AtomicMoveNotSupportedException;
-import java.nio.file.Files;
+import com.azhukov.agent.core.security.SecureFileAccess;
+import java.nio.ByteBuffer;
+import java.nio.channels.Channels;
 import java.nio.file.LinkOption;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
+import java.nio.file.SecureDirectoryStream;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.BasicFileAttributeView;
+import java.nio.file.attribute.PosixFileAttributeView;
+import java.util.Set;
+import java.util.UUID;
 
 final class TextFileWriteSupport {
 
@@ -31,33 +37,51 @@ final class TextFileWriteSupport {
     private TextFileWriteSupport() {
     }
 
-    static WriteOutcome write(Path requestedPath, String content) throws IOException {
-        validateCandidate(requestedPath, content);
-
-        Path target = FileToolSafety.resolveWritableTarget(requestedPath);
-        Path parent = target.getParent();
-        if (parent != null) {
-            Files.createDirectories(parent);
-        }
-
-        byte[] existingBytes = readExistingBytes(target);
-        String adjusted = preserveExistingEncodingShape(existingBytes, content);
-        byte[] bytes = adjusted.getBytes(StandardCharsets.UTF_8);
-
-        Path temp = Files.createTempFile(parent, ".java-agent-write-", ".tmp");
-        try {
-            copyExistingPermissions(target, temp);
-            Files.write(temp, bytes, StandardOpenOption.TRUNCATE_EXISTING);
-            moveReplacing(temp, target);
-            verifyBytesPersisted(target, bytes);
-            return new WriteOutcome(target, adjusted, bytes.length, true);
-        } catch (IOException | RuntimeException e) {
+    static WriteOutcome write(Path path, String content) throws IOException {
+        validateCandidate(path, content);
+        try (var parent = SecureFileAccess.openOrCreateDirectory(path.getParent())) {
+            Path name = path.getFileName();
+            byte[] existing = readExistingBytes(parent, name);
+            String adjusted = preserveExistingEncodingShape(existing, content);
+            byte[] bytes = adjusted.getBytes(StandardCharsets.UTF_8);
+            Path temp = Path.of(".java-agent-write-" + UUID.randomUUID() + ".tmp");
+            boolean created = false;
             try {
-                Files.deleteIfExists(temp);
-            } catch (IOException ignored) {
-                // Best-effort cleanup after a failed write.
+                try (var channel = parent.newByteChannel(temp,
+                        Set.of(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS),
+                        java.nio.file.attribute.PosixFilePermissions.asFileAttribute(
+                            java.nio.file.attribute.PosixFilePermissions.fromString("rw-------")))) {
+                    created = true;
+                    if (existing != null) copyExistingPermissions(parent, name, temp);
+                    var buffer = ByteBuffer.wrap(bytes);
+                    while (buffer.hasRemaining()) channel.write(buffer);
+                }
+                parent.move(temp, parent, name);
+                created = false;
+                if (!Arrays.equals(bytes, readExistingBytes(parent, name))) {
+                    throw new IOException("Post-write verification failed for " + path + ": re-read it before retrying.");
+                }
+                return new WriteOutcome(path, adjusted, bytes.length, true);
+            } catch (IOException | RuntimeException error) {
+                if (created) {
+                    try {
+                        parent.deleteFile(temp);
+                    } catch (IOException cleanup) {
+                        error.addSuppressed(cleanup);
+                    }
+                }
+                throw error;
             }
-            throw e;
+        }
+    }
+
+    static String read(Path path) throws IOException {
+        try (var channel = SecureFileAccess.openRead(path);
+             var reader = Channels.newReader(channel, StandardCharsets.UTF_8.newDecoder(), -1)) {
+            var text = new StringBuilder();
+            char[] buffer = new char[4096];
+            for (int n; (n = reader.read(buffer)) != -1;) text.append(buffer, 0, n);
+            return text.toString();
         }
     }
 
@@ -135,14 +159,18 @@ final class TextFileWriteSupport {
         return flattened.substring(0, 297) + "...";
     }
 
-    private static byte[] readExistingBytes(Path target) throws IOException {
-        if (!Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+    private static byte[] readExistingBytes(SecureDirectoryStream<Path> parent, Path name) throws IOException {
+        try {
+            var attributes = parent.getFileAttributeView(name, BasicFileAttributeView.class, LinkOption.NOFOLLOW_LINKS);
+            if (!attributes.readAttributes().isRegularFile()) {
+                throw new IOException("Target is not a regular file: " + name);
+            }
+        } catch (NoSuchFileException missing) {
             return null;
         }
-        if (!Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS)) {
-            throw new IOException("Target is not a regular file: " + target);
+        try (var channel = parent.newByteChannel(name, Set.of(StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS))) {
+            return Channels.newInputStream(channel).readAllBytes();
         }
-        return Files.readAllBytes(target);
     }
 
     private static String preserveExistingEncodingShape(byte[] existingBytes, String content) {
@@ -207,32 +235,11 @@ final class TextFileWriteSupport {
         }
     }
 
-    private static void copyExistingPermissions(Path target, Path temp) {
-        if (!Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
-            return;
-        }
-        try {
-            Files.setPosixFilePermissions(temp, Files.getPosixFilePermissions(target, LinkOption.NOFOLLOW_LINKS));
-        } catch (IOException | UnsupportedOperationException ignored) {
-            // Windows and some file systems do not support POSIX permissions.
-        }
-    }
-
-    private static void moveReplacing(Path temp, Path target) throws IOException {
-        try {
-            Files.move(temp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-        } catch (AtomicMoveNotSupportedException e) {
-            Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
-        }
-    }
-
-    private static void verifyBytesPersisted(Path target, byte[] expected) throws IOException {
-        byte[] actual = Files.readAllBytes(target);
-        if (!Arrays.equals(expected, actual)) {
-            throw new IOException(
-                "Post-write verification failed for " + target
-                    + ": on-disk content differs from the intended write. The file may be corrupt; "
-                    + "re-read it before retrying.");
+    private static void copyExistingPermissions(SecureDirectoryStream<Path> parent, Path name, Path temp) throws IOException {
+        var original = parent.getFileAttributeView(name, PosixFileAttributeView.class, LinkOption.NOFOLLOW_LINKS);
+        if (original != null) {
+            parent.getFileAttributeView(temp, PosixFileAttributeView.class, LinkOption.NOFOLLOW_LINKS)
+                .setPermissions(original.readAttributes().permissions());
         }
     }
 

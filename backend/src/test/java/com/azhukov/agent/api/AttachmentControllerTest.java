@@ -83,18 +83,19 @@ class AttachmentControllerTest {
         }
     }
 
-    @Test
-    void previouslyClaimedArtifactReturnsConflictWithoutReadingContent() throws Exception {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.EnumSource(value = OutboundStatus.class, names = {"CLAIMED", "DELIVERED"})
+    void priorAttemptReturnsItsActualStatusWithoutReadingContent(OutboundStatus outboundStatus) throws Exception {
         UUID sessionId = UUID.randomUUID();
         UserContext.set("gateway", UserContext.ROLE_ADMIN);
         com.azhukov.agent.core.security.NativeIdentityOrigin.bind(new com.azhukov.agent.core.security.NativeIdentityOrigin.Origin(
             com.azhukov.agent.core.security.NativeIdentityOrigin.Kind.GATEWAY_KEY, "gateway", true));
         try {
-            when(service.outboundStatus("att_1", "701938011", sessionId)).thenReturn(OutboundStatus.CLAIMED);
+            when(service.outboundStatus("att_1", "701938011", sessionId)).thenReturn(outboundStatus);
             when(service.hasProtectedOutbound()).thenReturn(true);
             mockMvc.perform(post("/api/v1/attachments/att_1/outbound")
                     .param("ownerId", "701938011").param("sessionId", sessionId.toString()))
-                .andExpect(status().isConflict());
+                .andExpect(status().is(outboundStatus == OutboundStatus.DELIVERED ? 204 : 409));
             org.mockito.Mockito.verify(service, org.mockito.Mockito.never()).verifiedContent(anyString(), anyString());
             org.mockito.Mockito.verify(service, org.mockito.Mockito.never()).claimOutbound(anyString(), anyString(), any());
         } finally {

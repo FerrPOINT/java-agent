@@ -175,14 +175,16 @@ public class AttachmentArtifactService {
         return "MEDIA:artifact:" + result.id();
     }
 
-    public enum OutboundStatus { UNAVAILABLE, UNCLAIMED, CLAIMED }
+    public enum OutboundStatus { UNAVAILABLE, UNCLAIMED, CLAIMED, DELIVERED }
 
     public OutboundStatus outboundStatus(String id, String owner, UUID sessionId) {
         return findEntity(id, owner).filter(artifact -> sessionId.equals(artifact.getSessionId()))
             .filter(artifact -> artifact.getExpiresAt().isAfter(Instant.now()))
             .filter(artifact -> "received".equals(artifact.getState()) || "delivered".equals(artifact.getState()))
-            .map(artifact -> "received".equals(artifact.getState()) && artifact.getOutboundClaimedAt() == null
-                ? OutboundStatus.UNCLAIMED : OutboundStatus.CLAIMED)
+            .map(artifact -> {
+                if ("delivered".equals(artifact.getState())) return OutboundStatus.DELIVERED;
+                return artifact.getOutboundClaimedAt() == null ? OutboundStatus.UNCLAIMED : OutboundStatus.CLAIMED;
+            })
             .orElse(OutboundStatus.UNAVAILABLE);
     }
 
