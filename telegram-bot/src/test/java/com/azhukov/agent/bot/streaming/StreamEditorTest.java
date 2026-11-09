@@ -250,13 +250,13 @@ class StreamEditorTest {
     void finalizeStreamDoesNotResendWhenEditIsUnconfirmed() {
         StreamSession session = editor.sessionFor(123L);
         session.currentMessageId.set(42L);
-        doReturn(Optional.empty()).when(client).editFinalMessage(123L, 42L, "Final text", "MarkdownV2");
+        doReturn(Optional.empty()).when(client).editFinalMessage(eq(123L), eq(42L), eq("Final text"), eq("MarkdownV2"), any());
 
         assertThat(editor.finalizeStream(123L, 42L, "Final text")).isFalse();
 
         assertThat(editor.hasUnconfirmedDelivery(123L)).isTrue();
         assertThat(editor.getSession(123L)).isSameAs(session);
-        verify(client).editFinalMessage(123L, 42L, "Final text", "MarkdownV2");
+        verify(client).editFinalMessage(eq(123L), eq(42L), eq("Final text"), eq("MarkdownV2"), any());
         verifyNoMoreInteractions(client);
     }
 
@@ -277,7 +277,7 @@ class StreamEditorTest {
         assertThat(result).isTrue();
         verify(client).editMessageText(123L, 42L, "Final text", "MarkdownV2", false);
         verify(client, never()).deleteMessage(123L, 42L);
-        verify(client, never()).sendMessageChecked(eq(123L), eq("Final text"), any(), any(), any(), isNull(), anyBoolean());
+        verify(client, never()).sendMessageChecked(eq(123L), eq("Final text"), any(), any(), any(), isNull(), anyBoolean(), any());
     }
 
     @Test
@@ -295,7 +295,7 @@ class StreamEditorTest {
 
         assertThat(result).isTrue();
         verify(client).editMessageText(eq(123L), eq(42L), anyString(), eq("MarkdownV2"), eq(false));
-        verify(client, never()).callApi(eq("sendRichMessage"), any());
+        verify(client, never()).callApi(eq("sendRichMessage"), any(), any());
         verify(client, never()).deleteMessage(123L, 42L);
     }
 
@@ -329,7 +329,7 @@ class StreamEditorTest {
         StreamSession streamSession = freshEditor.sessionFor(123L);
         streamSession.streamStartTime = System.currentTimeMillis() - 1_000L;
         streamSession.currentMessageId.set(42L);
-        when(client.sendMessageChecked(anyLong(), anyString(), anyString(), any(), any(), isNull(), anyBoolean()))
+        when(client.sendMessageChecked(anyLong(), anyString(), anyString(), any(), any(), isNull(), anyBoolean(), any()))
             .thenReturn(Optional.of(99L));
 
         boolean result = freshEditor.finalizeStream(123L, 42L, "Final text");
@@ -704,15 +704,15 @@ class StreamEditorTest {
             assertThat(preview.editStream(123L, 42L, text)).isTrue();
             verify(client).editMessageText(eq(123L), eq(42L), eq("a".repeat(18) + "|"), isNull(), anyBoolean());
             verify(client, times(1)).sendMessage(eq(123L), anyString(), any(), any(), any(), anyBoolean());
-            verify(client, never()).sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean());
+            verify(client, never()).sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean(), any());
 
-            when(client.sendMessageChecked(eq(123L), anyString(), isNull(), any(), any(), any(), anyBoolean()))
+            when(client.sendMessageChecked(eq(123L), anyString(), isNull(), any(), any(), any(), anyBoolean(), any()))
                 .thenReturn(Optional.of(43L));
             when(client.deleteMessage(123L, 42L)).thenReturn(true);
             assertThat(preview.finalizeStream(123L, 42L, text)).isTrue();
 
             var chunks = org.mockito.ArgumentCaptor.forClass(String.class);
-            verify(client, times(2)).sendMessageChecked(eq(123L), chunks.capture(), isNull(), any(), any(), any(), anyBoolean());
+            verify(client, times(2)).sendMessageChecked(eq(123L), chunks.capture(), isNull(), any(), any(), any(), anyBoolean(), any());
             assertThat(chunks.getAllValues().stream().map(part -> part.substring(part.indexOf(' ') + 1))
                 .collect(java.util.stream.Collectors.joining())).isEqualTo(text);
             verify(client).deleteMessage(123L, 42L);

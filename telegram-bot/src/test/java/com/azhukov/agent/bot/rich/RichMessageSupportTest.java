@@ -87,9 +87,9 @@ class RichMessageSupportTest {
         when(sendResponse.isSuccess()).thenReturn(true);
         when(sendResponse.resultAsMap()).thenReturn(sendResult);
         when(sendResponse.resultMessageIdAsLong()).thenReturn(42L);
-        when(client.callApi(eq("sendRichMessage"), any())).thenReturn(Optional.of(sendResponse));
+        when(client.callApi(eq("sendRichMessage"), any(), any())).thenReturn(Optional.of(sendResponse));
 
-        Optional<Long> msgId = support.sendRichMessage(123L, "# Hello\n\n| Col1 | Col2 |\n|---|---|\n| A | B |", null, null);
+        Optional<Long> msgId = support.sendRichMessage(123L, "# Hello\n\n| Col1 | Col2 |\n|---|---|\n| A | B |", null, null, () -> true);
         assertThat(msgId).contains(42L);
     }
 
@@ -107,9 +107,9 @@ class RichMessageSupportTest {
         TelegramResponse failResponse = mock(TelegramResponse.class);
         when(failResponse.isSuccess()).thenReturn(false);
         when(failResponse.errorMessage()).thenReturn("Bad Request: invalid markdown");
-        when(client.callApi(eq("sendRichMessage"), any())).thenReturn(Optional.of(failResponse));
+        when(client.callApi(eq("sendRichMessage"), any(), any())).thenReturn(Optional.of(failResponse));
 
-        Optional<Long> msgId = support.sendRichMessage(123L, "content", null, null);
+        Optional<Long> msgId = support.sendRichMessage(123L, "content", null, null, () -> true);
         assertThat(msgId).isEmpty();
     }
 
@@ -124,17 +124,17 @@ class RichMessageSupportTest {
         when(client.callApi("getMe", Map.of())).thenReturn(Optional.of(meResponse));
 
         var rejection = new com.azhukov.agent.bot.client.TelegramApiException(404, "method not found");
-        when(client.callApi(eq("sendRichMessage"), any())).thenThrow(rejection);
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> support.sendRichMessage(123L, "content", null, null))
+        when(client.callApi(eq("sendRichMessage"), any(), any())).thenThrow(rejection);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> support.sendRichMessage(123L, "content", null, null, () -> true))
             .isSameAs(rejection);
         assertThat(support.formatWasRejected(rejection)).isTrue();
         assertThat(support.isRichSendDisabled()).isTrue();
 
         // Second call should skip rich entirely
-        Optional<Long> msgId2 = support.sendRichMessage(123L, "content2", null, null);
+        Optional<Long> msgId2 = support.sendRichMessage(123L, "content2", null, null, () -> true);
         assertThat(msgId2).isEmpty();
         // Should not call sendRichMessage again
-        verify(client, times(1)).callApi(eq("sendRichMessage"), any());
+        verify(client, times(1)).callApi(eq("sendRichMessage"), any(), any());
     }
 
     @Test
@@ -153,9 +153,9 @@ class RichMessageSupportTest {
         when(sendResponse.isSuccess()).thenReturn(true);
         when(sendResponse.resultAsMap()).thenReturn(sendResult);
         when(sendResponse.resultMessageIdAsLong()).thenReturn(99L);
-        when(client.callApi(eq("sendRichMessage"), any())).thenReturn(Optional.of(sendResponse));
+        when(client.callApi(eq("sendRichMessage"), any(), any())).thenReturn(Optional.of(sendResponse));
 
-        support.sendRichMessage(123L, "content", 55L, 77L);
+        support.sendRichMessage(123L, "content", 55L, 77L, () -> true);
         // Verify the API was called with correct params
         verify(client).callApi(eq("sendRichMessage"), argThat(params -> {
             Object chatId = params.get("chat_id");
@@ -166,7 +166,7 @@ class RichMessageSupportTest {
                 && richMsg instanceof Map
                 && replyParams instanceof Map && ((Map<?,?>) replyParams).get("message_id").equals(55L)
                 && threadId.equals(77L);
-        }));
+        }), any());
     }
 
     @Test

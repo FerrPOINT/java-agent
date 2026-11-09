@@ -298,14 +298,15 @@ public class TelegramClient {
     }
 
     /** A final edit reports Telegram's explicit refusal to the delivery owner. */
-    public Optional<Long> editFinalMessage(long chatId, long messageId, String text, String parseMode) {
+    public Optional<Long> editFinalMessage(long chatId, long messageId, String text, String parseMode,
+                                           BooleanSupplier maySend) {
         var params = new LinkedHashMap<String, Object>();
         params.put("chat_id", chatId);
         params.put("message_id", messageId);
         params.put("text", text);
         if (parseMode != null && !parseMode.isBlank()) params.put("parse_mode", parseMode);
         try {
-            return callApi("editMessageText", params).map(response -> messageId);
+            return callApi("editMessageText", params, maySend).map(response -> messageId);
         } catch (TelegramApiException error) {
             if (error.getErrorCode() == 400 && error.getMessage().contains("message is not modified")) {
                 return Optional.of(messageId);
@@ -887,7 +888,7 @@ public class TelegramClient {
         return callApi(method, params, () -> true);
     }
 
-    private Optional<TelegramResponse> callApi(String method, Map<String, Object> params, BooleanSupplier maySend) {
+    public Optional<TelegramResponse> callApi(String method, Map<String, Object> params, BooleanSupplier maySend) {
         if (botToken.isBlank()) {
             log.warn("Bot token is empty; cannot call {}", method);
             return Optional.empty();

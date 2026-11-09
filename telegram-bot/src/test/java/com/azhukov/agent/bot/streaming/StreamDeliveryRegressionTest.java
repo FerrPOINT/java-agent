@@ -31,12 +31,73 @@ class StreamDeliveryRegressionTest {
     }
 
     @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({
+        "sendMessage,stop", "editMessageText,stop", "sendRichMessage,stop",
+        "sendMessage,expired", "editMessageText,expired", "sendRichMessage,expired",
+        "sendMessage,allowed", "editMessageText,allowed", "sendRichMessage,allowed"
+    })
+    void finalPostChecksSessionAfterWaitingForPermit(String method, String state) throws Exception {
+        var requests = new java.util.concurrent.CopyOnWriteArrayList<String>();
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        var transport = new com.azhukov.agent.bot.config.BotConfig().telegramRestClient(mapper).mutate()
+            .requestInterceptor((request, body, execution) -> {
+                String path = request.getURI().getPath();
+                String apiMethod = path.substring(path.lastIndexOf('/') + 1);
+                requests.add(apiMethod);
+                String result = apiMethod.equals("getMe")
+                    ? "{\"supports_rich_messages\":true}" : "{\"message_id\":42}";
+                var response = new org.springframework.mock.http.client.MockClientHttpResponse(
+                    ("{\"ok\":true,\"result\":" + result + "}").getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                    org.springframework.http.HttpStatus.OK);
+                response.getHeaders().setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
+                return response;
+            }).build();
+        var telegram = new TelegramClient(transport, mapper, "fixture", 1);
+        var props = new BotProperties();
+        props.getRichMessages().setEnabled(method.equals("sendRichMessage"));
+        var rich = new RichMessageSupport(telegram);
+        var editor = new StreamEditor(telegram, props, new MediaDeliveryService(), rich);
+        editor.init();
+        try {
+            if (method.equals("sendRichMessage")) assertThat(rich.shouldAttemptRich("final")).isTrue();
+            requests.clear();
+            var session = editor.sessionFor(101L);
+            long preview = method.equals("editMessageText") ? 9L : -1L;
+            session.currentMessageId.set(preview);
+            var permit = (java.util.concurrent.Semaphore) org.springframework.test.util.ReflectionTestUtils
+                .getField(telegram, "rateLimiter");
+            var send = new java.util.concurrent.FutureTask<>(() -> editor.finalizeStream(101L, preview, "final"));
+            permit.acquire();
+            try {
+                Thread.startVirtualThread(send);
+                long limit = System.nanoTime() + SECONDS.toNanos(2);
+                while (!permit.hasQueuedThreads() && System.nanoTime() < limit) Thread.sleep(1);
+                assertThat(permit.hasQueuedThreads()).isTrue();
+                if (state.equals("stop")) editor.cancelDeferredDelivery(101L);
+                if (state.equals("expired")) {
+                    synchronized (session) {
+                        session.deferredDelivery = new java.util.concurrent.CompletableFuture<>();
+                        session.floodDeliveryDeadlineNanos = System.nanoTime() - 1;
+                    }
+                }
+            } finally {
+                permit.release();
+            }
+            boolean allowed = state.equals("allowed");
+            assertThat(send.get(2, SECONDS)).isEqualTo(allowed);
+            assertThat(requests).containsExactlyElementsOf(allowed ? java.util.List.of(method) : java.util.List.of());
+        } finally {
+            editor.destroy();
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(ints = {400, -1})
     void onlyConfirmedMissingPreviewCanBeReplaced(int code) {
-        when(client.editFinalMessage(101L, 9L, "final", "MarkdownV2")).thenThrow(
+        when(client.editFinalMessage(eq(101L), eq(9L), eq("final"), eq("MarkdownV2"), any())).thenThrow(
             new TelegramApiException(code, code == 400 ? "Bad Request: message to edit not found" : "lost receipt"));
         if (code == 400) {
-            when(client.sendMessageChecked(eq(101L), eq("final"), eq("MarkdownV2"), any(), any(), any(), anyBoolean()))
+            when(client.sendMessageChecked(eq(101L), eq("final"), eq("MarkdownV2"), any(), any(), any(), anyBoolean(), any()))
                 .thenReturn(Optional.of(17L));
         }
         var editor = editor(false, 0);
@@ -44,7 +105,7 @@ class StreamDeliveryRegressionTest {
             editor.sessionFor(101L).currentMessageId.set(9L);
             assertThat(editor.finalizeStream(101L, 9L, "final")).isEqualTo(code == 400);
             verify(client, times(code == 400 ? 1 : 0))
-                .sendMessageChecked(eq(101L), eq("final"), eq("MarkdownV2"), any(), any(), any(), anyBoolean());
+                .sendMessageChecked(eq(101L), eq("final"), eq("MarkdownV2"), any(), any(), any(), anyBoolean(), any());
         } finally {
             editor.destroy();
         }
@@ -55,15 +116,15 @@ class StreamDeliveryRegressionTest {
         var me = mock(TelegramResponse.class);
         when(me.resultAsMap()).thenReturn(Map.of("supports_rich_messages", true));
         when(client.callApi("getMe", Map.of())).thenReturn(Optional.of(me));
-        when(client.callApi(eq("sendRichMessage"), anyMap()))
+        when(client.callApi(eq("sendRichMessage"), anyMap(), any()))
             .thenThrow(new TelegramApiException(-1, "receipt lost after acceptance"));
         var editor = editor(true, 0);
         try {
             editor.sessionFor(101L).useDraftStreaming = true;
             assertThat(editor.finalizeStream(101L, -1L, "final")).isFalse();
             assertThat(editor.hasUnconfirmedDelivery(101L)).isTrue();
-            verify(client).callApi(eq("sendRichMessage"), anyMap());
-            verify(client, never()).sendMessageChecked(eq(101L), anyString(), any(), any(), any(), any(), anyBoolean());
+            verify(client).callApi(eq("sendRichMessage"), anyMap(), any());
+            verify(client, never()).sendMessageChecked(eq(101L), anyString(), any(), any(), any(), any(), anyBoolean(), any());
         } finally {
             editor.destroy();
         }
@@ -72,7 +133,7 @@ class StreamDeliveryRegressionTest {
     @Test
     @Tag("slow")
     void silentFinalLeavesEarlierDeferredSegmentQueued() throws Exception {
-        when(client.sendMessageChecked(eq(101L), eq("earlier"), any(), any(), any(), isNull(), anyBoolean()))
+        when(client.sendMessageChecked(eq(101L), eq("earlier"), any(), any(), any(), isNull(), anyBoolean(), any()))
             .thenThrow(new TelegramClient.SendRefusalException(429, 1, "rate limit")).thenReturn(Optional.of(1L));
         var editor = editor(false, 0);
         try {
@@ -80,7 +141,7 @@ class StreamDeliveryRegressionTest {
             assertThat(editor.finalizeStream(101L, -1L, "<think>hidden</think>NO_REPLY")).isFalse();
             assertThat(editor.sealDeferredDelivery(101L).get(5, SECONDS)).isTrue();
             verify(client, times(2)).sendMessageChecked(
-                eq(101L), eq("earlier"), any(), any(), any(), isNull(), anyBoolean());
+                eq(101L), eq("earlier"), any(), any(), any(), isNull(), anyBoolean(), any());
             verifyNoMoreInteractions(client);
         } finally {
             editor.destroy();
@@ -91,16 +152,16 @@ class StreamDeliveryRegressionTest {
     @org.junit.jupiter.params.provider.ValueSource(ints = {1, 800})
     void markdownRejectionSendsOriginalFragmentsAsPlainText(int repeats) {
         String text = "file_name. ".repeat(repeats).stripTrailing();
-        when(client.sendMessageChecked(eq(101L), anyString(), eq("MarkdownV2"), any(), any(), isNull(), anyBoolean()))
+        when(client.sendMessageChecked(eq(101L), anyString(), eq("MarkdownV2"), any(), any(), isNull(), anyBoolean(), any()))
             .thenThrow(new TelegramClient.SendRefusalException(400, -1, "Bad Request: can't parse entities"));
-        when(client.sendMessageChecked(eq(101L), anyString(), isNull(), any(), any(), isNull(), anyBoolean()))
+        when(client.sendMessageChecked(eq(101L), anyString(), isNull(), any(), any(), isNull(), anyBoolean(), any()))
             .thenReturn(Optional.of(17L));
         var editor = editor(false, 0);
         try {
             assertThat(editor.sendFormattedFinalMessage(101L, text)).contains(17L);
             var plain = org.mockito.ArgumentCaptor.forClass(String.class);
             verify(client, atLeastOnce()).sendMessageChecked(
-                eq(101L), plain.capture(), isNull(), any(), any(), isNull(), anyBoolean());
+                eq(101L), plain.capture(), isNull(), any(), any(), isNull(), anyBoolean(), any());
             String joined = plain.getAllValues().stream()
                 .map(part -> part.replaceFirst("^\\(\\d+/\\d+\\) ", ""))
                 .collect(java.util.stream.Collectors.joining());
@@ -113,20 +174,20 @@ class StreamDeliveryRegressionTest {
     @Test
     void oversizedPlainFallbackReplacesPreviewWithBoundedChunks() {
         String text = "**" + "a".repeat(4093) + "**";
-        when(client.sendMessageChecked(eq(101L), anyString(), eq("MarkdownV2"), any(), any(), any(), anyBoolean()))
+        when(client.sendMessageChecked(eq(101L), anyString(), eq("MarkdownV2"), any(), any(), any(), anyBoolean(), any()))
             .thenThrow(new TelegramClient.SendRefusalException(400, -1, "Bad Request: can't parse entities"));
-        when(client.sendMessageChecked(eq(101L), anyString(), isNull(), any(), any(), any(), anyBoolean()))
+        when(client.sendMessageChecked(eq(101L), anyString(), isNull(), any(), any(), any(), anyBoolean(), any()))
             .thenReturn(Optional.of(17L));
         var editor = editor(false, 0);
         try {
             editor.sessionFor(101L).currentMessageId.set(9L);
             assertThat(editor.finalizeStream(101L, 9L, text)).isTrue();
             var parts = org.mockito.ArgumentCaptor.forClass(String.class);
-            verify(client, atLeast(2)).sendMessageChecked(eq(101L), parts.capture(), isNull(), any(), any(), any(), anyBoolean());
+            verify(client, atLeast(2)).sendMessageChecked(eq(101L), parts.capture(), isNull(), any(), any(), any(), anyBoolean(), any());
             assertThat(parts.getAllValues()).allMatch(part -> part.length() <= 4096);
             assertThat(String.join("", parts.getAllValues().stream()
                 .map(part -> part.replaceFirst("^\\(\\d+/\\d+\\) ", "")).toList())).isEqualTo(text);
-            verify(client, never()).editFinalMessage(anyLong(), anyLong(), anyString(), any());
+            verify(client, never()).editFinalMessage(anyLong(), anyLong(), anyString(), any(), any());
         } finally {
             editor.destroy();
         }
@@ -147,14 +208,14 @@ class StreamDeliveryRegressionTest {
     @Test
     void longMarkdownBlockDeliversItsTailAndKeepsPlainFragmentsWithinLimit() {
         String text = "intro\n\n~~~\n\n" + "paragraph\n\n".repeat(530) + "TAIL_MARKER\n~~~\n\nafter";
-        when(client.sendMessageChecked(eq(101L), anyString(), any(), any(), any(), isNull(), anyBoolean()))
+        when(client.sendMessageChecked(eq(101L), anyString(), any(), any(), any(), isNull(), anyBoolean(), any()))
             .thenReturn(Optional.of(17L));
         var editor = editor(false, 0);
         try {
             assertThat(editor.sendFormattedFinalMessage(101L, text)).contains(17L);
             var sent = org.mockito.ArgumentCaptor.forClass(String.class);
             verify(client, atLeast(2)).sendMessageChecked(
-                eq(101L), sent.capture(), any(), any(), any(), isNull(), anyBoolean());
+                eq(101L), sent.capture(), any(), any(), any(), isNull(), anyBoolean(), any());
             assertThat(sent.getAllValues()).allMatch(part -> part.length() <= 4096);
             assertThat(String.join("", sent.getAllValues())).contains("TAIL\\_MARKER");
             var originals = com.azhukov.agent.bot.formatting.MessageSplitter.splitMarkdown(text).stream()
@@ -190,7 +251,7 @@ class StreamDeliveryRegressionTest {
 
     @Test
     void oversizedToolSegmentIsSplitBeforeFinalDelivery() {
-        when(client.sendMessageChecked(eq(101L), anyString(), any(), any(), any(), isNull(), anyBoolean()))
+        when(client.sendMessageChecked(eq(101L), anyString(), any(), any(), any(), isNull(), anyBoolean(), any()))
             .thenReturn(Optional.of(17L));
         var editor = editor(false, 0);
         try {
@@ -201,7 +262,7 @@ class StreamDeliveryRegressionTest {
 
             var messages = org.mockito.ArgumentCaptor.forClass(String.class);
             verify(client, atLeast(3)).sendMessageChecked(
-                eq(101L), messages.capture(), any(), any(), any(), isNull(), anyBoolean());
+                eq(101L), messages.capture(), any(), any(), any(), isNull(), anyBoolean(), any());
             assertThat(messages.getAllValues()).allMatch(message -> message.length() <= 4096);
             assertThat(messages.getAllValues().getLast()).isEqualTo("final");
             verify(client).deleteMessage(101L, 42L);
@@ -237,13 +298,13 @@ class StreamDeliveryRegressionTest {
         var firstStarted = new CountDownLatch(1);
         var releaseFirst = new CountDownLatch(1);
         var secondStarted = new CountDownLatch(1);
-        when(client.sendMessageChecked(eq(101L), eq("first"), any(), any(), any(), isNull(), anyBoolean()))
+        when(client.sendMessageChecked(eq(101L), eq("first"), any(), any(), any(), isNull(), anyBoolean(), any()))
             .thenThrow(new TelegramClient.SendRefusalException(429, 1, "rate limit")).thenAnswer(call -> {
                 firstStarted.countDown();
                 if (!releaseFirst.await(8, SECONDS)) throw new IllegalStateException("first retry gate");
                 return Optional.of(1L);
             });
-        when(client.sendMessageChecked(eq(202L), eq("second"), any(), any(), any(), isNull(), anyBoolean()))
+        when(client.sendMessageChecked(eq(202L), eq("second"), any(), any(), any(), isNull(), anyBoolean(), any()))
             .thenThrow(new TelegramClient.SendRefusalException(429, 1, "rate limit")).thenAnswer(call -> {
                 secondStarted.countDown();
                 return Optional.of(2L);
@@ -270,7 +331,7 @@ class StreamDeliveryRegressionTest {
     @Tag("slow")
     void successfulDeferredReplacementRemovesOldPreview() throws Exception {
         var editor = editor(false, 1);
-        when(client.sendMessageChecked(eq(101L), eq("final"), any(), any(), any(), isNull(), anyBoolean()))
+        when(client.sendMessageChecked(eq(101L), eq("final"), any(), any(), any(), isNull(), anyBoolean(), any()))
             .thenThrow(new TelegramClient.SendRefusalException(429, 1, "rate limit")).thenReturn(Optional.of(17L));
         try {
             var session = editor.sessionFor(101L);

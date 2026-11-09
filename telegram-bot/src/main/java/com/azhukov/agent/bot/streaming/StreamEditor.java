@@ -580,7 +580,7 @@ public class StreamEditor {
             Long topic = session.messageThreadId > 0 ? session.messageThreadId : null;
             Long reply = replyFor(session, 0);
             operations = List.of(new DeliveryOperation(
-                () -> richMessageSupport.sendRichMessage(chatId, richText, reply, topic),
+                maySend -> richMessageSupport.sendRichMessage(chatId, richText, reply, topic, maySend),
                 error -> richMessageSupport.formatWasRejected(error) ? normal : List.of(), preview));
         }
         Optional<Long> confirmed = enqueueDelivery(chatId, session, operations);
@@ -1025,10 +1025,10 @@ public class StreamEditor {
         return telegramClient.sendMessage(chatId, text, null, replyToMessageId, threadId, disableNotification);
     }
 
-    record DeliveryOperation(java.util.function.Supplier<Optional<Long>> send,
+    record DeliveryOperation(java.util.function.Function<java.util.function.BooleanSupplier, Optional<Long>> send,
                              java.util.function.Function<TelegramApiException, List<DeliveryOperation>> onRefusal,
                              long replacedPreview) {
-        DeliveryOperation(java.util.function.Supplier<Optional<Long>> send, long replacedPreview) {
+        DeliveryOperation(java.util.function.Function<java.util.function.BooleanSupplier, Optional<Long>> send, long replacedPreview) {
             this(send, error -> List.of(), replacedPreview);
         }
     }
@@ -1039,9 +1039,9 @@ public class StreamEditor {
             error.getErrorCode() == 400 && java.util.Objects.toString(error.getErrorDescription(), "")
                 .toLowerCase(java.util.Locale.ROOT).contains("message to edit not found")
                 ? formattedOperations(chatId, plain, session, 0) : List.of();
-        var plainEdit = new DeliveryOperation(() -> telegramClient.editFinalMessage(chatId, messageId, plain, null),
+        var plainEdit = new DeliveryOperation(maySend -> telegramClient.editFinalMessage(chatId, messageId, plain, null, maySend),
             missingPreview, 0);
-        return new DeliveryOperation(() -> telegramClient.editFinalMessage(chatId, messageId, formatted, parseMode),
+        return new DeliveryOperation(maySend -> telegramClient.editFinalMessage(chatId, messageId, formatted, parseMode, maySend),
             error -> parseMode != null && error.getErrorCode() == 400 && error.isParseError()
                 ? List.of(plainEdit) : missingPreview.apply(error), 0);
     }
@@ -1062,11 +1062,11 @@ public class StreamEditor {
             String payload = part.formatted();
             Long reply = replyFor(session, i);
             long preview = i == chunks.size() - 1 ? replacedPreview : 0;
-            var plain = new DeliveryOperation(() -> telegramClient.sendMessageChecked(
-                chatId, chunk, null, reply, topic, null, false), preview);
+            var plain = new DeliveryOperation(maySend -> telegramClient.sendMessageChecked(
+                chatId, chunk, null, reply, topic, null, false, maySend), preview);
             operations.add(parseMode == null || payload.length() > MessageSplitter.TELEGRAM_MAX_LENGTH
                 ? plain : new DeliveryOperation(
-                () -> telegramClient.sendMessageChecked(chatId, payload, parseMode, reply, topic, null, false),
+                maySend -> telegramClient.sendMessageChecked(chatId, payload, parseMode, reply, topic, null, false, maySend),
                 error -> error.getErrorCode() == 400 && error.isParseError() ? List.of(plain) : List.of(), preview));
         }
         return operations;
@@ -1109,7 +1109,7 @@ public class StreamEditor {
                 }
             }
             try {
-                last = operation.send().get();
+                last = operation.send().apply(() -> mayDeliver(chatId, session));
                 synchronized (session) {
                     if (session.deliveryCancelled) {
                         failDelivery(session);
@@ -1145,6 +1145,13 @@ public class StreamEditor {
                 synchronized (session) { failDelivery(session); }
                 return Optional.empty();
             }
+        }
+    }
+
+    private boolean mayDeliver(long chatId, StreamSession session) {
+        synchronized (session) {
+            return sessions.get(chatId) == session && !session.deliveryCancelled
+                && (session.deferredDelivery == null || System.nanoTime() < session.floodDeliveryDeadlineNanos);
         }
     }
 
