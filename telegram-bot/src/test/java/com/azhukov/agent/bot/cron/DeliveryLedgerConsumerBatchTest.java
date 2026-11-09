@@ -43,18 +43,18 @@ class DeliveryLedgerConsumerBatchTest {
 
     @Test
     void singleItemDeliversPlainPayload() {
-        when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean())).thenReturn(Optional.of(1L));
+        when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean(), any())).thenReturn(Optional.of(1L));
 
         consumer().deliverBatchForTest(List.of(delegate("42", "task done")));
 
         ArgumentCaptor<String> sent = ArgumentCaptor.forClass(String.class);
-        verify(telegram, times(1)).sendMessageChecked(anyLong(), sent.capture(), any(), any(), any(), any(), anyBoolean());
+        verify(telegram, times(1)).sendMessageChecked(anyLong(), sent.capture(), any(), any(), any(), any(), anyBoolean(), any());
         assertThat(sent.getValue()).isEqualTo("task done");
     }
 
     @Test
     void multipleItemsCoalesceIntoOneSyntheticMessage() {
-        when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean())).thenReturn(Optional.of(1L));
+        when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean(), any())).thenReturn(Optional.of(1L));
 
         consumer().deliverBatchForTest(List.of(
             delegate("42", "result A"),
@@ -62,7 +62,7 @@ class DeliveryLedgerConsumerBatchTest {
             delegate("44", "result C")));
 
         ArgumentCaptor<String> sent = ArgumentCaptor.forClass(String.class);
-        verify(telegram, times(1)).sendMessageChecked(anyLong(), sent.capture(), any(), any(), any(), any(), anyBoolean());
+        verify(telegram, times(1)).sendMessageChecked(anyLong(), sent.capture(), any(), any(), any(), any(), anyBoolean(), any());
         String text = sent.getValue();
         assertThat(text).startsWith("[IMPORTANT: 3 background processes completed");
         assertThat(text).contains("result A");
@@ -96,15 +96,15 @@ class DeliveryLedgerConsumerBatchTest {
 
     @Test
     void sendFailureFencesEveryItemAsUnknown() {
-        when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean())).thenReturn(Optional.empty());
+        when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean(), any())).thenReturn(Optional.empty());
 
         consumer().deliverBatchForTest(List.of(
             delegate("42", "result A"), delegate("43", "result B")));
 
-        verify(telegram, times(1)).sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean());
+        verify(telegram, times(1)).sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean(), any());
         // Both items must be fenced unknown via /delivery/unknown — verified by
         // the outcome posts: consumer posts for each item (2 posts). We assert
         // via the ack absence: no ack call happens because sendMessage empty.
-        verify(telegram, times(1)).sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean());
+        verify(telegram, times(1)).sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean(), any());
     }
 }

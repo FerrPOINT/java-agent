@@ -203,15 +203,15 @@ public class DeliveryLedgerConsumer {
         try {
             List<String> chunks = com.azhukov.agent.bot.formatting.MessageSplitter.splitPlainText(text);
             boolean sendFailed = false;
+            java.util.function.BooleanSupplier leaseHeld = () -> nanoTime.getAsLong() - startedNanos < leaseNanos;
             for (String chunk : chunks) {
-                if (nanoTime.getAsLong() - startedNanos >= leaseNanos) {
+                if (!leaseHeld.getAsBoolean()) {
                     for (ClaimedItem item : batch) outcome(item, "unknown", "delivery_lease_elapsed", null);
                     log.warn("delivery_batch_lease_elapsed items={} chat={}", batch.size(), chatId);
                     return;
                 }
-                Optional<Long> sent = threadId == null
-                    ? telegramClient.sendMessageChecked(chatId, chunk, null, null, null, null, false)
-                    : telegramClient.sendMessageChecked(chatId, chunk, null, null, threadId, null, false);
+                Optional<Long> sent = telegramClient.sendMessageChecked(chatId, chunk, null, null, threadId, null,
+                    false, leaseHeld);
                 if (sent.isEmpty()) {
                     sendFailed = true;
                     break;
@@ -233,13 +233,11 @@ public class DeliveryLedgerConsumer {
                 }
                 return;
             }
-            for (ClaimedItem item : batch) {
-                outcome(item, "unknown",
-                    lastMessageId != null ? "partial_chunk_failure" : "empty_send_result", null);
-            }
+            String category = !leaseHeld.getAsBoolean() ? "delivery_lease_elapsed"
+                : lastMessageId != null ? "partial_chunk_failure" : "empty_send_result";
+            for (ClaimedItem item : batch) outcome(item, "unknown", category, null);
             log.warn("delivery_batch_unresolved items={} sourceIds={} chat={} category={}", batch.size(),
-                batch.stream().map(ClaimedItem::sourceId).toList(), chatId,
-                lastMessageId != null ? "partial_chunk_failure" : "empty_send_result");
+                batch.stream().map(ClaimedItem::sourceId).toList(), chatId, category);
         } catch (TelegramClient.SendRefusalException e) {
             if (lastMessageId != null) {
                 for (ClaimedItem item : batch) outcome(item, "unknown", "partial_chunk_failure", null);

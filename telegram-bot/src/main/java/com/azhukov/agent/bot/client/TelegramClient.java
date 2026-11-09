@@ -14,6 +14,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BooleanSupplier;
 
 /**
  * Typed wrapper around the Telegram Bot API.
@@ -79,17 +80,16 @@ public class TelegramClient {
      * release happens after the API call completes — keeping the
      * effective rate within the configured limit.
      */
-    private void acquireRateLimit() {
-        if (rateLimiter != null) {
-            try {
-                if (!rateLimiter.tryAcquire(5, TimeUnit.SECONDS)) {
-                    log.warn("Rate limit exceeded, proceeding anyway");
-                }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                log.warn("Rate limit acquire interrupted, proceeding anyway");
-            }
+    private boolean acquireRateLimit() {
+        if (rateLimiter == null) return false;
+        try {
+            if (rateLimiter.tryAcquire(5, TimeUnit.SECONDS)) return true;
+            log.warn("Rate limit exceeded, proceeding anyway");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("Rate limit acquire interrupted, proceeding anyway");
         }
+        return false;
     }
 
     /**
@@ -270,10 +270,17 @@ public class TelegramClient {
     public Optional<Long> sendMessageChecked(long chatId, String text, String parseMode,
                                              Long replyToMessageId, Integer messageThreadId,
                                              String replyMarkup, boolean disableNotification) {
+        return sendMessageChecked(chatId, text, parseMode, replyToMessageId, messageThreadId, replyMarkup,
+            disableNotification, () -> true);
+    }
+
+    public Optional<Long> sendMessageChecked(long chatId, String text, String parseMode,
+                                             Long replyToMessageId, Integer messageThreadId,
+                                             String replyMarkup, boolean disableNotification, BooleanSupplier maySend) {
         Map<String, Object> params = baseSendParams(chatId, text, parseMode, replyToMessageId,
             messageThreadId, replyMarkup, disableNotification);
         try {
-            Optional<TelegramResponse> response = callApi("sendMessage", params);
+            Optional<TelegramResponse> response = callApi("sendMessage", params, maySend);
             return response.flatMap(r -> Optional.ofNullable(r.resultMessageIdAsLong()));
         } catch (TelegramApiException e) {
             if (e.isRateLimit()) {
@@ -841,14 +848,19 @@ public class TelegramClient {
      * @throws TelegramApiException on non-{@code ok} API responses
      */
     public Optional<TelegramResponse> callApi(String method, Map<String, Object> params) {
+        return callApi(method, params, () -> true);
+    }
+
+    private Optional<TelegramResponse> callApi(String method, Map<String, Object> params, BooleanSupplier maySend) {
         if (botToken.isBlank()) {
             log.warn("Bot token is empty; cannot call {}", method);
             return Optional.empty();
         }
         lastCallConflict = false; // B3: clear at start of each call
         lastApiErrorCode = 0; // Clear error code at start of each call
-        acquireRateLimit();
+        boolean acquired = acquireRateLimit();
         try {
+            if (!maySend.getAsBoolean()) return Optional.empty();
             log.debug("Telegram API call: POST /bot{}/{}, token length={}", maskToken(botToken), method, botToken.length());
             TelegramResponse response = restClient.post()
                 .uri("/bot{token}/{method}", botToken, method)
@@ -909,7 +921,7 @@ public class TelegramClient {
             lastApiErrorCode = -1;
             throw transportFailure(method, e);
         } finally {
-            releaseRateLimit();
+            if (acquired) releaseRateLimit();
         }
     }
 
@@ -934,7 +946,7 @@ public class TelegramClient {
             log.warn("Bot token is empty; cannot call {}", method);
             return Optional.empty();
         }
-        acquireRateLimit();
+        boolean acquired = acquireRateLimit();
         try {
             TelegramResponse response = restClient.post()
                 .uri("/bot{token}/{method}", botToken, method)
@@ -962,7 +974,7 @@ public class TelegramClient {
         } catch (Exception e) {
             throw transportFailure(method, e);
         } finally {
-            releaseRateLimit();
+            if (acquired) releaseRateLimit();
         }
     }
     private static TelegramApiException transportFailure(String method, Exception error) {

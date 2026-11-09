@@ -39,7 +39,7 @@ class DeliveryLedgerConsumerHttpTest {
             .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess("{\"claimed\":false}", json));
         var telegram = mock(TelegramClient.class);
         var time = new java.util.concurrent.atomic.AtomicLong();
-        when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean()))
+        when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean(), any()))
             .thenAnswer(call -> {
                 if (expires) time.set(java.util.concurrent.TimeUnit.MINUTES.toNanos(1));
                 return Optional.of(42L);
@@ -48,7 +48,7 @@ class DeliveryLedgerConsumerHttpTest {
         properties.setCronDeliveryEnabled(true);
         new DeliveryLedgerConsumer(builder.build(), telegram, properties, mapper).consume(time::get);
         verify(telegram, times(expires ? 1 : 2))
-            .sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean());
+            .sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean(), any());
         server.verify();
     }
 
@@ -62,7 +62,7 @@ class DeliveryLedgerConsumerHttpTest {
         server.expect(ack).andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess());
         server.expect(ack).andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withServerError());
         var telegram = mock(TelegramClient.class);
-        when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean()))
+        when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean(), any()))
             .thenReturn(Optional.of(42L));
         var consumer = new DeliveryLedgerConsumer(builder.build(), telegram, new BotProperties(), new ObjectMapper());
         var first = new DeliveryLedgerConsumer.ClaimedItem("id-1", "token-1", "cron_execution", "first",
@@ -71,7 +71,7 @@ class DeliveryLedgerConsumerHttpTest {
             "telegram", "123", "", "second", 1);
         consumer.deliverBatchForTest(List.of(first, second));
         server.verify();
-        verify(telegram).sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean());
+        verify(telegram).sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean(), any());
         assertThat(output.getAll()).contains("delivery_batch_ack_unconfirmed confirmed=1 items=2")
             .doesNotContain("delivery_batch_acked");
     }
@@ -90,7 +90,7 @@ class DeliveryLedgerConsumerHttpTest {
         server.start();
         try {
             var telegram = mock(TelegramClient.class);
-            when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean()))
+            when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean(), any()))
                 .thenReturn(Optional.of(42L)).thenThrow(new TelegramClient.SendRefusalException(429, 30, "rate limited"));
             var rest = RestClient.builder().baseUrl("http://127.0.0.1:" + server.getAddress().getPort()).build();
             var consumer = new DeliveryLedgerConsumer(rest, telegram, new BotProperties(), new ObjectMapper());
@@ -100,7 +100,7 @@ class DeliveryLedgerConsumerHttpTest {
             assertThat(requests).hasSize(1);
             assertThat(requests.getFirst()).startsWith("/api/v1/agent/delivery/unknown ")
                 .contains("partial_chunk_failure", "id-1", "token-1");
-            verify(telegram, times(2)).sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean());
+            verify(telegram, times(2)).sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean(), any());
         } finally {
             server.stop(0);
         }
