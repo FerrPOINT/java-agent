@@ -49,12 +49,13 @@ class CronJobServiceReEnableTest {
     }
 
     @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
-    void restartKeepsRecordedDeadlineAndArmsOverdueJobImmediately(boolean overdue) {
+    @org.junit.jupiter.params.provider.CsvSource({"false,false", "true,true", "true,false"})
+    void restartOnlyReplaysOverdueOneShot(boolean overdue, boolean oneShot) {
         var job = new CronJobEntity();
         job.setId(UUID.randomUUID());
         job.setEnabled(true);
-        job.setSchedule("30m");
+        job.setSchedule(oneShot ? "30m" : "every 30m");
+        if (oneShot) job.setRepeatCount(1);
         Instant due = Instant.now().plusSeconds(overdue ? -60 : 300);
         job.setNextRunAt(due);
         when(cronJobRepository.findByEnabledTrue()).thenReturn(List.of(job));
@@ -67,9 +68,14 @@ class CronJobServiceReEnableTest {
         service.init();
         var delay = org.mockito.ArgumentCaptor.forClass(Long.class);
         verify(scheduler).schedule(any(Runnable.class), delay.capture(), org.mockito.ArgumentMatchers.eq(java.util.concurrent.TimeUnit.MILLISECONDS));
-        assertThat(job.getNextRunAt()).isEqualTo(due);
-        if (overdue) assertThat(delay.getValue()).isZero();
-        else assertThat(delay.getValue()).isBetween(280_000L, 300_000L);
+        if (overdue && !oneShot) {
+            assertThat(job.getNextRunAt()).isAfter(Instant.now());
+            assertThat(delay.getValue()).isBetween(1_780_000L, 1_800_000L);
+        } else {
+            assertThat(job.getNextRunAt()).isEqualTo(due);
+            if (overdue) assertThat(delay.getValue()).isZero();
+            else assertThat(delay.getValue()).isBetween(280_000L, 300_000L);
+        }
     }
 
     @Test

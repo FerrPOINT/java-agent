@@ -765,8 +765,11 @@ private static final String CRON_EXECUTION_HINT = """
     private void reconcileSchedule(UUID id) {
         transactionTemplate.executeWithoutResult(status ->
             lockedSchedule(id).ifPresent(job -> {
-                if (job.isEnabled() && job.getNextRunAt() != null) {
-                    scheduleJob(job, job.getNextRunAt());
+                Instant due = job.getNextRunAt();
+                // Only one-shot execution consumes its deadline before any side effect.
+                if (job.isEnabled() && due != null
+                        && (due.isAfter(Instant.now()) || Integer.valueOf(1).equals(job.getRepeatCount()))) {
+                    scheduleJob(job, due);
                 } else {
                     updateSchedule(job, null);
                 }
@@ -797,7 +800,7 @@ private static final String CRON_EXECUTION_HINT = """
     }
 
     private void scheduleJob(CronJobEntity job, Instant due) {
-        // A missed, unclaimed firing runs once when the service comes back.
+        // A missed one-shot that has not been claimed runs when the service comes back.
         long delayMillis = Math.max(0, Duration.between(Instant.now(), due).toMillis());
         UUID id = job.getId();
         long revision = job.getConfigurationRevision();
