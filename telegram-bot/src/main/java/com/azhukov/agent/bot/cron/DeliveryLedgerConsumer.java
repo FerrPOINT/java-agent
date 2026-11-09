@@ -206,14 +206,17 @@ public class DeliveryLedgerConsumer {
             }
             if (!sendFailed) {
                 String messageId = lastMessageId == null ? null : lastMessageId.toString();
+                int confirmed = 0;
                 for (ClaimedItem item : batch) {
-                    ack(item, messageId);
+                    if (ack(item, messageId)) confirmed++;
                 }
-                log.info("delivery_batch_acked items={} sourceIds={} chat={} chunks={} lastMessageId={}",
-                    batch.size(), batch.stream().map(ClaimedItem::sourceId).toList(), chatId, chunks.size(), lastMessageId);
-                log.info("Delivered batch of {} items ({} source types) to chat {} ({} chunks, last msg {})",
-                    batch.size(), batch.stream().map(ClaimedItem::sourceType).distinct().count(),
-                    chatId, chunks.size(), lastMessageId);
+                if (confirmed == batch.size()) {
+                    log.info("delivery_batch_acked items={} chat={} chunks={} lastMessageId={}",
+                        confirmed, chatId, chunks.size(), lastMessageId);
+                } else {
+                    log.warn("delivery_batch_ack_unconfirmed confirmed={} items={} chat={} lastMessageId={}",
+                        confirmed, batch.size(), chatId, lastMessageId);
+                }
                 return;
             }
             for (ClaimedItem item : batch) {
@@ -262,8 +265,8 @@ public class DeliveryLedgerConsumer {
         deliverBatch(batch);
     }
 
-    private void ack(ClaimedItem item, String messageId) {
-        post("/api/v1/agent/delivery/ack", Map.of(
+    private boolean ack(ClaimedItem item, String messageId) {
+        return post("/api/v1/agent/delivery/ack", Map.of(
             "id", item.id(),
             "claim_token", item.claimToken(),
             "outbound_message_id", messageId,
@@ -283,7 +286,7 @@ public class DeliveryLedgerConsumer {
         post("/api/v1/agent/delivery/" + action, body);
     }
 
-    private void post(String path, Object body) {
+    private boolean post(String path, Object body) {
         try {
             restClient.post()
                 .uri(path)
@@ -291,10 +294,10 @@ public class DeliveryLedgerConsumer {
                 .body(objectMapper.writeValueAsString(body))
                 .retrieve()
                 .toBodilessEntity();
+            return true;
         } catch (Exception e) {
-            // The claim will expire or be re-driven on the next cycle; the
-            // backend's stale-claim policy is the safety net.
-            log.warn("Delivery outcome {} failed: {}", path, e.getMessage());
+            log.warn("Delivery outcome {} failed ({})", path, e.getClass().getSimpleName());
+            return false;
         }
     }
 
