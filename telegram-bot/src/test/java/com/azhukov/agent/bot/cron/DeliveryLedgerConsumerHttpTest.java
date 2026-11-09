@@ -31,11 +31,11 @@ class DeliveryLedgerConsumerHttpTest {
             .put("platform", "telegram").put("chat_id", "123").put("payload", "x".repeat(6000));
         var claim = mapper.createObjectNode().put("claimed", true).put("lease_remaining_ms", 60_000);
         claim.putArray("items").add(item);
-        server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(prefix + "claim-batch"))
+        server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(prefix + "claim-batch-v2"))
             .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess(claim.toString(), json));
         server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(prefix + (expires ? "unknown" : "ack")))
             .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess());
-        server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(prefix + "claim-batch"))
+        server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(prefix + "claim-batch-v2"))
             .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess("{\"claimed\":false}", json));
         var telegram = mock(TelegramClient.class);
         var time = new java.util.concurrent.atomic.AtomicLong();
@@ -50,6 +50,24 @@ class DeliveryLedgerConsumerHttpTest {
         verify(telegram, times(expires ? 1 : 2))
             .sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean(), any());
         server.verify();
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"", ",\"lease_remaining_ms\":\"1000\"", ",\"lease_remaining_ms\":-1"})
+    void malformedLeaseStopsWithoutPostingAnOutcome(String leaseField) {
+        var builder = RestClient.builder().baseUrl("http://backend");
+        var server = org.springframework.test.web.client.MockRestServiceServer.bindTo(builder).build();
+        server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(
+                "http://backend/api/v1/agent/delivery/claim-batch-v2"))
+            .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess(
+                "{\"claimed\":true,\"items\":[{\"id\":\"item\",\"claim_token\":\"token\",\"platform\":\"telegram\",\"chat_id\":\"123\"}]" + leaseField + "}",
+                org.springframework.http.MediaType.APPLICATION_JSON));
+        var telegram = mock(TelegramClient.class);
+        var properties = new BotProperties();
+        properties.setCronDeliveryEnabled(true);
+        new DeliveryLedgerConsumer(builder.build(), telegram, properties, new ObjectMapper()).consume();
+        server.verify();
+        verifyNoInteractions(telegram);
     }
 
     @Test

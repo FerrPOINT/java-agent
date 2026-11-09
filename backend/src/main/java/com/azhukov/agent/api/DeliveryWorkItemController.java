@@ -63,7 +63,7 @@ public class DeliveryWorkItemController {
         List<String> profiles,
         Integer max) {}
 
-    @PostMapping("/claim-batch")
+    @PostMapping("/claim-batch-v2")
     public ResponseEntity<Map<String, Object>> claimBatch(@RequestBody BatchClaimRequest request) {
         requireDeliveryConsumer();
         if (request == null || request.consumerId() == null || request.consumerId().isBlank()) {

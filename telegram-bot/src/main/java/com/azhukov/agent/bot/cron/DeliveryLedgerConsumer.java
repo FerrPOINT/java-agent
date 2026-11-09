@@ -105,13 +105,18 @@ public class DeliveryLedgerConsumer {
                 "profiles", List.of(profile()),
                 "max", 5));
             String json = restClient.post()
-                .uri("/api/v1/agent/delivery/claim-batch")
+                .uri("/api/v1/agent/delivery/claim-batch-v2")
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
                 .body(body)
                 .retrieve()
                 .body(String.class);
             JsonNode parsed = json == null ? null : objectMapper.readTree(json);
             if (parsed == null || !parsed.path("claimed").asBoolean(false)) {
+                return new ClaimedBatch(List.of(), started, 0);
+            }
+            JsonNode lease = parsed.path("lease_remaining_ms");
+            if (!lease.isIntegralNumber() || !lease.canConvertToLong() || lease.longValue() < 0) {
+                log.warn("Invalid delivery batch response: expected non-negative lease_remaining_ms");
                 return new ClaimedBatch(List.of(), started, 0);
             }
             List<ClaimedItem> items = new java.util.ArrayList<>();
@@ -129,7 +134,7 @@ public class DeliveryLedgerConsumer {
             }
             // Anchor before the request so network and parsing delays consume budget, without
             // comparing the bot clock to the database server clock.
-            long leaseNanos = java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(parsed.path("lease_remaining_ms").asLong(0));
+            long leaseNanos = java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(lease.longValue());
             return new ClaimedBatch(items, started, leaseNanos);
         } catch (Exception e) {
             log.debug("Delivery batch claim failed: {}", e.getMessage());
