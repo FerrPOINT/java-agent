@@ -1,6 +1,13 @@
 package com.azhukov.agent.persistence.repository;
 
+import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.persistence.entity.CronJobEntity;
+import com.azhukov.agent.service.AgentRuntimeService;
+import com.azhukov.agent.service.CronJobService;
+import com.azhukov.agent.service.CronScheduleParser;
+import org.springframework.context.ApplicationContext;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.support.TransactionTemplate;
 import com.azhukov.agent.persistence.PostgresTestContainer;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -28,6 +35,47 @@ class CronJobRepositoryTest extends PostgresTestContainer {
 
     @Autowired
     private CronJobRepository cronJobRepository;
+
+    @Autowired private TransactionTemplate transactions;
+    @Autowired private ApplicationContext context;
+    @Autowired private CronExecutionLogRepository executionLogs;
+    @Autowired private MessageRepository messages;
+    @Autowired private CronScheduleParser scheduleParser;
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void startupDisablesInvalidScheduleAndKeepsValidDeadline() {
+        var invalid = newCronJob("invalid", "0 0 31 2 *", PROMPT_1, true);
+        var valid = newCronJob("valid", "0 9 * * *", PROMPT_2, true);
+        Instant due = Instant.now().plusSeconds(3600).truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+        invalid.setNextRunAt(due);
+        valid.setNextRunAt(due);
+        invalid = cronJobRepository.save(invalid);
+        valid = cronJobRepository.save(valid);
+        var properties = new AgentProperties();
+        properties.getCron().setEnabled(true);
+        var service = new CronJobService(cronJobRepository, context.getBeanProvider(AgentRuntimeService.class),
+            properties, org.mockito.Mockito.mock(com.azhukov.agent.core.skill.SkillManager.class),
+            executionLogs, messages, transactions, scheduleParser);
+        try {
+            service.init();
+            var disabled = cronJobRepository.findById(invalid.getId()).orElseThrow();
+            assertThat(disabled.isEnabled()).isFalse();
+            assertThat(disabled.getNextRunAt()).isNull();
+            assertThat(disabled.getLastError()).contains("no next execution");
+            assertThat(cronJobRepository.findById(valid.getId()).orElseThrow().getNextRunAt()).isEqualTo(due);
+
+            UUID id = disabled.getId();
+            transactions.executeWithoutResult(status -> service.update(id, null, "0 9 * * *", null, null, null));
+            transactions.executeWithoutResult(status -> service.resume(id));
+            var resumed = cronJobRepository.findById(id).orElseThrow();
+            assertThat(resumed.isEnabled()).isTrue();
+            assertThat(resumed.getNextRunAt()).isAfter(Instant.now());
+        } finally {
+            service.shutdown();
+            cronJobRepository.deleteAllById(List.of(invalid.getId(), valid.getId()));
+        }
+    }
 
     @Test
     void saveAndFindById() {

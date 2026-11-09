@@ -24,6 +24,15 @@ class BotPropertiesTest extends BotIntegrationTestBase {
     }
 
     @Test
+    void enabledTelegramCannotUseAnUnauthenticatedBackend() {
+        var settings = new BotProperties();
+        settings.setToken("test-token");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> new BotConfig().backendRestClient(settings))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("BOT_BACKEND_API_KEY");
+    }
+
+    @Test
     void bindsPollingDefaults() {
         assertThat(properties.getPolling().getTimeoutSeconds()).isEqualTo(30);
         assertThat(properties.getPolling().getLimit()).isEqualTo(100);

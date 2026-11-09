@@ -12,17 +12,16 @@ import com.azhukov.agent.persistence.entity.CronJobEntity;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.repository.CronExecutionLogRepository;
 import com.azhukov.agent.persistence.repository.CronJobRepository;
-import com.cronutils.model.Cron;
-import com.cronutils.model.CronType;
-import com.cronutils.model.definition.CronDefinitionBuilder;
-import com.cronutils.model.time.ExecutionTime;
-import com.cronutils.parser.CronParser;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
+
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -42,11 +41,6 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.Instant;
-import java.time.LocalDateTime;
-import java.time.ZoneId;
-import java.time.ZonedDateTime;
-import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.Locale;
@@ -56,6 +50,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.HexFormat;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -63,7 +58,6 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -93,7 +87,9 @@ private static final String CRON_EXECUTION_HINT = """
     // (@Transactional would be bypassed here because executeAndReschedule is a
     // self-invocation from the scheduler lambda).
     private final com.azhukov.agent.persistence.repository.MessageRepository messageRepository;
-    private final org.springframework.transaction.support.TransactionTemplate transactionTemplate;
+    private final TransactionTemplate transactionTemplate;
+    private final java.util.concurrent.ConcurrentMap<UUID, PendingPublication> pendingPublications =
+        new java.util.concurrent.ConcurrentHashMap<>();
     private final CronScheduleParser scheduleParser;
     private final ObjectProvider<DeliveryWorkItemService> deliveryWorkItemServiceProvider;
     private final ObjectProvider<com.azhukov.agent.persistence.repository.SessionRepository> sessionRepositoryProvider;
@@ -112,7 +108,7 @@ private static final String CRON_EXECUTION_HINT = """
         SkillManager skillManager,
         CronExecutionLogRepository cronExecutionLogRepository,
         com.azhukov.agent.persistence.repository.MessageRepository messageRepository,
-        org.springframework.transaction.support.TransactionTemplate transactionTemplate,
+        TransactionTemplate transactionTemplate,
         CronScheduleParser scheduleParser
     ) {
         this(cronJobRepository, agentRuntimeServiceProvider, properties, skillManager,
@@ -127,7 +123,7 @@ private static final String CRON_EXECUTION_HINT = """
         SkillManager skillManager,
         CronExecutionLogRepository cronExecutionLogRepository,
         com.azhukov.agent.persistence.repository.MessageRepository messageRepository,
-        org.springframework.transaction.support.TransactionTemplate transactionTemplate,
+        TransactionTemplate transactionTemplate,
         CronScheduleParser scheduleParser,
         ObjectProvider<DeliveryWorkItemService> deliveryWorkItemServiceProvider,
         ObjectProvider<com.azhukov.agent.persistence.repository.SessionRepository> sessionRepositoryProvider,
@@ -157,29 +153,8 @@ private static final String CRON_EXECUTION_HINT = """
     private final Map<UUID, ScheduledFuture<?>> scheduledTasks = new ConcurrentHashMap<>();
     // Per-job lock to prevent concurrent execution of the same job
     private final Map<UUID, ReentrantLock> jobLocks = new ConcurrentHashMap<>();
-    private final CronParser cronParser = new CronParser(CronDefinitionBuilder.instanceDefinitionFor(CronType.UNIX));
-
-    // Schedule kind constants — mirror Hermes parse_schedule() kinds
-    private static final String KIND_ONCE = "once";
-    private static final String KIND_INTERVAL = "interval";
-    private static final String KIND_CRON = "cron";
     private static final String DEFAULT_PROFILE = "default";
     private static final Pattern PROFILE_ID_PATTERN = Pattern.compile("[a-z0-9][a-z0-9_-]{0,63}");
-
-    // ISO timestamp pattern: 2026-02-03T14:00:00 or 2026-02-03T14:00
-    private static final Pattern ISO_TIMESTAMP_PATTERN = Pattern.compile(
-        "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2})?(\\.\\d+)?(Z|[+-]\\d{2}:?\\d{2})?$");
-
-    // Bare duration: 30m, 2h, 1d, 30s
-    private static final Pattern DURATION_PATTERN = Pattern.compile(
-        "^(\\d+)\\s*([smhd])$", Pattern.CASE_INSENSITIVE);
-
-    // "every X" prefix
-    private static final Pattern EVERY_PREFIX = Pattern.compile(
-        "^every\\s+(.+)$", Pattern.CASE_INSENSITIVE);
-
-    // Cron expression: 5+ space-separated fields of digits/specials
-    private static final Pattern CRON_FIELD_PATTERN = Pattern.compile("^[\\d*/,-]+$");
 
     // h74: Maximum consecutive failures before backing off significantly.
     private static final int MAX_CONSECUTIVE_FAILURES = 5;
@@ -212,19 +187,8 @@ private static final String CRON_EXECUTION_HINT = """
         }
         log.info("Initializing cron jobs...");
         List<CronJobEntity> jobs = cronJobRepository.findByEnabledTrue();
-        // h71: Re-arm recurring cron jobs stuck in stale last_status=error.
-        // Don't let a permanent error state block future executions.
         for (CronJobEntity job : jobs) {
-            if ("error".equals(job.getLastStatus()) && job.isEnabled()) {
-                log.info("Re-arming cron job '{}' stuck in error state for next tick", job.getName());
-                job.setLastStatus(null);
-                job.setLastError(null);
-                job.setConsecutiveFailures(0);
-                cronJobRepository.save(job);
-            }
-        }
-        for (CronJobEntity job : jobs) {
-            scheduleJob(job);
+            reconcileSchedule(job.getId());
         }
         log.info("Loaded {} cron jobs", jobs.size());
     }
@@ -387,7 +351,7 @@ private static final String CRON_EXECUTION_HINT = """
         String modelProvider, String modelName, String baseUrl,
         String monitor, boolean continuityEnabled, UUID attachedSessionId
     ) {
-        validateSchedule(schedule);
+        var scheduleInfo = scheduleParser.parse(schedule);
         String normalizedProfile = normalizeProfileForStorage(profile);
         String normalizedScript = normalizeCronScriptPath(script);
         String normalizedMonitor = normalizeMonitorSource(monitor);
@@ -403,9 +367,6 @@ private static final String CRON_EXECUTION_HINT = """
             throw new IllegalArgumentException(EMPTY_PAYLOAD_ERROR);
         }
         String effectiveContextFrom = continuityEnabled ? applyContinuity(contextFrom, true) : contextFrom;
-
-        // Parse schedule to detect one-shot
-        ScheduleInfo scheduleInfo = parseSchedule(schedule);
 
         CronJobEntity entity = new CronJobEntity();
         entity.setUserId(userId != null ? userId : UserContext.scopeUserId());
@@ -443,16 +404,18 @@ private static final String CRON_EXECUTION_HINT = """
         if (effectiveRepeat != null && effectiveRepeat <= 0) {
             effectiveRepeat = null;
         }
-        if (KIND_ONCE.equals(scheduleInfo.kind) && effectiveRepeat == null) {
+        if (CronScheduleParser.KIND_ONCE.equals(scheduleInfo.kind()) && effectiveRepeat == null) {
             effectiveRepeat = 1;
         }
         entity.setRepeatCount(effectiveRepeat);
         entity.setRepeatCompleted(0);
 
-        entity = cronJobRepository.save(entity);
-        if (properties.getCron().isEnabled()) {
-            scheduleJob(entity);
-        }
+        CronJobEntity newJob = entity;
+        entity = properties.getCron().isEnabled() ? transactionTemplate.execute(status -> {
+            CronJobEntity saved = cronJobRepository.save(newJob);
+            updateSchedule(saved, null);
+            return saved;
+        }) : cronJobRepository.save(newJob);
         log.info("Created cron job: {} (profile: {}, schedule: {}, skills: {}, context_from: {}, repeat: {}, noAgent: {}, script: {})",
             name, normalizedProfile, schedule, skills, contextFrom, effectiveRepeat, noAgent, normalizedScript);
         return entity;
@@ -508,6 +471,7 @@ private static final String CRON_EXECUTION_HINT = """
 
     // ── Update overloads (backward-compatible) ──
 
+    @org.springframework.transaction.annotation.Transactional
     public CronJobEntity update(UUID id, String name, String schedule, String prompt, String deliverTo, Boolean enabled) {
         return update(id, name, schedule, prompt, deliverTo, enabled,
             null, null, null, null, null, null, null, null, null, null);
@@ -517,6 +481,7 @@ private static final String CRON_EXECUTION_HINT = """
      * Full-featured update with all Hermes parity fields.
      * Each field is only applied if non-null (Boolean fields use explicit non-null check).
      */
+    @org.springframework.transaction.annotation.Transactional
     public CronJobEntity update(
         UUID id, String name, String schedule, String prompt, String deliverTo, Boolean enabled,
         String skills, String contextFrom,
@@ -534,6 +499,7 @@ private static final String CRON_EXECUTION_HINT = """
      * Extended update with Hermes monitor, continuity, and session-attach fields.
      * Null means "leave unchanged"; blank monitor clears the monitor source.
      */
+    @org.springframework.transaction.annotation.Transactional
     public CronJobEntity update(
         UUID id, String name, String schedule, String prompt, String deliverTo, Boolean enabled,
         String skills, String contextFrom,
@@ -543,7 +509,7 @@ private static final String CRON_EXECUTION_HINT = """
         String modelProvider, String modelName, String baseUrl,
         String monitor, Boolean continuityEnabled, Boolean attachToSession, UUID currentSessionId
     ) {
-        CronJobEntity entity = cronJobRepository.findById(id)
+        CronJobEntity entity = lockedSchedule(id)
             .orElseThrow(() -> new IllegalArgumentException("Cron job not found: " + id));
         requireOwnership(entity);
 
@@ -556,13 +522,14 @@ private static final String CRON_EXECUTION_HINT = """
         String previousBaseUrl = entity.getBaseUrl();
         boolean previousNoAgent = entity.isNoAgent();
 
+        var scheduleInfo = schedule == null ? null : scheduleParser.parse(schedule);
+        if (scheduleInfo == null && Boolean.TRUE.equals(enabled)) {
+            scheduleParser.validate(entity.getSchedule());
+        }
         if (name != null) entity.setName(name);
-        if (schedule != null) {
-            validateSchedule(schedule);
+        if (scheduleInfo != null) {
             entity.setSchedule(schedule);
-            // Re-detect one-shot for repeatCount auto-set
-            ScheduleInfo scheduleInfo = parseSchedule(schedule);
-            if (KIND_ONCE.equals(scheduleInfo.kind) && entity.getRepeatCount() == null) {
+            if (CronScheduleParser.KIND_ONCE.equals(scheduleInfo.kind()) && entity.getRepeatCount() == null) {
                 entity.setRepeatCount(1);
             }
         }
@@ -643,36 +610,33 @@ private static final String CRON_EXECUTION_HINT = """
         // run-time payload check fires in executeJob instead. Hermes update_job
         // allows disabling a job to a stub and re-editing later.
 
-        entity = cronJobRepository.save(entity);
-        // Reschedule
-        cancelJob(id);
-        if (entity.isEnabled() && properties.getCron().isEnabled()) {
-            scheduleJob(entity);
-        }
+        entity.setConfigurationRevision(entity.getConfigurationRevision() + 1);
+        updateSchedule(cronJobRepository.save(entity), null);
         log.info("Updated cron job: {}", id);
         return entity;
     }
 
+    @org.springframework.transaction.annotation.Transactional
     public CronJobEntity pause(UUID id) {
-        CronJobEntity entity = cronJobRepository.findById(id)
+        CronJobEntity entity = lockedSchedule(id)
             .orElseThrow(() -> new IllegalArgumentException("Cron job not found: " + id));
         requireOwnership(entity);
         entity.setEnabled(false);
-        entity = cronJobRepository.save(entity);
-        cancelJob(id);
+        entity.setConfigurationRevision(entity.getConfigurationRevision() + 1);
+        updateSchedule(entity, null);
         log.info("Paused cron job: {}", id);
         return entity;
     }
 
+    @org.springframework.transaction.annotation.Transactional
     public CronJobEntity resume(UUID id) {
-        CronJobEntity entity = cronJobRepository.findById(id)
+        CronJobEntity entity = lockedSchedule(id)
             .orElseThrow(() -> new IllegalArgumentException("Cron job not found: " + id));
         requireOwnership(entity);
+        scheduleParser.validate(entity.getSchedule());
         entity.setEnabled(true);
-        entity = cronJobRepository.save(entity);
-        if (properties.getCron().isEnabled()) {
-            scheduleJob(entity);
-        }
+        entity.setConfigurationRevision(entity.getConfigurationRevision() + 1);
+        updateSchedule(entity, null);
         log.info("Resumed cron job: {}", id);
         return entity;
     }
@@ -681,14 +645,14 @@ private static final String CRON_EXECUTION_HINT = """
         return findById(id).isPresent();
     }
 
+    @org.springframework.transaction.annotation.Transactional
     public void remove(UUID id) {
-        CronJobEntity entity = cronJobRepository.findById(id).orElse(null);
+        CronJobEntity entity = lockedSchedule(id).orElse(null);
         if (entity != null) {
             requireOwnership(entity);
         }
-        cancelJob(id);
         cronJobRepository.deleteById(id);
-        jobLocks.remove(id);
+        if (entity != null) cancelAfterCommit(id);
         log.info("Removed cron job: {}", id);
     }
 
@@ -711,7 +675,7 @@ private static final String CRON_EXECUTION_HINT = """
             try {
                 executeManualNow(id, extraPrompt);
             } catch (Exception e) {
-                log.warn("Manual background cron run {} failed before execution: {}", id, e.getMessage());
+                log.warn("Manual background cron run {} did not complete: {}", id, e.getMessage());
             }
         });
         return entity;
@@ -721,9 +685,14 @@ private static final String CRON_EXECUTION_HINT = """
         ReentrantLock lock = jobLocks.computeIfAbsent(id, k -> new ReentrantLock());
         lock.lock();
         try {
-            CronJobEntity entity = cronJobRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("Cron job not found: " + id));
-            executeJob(entity, extraPrompt);
+            CronJobEntity entity = cronJobRepository.findById(id).orElse(null);
+            if (entity == null) {
+                jobLocks.remove(id, lock);
+                throw new IllegalArgumentException("Cron job not found: " + id);
+            }
+            if (executeJob(entity, extraPrompt) == CronExecutionOutcome.RESULT_NOT_COMMITTED) {
+                throw new IllegalStateException("Cron execution result could not be committed");
+            }
             return entity;
         } finally {
             lock.unlock();
@@ -752,117 +721,217 @@ private static final String CRON_EXECUTION_HINT = """
 
     // ── Scheduling ──
 
-    private void scheduleJob(CronJobEntity job) {
-        try {
-            long delaySeconds = calculateDelaySeconds(job.getSchedule());
-            scheduleJob(job, delaySeconds);
-        } catch (Exception e) {
-            log.error("Failed to schedule cron job {}: {}", job.getName(), e.getMessage());
-        }
-    }
-
-    private void scheduleJob(CronJobEntity job, long delaySeconds) {
-        ScheduledFuture<?> future = scheduler.schedule(
-            () -> executeAndReschedule(job.getId()),
-            delaySeconds, TimeUnit.SECONDS
-        );
-        scheduledTasks.put(job.getId(), future);
-        job.setNextRunAt(Instant.now().plusSeconds(delaySeconds));
-        cronJobRepository.save(job);
-        log.debug("Scheduled cron job '{}' to run in {} seconds", job.getName(), delaySeconds);
-    }
-
-    private void executeAndReschedule(UUID jobId) {
-        try {
-            // Per-job lock: skip if another execution of the same job is still running
-            ReentrantLock lock = jobLocks.computeIfAbsent(jobId, k -> new ReentrantLock());
-            if (!lock.tryLock()) {
-                log.warn("Cron job {} already running, skipping this execution", jobId);
-                // Still reschedule
-                CronJobEntity job = cronJobRepository.findById(jobId).orElse(null);
-                if (job != null && job.isEnabled()) {
-                    scheduleJob(job);
-                }
-                return;
-            }
-            try {
-                CronJobEntity job = cronJobRepository.findById(jobId).orElse(null);
-                if (job == null || !job.isEnabled()) return;
-
-                // h74: Check if we should back off due to consecutive failures.
-                // If the backend has been unavailable, increase the delay before next attempt.
-                if (job.getConsecutiveFailures() >= MAX_CONSECUTIVE_FAILURES) {
-                    long backoff = BACKEND_UNAVAILABLE_BACKOFF_SECONDS * (1L << Math.min(
-                        job.getConsecutiveFailures() - MAX_CONSECUTIVE_FAILURES, 5));
-                    log.warn("Cron job {} backing off {}s due to {} consecutive failures (backend unavailability)",
-                        job.getName(), backoff, job.getConsecutiveFailures());
-                    long delaySeconds = Math.max(backoff, calculateDelaySeconds(job.getSchedule()));
-                    ScheduledFuture<?> future = scheduler.schedule(
-                        () -> executeAndReschedule(jobId), delaySeconds, TimeUnit.SECONDS);
-                    scheduledTasks.put(jobId, future);
-                    job.setNextRunAt(Instant.now().plusSeconds(delaySeconds));
-                    cronJobRepository.save(job);
+    private void reconcileSchedule(UUID id) {
+        transactionTemplate.executeWithoutResult(status ->
+            lockedSchedule(id).ifPresent(job -> {
+                if (!job.isEnabled()) return;
+                long delay;
+                try {
+                    delay = scheduleParser.calculateDelaySeconds(job.getSchedule());
+                } catch (IllegalArgumentException invalid) {
+                    job.setEnabled(false);
+                    job.setLastStatus("error");
+                    job.setLastError(invalid.getMessage());
+                    updateSchedule(job, null);
+                    log.warn("Disabled cron job {} with invalid schedule: {}", id, invalid.getMessage());
                     return;
                 }
+                if ("error".equals(job.getLastStatus())) {
+                    job.setLastStatus(null);
+                    job.setLastError(null);
+                    job.setConsecutiveFailures(0);
+                }
+                Instant due = job.getNextRunAt();
+                // Only one-shot execution consumes its deadline before any side effect.
+                if (due == null || (!due.isAfter(Instant.now()) && !Integer.valueOf(1).equals(job.getRepeatCount()))) {
+                    due = nextRunAt(delay);
+                }
+                scheduleJob(job, due);
+            }));
+    }
 
-                CronExecutionOutcome outcome = executeJob(job);
+    private Optional<CronJobEntity> lockedSchedule(UUID id) {
+        return cronJobRepository.findByIdForUpdate(id);
+    }
 
-                // ── Fix 2: Repeat count auto-delete ──
-                // After each successful execution, increment repeatCompleted.
-                // If repeatCount is set and completed >= repeatCount, auto-delete.
-                // Audit C4: save + delete + reset are wrapped in one programmatic
-                // transaction so a DB failure mid-sequence cannot leave an orphaned
-                // fully-completed job that never runs again and never gets deleted.
+    private void updateSchedule(CronJobEntity job, CronExecutionOutcome outcome) {
+        if (job.isEnabled() && properties.getCron().isEnabled()) {
+            long delay = scheduleParser.calculateDelaySeconds(job.getSchedule());
+            if (outcome != null) delay = delayAfterExecution(job, outcome, delay);
+            scheduleJob(job, nextRunAt(delay));
+        } else {
+            job.setNextRunAt(null);
+            cronJobRepository.save(job);
+            publishAfterCommit(job.getId(), () -> cancelJob(job.getId()), () -> {});
+        }
+    }
+
+    private Instant nextRunAt(long delay) {
+        return Instant.now().plusSeconds(delay).truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+    }
+
+    private void cancelAfterCommit(UUID id) {
+        publishAfterCommit(id, () -> {
+            cancelJob(id);
+            jobLocks.remove(id);
+        }, () -> {});
+    }
+
+    private void scheduleJob(CronJobEntity job, Instant due) {
+        // A missed one-shot that has not been claimed runs when the service comes back.
+        long delayMillis = Math.max(0, Duration.between(Instant.now(), due).toMillis());
+        UUID id = job.getId();
+        long revision = job.getConfigurationRevision();
+        var persisted = new CompletableFuture<ScheduledFuture<?>>();
+        ScheduledFuture<?> future;
+        try {
+            future = scheduler.schedule(() -> {
+                if (persisted.isDone()) {
+                    var current = persisted.join();
+                    if (current != null) executeAndReschedule(id, current, due, revision);
+                } else {
+                    persisted.thenAcceptAsync(current -> {
+                        if (current != null) executeAndReschedule(id, current, due, revision);
+                    }, scheduler);
+                }
+            }, delayMillis, TimeUnit.MILLISECONDS);
+        } catch (java.util.concurrent.RejectedExecutionException rejected) {
+            job.setLastStatus("error");
+            job.setLastError("Failed to schedule cron job");
+            job.setNextRunAt(null);
+            cronJobRepository.save(job);
+            publishAfterCommit(job.getId(), () -> cancelJob(job.getId()), () -> {});
+            return;
+        }
+        try {
+            job.setNextRunAt(due);
+            cronJobRepository.save(job);
+            publishAfterCommit(job.getId(), () -> {
+                var previous = scheduledTasks.put(job.getId(), future);
+                if (previous != null) previous.cancel(false);
+                persisted.complete(future);
+            }, () -> {
+                future.cancel(false);
+                persisted.complete(null);
+            });
+        } catch (RuntimeException e) {
+            scheduledTasks.remove(job.getId(), future);
+            future.cancel(false);
+            persisted.complete(null);
+            throw e;
+        }
+        log.debug("Scheduled cron job '{}' for {}", job.getName(), due);
+    }
+
+    private static final class PendingPublication {
+        private long registered;
+        private long committed;
+        private int remaining;
+    }
+
+    private void publishAfterCommit(UUID id, Runnable publish, Runnable discard) {
+        if (!TransactionSynchronizationManager.isActualTransactionActive()) {
+            publish.run();
+            return;
+        }
+        // Registration happens while the row is locked. Commit callbacks can
+        // arrive out of order once that lock is released.
+        long order = pendingPublications.compute(id, (key, pending) -> {
+            if (pending == null) pending = new PendingPublication();
+            pending.registered++;
+            pending.remaining++;
+            return pending;
+        }).registered;
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCompletion(int status) {
+                pendingPublications.computeIfPresent(id, (key, pending) -> {
+                    if (status == STATUS_COMMITTED && order > pending.committed) {
+                        pending.committed = order;
+                        publish.run();
+                    } else {
+                        discard.run();
+                    }
+                    return --pending.remaining == 0 ? null : pending;
+                });
+            }
+        });
+    }
+
+    private void executeAndReschedule(UUID jobId, ScheduledFuture<?> expected, Instant due, long revision) {
+        ReentrantLock lock = jobLocks.compute(jobId, (id, existing) ->
+            scheduledTasks.get(id) == expected ? (existing == null ? new ReentrantLock() : existing) : existing);
+        if (lock == null || scheduledTasks.get(jobId) != expected) return;
+        if (!lock.tryLock()) {
+            finishScheduledRun(jobId, expected, due, revision, null);
+            return;
+        }
+        try {
+            if (scheduledTasks.get(jobId) != expected) return;
+            CronJobEntity job = cronJobRepository.findById(jobId).orElse(null);
+            if (job == null || !job.isEnabled() || job.getConfigurationRevision() != revision || !due.equals(job.getNextRunAt()) || scheduledTasks.get(jobId) != expected) return;
+            if (job.getConsecutiveFailures() >= MAX_CONSECUTIVE_FAILURES) {
+                finishScheduledRun(jobId, expected, due, revision, CronExecutionOutcome.failure("backoff"));
+                return;
+            }
+            if (Integer.valueOf(1).equals(job.getRepeatCount())) {
+                executeOneShot(jobId, due, revision);
+                return;
+            }
+            finishScheduledRun(jobId, expected, due, revision, executeJob(job));
+        } catch (Exception e) {
+            log.error("Error executing cron job {}", jobId, e);
+            finishScheduledRun(jobId, expected, due, revision, null);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private void executeOneShot(UUID id, Instant due, long revision) {
+        var claimed = transactionTemplate.execute(status -> {
+            var job = cronJobRepository.findByIdForUpdate(id).orElse(null);
+            if (job == null || !job.isEnabled() || job.getConfigurationRevision() != revision
+                    || !due.equals(job.getNextRunAt())) {
+                return null;
+            }
+            // Consume this firing durably before running anything outside the database.
+            job.setEnabled(false);
+            job.setLastStatus("error");
+            job.setLastError("One-shot execution claimed. Verify its result before resuming.");
+            job.setLastErrorAt(Instant.now());
+            updateSchedule(job, null);
+            return job;
+        });
+        if (claimed == null || !executeJob(claimed).countsTowardRepeat()) {
+            return;
+        }
+        transactionTemplate.executeWithoutResult(status ->
+            cronJobRepository.findByIdForUpdate(id)
+                .filter(job -> !job.isEnabled() && job.getConfigurationRevision() == revision)
+                .ifPresent(job -> {
+                    cronJobRepository.delete(job);
+                    cancelAfterCommit(id);
+                }));
+    }
+
+    private void finishScheduledRun(UUID id, ScheduledFuture<?> expected, Instant due, long revision, CronExecutionOutcome outcome) {
+        if (scheduledTasks.get(id) != expected) return;
+        transactionTemplate.executeWithoutResult(status -> {
+            var job = cronJobRepository.findByIdForUpdate(id).orElse(null);
+            if (job == null || !job.isEnabled() || job.getConfigurationRevision() != revision || !due.equals(job.getNextRunAt())) return;
+            if (outcome != null) {
                 if (outcome.countsTowardRepeat() && job.getRepeatCount() != null) {
-                    final CronJobEntity jobRef = job;
-                    boolean deleted = Boolean.TRUE.equals(transactionTemplate.execute(tx -> {
-                        jobRef.setRepeatCompleted(jobRef.getRepeatCompleted() + 1);
-                        if (jobRef.getRepeatCompleted() >= jobRef.getRepeatCount()) {
-                            log.info("Cron job '{}' reached repeat limit ({}/{}), auto-deleting",
-                                jobRef.getName(), jobRef.getRepeatCompleted(), jobRef.getRepeatCount());
-                            cronJobRepository.save(jobRef);
-                            cancelJob(jobId);
-                            cronJobRepository.deleteById(jobId);
-                            return true;
-                        }
-                        cronJobRepository.save(jobRef);
-                        // h71: Reset consecutive failures on successful execution (same tx)
-                        if (jobRef.getConsecutiveFailures() > 0) {
-                            jobRef.setConsecutiveFailures(0);
-                            cronJobRepository.save(jobRef);
-                        }
-                        return false;
-                    }));
-                    if (deleted) {
-                        jobLocks.remove(jobId, lock);
+                    job.setRepeatCompleted(job.getRepeatCompleted() + 1);
+                    if (job.getRepeatCompleted() >= job.getRepeatCount()) {
+                        cronJobRepository.delete(job);
+                        cancelAfterCommit(id);
                         return;
                     }
-                } else if (outcome.resetFailureStreak() && job.getConsecutiveFailures() > 0) {
-                    // h71: Reset consecutive failures on successful execution
-                    transactionTemplate.executeWithoutResult(tx -> {
-                        job.setConsecutiveFailures(0);
-                        cronJobRepository.save(job);
-                    });
                 }
-
-                // Reschedule (one-shot jobs with repeatCount=1 are already deleted above)
-                scheduleJobAfterExecution(job, outcome);
-            } finally {
-                lock.unlock();
+                if (outcome.resetFailureStreak()) job.setConsecutiveFailures(0);
             }
-        } catch (Exception e) {
-            log.error("Error executing cron job {}: {} — job will be rescheduled", jobId, e.getMessage());
-            // h71: Re-arm the job even if the outer catch fires — don't let a
-            // permanent error state block future executions.
-            try {
-                CronJobEntity job = cronJobRepository.findById(jobId).orElse(null);
-                if (job != null && job.isEnabled()) {
-                    scheduleJob(job);
-                }
-            } catch (Exception retryEx) {
-                log.error("Failed to re-schedule cron job {} after error: {}", jobId, retryEx.getMessage());
-            }
-        }
+            updateSchedule(job, outcome);
+        });
     }
 
     // ── Job execution ──
@@ -894,12 +963,10 @@ private static final String CRON_EXECUTION_HINT = """
                 job.setLastRunAt(Instant.now());
                 job.setLastStatus("success");
                 job.setLastError(null);
-                cronJobRepository.save(job);
-                // WP-1: no_agent stdout is the deliverable (Hermes run_job delivers
-                // it verbatim); record + enqueue in the same sequence as the agent path.
                 String stdout = scriptResult.output() == null ? "" : scriptResult.output().trim();
-                Long executionLogId = recordExecution(job.getId(), startedAt, Instant.now(), "success", null, stdout);
-                enqueueDeliveryWork(job, executionLogId, stdout);
+                if (!recordRunAndDelivery(job, startedAt, "success", null, stdout, false)) {
+                    return CronExecutionOutcome.RESULT_NOT_COMMITTED;
+                }
                 publishCronEvent("cron.success", job, startedAt, null);
                 return CronExecutionOutcome.success();
             }
@@ -912,7 +979,7 @@ private static final String CRON_EXECUTION_HINT = """
                 job.setLastRunAt(Instant.now());
                 job.setLastStatus("no_change");
                 job.setLastError(null);
-                cronJobRepository.save(job);
+                cronJobRepository.recordRun(job);
                 recordExecution(job.getId(), startedAt, Instant.now(), "no_change", null, null);
                 log.info("Cron job '{}' monitor output unchanged; skipping agent run", job.getName());
                 publishCronEvent("cron.no_change", job, startedAt, null);
@@ -1019,11 +1086,10 @@ private static final String CRON_EXECUTION_HINT = """
                     log.warn("Cron job '{}' produced non-UUID session id: {}", job.getName(), lastRunSessionId);
                 }
             }
-            cronJobRepository.save(job);
-            // h72: Record successful execution in the ledger.
             String executionOutput = loadLastRunOutput(job.getLastRunSessionId());
-            Long executionLogId = recordExecution(job.getId(), startedAt, Instant.now(), "success", null, executionOutput);
-            enqueueDeliveryWork(job, executionLogId, executionOutput);
+            if (!recordRunAndDelivery(job, startedAt, "success", null, executionOutput, false)) {
+                return CronExecutionOutcome.RESULT_NOT_COMMITTED;
+            }
             publishCronEvent("cron.success", job, startedAt, Map.of("monitor_changed", monitorOutcome.changed()));
             return CronExecutionOutcome.success();
         } catch (Exception e) {
@@ -1050,20 +1116,11 @@ private static final String CRON_EXECUTION_HINT = """
                 log.warn("Cron job '{}' detected backend unavailability (consecutive failures: {})",
                     job.getName(), job.getConsecutiveFailures());
             }
-            cronJobRepository.save(job);
-
-            // h72: Record failed execution in the ledger.
             String status = errorMsg.toLowerCase().contains("timeout") ? "timeout" : "failure";
-            Long executionLogId = recordExecution(job.getId(), startedAt, Instant.now(), status, errorMsg, null);
             boolean retryPending = job.getUnreachableRetries() > 0
                 && job.getUnreachableRetries() <= UNREACHABLE_LADDER_SECONDS.length;
-            // WP-1 (Hermes scheduler deliver path): every failed run delivers a
-            // compact one-line failure summary + a review nudge once the failure
-            // streak reaches the threshold — through the durable ledger, not a
-            // bot-side scan.
-            // WP-c: suppressed while an unreachable re-run is still pending.
-            if (!retryPending) {
-                enqueueFailureDeliveryWork(job, executionLogId, errorMsg);
+            if (!recordRunAndDelivery(job, startedAt, status, errorMsg, null, retryPending)) {
+                return CronExecutionOutcome.RESULT_NOT_COMMITTED;
             }
             publishCronEvent("cron." + status, job, startedAt, Map.of("error", errorMsg));
             // h71: Re-arm: clear the error status so the job can run on the next tick.
@@ -1075,32 +1132,47 @@ private static final String CRON_EXECUTION_HINT = """
         }
     }
 
-    private void scheduleJobAfterExecution(CronJobEntity job, CronExecutionOutcome outcome) {
-        // WP-c: a recurring job that never reached the model on a transient
-        // network error pulls its next run earlier along a bounded 5/15/30-minute
-        // ladder instead of silently skipping a whole period (a daily job behind
-        // a reconnecting VPN used to lose the day). One-shots (repeatCount=1)
-        // keep at-most-once dispatch semantics and never re-run.
-        if (outcome.unreachableBeforeModel() && retryUnreachableEnabled()
-                && isRecurring(job)) {
-            long ladderSeconds = unreachableRetryLadderSeconds(job);
-            long regularSeconds = calculateDelaySeconds(job.getSchedule());
-            if (ladderSeconds < regularSeconds) {
-                log.warn("Cron job '{}' never reached the model (attempt {} on the retry ladder); "
-                    + "re-running in {}s instead of waiting the full period",
-                    job.getName(), job.getUnreachableRetries() + 1, ladderSeconds);
-                scheduleJob(job, ladderSeconds);
-                return;
-            }
+    private boolean recordRunAndDelivery(CronJobEntity job, Instant startedAt, String status,
+                                      String error, String output, boolean retryPending) {
+        Long executionId = recordExecution(job.getId(), startedAt, Instant.now(), status, error, output);
+        if (executionId == null) {
+            return false;
         }
-        if (!outcome.failed() || job.getConsecutiveFailures() < MAX_CONSECUTIVE_FAILURES) {
-            scheduleJob(job);
-            return;
+        try {
+            String mirrorPayload = transactionTemplate.execute(tx -> {
+                // The conditional UPDATE holds the row through enqueue. History survives a stale revision.
+                if (cronJobRepository.recordRun(job) == 0 || retryPending
+                        || (error == null && CronSilenceFilter.isSilent(output))) {
+                    return null;
+                }
+                DeliveryWorkItemService deliveryService = deliveryProvider();
+                if (deliveryService == null) {
+                    return null;
+                }
+                String payload = error == null ? Objects.toString(output, "") : failureDeliveryText(job, error);
+                String target = resolveDeliveryTarget(job);
+                if (error == null) {
+                    target = withSessionOriginThread(job, target);
+                }
+                enqueueDeliveryWork(deliveryService, job, executionId, target, payload);
+                return payload;
+            });
+            // The transcript is optional, including for local jobs without a delivery target.
+            mirrorToAttachedSession(job, mirrorPayload);
+            return true;
+        } catch (org.springframework.transaction.TransactionException | org.springframework.dao.DataAccessException
+                | IllegalArgumentException e) {
+            log.warn("Could not publish the completed cron run {}", job.getId(), e);
+            return false;
         }
-        long delaySeconds = Math.max(failureBackoffSeconds(job), calculateDelaySeconds(job.getSchedule()));
-        log.warn("Cron job {} backing off {}s after {} consecutive failures",
-            job.getName(), delaySeconds, job.getConsecutiveFailures());
-        scheduleJob(job, delaySeconds);
+    }
+
+    private long delayAfterExecution(CronJobEntity job, CronExecutionOutcome outcome, long regularDelay) {
+        if (outcome.unreachableBeforeModel() && retryUnreachableEnabled() && isRecurring(job)) {
+            return Math.min(regularDelay, unreachableRetryLadderSeconds(job));
+        }
+        return outcome.failed() && job.getConsecutiveFailures() >= MAX_CONSECUTIVE_FAILURES
+            ? Math.max(regularDelay, failureBackoffSeconds(job)) : regularDelay;
     }
 
     private static final long[] UNREACHABLE_LADDER_SECONDS = {5 * 60L, 15 * 60L, 30 * 60L};
@@ -1167,6 +1239,8 @@ private static final String CRON_EXECUTION_HINT = """
 
     private record CronExecutionOutcome(String status, boolean failed, boolean countsTowardRepeat,
                                         boolean unreachableBeforeModel) {
+        private static final CronExecutionOutcome RESULT_NOT_COMMITTED = failure("result_not_committed");
+
         static CronExecutionOutcome success() {
             return new CronExecutionOutcome("success", false, true, false);
         }
@@ -1495,85 +1569,16 @@ private static final String CRON_EXECUTION_HINT = """
         return null;
     }
 
-    /**
-     * WP-1 durable delivery: create the delivery work item for a finished cron
-     * execution in the same logical sequence. The target is resolved once, from
-     * the job's deliver_to (already normalized to platform:chat_id by the
-     * creator) — never from the current bot state at send time. Silenced runs
-     * ([SILENT] markers) are terminally acknowledged without platform send.
-     */
-    private void enqueueDeliveryWork(CronJobEntity job, Long executionLogId, String output) {
-        if (executionLogId == null || CronSilenceFilter.isSilent(output)) {
-            return;
-        }
-        DeliveryWorkItemService deliveryService = deliveryProvider();
-        if (deliveryService == null) {
-            return;
-        }
-        String target = resolveDeliveryTarget(job);
-        target = withSessionOriginThread(job, target);
-        // Mirror rides along ANY delivery — including target-less local runs
-        // (Hermes _maybe_mirror_cron_delivery is a transcript mirror, not a
-        // transport; it must not depend on the ledger target resolving).
-        mirrorToAttachedSession(job, output == null ? "" : output);
-        if (target == null) {
-            log.debug("Cron job '{}' has no resolvable delivery target; skipping ledger enqueue", job.getName());
-            return;
-        }
-        String profile = job.getProfile() == null || job.getProfile().isBlank()
-            ? DEFAULT_PROFILE : job.getProfile();
-        String payload = output == null ? "" : output;
-        try {
-            deliveryService.enqueue(new DeliveryWorkItemService.EnqueueRequest(
-                DeliveryWorkItemService.SOURCE_CRON_EXECUTION,
-                String.valueOf(executionLogId),
-                profile,
-                job.getUserId(),
-                job.getLastRunSessionId(),
-                target,
-                payload));
-        } catch (IllegalArgumentException e) {
-            log.warn("Cron job '{}' delivery target rejected: {}", job.getName(), e.getMessage());
-        } catch (Exception e) {
-            log.warn("Cron job '{}' delivery enqueue failed: {}", job.getName(), e.getMessage());
-        }
-    }
-
-    /**
-     * WP-1 (Hermes _summarize_cron_failure_for_delivery + _failure_streak_nudge):
-     * every failed run delivers a compact one-line failure summary, plus a
-     * "worth a review" nudge line once the streak reaches the configured
-     * threshold. Compact by design — no provider JSON, retry noise or stack
-     * traces in the delivery channel.
-     */
-    private void enqueueFailureDeliveryWork(CronJobEntity job, Long executionLogId, String errorMsg) {
-        DeliveryWorkItemService deliveryService = deliveryProvider();
-        if (deliveryService == null || executionLogId == null) {
-            return;
-        }
-        String payload = failureDeliveryText(job, errorMsg);
-        // Mirror rides along ANY delivery — see enqueueDeliveryWork.
-        mirrorToAttachedSession(job, payload);
-        String target = resolveDeliveryTarget(job);
+    private void enqueueDeliveryWork(DeliveryWorkItemService deliveryService, CronJobEntity job,
+                                     long executionId, String target, String payload) {
         if (target == null) {
             return;
         }
         String profile = job.getProfile() == null || job.getProfile().isBlank()
             ? DEFAULT_PROFILE : job.getProfile();
-        try {
-            deliveryService.enqueue(new DeliveryWorkItemService.EnqueueRequest(
-                DeliveryWorkItemService.SOURCE_CRON_EXECUTION,
-                String.valueOf(executionLogId),
-                profile,
-                job.getUserId(),
-                job.getLastRunSessionId(),
-                target,
-                payload));
-        } catch (IllegalArgumentException e) {
-            log.warn("Cron job '{}' failure delivery target rejected: {}", job.getName(), e.getMessage());
-        } catch (Exception e) {
-            log.warn("Cron job '{}' failure delivery enqueue failed: {}", job.getName(), e.getMessage());
-        }
+        deliveryService.enqueue(new DeliveryWorkItemService.EnqueueRequest(
+            DeliveryWorkItemService.SOURCE_CRON_EXECUTION, String.valueOf(executionId),
+            profile, job.getUserId(), job.getLastRunSessionId(), target, payload));
     }
 
     /**
@@ -2352,166 +2357,6 @@ private static final String CRON_EXECUTION_HINT = """
             || lower.contains("503")
             || lower.contains("gateway")
             && lower.contains("502");
-    }
-
-    // ── Schedule parsing ──
-
-    /**
-     * Schedule info holder — mirrors Hermes parse_schedule() return shape.
-     */
-    private record ScheduleInfo(String kind, long delaySeconds) {}
-
-    /**
-     * Fix 3: Parse schedule string and detect one-shot vs recurring.
-     * <p>
-     * Hermes parse_schedule() recognizes:
-     * - ISO timestamp (2026-02-03T14:00:00) → one-shot at specific time
-     * - Bare duration (30m, 2h, 1d) without "every" → one-shot from now
-     * - "every X" → recurring interval
-     * - Cron expression → recurring cron
-     *
-     * @return ScheduleInfo with kind and delay in seconds from now
-     */
-    private ScheduleInfo parseSchedule(String schedule) {
-        String trimmed = schedule.trim();
-        String lower = trimmed.toLowerCase();
-
-        // "every X" → recurring interval
-        Matcher everyMatcher = EVERY_PREFIX.matcher(trimmed);
-        if (everyMatcher.matches()) {
-            long seconds = parseDurationSeconds(everyMatcher.group(1));
-            return new ScheduleInfo(KIND_INTERVAL, seconds);
-        }
-
-        // ISO timestamp → one-shot at specific time
-        if (ISO_TIMESTAMP_PATTERN.matcher(trimmed).matches() || (trimmed.contains("T") && trimmed.matches("\\d{4}-\\d{2}-\\d{2}.*"))) {
-            try {
-                LocalDateTime dt = parseIsoTimestamp(trimmed);
-                long delay = Duration.between(LocalDateTime.now(), dt).getSeconds();
-                return new ScheduleInfo(KIND_ONCE, Math.max(1, delay));
-            } catch (DateTimeParseException e) {
-                throw new IllegalArgumentException("Invalid timestamp '" + trimmed + "': " + e.getMessage());
-            }
-        }
-
-        // Check for date-only pattern: 2026-02-03
-        if (trimmed.matches("\\d{4}-\\d{2}-\\d{2}$")) {
-            try {
-                LocalDateTime dt = LocalDateTime.parse(trimmed + "T00:00:00");
-                long delay = Duration.between(LocalDateTime.now(), dt).getSeconds();
-                return new ScheduleInfo(KIND_ONCE, Math.max(1, delay));
-            } catch (DateTimeParseException e) {
-                throw new IllegalArgumentException("Invalid date '" + trimmed + "': " + e.getMessage());
-            }
-        }
-
-        // Bare duration (30m, 2h, 1d, 30s) without "every" → one-shot from now
-        Matcher durationMatcher = DURATION_PATTERN.matcher(trimmed);
-        if (durationMatcher.matches()) {
-            long seconds = parseDurationSeconds(trimmed);
-            return new ScheduleInfo(KIND_ONCE, seconds);
-        }
-
-        // Cron expression (5+ space-separated fields)
-        String[] parts = trimmed.split("\\s+");
-        if (parts.length >= 5 && isCronExpression(parts)) {
-            return new ScheduleInfo(KIND_CRON, calculateCronDelaySeconds(trimmed));
-        }
-
-        throw new IllegalArgumentException(
-            "Invalid schedule '" + trimmed + "'. Use:\n" +
-            "  - Duration: '30m', '2h', '1d' (one-shot)\n" +
-            "  - Interval: 'every 30m', 'every 2h' (recurring)\n" +
-            "  - Cron: '0 9 * * *' (cron expression)\n" +
-            "  - Timestamp: '2026-02-03T14:00:00' (one-shot at time)");
-    }
-
-    private boolean isCronExpression(String[] parts) {
-        for (int i = 0; i < Math.min(5, parts.length); i++) {
-            if (!CRON_FIELD_PATTERN.matcher(parts[i]).matches()) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private LocalDateTime parseIsoTimestamp(String s) {
-        // Handle Z suffix
-        String normalized = s.replace("Z", "");
-        // Try with seconds
-        try {
-            return LocalDateTime.parse(normalized, DateTimeFormatter.ISO_LOCAL_DATE_TIME);
-        } catch (DateTimeParseException e) {
-            // Try without seconds: 2026-02-03T14:00
-            try {
-                return LocalDateTime.parse(normalized + ":00", DateTimeFormatter.ISO_LOCAL_DATE_TIME);
-            } catch (DateTimeParseException e2) {
-                throw e;
-            }
-        }
-    }
-
-    private long parseDurationSeconds(String s) {
-        Matcher m = DURATION_PATTERN.matcher(s.trim());
-        if (!m.matches()) {
-            throw new IllegalArgumentException("Unrecognized duration: " + s);
-        }
-        long value = Long.parseLong(m.group(1));
-        return switch (m.group(2).toLowerCase()) {
-            case "s" -> value;
-            case "m" -> value * 60;
-            case "h" -> value * 3600;
-            case "d" -> value * 86400;
-            default -> throw new IllegalArgumentException("Unknown time unit: " + m.group(2));
-        };
-    }
-
-    private long calculateDelaySeconds(String schedule) {
-        // Try human-readable interval or one-shot first
-        try {
-            ScheduleInfo info = parseSchedule(schedule);
-            return Math.max(1, info.delaySeconds());
-        } catch (Exception e) {
-            log.debug("Schedule '{}' is not a human-readable interval, trying cron: {}", schedule, e.getMessage());
-        }
-        // Fall back to standard cron expression
-        return calculateCronDelaySeconds(schedule);
-    }
-
-    private long calculateCronDelaySeconds(String cronExpression) {
-        try {
-            Cron cron = cronParser.parse(cronExpression);
-            ExecutionTime executionTime = ExecutionTime.forCron(cron);
-            ZonedDateTime now = ZonedDateTime.now(ZoneId.systemDefault());
-            Optional<ZonedDateTime> nextExecution = executionTime.nextExecution(now);
-            if (nextExecution.isPresent()) {
-                long delaySeconds = Duration.between(now, nextExecution.get()).getSeconds();
-                return Math.max(1, delaySeconds);
-            }
-            return 60; // fallback
-        } catch (Exception e) {
-            log.warn("Failed to parse cron expression '{}', using default 60s delay: {}", cronExpression, e.getMessage());
-            return 60;
-        }
-    }
-
-    private void validateSchedule(String schedule) {
-        if (schedule == null || schedule.isBlank()) {
-            throw new IllegalArgumentException("Schedule cannot be null or blank");
-        }
-        // Try human-readable interval, one-shot, or ISO timestamp first
-        try {
-            parseSchedule(schedule);
-            return;
-        } catch (IllegalArgumentException e) {
-            // Not a human-readable format, try cron
-        }
-        // Fall back to standard cron expression
-        try {
-            cronParser.parse(schedule);
-        } catch (Exception e) {
-            throw new IllegalArgumentException("Invalid cron expression: " + schedule + " — " + e.getMessage());
-        }
     }
 
     private boolean isVisibleToCurrentUser(CronJobEntity entity) {

@@ -35,12 +35,72 @@ class CronJobServiceTest {
     private AgentProperties properties;
     private CronJobService service;
 
+    static org.springframework.transaction.support.TransactionTemplate unitTransaction() {
+        return new org.springframework.transaction.support.TransactionTemplate() {
+            @Override
+            public <T> T execute(org.springframework.transaction.support.TransactionCallback<T> callback) {
+                return callback.doInTransaction(new org.springframework.transaction.support.SimpleTransactionStatus());
+            }
+        };
+    }
+
+    static void stubExecutionHistory(CronExecutionLogRepository repository) {
+        lenient().when(repository.save(any(com.azhukov.agent.persistence.entity.CronExecutionLogEntity.class)))
+            .thenAnswer(invocation -> {
+                var entry = invocation.<com.azhukov.agent.persistence.entity.CronExecutionLogEntity>getArgument(0);
+                entry.setId(1L);
+                return entry;
+            });
+    }
+
     @BeforeEach
     void setUp() {
+        stubExecutionHistory(cronExecutionLogRepository);
+        org.mockito.Mockito.lenient().when(cronJobRepository.findByIdForUpdate(
+                org.mockito.ArgumentMatchers.any(java.util.UUID.class)))
+            .thenAnswer(call -> cronJobRepository.findById(call.getArgument(0)));
         properties = new AgentProperties();
         properties.getCron().setEnabled(false); // Disable scheduling for tests
         lenient().when(agentRuntimeServiceProvider.getIfAvailable()).thenReturn(agentRuntimeService);
-        service = new CronJobService(cronJobRepository, agentRuntimeServiceProvider, properties, skillManager, cronExecutionLogRepository, messageRepository, new org.springframework.transaction.support.TransactionTemplate(), new CronScheduleParser());
+        service = new CronJobService(cronJobRepository, agentRuntimeServiceProvider, properties, skillManager, cronExecutionLogRepository, messageRepository, CronJobServiceTest.unitTransaction(), new CronScheduleParser());
+    }
+
+    @Test
+    void schedulerDoesNotLeaveLiveFutureWhenPersistenceFails() {
+        var scheduler = mock(java.util.concurrent.ScheduledExecutorService.class);
+        var future = mock(java.util.concurrent.ScheduledFuture.class);
+        doReturn(future).when(scheduler).schedule(any(Runnable.class), anyLong(), any(java.util.concurrent.TimeUnit.class));
+        when(cronJobRepository.save(any(CronJobEntity.class))).thenThrow(new IllegalStateException("database unavailable"));
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "scheduler", scheduler);
+        var job = new CronJobEntity();
+        job.setId(UUID.randomUUID());
+        job.setName("job");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+            org.springframework.test.util.ReflectionTestUtils.invokeMethod(service, "scheduleJob", job, java.time.Instant.now().plusSeconds(3600)))
+            .hasMessageContaining("database unavailable");
+        verify(future).cancel(false);
+        @SuppressWarnings("unchecked")
+        var tasks = (java.util.Map<UUID, ?>) org.springframework.test.util.ReflectionTestUtils.getField(service, "scheduledTasks");
+        assertThat(tasks).doesNotContainKey(job.getId());
+    }
+
+    @Test
+    void schedulerDoesNotRunJobBeforeSchedulePersistence() {
+        var scheduler = mock(java.util.concurrent.ScheduledExecutorService.class);
+        var future = mock(java.util.concurrent.ScheduledFuture.class);
+        doAnswer(invocation -> {
+            invocation.<Runnable>getArgument(0).run();
+            return future;
+        }).when(scheduler).schedule(any(Runnable.class), anyLong(), any(java.util.concurrent.TimeUnit.class));
+        when(cronJobRepository.save(any(CronJobEntity.class))).thenThrow(new IllegalStateException("database unavailable"));
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "scheduler", scheduler);
+        var job = new CronJobEntity();
+        job.setId(UUID.randomUUID());
+        job.setName("job");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+            org.springframework.test.util.ReflectionTestUtils.invokeMethod(service, "scheduleJob", job, java.time.Instant.now()))
+            .hasMessageContaining("database unavailable");
+        verify(cronJobRepository, never()).findById(job.getId());
     }
 
     @Test
@@ -276,11 +336,35 @@ class CronJobServiceTest {
         CronJobEntity job = new CronJobEntity();
         job.setId(id);
         job.setEnabled(false);
+        job.setSchedule("0 9 * * *");
         when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
         when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         CronJobEntity resumed = service.resume(id);
         assertThat(resumed.isEnabled()).isTrue();
         verify(cronJobRepository).save(any());
+    }
+
+    @Test
+    void repeatedResumeCancelsPreviouslyScheduledFuture() {
+        properties.getCron().setEnabled(true);
+        UUID id = UUID.randomUUID();
+        CronJobEntity job = new CronJobEntity();
+        job.setId(id);
+        job.setName("job");
+        job.setSchedule("every 1h");
+        job.setEnabled(false);
+        when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
+        when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        var scheduler = mock(java.util.concurrent.ScheduledExecutorService.class);
+        var first = mock(java.util.concurrent.ScheduledFuture.class);
+        var second = mock(java.util.concurrent.ScheduledFuture.class);
+        doReturn(first, second).when(scheduler).schedule(any(Runnable.class), anyLong(), any(java.util.concurrent.TimeUnit.class));
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "scheduler", scheduler);
+        service.resume(id);
+        service.resume(id);
+        verify(first).cancel(false);
+        service.pause(id);
+        verify(second).cancel(false);
     }
 
     @Test
@@ -299,7 +383,6 @@ class CronJobServiceTest {
         job.setPrompt("Do something");
         job.setEnabled(true);
         when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
-        when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         service.runNow(id);
         verify(agentRuntimeService).runBackground(org.mockito.AdditionalMatchers.and(
             org.mockito.ArgumentMatchers.startsWith("[IMPORTANT: You are running as a scheduled cron job."),
@@ -354,7 +437,6 @@ class CronJobServiceTest {
         job.setEnabled(true);
         job.setSkills("hermes-agent,backend-dev");
         when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
-        when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(skillManager.getSkill("hermes-agent")).thenReturn("# Hermes Agent\nUse this skill.");
         when(skillManager.getSkill("backend-dev")).thenReturn("# Backend Dev\nDev conventions.");
 
@@ -377,7 +459,6 @@ class CronJobServiceTest {
         job.setEnabled(true);
         job.setSkills(null);
         when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
-        when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         service.runNow(id);
 
@@ -756,7 +837,6 @@ class CronJobServiceTest {
         job.setScript("echo hello");
         // This won't find the file, but it exercises the no_agent path and doesn't call LLM
         when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
-        when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         service.runNow(id);
 
@@ -821,7 +901,6 @@ class CronJobServiceTest {
         job.setModelName("gpt-4");
         job.setBaseUrl("https://api.openai.com");
         when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
-        when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         service.runNow(id);
 

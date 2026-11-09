@@ -45,13 +45,16 @@ class CronJobServiceBranchTest {
 
     @BeforeEach
     void setUp() {
+        org.mockito.Mockito.lenient().when(cronJobRepository.findByIdForUpdate(
+                org.mockito.ArgumentMatchers.any(java.util.UUID.class)))
+            .thenAnswer(call -> cronJobRepository.findById(call.getArgument(0)));
         properties = new AgentProperties();
         properties.getCron().setEnabled(false);
         lenient().when(agentRuntimeServiceProvider.getIfAvailable()).thenReturn(agentRuntimeService);
         lenient().when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(inv -> inv.getArgument(0));
         service = new CronJobService(cronJobRepository, agentRuntimeServiceProvider, properties,
             skillManager, cronExecutionLogRepository, messageRepository,
-            new org.springframework.transaction.support.TransactionTemplate(), new CronScheduleParser());
+            CronJobServiceTest.unitTransaction(), new CronScheduleParser());
     }
 
     @Test
@@ -67,6 +70,7 @@ class CronJobServiceBranchTest {
         stuck.setConsecutiveFailures(3);
 
         when(cronJobRepository.findByEnabledTrue()).thenReturn(List.of(stuck));
+        when(cronJobRepository.findById(stuck.getId())).thenReturn(Optional.of(stuck));
         properties.getCron().setEnabled(true);
         try {
             service.init();
