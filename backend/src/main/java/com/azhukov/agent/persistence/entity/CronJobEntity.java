@@ -12,6 +12,7 @@ import java.time.Instant;
 import java.util.UUID;
 
 @Entity
+@org.hibernate.annotations.DynamicUpdate
 @Table(name = "cron_jobs")
 @Data
 public class CronJobEntity {
@@ -118,6 +119,9 @@ public class CronJobEntity {
 
     @Column(name = "last_run_at")
     private Instant lastRunAt;
+
+    @Column(name = "configuration_revision", nullable = false)
+    private long configurationRevision;
 
     @Column(name = "next_run_at")
     private Instant nextRunAt;

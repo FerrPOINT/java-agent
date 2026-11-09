@@ -509,9 +509,13 @@ class McpLifecycleManagerNewFeaturesTest {
         String png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
         byte[] expected = Base64.getDecoder().decode(png);
 
-        String tag = McpLifecycleManager.publishMcpImageContent(new McpSchema.ImageContent(null, png, "image/png"), (d, m, n, bytes) -> "MEDIA:artifact:" + n);
-
-        assertThat(tag).startsWith("MEDIA:artifact:");
+        var content = new McpSchema.ImageContent(null, png, "image/png");
+        assertLocalMediaBytes(McpLifecycleManager.publishMcpImageContent(content, null), expected);
+        assertThat(McpLifecycleManager.publishMcpImageContent(content, (disposition, mime, name, bytes) -> {
+            assertThat(disposition).isEqualTo("photo");
+            assertThat(bytes).isEqualTo(expected);
+            return "MEDIA:artifact:att_photo";
+        })).isEqualTo("MEDIA:artifact:att_photo");
     }
 
     @Test
@@ -634,9 +638,26 @@ class McpLifecycleManagerNewFeaturesTest {
         byte[] wav = "RIFFfakewav".getBytes(StandardCharsets.US_ASCII);
         String data = Base64.getEncoder().encodeToString(wav);
 
-        String tag = McpLifecycleManager.publishMcpAudioContent(new McpSchema.AudioContent(null, data, "audio/wav"), (d, m, n, bytes) -> "MEDIA:artifact:" + n);
+        var content = new McpSchema.AudioContent(null, data, "audio/wav");
+        assertLocalMediaBytes(McpLifecycleManager.publishMcpAudioContent(content, null), wav);
+        assertThat(McpLifecycleManager.publishMcpAudioContent(content, (disposition, mime, name, bytes) -> {
+            assertThat(disposition).isEqualTo("audio");
+            assertThat(bytes).isEqualTo(wav);
+            return "MEDIA:artifact:att_audio";
+        })).isEqualTo("MEDIA:artifact:att_audio");
+        assertThatThrownBy(() -> McpLifecycleManager.publishMcpAudioContent(content, (d, m, n, b) -> {
+            throw new IllegalStateException("storage unavailable");
+        })).hasMessage("storage unavailable");
+    }
 
-        assertThat(tag).startsWith("MEDIA:artifact:");
+    private static void assertLocalMediaBytes(String tag, byte[] expected) throws Exception {
+        assertThat(tag).startsWith("MEDIA:").doesNotStartWith("MEDIA:artifact:");
+        Path path = Path.of(tag.substring("MEDIA:".length()));
+        try {
+            assertThat(Files.readAllBytes(path)).isEqualTo(expected);
+        } finally {
+            Files.deleteIfExists(path);
+        }
     }
 
     @Test
@@ -867,7 +888,7 @@ class McpLifecycleManagerNewFeaturesTest {
 
         try {
             long start = System.nanoTime();
-            assertThatThrownBy(() -> manager.getPromptForTool("srv", "{\"name\":\"slow\"}"))
+            assertThatThrownBy(() -> manager.getPromptForTool("srv", "{\"name\":\"slow\"}", null))
                 .isInstanceOf(RuntimeException.class)
                 .hasMessageContaining("MCP get prompt failed")
                 .hasMessageContaining("MCP call timed out")

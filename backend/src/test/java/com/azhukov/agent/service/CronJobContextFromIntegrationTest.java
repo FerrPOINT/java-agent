@@ -50,7 +50,7 @@ class CronJobContextFromIntegrationTest {
         lenient().when(agentRuntimeService.getIfAvailable()).thenReturn(null);
         service = new CronJobService(cronJobRepository, agentRuntimeService, properties,
             skillManager, cronExecutionLogRepository, messageRepository,
-            new org.springframework.transaction.support.TransactionTemplate(),
+            new org.springframework.transaction.support.TransactionTemplate(org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class)),
             new CronScheduleParser());
     }
 

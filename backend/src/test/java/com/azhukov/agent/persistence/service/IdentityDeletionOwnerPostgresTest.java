@@ -90,6 +90,33 @@ class IdentityDeletionOwnerPostgresTest {
         owner.release(r,window());sql(db,"DELETE FROM sessions WHERE id='"+session+"'");
         assertThat(owner.check(new Request(1,UUID.randomUUID(),r.identity(),r.inventoryRevision()),window()).referenceCount()).isPositive();
     });}
+    @Test void cron_suggestions_are_counted_and_fenced()throws Exception{isolated(false,db->{
+        var owner=store(db);Request r=request();owner.central(ISSUER,r.identity().subject(),window());
+        long before=owner.check(r,window()).referenceCount();
+        String insert="INSERT INTO cron_suggestions(id,user_id,title,source,job_name,job_schedule,job_prompt,dedup_key) VALUES ('"+UUID.randomUUID()+"','"+r.identity().subject()+"','title','test','job','0 9 * * *','prompt','key')";
+        sql(db,insert);
+        assertThat(owner.check(r,window()).referenceCount()).isEqualTo(before+1);
+        owner.freeze(r,window());
+        assertThatThrownBy(()->sql(db,insert.replace("'key'", "'another'"))).isInstanceOf(SQLException.class).hasMessageContaining("identity_deletion_fenced");
+        owner.release(r,window());
+        sql(db,insert.replace("'key'", "'another'").replaceFirst("'[0-9a-f-]{36}'", "'"+UUID.randomUUID()+"'"));
+    });}
+    @Test void cron_suggestion_write_cannot_race_past_freeze()throws Exception{isolated(false,db->{
+        var owner=store(db);Request r=request();owner.central(ISSUER,r.identity().subject(),window());
+        String insert="INSERT INTO cron_suggestions(id,user_id,title,source,job_name,job_schedule,job_prompt,dedup_key) VALUES ('"+UUID.randomUUID()+"','"+r.identity().subject()+"','title','test','job','0 9 * * *','prompt','key')";
+        try(Connection c=db.getConnection();var q=c.createStatement();var pool=Executors.newSingleThreadExecutor()) {
+            c.setAutoCommit(false);q.execute("SELECT pg_advisory_xact_lock(714402216006::bigint)");int blocker=pid(c);
+            var result=pool.submit(()->{sql(db,insert);return null;});
+            blockedBy(db,blocker);
+            try(var freeze=c.prepareStatement("INSERT INTO java_identity_deletion_operations(operation_id,issuer,subject,inventory_revision,request,state,fence,revision,reference_count) VALUES (?,?,?,?,?::jsonb,'frozen',?,1,0)")) {
+                freeze.setObject(1,r.operationId());freeze.setString(2,ISSUER);freeze.setString(3,r.identity().subject());freeze.setObject(4,r.inventoryRevision());freeze.setString(5,"{}");freeze.setObject(6,UUID.randomUUID());freeze.executeUpdate();
+            }
+            c.commit();
+            assertThatThrownBy(()->result.get(10,TimeUnit.SECONDS)).hasCauseInstanceOf(SQLException.class)
+                .hasStackTraceContaining("identity_deletion_fenced");
+            assertThat(scalar(db,"SELECT count(*) FROM cron_suggestions")).isZero();
+        }
+    });}
     @Test void native_uuid_and_native_gateway_never_become_a_guessed_auth_subject()throws Exception{isolated(false,db->{
         var owner=store(db);Request r=request();String id=r.identity().subject();
         sql(db,"INSERT INTO agent_users(id,username,role) VALUES('"+id+"','synthetic-native','user')");session(db,UUID.randomUUID(),id);

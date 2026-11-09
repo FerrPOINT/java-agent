@@ -39,10 +39,91 @@ class CronJobServiceReEnableTest {
 
     @BeforeEach
     void setUp() {
+        org.mockito.Mockito.lenient().when(cronJobRepository.findByIdForUpdate(
+                org.mockito.ArgumentMatchers.any(java.util.UUID.class)))
+            .thenAnswer(call -> cronJobRepository.findById(call.getArgument(0)));
         properties = new AgentProperties();
         properties.getCron().setEnabled(true);
         lenient().when(agentRuntimeServiceProvider.getIfAvailable()).thenReturn(agentRuntimeService);
-        service = new CronJobService(cronJobRepository, agentRuntimeServiceProvider, properties, skillManager, cronExecutionLogRepository, messageRepository, new org.springframework.transaction.support.TransactionTemplate(), new CronScheduleParser());
+        service = new CronJobService(cronJobRepository, agentRuntimeServiceProvider, properties, skillManager, cronExecutionLogRepository, messageRepository, CronJobServiceTest.unitTransaction(), new CronScheduleParser());
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"false,false", "true,true", "true,false"})
+    void restartOnlyReplaysOverdueOneShot(boolean overdue, boolean oneShot) {
+        var job = new CronJobEntity();
+        job.setId(UUID.randomUUID());
+        job.setEnabled(true);
+        job.setSchedule(oneShot ? "30m" : "every 30m");
+        if (oneShot) job.setRepeatCount(1);
+        Instant due = Instant.now().plusSeconds(overdue ? -60 : 300);
+        job.setNextRunAt(due);
+        when(cronJobRepository.findByEnabledTrue()).thenReturn(List.of(job));
+        when(cronJobRepository.findById(job.getId())).thenReturn(Optional.of(job));
+        var scheduler = org.mockito.Mockito.mock(java.util.concurrent.ScheduledExecutorService.class);
+        var timer = org.mockito.Mockito.mock(java.util.concurrent.ScheduledFuture.class);
+        org.mockito.Mockito.doReturn(timer).when(scheduler)
+            .schedule(any(Runnable.class), org.mockito.ArgumentMatchers.anyLong(), any());
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "scheduler", scheduler);
+        service.init();
+        var delay = org.mockito.ArgumentCaptor.forClass(Long.class);
+        verify(scheduler).schedule(any(Runnable.class), delay.capture(), org.mockito.ArgumentMatchers.eq(java.util.concurrent.TimeUnit.MILLISECONDS));
+        if (overdue && !oneShot) {
+            assertThat(job.getNextRunAt()).isAfter(Instant.now());
+            assertThat(delay.getValue()).isBetween(1_780_000L, 1_800_000L);
+        } else {
+            assertThat(job.getNextRunAt()).isEqualTo(due);
+            if (overdue) assertThat(delay.getValue()).isZero();
+            else assertThat(delay.getValue()).isBetween(280_000L, 300_000L);
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"99 9 * * *", "0 0 31 2 *"})
+    void invalidScheduleDisablesOnlyThatJobOnStartupAndCannotBeResumed(String schedule) {
+        var invalid = new CronJobEntity();
+        invalid.setId(UUID.randomUUID());
+        invalid.setEnabled(true);
+        invalid.setSchedule(schedule);
+        invalid.setNextRunAt(Instant.now().plusSeconds(300));
+        var valid = new CronJobEntity();
+        valid.setId(UUID.randomUUID());
+        valid.setEnabled(true);
+        valid.setSchedule("0 9 * * *");
+        when(cronJobRepository.findByEnabledTrue()).thenReturn(List.of(invalid, valid));
+        when(cronJobRepository.findById(invalid.getId())).thenReturn(Optional.of(invalid));
+        when(cronJobRepository.findById(valid.getId())).thenReturn(Optional.of(valid));
+
+        try {
+            service.init();
+            assertThat(invalid.isEnabled()).isFalse();
+            assertThat(invalid.getNextRunAt()).isNull();
+            assertThat(invalid.getLastError()).isNotBlank();
+            assertThat(valid.getNextRunAt()).isAfter(Instant.now());
+            org.assertj.core.api.Assertions.assertThatIllegalArgumentException()
+                .isThrownBy(() -> service.resume(invalid.getId()));
+            org.assertj.core.api.Assertions.assertThatIllegalArgumentException()
+                .isThrownBy(() -> service.update(valid.getId(), "bad edit", schedule, null, null, null));
+            assertThat(valid.getSchedule()).isEqualTo("0 9 * * *");
+            assertThat(valid.getName()).isNull();
+        } finally {
+            service.shutdown();
+        }
+    }
+
+    @Test
+    void deletedJobBeforeManualCallbackDoesNotKeepAnExecutionLock() {
+        var job = new CronJobEntity();
+        job.setId(UUID.randomUUID());
+        when(cronJobRepository.findById(job.getId())).thenReturn(Optional.of(job), Optional.empty());
+        var scheduler = mock(java.util.concurrent.ScheduledExecutorService.class);
+        var callback = org.mockito.ArgumentCaptor.forClass(Runnable.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "scheduler", scheduler);
+        service.runNowBackground(job.getId(), null);
+        verify(scheduler).execute(callback.capture());
+        callback.getValue().run();
+        var locks = (java.util.Map<?, ?>) org.springframework.test.util.ReflectionTestUtils.getField(service, "jobLocks");
+        assertThat(locks).isEmpty();
     }
 
     @Test
@@ -60,6 +141,8 @@ class CronJobServiceReEnableTest {
             jobs.add(job);
         }
         when(cronJobRepository.findByEnabledTrue()).thenReturn(jobs);
+        when(cronJobRepository.findById(any(UUID.class))).thenAnswer(invocation ->
+            jobs.stream().filter(job -> job.getId().equals(invocation.getArgument(0))).findFirst());
         when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(inv -> inv.getArgument(0));
 
         service.init();
@@ -113,7 +196,7 @@ class CronJobServiceReEnableTest {
         CronJobEntity result = service.resume(id);
 
         assertThat(result.isEnabled()).isTrue();
-        // scheduleJob saves the entity with nextRunAt
-        verify(cronJobRepository, atLeast(2)).save(any(CronJobEntity.class));
+        assertThat(result.getNextRunAt()).isNotNull();
+        verify(cronJobRepository).save(result);
     }
 }

@@ -41,6 +41,8 @@ repositories {
     maven { url = 'https://repo.spring.io/milestone' }
 }
 
+def langchain4jVersion = "1.23.0"
+
 dependencies {
     // shared DTOs + mapper + REST factory (h10)
     implementation project(':shared')
@@ -55,9 +57,9 @@ dependencies {
     implementation 'io.micrometer:micrometer-registry-prometheus'
 
     // LLM (latest stable, not in Spring Boot BOM)
-    implementation 'dev.langchain4j:langchain4j:1.22.0'
-    implementation 'dev.langchain4j:langchain4j-open-ai:1.22.0'
-    implementation 'dev.langchain4j:langchain4j-http-client-jdk:1.22.0'
+    implementation "dev.langchain4j:langchain4j:${langchain4jVersion}"
+    implementation "dev.langchain4j:langchain4j-open-ai:${langchain4jVersion}"
+    implementation "dev.langchain4j:langchain4j-http-client-jdk:${langchain4jVersion}"
 
     // MCP (not in Spring Boot BOM)
     implementation 'io.modelcontextprotocol.sdk:mcp:2.1.0'
@@ -99,7 +101,7 @@ dependencies {
     implementation 'org.apache.pdfbox:pdfbox:3.0.8'
 
     // HTML / markdown parsing
-    implementation 'org.jsoup:jsoup:1.23.2'
+    implementation 'org.jsoup:jsoup:1.24.1'
     implementation 'com.vladsch.flexmark:flexmark:0.64.8'
     implementation 'com.vladsch.flexmark:flexmark-html2md-converter:0.64.8'
 

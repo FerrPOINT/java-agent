@@ -109,6 +109,18 @@ The backend exposes one internal delivery port with operations equivalent to:
 
 `DeliveryReceipt` is immutable and includes platform, normalized target, outbound message IDs, chunk count and a transport timestamp. Error details are redacted before persistence and API output.
 
+### Telegram batch rollout
+
+The Telegram poller uses `POST /api/v1/agent/delivery/claim-batch-v2`. A claimed
+batch carries a non-negative integer `lease_remaining_ms`. A bot that receives
+a malformed lease stops the pass without posting an outcome. A valid zero means
+the lease has expired. Single-item consumers continue to use `/claim`.
+
+For upgrade or rollback, stop new polling on the running bot and let in-flight
+sends settle before stopping it. Switch the backend, then start its matching
+bot. Verify that pending rows are delivered and unknown rows remain terminal.
+Either mixed pair rejects batch claims before incrementing attempts.
+
 ## Migration plan
 
 1. Add `delivery_work_items` and `outbound_message_receipts`, indexes on `(state, available_at)`, `(profile, state, available_at)`, `(parent_session_id, state)`, and the unique source/target key.

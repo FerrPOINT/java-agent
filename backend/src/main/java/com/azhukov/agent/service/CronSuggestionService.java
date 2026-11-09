@@ -1,23 +1,26 @@
 package com.azhukov.agent.service;
 
+import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.persistence.entity.CronJobEntity;
+import com.azhukov.agent.persistence.entity.CronSuggestionEntity;
+import com.azhukov.agent.persistence.repository.CronSuggestionRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
- * S18: Cron suggestions engine — presents automation suggestions based on usage patterns.
- * <p>
- * Ported from the original project's cron/suggestions.py. A suggestion is a ready-to-run cron job spec
- * that the user accepts (creates the real cron job) or dismisses (latched so it is
- * never re-offered). Consent-first: suggestions never auto-create jobs.
+ * Consent-first, durable cron suggestions. Suggestions are isolated by owner so a restart
+ * or a second authenticated user cannot lose or consume another user's pending decisions.
  */
 @Service
 @Slf4j
@@ -30,157 +33,170 @@ public class CronSuggestionService {
  private static final String STATUS_DISMISSED = "dismissed";
 
  private final CronJobService cronJobService;
- private final Map<String, SuggestionRecord> suggestions = new ConcurrentHashMap<>();
- private final List<SuggestionRecord> orderedSuggestions = new ArrayList<>();
+ private final CronSuggestionRepository cronSuggestionRepository;
+ private final ReentrantLock noopCreationLock = new ReentrantLock();
+
+ @Value("${spring.datasource.driver-class-name}")
+ private String driverClassName;
 
  /**
- * Add a pending suggestion. Returns the record, or null if skipped.
- * Skipped when: the same dedup_key was already dismissed or accepted,
- * an identical pending suggestion exists, or the pending list is full.
+ * Add a pending suggestion for the authenticated owner, or return null if it was
+ * already offered or that owner's pending backlog is full.
  */
- public synchronized SuggestionRecord addSuggestion(String title, String description,
- String source, JobSpec jobSpec,
- String dedupKey) {
+ @Transactional
+ public SuggestionRecord addSuggestion(String title, String description,
+ String source, JobSpec jobSpec, String dedupKey) {
+     return addSuggestion(title, description, source, jobSpec, dedupKey, currentUserId());
+ }
+
+ private SuggestionRecord addSuggestion(String title, String description, String source,
+                                       JobSpec jobSpec, String dedupKey, String userId) {
  if (title == null || title.isBlank()) {
  throw new IllegalArgumentException("title is required");
  }
  if (dedupKey == null || dedupKey.isBlank()) {
  throw new IllegalArgumentException("dedup_key is required");
  }
-
- // Never re-offer something the user already saw and decided on
- for (SuggestionRecord existing : orderedSuggestions) {
- if (existing.dedupKey().equals(dedupKey)) {
- if (STATUS_DISMISSED.equals(existing.status()) || STATUS_ACCEPTED.equals(existing.status())) {
- return null;
- }
- if (STATUS_PENDING.equals(existing.status())) {
- return null;
- }
- }
+ if (jobSpec == null) {
+ throw new IllegalArgumentException("job_spec is required");
  }
 
- long pendingCount = orderedSuggestions.stream()
- .filter(s -> STATUS_PENDING.equals(s.status())).count();
- if (pendingCount >= MAX_PENDING) {
- log.info("Suggestion backlog full ({}); dropping '{}'", MAX_PENDING, title);
+ lockCreation(userId);
+ String normalizedDedupKey = dedupKey.strip();
+ if (cronSuggestionRepository.findByUserIdAndDedupKey(userId, normalizedDedupKey).isPresent()) {
+ return null;
+ }
+ if (cronSuggestionRepository.countByUserIdAndStatus(userId, STATUS_PENDING) >= MAX_PENDING) {
+ log.info("Suggestion backlog full for owner {}; dropping source={}", userId, source);
  return null;
  }
 
- SuggestionRecord record = new SuggestionRecord(
- UUID.randomUUID().toString().substring(0, 12),
- title.strip(), description != null ? description.strip() : "",
- source, jobSpec, dedupKey.strip(), STATUS_PENDING, Instant.now()
- );
- orderedSuggestions.add(record);
- suggestions.put(record.id(), record);
- log.info("Suggestion added: '{}' (source: {}, dedup: {})", title, source, dedupKey);
- return record;
+ CronSuggestionEntity entity = new CronSuggestionEntity();
+ entity.setUserId(userId);
+ entity.setTitle(title.strip());
+ entity.setDescription(description != null ? description.strip() : "");
+ entity.setSource(source);
+ applyJobSpec(entity, jobSpec);
+ entity.setDedupKey(normalizedDedupKey);
+ entity.setStatus(STATUS_PENDING);
+ entity.setCreatedAt(Instant.now());
+ return toRecord(cronSuggestionRepository.save(entity));
  }
 
- /**
- * List pending suggestions in creation order (oldest first).
- */
+ private void lockCreation(String userId) {
+     if (!"org.h2.Driver".equals(driverClassName)) {
+         cronSuggestionRepository.lockOwner(userId);
+         return;
+     }
+     // The noop H2 database belongs to this process. Hold the lock through
+     // commit, including when a catalog seed adds several rows in one transaction.
+     noopCreationLock.lock();
+     try {
+         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+             @Override
+             public void afterCompletion(int status) {
+                 noopCreationLock.unlock();
+             }
+         });
+     } catch (RuntimeException e) {
+         noopCreationLock.unlock();
+         throw e;
+     }
+ }
+
+ /** List the current owner's pending suggestions in creation order. */
+ @Transactional(readOnly = true)
  public List<SuggestionRecord> listPending() {
- return orderedSuggestions.stream()
- .filter(s -> STATUS_PENDING.equals(s.status()))
- .toList();
+     return listPending(currentUserId());
  }
 
- /**
- * List all suggestions (any status).
- */
+ @Transactional(readOnly = true)
+ public List<SuggestionRecord> listPending(String userId) {
+ return cronSuggestionRepository.findByUserIdAndStatusOrderByCreatedAtAsc(userId, STATUS_PENDING)
+ .stream().map(CronSuggestionService::toRecord).toList();
+ }
+
+ /** List every suggestion visible to the current owner. */
+ @Transactional(readOnly = true)
  public List<SuggestionRecord> listAll() {
- return List.copyOf(orderedSuggestions);
+ return cronSuggestionRepository.findByUserIdOrderByCreatedAtAsc(currentUserId())
+ .stream().map(CronSuggestionService::toRecord).toList();
  }
 
  /**
- * Get a suggestion by id, 1-based pending index, or exact title.
+ * Accept a pending suggestion and create its cron job with the same owner from the first write.
  */
- public SuggestionRecord getSuggestion(String ref) {
- // By id
- SuggestionRecord byId = suggestions.get(ref);
- if (byId != null) return byId;
- // By 1-based pending index
- if (ref != null && ref.matches("\\d+")) {
- List<SuggestionRecord> pending = listPending();
- int idx = Integer.parseInt(ref) - 1;
- if (idx >= 0 && idx < pending.size()) {
- return pending.get(idx);
+ @Transactional
+ public CronJobEntity acceptSuggestion(UUID id) {
+     return acceptSuggestion(id, currentUserId());
  }
- }
- // By exact title (case-insensitive)
- if (ref != null) {
- for (SuggestionRecord s : orderedSuggestions) {
- if (s.title().equalsIgnoreCase(ref)) {
- return s;
- }
- }
- }
+
+ @Transactional
+ public CronJobEntity acceptSuggestion(UUID id, String userId) {
+ CronSuggestionEntity suggestion = cronSuggestionRepository.findByIdAndUserIdForUpdate(id, userId).orElse(null);
+ if (suggestion == null || !STATUS_PENDING.equals(suggestion.getStatus())) {
  return null;
  }
 
- /**
- * Accept a suggestion — creates the real cron job from its job_spec.
- * Returns the created cron job entity, or null if the suggestion isn't found/not pending.
- */
- public synchronized CronJobEntity acceptSuggestion(String ref) {
- SuggestionRecord s = getSuggestion(ref);
- if (s == null || !STATUS_PENDING.equals(s.status())) {
- return null;
- }
- JobSpec spec = s.jobSpec();
  CronJobEntity entity = cronJobService.create(
- spec.name(), spec.schedule(), spec.prompt(), spec.deliverTo(), spec.skills()
- );
- setStatus(s.id(), STATUS_ACCEPTED);
- log.info("Suggestion '{}' accepted — cron job '{}' created", s.title(), spec.name());
+ userId, suggestion.getJobName(), suggestion.getJobSchedule(), suggestion.getJobPrompt(),
+ suggestion.getDeliverTo(), suggestion.getSkills(), null, null, null, false,
+ null, null, null, null, null);
+ suggestion.setStatus(STATUS_ACCEPTED);
+ suggestion.setResolvedAt(Instant.now());
+ cronSuggestionRepository.save(suggestion);
+ log.info("Cron suggestion accepted owner={} source={}", userId, suggestion.getSource());
  return entity;
  }
 
- /**
- * Dismiss a suggestion (latched — never re-offered for its dedup_key).
- */
- public synchronized boolean dismissSuggestion(String ref) {
- SuggestionRecord s = getSuggestion(ref);
- if (s == null) {
+ /** Dismiss a current-owner suggestion and retain its dedup latch. */
+ @Transactional
+ public boolean dismissSuggestion(UUID id) {
+     return dismissSuggestion(id, currentUserId());
+ }
+
+ @Transactional
+ public boolean dismissSuggestion(UUID id, String userId) {
+ CronSuggestionEntity suggestion = cronSuggestionRepository.findByIdAndUserIdForUpdate(id, userId).orElse(null);
+ if (suggestion == null || !STATUS_PENDING.equals(suggestion.getStatus())) {
  return false;
  }
- return setStatus(s.id(), STATUS_DISMISSED);
- }
-
- /**
- * Clear accepted suggestions from the list.
- */
- public synchronized int clearAccepted() {
- int before = orderedSuggestions.size();
- orderedSuggestions.removeIf(s -> STATUS_ACCEPTED.equals(s.status()));
- int removed = before - orderedSuggestions.size();
- // Rebuild map
- suggestions.clear();
- for (SuggestionRecord s : orderedSuggestions) {
- suggestions.put(s.id(), s);
- }
- if (removed > 0) {
- log.info("Cleared {} accepted suggestions", removed);
- }
- return removed;
- }
-
- private boolean setStatus(String suggestionId, String status) {
- for (int i = 0; i < orderedSuggestions.size(); i++) {
- SuggestionRecord s = orderedSuggestions.get(i);
- if (s.id().equals(suggestionId)) {
- SuggestionRecord updated = new SuggestionRecord(
- s.id(), s.title(), s.description(), s.source(),
- s.jobSpec(), s.dedupKey(), status, Instant.now()
- );
- orderedSuggestions.set(i, updated);
- suggestions.put(suggestionId, updated);
+ suggestion.setStatus(STATUS_DISMISSED);
+ suggestion.setResolvedAt(Instant.now());
+ cronSuggestionRepository.save(suggestion);
  return true;
  }
+
+ /** Remove only accepted current-owner records; dismissed records keep the dedup latch. */
+ @Transactional
+ public int clearAccepted() {
+     return clearAccepted(currentUserId());
  }
- return false;
+
+ @Transactional
+ public int clearAccepted(String userId) {
+ List<CronSuggestionEntity> accepted = cronSuggestionRepository
+ .findByUserIdAndStatusOrderByCreatedAtAsc(userId, STATUS_ACCEPTED);
+ cronSuggestionRepository.deleteAll(accepted);
+ return accepted.size();
+ }
+
+ private static void applyJobSpec(CronSuggestionEntity entity, JobSpec jobSpec) {
+ entity.setJobName(jobSpec.name());
+ entity.setJobSchedule(jobSpec.schedule());
+ entity.setJobPrompt(jobSpec.prompt());
+ entity.setDeliverTo(jobSpec.deliverTo());
+ entity.setSkills(jobSpec.skills());
+ }
+
+ private static SuggestionRecord toRecord(CronSuggestionEntity entity) {
+ return new SuggestionRecord(entity.getId().toString(), entity.getTitle(), entity.getDescription(),
+ entity.getSource(), new JobSpec(entity.getJobName(), entity.getJobSchedule(), entity.getJobPrompt(),
+ entity.getDeliverTo(), entity.getSkills()), entity.getDedupKey(), entity.getStatus(), entity.getCreatedAt());
+ }
+
+ private static String currentUserId() {
+ return UserContext.effectiveUserId(AgentProperties.DEFAULT_USER_ID);
  }
 
  // ── Records ────────────────────────────────────────────────────────
@@ -217,7 +233,13 @@ public class CronSuggestionService {
   * {@link #addSuggestion}'s dedup — the dismiss latch is never re-offered.
   * Returns the number of NEW suggestions added.
   */
- public synchronized int seedCatalogSuggestions() {
+ @Transactional
+ public int seedCatalogSuggestions() {
+     return seedCatalogSuggestions(currentUserId());
+ }
+
+ @Transactional
+ public int seedCatalogSuggestions(String userId) {
      int added = 0;
      for (Object[] e : CATALOG) {
          String key = (String) e[0];
@@ -227,7 +249,7 @@ public class CronSuggestionService {
          String schedule = (String) e[4];
          String name = (String) e[5];
          SuggestionRecord rec = addSuggestion(title, description, "catalog",
-             new JobSpec(name, schedule, prompt, "origin", null), key);
+             new JobSpec(name, schedule, prompt, "origin", null), key, userId);
          if (rec != null) {
              added++;
          }

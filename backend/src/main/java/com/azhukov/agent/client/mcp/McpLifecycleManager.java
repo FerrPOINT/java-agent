@@ -1378,8 +1378,10 @@ public class McpLifecycleManager {
     }
 
     private MediaPublisher publisherFor(Session session) {
-        return session == null ? null
-            : (kind, mime, name, bytes) -> artifacts.publishGenerated(session, kind, mime, name, bytes);
+        if (session == null || !"telegram".equalsIgnoreCase(session.getMetadata("platform"))) {
+            return null;
+        }
+        return (kind, mime, name, bytes) -> artifacts.publishGenerated(session, kind, mime, name, bytes);
     }
 
     String listResourcesForTool(String serverName) {
@@ -1423,7 +1425,7 @@ public class McpLifecycleManager {
         }
     }
 
-    String getPromptForTool(String serverName, String arguments) {
+    String getPromptForTool(String serverName, String arguments, Session session) {
         var state = clients.get(serverName);
         if (state == null) {
             throw new IllegalStateException("MCP server not connected: " + serverName);
@@ -1441,8 +1443,9 @@ public class McpLifecycleManager {
             if (result.description() != null && !result.description().isBlank()) {
                 response.put("description", result.description());
             }
+            MediaPublisher publisher = publisherFor(session);
             response.put("messages", safeList(result.messages()).stream()
-                .map(McpLifecycleManager::promptMessageEntry)
+                .map(message -> promptMessageEntry(message, publisher))
                 .toList());
             return writeJson(response);
         } catch (Exception e) {
@@ -2208,19 +2211,15 @@ public class McpLifecycleManager {
         return entry;
     }
 
-    private static Map<String, Object> promptMessageEntry(McpSchema.PromptMessage message) {
+    private static Map<String, Object> promptMessageEntry(McpSchema.PromptMessage message, MediaPublisher publisher) {
         Map<String, Object> entry = new LinkedHashMap<>();
         if (message.role() != null) {
             entry.put("role", message.role().name().toLowerCase(Locale.ROOT));
         }
         if (message.content() != null) {
-            entry.put("content", contentText(message.content()));
+            entry.put("content", contentText(message.content(), "", publisher));
         }
         return entry;
-    }
-
-    private static String contentText(McpSchema.Content content) {
-        return contentText(content, "", null);
     }
 
     private static String contentText(McpSchema.Content content, String serverName, MediaPublisher publisher) {
@@ -2281,8 +2280,9 @@ public class McpLifecycleManager {
         if (!looksLikeImage(bytes)) {
             return "";
         }
-        if (publisher == null) return "[MCP image requires an active session]";
-        return publisher.publish("photo", normalizedMime, "mcp" + mcpImageExtensionForMimeType(normalizedMime), bytes);
+        String extension = mcpImageExtensionForMimeType(normalizedMime);
+        if (publisher != null) return publisher.publish("photo", normalizedMime, "mcp" + extension, bytes);
+        return cacheMcpMediaTag(bytes, "images", extension);
     }
 
     static String mcpAudioExtensionForMimeType(String mimeType) {
@@ -2317,8 +2317,18 @@ public class McpLifecycleManager {
         if (bytes.length > MCP_RESOURCE_MAX_BYTES) {
             return "[MCP audio resource too large to cache: " + bytes.length + " bytes]";
         }
-        if (publisher == null) return "[MCP audio requires an active session]";
-        return publisher.publish("audio", normalizedMime, "mcp" + mcpAudioExtensionForMimeType(normalizedMime), bytes);
+        String extension = mcpAudioExtensionForMimeType(normalizedMime);
+        if (publisher != null) return publisher.publish("audio", normalizedMime, "mcp" + extension, bytes);
+        return cacheMcpMediaTag(bytes, "audio", extension);
+    }
+
+    private static String cacheMcpMediaTag(byte[] bytes, String category, String extension) {
+        try {
+            return "MEDIA:" + cacheMcpBytes(bytes, category, "mcp-" + UUID.randomUUID() + extension);
+        } catch (java.io.IOException e) {
+            log.warn("MCP {} cache write failed: {}", category, e.toString());
+            return "";
+        }
     }
 
     private static String normalizedMimeType(String mimeType) {
@@ -2553,7 +2563,7 @@ public class McpLifecycleManager {
                     case LIST_RESOURCES -> ToolResult.ok(listResourcesForTool(serverName));
                     case READ_RESOURCE -> ToolResult.ok(readResourceForTool(serverName, arguments, session));
                     case LIST_PROMPTS -> ToolResult.ok(listPromptsForTool(serverName));
-                    case GET_PROMPT -> ToolResult.ok(getPromptForTool(serverName, arguments));
+                    case GET_PROMPT -> ToolResult.ok(getPromptForTool(serverName, arguments, session));
                 };
             } catch (Exception e) {
                 return mcpError("MCP tool failed: " + e.getMessage());

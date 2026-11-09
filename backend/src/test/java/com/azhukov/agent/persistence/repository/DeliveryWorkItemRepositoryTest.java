@@ -135,6 +135,35 @@ class DeliveryWorkItemRepositoryTest extends PostgresTestContainer {
     }
 
     @Test
+    void incompatibleBatchRouteLeavesPendingRowForCompatibleBot() throws Exception {
+        String profile = "batch-" + UUID.randomUUID();
+        var item = repository.saveAndFlush(pendingItem(profile, "cron_execution", profile, "telegram:100"));
+        String body = "{\"consumer_id\":\"test-bot\",\"profiles\":[\"" + profile + "\"]}";
+        String base = "/api/v1/agent/delivery/";
+        var post = org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post(base + "claim-batch")
+            .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content(body);
+        com.azhukov.agent.core.security.UserContext.set("admin-test", com.azhukov.agent.core.security.UserContext.ROLE_ADMIN);
+        try {
+            mvc.perform(post).andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isNotFound());
+            var pending = repository.findById(item.getId()).orElseThrow();
+            assertThat(pending.getState()).isEqualTo("pending");
+            assertThat(pending.getAttempts()).isZero();
+
+            mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post(base + "claim-batch-v2")
+                    .contentType(org.springframework.http.MediaType.APPLICATION_JSON).content(body))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.items[0].id")
+                    .value(item.getId().toString()));
+            var claimed = repository.findById(item.getId()).orElseThrow();
+            assertThat(claimed.getState()).isEqualTo("claimed");
+            assertThat(claimed.getAttempts()).isEqualTo(1);
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+            repository.deleteById(item.getId());
+        }
+    }
+
+    @Test
     void unknownOutcomeHttpPersistsAndPreventsRetry() throws Exception {
         DeliveryWorkItemEntity item = repository.saveAndFlush(
             pendingItem("default", "cron_execution", "outcome-" + UUID.randomUUID(), "telegram:100"));

@@ -55,6 +55,22 @@ class DeliveryWorkItemControllerTest {
     }
 
     @Test
+    void onlyVersionedBatchRouteCanClaimWork() throws Exception {
+        String base = "/api/v1/agent/delivery/claim-batch";
+        String request = "{\"consumer_id\":\"telegram-bot\",\"profiles\":[\"default\"]}";
+        mockMvc.perform(post(base).contentType(MediaType.APPLICATION_JSON).content(request))
+            .andExpect(status().isNotFound());
+        org.mockito.Mockito.verifyNoInteractions(deliveryService);
+
+        when(deliveryService.claimNextBatch("telegram-bot", List.of("default"), 5)).thenReturn(List.of());
+        mockMvc.perform(post(base + "-v2").contentType(MediaType.APPLICATION_JSON).content(request))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.claimed").value(false))
+            .andExpect(jsonPath("$.lease_remaining_ms").value(0));
+        verify(deliveryService).claimNextBatch("telegram-bot", List.of("default"), 5);
+    }
+
+    @Test
     void regularUserCannotClaimDeliveryWork() throws Exception {
         UserContext.set("user-a", UserContext.ROLE_USER);
 
