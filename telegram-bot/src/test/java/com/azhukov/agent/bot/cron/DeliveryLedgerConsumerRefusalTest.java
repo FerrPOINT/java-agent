@@ -64,7 +64,7 @@ class DeliveryLedgerConsumerRefusalTest {
     @Test
     void floodRefusalReleasesWithPlatformRetryAfter() {
         spec();
-        when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean()))
+        when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean(), any()))
             .thenThrow(new TelegramClient.SendRefusalException(429, 95, "429: Too Many Requests"));
 
         consumer().deliverBatchForTest(List.of(
@@ -84,7 +84,7 @@ class DeliveryLedgerConsumerRefusalTest {
     @Test
     void refusalAfterAcceptedChunkFencesBatchAsUnknown() {
         spec();
-        when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean()))
+        when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean(), any()))
             .thenReturn(Optional.of(123L))
             .thenThrow(new TelegramClient.SendRefusalException(429, 95, "429: Too Many Requests"));
         consumer().deliverBatchForTest(List.of(delegate("42", "a".repeat(9000))));
@@ -99,7 +99,7 @@ class DeliveryLedgerConsumerRefusalTest {
     @Test
     void transportExceptionAfterAcceptedChunkFencesBatchAsUnknown() {
         spec();
-        when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean()))
+        when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean(), any()))
             .thenReturn(Optional.of(123L))
             .thenThrow(new IllegalStateException("connection failed"));
         consumer().deliverBatchForTest(List.of(delegate("42", "a".repeat(9000))));
@@ -112,7 +112,7 @@ class DeliveryLedgerConsumerRefusalTest {
     @Test
     void transportExceptionBeforeReceiptIsUnknownNotRetryable() {
         spec();
-        when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean()))
+        when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean(), any()))
             .thenThrow(new IllegalStateException("connection failed"));
         consumer().deliverBatchForTest(List.of(delegate("42", "payload")));
         verify(restClient.post()).uri("/api/v1/agent/delivery/unknown");
@@ -122,7 +122,7 @@ class DeliveryLedgerConsumerRefusalTest {
     @Test
     void partialRefusalOnCoalescedBatchFencesEveryClaim() {
         spec();
-        when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean()))
+        when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean(), any()))
             .thenReturn(Optional.of(123L))
             .thenThrow(new TelegramClient.SendRefusalException(429, 95, "429: Too Many Requests"));
         var items = new java.util.ArrayList<DeliveryLedgerConsumer.ClaimedItem>();
@@ -148,7 +148,7 @@ class DeliveryLedgerConsumerRefusalTest {
         verify(specMock, times(2)).body(bodies.capture());
         assertThat(bodies.getAllValues()).anySatisfy(body -> assertThat(body).contains("id-42", "token-42", "invalid_thread_id"));
         assertThat(bodies.getAllValues()).anySatisfy(body -> assertThat(body).contains("id-43", "token-43", "invalid_thread_id"));
-        verify(telegram, org.mockito.Mockito.never()).sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean());
+        verify(telegram, org.mockito.Mockito.never()).sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean(), any());
     }
 
     @Test
@@ -158,7 +158,7 @@ class DeliveryLedgerConsumerRefusalTest {
             "telegram", "100200300", "999999999999999999999999", "payload", 1);
         consumer().deliverBatchForTest(List.of(item));
         verify(restClient.post()).uri("/api/v1/agent/delivery/drop");
-        verify(telegram, org.mockito.Mockito.never()).sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean());
+        verify(telegram, org.mockito.Mockito.never()).sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean(), any());
     }
 
     @Test
@@ -166,18 +166,18 @@ class DeliveryLedgerConsumerRefusalTest {
         spec();
         var item = new DeliveryLedgerConsumer.ClaimedItem("id-42", "token-42", "cron_execution", "42",
             "telegram", "100200300", "77", "payload", 1);
-        when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), org.mockito.ArgumentMatchers.eq(77), any(), anyBoolean()))
+        when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), org.mockito.ArgumentMatchers.eq(77), any(), anyBoolean(), any()))
             .thenReturn(Optional.of(123L));
         consumer().deliverBatchForTest(List.of(item));
         verify(telegram).sendMessageChecked(org.mockito.ArgumentMatchers.eq(100200300L), anyString(), any(), any(),
-            org.mockito.ArgumentMatchers.eq(77), any(), anyBoolean());
+            org.mockito.ArgumentMatchers.eq(77), any(), anyBoolean(), any());
         verify(restClient.post()).uri("/api/v1/agent/delivery/ack");
     }
 
     @Test
     void badRequestDropsBeforeAnyAcceptedChunk() {
         spec();
-        when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean()))
+        when(telegram.sendMessageChecked(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean(), any()))
             .thenThrow(new TelegramClient.SendRefusalException(400, -1, "400: Bad Request: chat not found"));
 
         consumer().deliverBatchForTest(List.of(delegate("44", "payload")));

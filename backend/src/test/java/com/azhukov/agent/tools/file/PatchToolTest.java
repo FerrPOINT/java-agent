@@ -329,6 +329,19 @@ class PatchToolTest {
     }
 
     @Test
+    void v4aSecondMoveCannotOverwriteFirstDestination(@TempDir Path dir) throws Exception {
+        Path first = Files.writeString(dir.resolve("first.txt"), "first");
+        Path second = Files.writeString(dir.resolve("second.txt"), "second");
+        Path target = dir.resolve("target.txt");
+        var result = tool.execute(jsonPatch("*** Move File: " + first + " -> " + target
+            + "\n*** Move File: " + second + " -> " + target), null, session);
+
+        assertThat(result.success()).isFalse();
+        assertThat(target).hasContent("first");
+        assertThat(second).hasContent("second");
+    }
+
+    @Test
     void v4aMoveRejectsReplacedDestinationParent(@TempDir Path dir) throws Exception {
         Path source = Files.writeString(dir.resolve("source.txt"), "payload");
         Path parent = Files.createDirectory(dir.resolve("target"));

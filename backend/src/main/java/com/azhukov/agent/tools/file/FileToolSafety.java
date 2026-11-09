@@ -119,6 +119,16 @@ public final class FileToolSafety {
         return null;
     }
 
+    public static java.nio.channels.SeekableByteChannel openReadable(AgentProperties properties, FileSafety fileSafety,
+                                                                    Path path, String rawPath) throws IOException {
+        ToolResult check = ensureReadable(properties, fileSafety, path, rawPath);
+        if (check != null) throw new IOException(check.error());
+        Path target = path.toRealPath();
+        check = ensureReadable(properties, fileSafety, target, rawPath);
+        if (check != null) throw new IOException(check.error());
+        return com.azhukov.agent.core.security.SecureFileAccess.openRead(target);
+    }
+
     static boolean isReadable(AgentProperties properties, FileSafety fileSafety, Path path) {
         return ensureReadable(properties, fileSafety, path, path.toString()) == null;
     }

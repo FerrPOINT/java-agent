@@ -22,6 +22,7 @@ class VisionAnalyzeToolTest {
     private ImageShrinkerService imageShrinker;
     private com.azhukov.agent.core.security.UrlSafety urlSafety;
     private VisionAnalyzeTool tool;
+    private com.azhukov.agent.core.security.DefaultFileSafety fileSafety;
 
     @TempDir
     Path tempDir;
@@ -33,7 +34,9 @@ class VisionAnalyzeToolTest {
         urlSafety = mock(com.azhukov.agent.core.security.UrlSafety.class);
         when(urlSafety.checkUrl(anyString())).thenReturn(null);
         when(imageShrinker.shrinkIfNeeded(anyString())).thenAnswer(inv -> inv.getArgument(0));
-        tool = new VisionAnalyzeTool(modelClient, imageShrinker, urlSafety);
+        var properties = new com.azhukov.agent.config.AgentProperties();
+        fileSafety = spy(new com.azhukov.agent.core.security.DefaultFileSafety(properties));
+        tool = new VisionAnalyzeTool(modelClient, imageShrinker, urlSafety, properties, fileSafety);
     }
 
     @Test
@@ -172,6 +175,25 @@ class VisionAnalyzeToolTest {
         assertThat(result.success()).isTrue();
         assertThat(result.content()).isEqualTo("A test image");
         verify(modelClient).analyzeImage(anyString(), eq("What is this?"));
+    }
+
+    @Test
+    void deniesArtifactPathsBeforeVisionProvider() {
+        var result = tool.execute("{\"image_url\":\"/artifacts/protected.png\"}", null, null);
+        assertThat(result.success()).isFalse();
+        assertThat(result.error()).containsIgnoringCase("blocked");
+        verifyNoInteractions(imageShrinker, modelClient);
+    }
+
+    @Test
+    void deniesLinkToProtectedImage() throws Exception {
+        Path protectedImage = Files.write(tempDir.resolve("protected.png"), new byte[]{1, 2, 3});
+        Path link = Files.createSymbolicLink(tempDir.resolve("image.png"), protectedImage);
+        doReturn(true).when(fileSafety).isReadBlocked(protectedImage.toRealPath());
+        var result = tool.execute(new com.fasterxml.jackson.databind.ObjectMapper()
+            .writeValueAsString(java.util.Map.of("image_url", link.toString())), null, null);
+        assertThat(result.success()).isFalse();
+        verifyNoInteractions(imageShrinker, modelClient);
     }
 
     @Test

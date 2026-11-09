@@ -14,6 +14,37 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class TelegramTransportTest {
     @Test
+    void sendGuardIsCheckedAfterWaitingForRateLimitPermit() throws Exception {
+        var requests = new AtomicInteger();
+        var mapper = new ObjectMapper();
+        var transport = new BotConfig().telegramRestClient(mapper).mutate()
+            .requestInterceptor((request, bytes, execution) -> {
+                requests.incrementAndGet();
+                return new org.springframework.mock.http.client.MockClientHttpResponse(
+                    new byte[0], org.springframework.http.HttpStatus.OK);
+            }).build();
+        var client = new TelegramClient(transport, mapper, "fixture", 1);
+        var permit = (java.util.concurrent.Semaphore) org.springframework.test.util.ReflectionTestUtils
+            .getField(client, "rateLimiter");
+        var allowed = new java.util.concurrent.atomic.AtomicBoolean(true);
+        var send = new java.util.concurrent.FutureTask<>(() ->
+            client.sendMessageChecked(1L, "fixture", null, null, null, null, false, allowed::get));
+        permit.acquire();
+        try {
+            Thread.startVirtualThread(send);
+            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(2);
+            while (!permit.hasQueuedThreads() && System.nanoTime() < deadline) Thread.sleep(1);
+            assertThat(permit.hasQueuedThreads()).isTrue();
+            allowed.set(false);
+        } finally {
+            permit.release();
+        }
+        assertThat(send.get(2, java.util.concurrent.TimeUnit.SECONDS)).isEmpty();
+        assertThat(requests).hasValue(0);
+        assertThat(permit.availablePermits()).isEqualTo(1);
+    }
+
+    @Test
     void httpBadRequestWithTelegramEnvelopeIsDefiniteRefusal() throws Exception {
         var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/bot-fixture/sendMessage", exchange -> {
