@@ -118,22 +118,27 @@ class ImageTranscodeServiceTest {
     }
 
     @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    @org.junit.jupiter.params.provider.CsvSource({"false, false", "true, false", "true, true"})
     @EnabledOnOs(OS.LINUX)
-    void converterTimeoutStopsChildAfterParentExits(boolean holdStdin,
+    void converterTimeoutStopsChildHoldingProcessPipes(boolean holdStdin, boolean keepParentAlive,
         @org.junit.jupiter.api.io.TempDir java.nio.file.Path dir
     ) throws Exception {
         var pidFile = dir.resolve("child-pid");
         String child = holdStdin
-            ? "exec 3<&0; sleep 30 <&3 3<&- >/dev/null 2>&1 &"
-            : "sleep 30 &";
+            ? "exec 3<&0; sleep 6 <&3 3<&- >/dev/null 2>&1 &"
+            : "sleep 6 &";
+        String parent = keepParentAlive ? "wait" : "sleep 0.05; exit 0";
         byte[] input = new byte[holdStdin ? 1024 * 1024 : 0];
         try {
+            long start = System.nanoTime();
             assertThatThrownBy(() -> ImageTranscodeService.runConverter(
-                java.util.List.of("/bin/sh", "-c", child + " echo $! > \"$1\"; sleep 0.05; exit 0",
+                java.util.List.of("/bin/sh", "-c", child + " echo $! > \"$1\"; " + parent,
                     "test", pidFile.toString()),
-                input, 1024, System.nanoTime() + java.time.Duration.ofMillis(750).toNanos()))
+                input, 1024, start + java.time.Duration.ofMillis(750).toNanos()))
                 .isInstanceOf(java.io.IOException.class).hasMessageContaining("timed out");
+            assertThat(java.time.Duration.ofNanos(System.nanoTime() - start))
+                .as("cleanup must finish before the child exits on its own")
+                .isLessThan(java.time.Duration.ofSeconds(3));
 
             long pid = Long.parseLong(java.nio.file.Files.readString(pidFile).strip());
             var procStatus = java.nio.file.Path.of("/proc", Long.toString(pid), "status");

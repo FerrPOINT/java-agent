@@ -141,7 +141,8 @@ public class ImageTranscodeService {
 
     private static void stopConverterGroup(Process process) {
         // Also stop the direct process if cancellation beat setsid during startup.
-        if (process.isAlive()) process.destroyForcibly();
+        // Signal through the handle so a blocked pipe cannot delay signaling the group.
+        if (process.isAlive()) process.toHandle().destroyForcibly();
         try {
             Process signal = new ProcessBuilder("/bin/bash", "-c", "kill -KILL -- \"-$1\"",
                 "image-converter-cleanup", Long.toString(process.pid()))
