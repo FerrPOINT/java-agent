@@ -92,7 +92,9 @@ class AttachmentControllerTest {
             com.azhukov.agent.core.security.NativeIdentityOrigin.Kind.GATEWAY_KEY, "gateway", true));
         try {
             when(service.outboundStatus("att_1", "701938011", sessionId)).thenReturn(outboundStatus);
-            when(service.hasProtectedOutbound()).thenReturn(true);
+            if (outboundStatus == OutboundStatus.CLAIMED) {
+                when(service.hasProtectedOutbound()).thenReturn(true);
+            }
             mockMvc.perform(post("/api/v1/attachments/att_1/outbound")
                     .param("ownerId", "701938011").param("sessionId", sessionId.toString()))
                 .andExpect(status().is(outboundStatus == OutboundStatus.DELIVERED ? 204 : 409));
