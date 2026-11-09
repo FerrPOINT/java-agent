@@ -672,7 +672,7 @@ public class StreamEditor {
         boolean fresh = freshFinalTimeoutMs > 0 && session.streamStartTime != 0
             && System.currentTimeMillis() - session.streamStartTime > freshFinalTimeoutMs;
         boolean replace = session.useDraftStreaming || preview <= 0 || fresh
-            || formatted.length() > MessageSplitter.TELEGRAM_MAX_LENGTH || !session.floodFallbackBuffer.isEmpty();
+            || !fitsTelegram(finalText, formatted) || !session.floodFallbackBuffer.isEmpty();
         List<DeliveryOperation> normal = replace
             ? formattedOperations(chatId, finalText, session, preview)
             : List.of(editOperation(chatId, preview, finalText, formatted, parseMode));
@@ -903,7 +903,7 @@ public class StreamEditor {
             sendFormattedFinalMessage(chatId, scrubbed);
         } else {
             String formatted = formatForTelegramDelegate(scrubbed);
-            var operations = formatted.length() > MessageSplitter.TELEGRAM_MAX_LENGTH
+            var operations = !fitsTelegram(scrubbed, formatted)
                 ? formattedOperations(chatId, scrubbed, session, effectiveMessageId)
                 : List.of(editOperation(chatId, effectiveMessageId, scrubbed, formatted, parseMode));
             enqueueDelivery(chatId, session, operations);
@@ -1146,12 +1146,16 @@ public class StreamEditor {
         return enqueueDelivery(chatId, session, formattedOperations(chatId, text, session, 0));
     }
 
+    private static boolean fitsTelegram(String plain, String formatted) {
+        return Math.max(plain.length(), formatted.length()) <= MessageSplitter.TELEGRAM_MAX_LENGTH;
+    }
+
     private List<DeliveryOperation> formattedOperations(long chatId, String text, StreamSession session, long replacedPreview) {
         if (text == null || text.isBlank()) return List.of();
         String formatted = formatForTelegramDelegate(text);
         Integer topic = session.messageThreadId > 0 ? (int) session.messageThreadId : null;
         List<MessageSplitter.TextPart> parts;
-        if (formatted.length() <= MessageSplitter.TELEGRAM_MAX_LENGTH && text.length() <= MessageSplitter.TELEGRAM_MAX_LENGTH) {
+        if (fitsTelegram(text, formatted)) {
             parts = List.of(new MessageSplitter.TextPart(text, formatted));
         } else if ("MarkdownV2".equalsIgnoreCase(parseMode)) {
             parts = MessageSplitter.splitMarkdown(text);

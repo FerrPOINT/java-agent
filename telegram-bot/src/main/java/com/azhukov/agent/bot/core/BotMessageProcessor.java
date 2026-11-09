@@ -535,6 +535,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         } finally {
             var delivery = streamEditor.hasDeferredDelivery(chatId) ? streamEditor.sealDeferredDelivery(chatId) : null;
             if (delivery == null) {
+                streamEditor.clearStream(chatId);
                 busyHandler.markFree(chatId);
             } else {
                 var finishedTurn = result;

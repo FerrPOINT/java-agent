@@ -91,6 +91,40 @@ class StreamDeliveryRegressionTest {
     }
 
     @Test
+    void oversizedPlainFallbackReplacesPreviewWithBoundedChunks() {
+        String text = "**" + "a".repeat(4093) + "**";
+        when(client.sendMessageChecked(eq(101L), anyString(), eq("MarkdownV2"), any(), any(), any(), anyBoolean()))
+            .thenThrow(new TelegramClient.SendRefusalException(400, -1, "Bad Request: can't parse entities"));
+        when(client.sendMessageChecked(eq(101L), anyString(), isNull(), any(), any(), any(), anyBoolean()))
+            .thenReturn(Optional.of(17L));
+        var editor = editor(false, 0);
+        try {
+            editor.sessionFor(101L).currentMessageId.set(9L);
+            assertThat(editor.finalizeStream(101L, 9L, text)).isTrue();
+            var parts = org.mockito.ArgumentCaptor.forClass(String.class);
+            verify(client, atLeast(2)).sendMessageChecked(eq(101L), parts.capture(), isNull(), any(), any(), any(), anyBoolean());
+            assertThat(parts.getAllValues()).allMatch(part -> part.length() <= 4096);
+            assertThat(String.join("", parts.getAllValues().stream()
+                .map(part -> part.replaceFirst("^\\(\\d+/\\d+\\) ", "")).toList())).isEqualTo(text);
+            verify(client, never()).editFinalMessage(anyLong(), anyLong(), anyString(), any());
+        } finally {
+            editor.destroy();
+        }
+    }
+
+    @Test
+    void htmlSplitsByActualEscapeCost() {
+        var plain = com.azhukov.agent.bot.formatting.MessageSplitter.splitHtmlSource("а".repeat(4097));
+        assertThat(plain).hasSize(2);
+        String text = "&<>🙂".repeat(410) + "tail";
+        var escaped = com.azhukov.agent.bot.formatting.MessageSplitter.splitHtmlSource(text);
+        assertThat(escaped).allMatch(part -> part.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            .length() <= 4096);
+        assertThat(String.join("", escaped.stream()
+            .map(part -> part.replaceFirst("^\\(\\d+/\\d+\\) ", "")).toList())).isEqualTo(text);
+    }
+
+    @Test
     void longMarkdownBlockDeliversItsTailAndKeepsPlainFragmentsWithinLimit() {
         String text = "intro\n\n~~~\n\n" + "paragraph\n\n".repeat(530) + "TAIL_MARKER\n~~~\n\nafter";
         when(client.sendMessageChecked(eq(101L), anyString(), any(), any(), any(), isNull(), anyBoolean()))

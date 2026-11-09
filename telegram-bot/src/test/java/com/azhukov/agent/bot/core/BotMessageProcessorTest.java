@@ -573,6 +573,45 @@ class BotMessageProcessorTest {
 
     @SuppressWarnings("unchecked")
     @Test
+    void stopDuringUnconfirmedImmediateDeliveryDoesNotCancelNextTurn() throws Exception {
+        properties.setStreamingTransport("off");
+        var started = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        when(telegramClient.sendMessageChecked(eq(100L), eq("first"), any(), any(), any(), any(), anyBoolean()))
+            .thenAnswer(call -> {
+                started.countDown();
+                assertThat(release.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                return Optional.empty();
+            });
+        when(telegramClient.sendMessageChecked(eq(100L), eq("second"), any(), any(), any(), any(), anyBoolean()))
+            .thenReturn(Optional.of(42L));
+        when(commandRegistry.get("stop")).thenReturn(
+            new com.azhukov.agent.bot.commands.impl.StopCommand(busyHandler, backendClient));
+        when(backendClient.chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+            .thenAnswer(call -> {
+                String text = call.getArgument(0);
+                ((Consumer<String>) call.getArgument(4)).accept(text);
+                var result = new AgentBackendClient.ChatResult(text, "model", 1, 10, true);
+                ((Consumer<AgentBackendClient.ChatResult>) call.getArgument(10)).accept(result);
+                return result;
+            });
+        try (DeliveryFixture fixture = realDeliveryFixture();
+             var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var first = executor.submit(() -> fixture.processor().accept(textEvent(1, 100L, "first")));
+            try {
+                assertThat(started.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                fixture.processor().accept(commandEvent(2, 100L, "stop", ""));
+            } finally {
+                release.countDown();
+            }
+            first.get(5, java.util.concurrent.TimeUnit.SECONDS);
+            fixture.processor().accept(textEvent(3, 100L, "second"));
+            verify(telegramClient).sendMessageChecked(eq(100L), eq("second"), any(), any(), any(), any(), anyBoolean());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
     void completedToolAfterDraftTextDoesNotRestartBackendOrSendEmptyFallback() {
         properties.setStreamingTransport("draft");
         properties.getDisplay().setToolProgress("off");
@@ -1472,7 +1511,7 @@ class BotMessageProcessorTest {
             .thenThrow(new RuntimeException("connection refused"));
 
         processor.accept(textEvent(1, 100L, "hello"));
-        verify(streamEditor).clearStream(100L);
+        verify(streamEditor, atLeastOnce()).clearStream(100L);
     }
 
     @Test

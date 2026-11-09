@@ -92,12 +92,35 @@ public final class MessageSplitter {
 
     /** Split original HTML text before escaping entities. Keep every source character. */
     public static List<String> splitHtmlSource(String text) {
-        // Each ampersand expands to five units. Reserve space for the part label.
-        return splitNumberedSource(text, (TELEGRAM_MAX_LENGTH - 32) / 5);
+        int limit = TELEGRAM_MAX_LENGTH - 24;
+        var parts = new ArrayList<String>();
+        int start = 0;
+        int length = 0;
+        for (int i = 0; i < text.length();) {
+            int character = text.codePointAt(i);
+            int width = switch (character) {
+                case '&' -> 5;
+                case '<', '>' -> 4;
+                default -> Character.charCount(character);
+            };
+            if (length + width > limit) {
+                parts.add(text.substring(start, i));
+                start = i;
+                length = 0;
+            }
+            length += width;
+            i += Character.charCount(character);
+        }
+        if (start < text.length()) parts.add(text.substring(start));
+        return numberParts(parts);
     }
 
     private static List<String> splitNumberedSource(String text, int limit) {
-        List<String> parts = splitSource(text, limit);
+        return numberParts(splitSource(text, limit));
+    }
+
+    private static List<String> numberParts(List<String> parts) {
+        if (parts.size() <= 1) return parts;
         for (int i = 0; i < parts.size(); i++) {
             parts.set(i, partLabel(i, parts.size()) + parts.get(i));
         }
