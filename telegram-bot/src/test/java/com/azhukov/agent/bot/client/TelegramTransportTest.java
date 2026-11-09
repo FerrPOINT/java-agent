@@ -54,8 +54,9 @@ class TelegramTransportTest {
         "200, null, -1", "429, null, -1"
     })
     void sendsPreserveConfirmedFloodControl(int status, String retryAfterJson, int expectedRetryAfter) {
-        var mapper = new ObjectMapper();
-        var transport = new BotConfig().telegramRestClient(mapper).mutate()
+        var config = new BotConfig();
+        var mapper = config.telegramObjectMapper(config.objectMapper());
+        var transport = config.telegramRestClient(mapper).mutate()
             .requestInterceptor((request, bytes, execution) -> {
                 String body = """
                     {"ok":false,"error_code":429,"description":"Flood control","parameters":{"retry_after":%s}}
@@ -98,11 +99,19 @@ class TelegramTransportTest {
         "200, '{\"ok\":0,\"error_code\":429}'", "429, '{\"ok\":0,\"error_code\":429}'",
         "200, '{\"ok\":\"false\",\"error_code\":429}'", "429, '{\"ok\":\"false\",\"error_code\":429}'",
         "200, '{\"ok\":false,\"error_code\":429.5}'", "429, '{\"ok\":false,\"error_code\":429.5}'",
-        "200, '{\"ok\":false,\"error_code\":\"429\"}'", "429, '{\"ok\":false,\"error_code\":\"429\"}'"
+        "200, '{\"ok\":false,\"error_code\":\"429\"}'", "429, '{\"ok\":false,\"error_code\":\"429\"}'",
+        "200, '{\"ok\":true,\"ok\":false,\"error_code\":429}'",
+        "429, '{\"ok\":true,\"ok\":false,\"error_code\":429}'",
+        "200, '{\"ok\":false,\"error_code\":400,\"error_code\":429}'",
+        "429, '{\"ok\":false,\"error_code\":400,\"error_code\":429}'",
+        "200, '{\"ok\":false,\"error_code\":429}{\"ok\":true,\"result\":{\"message_id\":42}}'",
+        "429, '{\"ok\":false,\"error_code\":429}{\"ok\":true,\"result\":{\"message_id\":42}}'",
+        "200, '{\"ok\":false,\"error_code\":429}garbage'",
+        "429, '{\"ok\":false,\"error_code\":429}garbage'"
     })
     void invalidTelegramEnvelopeHasUnknownOutcomeForTextAndMedia(int status, String body) {
         var config = new BotConfig();
-        var mapper = config.objectMapper();
+        var mapper = config.telegramObjectMapper(config.objectMapper());
         var transport = config.telegramRestClient(mapper).mutate()
             .requestInterceptor((request, bytes, execution) -> {
                 var response = new org.springframework.mock.http.client.MockClientHttpResponse(
