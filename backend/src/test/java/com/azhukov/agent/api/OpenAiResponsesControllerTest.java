@@ -466,6 +466,7 @@ class OpenAiResponsesControllerTest {
             .contentType(MediaType.APPLICATION_JSON).content("{\"model\":\"gpt-resp\",\"input\":\"same\"}");
         try (var ignored = runAdmissionService.tryAcquire().orElseThrow()) {
             mockMvc.perform(request).andExpect(status().isTooManyRequests());
+            verify(openAiSessionService, never()).resolve(any(), any(), anyString());
         }
         when(agentRuntime.runMessages(anyList(), anyList(), any(ModelRequestOptions.class)))
             .thenReturn(new TurnResult(List.of(Message.assistant("recovered", 1)), true, null));

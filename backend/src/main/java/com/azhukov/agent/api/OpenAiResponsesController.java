@@ -199,21 +199,17 @@ public class OpenAiResponsesController {
                                            String instructions,
                                            String requestedModel,
                                            StoredResponse previous) {
-        OpenAiSessionContext sessionContext = resolveSession(
-            sessionIdHeader,
-            sessionKeyHeader,
-            requestedModel,
-            previous
-        );
-        List<Message> messages = buildMessages(sessionContext, instructions, priorHistory, inputMessages, request.truncation());
         List<ToolDefinition> tools = buildTools(request);
         ModelRequestOptions requestOptions = requestOptions(request, requestedModel);
         var reservation = runAdmissionService.tryAcquire();
         if (reservation.isEmpty()) {
             return new OpenAiIdempotencyCache.Result(concurrencyLimitedResponse(), null);
         }
+        OpenAiSessionContext sessionContext;
         AgentCallResult result;
         try (ApiRunAdmissionService.Reservation ignored = reservation.get()) {
+            sessionContext = resolveSession(sessionIdHeader, sessionKeyHeader, requestedModel, previous);
+            List<Message> messages = buildMessages(sessionContext, instructions, priorHistory, inputMessages, request.truncation());
             result = runAgent(messages, tools, requestOptions);
         }
         ChatResponse response = result.response();
