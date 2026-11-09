@@ -80,7 +80,12 @@ public final class SuggestionCommands implements CommandGroup {
             JsonNode res = client.executePost("/api/v1/agent/cron/suggestions/" + URLEncoder.encode(id, StandardCharsets.UTF_8) + "/accept", Map.of());
             if (res != null && res.path("accepted").asBoolean(false)) {
                 String name = res.path("jobName").asText(res.path("name").asText(""));
-                return "Suggestion accepted" + (name.isBlank() ? "." : ": cron job '" + name + "' created.");
+                String accepted = "Suggestion accepted" + (name.isBlank() ? "." : ": cron job '" + name + "' created.");
+                return switch (res.path("schedulingStatus").asText()) {
+                    case "failed" -> accepted + " Scheduling failed. Check the cron job status.";
+                    case "not_scheduled", "unknown" -> accepted + " Scheduling is not confirmed. Check the cron job status.";
+                    default -> accepted;
+                };
             }
             String reason = res == null ? "no response" : res.path("reason").asText("unknown id");
             return "Suggestion not accepted: " + reason;

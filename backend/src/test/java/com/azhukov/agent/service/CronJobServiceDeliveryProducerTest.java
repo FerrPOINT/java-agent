@@ -132,8 +132,8 @@ class CronJobServiceDeliveryProducerTest {
     }
 
     @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
-    void oneShotConsumesItsTimerBeforeExecutingEvenWhenCompletionFails(boolean enqueueFails) {
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"enqueue", "delete", "success"})
+    void oneShotConsumesItsTimerBeforeExecutingAndCleansUpOnDeletion(String scenario) {
         var job = jobWithDeliverTo("telegram:111");
         job.setRepeatCount(1);
         var properties = new AgentProperties();
@@ -149,9 +149,9 @@ class CronJobServiceDeliveryProducerTest {
         message.setRole("assistant");
         message.setContent("completed side effect");
         when(messageRepository.findBySessionIdOrderByCreatedAtAsc(session)).thenReturn(List.of(message));
-        if (enqueueFails) {
+        if ("enqueue".equals(scenario)) {
             when(deliveryService.enqueue(any())).thenThrow(new IllegalArgumentException("ledger rejected output"));
-        } else {
+        } else if ("delete".equals(scenario)) {
             org.mockito.Mockito.doThrow(new org.springframework.dao.DataAccessResourceFailureException("completion write failed"))
                 .when(cronJobRepository).delete(job);
         }
@@ -172,7 +172,10 @@ class CronJobServiceDeliveryProducerTest {
         assertThat(job.isEnabled()).isFalse();
         assertThat(job.getNextRunAt()).isNull();
         assertThat(job.getRepeatCompleted()).isZero();
-        verify(cronJobRepository, org.mockito.Mockito.times(enqueueFails ? 0 : 1)).delete(any(CronJobEntity.class));
+        verify(cronJobRepository, org.mockito.Mockito.times("enqueue".equals(scenario) ? 0 : 1))
+            .delete(any(CronJobEntity.class));
+        var locks = (Map<?, ?>) org.springframework.test.util.ReflectionTestUtils.getField(service, "jobLocks");
+        assertThat(locks.containsKey(job.getId())).isEqualTo(!"success".equals(scenario));
         verify(timer).cancel(false);
         verify(scheduler).schedule(any(Runnable.class), org.mockito.ArgumentMatchers.anyLong(), any());
         verify(runtime).runBackground(any(), any(), anyBoolean());

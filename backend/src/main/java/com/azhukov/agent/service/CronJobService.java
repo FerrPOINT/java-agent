@@ -918,7 +918,10 @@ private static final String CRON_EXECUTION_HINT = """
         transactionTemplate.executeWithoutResult(status ->
             cronJobRepository.findByIdForUpdate(id)
                 .filter(job -> !job.isEnabled() && job.getConfigurationRevision() == revision)
-                .ifPresent(cronJobRepository::delete));
+                .ifPresent(job -> {
+                    cronJobRepository.delete(job);
+                    cancelAfterCommit(id);
+                }));
     }
 
     private void finishScheduledRun(UUID id, ScheduledFuture<?> expected, Instant due, long revision, CronExecutionOutcome outcome) {
