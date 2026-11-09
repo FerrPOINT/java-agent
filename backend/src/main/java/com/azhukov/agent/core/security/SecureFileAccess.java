@@ -5,19 +5,19 @@ import java.nio.channels.SeekableByteChannel;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.NoSuchFileException;
-import java.util.concurrent.TimeUnit;
 import java.nio.file.Path;
 import java.nio.file.SecureDirectoryStream;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributeView;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
 /** Opens an authorized absolute path without following replacements by symlink. */
 public final class SecureFileAccess {
     private SecureFileAccess() {}
 
     public static SecureDirectoryStream<Path> openDirectory(Path absolutePath) throws IOException {
-        if (!absolutePath.isAbsolute() || !absolutePath.equals(absolutePath.normalize())) {
+        if (absolutePath == null || !absolutePath.isAbsolute() || !absolutePath.equals(absolutePath.normalize())) {
             throw new IOException("Expected an absolute normalized directory path");
         }
         var root = Files.newDirectoryStream(absolutePath.getRoot());
