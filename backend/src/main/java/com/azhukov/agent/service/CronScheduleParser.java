@@ -11,7 +11,6 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
-import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.springframework.stereotype.Component;
@@ -60,6 +59,15 @@ public class CronScheduleParser {
         } catch (DateTimeParseException ignored) {
             // Not an offset timestamp.
         }
+        if (trimmed.matches("\\d{4}-\\d{2}-\\d{2}")) {
+            try {
+                LocalDateTime dateTime = LocalDateTime.parse(trimmed + "T00:00:00");
+                return new ScheduleInfo(KIND_ONCE, Math.max(1,
+                    Duration.between(LocalDateTime.now(), dateTime).getSeconds()));
+            } catch (DateTimeParseException invalid) {
+                throw new IllegalArgumentException("Invalid schedule date: " + trimmed, invalid);
+            }
+        }
         if (DURATION_PATTERN.matcher(trimmed).matches()) {
             return new ScheduleInfo(KIND_ONCE, parseDurationSeconds(trimmed));
         }
@@ -71,7 +79,7 @@ public class CronScheduleParser {
     }
 
     long calculateDelaySeconds(String schedule) {
-        return parse(schedule).delaySeconds();
+        return Math.max(1, parse(schedule).delaySeconds());
     }
 
     void validate(String schedule) {
@@ -108,13 +116,10 @@ public class CronScheduleParser {
     }
 
     private long calculateCronDelaySeconds(String expression) {
-        try {
-            Optional<ZonedDateTime> next = ExecutionTime.forCron(cronParser.parse(expression))
-                .nextExecution(ZonedDateTime.now());
-            return next.map(time -> Math.max(1, Duration.between(ZonedDateTime.now(), time).getSeconds()))
-                .orElse(60L);
-        } catch (Exception e) {
-            throw new IllegalArgumentException("Invalid cron expression: " + expression, e);
-        }
+        ZonedDateTime now = ZonedDateTime.now();
+        ExecutionTime executionTime = ExecutionTime.forCron(cronParser.parse(expression).validate());
+        ZonedDateTime next = executionTime.nextExecution(now)
+            .orElseThrow(() -> new IllegalArgumentException("Cron expression has no next execution: " + expression));
+        return Math.max(1, Duration.between(now, next).getSeconds());
     }
 }

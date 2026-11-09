@@ -78,6 +78,54 @@ class CronJobServiceReEnableTest {
         }
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"99 9 * * *", "0 0 31 2 *"})
+    void invalidScheduleDisablesOnlyThatJobOnStartupAndCannotBeResumed(String schedule) {
+        var invalid = new CronJobEntity();
+        invalid.setId(UUID.randomUUID());
+        invalid.setEnabled(true);
+        invalid.setSchedule(schedule);
+        invalid.setNextRunAt(Instant.now().plusSeconds(300));
+        var valid = new CronJobEntity();
+        valid.setId(UUID.randomUUID());
+        valid.setEnabled(true);
+        valid.setSchedule("0 9 * * *");
+        when(cronJobRepository.findByEnabledTrue()).thenReturn(List.of(invalid, valid));
+        when(cronJobRepository.findById(invalid.getId())).thenReturn(Optional.of(invalid));
+        when(cronJobRepository.findById(valid.getId())).thenReturn(Optional.of(valid));
+
+        try {
+            service.init();
+            assertThat(invalid.isEnabled()).isFalse();
+            assertThat(invalid.getNextRunAt()).isNull();
+            assertThat(invalid.getLastError()).isNotBlank();
+            assertThat(valid.getNextRunAt()).isAfter(Instant.now());
+            org.assertj.core.api.Assertions.assertThatIllegalArgumentException()
+                .isThrownBy(() -> service.resume(invalid.getId()));
+            org.assertj.core.api.Assertions.assertThatIllegalArgumentException()
+                .isThrownBy(() -> service.update(valid.getId(), "bad edit", schedule, null, null, null));
+            assertThat(valid.getSchedule()).isEqualTo("0 9 * * *");
+            assertThat(valid.getName()).isNull();
+        } finally {
+            service.shutdown();
+        }
+    }
+
+    @Test
+    void deletedJobBeforeManualCallbackDoesNotKeepAnExecutionLock() {
+        var job = new CronJobEntity();
+        job.setId(UUID.randomUUID());
+        when(cronJobRepository.findById(job.getId())).thenReturn(Optional.of(job), Optional.empty());
+        var scheduler = mock(java.util.concurrent.ScheduledExecutorService.class);
+        var callback = org.mockito.ArgumentCaptor.forClass(Runnable.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "scheduler", scheduler);
+        service.runNowBackground(job.getId(), null);
+        verify(scheduler).execute(callback.capture());
+        callback.getValue().run();
+        var locks = (java.util.Map<?, ?>) org.springframework.test.util.ReflectionTestUtils.getField(service, "jobLocks");
+        assertThat(locks).isEmpty();
+    }
+
     @Test
     void init_loadsAllEnabledJobs_noPaginationLimit() {
         // Create more than 50 enabled jobs to verify no pagination limit
