@@ -52,6 +52,7 @@ import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch;
@@ -304,8 +305,9 @@ class OpenAiResponsesControllerTest {
         assertThat(optionsCaptor.getValue().modelName()).isEqualTo(MODEL);
     }
 
-    @Test
-    void createResponseReturns429WhenApiRunLimitIsReachedLikeHermes() throws Exception {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void createResponseReturns429WhenApiRunLimitIsReachedLikeHermes(boolean streaming) throws Exception {
         properties.getApi().setMaxConcurrentRuns(1);
 
         try (ApiRunAdmissionService.Reservation ignored = runAdmissionService.tryAcquire().orElseThrow()) {
@@ -314,9 +316,10 @@ class OpenAiResponsesControllerTest {
                     .content("""
                         {
                           "model": "gpt-resp",
-                          "input": "ping"
+                          "input": "ping",
+                          "stream": %s
                         }
-                        """))
+                        """.formatted(streaming)))
                 .andExpect(status().isTooManyRequests())
                 .andExpect(header().string(HttpHeaders.RETRY_AFTER, "1"))
                 .andExpect(jsonPath("$.error.message").value("Too many concurrent runs (max 1)"))
@@ -326,7 +329,26 @@ class OpenAiResponsesControllerTest {
         }
 
         verify(agentRuntime, never()).run(anyList(), anyList(), any(ModelRequestOptions.class));
+        verify(openAiSessionService, never()).resolve(any(), any(), anyString());
         verify(openAiSessionService, never()).persistTurn(any(), anyList(), any(ChatResponse.class), anyList());
+    }
+
+    @Test
+    void streamingSessionSetupFailureReleasesRunPermit() throws Exception {
+        properties.getApi().setMaxConcurrentRuns(1);
+        when(openAiSessionService.resolve(null, null, "gpt-resp"))
+            .thenThrow(new IllegalArgumentException("Session not found"));
+
+        mockMvc.perform(post("/v1/responses")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"model":"gpt-resp","input":"ping","stream":true}
+                    """))
+            .andExpect(status().isBadRequest());
+
+        try (var permit = runAdmissionService.tryAcquire().orElseThrow()) {
+            verifyNoInteractions(agentRuntime);
+        }
     }
 
     @Test

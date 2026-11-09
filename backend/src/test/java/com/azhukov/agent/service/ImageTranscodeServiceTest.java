@@ -64,6 +64,15 @@ class ImageTranscodeServiceTest {
     }
 
     @Test
+    void preflightRejectsOversizedOrMissingDimensions() throws Exception {
+        ImageTranscodeService.verifyImageSize("width: 8000\nheight: 5000\nbands: 3\n");
+        assertThatThrownBy(() -> ImageTranscodeService.verifyImageSize("width: 8001\nheight: 5000\n"))
+            .isInstanceOf(java.io.IOException.class).hasMessageContaining("40 megapixels");
+        assertThatThrownBy(() -> ImageTranscodeService.verifyImageSize("width: 8000\n"))
+            .isInstanceOf(java.io.IOException.class).hasMessageContaining("HEIF image dimensions");
+    }
+
+    @Test
     @EnabledOnOs(OS.LINUX)
     void realHeicFileTranscodesToDecodablePng() throws Exception {
         // Generate a real HEIC through libheif's own encoder, then transcode back.

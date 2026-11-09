@@ -13,7 +13,6 @@ import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.security.FileSafety;
 import com.azhukov.agent.core.security.UrlSafety;
 import com.azhukov.agent.tools.file.FileToolSafety;
-import com.azhukov.agent.service.ImageShrinkerService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -33,7 +32,6 @@ import java.util.Base64;
 public class VisionAnalyzeTool implements ToolHandler {
 
     private final ModelClient modelClient;
-    private final ImageShrinkerService imageShrinker;
     private final UrlSafety urlSafety;
     private final AgentProperties properties;
     private final FileSafety fileSafety;
@@ -51,9 +49,7 @@ public class VisionAnalyzeTool implements ToolHandler {
         }
         try {
             String base64 = loadImageBase64(args.image(), session);
-            // P2-15: shrink image if it exceeds provider payload limits
-            String shrunkBase64 = imageShrinker.shrinkIfNeeded(base64);
-            String result = modelClient.analyzeImage(shrunkBase64, args.prompt() != null ? args.prompt() : "Describe this image");
+            String result = modelClient.analyzeImage(base64, args.prompt() != null ? args.prompt() : "Describe this image");
             return ToolResult.ok(result);
         } catch (Exception e) {
             return ToolResult.fail("Vision analyze failed: " + e.getMessage());

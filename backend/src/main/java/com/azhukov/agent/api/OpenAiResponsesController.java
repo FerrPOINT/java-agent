@@ -169,26 +169,20 @@ public class OpenAiResponsesController {
                 }
             ).response();
         }
-        OpenAiSessionContext sessionContext = resolveSession(
-            sessionIdHeader,
-            sessionKeyHeader,
-            requestedModel,
-            previous
-        );
-        List<Message> messages = buildMessages(sessionContext, instructions, priorHistory, inputMessages, request.truncation());
-        List<ToolDefinition> tools = buildTools(request);
-        ModelRequestOptions requestOptions = requestOptions(request, requestedModel);
-
-        return streamResponse(
-            request,
-            sessionContext,
-            inputMessages,
-            messages,
-            tools,
-            requestOptions,
-            priorHistory,
-            instructions,
-            requestedModel);
+        var reservation = runAdmissionService.tryAcquire();
+        if (reservation.isEmpty()) {
+            return concurrencyLimitedResponse();
+        }
+        var permit = reservation.get();
+        try {
+            OpenAiSessionContext sessionContext = resolveSession(sessionIdHeader, sessionKeyHeader, requestedModel, previous);
+            List<Message> messages = buildMessages(sessionContext, instructions, priorHistory, inputMessages, request.truncation());
+            return streamResponse(request, sessionContext, inputMessages, messages, buildTools(request),
+                requestOptions(request, requestedModel), priorHistory, instructions, requestedModel, permit);
+        } catch (RuntimeException | Error failure) {
+            permit.close();
+            throw failure;
+        }
     }
 
     private OpenAiIdempotencyCache.Result syncResponse(OpenAiResponsesRequest request,
@@ -244,11 +238,8 @@ public class OpenAiResponsesController {
                                              ModelRequestOptions requestOptions,
                                              List<Message> priorHistory,
                                              String instructions,
-                                             String requestedModel) {
-        var reservation = runAdmissionService.tryAcquire();
-        if (reservation.isEmpty()) {
-            return concurrencyLimitedResponse();
-        }
+                                             String requestedModel,
+                                             ApiRunAdmissionService.Reservation reservation) {
         SseEmitter emitter = new SseEmitter(600_000L);
         String responseId = responseId();
         long createdAt = Instant.now().getEpochSecond();
@@ -277,6 +268,10 @@ public class OpenAiResponsesController {
             ), request.conversation());
         }
 
+        var responseEntity = ResponseEntity.ok()
+            .headers(sseResponseHeaders(sessionContext))
+            .contentType(MediaType.TEXT_EVENT_STREAM)
+            .body(emitter);
         CompletableFuture.runAsync(() -> {
             try {
                 sendResponsesSse(emitter, sequenceNumber, "response.created", Map.of(
@@ -370,14 +365,11 @@ public class OpenAiResponsesController {
                     shouldStore,
                     e);
             } finally {
-                reservation.get().close();
+                reservation.close();
             }
         });
 
-        return ResponseEntity.ok()
-            .headers(sseResponseHeaders(sessionContext))
-            .contentType(MediaType.TEXT_EVENT_STREAM)
-            .body(emitter);
+        return responseEntity;
     }
 
     @GetMapping("/{responseId}")

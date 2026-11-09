@@ -15,7 +15,6 @@ import java.nio.channels.SeekableByteChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.DirectoryIteratorException;
-import java.nio.file.NoSuchFileException;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -26,19 +25,9 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
 
-/**
- * WP-j (Hermes vision HEIC/HEIF/AVIF parity): iPhone photos arrive as HEIC/
- * HEIF (and increasingly AVIF). {@code ImageIO} cannot decode them on a stock
- * JVM, so before this service the vision lane silently produced a corrupt or
- * empty image — the model saw garbage instead of the photo.
- *
- * This service transcodes such formats to PNG via system converters when
- * available (libheif {@code heif-convert}, ImageMagick {@code convert},
- * AVIF {@code avifdec}) — probed once per process, honest degradation:
- * without a converter the caller gets a clear error naming the missing
- * package instead of a garbage decode.
- */
+/** Converts the first HEIF or AVIF image to a bounded PNG for model input. */
 @Slf4j
 @Service
 public class ImageTranscodeService {
@@ -48,6 +37,8 @@ public class ImageTranscodeService {
     private static final int PNG_HEADER_BYTES = 33; // signature and complete IHDR chunk
     private static final long MAX_PNG_PIXELS = 40_000_000;
     private static final Duration CONVERTER_TIMEOUT = Duration.ofSeconds(60);
+    private static final Pattern IMAGE_SIZE = Pattern.compile(
+        "(?m)^width: ([0-9]{1,10})\\Rheight: ([0-9]{1,10})$");
 
     /** Magic-byte sniffing — source of truth is the file, not the extension. */
     static boolean isHeifFamily(byte[] bytes) {
@@ -65,9 +56,6 @@ public class ImageTranscodeService {
         return false;
     }
 
-    private volatile Boolean heifConvertAvailable;
-    private volatile Boolean magickAvailable;
-
     /**
      * Decode a HEIF-family image to PNG bytes. Returns the original bytes
      * when the input is already decodable by ImageIO (fast path), transcodes
@@ -77,11 +65,8 @@ public class ImageTranscodeService {
         if (bytes == null || bytes.length == 0) {
             throw new IOException("empty image");
         }
-        if (ImageIO.read(new ByteArrayInputStream(bytes)) != null) {
-            return bytes; // already decodable (JPEG/PNG/GIF/BMP/WebP-JVM)
-        }
         if (!isHeifFamily(bytes)) {
-            return bytes; // unknown-but-not-HEIF: let the downstream try
+            return bytes;
         }
         byte[] png = transcode(bytes);
         BufferedImage check = ImageIO.read(new ByteArrayInputStream(png));
@@ -98,20 +83,13 @@ public class ImageTranscodeService {
                 Path input = work.resolve("source.heic");
                 Path output = Path.of("image.png");
                 Files.write(input, heifBytes, StandardOpenOption.CREATE_NEW);
-                if (isHeifConvertAvailable()) {
-                    runConverter(List.of("heif-convert", input.toString(), work.resolve(output).toString()), CONVERTER_TIMEOUT);
-                    // libheif numbers the output from 1 when the input has multiple top-level images.
-                    try {
-                        directory.attributes(output);
-                    } catch (NoSuchFileException singleImageOutputAbsent) {
-                        output = Path.of("image-1.png");
-                    }
-                } else if (isMagickAvailable()) {
-                    runConverter(List.of("convert", input.toString(), "png:" + work.resolve(output)), CONVERTER_TIMEOUT);
-                } else {
-                    throw new IOException("image is HEIC/HEIF/AVIF but no system converter is installed "
-                        + "(install libheif-examples for heif-convert)");
-                }
+                long deadline = System.nanoTime() + CONVERTER_TIMEOUT.toNanos();
+                // The header probe and decoder use the same page selection.
+                String firstImage = input + "[page=0,n=1]";
+                verifyImageSize(runConverter(List.of("vipsheader", "-a", firstImage), CONVERTER_TIMEOUT));
+                runConverter(List.of("/usr/bin/prlimit", "--fsize=" + MAX_PNG_BYTES + ":" + MAX_PNG_BYTES,
+                    "--", "vips", "copy", firstImage, work.resolve(output).toString()),
+                    Duration.ofNanos(deadline - System.nanoTime()));
                 return readConvertedPng(directory.openRead(output));
             } finally {
                 try {
@@ -131,21 +109,18 @@ public class ImageTranscodeService {
         }
     }
 
-    private boolean isHeifConvertAvailable() {
-        if (heifConvertAvailable == null) {
-            heifConvertAvailable = probeBinary("heif-convert");
+    static void verifyImageSize(String metadata) throws IOException {
+        var dimensions = IMAGE_SIZE.matcher(metadata);
+        if (!dimensions.find()) {
+            throw new IOException("Could not read HEIF image dimensions");
         }
-        return heifConvertAvailable;
+        verifyPixelCount(Long.parseLong(dimensions.group(1)), Long.parseLong(dimensions.group(2)));
     }
 
-    private boolean isMagickAvailable() {
-        if (magickAvailable == null) {
-            magickAvailable = probeBinary("convert");
+    static String runConverter(List<String> command, Duration timeout) throws IOException {
+        if (timeout.isZero() || timeout.isNegative()) {
+            throw new IOException("converter timed out: " + command.getFirst());
         }
-        return magickAvailable;
-    }
-
-    static void runConverter(List<String> command, Duration timeout) throws IOException {
         long deadline = System.nanoTime() + timeout.toNanos();
         // Keep the group addressable by the original PID even if the converter exits first.
         var groupedCommand = new ArrayList<String>(command.size() + 2);
@@ -172,6 +147,7 @@ public class ImageTranscodeService {
                     throw new IOException("converter failed (" + process.exitValue() + "): "
                         + new String(prefix, StandardCharsets.UTF_8).trim());
                 }
+                return new String(prefix, StandardCharsets.UTF_8);
             } catch (TimeoutException e) {
                 throw new IOException("converter timed out: " + command.getFirst(), e);
             } catch (InterruptedException e) {
@@ -236,22 +212,18 @@ public class ImageTranscodeService {
         var reader = readers.next();
         try (var input = new MemoryCacheImageInputStream(new ByteArrayInputStream(header))) {
             reader.setInput(input);
-            if ((long) reader.getWidth(0) * reader.getHeight(0) > MAX_PNG_PIXELS) {
-                throw new IOException("converter output exceeds 40 megapixels");
-            }
+            verifyPixelCount(reader.getWidth(0), reader.getHeight(0));
         } finally {
             reader.dispose();
         }
     }
 
-    private static Boolean probeBinary(String name) {
-        try {
-            Process p = new ProcessBuilder(name).start();
-            p.waitFor(5, TimeUnit.SECONDS);
-            p.destroyForcibly();
-            return true; // found + executed (usage error still means present)
-        } catch (Exception e) {
-            return false;
+    private static void verifyPixelCount(long width, long height) throws IOException {
+        if (width <= 0 || height <= 0) {
+            throw new IOException("Invalid image dimensions");
+        }
+        if (width > MAX_PNG_PIXELS / height) {
+            throw new IOException("image exceeds 40 megapixels");
         }
     }
 }
