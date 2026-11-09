@@ -92,7 +92,10 @@ class CronJobServiceReEnableTest {
     }
 
     @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.ValueSource(strings = {"99 9 * * *", "0 0 31 2 *"})
+    @org.junit.jupiter.params.provider.ValueSource(strings = {
+        "99 9 * * *", "0 0 31 2 *", "every 2562047788015216h",
+        "every 9223372036854775807s", "9223372036854776s", "every 5000000000s", "9999-01-01T00:00:00Z"
+    })
     void invalidScheduleDisablesOnlyThatJobOnStartupAndCannotBeResumed(String schedule) {
         var invalid = new CronJobEntity();
         invalid.setId(UUID.randomUUID());

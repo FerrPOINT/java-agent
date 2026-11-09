@@ -9,6 +9,7 @@ import javax.imageio.ImageIO;
 import javax.imageio.ImageWriteParam;
 import javax.imageio.ImageWriter;
 import javax.imageio.stream.ImageOutputStream;
+import javax.imageio.stream.MemoryCacheImageInputStream;
 import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
@@ -39,7 +40,7 @@ public class ImageShrinkerService {
     private final ImageTranscodeService transcodeService;
 
     public ImageShrinkerService(AgentProperties properties) {
-        this(properties, null);
+        this(properties, new ImageTranscodeService());
     }
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -50,47 +51,51 @@ public class ImageShrinkerService {
         this.transcodeService = transcodeService;
     }
 
-    /**
-     * Shrink a single base64-encoded image if it exceeds the per-image limit.
-     *
-     * @param base64Image base64-encoded image data (without data: prefix)
-     * @return base64-encoded image data, possibly shrunk; original if no shrink needed
-     */
-    public String shrinkIfNeeded(String base64Image) {
-        if (base64Image == null || base64Image.isBlank()) {
-            return base64Image;
-        }
+    public record PreparedImage(String base64, String mimeType) {}
 
-        byte[] imageBytes = Base64.getDecoder().decode(base64Image);
-        // WP-j: HEIC/HEIF/AVIF cannot be read by ImageIO nor by the provider's
-        // vision endpoint — transcode to PNG first (no-op for decodable input).
-        if (transcodeService != null) {
-            try {
-                byte[] decoded = transcodeService.toDecodablePng(imageBytes);
-                if (decoded != imageBytes) {
-                    log.info("image-shrink: transcoded HEIF-family image ({} bytes -> {} bytes PNG)",
-                        imageBytes.length, decoded.length);
-                    imageBytes = decoded;
-                }
-            } catch (java.io.IOException e) {
-                log.warn("image-shrink: HEIF transcode failed: {}", e.getMessage());
-                throw new IllegalArgumentException(e.getMessage(), e);
-            }
+    /** Prepare a single image and describe the bytes that will be sent to the provider. */
+    public PreparedImage prepareImage(String base64Image) {
+        if (base64Image == null || base64Image.isBlank()) {
+            throw new IllegalArgumentException("Image data must not be empty");
+        }
+        byte[] imageBytes;
+        try {
+            imageBytes = transcodeService.toDecodablePng(Base64.getDecoder().decode(base64Image));
+        } catch (IOException e) {
+            throw new IllegalArgumentException("Image conversion failed: " + e.getMessage(), e);
         }
         if (imageBytes.length <= maxImageSizeBytes) {
-            return Base64.getEncoder().encodeToString(imageBytes);
+            return new PreparedImage(Base64.getEncoder().encodeToString(imageBytes), imageMimeType(imageBytes));
         }
 
         byte[] shrunk = shrinkImageBytes(imageBytes, maxImageSizeBytes);
-        if (shrunk != null && shrunk.length < imageBytes.length) {
-            log.info("image-shrink: shrank image from {} bytes to {} bytes (target {} bytes)",
-                imageBytes.length, shrunk.length, maxImageSizeBytes);
-            return Base64.getEncoder().encodeToString(shrunk);
+        if (shrunk == null) {
+            throw new IllegalArgumentException("Image could not be reduced to " + maxImageSizeBytes + " bytes");
         }
+        log.info("image-shrink: shrank image from {} bytes to {} bytes", imageBytes.length, shrunk.length);
+        return new PreparedImage(Base64.getEncoder().encodeToString(shrunk), "image/jpeg");
+    }
 
-        log.warn("image-shrink: could not shrink image below {} bytes (original {} bytes) — sending as-is",
-            maxImageSizeBytes, imageBytes.length);
-        return base64Image;
+    private static String imageMimeType(byte[] bytes) {
+        // WebP is a provider-supported format without a built-in JDK ImageIO reader.
+        if (bytes.length >= 12 && bytes[0] == 'R' && bytes[1] == 'I' && bytes[2] == 'F' && bytes[3] == 'F'
+                && bytes[8] == 'W' && bytes[9] == 'E' && bytes[10] == 'B' && bytes[11] == 'P') {
+            return "image/webp";
+        }
+        try (var input = new MemoryCacheImageInputStream(new ByteArrayInputStream(bytes))) {
+            var readers = ImageIO.getImageReaders(input);
+            if (readers.hasNext()) {
+                var reader = readers.next();
+                try {
+                    return reader.getOriginatingProvider().getMIMETypes()[0];
+                } finally {
+                    reader.dispose();
+                }
+            }
+        } catch (IOException e) {
+            throw new IllegalArgumentException("Could not identify image format", e);
+        }
+        throw new IllegalArgumentException("Unsupported image format");
     }
 
     /**
@@ -201,7 +206,7 @@ public class ImageShrinkerService {
         // Last resort: smallest scale, lowest quality
         BufferedImage smallest = scaleImage(original, 0.15);
         byte[] lastResort = encodeAsJpeg(smallest, 0.5f);
-        if (lastResort != null && lastResort.length < imageBytes.length) {
+        if (lastResort != null && lastResort.length <= targetBytes) {
             return lastResort;
         }
 
@@ -209,18 +214,18 @@ public class ImageShrinkerService {
     }
 
     private BufferedImage scaleImage(BufferedImage original, double scale) {
-        if (scale >= 1.0) {
+        if (scale >= 1.0 && !original.getColorModel().hasAlpha()) {
             return original;
         }
         int newWidth = Math.max(1, (int) (original.getWidth() * scale));
         int newHeight = Math.max(1, (int) (original.getHeight() * scale));
 
-        // L11: Use TYPE_INT_ARGB to preserve alpha channel during scaling.
-        // JPEG doesn't support alpha, but the encodeAsJpeg step will handle the
-        // conversion. Using ARGB here prevents transparent pixels from turning black.
-        BufferedImage scaled = new BufferedImage(newWidth, newHeight, BufferedImage.TYPE_INT_ARGB);
+        // JPEG has no alpha channel. Composite transparency against white.
+        BufferedImage scaled = new BufferedImage(newWidth, newHeight, BufferedImage.TYPE_INT_RGB);
         Graphics2D g = scaled.createGraphics();
         try {
+            g.setColor(Color.WHITE);
+            g.fillRect(0, 0, newWidth, newHeight);
             g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
             g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
             g.drawImage(original, 0, 0, newWidth, newHeight, null);

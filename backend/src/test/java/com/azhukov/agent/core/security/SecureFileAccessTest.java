@@ -17,6 +17,20 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @EnabledOnOs(OS.LINUX)
 class SecureFileAccessTest {
     @Test
+    void cleanupFailureDoesNotChangeThePublishedResult(@TempDir Path root) throws Exception {
+        Path target = Files.writeString(root.resolve("target"), "original");
+        try (var directory = SecureFileAccess.openDirectory(root)) {
+            directory.replaceFile(target.getFileName(), "updated".getBytes(StandardCharsets.UTF_8), () -> {
+                try (var paths = Files.list(root)) {
+                    Path stage = paths.filter(Files::isDirectory).findFirst().orElseThrow();
+                    Files.writeString(stage.resolve("unexpected-entry"), "blocks staging cleanup");
+                }
+            });
+        }
+        assertThat(Files.readString(target)).isEqualTo("updated");
+    }
+
+    @Test
     void refusesToPublishAReplacedStagingEntry(@TempDir Path root) throws Exception {
         Path target = Files.writeString(root.resolve("target"), "original");
         Path other = Files.writeString(root.resolve("other"), "unrelated");

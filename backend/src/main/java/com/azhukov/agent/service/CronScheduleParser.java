@@ -4,6 +4,8 @@ import com.cronutils.model.CronType;
 import com.cronutils.model.definition.CronDefinitionBuilder;
 import com.cronutils.model.time.ExecutionTime;
 import com.cronutils.parser.CronParser;
+import java.time.DateTimeException;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -28,6 +30,10 @@ public class CronScheduleParser {
     private static final Pattern EVERY_PREFIX = Pattern.compile(
         "^every\\s+(.+)$", Pattern.CASE_INSENSITIVE);
     private static final Pattern CRON_FIELD_PATTERN = Pattern.compile("^[\\d*/,-]+$");
+    // ScheduledThreadPoolExecutor caps delays at half the nanoTime range.
+    // Round down to milliseconds, the unit used when registering the timer.
+    private static final Duration MAX_TIMER_DELAY =
+        Duration.ofMillis((Long.MAX_VALUE / 2) / 1_000_000);
 
     private final CronParser cronParser = new CronParser(
         CronDefinitionBuilder.instanceDefinitionFor(CronType.UNIX));
@@ -45,7 +51,7 @@ public class CronScheduleParser {
         String trimmed = schedule.trim();
         Matcher everyMatcher = EVERY_PREFIX.matcher(trimmed);
         if (everyMatcher.matches()) {
-            return new ScheduleInfo(KIND_INTERVAL, now.plusSeconds(parseDurationSeconds(everyMatcher.group(1))));
+            return durationSchedule(KIND_INTERVAL, everyMatcher.group(1), now);
         }
         if (ISO_TIMESTAMP_PATTERN.matcher(trimmed).matches()) {
             try {
@@ -69,7 +75,7 @@ public class CronScheduleParser {
             }
         }
         if (DURATION_PATTERN.matcher(trimmed).matches()) {
-            return new ScheduleInfo(KIND_ONCE, now.plusSeconds(parseDurationSeconds(trimmed)));
+            return durationSchedule(KIND_ONCE, trimmed, now);
         }
         String[] parts = trimmed.split("\\s+");
         if (parts.length >= 5 && isCronExpression(parts)) {
@@ -79,7 +85,9 @@ public class CronScheduleParser {
     }
 
     private static ScheduleInfo oneShot(Instant due, Instant now) {
-        return new ScheduleInfo(KIND_ONCE, due.isAfter(now) ? due : now.plusSeconds(1));
+        if (!due.isAfter(now)) return new ScheduleInfo(KIND_ONCE, now.plusSeconds(1));
+        checkTimerRange(now, due);
+        return new ScheduleInfo(KIND_ONCE, due);
     }
 
     void validate(String schedule) {
@@ -101,18 +109,31 @@ public class CronScheduleParser {
         }
     }
 
-    private long parseDurationSeconds(String value) {
+    private static ScheduleInfo durationSchedule(String kind, String value, Instant now) {
         Matcher matcher = DURATION_PATTERN.matcher(value.trim());
         if (!matcher.matches()) throw new IllegalArgumentException("Invalid duration: " + value);
         long amount = Long.parseLong(matcher.group(1));
-        long seconds = switch (matcher.group(2).toLowerCase(java.util.Locale.ROOT)) {
-            case "s" -> amount;
-            case "m" -> amount * 60;
-            case "h" -> amount * 3600;
-            case "d" -> amount * 86400;
+        long unitSeconds = switch (matcher.group(2).toLowerCase(java.util.Locale.ROOT)) {
+            case "s" -> 1;
+            case "m" -> 60;
+            case "h" -> 3600;
+            case "d" -> 86400;
             default -> throw new IllegalArgumentException("Invalid duration unit: " + value);
         };
-        return Math.max(1, seconds);
+        Instant due;
+        try {
+            due = now.plusSeconds(Math.max(1, Math.multiplyExact(amount, unitSeconds)));
+        } catch (ArithmeticException | DateTimeException overflow) {
+            throw new IllegalArgumentException("Schedule duration is out of range: " + value, overflow);
+        }
+        checkTimerRange(now, due);
+        return new ScheduleInfo(kind, due);
+    }
+
+    private static void checkTimerRange(Instant now, Instant due) {
+        if (Duration.between(now, due).compareTo(MAX_TIMER_DELAY) > 0) {
+            throw new IllegalArgumentException("Next execution is outside the scheduler's range");
+        }
     }
 
     private Instant nextCronExecution(String expression, ZonedDateTime now) {

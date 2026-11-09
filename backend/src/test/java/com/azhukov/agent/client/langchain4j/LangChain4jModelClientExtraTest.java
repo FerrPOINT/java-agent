@@ -514,11 +514,13 @@ class LangChain4jModelClientExtraTest {
     @Test
     void analyzeImageAsyncReturnsText() throws Exception {
         properties.getModel().setModelName("gpt-4o");
-        LangChain4jModelClient client = client();
+        var client = new LangChain4jModelClient(chatModel, streamingChatModel, properties, null,
+            null, null, null, new com.azhukov.agent.service.ImageShrinkerService(properties));
 
         when(chatModel.chat(any(ChatRequest.class))).thenReturn(lcResponse("image desc"));
 
-        String result = client.analyzeImageAsync("data:image/png;base64,abc", "describe").get();
+        String result = client.analyzeImageAsync(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=", "describe").get();
         assertThat(result).isEqualTo("image desc");
     }
 }

@@ -11,6 +11,10 @@ import java.util.Base64;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * P2-15: Tests for {@link ImageShrinkerService}.
@@ -68,22 +72,35 @@ class ImageShrinkerServiceTest {
     void smallImageNotShrunk() throws Exception {
         ImageShrinkerService shrinker = createShrinker();
         String small = createTestImageBase64(10, 10);
-        String result = shrinker.shrinkIfNeeded(small);
-        assertThat(result).isEqualTo(small);
+        var result = shrinker.prepareImage(small);
+        assertThat(result.base64()).isEqualTo(small);
+        assertThat(result.mimeType()).isEqualTo("image/png");
     }
 
     @Test
-    @DisplayName("null input returns null")
-    void nullInputReturnsNull() {
-        ImageShrinkerService shrinker = createShrinker();
-        assertThat(shrinker.shrinkIfNeeded((String) null)).isNull();
+    void rejectsEmptyImageData() {
+        var shrinker = createShrinker();
+        assertThatIllegalArgumentException().isThrownBy(() -> shrinker.prepareImage(null));
+        assertThatIllegalArgumentException().isThrownBy(() -> shrinker.prepareImage(""));
     }
 
     @Test
-    @DisplayName("blank input returns blank")
-    void blankInputReturnsBlank() {
-        ImageShrinkerService shrinker = createShrinker();
-        assertThat(shrinker.shrinkIfNeeded("")).isEqualTo("");
+    void convertedImageThatCannotFitIsRejected() throws Exception {
+        var properties = new AgentProperties();
+        var converter = mock(ImageTranscodeService.class);
+        var png = Base64.getDecoder().decode(createTestImageBase64(20, 20));
+        when(converter.toDecodablePng(any())).thenReturn(png);
+        var heif = Base64.getEncoder().encodeToString(new byte[] {0, 0, 0, 12, 'f', 't', 'y', 'p', 'h', 'e', 'i', 'c'});
+
+        properties.getModel().setMaxImageSizeBytes(png.length);
+        var prepared = new ImageShrinkerService(properties, converter).prepareImage(heif);
+        assertThat(prepared.mimeType()).isEqualTo("image/png");
+        assertThat(Base64.getDecoder().decode(prepared.base64())).isEqualTo(png);
+
+        properties.getModel().setMaxImageSizeBytes(1);
+        var limited = new ImageShrinkerService(properties, converter);
+        assertThatIllegalArgumentException().isThrownBy(() -> limited.prepareImage(heif))
+            .withMessageContaining("could not be reduced");
     }
 
     @Test
@@ -95,9 +112,9 @@ class ImageShrinkerServiceTest {
         assertThat(originalSize).isGreaterThan(4 * 1024 * 1024);
 
         ImageShrinkerService shrinker = createShrinker();
-        String result = shrinker.shrinkIfNeeded(large);
-        assertThat(result).isNotNull();
-        int shrunkSize = Base64.getDecoder().decode(result).length;
+        var result = shrinker.prepareImage(large);
+        assertThat(result.mimeType()).isEqualTo("image/jpeg");
+        int shrunkSize = Base64.getDecoder().decode(result.base64()).length;
         assertThat(shrunkSize).isLessThan(originalSize);
         assertThat(shrunkSize).isLessThanOrEqualTo(4 * 1024 * 1024);
     }
@@ -109,8 +126,7 @@ class ImageShrinkerServiceTest {
         int imgSize = Base64.getDecoder().decode(img).length;
         // Set threshold just above the image size
         ImageShrinkerService shrinker = createShrinker(imgSize + 1, 100 * 1024 * 1024, 0.85);
-        String result = shrinker.shrinkIfNeeded(img);
-        assertThat(result).isEqualTo(img);
+        assertThat(shrinker.prepareImage(img).base64()).isEqualTo(img);
     }
 
     @Test

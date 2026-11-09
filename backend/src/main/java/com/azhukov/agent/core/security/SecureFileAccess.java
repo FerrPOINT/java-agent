@@ -28,6 +28,7 @@ import static java.lang.foreign.ValueLayout.JAVA_INT;
 
 /** Descriptor-relative Linux file access for paths already authorized by the caller. */
 public final class SecureFileAccess {
+    private static final System.Logger LOG = System.getLogger(SecureFileAccess.class.getName());
     private static final int AT_FDCWD = -100;
     private static final int O_NONBLOCK = 00004000;
     private static final int O_CLOEXEC = 02000000;
@@ -150,17 +151,28 @@ public final class SecureFileAccess {
 
             Path stageName = Path.of(".java-agent-stage-" + UUID.randomUUID());
             descriptor.linux.mkdir(descriptor.fd, componentName(stageName), 0700);
+            boolean published = false;
+            Throwable writeFailure = null;
             try (var stage = openDirectory(stageName, false)) {
                 writeStagedFile(stage, name, bytes, permissions, check);
+                published = true;
             } catch (IOException | RuntimeException failure) {
+                if (!published) {
+                    writeFailure = failure;
+                    throw failure;
+                }
+                LOG.log(System.Logger.Level.WARNING, "Could not close staging after publishing " + name, failure);
+            } finally {
                 try {
                     entries.deleteDirectory(stageName);
-                } catch (IOException cleanup) {
-                    failure.addSuppressed(cleanup);
+                } catch (IOException | RuntimeException cleanup) {
+                    if (writeFailure != null) {
+                        writeFailure.addSuppressed(cleanup);
+                    } else {
+                        LOG.log(System.Logger.Level.WARNING, "Could not remove file staging " + stageName, cleanup);
+                    }
                 }
-                throw failure;
             }
-            entries.deleteDirectory(stageName);
         }
 
         private void writeStagedFile(Directory stage, Path name, byte[] bytes,
