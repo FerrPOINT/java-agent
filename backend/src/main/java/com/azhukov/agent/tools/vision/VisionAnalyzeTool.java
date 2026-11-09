@@ -9,16 +9,18 @@ import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
+import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.security.FileSafety;
 import com.azhukov.agent.core.security.UrlSafety;
+import com.azhukov.agent.tools.file.FileToolSafety;
 import com.azhukov.agent.service.ImageShrinkerService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.io.InputStream;
 import java.net.URI;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
+import java.nio.channels.Channels;
+import java.nio.file.NoSuchFileException;
 import java.util.Base64;
 
 @AgentTool(
@@ -33,6 +35,8 @@ public class VisionAnalyzeTool implements ToolHandler {
     private final ModelClient modelClient;
     private final ImageShrinkerService imageShrinker;
     private final UrlSafety urlSafety;
+    private final AgentProperties properties;
+    private final FileSafety fileSafety;
 
     /** Hermes parity (image_source._download_to_bytes): 50MB stream cap. */
     private static final long MAX_IMAGE_BYTES = 50L * 1024 * 1024;
@@ -46,7 +50,7 @@ public class VisionAnalyzeTool implements ToolHandler {
             return ToolResult.fail("Image path or URL is required");
         }
         try {
-            String base64 = loadImageBase64(args.image());
+            String base64 = loadImageBase64(args.image(), session);
             // P2-15: shrink image if it exceeds provider payload limits
             String shrunkBase64 = imageShrinker.shrinkIfNeeded(base64);
             String result = modelClient.analyzeImage(shrunkBase64, args.prompt() != null ? args.prompt() : "Describe this image");
@@ -56,7 +60,7 @@ public class VisionAnalyzeTool implements ToolHandler {
         }
     }
 
-    private String loadImageBase64(String source) throws Exception {
+    private String loadImageBase64(String source, Session session) throws Exception {
         byte[] bytes;
         if (source.startsWith("http://") || source.startsWith("https://")) {
             URI current = URI.create(source);
@@ -89,16 +93,17 @@ public class VisionAnalyzeTool implements ToolHandler {
                     connection.disconnect();
                 }
             }
-            // Hermes parity: 50MB stream cap (image_source.SourceTooLarge)
-            if (bytes.length > MAX_IMAGE_BYTES) {
-                throw new IllegalArgumentException("Image exceeds 50MB limit: " + bytes.length + " bytes");
-            }
         } else {
-            Path path = Paths.get(source);
-            if (!Files.exists(path)) {
-                throw new IllegalArgumentException("File not found: " + source);
+            var path = FileToolSafety.resolvePath(source, session);
+            try (var channel = FileToolSafety.openReadable(properties, fileSafety, path, source);
+                 var input = Channels.newInputStream(channel)) {
+                bytes = input.readNBytes((int) MAX_IMAGE_BYTES + 1);
+            } catch (NoSuchFileException missing) {
+                throw new IllegalArgumentException("File not found: " + source, missing);
             }
-            bytes = Files.readAllBytes(path);
+        }
+        if (bytes.length > MAX_IMAGE_BYTES) {
+            throw new IllegalArgumentException("Image exceeds 50MB limit: " + bytes.length + " bytes");
         }
         return Base64.getEncoder().encodeToString(bytes);
     }

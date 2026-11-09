@@ -7,6 +7,7 @@ import java.lang.foreign.Linker;
 import java.lang.foreign.MemorySegment;
 import java.lang.invoke.MethodHandle;
 import java.nio.channels.SeekableByteChannel;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
@@ -21,6 +22,7 @@ public final class SecureFileAccess {
     private static final int AT_FDCWD = -100;
     private static final int O_NONBLOCK = 00004000;
     private static final int O_CLOEXEC = 02000000;
+    private static final int RENAME_NOREPLACE = 1;
 
     private SecureFileAccess() {}
 
@@ -86,12 +88,8 @@ public final class SecureFileAccess {
         }
 
         public SeekableByteChannel openRead(Path name) throws IOException {
-            if (name == null || name.isAbsolute() || name.getNameCount() != 1
-                    || name.toString().isEmpty() || ".".equals(name.toString()) || "..".equals(name.toString())) {
-                throw new IOException("Expected a file name relative to the open directory");
-            }
             var linux = descriptor.linux;
-            try (var file = linux.open(descriptor.fd, name.toString(), O_NONBLOCK | O_CLOEXEC | linux.noFollow)) {
+            try (var file = linux.open(descriptor.fd, componentName(name), O_NONBLOCK | O_CLOEXEC | linux.noFollow)) {
                 Path pinned = file.procPath();
                 if (!Files.readAttributes(pinned, BasicFileAttributes.class).isRegularFile()) {
                     throw new IOException("Not a regular file: " + name);
@@ -99,6 +97,19 @@ public final class SecureFileAccess {
                 // The open descriptor pins the inode until Java has opened its own channel.
                 return Files.newByteChannel(pinned);
             }
+        }
+
+        public void moveWithoutReplace(Path name, Directory target, Path targetName) throws IOException {
+            descriptor.linux.moveWithoutReplace(descriptor.fd, componentName(name), target.descriptor.fd,
+                componentName(targetName));
+        }
+
+        private static String componentName(Path name) throws IOException {
+            if (name == null || name.isAbsolute() || name.getNameCount() != 1
+                    || name.toString().isEmpty() || ".".equals(name.toString()) || "..".equals(name.toString())) {
+                throw new IOException("Expected a file name relative to the open directory");
+            }
+            return name.toString();
         }
 
         @Override
@@ -128,6 +139,7 @@ public final class SecureFileAccess {
         private final int noFollow;
         private final MethodHandle open;
         private final MethodHandle mkdir;
+        private final MethodHandle renameNoReplace;
         private final MethodHandle close;
         private final java.lang.foreign.StructLayout callState = Linker.Option.captureStateLayout();
         private final long errno = callState.byteOffset(java.lang.foreign.MemoryLayout.PathElement.groupElement("errno"));
@@ -142,6 +154,9 @@ public final class SecureFileAccess {
                 Linker.Option.firstVariadicArg(3), Linker.Option.captureCallState("errno"));
             mkdir = linker.downcallHandle(libc.find("mkdirat").orElseThrow(),
                 FunctionDescriptor.of(JAVA_INT, JAVA_INT, ADDRESS, JAVA_INT));
+            renameNoReplace = libc.find("renameat2").map(symbol -> linker.downcallHandle(symbol,
+                FunctionDescriptor.of(JAVA_INT, JAVA_INT, ADDRESS, JAVA_INT, ADDRESS, JAVA_INT),
+                Linker.Option.captureCallState("errno"))).orElse(null);
             close = linker.downcallHandle(libc.find("close").orElseThrow(), FunctionDescriptor.of(JAVA_INT, JAVA_INT));
         }
 
@@ -181,6 +196,22 @@ public final class SecureFileAccess {
                 throw failure;
             } catch (Throwable failure) {
                 throw new IOException("Secure directory creation failed", failure);
+            }
+        }
+
+        void moveWithoutReplace(int sourceFd, String source, int targetFd, String target) throws IOException {
+            if (renameNoReplace == null) throw new IOException("Atomic move without replacement is unavailable");
+            try (var arena = Arena.ofConfined()) {
+                var state = arena.allocate(callState);
+                int result = (int) renameNoReplace.invokeExact(state, sourceFd, arena.allocateFrom(source),
+                    targetFd, arena.allocateFrom(target), RENAME_NOREPLACE);
+                if (result == 0) return;
+                if (state.get(JAVA_INT, errno) == 17) throw new FileAlreadyExistsException(target);
+                throw new IOException("Could not safely move " + source + " to " + target);
+            } catch (IOException | RuntimeException | Error failure) {
+                throw failure;
+            } catch (Throwable failure) {
+                throw new IOException("Secure move failed", failure);
             }
         }
 

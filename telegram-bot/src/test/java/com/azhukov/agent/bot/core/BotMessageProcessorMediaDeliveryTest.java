@@ -237,6 +237,8 @@ class BotMessageProcessorMediaDeliveryTest {
             when(attachmentApiClient.claimOutbound(id, "101", sessionId))
                 .thenReturn(Optional.of(new AttachmentApiClient.Outbound(id, id, mime, bytes)));
         }
+        when(attachmentApiClient.markOutboundDelivered(anyString(), eq("101"), eq(sessionId), anyLong()))
+            .thenReturn(true);
         when(telegramClient.sendMediaGroup(eq(100L), anyList(), eq(55))).thenReturn(List.of(20L, 21L));
         when(telegramClient.sendDocument(100L, bytes, "document", null, null, 55)).thenReturn(Optional.of(22L));
         when(telegramClient.sendAudioAsVoice(100L, bytes, "voice", null, 55)).thenReturn(Optional.of(23L));
@@ -251,6 +253,29 @@ class BotMessageProcessorMediaDeliveryTest {
         verify(attachmentApiClient).markOutboundDelivered("second", "101", sessionId, 21L);
         verify(attachmentApiClient).markOutboundDelivered("document", "101", sessionId, 22L);
         verify(attachmentApiClient).markOutboundDelivered("voice", "101", sessionId, 23L);
+        verify(telegramClient, never()).sendMessage(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean());
+    }
+
+    @Test
+    void acceptedAlbumWithFailedReceiptReportsUnconfirmedAndRecordsOtherReceipt() {
+        UUID sessionId = UUID.randomUUID();
+        byte[] bytes = {1, 2};
+        for (String id : List.of("first", "second")) {
+            when(attachmentApiClient.claimOutbound(id, "101", sessionId))
+                .thenReturn(Optional.of(new AttachmentApiClient.Outbound(id, id, "image/png", bytes)));
+        }
+        when(telegramClient.sendMediaGroup(eq(100L), anyList(), eq(55))).thenReturn(List.of(20L, 21L));
+        when(attachmentApiClient.markOutboundDelivered("second", "101", sessionId, 21L)).thenReturn(true);
+
+        processor.deliverMedia(100L, List.of(new MediaDeliveryService.MediaDescriptor("first", false, false),
+            new MediaDeliveryService.MediaDescriptor("second", false, false)), 55, "101", sessionId);
+
+        verify(telegramClient).sendMediaGroup(eq(100L), anyList(), eq(55));
+        verify(attachmentApiClient).markOutboundDelivered("first", "101", sessionId, 20L);
+        verify(attachmentApiClient).markOutboundDelivered("second", "101", sessionId, 21L);
+        verify(telegramClient).sendMessage(100L, "Delivery could not be confirmed for one or more attachments.",
+            null, null, 55, null, false);
+        verifyNoMoreInteractions(telegramClient);
     }
 
     @Test

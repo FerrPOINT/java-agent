@@ -829,8 +829,8 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
             } else {
                 sent = telegramClient.sendDocument(chatId, artifact.bytes(), artifact.fileName(), null, null, threadId);
             }
-            sent.ifPresent(id -> attachmentApiClient.markOutboundDelivered(artifact.id(), owner, sessionId, id));
-            allConfirmed &= sent.isPresent();
+            allConfirmed &= sent.map(id -> attachmentApiClient.markOutboundDelivered(artifact.id(), owner, sessionId, id))
+                .orElse(false);
         }
         allConfirmed &= sendPhotoBatch(chatId, threadId, owner, sessionId, photos);
         if (!allConfirmed) {
@@ -845,16 +845,17 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         if (photos.size() == 1) {
             var photo = photos.getFirst();
             var receipt = telegramClient.sendPhoto(chatId, photo.bytes(), null, null, threadId);
-            receipt.ifPresent(id -> attachmentApiClient.markOutboundDelivered(photo.id(), owner, sessionId, id));
-            return receipt.isPresent();
+            return receipt.map(id -> attachmentApiClient.markOutboundDelivered(photo.id(), owner, sessionId, id))
+                .orElse(false);
         }
         var inputs = photos.stream().map(photo -> new TelegramClient.PhotoInput(photo.bytes(), photo.fileName(), null)).toList();
         var receipts = telegramClient.sendMediaGroup(chatId, inputs, threadId);
         if (receipts.size() != photos.size()) return false;
+        boolean allConfirmed = true;
         for (int i = 0; i < photos.size(); i++) {
-            attachmentApiClient.markOutboundDelivered(photos.get(i).id(), owner, sessionId, receipts.get(i));
+            allConfirmed &= attachmentApiClient.markOutboundDelivered(photos.get(i).id(), owner, sessionId, receipts.get(i));
         }
-        return true;
+        return allConfirmed;
     }
 
     /**

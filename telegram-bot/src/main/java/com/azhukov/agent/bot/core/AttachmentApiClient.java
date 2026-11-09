@@ -111,13 +111,15 @@ public class AttachmentApiClient extends BaseBackendClient {
         }
     }
 
-    public void markOutboundDelivered(String id, String owner, UUID sessionId, long messageId) {
+    public boolean markOutboundDelivered(String id, String owner, UUID sessionId, long messageId) {
         try {
             restClient.post().uri(uri -> uri.path("/api/v1/attachments/{id}/delivered")
                 .queryParam("ownerId", owner).queryParam("sessionId", sessionId).queryParam("messageId", messageId)
                 .build(id)).retrieve().toBodilessEntity();
+            return true;
         } catch (Exception e) {
             log.warn("Could not record outbound artifact {} receipt ({})", id, e.getClass().getSimpleName());
+            return false;
         }
     }
 

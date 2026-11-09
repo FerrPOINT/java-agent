@@ -576,7 +576,7 @@ public class PatchTool implements ToolHandler {
     private void moveFile(Path source, Path destination) throws IOException {
         try (var sourceParent = SecureFileAccess.openDirectory(source.getParent());
              var destinationParent = SecureFileAccess.openOrCreateDirectory(destination.getParent())) {
-            sourceParent.entries().move(source.getFileName(), destinationParent.entries(), destination.getFileName());
+            sourceParent.moveWithoutReplace(source.getFileName(), destinationParent, destination.getFileName());
         }
     }
 
