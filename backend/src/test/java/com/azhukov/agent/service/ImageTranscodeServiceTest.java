@@ -1,5 +1,6 @@
 package com.azhukov.agent.service;
 
+import com.azhukov.agent.core.security.SecureFileAccess;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledOnOs;
 import org.junit.jupiter.api.condition.OS;
@@ -102,7 +103,7 @@ class ImageTranscodeServiceTest {
         var pidFile = dir.resolve("pid");
         assertThatThrownBy(() -> ImageTranscodeService.runConverter(
             java.util.List.of("sh", "-c", "echo $$ > \"$1\"; exec sleep 30", "test", pidFile.toString()),
-            dir.resolve("result.png"), java.time.Duration.ofMillis(500)))
+            java.time.Duration.ofMillis(500)))
             .isInstanceOf(java.io.IOException.class).hasMessageContaining("timed out");
         long pid = Long.parseLong(java.nio.file.Files.readString(pidFile).strip());
         assertThat(ProcessHandle.of(pid).filter(ProcessHandle::isAlive)).isEmpty();
@@ -114,8 +115,8 @@ class ImageTranscodeServiceTest {
             throws Exception {
         var pipe = dir.resolve("result.png");
         assertThat(new ProcessBuilder("mkfifo", pipe.toString()).start().waitFor()).isZero();
-        assertThatThrownBy(() -> ImageTranscodeService.runConverter(
-            java.util.List.of("true"), pipe, java.time.Duration.ofSeconds(2)))
+        assertThatThrownBy(() -> ImageTranscodeService.readConvertedPng(
+            SecureFileAccess.openRead(pipe)))
             .isInstanceOf(java.io.IOException.class).hasMessageContaining("Not a regular file");
     }
 
@@ -129,7 +130,7 @@ class ImageTranscodeServiceTest {
             assertThatThrownBy(() -> ImageTranscodeService.runConverter(
                 java.util.List.of("/bin/sh", "-c", "sleep 30 & echo $! > \"$1\"; sleep 0.05; exit 0",
                     "test", pidFile.toString()),
-                dir.resolve("result.png"), java.time.Duration.ofMillis(500)))
+                java.time.Duration.ofMillis(500)))
                 .isInstanceOf(java.io.IOException.class).hasMessageContaining("timed out");
 
             long pid = Long.parseLong(java.nio.file.Files.readString(pidFile).strip());
@@ -165,20 +166,21 @@ class ImageTranscodeServiceTest {
         byte[] png = pngBytes();
         java.nio.file.Files.write(output, png);
         var noisy = java.util.List.of("sh", "-c", "head -c 1048576 /dev/zero");
-        assertThat(ImageTranscodeService.runConverter(noisy, output, java.time.Duration.ofSeconds(3)))
-            .isEqualTo(png);
+        ImageTranscodeService.runConverter(noisy, java.time.Duration.ofSeconds(3));
+        assertThat(ImageTranscodeService.readConvertedPng(
+            SecureFileAccess.openRead(output))).isEqualTo(png);
 
         java.nio.ByteBuffer.wrap(png).putInt(16, 10_000).putInt(20, 10_000);
         java.nio.file.Files.write(output, png);
-        assertThatThrownBy(() -> ImageTranscodeService.runConverter(
-            java.util.List.of("true"), output, java.time.Duration.ofSeconds(2)))
+        assertThatThrownBy(() -> ImageTranscodeService.readConvertedPng(
+            SecureFileAccess.openRead(output)))
             .isInstanceOf(java.io.IOException.class).hasMessageContaining("40 megapixels");
 
         try (var file = new java.io.RandomAccessFile(output.toFile(), "rw")) {
             file.setLength(64L * 1024 * 1024 + 1);
         }
-        assertThatThrownBy(() -> ImageTranscodeService.runConverter(
-            java.util.List.of("true"), output, java.time.Duration.ofSeconds(2)))
+        assertThatThrownBy(() -> ImageTranscodeService.readConvertedPng(
+            SecureFileAccess.openRead(output)))
             .isInstanceOf(java.io.IOException.class).hasMessageContaining("64 MiB");
     }
 

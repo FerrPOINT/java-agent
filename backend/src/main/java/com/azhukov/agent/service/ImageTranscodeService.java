@@ -11,8 +11,12 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.SequenceInputStream;
 import java.nio.channels.Channels;
+import java.nio.channels.SeekableByteChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.DirectoryIteratorException;
+import java.nio.file.NoSuchFileException;
+import java.nio.file.StandardOpenOption;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -88,22 +92,41 @@ public class ImageTranscodeService {
     }
 
     private byte[] transcode(byte[] heifBytes) throws IOException {
-        Path tmp = null;
-        try {
-            tmp = Files.createTempFile("vision-heif-", ".heic");
-            Files.write(tmp, heifBytes);
-            if (isHeifConvertAvailable()) {
-                return runConverter(List.of("heif-convert", tmp.toString(), tmp + ".png"), Path.of(tmp + ".png"), CONVERTER_TIMEOUT);
+        Path work = Files.createTempDirectory("vision-heif-");
+        try (var directory = SecureFileAccess.openDirectory(work)) {
+            try {
+                Path input = work.resolve("source.heic");
+                Path output = Path.of("image.png");
+                Files.write(input, heifBytes, StandardOpenOption.CREATE_NEW);
+                if (isHeifConvertAvailable()) {
+                    runConverter(List.of("heif-convert", input.toString(), work.resolve(output).toString()), CONVERTER_TIMEOUT);
+                    // libheif numbers the output from 1 when the input has multiple top-level images.
+                    try {
+                        directory.attributes(output);
+                    } catch (NoSuchFileException singleImageOutputAbsent) {
+                        output = Path.of("image-1.png");
+                    }
+                } else if (isMagickAvailable()) {
+                    runConverter(List.of("convert", input.toString(), "png:" + work.resolve(output)), CONVERTER_TIMEOUT);
+                } else {
+                    throw new IOException("image is HEIC/HEIF/AVIF but no system converter is installed "
+                        + "(install libheif-examples for heif-convert)");
+                }
+                return readConvertedPng(directory.openRead(output));
+            } finally {
+                try {
+                    for (Path entry : directory.entries()) {
+                        directory.entries().deleteFile(entry.getFileName());
+                    }
+                } catch (IOException | DirectoryIteratorException failure) {
+                    log.warn("Could not clean image converter files in {}", work, failure);
+                }
             }
-            if (isMagickAvailable()) {
-                return runConverter(List.of("convert", tmp.toString(), "png:" + tmp + ".png"), Path.of(tmp + ".png"), CONVERTER_TIMEOUT);
-            }
-            throw new IOException("image is HEIC/HEIF/AVIF but no system converter is installed "
-                + "(install libheif-examples for heif-convert)");
         } finally {
-            if (tmp != null) {
-                Files.deleteIfExists(tmp);
-                deleteQuietly(Path.of(tmp + ".png"));
+            try {
+                Files.deleteIfExists(work);
+            } catch (IOException failure) {
+                log.warn("Could not remove image converter directory {}", work, failure);
             }
         }
     }
@@ -122,7 +145,7 @@ public class ImageTranscodeService {
         return magickAvailable;
     }
 
-    static byte[] runConverter(List<String> command, Path output, Duration timeout) throws IOException {
+    static void runConverter(List<String> command, Duration timeout) throws IOException {
         long deadline = System.nanoTime() + timeout.toNanos();
         // Keep the group addressable by the original PID even if the converter exits first.
         var groupedCommand = new ArrayList<String>(command.size() + 2);
@@ -149,7 +172,6 @@ public class ImageTranscodeService {
                     throw new IOException("converter failed (" + process.exitValue() + "): "
                         + new String(prefix, StandardCharsets.UTF_8).trim());
                 }
-                return readConvertedPng(output);
             } catch (TimeoutException e) {
                 throw new IOException("converter timed out: " + command.getFirst(), e);
             } catch (InterruptedException e) {
@@ -194,8 +216,8 @@ public class ImageTranscodeService {
         }
     }
 
-    private static byte[] readConvertedPng(Path output) throws IOException {
-        try (var file = SecureFileAccess.openRead(output); var input = Channels.newInputStream(file)) {
+    static byte[] readConvertedPng(SeekableByteChannel file) throws IOException {
+        try (var input = Channels.newInputStream(file)) {
             if (file.size() > MAX_PNG_BYTES) throw new IOException("converter output exceeds 64 MiB");
             byte[] header = input.readNBytes(PNG_HEADER_BYTES);
             verifyPngDimensions(header);
@@ -230,14 +252,6 @@ public class ImageTranscodeService {
             return true; // found + executed (usage error still means present)
         } catch (Exception e) {
             return false;
-        }
-    }
-
-    private static void deleteQuietly(Path p) {
-        try {
-            Files.deleteIfExists(p);
-        } catch (IOException ignored) {
-            // best-effort temp cleanup
         }
     }
 }
