@@ -49,11 +49,6 @@ public class ImageShrinkerService {
 
     private PreparedImage preparePixels(byte[] bytes) throws IOException {
         boolean fits = bytes.length <= maxImageSizeBytes;
-        // The JDK cannot decode WebP, but can forward it within the byte limit.
-        if (fits && bytes.length >= 12 && bytes[0] == 'R' && bytes[1] == 'I' && bytes[2] == 'F' && bytes[3] == 'F'
-                && bytes[8] == 'W' && bytes[9] == 'E' && bytes[10] == 'B' && bytes[11] == 'P') {
-            return prepared(bytes, "image/webp");
-        }
         try (var input = new MemoryCacheImageInputStream(new ByteArrayInputStream(bytes))) {
             var readers = ImageIO.getImageReaders(input);
             if (!readers.hasNext()) throw new IOException("Unsupported image format");

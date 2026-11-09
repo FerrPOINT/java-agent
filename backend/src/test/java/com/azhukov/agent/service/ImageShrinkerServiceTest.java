@@ -87,6 +87,16 @@ class ImageShrinkerServiceTest {
     }
 
     @Test
+    void rejectsOversizedWebpHeaderWithoutPixels() {
+        byte[] header = ByteBuffer.allocate(30).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            .put("RIFF".getBytes(java.nio.charset.StandardCharsets.US_ASCII)).putInt(22)
+            .put("WEBPVP8X".getBytes(java.nio.charset.StandardCharsets.US_ASCII)).putInt(10)
+            .putInt(0).put(new byte[] {-1, 31, 0, -1, 31, 0}).array();
+        assertThatIllegalArgumentException().isThrownBy(() ->
+            createShrinker().prepareImage(Base64.getEncoder().encodeToString(header)));
+    }
+
+    @Test
     void rejectsEmptyImageData() {
         var shrinker = createShrinker();
         assertThatIllegalArgumentException().isThrownBy(() -> shrinker.prepareImage(null));
