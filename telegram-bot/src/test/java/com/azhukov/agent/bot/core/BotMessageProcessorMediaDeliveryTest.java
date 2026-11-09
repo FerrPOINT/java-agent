@@ -84,6 +84,7 @@ class BotMessageProcessorMediaDeliveryTest {
     private GoalAutoContinueService goalAutoContinueService;
     private EditCaptureService editCaptureService;
 
+    private AttachmentApiClient attachmentApiClient;
     private BotMessageProcessor processor;
     private final com.azhukov.agent.bot.session.BotSessionStore sessionStoreMock = org.mockito.Mockito.mock(com.azhukov.agent.bot.session.BotSessionStore.class);
 
@@ -161,22 +162,17 @@ class BotMessageProcessorMediaDeliveryTest {
             mock(com.azhukov.agent.bot.client.TelegramClient.class), sessionStoreMock,
             mock(com.azhukov.agent.bot.keyboard.ClarifyInteractionRenderer.class));
 
+        attachmentApiClient = mock(AttachmentApiClient.class);
         processor = new BotMessageProcessor(
             telegramClient, authorizationService, sessionStore, busyHandler,
             typingManager, backendClient, commandRegistry, callbackQueryHandler,
-            properties, streamEditor, inboundMediaHandler, mediaDeliveryService, org.mockito.Mockito.mock(com.azhukov.agent.bot.core.AttachmentApiClient.class),
+            properties, streamEditor, inboundMediaHandler, mediaDeliveryService, attachmentApiClient,
             runtimeFooter, reactionManager, textBatchDebouncer, photoBatchDebouncer,
             groupMessageFilter, slashAccessPolicy, responseFilter, goalAutoContinueService,
             editCaptureService, updateDispatcher, streamingOrchestrator);
+        processor.init();
     }
 
-    @AfterEach
-    void tearDown() {
-        // Reset the busy state between tests to avoid cross-test interference
-        // (BusySessionHandler is a real instance, not a mock)
-    }
-
-    @SuppressWarnings("unchecked")
     private void stubStreamingResult(String content, boolean streamFinalized) {
         doAnswer(inv -> {
             Consumer<String> tokenConsumer = inv.getArgument(4);
@@ -209,92 +205,125 @@ class BotMessageProcessorMediaDeliveryTest {
     //  Media delivery routing tests
     // ═══════════════════════════════════════════════════════════════════
 
-    @Test
-    void invalidMediaPathsDoNotPreventDeliveryOfLaterValidFiles() throws Exception {
-        Path document = createTempFile("valid.pdf");
-        processor.deliverMedia(100L, List.of(
-            new MediaDeliveryService.MediaDescriptor("invalid\u0000.pdf", "pdf", false, false),
-            new MediaDeliveryService.MediaDescriptor(null, "pdf", false, false),
-            new MediaDeliveryService.MediaDescriptor(document.toString(), "pdf", false, false)
-        ), null);
 
-        verify(telegramClient).sendDocument(eq(100L), any(byte[].class), eq("valid.pdf"), isNull(), isNull());
-        verify(telegramClient, never()).sendVideo(anyLong(), any(), anyString(), any(), any());
+    @Test
+    void validArtifactsReachTelegramAndOnlyAcceptedItemsGetReceipts() {
+        UUID sessionId = UUID.randomUUID();
+        byte[] bytes = {1, 2};
+        when(attachmentApiClient.claimOutbound("photo", "101", sessionId))
+            .thenReturn(Optional.of(new AttachmentApiClient.Outbound("photo", "photo.png", "image/png", bytes)));
+        when(attachmentApiClient.claimOutbound("voice", "101", sessionId))
+            .thenReturn(Optional.of(new AttachmentApiClient.Outbound("voice", "voice.ogg", "audio/ogg", bytes)));
+        when(telegramClient.sendPhoto(100L, bytes, null, null, 55)).thenReturn(Optional.of(17L));
+        when(telegramClient.sendAudioAsVoice(100L, bytes, "voice.ogg", null, 55)).thenReturn(Optional.empty());
+        processor.deliverMedia(100L, List.of(new MediaDeliveryService.MediaDescriptor("photo", false, false),
+            new MediaDeliveryService.MediaDescriptor("voice", true, false)), 55, "101", sessionId);
+        verify(telegramClient).sendPhoto(100L, bytes, null, null, 55);
+        verify(telegramClient).sendAudioAsVoice(100L, bytes, "voice.ogg", null, 55);
+        verify(attachmentApiClient).markOutboundDelivered("photo", "101", sessionId, 17L);
+        verify(attachmentApiClient, never()).markOutboundDelivered(eq("voice"), anyString(), any(), anyLong());
     }
 
     @Test
-    @DisplayName("1. Single image → sendPhoto is called")
-    void singleImageRoutesToSendPhoto() throws Exception {
-        Path imageFile = createTempFile("test-image.png");
-        String mediaTag = "MEDIA:" + imageFile.toString();
-        stubStreamingResult("Here is the image\n" + mediaTag, true);
+    void albumDocumentAndVoiceRecordTheirOwnReceipts() {
+        UUID sessionId = UUID.randomUUID();
+        byte[] bytes = {1, 2};
+        for (String id : List.of("first", "second", "document", "voice")) {
+            String mime = switch (id) {
+                case "document" -> "application/pdf";
+                case "voice" -> "audio/ogg";
+                default -> "image/png";
+            };
+            when(attachmentApiClient.claimOutbound(id, "101", sessionId))
+                .thenReturn(Optional.of(new AttachmentApiClient.Outbound(id, id, mime, bytes)));
+        }
+        when(attachmentApiClient.markOutboundDelivered(anyString(), eq("101"), eq(sessionId), anyLong()))
+            .thenReturn(true);
+        when(telegramClient.sendMediaGroup(eq(100L), anyList(), eq(55))).thenReturn(List.of(20L, 21L));
+        when(telegramClient.sendDocument(100L, bytes, "document", null, null, 55)).thenReturn(Optional.of(22L));
+        when(telegramClient.sendAudioAsVoice(100L, bytes, "voice", null, 55)).thenReturn(Optional.of(23L));
 
-        processor.accept(textEvent(1, 100L, "show me an image"));
+        processor.deliverMedia(100L, List.of(new MediaDeliveryService.MediaDescriptor("first", false, false),
+            new MediaDeliveryService.MediaDescriptor("second", false, false),
+            new MediaDeliveryService.MediaDescriptor("document", false, true),
+            new MediaDeliveryService.MediaDescriptor("voice", true, false)), 55, "101", sessionId);
 
-        verify(telegramClient).sendPhoto(eq(100L), any(byte[].class), isNull(), isNull());
+        verify(telegramClient).sendMediaGroup(eq(100L), argThat(photos -> photos.size() == 2), eq(55));
+        verify(attachmentApiClient).markOutboundDelivered("first", "101", sessionId, 20L);
+        verify(attachmentApiClient).markOutboundDelivered("second", "101", sessionId, 21L);
+        verify(attachmentApiClient).markOutboundDelivered("document", "101", sessionId, 22L);
+        verify(attachmentApiClient).markOutboundDelivered("voice", "101", sessionId, 23L);
+        verify(telegramClient, never()).sendMessage(anyLong(), anyString(), any(), any(), any(), any(), anyBoolean());
     }
 
     @Test
-    @DisplayName("2. Multiple images (2+) → sendMediaGroup is called")
-    void multipleImagesRoutesToSendMediaGroup() throws Exception {
-        Path image1 = createTempFile("image1.png");
-        Path image2 = createTempFile("image2.png");
-        String mediaTags = "MEDIA:" + image1.toString() + "\nMEDIA:" + image2.toString();
-        stubStreamingResult("Here are the images\n" + mediaTags, true);
+    void acceptedAlbumWithFailedReceiptReportsUnconfirmedAndRecordsOtherReceipt() {
+        UUID sessionId = UUID.randomUUID();
+        byte[] bytes = {1, 2};
+        for (String id : List.of("first", "second")) {
+            when(attachmentApiClient.claimOutbound(id, "101", sessionId))
+                .thenReturn(Optional.of(new AttachmentApiClient.Outbound(id, id, "image/png", bytes)));
+        }
+        when(telegramClient.sendMediaGroup(eq(100L), anyList(), eq(55))).thenReturn(List.of(20L, 21L));
+        when(attachmentApiClient.markOutboundDelivered("second", "101", sessionId, 21L)).thenReturn(true);
 
-        processor.accept(textEvent(1, 100L, "show me images"));
+        processor.deliverMedia(100L, List.of(new MediaDeliveryService.MediaDescriptor("first", false, false),
+            new MediaDeliveryService.MediaDescriptor("second", false, false)), 55, "101", sessionId);
 
-        verify(telegramClient).sendMediaGroup(eq(100L), anyList());
+        verify(telegramClient).sendMediaGroup(eq(100L), anyList(), eq(55));
+        verify(attachmentApiClient).markOutboundDelivered("first", "101", sessionId, 20L);
+        verify(attachmentApiClient).markOutboundDelivered("second", "101", sessionId, 21L);
+        verify(telegramClient).sendMessage(100L, "Delivery could not be confirmed for one or more attachments.",
+            null, null, 55, null, false);
+        verifyNoMoreInteractions(telegramClient);
     }
 
     @Test
-    @DisplayName("3. Video file → sendVideo is called")
-    void videoFileRoutesToSendVideo() throws Exception {
-        Path videoFile = createTempFile("test-video.mp4");
-        String mediaTag = "MEDIA:" + videoFile.toString();
-        stubStreamingResult("Here is the video\n" + mediaTag, true);
+    void uncertainDeliveryHasNoReceiptAndClaimPreventsAnotherSend() {
+        UUID sessionId = UUID.randomUUID();
+        byte[] bytes = {1, 2};
+        when(attachmentApiClient.claimOutbound("document", "101", sessionId))
+            .thenReturn(Optional.of(new AttachmentApiClient.Outbound("document", "report.pdf", "application/pdf", bytes)))
+            .thenReturn(Optional.empty());
+        when(telegramClient.sendDocument(100L, bytes, "report.pdf", null, null, 55))
+            .thenReturn(Optional.empty());
 
-        processor.accept(textEvent(1, 100L, "show me a video"));
+        var media = List.of(new MediaDeliveryService.MediaDescriptor("document", false, true));
+        processor.deliverMedia(100L, media, 55, "101", sessionId);
+        processor.deliverMedia(100L, media, 55, "101", sessionId);
 
-        verify(telegramClient).sendVideo(eq(100L), any(byte[].class), eq("test-video.mp4"), isNull(), isNull());
+        verify(telegramClient).sendDocument(100L, bytes, "report.pdf", null, null, 55);
+        verify(attachmentApiClient, never()).markOutboundDelivered(anyString(), anyString(), any(), anyLong());
     }
 
     @Test
-    @DisplayName("4. Document file (PDF) → sendDocument is called")
-    void documentFileRoutesToSendDocument() throws Exception {
-        Path pdfFile = createTempFile("report.pdf");
-        String mediaTag = "MEDIA:" + pdfFile.toString();
-        stubStreamingResult("Here is the document\n" + mediaTag, true);
+    void reportsUnavailableArtifactAndSendsLargeImageAsDocument() {
+        UUID sessionId = UUID.randomUUID();
+        byte[] image = new byte[10_000_001];
+        when(attachmentApiClient.claimOutbound("missing", "101", sessionId))
+            .thenThrow(new AttachmentApiClient.OutboundUnavailable(new IllegalStateException()));
+        when(attachmentApiClient.claimOutbound("large", "101", sessionId))
+            .thenReturn(Optional.of(new AttachmentApiClient.Outbound("large", "large.png", "image/png", image)));
+        when(telegramClient.sendDocument(100L, image, "large.png", null, null, 55)).thenReturn(Optional.of(18L));
 
-        processor.accept(textEvent(1, 100L, "show me a document"));
+        processor.deliverMedia(100L, List.of(new MediaDeliveryService.MediaDescriptor("missing", false, false),
+            new MediaDeliveryService.MediaDescriptor("large", false, false)), 55, "101", sessionId);
 
-        verify(telegramClient).sendDocument(eq(100L), any(byte[].class), eq("report.pdf"), isNull(), isNull());
+        verify(telegramClient).sendDocument(100L, image, "large.png", null, null, 55);
+        verify(telegramClient).sendMessage(100L, "Delivery could not be confirmed for one or more attachments.",
+            null, null, 55, null, false);
+        verify(attachmentApiClient).markOutboundDelivered("large", "101", sessionId, 18L);
+        verifyNoMoreInteractions(telegramClient);
     }
 
     @Test
-    @DisplayName("5. Audio with [[audio_as_voice]] → sendAudioAsVoice is called")
-    void audioWithAsVoiceRoutesToSendAudioAsVoice() throws Exception {
-        Path audioFile = createTempFile("recording.mp3");
-        String mediaTag = "MEDIA:" + audioFile.toString();
-        // The [[audio_as_voice]] directive causes audio files to be delivered as voice messages
-        stubStreamingResult("[[audio_as_voice]]Here is the audio\n" + mediaTag, true);
-
-        processor.accept(textEvent(1, 100L, "play me audio"));
-
-        verify(telegramClient).sendAudioAsVoice(eq(100L), any(byte[].class), eq("recording.mp3"), isNull());
-    }
-
-    @Test
-    @DisplayName("6. File not found → warning message sent via sendMessage")
-    void fileNotFoundSendsWarningMessage() {
-        // Reference a file that does not exist, but is within the allowed working directory
-        String nonExistentPath = tempDir.resolve("nonexistent-file.png").toString();
-        String mediaTag = "MEDIA:" + nonExistentPath;
-        stubStreamingResult("Here is the image\n" + mediaTag, true);
-
-        processor.accept(textEvent(1, 100L, "show me the image"));
-
-        // A warning message should be sent via sendMessage containing "not found"
-        verify(telegramClient).sendMessage(eq(100L), contains("not found"));
+    void missingOrUnscopedArtifactsDoNotReachTelegram() {
+        UUID sessionId = UUID.randomUUID();
+        var media = List.of(new MediaDeliveryService.MediaDescriptor("missing", false, false));
+        processor.deliverMedia(100L, media, null, "101", null);
+        verifyNoInteractions(attachmentApiClient);
+        processor.deliverMedia(100L, media, null, "101", sessionId);
+        verify(attachmentApiClient).claimOutbound("missing", "101", sessionId);
+        verifyNoInteractions(telegramClient);
     }
 }

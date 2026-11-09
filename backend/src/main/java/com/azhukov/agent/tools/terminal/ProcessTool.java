@@ -1,5 +1,7 @@
 package com.azhukov.agent.tools.terminal;
 
+import com.azhukov.agent.core.security.ChildProcessEnvironment;
+
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;

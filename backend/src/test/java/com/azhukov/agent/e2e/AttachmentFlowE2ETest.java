@@ -41,7 +41,13 @@ class AttachmentFlowE2ETest extends PostgresTestContainer {
     private com.azhukov.agent.persistence.repository.SessionRepository sessionRepository;
 
     @Autowired
+    private com.azhukov.agent.service.AttachmentArtifactService artifactService;
+
+    @Autowired
     private org.springframework.web.context.WebApplicationContext webApplicationContext;
+
+    @org.springframework.test.context.bean.override.mockito.MockitoBean
+    private com.azhukov.agent.service.ArtifactProcessIsolation artifactProcessIsolation;
 
     private static final String TEXT_PAYLOAD = "quarterly figures: 42";
 
@@ -229,23 +235,7 @@ class AttachmentFlowE2ETest extends PostgresTestContainer {
         assertThat(persisted).contains(TEXT_PAYLOAD);
         assertThat(persisted).contains("notes.txt");
 
-        // 4) delivered receipt with platform message id — idempotent
-        mockMvc.perform(post("/api/v1/attachments/{id}/delivered", artifactId)
-                .param("messageId", "42133"))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.state").value("delivered"));
-
-        // second call keeps the FIRST receipt, still 200
-        mockMvc.perform(post("/api/v1/attachments/{id}/delivered", artifactId)
-                .param("messageId", "99999"))
-            .andExpect(status().isOk());
-
-        mockMvc.perform(get("/api/v1/attachments/" + artifactId))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.state").value("delivered"))
-            .andExpect(jsonPath("$.deliveredMessageId").value("42133"));
-
-        // 5) by-session listing: the chat-time artifact was registered before
+        // 4) by-session listing: the chat-time artifact was registered before
         //    the session existed (session id is only known after the first
         //    turn), so a follow-up upload explicitly linked to the session
         //    must appear; the first one stays owner-scoped.
@@ -270,6 +260,71 @@ class AttachmentFlowE2ETest extends PostgresTestContainer {
             .andReturn();
         return com.fasterxml.jackson.databind.json.JsonMapper.builder().build()
             .readTree(result.getResponse().getContentAsString()).path("id").asText();
+    }
+
+    @Test
+    void gatewayCanClaimExactSessionOnlyOnceAndRecordReceipt() throws Exception {
+        org.mockito.Mockito.when(artifactProcessIsolation.protects(org.mockito.ArgumentMatchers.any())).thenReturn(true);
+        String owner = "701938011";
+        UUID session = UUID.randomUUID();
+        String payload = "outbound fixture " + session;
+        String id = uploadTextArtifactWithSession("report.txt", payload, owner, session);
+        var properties = new com.azhukov.agent.config.AgentProperties();
+        properties.getSecurity().setApiKey("fixture-gateway-key");
+        var gateway = org.springframework.test.web.servlet.setup.MockMvcBuilders.webAppContextSetup(webApplicationContext)
+            .addFilters(new com.azhukov.agent.api.filter.ApiKeyAuthFilter(properties)).build();
+
+        gateway.perform(post("/api/v1/attachments/{id}/outbound", id)
+                .header("X-API-Key", "fixture-gateway-key").param("ownerId", "701938012")
+                .param("sessionId", session.toString()))
+            .andExpect(status().isNotFound());
+        gateway.perform(post("/api/v1/attachments/{id}/outbound", id)
+                .header("X-API-Key", "fixture-gateway-key").param("ownerId", owner)
+                .param("sessionId", UUID.randomUUID().toString()))
+            .andExpect(status().isNotFound());
+        gateway.perform(post("/api/v1/attachments/{id}/delivered", id)
+                .header("X-API-Key", "fixture-gateway-key").param("ownerId", owner).param("sessionId", session.toString())
+                .param("messageId", "419"))
+            .andExpect(status().isConflict());
+        var response = gateway.perform(post("/api/v1/attachments/{id}/outbound", id)
+                .header("X-API-Key", "fixture-gateway-key").param("ownerId", owner).param("sessionId", session.toString()))
+            .andExpect(status().isOk()).andReturn().getResponse();
+        assertThat(response.getContentAsByteArray()).isEqualTo(payload.getBytes(StandardCharsets.UTF_8));
+
+        gateway.perform(post("/api/v1/attachments/{id}/outbound", id)
+                .header("X-API-Key", "fixture-gateway-key").param("ownerId", owner).param("sessionId", session.toString()))
+            .andExpect(status().isConflict());
+        gateway.perform(post("/api/v1/attachments/{id}/delivered", id)
+                .header("X-API-Key", "fixture-gateway-key").param("ownerId", owner).param("sessionId", session.toString())
+                .param("messageId", "420"))
+            .andExpect(status().isOk());
+        gateway.perform(post("/api/v1/attachments/{id}/delivered", id)
+                .header("X-API-Key", "fixture-gateway-key").param("ownerId", owner).param("sessionId", session.toString())
+                .param("messageId", "420"))
+            .andExpect(status().isOk());
+        gateway.perform(post("/api/v1/attachments/{id}/delivered", id)
+                .header("X-API-Key", "fixture-gateway-key").param("ownerId", owner).param("sessionId", session.toString())
+                .param("messageId", "421"))
+            .andExpect(status().isConflict());
+        assertThat(artifactService.find(id, owner).orElseThrow().deliveredMessageId()).isEqualTo("420");
+    }
+
+    @Test
+    void separatePublicationsOfIdenticalBytesCanEachBeClaimedOnce() {
+        var session = new com.azhukov.agent.core.model.Session(UUID.randomUUID(), "701938019",
+            "fixture", "noop", "fixture", null, java.util.Map.of());
+        byte[] bytes = "same generated bytes".getBytes(StandardCharsets.UTF_8);
+        String first = artifactService.publishGenerated(session, "document", "text/plain", "report.txt", bytes)
+            .substring("MEDIA:artifact:".length());
+        String second = artifactService.publishGenerated(session, "document", "text/plain", "report.txt", bytes)
+            .substring("MEDIA:artifact:".length());
+
+        assertThat(second).isNotEqualTo(first);
+        assertThat(artifactService.claimOutbound(first, session.userId(), session.id())).isTrue();
+        assertThat(artifactService.claimOutbound(first, session.userId(), session.id())).isFalse();
+        assertThat(artifactService.claimOutbound(second, session.userId(), session.id())).isTrue();
+        assertThat(artifactService.verifiedContent(second, session.userId())).hasValueSatisfying(
+            content -> assertThat(content.bytes()).isEqualTo(bytes));
     }
 
     @Test

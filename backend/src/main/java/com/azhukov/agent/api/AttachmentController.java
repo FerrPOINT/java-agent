@@ -4,6 +4,7 @@ import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.service.AttachmentArtifactService;
 import com.azhukov.agent.service.AttachmentArtifactService.ArtifactRegistration;
 import com.azhukov.agent.service.AttachmentArtifactService.AttachmentArtifact;
+import com.azhukov.agent.service.AttachmentArtifactService.OutboundStatus;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
@@ -99,21 +100,58 @@ public class AttachmentController {
 
     @GetMapping("/{id}")
     public AttachmentArtifact get(@PathVariable("id") String id) {
-        return service().find(id, scopedOwner())
+        String owner = scopedOwner();
+        return service().find(id, owner)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "unknown artifact " + id));
     }
 
     /** Attachment block injected into the turn (bounded text preview or path reference). */
     @GetMapping("/{id}/content")
     public ResponseEntity<Resource> content(@PathVariable("id") String id) {
-        AttachmentArtifact artifact = service().find(id, scopedOwner())
+        String owner = scopedOwner();
+        AttachmentArtifact artifact = service().find(id, owner)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "unknown artifact " + id));
-        Path path = service().contentPath(id, scopedOwner())
+        Path path = service().contentPath(id, owner)
+            .filter(Files::isReadable)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "artifact content is gone " + id));
-        if (!Files.isReadable(path)) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "artifact content is gone " + id);
+        return contentResponse(artifact, new FileSystemResource(path));
+    }
+
+    @PostMapping("/{id}/outbound")
+    public ResponseEntity<Resource> claimOutbound(@PathVariable("id") String id,
+            @RequestParam(name = "ownerId", required = false) String ownerId,
+            @RequestParam("sessionId") UUID sessionId) {
+        String owner = requireGatewayOwner(ownerId);
+        OutboundStatus status = requireOutboundArtifact(id, owner, sessionId);
+        if (status == OutboundStatus.DELIVERED) return ResponseEntity.noContent().build();
+        requireProtectedOutbound();
+        if (status == OutboundStatus.CLAIMED) {
+            throw alreadyClaimed();
         }
-        Resource resource = new FileSystemResource(path);
+        var content = service().verifiedContent(id, owner)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Artifact content is unavailable"));
+        var response = contentResponse(content.artifact(), new org.springframework.core.io.ByteArrayResource(content.bytes()));
+        if (!service().claimOutbound(id, owner, sessionId)) {
+            if (requireOutboundArtifact(id, owner, sessionId) == OutboundStatus.DELIVERED) {
+                return ResponseEntity.noContent().build();
+            }
+            throw alreadyClaimed();
+        }
+        return response;
+    }
+
+    private static ResponseStatusException alreadyClaimed() {
+        return new ResponseStatusException(HttpStatus.CONFLICT, "Artifact delivery was already attempted");
+    }
+
+    private void requireProtectedOutbound() {
+        if (!service().hasProtectedOutbound()) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                "Outbound artifacts require an enforced storage boundary");
+        }
+    }
+
+    private ResponseEntity<Resource> contentResponse(AttachmentArtifact artifact, Resource resource) {
         String fileName = artifact.fileName() != null ? artifact.fileName() : "artifact.bin";
         String contentType = artifact.mimeType() != null ? artifact.mimeType()
             : URLConnection.guessContentTypeFromName(fileName);
@@ -128,14 +166,20 @@ public class AttachmentController {
 
     /**
      * Outbound receipt: mark delivered exactly once (idempotent). Accepts an
-     * optional platform message id from the successful send.
+     * platform message ID from a claimed send.
      */
     @PostMapping("/{id}/delivered")
     public Map<String, Object> delivered(@PathVariable("id") String id,
-            @RequestParam(value = "messageId", required = false) String messageId) {
-        boolean ok = service().markDelivered(id, scopedOwner(), messageId);
-        if (!ok) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "unknown artifact " + id);
+            @RequestParam(name = "ownerId", required = false) String ownerId,
+            @RequestParam("sessionId") UUID sessionId,
+            @RequestParam("messageId") String messageId) {
+        if (messageId.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Telegram message ID required");
+        }
+        String owner = requireGatewayOwner(ownerId);
+        requireOutboundArtifact(id, owner, sessionId);
+        if (!service().markDelivered(id, owner, sessionId, messageId)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "No matching outbound attempt or receipt");
         }
         return Map.of("ok", true, "id", id, "state", "delivered");
     }
@@ -143,6 +187,22 @@ public class AttachmentController {
     @GetMapping("/session/{sessionId}")
     public List<AttachmentArtifact> bySession(@PathVariable("sessionId") UUID sessionId) {
         return service().bySession(sessionId, scopedOwner());
+    }
+
+    private static String requireGatewayOwner(String ownerId) {
+        var origin = com.azhukov.agent.core.security.NativeIdentityOrigin.current();
+        if (origin == null || origin.kind() != com.azhukov.agent.core.security.NativeIdentityOrigin.Kind.GATEWAY_KEY) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Telegram gateway authentication required");
+        }
+        return UserContext.requireRequestOwner(ownerId);
+    }
+
+    private OutboundStatus requireOutboundArtifact(String id, String owner, UUID sessionId) {
+        OutboundStatus status = service().outboundStatus(id, owner, sessionId);
+        if (status == OutboundStatus.UNAVAILABLE) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Unknown artifact");
+        }
+        return status;
     }
 
     private static String scopedOwner() {

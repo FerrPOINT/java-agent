@@ -347,8 +347,7 @@ public class BrowserService {
         } catch (IllegalArgumentException e) {
             return BrowserScreenshot.failure("Screenshot failed: invalid base64 data");
         }
-        Path output = writeScreenshot(png);
-        return BrowserScreenshot.success("data:image/png;base64," + capture.base64(), output);
+        return new BrowserScreenshot(true, "data:image/png;base64," + capture.base64(), png, "image/png", null);
     }
 
     private ScreenshotData captureScreenshotData() throws Exception {
@@ -363,7 +362,7 @@ public class BrowserService {
         return ScreenshotData.success(data.asText());
     }
 
-    private Path writeScreenshot(byte[] bytes) throws java.io.IOException {
+    Path writeScreenshot(byte[] bytes) throws java.io.IOException {
         // Same artifact-home resolution as TTS/image-gen: HERMES_HOME (the
         // deployment's writable state dir, e.g. /home/agent/.java-agent) first,
         // fallback ~/.hermes. Hardcoding ~/.hermes broke screenshots in the
@@ -859,19 +858,9 @@ public class BrowserService {
         }
     }
 
-    public record BrowserScreenshot(boolean success,
-                                    String dataUrl,
-                                    String screenshotPath,
-                                    String mediaTag,
-                                    String mimeType,
-                                    String error) {
-        static BrowserScreenshot success(String dataUrl, Path path) {
-            String normalizedPath = path.toAbsolutePath().normalize().toString();
-            return new BrowserScreenshot(true, dataUrl, normalizedPath, "MEDIA:" + normalizedPath, "image/png", null);
-        }
-
+    public record BrowserScreenshot(boolean success, String dataUrl, byte[] bytes, String mimeType, String error) {
         static BrowserScreenshot failure(String error) {
-            return new BrowserScreenshot(false, null, null, null, null, error);
+            return new BrowserScreenshot(false, null, null, null, error);
         }
     }
 }

@@ -50,6 +50,19 @@ class ReadFileToolTest {
     }
 
     @Test
+    void artifactStoreIsPrivateForReadAndSearchTools() {
+        AgentProperties properties = new AgentProperties();
+        properties.getSecurity().setFileSafetyEnabled(false);
+        var read = new ReadFileTool(properties)
+            .execute("{\"path\":\"/artifacts/other-owner/fixture.txt\"}", null, session);
+        var search = new SearchFilesTool(properties)
+            .execute("{\"path\":\"/artifacts\",\"target\":\"files\",\"pattern\":\"*\"}", null, session);
+
+        assertThat(read.error()).contains("Reading this path is not allowed");
+        assertThat(search.error()).contains("Reading this path is not allowed");
+    }
+
+    @Test
     void malformedToolArgumentsReturnStructuredError() throws Exception {
         ToolResult r = newTool().execute("{", null, session);
 

@@ -77,6 +77,7 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+      - apparmor=docker-default//&pdlc-java-agent
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "--show-error", "--max-time", "2", "--output", "/dev/null", "http://localhost:8090/actuator/health/readiness"]
       interval: 15s
@@ -136,15 +137,12 @@ services:
       BOT_ALLOWED_USER_IDS: ${BOT_ALLOWED_USER_IDS:-}
       BOT_AVAILABLE_MODELS: ${BOT_AVAILABLE_MODELS:-}
       BOT_WORKING_DIRECTORY: /workspace
-      AGENT_ATTACHMENTS_CACHE_ROOT: /artifacts
       HERMES_HOME: /home/agent/.java-agent
       HOME: /home/agent
     ports:
       - "127.0.0.1:8091:8091"
     volumes:
       - java_agent_state:/home/agent/.java-agent
-      - java_agent_workspace:/workspace
-      - java_agent_artifacts:/artifacts
       - java_agent_tmp:/tmp
     networks:
       - runtime

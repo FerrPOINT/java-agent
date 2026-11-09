@@ -329,6 +329,40 @@ class PatchToolTest {
     }
 
     @Test
+    void v4aSecondMoveCannotOverwriteFirstDestination(@TempDir Path dir) throws Exception {
+        Path first = Files.writeString(dir.resolve("first.txt"), "first");
+        Path second = Files.writeString(dir.resolve("second.txt"), "second");
+        Path target = dir.resolve("target.txt");
+        var result = tool.execute(jsonPatch("*** Move File: " + first + " -> " + target
+            + "\n*** Move File: " + second + " -> " + target), null, session);
+
+        assertThat(result.success()).isFalse();
+        assertThat(target).hasContent("first");
+        assertThat(second).hasContent("second");
+    }
+
+    @Test
+    void v4aMoveRejectsReplacedDestinationParent(@TempDir Path dir) throws Exception {
+        Path source = Files.writeString(dir.resolve("source.txt"), "payload");
+        Path parent = Files.createDirectory(dir.resolve("target"));
+        Path outside = Files.createDirectory(dir.resolve("outside"));
+        Path target = parent.resolve("new.txt");
+        var safety = org.mockito.Mockito.mock(com.azhukov.agent.core.security.FileSafety.class);
+        var swapped = new java.util.concurrent.atomic.AtomicBoolean();
+        org.mockito.Mockito.when(safety.isPathAllowed(org.mockito.ArgumentMatchers.any())).thenAnswer(call -> {
+            if (target.equals(call.getArgument(0)) && swapped.compareAndSet(false, true)) {
+                Files.move(parent, dir.resolve("original"));
+                Files.createSymbolicLink(parent, outside);
+            }
+            return true;
+        });
+        var result = new PatchTool(safety).execute(jsonPatch("*** Move File: " + source + " -> " + target), null, session);
+        assertThat(result.success()).isFalse();
+        assertThat(Files.readString(source)).isEqualTo("payload");
+        assertThat(outside.resolve("new.txt")).doesNotExist();
+    }
+
+    @Test
     void v4aMoveRejectsTraversalDestinationBeforeNormalize(@TempDir Path dir) throws Exception {
         Path source = dir.resolve("old.txt");
         Files.writeString(source, "payload");

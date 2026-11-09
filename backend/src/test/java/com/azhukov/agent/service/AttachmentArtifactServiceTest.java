@@ -21,6 +21,7 @@ import java.util.stream.Stream;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -51,11 +52,36 @@ class AttachmentArtifactServiceTest {
     }
 
     private AttachmentArtifactService service() {
-        AttachmentArtifactService service = new AttachmentArtifactService(prov(repository));
+        AttachmentArtifactService service = new AttachmentArtifactService(prov(repository), new ArtifactProcessIsolation());
         ReflectionTestUtils.setField(service, "cacheRootConfig", tempDir.toString());
         lenient().when(repository.save(any(AttachmentArtifactEntity.class)))
             .thenAnswer(inv -> inv.getArgument(0));
         return service;
+    }
+
+    @Test
+    void scopedOutboundContentDoesNotServeModifiedBytes() throws Exception {
+        var service = service();
+        var session = UUID.randomUUID();
+        byte[] bytes = {1, 2, 3};
+        var registration = service.register("u1", "default", session, null,
+            "internal", "document", "application/octet-stream", "example.bin", bytes);
+        var stored = org.mockito.ArgumentCaptor.forClass(AttachmentArtifactEntity.class);
+        verify(repository).save(stored.capture());
+        when(repository.findById(registration.id())).thenReturn(Optional.of(stored.getValue()));
+        assertThat(service.outboundStatus(registration.id(), "u1", session))
+            .isEqualTo(AttachmentArtifactService.OutboundStatus.UNCLAIMED);
+        assertThat(service.outboundStatus(registration.id(), "u1", UUID.randomUUID()))
+            .isEqualTo(AttachmentArtifactService.OutboundStatus.UNAVAILABLE);
+        assertThat(service.outboundStatus(registration.id(), "u2", session))
+            .isEqualTo(AttachmentArtifactService.OutboundStatus.UNAVAILABLE);
+        stored.getValue().setOutboundClaimedAt(java.time.Instant.now());
+        assertThat(service.outboundStatus(registration.id(), "u1", session))
+            .isEqualTo(AttachmentArtifactService.OutboundStatus.CLAIMED);
+        assertThat(service.verifiedContent(registration.id(), "u1")).hasValueSatisfying(
+            content -> assertThat(content.bytes()).isEqualTo(bytes));
+        Files.write(tempDir.resolve(registration.cachePath()), new byte[]{3, 2, 1});
+        assertThat(service.verifiedContent(registration.id(), "u1")).isEmpty();
     }
 
     @Test
@@ -84,8 +110,8 @@ class AttachmentArtifactServiceTest {
         existing.setCachePath("u1/att_existing.png");
         Files.createDirectories(tempDir.resolve("u1"));
         Files.write(tempDir.resolve("u1/att_existing.png"), data);
-        when(repository.findFirstByOwnerIdAndContentHashAndDisposition(
-            org.mockito.ArgumentMatchers.eq("u1"), any(), org.mockito.ArgumentMatchers.eq("photo")))
+        when(repository.findFirstByOwnerIdAndContentHashAndDispositionAndSessionIdAndDedupScope(
+            org.mockito.ArgumentMatchers.eq("u1"), any(), org.mockito.ArgumentMatchers.eq("photo"), org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.eq("")))
             .thenReturn(Optional.of(existing));
 
         var result = service().register("u1", "default", null, null,
@@ -114,46 +140,15 @@ class AttachmentArtifactServiceTest {
     }
 
     @Test
-    void ownerScopedLookupAndReceiptDoNotCrossArtifactBoundary() {
-        AttachmentArtifactEntity artifact = new AttachmentArtifactEntity();
-        artifact.setId("att_private");
-        artifact.setOwnerId("user-b");
-        artifact.setState("received");
-        when(repository.findById("att_private")).thenReturn(Optional.of(artifact));
+    void receiptUsesExactOwnerAndSession() {
+        var session = UUID.randomUUID();
+        when(repository.recordOutboundReceipt(eq("att_1"), eq("user-a"), eq(session), eq("42"), any(Instant.class)))
+            .thenReturn(1);
+        var service = service();
 
-        assertThat(service().find("att_private", "user-a")).isEmpty();
-        assertThat(service().markDelivered("att_private", "user-a", "msg-1")).isFalse();
-        assertThat(artifact.getState()).isEqualTo("received");
-        verify(repository, never()).save(artifact);
-    }
-
-    @Test
-    void markDeliveredIsIdempotent() {
-        AttachmentArtifactEntity delivered = new AttachmentArtifactEntity();
-        delivered.setId("att_1");
-        delivered.setState("delivered");
-        when(repository.findById("att_1")).thenReturn(Optional.of(delivered));
-
-        assertThat(service().markDelivered("att_1")).isTrue();
-        verify(repository, never()).save(any()); // already delivered — no rewrite
-    }
-
-    @Test
-    void markDeliveredTransitionsReceivedOnce() {
-        AttachmentArtifactEntity received = new AttachmentArtifactEntity();
-        received.setId("att_2");
-        received.setState("received");
-        when(repository.findById("att_2")).thenReturn(Optional.of(received));
-
-        assertThat(service().markDelivered("att_2")).isTrue();
-        assertThat(received.getState()).isEqualTo("delivered");
-        verify(repository).save(received);
-    }
-
-    @Test
-    void unknownArtifactMarkDeliveredFalse() {
-        when(repository.findById("att_missing")).thenReturn(Optional.empty());
-        assertThat(service().markDelivered("att_missing")).isFalse();
+        assertThat(service.markDelivered("att_1", "user-a", session, "42")).isTrue();
+        assertThat(service.markDelivered("att_1", "user-b", session, "42")).isFalse();
+        assertThat(service.markDelivered("att_1", "user-a", UUID.randomUUID(), "42")).isFalse();
     }
 
     // helper to expose hash for dedupe stubbing
@@ -268,7 +263,7 @@ class AttachmentArtifactServiceTest {
         var entity = new AttachmentArtifactEntity();
         entity.setId("att_missing");
         entity.setCachePath("u1/missing.txt");
-        when(repository.findFirstByOwnerIdAndContentHashAndDisposition(any(), any(), any()))
+        when(repository.findFirstByOwnerIdAndContentHashAndDispositionAndSessionIdAndDedupScope(any(), any(), any(), any(), org.mockito.ArgumentMatchers.eq("")))
             .thenReturn(Optional.of(entity));
         var result = service().register("u1", "default", null, null,
             "cli", "document", "text/plain", "safe.txt", "bytes".getBytes());

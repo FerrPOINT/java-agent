@@ -374,11 +374,26 @@ public class SearchFilesTool implements ToolHandler {
     }
 
     private List<String> readSearchLines(Path file) throws IOException {
-        if (hasBinaryExtension(file) || isLikelyBinarySample(file)) {
+        if (hasBinaryExtension(file)) {
             return List.of();
         }
-        try {
-            return Files.readAllLines(file, StandardCharsets.UTF_8);
+        Path target = file.toRealPath();
+        if (!FileToolSafety.isReadable(properties, fileSafety, target)) {
+            return List.of();
+        }
+        try (var channel = com.azhukov.agent.core.security.SecureFileAccess.openRead(target);
+             var input = new java.io.BufferedInputStream(java.nio.channels.Channels.newInputStream(channel))) {
+            input.mark(8192);
+            if (isLikelyBinarySample(input.readNBytes(8192))) {
+                return List.of();
+            }
+            input.reset();
+            var reader = new java.io.BufferedReader(new java.io.InputStreamReader(input, StandardCharsets.UTF_8.newDecoder()));
+            List<String> lines = new java.util.ArrayList<>();
+            for (String line; (line = reader.readLine()) != null;) {
+                lines.add(line);
+            }
+            return lines;
         } catch (MalformedInputException | UnmappableCharacterException e) {
             return List.of();
         }
@@ -393,11 +408,7 @@ public class SearchFilesTool implements ToolHandler {
         return BINARY_EXTENSIONS.contains(fileName.substring(dotIndex));
     }
 
-    private boolean isLikelyBinarySample(Path file) throws IOException {
-        byte[] sample;
-        try (var input = Files.newInputStream(file)) {
-            sample = input.readNBytes(8192);
-        }
+    private boolean isLikelyBinarySample(byte[] sample) {
         for (byte b : sample) {
             if (b == 0) {
                 return true;

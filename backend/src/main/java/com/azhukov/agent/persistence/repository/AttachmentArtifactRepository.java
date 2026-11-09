@@ -13,9 +13,9 @@ import java.util.UUID;
 
 public interface AttachmentArtifactRepository extends JpaRepository<AttachmentArtifactEntity, String> {
 
-    /** Dedupe lookup: same owner + hash + disposition is ONE artifact. */
-    Optional<AttachmentArtifactEntity> findFirstByOwnerIdAndContentHashAndDisposition(
-        String ownerId, String contentHash, String disposition);
+    /** Look up the inbound deduplication key within its owner and session. */
+    Optional<AttachmentArtifactEntity> findFirstByOwnerIdAndContentHashAndDispositionAndSessionIdAndDedupScope(
+        String ownerId, String contentHash, String disposition, UUID sessionId, String dedupScope);
 
     List<AttachmentArtifactEntity> findBySessionIdOrderByCreatedAtAsc(UUID sessionId);
 
@@ -23,6 +23,29 @@ public interface AttachmentArtifactRepository extends JpaRepository<AttachmentAr
 
     /** TTL sweep input: expired artifacts of ANY state (delivered ones expire too). */
     List<AttachmentArtifactEntity> findByExpiresAtBefore(Instant cutoff);
+
+    @org.springframework.transaction.annotation.Transactional
+    @Modifying
+    @Query("""
+        UPDATE AttachmentArtifactEntity a SET a.outboundClaimedAt = :now
+        WHERE a.id = :id AND a.ownerId = :owner AND a.sessionId = :session
+          AND a.expiresAt > :now AND a.state = 'received' AND a.outboundClaimedAt IS NULL
+        """)
+    int claimOutbound(@Param("id") String id, @Param("owner") String owner,
+                      @Param("session") UUID session, @Param("now") Instant now);
+
+    @org.springframework.transaction.annotation.Transactional
+    @Modifying
+    @Query("""
+        UPDATE AttachmentArtifactEntity a SET a.state = 'delivered',
+            a.deliveredMessageId = :messageId, a.deliveredAt = COALESCE(a.deliveredAt, :now)
+        WHERE a.id = :id AND a.ownerId = :owner AND a.sessionId = :session
+          AND a.expiresAt > :now AND a.outboundClaimedAt IS NOT NULL
+          AND (a.state = 'received' OR (a.state = 'delivered' AND a.deliveredMessageId = :messageId))
+        """)
+    int recordOutboundReceipt(@Param("id") String id, @Param("owner") String owner,
+                              @Param("session") UUID session, @Param("messageId") String messageId,
+                              @Param("now") Instant now);
 
     @Modifying
     @Query("DELETE FROM AttachmentArtifactEntity a WHERE a.expiresAt < :cutoff")

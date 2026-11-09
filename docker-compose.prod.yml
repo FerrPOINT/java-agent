@@ -46,6 +46,9 @@ services:
   # ── Backend (Java Agent) ──
   agent:
     init: true
+    security_opt:
+      - no-new-privileges:true
+      - apparmor=docker-default//&pdlc-java-agent
     build:
       context: .
       dockerfile: Dockerfile
@@ -131,13 +134,10 @@ services:
       BOT_AGENT_NAME: ${BOT_AGENT_NAME:-Java Agent}
       BOT_ALLOWED_USER_IDS: ${BOT_ALLOWED_USER_IDS:-}
       BOT_WORKING_DIRECTORY: /workspace
-      AGENT_ATTACHMENTS_CACHE_ROOT: /artifacts
       HERMES_HOME: /home/agent/.java-agent
     networks:
       - backend
     volumes:
-      - agent_prod_workspace:/workspace
-      - agent_prod_artifacts:/artifacts
       - agent_prod_state:/home/agent/.java-agent
     deploy:
       resources:

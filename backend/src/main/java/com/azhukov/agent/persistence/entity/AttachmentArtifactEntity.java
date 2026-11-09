@@ -34,6 +34,10 @@ public class AttachmentArtifactEntity {
     @Column(name = "content_hash", nullable = false, length = 64)
     private String contentHash;
 
+    /** Inbound dedupe shares the empty scope. Each generated publication has its own scope. */
+    @Column(name = "dedup_scope", nullable = false, length = 64)
+    private String dedupScope = "";
+
     /** telegram | cli | internal. */
     @Column(name = "origin", nullable = false, length = 16)
     private String origin;
@@ -58,6 +62,10 @@ public class AttachmentArtifactEntity {
     /** received | delivered | failed | expired. */
     @Column(name = "state", nullable = false, length = 16)
     private String state = "received";
+
+    /** Once claimed for outbound delivery, an unknown outcome is never retried. */
+    @Column(name = "outbound_claimed_at")
+    private Instant outboundClaimedAt;
 
     /** V65: platform message id of the successful outbound delivery, if any. */
     @Column(name = "delivered_message_id", length = 128)

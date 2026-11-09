@@ -50,7 +50,8 @@ class DefaultContextReferenceServiceFullTest {
         properties.getCore().setHttpUserAgent("TestAgent/1.0");
 
         httpClient = mock(HttpClient.class);
-        service = new DefaultContextReferenceService(properties, skillManager);
+        service = new DefaultContextReferenceService(properties, skillManager,
+            new com.azhukov.agent.core.security.DefaultFileSafety(properties));
         injectHttpClient(service, httpClient);
     }
 
@@ -124,6 +125,54 @@ class DefaultContextReferenceServiceFullTest {
         assertThat(service.loadContent(ref))
             .isPresent()
             .hasValueSatisfying(v -> assertThat(v).contains("file too large").contains(file.toString()));
+    }
+
+    @Test
+    void fileReferencesCheckTheTargetOfWorkspaceSymlinks() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        properties.getCore().setWorkingDirectory(workspace.toString());
+        Path privateFile = Files.writeString(tempDir.resolve("private.txt"), "private marker");
+        Path publicFile = Files.writeString(workspace.resolve("notes.txt"), "workspace note");
+        Path outside = Files.createSymbolicLink(workspace.resolve("outside.txt"), privateFile);
+        Path inside = Files.createSymbolicLink(workspace.resolve("inside.txt"), publicFile);
+        var refs = service.resolve(List.of(outside.toUri().toString(), inside.toUri().toString()));
+
+        assertThat(service.loadContent(refs.get(0))).hasValueSatisfying(value ->
+            assertThat(value).contains("file access denied").doesNotContain("private marker"));
+        assertThat(service.loadContent(refs.get(1))).hasValue("workspace note");
+    }
+
+    @Test
+    void fileReferenceCannotReadAfterItsParentIsReplacedDuringAuthorization() throws Exception {
+        Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
+        Path parent = Files.createDirectory(workspace.resolve("subdir"));
+        Path outside = Files.createDirectory(tempDir.resolve("outside"));
+        Path file = Files.writeString(parent.resolve("note.txt"), "public marker");
+        Files.writeString(outside.resolve("note.txt"), "private marker");
+        properties.getCore().setWorkingDirectory(workspace.toString());
+
+        var guard = new com.azhukov.agent.core.security.DefaultFileSafety(properties) {
+            private int checks;
+
+            @Override
+            public boolean isReadBlocked(Path path) {
+                boolean blocked = super.isReadBlocked(path);
+                if (path.equals(file) && ++checks == 2) {
+                    try {
+                        Files.move(parent, workspace.resolve("old-subdir"));
+                        Files.createSymbolicLink(parent, outside);
+                    } catch (IOException e) {
+                        throw new java.io.UncheckedIOException(e);
+                    }
+                }
+                return blocked;
+            }
+        };
+        var guarded = new DefaultContextReferenceService(properties, skillManager, guard);
+        var reference = guarded.resolve(List.of(file.toUri().toString())).getFirst();
+
+        assertThat(guarded.loadContent(reference)).hasValueSatisfying(value ->
+            assertThat(value).contains("file read error").doesNotContain("private marker"));
     }
 
     @Test

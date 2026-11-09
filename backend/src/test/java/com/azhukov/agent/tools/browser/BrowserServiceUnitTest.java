@@ -282,10 +282,10 @@ class BrowserServiceUnitTest {
 
             assertThat(screenshot.success()).isTrue();
             assertThat(screenshot.dataUrl()).isEqualTo("data:image/png;base64," + data);
-            assertThat(screenshot.screenshotPath()).contains(home.resolve("state").toString());
-            assertThat(screenshot.mediaTag()).isEqualTo("MEDIA:" + screenshot.screenshotPath());
+            assertThat(screenshot.bytes()).containsExactly(png);
             assertThat(screenshot.mimeType()).isEqualTo("image/png");
-            Path path = Path.of(screenshot.screenshotPath());
+            assertThat(home.resolve("state").resolve("cache")).doesNotExist();
+            Path path = service.writeScreenshot(screenshot.bytes());
             try {
                 assertThat(path).startsWith(home.resolve("state").resolve("cache").resolve("screenshots"));
                 assertThat(path.getFileName().toString()).startsWith("browser_screenshot_").endsWith(".png");

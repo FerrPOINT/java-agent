@@ -1,6 +1,8 @@
 package com.azhukov.agent.api;
 
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.service.AttachmentArtifactService;
+import com.azhukov.agent.service.AttachmentArtifactService.OutboundStatus;
 import com.azhukov.agent.service.AttachmentArtifactService.ArtifactRegistration;
 import com.azhukov.agent.service.AttachmentArtifactService.AttachmentArtifact;
 import org.junit.jupiter.api.BeforeEach;
@@ -64,6 +66,83 @@ class AttachmentControllerTest {
     }
 
     @Test
+    void outboundContentRequiresAuthenticatedOwnerAndMatchingSession() throws Exception {
+        UUID sessionId = UUID.randomUUID();
+        UserContext.set("gateway", UserContext.ROLE_ADMIN);
+        com.azhukov.agent.core.security.NativeIdentityOrigin.bind(new com.azhukov.agent.core.security.NativeIdentityOrigin.Origin(
+            com.azhukov.agent.core.security.NativeIdentityOrigin.Kind.GATEWAY_KEY, "gateway", true));
+        try {
+            org.mockito.Mockito.when(service.outboundStatus("att_1", "701938011", sessionId)).thenReturn(OutboundStatus.UNAVAILABLE);
+            mockMvc.perform(post("/api/v1/attachments/att_1/outbound").param("ownerId", "701938011").param("sessionId", sessionId.toString()))
+                .andExpect(status().isNotFound());
+            org.mockito.Mockito.verify(service, org.mockito.Mockito.never()).verifiedContent(
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
+        } finally {
+            UserContext.clear();
+            com.azhukov.agent.core.security.NativeIdentityOrigin.clear();
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.EnumSource(value = OutboundStatus.class, names = {"CLAIMED", "DELIVERED"})
+    void priorAttemptReturnsItsActualStatusWithoutReadingContent(OutboundStatus outboundStatus) throws Exception {
+        UUID sessionId = UUID.randomUUID();
+        UserContext.set("gateway", UserContext.ROLE_ADMIN);
+        com.azhukov.agent.core.security.NativeIdentityOrigin.bind(new com.azhukov.agent.core.security.NativeIdentityOrigin.Origin(
+            com.azhukov.agent.core.security.NativeIdentityOrigin.Kind.GATEWAY_KEY, "gateway", true));
+        try {
+            when(service.outboundStatus("att_1", "701938011", sessionId)).thenReturn(outboundStatus);
+            if (outboundStatus == OutboundStatus.CLAIMED) {
+                when(service.hasProtectedOutbound()).thenReturn(true);
+            }
+            mockMvc.perform(post("/api/v1/attachments/att_1/outbound")
+                    .param("ownerId", "701938011").param("sessionId", sessionId.toString()))
+                .andExpect(status().is(outboundStatus == OutboundStatus.DELIVERED ? 204 : 409));
+            org.mockito.Mockito.verify(service, org.mockito.Mockito.never()).verifiedContent(anyString(), anyString());
+            org.mockito.Mockito.verify(service, org.mockito.Mockito.never()).claimOutbound(anyString(), anyString(), any());
+        } finally {
+            UserContext.clear();
+            com.azhukov.agent.core.security.NativeIdentityOrigin.clear();
+        }
+    }
+
+    @Test
+    void missingContentDoesNotConsumeClaim() throws Exception {
+        UUID sessionId = UUID.randomUUID();
+        UserContext.set("gateway", UserContext.ROLE_ADMIN);
+        com.azhukov.agent.core.security.NativeIdentityOrigin.bind(new com.azhukov.agent.core.security.NativeIdentityOrigin.Origin(
+            com.azhukov.agent.core.security.NativeIdentityOrigin.Kind.GATEWAY_KEY, "gateway", true));
+        try {
+            when(service.outboundStatus("att_1", "701938011", sessionId)).thenReturn(OutboundStatus.UNCLAIMED);
+            when(service.hasProtectedOutbound()).thenReturn(true);
+            mockMvc.perform(post("/api/v1/attachments/att_1/outbound").param("ownerId", "701938011").param("sessionId", sessionId.toString()))
+                .andExpect(status().isNotFound());
+            org.mockito.Mockito.verify(service, org.mockito.Mockito.never()).claimOutbound(anyString(), anyString(), any());
+        } finally {
+            UserContext.clear();
+            com.azhukov.agent.core.security.NativeIdentityOrigin.clear();
+        }
+    }
+
+    @Test
+    void unprotectedOutboundDoesNotConsumeClaimOrReadContent() throws Exception {
+        UUID sessionId = UUID.randomUUID();
+        UserContext.set("gateway", UserContext.ROLE_ADMIN);
+        com.azhukov.agent.core.security.NativeIdentityOrigin.bind(new com.azhukov.agent.core.security.NativeIdentityOrigin.Origin(
+            com.azhukov.agent.core.security.NativeIdentityOrigin.Kind.GATEWAY_KEY, "gateway", true));
+        try {
+            when(service.outboundStatus("att_1", "701938011", sessionId)).thenReturn(OutboundStatus.UNCLAIMED);
+            mockMvc.perform(post("/api/v1/attachments/att_1/outbound").param("ownerId", "701938011").param("sessionId", sessionId.toString()))
+                .andExpect(status().isServiceUnavailable());
+            org.mockito.Mockito.verify(service, org.mockito.Mockito.never()).claimOutbound(anyString(), anyString(), any());
+            org.mockito.Mockito.verify(service, org.mockito.Mockito.never()).verifiedContent(anyString(), anyString());
+        } finally {
+            UserContext.clear();
+            com.azhukov.agent.core.security.NativeIdentityOrigin.clear();
+        }
+    }
+
+    @Test
     void uploadRegistersArtifactAndReturnsId() throws Exception {
         when(service.register(any(), any(), any(), any(), anyString(), anyString(),
             any(), any(), any())).thenReturn(
@@ -110,16 +189,21 @@ class AttachmentControllerTest {
     }
 
     @Test
-    void regularUserCannotMarkAnotherOwnersArtifactDelivered() throws Exception {
-        when(service.markDelivered("att_1", "user-a", null)).thenReturn(false);
-        com.azhukov.agent.core.security.UserContext.set("user-a",
-            com.azhukov.agent.core.security.UserContext.ROLE_USER);
+    void authenticatedOwnerCannotClaimOrForgeGatewayReceipt() throws Exception {
+        UUID sessionId = UUID.randomUUID();
+        UserContext.set("701938011", UserContext.ROLE_USER);
+        com.azhukov.agent.core.security.NativeIdentityOrigin.bind(new com.azhukov.agent.core.security.NativeIdentityOrigin.Origin(
+            com.azhukov.agent.core.security.NativeIdentityOrigin.Kind.USER_API_KEY, "701938011", false));
         try {
-            mockMvc.perform(post("/api/v1/attachments/att_1/delivered"))
-                .andExpect(status().isNotFound());
-            org.mockito.Mockito.verify(service).markDelivered("att_1", "user-a", null);
+            for (String action : java.util.List.of("outbound", "delivered")) {
+                mockMvc.perform(post("/api/v1/attachments/att_1/" + action).param("ownerId", "701938011")
+                        .param("sessionId", sessionId.toString()).param("messageId", "42"))
+                    .andExpect(status().isForbidden());
+            }
+            org.mockito.Mockito.verifyNoInteractions(service);
         } finally {
-            com.azhukov.agent.core.security.UserContext.clear();
+            UserContext.clear();
+            com.azhukov.agent.core.security.NativeIdentityOrigin.clear();
         }
     }
 
@@ -163,18 +247,10 @@ class AttachmentControllerTest {
     }
 
     @Test
-    void deliveredMarksAndIsIdempotent() throws Exception {
-        when(service.markDelivered("att_1", null, null)).thenReturn(true);
+    void deliveredRequiresSessionAndMessageId() throws Exception {
         mockMvc.perform(post("/api/v1/attachments/att_1/delivered"))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.state").value("delivered"));
-    }
-
-    @Test
-    void deliveredUnknownArtifactIs404() throws Exception {
-        when(service.markDelivered("att_missing", null, null)).thenReturn(false);
-        mockMvc.perform(post("/api/v1/attachments/att_missing/delivered"))
-            .andExpect(status().isNotFound());
+            .andExpect(status().isBadRequest());
+        org.mockito.Mockito.verifyNoInteractions(service);
     }
 
     @Test

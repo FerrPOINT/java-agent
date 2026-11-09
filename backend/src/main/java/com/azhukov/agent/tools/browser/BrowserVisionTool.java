@@ -14,7 +14,7 @@ import java.util.Map;
 
 @AgentTool(
     name = "browser_vision",
-    description = "Capture a screenshot of the current page and return a PNG data URL plus screenshot_path/MEDIA path metadata.",
+    description = "Capture a screenshot of the current page and return a PNG data URL and the reference for the current client.",
     toolset = "browser"
 )
 @Component
@@ -22,6 +22,7 @@ import java.util.Map;
 public class BrowserVisionTool implements ToolHandler {
 
     private final BrowserService browserService;
+    private final com.azhukov.agent.service.AttachmentArtifactService artifacts;
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
@@ -37,8 +38,12 @@ public class BrowserVisionTool implements ToolHandler {
             }
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("data_url", screenshot.dataUrl());
-            response.put("screenshot_path", screenshot.screenshotPath());
-            response.put("media_tag", screenshot.mediaTag());
+            if (session != null && "telegram".equalsIgnoreCase(session.getMetadata("platform"))) {
+                response.put("media_tag", artifacts.publishGenerated(session, "photo", screenshot.mimeType(),
+                    "screenshot.png", screenshot.bytes()));
+            } else {
+                response.put("screenshot_path", browserService.writeScreenshot(screenshot.bytes()).toString());
+            }
             response.put("mime_type", screenshot.mimeType());
             return ToolResult.ok(BrowserToolResponses.success(response));
         } catch (Exception e) {
