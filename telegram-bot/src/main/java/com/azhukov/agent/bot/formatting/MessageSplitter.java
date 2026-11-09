@@ -9,6 +9,9 @@ import java.util.List;
  * then hard-splits if a single line exceeds the limit.
  */
 public final class MessageSplitter {
+    public static final int TELEGRAM_MAX_LENGTH = 4096;
+
+    private MessageSplitter() {}
 
     /** Split literal Telegram text without dropping whitespace or source characters. */
     public static List<String> splitPlainText(String text) {
