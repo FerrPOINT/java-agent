@@ -158,6 +158,27 @@ class LongPollingServiceTest {
     }
 
     @Test
+    void failedHandlerDoesNotStopAdmissionOfLaterUpdates() throws Exception {
+        when(telegramClient.getUpdates(eq(1L), anyInt(), anyInt()))
+            .thenReturn(Optional.of(List.of(Map.of("update_id", 1))));
+        when(telegramClient.getUpdates(eq(2L), anyInt(), anyInt()))
+            .thenReturn(Optional.of(List.of(Map.of("update_id", 2))));
+        when(telegramClient.getUpdates(eq(3L), anyInt(), anyInt()))
+            .thenReturn(Optional.empty());
+
+        CountDownLatch handled = new CountDownLatch(1);
+        service = new LongPollingService(telegramClient, properties, event -> {
+            if (event.updateId() == 1) throw new IllegalStateException("fixture handler failure");
+            if (event.updateId() == 2) handled.countDown();
+        }, reconnectWatcher);
+
+        service.start();
+        assertThat(handled.await(5, TimeUnit.SECONDS)).isTrue();
+        verify(telegramClient, timeout(2000)).getUpdates(eq(3L), anyInt(), anyInt());
+        assertThat(service.isRunning()).isTrue();
+    }
+
+    @Test
     void poolShutdownOnStop() throws Exception {
         when(telegramClient.getUpdates(anyLong(), anyInt(), anyInt()))
             .thenReturn(Optional.empty());
