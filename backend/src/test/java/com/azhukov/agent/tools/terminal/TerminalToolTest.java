@@ -229,11 +229,12 @@ class TerminalToolTest {
             + "printf -v chunk '%0110000d' 0; "
             + "for i in {1..12}; do export \"FIXTURE_ITEM_${i}=$chunk\"; done; "
             + "export FIXTURE_SMALL=kept; "
-            + "printf '%s\\n' \"$chunk\"{1..22}; printf 'visible-tail'";
+            + "printf '%s\\n' \"$chunk\"{1..28}; printf 'visible-tail'";
         ToolResult result = tool.execute(JSON.writeValueAsString(Map.of("command", command)), null, currentSession);
 
         assertThat(result.success()).as(result.error()).isTrue();
-        assertThat(result.content()).contains("visible-tail").doesNotContain("FIXTURE_SMALL", "FIXTURE_ITEM_");
+        assertThat(result.content()).contains("[earlier output truncated]", "visible-tail")
+            .doesNotContain("FIXTURE_SMALL", "FIXTURE_ITEM_");
         assertThat(TerminalTool.trackedCwd(currentSession.id())).isEqualTo(directory.toString());
         assertThat(TerminalTool.trackedEnv(currentSession.id())).containsEntry("FIXTURE_SMALL", "kept");
     }
