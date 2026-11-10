@@ -384,15 +384,20 @@ public class McpLifecycleManager {
             }
             handshake.complete(null);
         } catch (RuntimeException e) {
-            synchronized (clients) {
-                if (connectionsInFlight.get(name) == owner) {
-                    owner.handshake = null;
-                    scheduleReconnect(name, nextRetry, initial, owner);
-                }
-            }
-            handshake.completeExceptionally(e);
-            log.warn("Failed to connect to MCP server {}: {}", name, e.getMessage());
+            retryConnection(name, owner, handshake, nextRetry, initial, e);
         }
+    }
+
+    private void retryConnection(String name, ConnectionAttempt owner, CompletableFuture<Void> handshake,
+                                 int nextRetry, boolean initial, RuntimeException failure) {
+        synchronized (clients) {
+            if (connectionsInFlight.get(name) == owner) {
+                owner.handshake = null;
+                scheduleReconnect(name, nextRetry, initial, owner);
+            }
+        }
+        handshake.completeExceptionally(failure);
+        log.warn("Failed to connect to MCP server {}: {}", name, sanitizeError(failure.getMessage()));
     }
 
     private void openConnection(ConfiguredServer configured, ConnectionAttempt owner,
@@ -994,7 +999,13 @@ public class McpLifecycleManager {
                 }
                 owner.handshake = handshake;
             }
-            var server = enabledServer(name);
+            ConfiguredServer server;
+            try {
+                server = enabledServer(name);
+            } catch (RuntimeException e) {
+                retryConnection(name, owner, handshake, attempt + 1, initial, e);
+                return;
+            }
             if (server == null) {
                 synchronized (clients) {
                     connectionsInFlight.remove(name, owner);
@@ -1007,9 +1018,18 @@ public class McpLifecycleManager {
     }
 
     private ConfiguredServer enabledServer(String name) {
-        return effectiveServers().stream()
-            .filter(server -> name.equals(server.properties().getName()) && server.properties().isEnabled())
-            .findFirst().orElse(null);
+        for (var server : properties.getMcp().getServers()) {
+            if (name.equals(server.getName())) {
+                return server.isEnabled() ? new ConfiguredServer(server, null) : null;
+            }
+        }
+        var store = configStoreProvider == null ? null : configStoreProvider.getIfAvailable();
+        if (store == null) {
+            return null;
+        }
+        return store.find("default", name).filter(McpServerConfigEntity::isEnabled)
+            .map(config -> new ConfiguredServer(toServerProperties(config), config))
+            .orElse(null);
     }
 
     public void reconnect(String serverName) {
@@ -1039,12 +1059,14 @@ public class McpLifecycleManager {
                 refresh.cancel(false);
             }
             connectionsInFlight.put(name, owner);
-        }
-        safeCloseClient(expected.client());
-        synchronized (clients) {
-            if (!shutdownRequested.get() && connectionsInFlight.get(name) == owner) {
-                scheduleReconnect(name, 0, false, owner);
-            }
+            toolCallExecutor.execute(() -> {
+                safeCloseClient(expected.client());
+                synchronized (clients) {
+                    if (!shutdownRequested.get() && connectionsInFlight.get(name) == owner) {
+                        scheduleReconnect(name, 0, false, owner);
+                    }
+                }
+            });
         }
     }
 
@@ -1749,7 +1771,7 @@ public class McpLifecycleManager {
             return;
         }
         retireConnection(serverName, state);
-        log.info("MCP {} wedged ({} timeout {}); client torn down, reconnect scheduled",
+        log.info("MCP {} wedged ({} timeout {}); retiring client before reconnect",
             serverName, operation, formatSeconds(timeout));
     }
 

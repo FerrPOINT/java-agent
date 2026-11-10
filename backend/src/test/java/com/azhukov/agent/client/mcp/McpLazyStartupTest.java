@@ -71,7 +71,7 @@ class McpLazyStartupTest {
         configEntity.setEnabled(true);
         configEntity.setTransport("http");
         configEntity.setBaseUrl(server.getBaseUrl());
-        when(configStore.list("default")).thenReturn(List.of(configEntity));
+        when(configStore.find("default", "cached-server")).thenReturn(Optional.of(configEntity));
         configured = new McpLifecycleManager.ConfiguredServer(server, configEntity);
     }
 
@@ -144,6 +144,38 @@ class McpLazyStartupTest {
         verify(client).close();
         verify(toolRegistry, Mockito.atLeastOnce()).deregisterDynamic("mcp__cached_server__echo", "mcp-cached-server");
         assertThat(lifecycle.isConnected("cached-server")).isFalse();
+    }
+
+    @Test
+    void unavailableConfigurationLookupDoesNotStopScheduledRecovery() {
+        properties.getMcp().setLazyStartup(false);
+        var lifecycle = Mockito.spy(manager);
+        var scheduler = mock(ScheduledExecutorService.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(lifecycle, "reconnectExecutor", scheduler);
+        var scheduled = new java.util.ArrayDeque<Runnable>();
+        when(scheduler.schedule(any(Runnable.class), Mockito.anyLong(), eq(TimeUnit.SECONDS)))
+            .thenAnswer(call -> { scheduled.add(call.getArgument(0)); return null; });
+        when(configStore.find("default", "cached-server"))
+            .thenThrow(new IllegalStateException("database temporarily unavailable"))
+            .thenReturn(Optional.of(configured.schemaConfig()));
+        var failed = mock(io.modelcontextprotocol.client.McpSyncClient.class);
+        when(failed.initialize()).thenThrow(new IllegalStateException("fixture offline"));
+        var live = mock(io.modelcontextprotocol.client.McpSyncClient.class);
+        when(live.listTools()).thenReturn(new McpSchema.ListToolsResult(List.of(), null));
+        Mockito.doReturn(failed, live).when(lifecycle).createClient(any());
+
+        try {
+            lifecycle.connect(configured);
+            assertThat(scheduled).hasSize(1);
+            scheduled.removeFirst().run();
+            assertThat(lifecycle.isConnected("cached-server")).isFalse();
+            assertThat(scheduled).hasSize(1);
+            scheduled.removeFirst().run();
+            assertThat(lifecycle.isConnected("cached-server")).isTrue();
+            verify(live).initialize();
+        } finally {
+            lifecycle.closeAll();
+        }
     }
 
     @Test

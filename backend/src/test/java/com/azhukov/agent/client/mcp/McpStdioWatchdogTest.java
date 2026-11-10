@@ -86,27 +86,40 @@ class McpStdioWatchdogTest {
     }
 
     @Test
-    void wedgedClientIsClosedAndReconnectScheduledOnTimeout() throws Exception {
-        // callTool never returns => timeout path
+    void timeoutReturnsBeforeCloseAndReconnectWaitsForClose() throws Exception {
+        var inClose = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var scheduler = mock(java.util.concurrent.ScheduledExecutorService.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(manager, "reconnectExecutor", scheduler);
         when(wedgedClient.callTool(any(McpSchema.CallToolRequest.class)))
             .thenAnswer(inv -> { Thread.sleep(10_000); return null; });
+        org.mockito.Mockito.doAnswer(inv -> {
+            inClose.countDown();
+            assertThat(release.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            return null;
+        }).when(wedgedClient).close();
 
-        AgentProperties.McpProperties.ServerProperties server = properties.getMcp().getServers().get(0);
+        var server = properties.getMcp().getServers().getFirst();
         var state = new McpLifecycleManager.McpServerState(server, wedgedClient, List.of());
         manager.getClientsForTest().put("srv", state);
 
         ExecutorService ex = Executors.newSingleThreadExecutor();
         try {
             var future = ex.submit(() -> manager.executeTool("srv", "slow_tool", "{}"));
-            assertThatThrownBy(() -> future.get(3, java.util.concurrent.TimeUnit.SECONDS))
+            assertThat(inClose.await(3, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThatThrownBy(() -> future.get(1, java.util.concurrent.TimeUnit.SECONDS))
                 .isInstanceOf(java.util.concurrent.ExecutionException.class)
                 .hasMessageContaining("timed out");
+            org.mockito.Mockito.verifyNoInteractions(scheduler);
+
+            release.countDown();
+            verify(scheduler, org.mockito.Mockito.timeout(2000)).schedule(
+                any(Runnable.class), org.mockito.ArgumentMatchers.eq(1L),
+                org.mockito.ArgumentMatchers.eq(java.util.concurrent.TimeUnit.SECONDS));
         } finally {
+            release.countDown();
             ex.shutdownNow();
         }
-
-        // The wedged client must have been closed (verifiable via mock)
-        verify(wedgedClient).close();
     }
 
     @Test

@@ -1057,8 +1057,8 @@ class McpLifecycleManagerNewFeaturesTest {
 
         manager.reconnect("srv");
 
-        // Existing client should be closed
-        verify(client).close();
+        // Retirement closes the detached client outside the caller.
+        verify(client, org.mockito.Mockito.timeout(2000)).close();
         // Server should be removed from clients map
         assertThat(manager.listServers()).isEmpty();
     }
