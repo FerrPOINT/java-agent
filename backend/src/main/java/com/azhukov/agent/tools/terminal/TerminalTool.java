@@ -374,7 +374,8 @@ public class TerminalTool implements ToolHandler {
             } else {
                 if (sessionId != null) {
                     // Keep the shell's state out of the bounded user-visible output.
-                    shellState = Files.createTempFile("java-agent-terminal-", ".state");
+                    Path tempDirectory = Path.of(System.getProperty("java.io.tmpdir")).toRealPath();
+                    shellState = Files.createTempFile(tempDirectory, "java-agent-terminal-", ".state");
                     String captureState = "\nJAVA_AGENT_EXIT_CODE=$?; ( set +x; builtin printf '%s\\0' \"$(builtin pwd)\";\n"
                         + ChildProcessEnvironment.bashSessionEnvironmentCapture()
                         + ") >| " + shellQuote(shellState.toString()) + "; exit $JAVA_AGENT_EXIT_CODE";
