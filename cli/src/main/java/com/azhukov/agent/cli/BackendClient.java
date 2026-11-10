@@ -1,5 +1,6 @@
 package com.azhukov.agent.cli;
 
+import com.azhukov.agent.shared.http.ChatEventStream;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -10,9 +11,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 
-import java.io.BufferedReader;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -350,72 +349,33 @@ public class BackendClient {
                 .retrieve()
                 .body(InputStream.class);
 
-            if (is == null) {
-                onDone.run();
-                return;
-            }
-
-            try (BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(is, StandardCharsets.UTF_8))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    if (!line.startsWith("data:")) {
-                        continue;
+            ChatEventStream.read(is, objectMapper, event -> {
+                String type = event.path("type").asText("");
+                if ("tool_start".equalsIgnoreCase(type)) {
+                    String toolName = event.path("toolName").asText("");
+                    if (!toolName.isEmpty()) {
+                        onTool.accept("\uD83D\uDD27 " + toolName);
                     }
-                    String data = line.substring(5).strip();
-                    if (data.isEmpty() || "data:".equals(data) || "[DONE]".equals(data)) {
-                        if ("[DONE]".equals(data)) {
-                            onDone.run();
-                            return;
-                        }
-                        continue;
-                    }
-                    try {
-                        JsonNode event = objectMapper.readTree(data);
-                        String type = event.path("type").asText("");
-
-                        if ("error".equalsIgnoreCase(type)) {
-                            String errorMsg = event.path("error").asText(
-                                event.path("message").asText("Unknown stream error"));
-                            onTool.accept("ERROR: " + errorMsg);
-                            continue;
-                        }
-
-                        if ("tool_start".equalsIgnoreCase(type)) {
-                            String toolName = event.path("toolName").asText("");
-                            if (!toolName.isEmpty()) {
-                                onTool.accept("\uD83D\uDD27 " + toolName);
-                            }
-                            continue;
-                        }
-
-                        if ("tool_result".equalsIgnoreCase(type)) {
-                            String toolName = event.path("toolName").asText("");
-                            String toolResult = event.path("toolResult").asText("");
-                            String preview = toolResult.length() > 200
-                                ? toolResult.substring(0, 200) + "\u2026" : toolResult;
-                            onTool.accept("\u2705 " + toolName + ": " + preview);
-                            continue;
-                        }
-
-                        if ("done".equalsIgnoreCase(type)) {
-                            onDone.run();
-                            return;
-                        }
-
-                        // Default: token event
-                        JsonNode tokenNode = event.get("token");
-                        if (tokenNode != null && !tokenNode.isNull()) {
-                            String token = tokenNode.asText();
-                            onToken.accept(token);
-                        }
-                    } catch (Exception parseEx) {
-                        log.warn("Failed to parse SSE data line: {}", data, parseEx);
-                    }
+                    return;
                 }
-                // Stream ended without explicit "done" event
-                onDone.run();
-            }
+
+                if ("tool_result".equalsIgnoreCase(type)) {
+                    String toolName = event.path("toolName").asText("");
+                    String toolResult = event.path("toolResult").asText("");
+                    String preview = toolResult.length() > 200
+                        ? toolResult.substring(0, 200) + "\u2026" : toolResult;
+                    onTool.accept("\u2705 " + toolName + ": " + preview);
+                    return;
+                }
+
+                // Default: token event
+                JsonNode tokenNode = event.get("token");
+                if (tokenNode != null && !tokenNode.isNull()) {
+                    String token = tokenNode.asText();
+                    onToken.accept(token);
+                }
+            });
+            onDone.run();
         } catch (BackendUnavailableException e) {
             throw e;
         } catch (Exception e) {
@@ -424,7 +384,6 @@ public class BackendClient {
             }
             log.error("chatStream failed for sessionId={}: {}", sessionId, e.getMessage());
             onTool.accept("ERROR: " + e.getMessage());
-            onDone.run();
         }
     }
 

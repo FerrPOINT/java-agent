@@ -247,18 +247,15 @@ public class CliReplRunner implements CommandLineRunner {
             backendClient.chatStream(message, sessionId, cliState,
                 renderer::accept,
                 toolInfo -> System.out.println("\n  [" + toolInfo + "]"),
-                () -> {
-                    renderer.flush();
-                    System.out.println();
-                }
+                () -> cliState.setQueuedPrompt(null)
             );
-            // /queue semantics: the queued prompt applies to exactly one turn
-            // (cleared only on success — on failure it stays queued).
-            cliState.setQueuedPrompt(null);
         } catch (BackendUnavailableException e) {
             System.out.println("\nBackend unavailable. Is the backend running on " +
                 backendClient.getBackendUrl() + "?");
-            System.out.println("Your message was not sent. Please retry when the backend is available.");
+            System.out.println("The response could not be completed.");
+        } finally {
+            renderer.flush();
+            System.out.println();
         }
     }
 
