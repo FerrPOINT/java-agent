@@ -58,7 +58,7 @@ class McpToolHandlerTest {
             .annotations(McpSchema.ToolAnnotations.builder().readOnlyHint(true).build()).build();
         var current = McpSchema.Tool.builder("tool").description("changed definition").build();
         String fullName = McpLifecycleManager.mcpPrefixedToolName("srv", "tool");
-        trust.recordServerTools("srv", "untrusted", Map.of(fullName, true), Map.of(fullName, observed));
+        trust.recordServerTools("srv", "untrusted", Map.of(fullName, observed));
         var nativeCall = new com.azhukov.agent.core.model.ToolCall("native", fullName, "{}");
         String aliasArgs = "{\"server_name\":\"srv\",\"tool_name\":\"tool\"}";
         var aliasCall = new com.azhukov.agent.core.model.ToolCall("alias", "mcp_tool", aliasArgs);
@@ -76,7 +76,7 @@ class McpToolHandlerTest {
         assertThat(aliasHandler.execute(aliasArgs, null, null).success()).isFalse();
         verify(client, times(0)).callTool(any());
 
-        trust.recordServerTools("srv", "untrusted", Map.of(fullName, false), Map.of(fullName, current));
+        trust.recordServerTools("srv", "untrusted", Map.of(fullName, current));
         var approved = guard.mcpAdmission(aliasCall);
         assertThat(guard.requiresApproval(aliasCall, approved)).isTrue();
         assertThat(aliasHandler.execute(aliasArgs, null, null, approved).success()).isTrue();

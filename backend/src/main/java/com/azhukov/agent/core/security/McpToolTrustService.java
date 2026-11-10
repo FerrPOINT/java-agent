@@ -3,7 +3,6 @@ package com.azhukov.agent.core.security;
 import io.modelcontextprotocol.spec.McpSchema;
 import org.springframework.stereotype.Component;
 
-import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -32,22 +31,14 @@ public class McpToolTrustService {
         return TRUST_UNTRUSTED;
     }
 
-    public void recordServerTools(String serverName, String trust, Map<String, Boolean> readOnlyByFullToolName) {
-        recordServerTools(serverName, trust, readOnlyByFullToolName, Map.of());
-    }
-
-    public void recordServerTools(String serverName, String trust, Map<String, Boolean> readOnlyByFullToolName,
-                                  Map<String, McpSchema.Tool> definitions) {
+    public void recordServerTools(String serverName, String trust, Map<String, McpSchema.Tool> definitions) {
         if (serverName == null || serverName.isBlank()) {
             return;
         }
         String normalizedTrust = normalizeServerTrust(trust);
         serverTrust.put(serverName, normalizedTrust);
 
-        Map<String, Boolean> tools = readOnlyByFullToolName == null
-            ? Map.of()
-            : new LinkedHashMap<>(readOnlyByFullToolName);
-        Set<String> newToolNames = Set.copyOf(tools.keySet());
+        Set<String> newToolNames = Set.copyOf(definitions.keySet());
         Set<String> previousToolNames = serverToolNames.put(serverName, newToolNames);
         if (previousToolNames != null) {
             for (String oldToolName : previousToolNames) {
@@ -56,12 +47,8 @@ public class McpToolTrustService {
                 }
             }
         }
-        for (Map.Entry<String, Boolean> entry : tools.entrySet()) {
-            toolMetadata.put(entry.getKey(), new ToolTrustMetadata(
-                serverName,
-                normalizedTrust,
-                Boolean.TRUE.equals(entry.getValue()), definitions.get(entry.getKey())));
-        }
+        definitions.forEach((name, definition) ->
+            toolMetadata.put(name, ToolTrustMetadata.nativeTool(serverName, normalizedTrust, definition)));
     }
 
     public void recordTool(String serverName, String trust, String fullToolName, boolean readOnlyHint) {
@@ -92,6 +79,12 @@ public class McpToolTrustService {
     }
 
     public record ToolTrustMetadata(String serverName, String trust, boolean readOnlyHint, McpSchema.Tool definition) {
+        public static ToolTrustMetadata nativeTool(String serverName, String trust, McpSchema.Tool definition) {
+            boolean readOnly = definition.annotations() != null
+                && Boolean.TRUE.equals(definition.annotations().readOnlyHint());
+            return new ToolTrustMetadata(serverName, normalizeServerTrust(trust), readOnly, definition);
+        }
+
         public boolean requiresApproval() {
             return TRUST_UNTRUSTED.equals(trust) && !readOnlyHint;
         }

@@ -1005,9 +1005,9 @@ class McpLifecycleManagerNewFeaturesTest {
             .annotations(McpSchema.ToolAnnotations.builder().readOnlyHint(true).build())
             .build();
 
-        assertThat(McpLifecycleManager.isReadOnlyHint(missing)).isFalse();
-        assertThat(McpLifecycleManager.isReadOnlyHint(falseHint)).isFalse();
-        assertThat(McpLifecycleManager.isReadOnlyHint(trueHint)).isTrue();
+        assertThat(com.azhukov.agent.core.security.McpToolTrustService.ToolTrustMetadata.nativeTool("srv", "untrusted", missing).readOnlyHint()).isFalse();
+        assertThat(com.azhukov.agent.core.security.McpToolTrustService.ToolTrustMetadata.nativeTool("srv", "untrusted", falseHint).readOnlyHint()).isFalse();
+        assertThat(com.azhukov.agent.core.security.McpToolTrustService.ToolTrustMetadata.nativeTool("srv", "untrusted", trueHint).readOnlyHint()).isTrue();
     }
 
     @Test

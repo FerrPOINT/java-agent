@@ -1366,18 +1366,16 @@ public class McpLifecycleManager {
         if (mcpToolTrustService == null || serverName == null || tools == null) {
             return;
         }
-        Map<String, Boolean> readOnlyByFullName = new LinkedHashMap<>();
         Map<String, McpSchema.Tool> definitions = new LinkedHashMap<>();
         for (McpSchema.Tool tool : tools) {
             if (tool == null || tool.name() == null || tool.name().isBlank()) {
                 continue;
             }
             String name = mcpPrefixedToolName(serverName, tool.name());
-            readOnlyByFullName.put(name, isReadOnlyHint(tool));
             definitions.put(name, tool);
         }
         mcpToolTrustService.recordServerTools(serverName, server == null ? null : server.getTrust(),
-            readOnlyByFullName, definitions);
+            definitions);
     }
 
     private void recordGeneratedMcpUtilityToolTrustMetadata(String serverName, String fullName) {
@@ -1387,12 +1385,6 @@ public class McpLifecycleManager {
         McpServerState state = clients.get(serverName);
         AgentProperties.McpProperties.ServerProperties server = state == null ? null : state.properties();
         mcpToolTrustService.recordTool(serverName, server == null ? null : server.getTrust(), fullName, true);
-    }
-
-    static boolean isReadOnlyHint(McpSchema.Tool tool) {
-        return tool != null
-            && tool.annotations() != null
-            && Boolean.TRUE.equals(tool.annotations().readOnlyHint());
     }
 
     public List<McpServerInfo> listServers() {
@@ -1696,8 +1688,7 @@ public class McpLifecycleManager {
         var definition = state.admittedTools().stream().filter(tool -> toolName.equals(tool.name())).findFirst()
             .orElseThrow(() -> new IllegalStateException("MCP tool is not admitted: " + toolName));
         if (modelCall) {
-            String trust = McpToolTrustService.normalizeServerTrust(state.properties().getTrust());
-            var current = new ToolTrustMetadata(serverName, trust, isReadOnlyHint(definition), definition);
+            var current = ToolTrustMetadata.nativeTool(serverName, state.properties().getTrust(), definition);
             if (admission != null && !admission.equals(current)) {
                 throw new IllegalStateException("MCP tool changed after admission: " + toolName);
             }
@@ -1709,13 +1700,12 @@ public class McpLifecycleManager {
             return callMcpWithTimeout(state, "tool '" + toolName + "'",
                 () -> {
                     if (modelCall && clients.get(serverName) != state) {
-                        throw new IllegalStateException("MCP connection changed after admission: " + toolName);
+                        throw new IllegalStateException("MCP tool changed before dispatch: " + toolName);
                     }
                     return state.client().callTool(new McpSchema.CallToolRequest(toolName, args));
                 }, startedAt);
         } catch (Exception e) {
-            String serverName = serverNameOf(state);
-            if (serverName != null && !isAuthError(e) && isConnectionError(e)) {
+            if (!isAuthError(e) && isConnectionError(e)) {
                 retireConnection(serverName, state);
             }
             throw e;

@@ -1,5 +1,6 @@
 package com.azhukov.agent.core.security;
 
+import io.modelcontextprotocol.spec.McpSchema;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
@@ -24,9 +25,9 @@ class McpToolTrustServiceTest {
         McpToolTrustService service = new McpToolTrustService();
 
         service.recordServerTools("srv", "untrusted", Map.of(
-            "mcp__srv__list_repos", true,
-            "mcp__srv__delete_repo", false,
-            "mcp__srv__missing_hint", false));
+            "mcp__srv__list_repos", tool("list_repos", true),
+            "mcp__srv__delete_repo", tool("delete_repo", false),
+            "mcp__srv__missing_hint", McpSchema.Tool.builder("missing_hint").build()));
 
         assertThat(service.requiresApproval("mcp__srv__list_repos")).isFalse();
         assertThat(service.requiresApproval("mcp__srv__delete_repo")).isTrue();
@@ -47,11 +48,15 @@ class McpToolTrustServiceTest {
         McpToolTrustService service = new McpToolTrustService();
 
         service.recordServerTools("srv", "untrusted", Map.of(
-            "mcp__srv__old", false,
-            "mcp__srv__new", true));
-        service.recordServerTools("srv", "untrusted", Map.of("mcp__srv__new", true));
+            "mcp__srv__old", tool("old", false),
+            "mcp__srv__new", tool("new", true)));
+        service.recordServerTools("srv", "untrusted", Map.of("mcp__srv__new", tool("new", true)));
 
         assertThat(service.metadata("mcp__srv__old")).isNull();
         assertThat(service.metadata("mcp__srv__new")).isNotNull();
+    }
+    private static McpSchema.Tool tool(String name, boolean readOnly) {
+        return McpSchema.Tool.builder(name)
+            .annotations(McpSchema.ToolAnnotations.builder().readOnlyHint(readOnly).build()).build();
     }
 }
