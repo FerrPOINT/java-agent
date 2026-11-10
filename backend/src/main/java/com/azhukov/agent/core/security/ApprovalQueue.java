@@ -214,6 +214,12 @@ public class ApprovalQueue {
     public boolean awaitDecision(UUID sessionId, long timeoutMs) {
         Request current = pending.get(sessionId);
         if (current == null) return true;
+        synchronized (current) {
+            if (pending.get(sessionId) != current) return true;
+            if (isUndecided(current.approval) && isExpired(current.approval)) {
+                decide(current, false, "Auto-denied: timeout");
+            }
+        }
         try {
             return current.decided.await(timeoutMs, TimeUnit.MILLISECONDS);
         } catch (InterruptedException e) {
