@@ -11,9 +11,10 @@ manifest digest для JDK и JRE. Bot/CLI больше не выбирают JD
 Gradle image: Gradle загружается существующим committed wrapper.
 Backend standalone wrapper 9.8.2 используется в backend CI и сборке backend Docker.
 Корневой wrapper 9.6.1 используется в многомодульном workspace. Оба рецепта
-собирают backend, но выпускают JAR с разными именами и значениями
-`Implementation-Title`. Переход на один рецепт требует сохранить
-контракт поставки и обновить его потребителей.
+собирают backend, а их runtime-зависимости и содержимое BOOT-INF совпадают.
+Артефакты различаются именем, полями manifest и build-info. Корневая сборка
+также включает LICENSE, NOTICE и THIRD_PARTY_NOTICES в META-INF. Переход на
+один рецепт требует согласовать состав поставки и обновить её потребителей.
 
 `setup-java@v6` сравнивает Adoptium `version_data.semver`, поэтому используется
 `25.0.4+101.0.LTS`; фактический runtime дополнительно проверяется в CI.
