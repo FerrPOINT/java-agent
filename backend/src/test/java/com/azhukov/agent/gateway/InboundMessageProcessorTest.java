@@ -416,6 +416,48 @@ class InboundMessageProcessorTest {
     }
 
     @Test
+    void interruptDoesNotCancelOtherTurnWhileGatewayWaitsForSessionLock() throws Exception {
+        agentProperties.getGateway().getTelegram().setAllowByDefault(true);
+        agentProperties.getGateway().setBusyInputMode("interrupt");
+        var source = new SessionSource(Platform.TELEGRAM, CHAT_ID, USER_ID, USERNAME, USERNAME);
+        when(sessionResolver.resolve(source)).thenReturn(new Session(SESSION_ID, USER_ID, "Review",
+            MODEL_PROVIDER, MODEL_NAME, null, Map.of()));
+        var token = new com.azhukov.agent.core.agent.InterruptToken();
+        @SuppressWarnings("unchecked")
+        ObjectProvider<com.azhukov.agent.core.agent.InterruptToken> tokens = mock(ObjectProvider.class);
+        when(tokens.getIfAvailable()).thenReturn(token);
+        processor = new InboundMessageProcessor(sessionResolver, agentRuntime, routingServiceProvider,
+            messagePersistenceService, null, agentProperties, new com.azhukov.agent.core.agent.SteerBuffer(),
+            tokens, null);
+        var waiter = new java.util.concurrent.CountDownLatch(1);
+        var locks = new com.azhukov.agent.core.agent.SessionTurnLockManager() {
+            @Override public boolean tryAcquire(UUID id, long timeout) {
+                if (timeout == 30) waiter.countDown();
+                return super.tryAcquire(id, timeout);
+            }
+        };
+        processor.setTurnLocks(locks);
+        when(agentRuntime.runTurn(any(Session.class), any(String.class), eq(List.of())))
+            .thenReturn(new TurnResult(List.of(Message.assistant(REPLY_TEXT, 1)), true, null));
+        when(routingService.send(Platform.TELEGRAM, source, REPLY_TEXT))
+            .thenReturn(CompletableFuture.completedFuture(new SendResult(true, "fixture", null)));
+
+        assertThat(locks.tryAcquire(SESSION_ID, 1)).isTrue();
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var first = executor.submit(() -> processor.accept(messageEvent(source, "first")));
+            try {
+                assertThat(waiter.await(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                var second = executor.submit(() -> processor.accept(messageEvent(source, "second")));
+                second.get(2, java.util.concurrent.TimeUnit.SECONDS);
+                assertThat(token.isCancelled(SESSION_ID)).isFalse();
+            } finally {
+                locks.release(SESSION_ID);
+            }
+            first.get(3, java.util.concurrent.TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
     void messageStillRunsWhenActiveTurnFinishesBeforeEnqueue() throws Exception {
         agentProperties.getGateway().getTelegram().setAllowByDefault(true);
         agentProperties.getGateway().setBusyInputMode("interrupt");
