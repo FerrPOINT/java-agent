@@ -172,12 +172,30 @@ class AgentStreamingServiceSseErrorTest {
         }
     }
 
-    @Test
-    void emptyLastAttemptReportsBudgetExhaustionWithoutAnotherModelCall() throws Exception {
-        useRealBudget(1);
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"1, stop, false", "10, stop, false", "1, tool_calls, false",
+        "1, stop, true", "1, tool_calls, true"})
+    void budgetExhaustionKeepsVisibleTextAndReportsTheLimit(int maxTurns, String finishReason,
+                                                           boolean precedingFragment) throws Exception {
+        properties.getCore().setMaxTurns(maxTurns);
+        int maxCalls = precedingFragment ? 2 : 1;
+        useRealBudget(maxCalls);
+        when(sessionRepository.findMessageParentId(SESSION_ID)).thenReturn(Optional.of(SESSION_ID));
+        String earlier = "The provider already showed the first fragment. ".repeat(12).stripTrailing();
+        String current = "tool_calls".equals(finishReason)
+            ? "The provider already showed an explanation. ".repeat(12).stripTrailing() : "";
+        var calls = new AtomicInteger();
         doAnswer(call -> {
             StreamingResponseHandler handler = call.getArgument(3);
-            handler.onComplete();
+            if (calls.incrementAndGet() == 1 && precedingFragment) {
+                handler.onToken(earlier);
+                handler.onComplete("length", 12L);
+            } else {
+                if (!current.isEmpty()) {
+                    handler.onToken(current);
+                }
+                handler.onComplete(finishReason, 12L);
+            }
             return null;
         }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
@@ -185,10 +203,19 @@ class AgentStreamingServiceSseErrorTest {
         streamingService.streamTurn(ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L), emitter);
         emitter.awaitDone();
 
-        verify(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+        assertThat(calls).hasValue(maxCalls);
         verify(modelClient, org.mockito.Mockito.never()).complete(any(List.class), any(List.class), any());
         assertThat(emitter.events).anyMatch(event ->
             "token".equals(event.name) && event.data.contains("Iteration budget exhausted"));
+        assertThat(emitter.events).noneMatch(event -> event.data.contains("Reached maximum turns"));
+        String expectedVisible = (precedingFragment ? earlier : "") + current;
+        if (!expectedVisible.isEmpty()) {
+            verify(messageRepository, org.mockito.Mockito.timeout(2000)).save(
+                org.mockito.ArgumentMatchers.argThat(message -> expectedVisible.equals(message.getContent())));
+        }
+        verify(messageRepository, org.mockito.Mockito.timeout(2000)).save(
+            org.mockito.ArgumentMatchers.argThat(message -> message.getContent() != null
+                && message.getContent().contains("Iteration budget exhausted")));
     }
 
     private void useRealBudget(int maxModelCalls) {

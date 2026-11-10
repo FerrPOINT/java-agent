@@ -230,7 +230,7 @@ class AgentStreamingInterruptTest {
             interruptToken.cancel(SESSION_ID);
             handler.onToken("second");  // should be skipped due to interrupt check
             handler.onToken("third");   // should be skipped
-            handler.onComplete(finishReason);
+            handler.onComplete(finishReason, 1L);
             return null;
         }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 

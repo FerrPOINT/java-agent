@@ -658,6 +658,7 @@ public class AgentStreamingService {
             StringBuilder truncatedParts = new StringBuilder();
             var streamEmptyGuard = new com.azhukov.agent.core.agent.EmptyResponseGuard();
             ChatResponse response;
+            TurnExitReason exitReason = TurnExitReason.PENDING_TOOL_RESULT;
             final UUID sessionId = session.id();
             while (true) {
                 UserContext.requireCurrentAccess();
@@ -1222,8 +1223,11 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                 // the response is NOT truncated — the model just produced reasoning only.
                 boolean isEmpty = (contentBuilder.length() == 0) && collectedToolCalls.isEmpty()
                     && !scrubber.hadThinkContent();
-                if (!canRequestMore && truncatedParts.isEmpty() && (isEmpty || droppedToolCall)) {
-                    continue agentLoop;
+                if (!canRequestMore && (isEmpty || droppedToolCall)) {
+                    response = ChatResponse.text(truncatedParts.toString() + contentBuilder)
+                        .withReasoning(capturedReasoning.get());
+                    exitReason = TurnExitReason.BUDGET_EXHAUSTED;
+                    break;
                 }
                 streamEmptyGuard.recordEmptyAttempt(
                     properties.getModel().getModelName(),
@@ -1380,13 +1384,26 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                         + " попыток продолжения. Попробуйте переформулировать запрос.";
                     eventHelper().send(emitter, new StreamEvent("token", errorMsg, null, null), streamCtx);
                 }
-                turnMessages.add(Message.assistant(response.content(), turnIndex, response.reasoning()));
+                if (exitReason == TurnExitReason.BUDGET_EXHAUSTED) {
+                    if (response.hasContent()) {
+                        turnMessages.add(Message.assistant(response.content(), turnIndex, response.reasoning()));
+                    }
+                    var status = iterationBudget.status(budget);
+                    String reason = status == null ? "iteration budget exhausted" : status.reason();
+                    String notice = turnExecutor().formatBudgetExhaustionMessage(budget, reason);
+                    turnMessages.add(Message.assistant(notice, turnIndex));
+                    eventHelper().send(emitter, new StreamEvent("token",
+                        response.hasContent() ? "\n\n" + notice : notice, null, null), streamCtx);
+                } else {
+                    turnMessages.add(Message.assistant(response.content(), turnIndex, response.reasoning()));
+                }
                 triggerBackgroundReview(session, turnMessages);
                 eventHelper().sendMetadataEvent(emitter, session, streamCtx, budget.totalInputTokens(),
                     response.reasoning(), streamModel.modelName(primaryModel));
                 eventHelper().send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                 eventHelper().safeComplete(emitter);
-                if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
+                if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew,
+                    midTurnPersistenceCallback != null ? persistedUpTo : 0, exitReason);
                 return;
             }
 
