@@ -254,6 +254,17 @@ class TerminalToolTest {
     }
 
     @Test
+    void xtraceDoesNotEchoInternalStateCapture() throws Exception {
+        var current = session();
+        String command = "export TRACE_SETTING=synthetic-capture-value; set -x; printf visible";
+        var result = newTool(properties()).execute(
+            JSON.writeValueAsString(Map.of("command", command)), null, current);
+        assertThat(result.success()).as(result.error()).isTrue();
+        assertThat(TerminalTool.trackedEnv(current.id())).containsEntry("TRACE_SETTING", "synthetic-capture-value");
+        assertThat(result.content()).contains("visible").doesNotContain("synthetic-capture-value");
+    }
+
+    @Test
     void shellStateFileContainsOnlyAllowedExports() {
         var captured = new java.util.concurrent.atomic.AtomicReference<String>();
         when(redactor.redact(anyString())).thenAnswer(call -> {
