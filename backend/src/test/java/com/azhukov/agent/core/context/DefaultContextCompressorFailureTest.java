@@ -20,6 +20,112 @@ import static org.mockito.Mockito.when;
 class DefaultContextCompressorFailureTest {
 
     @Test
+    @Tag("slow")
+    void smallerCeilingInterruptsTheActiveModelCall() throws Exception {
+        var model = mock(com.azhukov.agent.core.client.ModelClient.class);
+        var interrupted = new java.util.concurrent.CountDownLatch(1);
+        when(model.complete(any(), any())).thenAnswer(invocation -> {
+            try {
+                Thread.sleep(4_000);
+            } catch (InterruptedException e) {
+                interrupted.countDown();
+                throw e;
+            }
+            return ChatResponse.text("late model summary");
+        });
+        var props = new AgentProperties();
+        props.getContext().setProtectFirstN(1);
+        props.getContext().setProtectLastN(1);
+        props.getCompression().setSummaryTimeoutSeconds(10);
+        props.getCompression().setTotalCeilingSeconds(1);
+        var compressor = new DefaultContextCompressor(model, null, props);
+        var result = compressor.compress(List.of(
+            Message.user("a".repeat(2000)),
+            Message.assistant("b".repeat(2000), 1),
+            Message.user("filler q ".repeat(100)),
+            Message.assistant("filler a ".repeat(100), 2),
+            Message.user("current")
+        ), 100);
+
+        assertThat(interrupted.await(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        assertThat(result.getLast().content()).isEqualTo("current");
+        assertThat(result).noneMatch(message -> "late model summary".equals(message.content()));
+    }
+
+    @Test
+    @Tag("slow")
+    void timeoutCancelsTheProviderHttpRequest() throws Exception {
+        try (var server = new java.net.ServerSocket(0, 1, java.net.InetAddress.getLoopbackAddress());
+             var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            server.setSoTimeout(4_000);
+            var disconnected = executor.submit(() -> {
+                try (var connection = server.accept()) {
+                    connection.setSoTimeout(4_000);
+                    var request = new java.io.BufferedInputStream(connection.getInputStream());
+                    var line = new StringBuilder();
+                    int contentLength = 0;
+                    for (int c; (c = request.read()) >= 0;) {
+                        if (c != '\n') {
+                            if (c != '\r') line.append((char) c);
+                            continue;
+                        }
+                        if (line.isEmpty()) break;
+                        String header = line.toString().toLowerCase(java.util.Locale.ROOT);
+                        if (header.startsWith("content-length:")) {
+                            contentLength = Integer.parseInt(header.substring("content-length:".length()).trim());
+                        }
+                        line.setLength(0);
+                    }
+                    assertThat(contentLength).isPositive();
+                    assertThat(request.readNBytes(contentLength)).hasSize(contentLength);
+                    return request.read() == -1;
+                }
+            });
+            var props = new AgentProperties();
+            props.getModel().setApiKey("fixture-key");
+            props.getModel().setBaseUrl("http://localhost:" + server.getLocalPort() + "/v1");
+            props.getModel().setModelName("fixture-model");
+            props.getContext().setProtectFirstN(1);
+            props.getContext().setProtectLastN(1);
+            props.getCompression().setSummaryTimeoutSeconds(10);
+            props.getCompression().setTotalCeilingSeconds(2);
+            var model = new com.azhukov.agent.client.langchain4j.LangChain4jModelClient(
+                props, null, null, null);
+            var compressor = new DefaultContextCompressor(model, null, props);
+
+            var result = compressor.compress(List.of(
+                Message.user("a".repeat(2000)), Message.assistant("b".repeat(2000), 1),
+                Message.user("filler q ".repeat(100)), Message.assistant("filler a ".repeat(100), 2),
+                Message.user("current")), 100);
+
+            assertThat(disconnected.get(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            assertThat(result.getLast().content()).isEqualTo("current");
+        }
+    }
+
+    @Test
+    void disabledDeadlineKeepsTheProviderCallOnTheCallerThread() {
+        var model = mock(com.azhukov.agent.core.client.ModelClient.class);
+        Thread caller = Thread.currentThread();
+        when(model.complete(any(), any())).thenAnswer(invocation -> {
+            assertThat(Thread.currentThread()).isSameAs(caller);
+            return ChatResponse.text("summary on caller thread");
+        });
+        var props = new AgentProperties();
+        props.getContext().setProtectFirstN(1);
+        props.getContext().setProtectLastN(1);
+        props.getCompression().setSummaryTimeoutSeconds(0);
+        props.getCompression().setTotalCeilingSeconds(1);
+
+        var result = new DefaultContextCompressor(model, null, props).compress(List.of(
+            Message.user("a".repeat(2000)), Message.assistant("b".repeat(2000), 1),
+            Message.user("filler q ".repeat(100)), Message.assistant("filler a ".repeat(100), 2),
+            Message.user("current")), 100);
+
+        assertThat(result).anyMatch(message -> message.content() != null && message.content().contains("summary on caller thread"));
+    }
+
+    @Test
     void compress_fallsBackToTruncationWhenModelFails() {
         var model = mock(com.azhukov.agent.core.client.ModelClient.class);
         Mockito.when(model.complete(Mockito.any(), Mockito.any())).thenThrow(new RuntimeException("boom"));
