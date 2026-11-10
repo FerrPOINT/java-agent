@@ -1,6 +1,7 @@
 package com.azhukov.agent.client.mcp;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.persistence.entity.McpServerConfigEntity;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolDefinition;
@@ -219,27 +220,24 @@ public class McpLifecycleManager {
             log.info("MCP is disabled.");
             return;
         }
-        for (AgentProperties.McpProperties.ServerProperties server : effectiveServers()) {
-            if (!server.isEnabled()) {
-                log.info("Skipping disabled MCP server {}", server.getName());
+        for (var server : effectiveServers()) {
+            if (!server.properties().isEnabled()) {
+                log.info("Skipping disabled MCP server {}", server.properties().getName());
                 continue;
             }
-            connect(server);
+            connect(server, true);
         }
     }
 
-    /**
-     * YAML-configured servers plus persisted dashboard configs (mcp_server_configs,
-     * profile "default"). A persisted entry with the same name overrides the YAML
-     * one (the dashboard is the more specific, revisioned source); entries are
-     * de-duplicated by name. Without this merge, servers added through the
-     * dashboard never connect after a restart.
-     */
-    List<AgentProperties.McpProperties.ServerProperties> effectiveServers() {
-        List<AgentProperties.McpProperties.ServerProperties> merged = new java.util.ArrayList<>();
+    record ConfiguredServer(AgentProperties.McpProperties.ServerProperties properties,
+                            McpServerConfigEntity schemaConfig) {}
+
+    /** YAML owns duplicate names. Dashboard-only servers retain their source revision. */
+    List<ConfiguredServer> effectiveServers() {
+        List<ConfiguredServer> merged = new ArrayList<>();
         java.util.Set<String> names = new java.util.HashSet<>();
         for (AgentProperties.McpProperties.ServerProperties server : properties.getMcp().getServers()) {
-            merged.add(server);
+            merged.add(new ConfiguredServer(server, null));
             names.add(server.getName());
         }
         var store = configStoreProvider == null ? null : configStoreProvider.getIfAvailable();
@@ -247,7 +245,7 @@ public class McpLifecycleManager {
             try {
                 for (var entity : store.list("default")) {
                     if (entity.getName() != null && names.add(entity.getName())) {
-                        merged.add(toServerProperties(entity));
+                        merged.add(new ConfiguredServer(toServerProperties(entity), entity));
                     }
                 }
             } catch (Exception e) {
@@ -258,7 +256,7 @@ public class McpLifecycleManager {
     }
 
     private AgentProperties.McpProperties.ServerProperties toServerProperties(
-            com.azhukov.agent.persistence.entity.McpServerConfigEntity entity) {
+            McpServerConfigEntity entity) {
         AgentProperties.McpProperties.ServerProperties server = new AgentProperties.McpProperties.ServerProperties();
         server.setEnabled(entity.isEnabled());
         server.setName(entity.getName());
@@ -308,12 +306,12 @@ public class McpLifecycleManager {
     }
 
     public void connect(AgentProperties.McpProperties.ServerProperties server) {
-        connect(server, true);
+        connect(new ConfiguredServer(server, null), true);
     }
 
     /** @param allowLazy false forces a real connect after cached registration. */
-    void connect(AgentProperties.McpProperties.ServerProperties server, boolean allowLazy) {
-        String name = server.getName();
+    void connect(ConfiguredServer server, boolean allowLazy) {
+        String name = server.properties().getName();
         var token = new CompletableFuture<Void>();
         CompletableFuture<Void> existing;
         synchronized (clients) {
@@ -352,11 +350,11 @@ public class McpLifecycleManager {
         }
     }
 
-    private void openConnection(AgentProperties.McpProperties.ServerProperties server,
-                                CompletableFuture<Void> token) {
+    private void openConnection(ConfiguredServer configured, CompletableFuture<Void> token) {
+        var server = configured.properties();
         String name = server.getName();
         var store = configStoreProvider == null ? null : configStoreProvider.getIfAvailable();
-        var config = findSchemaConfig(store, name);
+        var config = configured.schemaConfig();
         McpSyncClient client = null;
         boolean published = false;
         try {
@@ -365,6 +363,7 @@ public class McpLifecycleManager {
             var capabilities = client.getServerCapabilities();
             boolean hasTools = capabilities == null || capabilities.tools() != null;
             List<McpSchema.Tool> tools = hasTools ? listToolsWithPagination(client) : List.of();
+            var registeredTools = selectedMcpTools(server, tools);
             synchronized (clients) {
                 if (connectionsInFlight.get(name) != token || shutdownRequested.get()) {
                     return;
@@ -376,7 +375,7 @@ public class McpLifecycleManager {
                     if (cachedTools != null) {
                         unregisterTools(name, cachedTools);
                     }
-                    registerTools(name, server, capabilities, tools);
+                    registerTools(name, server, capabilities, registeredTools);
                     if (hasTools) {
                         scheduleToolRefresh(name);
                     }
@@ -391,17 +390,17 @@ public class McpLifecycleManager {
                     }
                 }
             }
-            if (config != null) {
+            if (store != null && config != null) {
                 try {
                     store.storeSchema(config.getId(), config.getConfigRevision(),
-                        objectMapper.writeValueAsString(selectedMcpTools(server, tools)), null, null);
+                        objectMapper.writeValueAsString(registeredTools), null, null);
                 } catch (Exception e) {
                     log.debug("MCP schema cache write failed for '{}': {}", name, e.getMessage());
                 }
             }
             log.info("Connected to MCP server {} ({}) with {} tools", name, server.getTransport(), tools.size());
         } catch (RuntimeException e) {
-            if (config != null && connectionsInFlight.get(name) == token) {
+            if (store != null && config != null && connectionsInFlight.get(name) == token) {
                 try {
                     store.recordSchemaError(config.getId(), config.getConfigRevision(), sanitizeError(e.getMessage()));
                 } catch (Exception ignored) {
@@ -432,9 +431,10 @@ public class McpLifecycleManager {
      * persisted schema cache without spawning the server process. Returns true
      * when the lazy registration succeeded (connect() must not spawn).
      */
-    private boolean lazyRegisterFromCache(AgentProperties.McpProperties.ServerProperties server,
-                                          CompletableFuture<Void> token) {
-        if (!properties.getMcp().isLazyStartup()) {
+    private boolean lazyRegisterFromCache(ConfiguredServer configured, CompletableFuture<Void> token) {
+        var server = configured.properties();
+        var configEntity = configured.schemaConfig();
+        if (!properties.getMcp().isLazyStartup() || configEntity == null) {
             return false;
         }
         var store = configStoreProvider == null ? null : configStoreProvider.getIfAvailable();
@@ -442,10 +442,6 @@ public class McpLifecycleManager {
             return false;
         }
         try {
-            var configEntity = store.find("default", server.getName()).orElse(null);
-            if (configEntity == null) {
-                return false;  // not a dashboard-managed server — no cached identity
-            }
             var cache = store.cachedSchema(configEntity.getId(), configEntity.getConfigRevision())
                 .filter(store::isFresh)
                 .orElse(null);
@@ -479,19 +475,6 @@ public class McpLifecycleManager {
         } catch (Exception e) {
             log.debug("Lazy registration for MCP server {} unavailable: {}", server.getName(), e.getMessage());
             return false;
-        }
-    }
-
-    private com.azhukov.agent.persistence.entity.McpServerConfigEntity findSchemaConfig(
-            McpConfigStore store, String name) {
-        if (store == null) {
-            return null;
-        }
-        try {
-            return store.find("default", name).orElse(null);
-        } catch (Exception e) {
-            log.debug("MCP schema config unavailable for '{}': {}", name, e.getMessage());
-            return null;
         }
     }
 
@@ -988,9 +971,9 @@ public class McpLifecycleManager {
         }, backoff, TimeUnit.SECONDS);
     }
 
-    private AgentProperties.McpProperties.ServerProperties enabledServer(String name) {
+    private ConfiguredServer enabledServer(String name) {
         return effectiveServers().stream()
-            .filter(server -> name.equals(server.getName()) && server.isEnabled())
+            .filter(server -> name.equals(server.properties().getName()) && server.properties().isEnabled())
             .findFirst().orElse(null);
     }
 
@@ -1178,8 +1161,7 @@ public class McpLifecycleManager {
     }
 
     private void registerTools(String serverName, AgentProperties.McpProperties.ServerProperties server,
-                               McpSchema.ServerCapabilities capabilities, List<McpSchema.Tool> tools) {
-        List<McpSchema.Tool> registeredTools = selectedMcpTools(server, tools);
+                               McpSchema.ServerCapabilities capabilities, List<McpSchema.Tool> registeredTools) {
         recordMcpToolTrustMetadata(serverName, server, registeredTools);
         Set<String> nativeFullNames = registeredTools.stream()
             .map(tool -> mcpPrefixedToolName(serverName, tool.name()))

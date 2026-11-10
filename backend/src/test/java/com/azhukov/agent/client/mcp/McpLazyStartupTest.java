@@ -44,6 +44,7 @@ class McpLazyStartupTest {
 
     private McpLifecycleManager manager;
     private AgentProperties.McpProperties.ServerProperties server;
+    private McpLifecycleManager.ConfiguredServer configured;
 
     @BeforeEach
     @SuppressWarnings("unchecked")
@@ -61,14 +62,16 @@ class McpLazyStartupTest {
         server.setTransport("http");
         server.setBaseUrl("http://localhost:9999");
         properties.getMcp().setEnabled(true);
-        properties.getMcp().getServers().add(server);
-
         McpServerConfigEntity configEntity = new McpServerConfigEntity();
         configEntity.setId(UUID.randomUUID());
         configEntity.setProfile("default");
         configEntity.setName("cached-server");
         configEntity.setConfigRevision(3);
-        when(configStore.find("default", "cached-server")).thenReturn(Optional.of(configEntity));
+        configEntity.setEnabled(true);
+        configEntity.setTransport("http");
+        configEntity.setBaseUrl(server.getBaseUrl());
+        when(configStore.list("default")).thenReturn(List.of(configEntity));
+        configured = new McpLifecycleManager.ConfiguredServer(server, configEntity);
     }
 
     private McpSchemaCacheEntity freshCache(String toolsJson) throws Exception {
@@ -93,7 +96,7 @@ class McpLazyStartupTest {
         Mockito.doThrow(new AssertionError("connect must not spawn on a cache hit"))
             .when(spy).createClient(Mockito.any());
 
-        spy.connect(server);
+        spy.connect(configured, true);
 
         verify(toolRegistry).registerDynamic(
             eq("mcp__cached_server__echo"), eq("mcp-cached-server"), any(), any());
@@ -123,8 +126,8 @@ class McpLazyStartupTest {
         when(client.callTool(any())).thenReturn(result);
 
         var lifecycle = Mockito.spy(manager);
-        Mockito.doReturn(client).when(lifecycle).createClient(server);
-        lifecycle.connect(server);
+        Mockito.doReturn(client).when(lifecycle).createClient(any());
+        lifecycle.connect(configured, true);
         try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
             var first = executor.submit(() -> lifecycle.executeTool("cached-server", "echo", "{}"));
             assertThat(connected.await(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
@@ -136,7 +139,7 @@ class McpLazyStartupTest {
             lifecycle.closeAll();
         }
 
-        verify(lifecycle).createClient(server);
+        verify(lifecycle).createClient(any());
         verify(client).close();
         verify(toolRegistry, Mockito.atLeastOnce()).deregisterDynamic("mcp__cached_server__echo", "mcp-cached-server");
         assertThat(lifecycle.isConnected("cached-server")).isFalse();
@@ -163,7 +166,7 @@ class McpLazyStartupTest {
         }).when(configStore).storeSchema(any(), eq(3L), any(), any(), any());
 
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
-            var first = executor.submit(() -> lifecycle.connect(server));
+            var first = executor.submit(() -> lifecycle.connect(configured, true));
             try {
                 assertThat(storing.await(5, TimeUnit.SECONDS)).isTrue();
                 executor.submit(() -> lifecycle.connect(neighbour)).get(5, TimeUnit.SECONDS);
@@ -187,7 +190,7 @@ class McpLazyStartupTest {
 
         // No HTTP server runs at localhost:9999 — the connect attempt fails and
         // the error is recorded in the cache WITHOUT deleting the schema.
-        manager.connect(server);
+        manager.connect(configured, true);
 
         assertThat(manager.isConnected("cached-server")).isFalse();
         verify(configStore).recordSchemaError(any(), eq(3L), any());
@@ -197,7 +200,7 @@ class McpLazyStartupTest {
     void configRevisionMismatchIsAMiss() {
         when(configStore.cachedSchema(any(), eq(3L))).thenReturn(Optional.empty());
 
-        manager.connect(server);
+        manager.connect(configured, true);
 
         // Cache miss (revision changed) — lazy registration declined; the full
         // connect path runs (and fails against localhost:9999).
