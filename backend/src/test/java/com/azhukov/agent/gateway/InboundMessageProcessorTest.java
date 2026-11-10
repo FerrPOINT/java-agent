@@ -380,6 +380,41 @@ class InboundMessageProcessorTest {
         verify(agentRuntime, timeout(1000)).runTurn(any(Session.class), eq("third"), eq(List.of()));
     }
 
+    @Test
+    void gatewayDrainsAfterSessionResolutionFails() throws Exception {
+        agentProperties.getGateway().getTelegram().setAllowByDefault(true);
+        agentProperties.getGateway().setBusyInputMode("queue");
+        SessionSource source = new SessionSource(Platform.TELEGRAM, CHAT_ID, USER_ID, USERNAME, USERNAME);
+        var session = new Session(SESSION_ID, USER_ID, "Review", MODEL_PROVIDER, MODEL_NAME, null, Map.of());
+        when(sessionResolver.resolve(source)).thenReturn(session, session, session)
+            .thenThrow(new IllegalStateException("fixture resolver failure")).thenReturn(session);
+        var locks = mock(com.azhukov.agent.core.agent.SessionTurnLockManager.class);
+        when(locks.tryAcquire(SESSION_ID, 30)).thenReturn(true);
+        processor.setTurnLocks(locks);
+        var firstEntered = new java.util.concurrent.CountDownLatch(1);
+        var firstCanFinish = new java.util.concurrent.CountDownLatch(1);
+        when(agentRuntime.runTurn(any(Session.class), eq("first"), eq(List.of()))).thenAnswer(call -> {
+            firstEntered.countDown();
+            if (!firstCanFinish.await(5, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("fixture timeout");
+            return new TurnResult(List.of(Message.assistant(REPLY_TEXT, 1)), true, null);
+        });
+        when(routingService.send(Platform.TELEGRAM, source, REPLY_TEXT))
+            .thenReturn(CompletableFuture.completedFuture(new SendResult(true, "review-first", null)));
+
+        var first = CompletableFuture.runAsync(() -> processor.accept(messageEvent(source, "first")));
+        try {
+            assertThat(firstEntered.await(3, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            processor.accept(messageEvent(source, "second"));
+            processor.accept(messageEvent(source, "third"));
+        } finally {
+            firstCanFinish.countDown();
+        }
+        first.get(3, java.util.concurrent.TimeUnit.SECONDS);
+        verify(routingService, timeout(1000)).send(Platform.TELEGRAM, source,
+            "Ошибка обработки: fixture resolver failure");
+        verify(agentRuntime, timeout(1000)).runTurn(any(Session.class), eq("third"), eq(List.of()));
+    }
+
     private final java.util.concurrent.atomic.AtomicInteger evtCounter =
         new java.util.concurrent.atomic.AtomicInteger();
 
