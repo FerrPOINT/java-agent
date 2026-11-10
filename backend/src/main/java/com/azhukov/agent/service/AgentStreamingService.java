@@ -133,10 +133,6 @@ public class AgentStreamingService {
     private final MidTurnPersistenceCallback midTurnPersistenceCallback;
     private final ErrorClassifier errorClassifier = new ErrorClassifier();
 
-    /** DEBT-2 (M32): optional turn usage sink (field injection — ctor is used positionally by tests). */
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    private TurnUsageCollector turnUsageCollector;
-
     // ── Background self-improvement wiring (Hermes parity, ported 0.1.16) ──
     // The streaming path previously NEVER initialized or incremented the
     // memory/skill nudge counters (MemoryNudgeManager methods had zero
@@ -208,7 +204,7 @@ public class AgentStreamingService {
     // without going through Spring's @PostConstruct lifecycle).
     // The deps not available here (contextCompressor, approvalQueue,
     // memoryNudgeManager) are passed as null — they are only used by
-    // callModelWithRetry/executeToolBatch which the streaming path doesn't call.
+    // proactive compression and other sync-only helpers.
     private com.azhukov.agent.core.agent.TurnExecutor turnExecutor;
 
     private com.azhukov.agent.core.agent.TurnExecutor turnExecutor() {
@@ -218,14 +214,9 @@ public class AgentStreamingService {
             // are wired here too (previously null — executeToolBatch had no
             // streaming callers).
             turnExecutor = new com.azhukov.agent.core.agent.TurnExecutor(
-                errorClassifier, properties, null, contextEngine,
+                properties, null, contextEngine,
                 toolExecutionService, toolResultFormatter, tokenEstimator,
                 interruptToken, approvalQueue, toolGuardrails, memoryNudgeManager, steerBuffer);
-            // DEBT-2 (M32): fallback-model tokens must be billed in the streaming path too.
-            if (turnUsageCollector != null) {
-                turnExecutor.setUsageConsumer(usage ->
-                    turnUsageCollector.record(usage.promptTokens(), usage.completionTokens()));
-            }
         }
         return turnExecutor;
     }
@@ -587,11 +578,13 @@ public class AgentStreamingService {
         // P-08 (Hermes #92450): bound escaped outer-loop exceptions per turn.
         com.azhukov.agent.core.agent.OuterErrorBudget outerErrors =
             new com.azhukov.agent.core.agent.OuterErrorBudget(maxTurns);
-        // c2 B4: holder so the budget-exhaustion summary (outer loop, declared
-        // before the per-iteration fallback state below) uses the same
-        // active/fallback client the inner stream loop switched to.
-        final java.util.concurrent.atomic.AtomicReference<ModelClient> activeStreamClientRef =
-            new java.util.concurrent.atomic.AtomicReference<>(modelClient);
+        var streamFallbackManager = new com.azhukov.agent.core.agent.FallbackManager(
+            properties.getFallbackChain(), properties.getModel().getProvider(), properties.getModel().getModelName(),
+            properties.getModel().getBaseUrl(), properties.getModel().getApiKey());
+        var streamFallbackCaller = new com.azhukov.agent.core.agent.FallbackModelCaller(
+            errorClassifier, properties, null, contextEngine);
+        var streamModel = new com.azhukov.agent.core.agent.FallbackModelCaller.ModelCallContext(
+            modelClient, streamFallbackManager);
         boolean lastResponseHadToolCalls = false;
         agentLoop: for (int i = 0; i < maxTurns; i++) {
           try {
@@ -627,7 +620,7 @@ public class AgentStreamingService {
                 String budgetMsg;
                 try {
                     String summary = turnExecutor().requestBudgetExhaustionSummary(
-                        activeStreamClientRef.get(), session, turnMessages, streamOptions);
+                        streamModel.client(), session, turnMessages, streamOptions);
                     budgetMsg = summary != null && !summary.isBlank() ? summary
                         : turnExecutor().formatBudgetExhaustionMessage(budget, exhaustionReason);
                 } catch (Exception summaryEx) {
@@ -662,23 +655,7 @@ public class AgentStreamingService {
             // attempt cap — prevents infinite compress→retry→overflow loops.
             int compressionAttempts = 0;
             StringBuilder truncatedParts = new StringBuilder();
-            // R3/R4 (Hermes 7728-7760 + empty_response_guard): per-turn fallback chain
-            // and deterministic-empty tracker for the streaming path too.
-            com.azhukov.agent.core.agent.FallbackManager streamFallbackManager =
-                new com.azhukov.agent.core.agent.FallbackManager(
-                    properties.getFallbackChain(),
-                    properties.getModel().getProvider(),
-                    properties.getModel().getModelName(),
-                    properties.getModel().getBaseUrl(),
-                    properties.getModel().getApiKey());
-            // Compressor is null: this caller is only used for the empty-exhausted
-            // fallback activation (no compression paths run through it).
-            com.azhukov.agent.core.agent.FallbackModelCaller streamFallbackCaller =
-                new com.azhukov.agent.core.agent.FallbackModelCaller(
-                    errorClassifier, properties, null, contextEngine);
-            com.azhukov.agent.core.agent.EmptyResponseGuard streamEmptyGuard =
-                new com.azhukov.agent.core.agent.EmptyResponseGuard();
-            ModelClient activeStreamClient = modelClient;
+            var streamEmptyGuard = new com.azhukov.agent.core.agent.EmptyResponseGuard();
             ChatResponse response;
             final UUID sessionId = session.id();
             while (true) {
@@ -727,7 +704,7 @@ public class AgentStreamingService {
                     // cache; the flag is set after each empty attempt and cleared
                     // once the handler completes.
                     com.azhukov.agent.client.langchain4j.EmptyRetryCacheBypass.clear();
-                    activeStreamClient.stream(context, tools, streamOptions, new StreamingResponseHandler() {
+                    streamModel.client().stream(context, tools, streamOptions, new StreamingResponseHandler() {
                         @Override
                         public void onToken(String token) {
                             // Check interrupt before emitting each token/chunk
@@ -829,23 +806,15 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     // itself. Previously only empty responses could switch models; a hard
                     // billing/auth/model failure went straight to the user even with a
                     // configured fallback chain.
-                    if (canRetry && errorClassification.hints().shouldFallback()) {
-                        com.azhukov.agent.core.agent.FallbackModelCaller.ModelCallContext fallbackContext =
-                            new com.azhukov.agent.core.agent.FallbackModelCaller.ModelCallContext(
-                                modelClient, streamFallbackManager);
-                        fallbackContext.activeClient = activeStreamClient == modelClient ? null : activeStreamClient;
-                        if (streamFallbackCaller.tryActivateFallbackForError(
-                                fallbackContext, errorClassification, failure)) {
-                            activeStreamClient = fallbackContext.activeClient;
-                            activeStreamClientRef.set(activeStreamClient);
-                            streamRetries = 0;
-                            compressionAttempts = 0;
-                            eventHelper().send(emitter, new StreamEvent("retry", null, null,
-                                "Switching to a fallback model after provider failure."), streamCtx);
-                            log.warn("Streaming provider failure ({}) switched to fallback model for session {}",
-                                errorClassification.type(), session.id());
-                            continue;
-                        }
+                    if (canRetry && streamFallbackCaller.tryActivateFallbackForError(
+                            streamModel, errorClassification, failure)) {
+                        streamRetries = 0;
+                        compressionAttempts = 0;
+                        eventHelper().send(emitter, new StreamEvent("retry", null, null,
+                            "Switching to a fallback model after provider failure."), streamCtx);
+                        log.warn("Streaming provider failure ({}) switched to fallback model for session {}",
+                            errorClassification.type(), session.id());
+                        continue;
                     }
                     if (canRetry && streamRetries < tierCap) {
                         long delayMs = turnExecutor().computeBackoffMs(errorType, streamRetries, failure)
@@ -1039,7 +1008,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     session = resolveRotatedSession(session);
                     // Re-issue the stream call with boosted max_tokens
                     try {
-                    activeStreamClient.stream(context, tools, boostedOptions, new StreamingResponseHandler() {
+                    streamModel.client().stream(context, tools, boostedOptions, new StreamingResponseHandler() {
                         @Override
                         public void onToken(String token) {
                             String scrubbed = ctxScrubber.feed(scrubber.scrub(token));
@@ -1255,23 +1224,13 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                         "⚠️ Модель детерминированно возвращает пустой ответ — ретраи остановлены"), streamCtx);
                 }
                 if (isEmpty && !streamDeterministicEmpty && emptyContentRetries >= MAX_EMPTY_RESPONSE_ATTEMPTS
-                        && streamFallbackManager.hasPendingFallback()) {
-                    // R3 (Hermes 7728-7760): empty budget burned — try the next fallback
-                    // provider BEFORE the terminal "(empty)".
-                    com.azhukov.agent.core.agent.FallbackModelCaller.ModelCallContext fmc =
-                        new com.azhukov.agent.core.agent.FallbackModelCaller.ModelCallContext(
-                            modelClient, streamFallbackManager);
-                    fmc.activeClient = activeStreamClient == modelClient ? null : activeStreamClient;
-                    if (streamFallbackCaller.tryActivateFallbackForEmpty(fmc)) {
-                        activeStreamClient = fmc.activeClient;
-                        activeStreamClientRef.set(activeStreamClient);
-                        emptyContentRetries = 0;
-                        streamEmptyGuard.reset();
-                        eventHelper().send(emitter, new StreamEvent("continuation", null, null,
-                            "↻ Переключение на fallback-провайдера после пустых ответов"), streamCtx);
-                        log.warn("Empty responses exhausted in stream — switched to fallback model");
-                        continue;
-                    }
+                        && streamFallbackCaller.tryActivateFallbackForEmpty(streamModel)) {
+                    emptyContentRetries = 0;
+                    streamEmptyGuard.reset();
+                    eventHelper().send(emitter, new StreamEvent("continuation", null, null,
+                        "↻ Переключение на fallback-провайдера после пустых ответов"), streamCtx);
+                    log.warn("Empty responses exhausted in stream — switched to fallback model");
+                    continue;
                 }
                 if (isEmpty && !streamDeterministicEmpty && emptyContentRetries < MAX_EMPTY_RESPONSE_ATTEMPTS) {
                     emptyContentRetries++;

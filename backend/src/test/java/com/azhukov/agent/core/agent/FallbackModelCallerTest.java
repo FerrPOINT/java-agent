@@ -8,7 +8,6 @@ import com.azhukov.agent.core.context.ContextCompressor;
 import com.azhukov.agent.core.context.ContextEngine;
 import com.azhukov.agent.core.model.ChatResponse;
 import com.azhukov.agent.core.model.Message;
-import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.model.ToolDefinition;
 import org.junit.jupiter.api.Test;
@@ -41,7 +40,7 @@ class FallbackModelCallerTest {
             Message.toolResult("orphan", "must not reach provider", 1));
 
         caller.call(new FallbackModelCaller.ModelCallContext(client, new FallbackManager(List.of(), "p", "m", "", "")),
-            malformed, List.<ToolDefinition>of(), Session.create("user", "p", "m"), ModelRequestOptions.empty());
+            malformed, List.<ToolDefinition>of(), ModelRequestOptions.empty(), () -> true, ModelClient::complete);
 
         ArgumentCaptor<List<Message>> context = ArgumentCaptor.forClass(List.class);
         verify(client).complete(context.capture(), any(), any());
@@ -67,7 +66,7 @@ class FallbackModelCallerTest {
             new FallbackManager(List.of(), "p", "m", "", ""));
 
         ChatResponse response = caller.call(context, List.of(Message.user("request")), List.of(),
-            Session.create("user", "p", "m"), ModelRequestOptions.empty());
+            ModelRequestOptions.empty(), () -> true, ModelClient::complete);
 
         assertThat(response.content()).isEqualTo("available");
         verify(client, org.mockito.Mockito.times(2)).complete(any(), any(), any());
@@ -91,7 +90,7 @@ class FallbackModelCallerTest {
         List<Message> malformed = List.of(Message.user("first"), Message.user("second"));
 
         caller.call(new FallbackModelCaller.ModelCallContext(client, new FallbackManager(List.of(), "p", "m", "", "")),
-            malformed, List.<ToolDefinition>of(), Session.create("user", "p", "m"), ModelRequestOptions.empty());
+            malformed, List.<ToolDefinition>of(), ModelRequestOptions.empty(), () -> true, ModelClient::complete);
 
         ArgumentCaptor<List<Message>> calls = ArgumentCaptor.forClass(List.class);
         verify(client, org.mockito.Mockito.times(2)).complete(calls.capture(), any(), any());

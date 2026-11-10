@@ -5,15 +5,10 @@ import com.azhukov.agent.core.budget.IterationBudget.TurnSnapshot;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
-import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * Coverage for TurnExecutor static helpers and FallbackContext accessors
- * (no full TurnExecutor construction needed — helpers are static/context-only).
- */
 class TurnExecutorHelpersTest {
 
     @Test
@@ -35,7 +30,7 @@ class TurnExecutorHelpersTest {
     @Test
     void budgetExhaustionFallbackExposesTheActualLimitAndCounters() {
         AgentProperties properties = new AgentProperties();
-        TurnExecutor executor = new TurnExecutor(null, properties, null, null, null, null,
+        TurnExecutor executor = new TurnExecutor(properties, null, null, null, null,
             null, null, null, null, null, null);
         TurnSnapshot budget = new TurnSnapshot(UUID.randomUUID(), Instant.now(), 1,
             7, 12, 120_000, 80_000, 45_000, true, "max tokens reached");
@@ -44,19 +39,5 @@ class TurnExecutorHelpersTest {
             .isEqualTo("Iteration budget exhausted: reason=max tokens reached; "
                 + "model_calls=7/1000; tool_executions=12/1000; "
                 + "estimated_tokens=200000/unlimited; tool_duration_ms=45000/unlimited.");
-    }
-
-    @Test
-    void fallbackContextTracksActiveClient() {
-        TurnExecutor.FallbackContext ctx = new TurnExecutor.FallbackContext(null);
-        assertThat(ctx.getActiveModelClient()).isNull();
-        assertThat(ctx.getPrimaryModelClient()).isNull();
-        assertThat(ctx.getFallbackManager()).isNull();
-
-        FallbackManager fm = new FallbackManager(List.of(), null, null, null, null);
-        ctx.setFallbackManager(fm);
-        ctx.setActiveModelClient(null);
-        assertThat(ctx.getFallbackManager()).isSameAs(fm);
-        assertThat(ctx.getActiveModelClient()).isNull();
     }
 }

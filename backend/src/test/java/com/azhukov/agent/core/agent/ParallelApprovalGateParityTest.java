@@ -43,7 +43,6 @@ class ParallelApprovalGateParityTest {
     private TurnExecutor executor(AgentProperties props, ToolGuardrails guardrails,
                                   ApprovalQueue queue, ToolExecutionService svc) {
         return new TurnExecutor(
-            mock(com.azhukov.agent.client.langchain4j.ErrorClassifier.class),
             props, null, null, svc,
             new ToolResultFormatter(), new TokenEstimator(),
             new InterruptToken(), queue, guardrails,

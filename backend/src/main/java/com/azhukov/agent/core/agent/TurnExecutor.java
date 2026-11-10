@@ -1,10 +1,8 @@
 package com.azhukov.agent.core.agent;
 
 import com.azhukov.agent.client.langchain4j.ErrorClassifier;
-import com.azhukov.agent.client.langchain4j.LangChain4jModelClient;
 import com.azhukov.agent.core.budget.IterationBudget.TurnSnapshot;
 import com.azhukov.agent.config.AgentProperties;
-import com.azhukov.agent.config.FallbackConfig;
 import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.client.ModelRequestOptions;
 import com.azhukov.agent.core.context.ContextCompressor;
@@ -44,9 +42,6 @@ import java.util.concurrent.ThreadLocalRandom;
  * <p>
  * Contains the genuinely shared pieces that both runtimes need:
  * <ul>
- *   <li>{@link #callModelWithRetry} — model call with retry, fallback, and
- *       one-shot recovery guards (parity with Hermes
- *       {@code _retry_with_recoveries})</li>
  *   <li>{@link #executeToolsInParallel} — parallel tool execution via a shared
  *       virtual-thread executor</li>
  *   <li>{@link #executeToolBatch} — full sequential-or-parallel tool batch
@@ -63,33 +58,16 @@ import java.util.concurrent.ThreadLocalRandom;
  *       content helpers</li>
  * </ul>
  * <p>
- * {@code DefaultAgentRuntime} delegates model calling + tool execution to this
- * class. {@code AgentStreamingService} delegates the retry classification and
- * backoff calculation (the non-SSE-specific part of "model call with retry")
- * while keeping its own SSE streaming wrapper.
- *
- * <h2>Fallback context</h2>
- * The rich retry loop depends on a per-turn {@link FallbackManager} and an
- * {@code activeModelClient} field that the caller owns. Callers pass a
- * {@link FallbackContext} snapshot so {@code TurnExecutor} can swap models
- * mid-retry without owning the per-turn mutable state itself.
+ * The synchronous model-call retry loop lives in {@link FallbackModelCaller}.
  */
 @Slf4j
 @Component
 public class TurnExecutor {
 
-    private final ErrorClassifier errorClassifier;
     private final AgentProperties properties;
     private final ContextCompressor contextCompressor;
     private final ContextEngine contextEngine;
 
-    /** Optional usage sink injected by the runtime (Hermes parity: fallback tokens are billed). */
-    private volatile java.util.function.Consumer<LangChain4jModelClient.Usage> usageConsumer;
-
-    /** Runtime hook: register the turn usage sink so fallback completions are billed. */
-    public void setUsageConsumer(java.util.function.Consumer<LangChain4jModelClient.Usage> usageConsumer) {
-        this.usageConsumer = usageConsumer;
-    }
     private final ToolExecutionService toolExecutionService;
     private final ToolResultFormatter toolResultFormatter;
     private final TokenEstimator tokenEstimator;
@@ -120,8 +98,7 @@ public class TurnExecutor {
         }
     }
 
-    public TurnExecutor(ErrorClassifier errorClassifier,
-                         AgentProperties properties,
+    public TurnExecutor(AgentProperties properties,
                          ContextCompressor contextCompressor,
                          ContextEngine contextEngine,
                          ToolExecutionService toolExecutionService,
@@ -132,7 +109,6 @@ public class TurnExecutor {
                          com.azhukov.agent.core.security.ToolGuardrails toolGuardrails,
                          MemoryNudgeManager memoryNudgeManager,
                          SteerBuffer steerBuffer) {
-        this.errorClassifier = errorClassifier;
         this.properties = properties;
         this.contextCompressor = contextCompressor;
         this.contextEngine = contextEngine;
@@ -206,398 +182,6 @@ public class TurnExecutor {
                 + "/" + tokenLimit
             + "; tool_duration_ms=" + budget.totalToolDurationMs()
                 + "/" + toolDurationLimit + ".";
-    }
-
-    // ──────────────────────────────────────────────────────────────────
-    //  Model call with retry (shared by both runtimes)
-    // ──────────────────────────────────────────────────────────────────
-
-    /**
-     * Mutable per-turn fallback state passed in by the caller.
-     * <p>
-     * {@code DefaultAgentRuntime} owns the {@link FallbackManager} and the
-     * {@code activeModelClient} field because they are initialised per turn
-     * from session/config data. This holder lets {@code TurnExecutor} swap
-     * the active model mid-retry without owning that per-turn state.
-     */
-    public static final class FallbackContext {
-        private FallbackManager fallbackManager;
-        private ModelClient activeModelClient;
-        private final ModelClient primaryModelClient;
-
-        public FallbackContext(ModelClient primaryModelClient) {
-            this.primaryModelClient = primaryModelClient;
-            this.activeModelClient = primaryModelClient;
-        }
-
-        public FallbackManager getFallbackManager() { return fallbackManager; }
-        public void setFallbackManager(FallbackManager fm) { this.fallbackManager = fm; }
-        public ModelClient getActiveModelClient() { return activeModelClient; }
-        public void setActiveModelClient(ModelClient c) { this.activeModelClient = c; }
-        public ModelClient getPrimaryModelClient() { return primaryModelClient; }
-    }
-
-    /**
-     * Calls the active model client with full retry logic: error classification,
-     * one-shot recovery guards (14 total, parity with Hermes), fallback chain
-     * activation, and interruptible backoff.
-     * <p>
-     * This is the canonical "model call with retry" extracted from
-     * {@code DefaultAgentRuntime.callModelWithRetry}. Both runtimes use it:
-     * {@code DefaultAgentRuntime} directly, and {@code AgentStreamingService}
-     * uses {@link #computeBackoffMs} for the parts that are reusable in the
-     * streaming path.
-     *
-     * @param context          the prepared message context
-     * @param tools            the tool definitions available to the model
-     * @param session          the current session (for interrupt checks)
-     * @param options          model request options
-     * @param fallbackCtx      per-turn fallback state (may be null if no fallback)
-     * @return the model response
-     * @throws ContentPolicyException if a content policy block has no fallback
-     * @throws RuntimeException        if all retries and fallbacks are exhausted
-     */
-    public ChatResponse callModelWithRetry(List<Message> context, List<ToolDefinition> tools,
-                                            Session session, ModelRequestOptions options,
-                                            FallbackContext fallbackCtx) {
-        int retryAttempts = properties.getError().getRetryAttempts();
-        Exception lastException = null;
-        int totalAttempts = 0;
-        List<Message> currentContext = context;
-        List<ToolDefinition> currentTools = tools;
-        TurnRetryState retryState = new TurnRetryState();
-
-        for (;;) {
-            int tierRetryAttempts = retryAttempts;
-            for (int attempt = 0; attempt <= tierRetryAttempts; attempt++) {
-                totalAttempts++;
-                try {
-                    ModelClient client = fallbackCtx != null && fallbackCtx.getActiveModelClient() != null
-                        ? fallbackCtx.getActiveModelClient()
-                        : (fallbackCtx != null ? fallbackCtx.getPrimaryModelClient() : null);
-                    currentContext = HistorySanitizer.sanitizeForModelRequest(currentContext);
-                    com.azhukov.agent.core.security.UserContext.requireCurrentAccess();
-                    return client.complete(currentContext, currentTools, options);
-                } catch (Exception e) {
-                    lastException = e;
-                    if (attempt >= retryAttempts) {
-                        break;
-                    }
-                    ErrorClassifier.ClassificationResult classification = errorClassifier.classifyWithHints(e);
-                    ErrorClassifier.ErrorType errorType = classification.type();
-                    // Two-tier budget (operator 2026-08-28): availability errors
-                    // (RATE_LIMIT/OVERLOADED) expand the budget for this loop.
-                    tierRetryAttempts = Math.max(tierRetryAttempts, retryBudgetFor(errorType));
-
-                    // ── Part F: Content policy handling ──
-                    if (errorType == ErrorClassifier.ErrorType.CONTENT_POLICY) {
-                        log.warn("Content policy block: {} — attempting fallback", e.getMessage());
-                        if (tryActivateFallback(errorType, e, fallbackCtx)) {
-                            retryState = new TurnRetryState();
-                            currentContext = context;
-                            break;
-                        }
-                        String refusalMsg = detectRefusalPattern(e.getMessage());
-                        throw new ContentPolicyException(refusalMsg != null ? refusalMsg :
-                            "The model's safety filter blocked this request. Please rephrase your request and try again.",
-                            e);
-                    }
-
-                    // ── One-shot recovery guards (parity with Hermes TurnRetryState — 14 total) ──
-
-                    // Guard 1: AUTH — try refreshing credentials once (generic)
-                    if (errorType == ErrorClassifier.ErrorType.AUTH && !retryState.isAuthRetryAttempted()) {
-                        retryState.setAuthRetryAttempted(true);
-                        log.info("AUTH error, attempting credential refresh (one-shot guard)");
-                        attempt--;
-                        continue;
-                    }
-
-                    // Guard 2: THINKING_SIGNATURE — strip thinking blocks and retry
-                    if (errorType == ErrorClassifier.ErrorType.THINKING_SIGNATURE
-                        && !retryState.isThinkingSigRetryAttempted()
-                        && containsThinkingBlocks(currentContext)) {
-                        retryState.setThinkingSigRetryAttempted(true);
-                        log.info("THINKING_SIGNATURE error, stripping thinking blocks and retrying (one-shot guard)");
-                        currentContext = ThinkBlockProcessor.stripThinkingBlocks(currentContext);
-                        attempt--;
-                        continue;
-                    }
-
-                    // Guard 2b: FORMAT_ERROR with thinking blocks
-                    if (errorType == ErrorClassifier.ErrorType.FORMAT_ERROR
-                        && !retryState.isThinkingSigRetryAttempted()
-                        && containsThinkingBlocks(currentContext)) {
-                        retryState.setThinkingSigRetryAttempted(true);
-                        log.info("FORMAT_ERROR with thinking blocks, stripping and retrying (one-shot guard)");
-                        currentContext = ThinkBlockProcessor.stripThinkingBlocks(currentContext);
-                        attempt--;
-                        continue;
-                    }
-
-                    // Guard 3: IMAGE_TOO_LARGE — shrink image content from messages
-                    if ((errorType == ErrorClassifier.ErrorType.IMAGE_TOO_LARGE
-                         || errorType == ErrorClassifier.ErrorType.CONTENT_POLICY)
-                        && !retryState.isImageShrinkRetryAttempted()
-                        && containsImageContent(currentContext)) {
-                        retryState.setImageShrinkRetryAttempted(true);
-                        log.info("{} with image content, stripping images and retrying (one-shot guard)", errorType);
-                        currentContext = stripImageContent(currentContext);
-                        attempt--;
-                        continue;
-                    }
-
-                    // Guard 4: MULTIMODAL_TOOL_CONTENT — strip non-text from tool results
-                    if ((errorType == ErrorClassifier.ErrorType.MULTIMODAL_TOOL_CONTENT
-                         || errorType == ErrorClassifier.ErrorType.FORMAT_ERROR)
-                        && !retryState.isMultimodalToolContentRetryAttempted()
-                        && containsMultimodalToolContent(currentContext)) {
-                        retryState.setMultimodalToolContentRetryAttempted(true);
-                        log.info("{} with multimodal tool content, stripping and retrying (one-shot guard)", errorType);
-                        currentContext = stripMultimodalToolContent(currentContext);
-                        attempt--;
-                        continue;
-                    }
-
-                    // Guard 5: INVALID_ENCRYPTED_CONTENT — strip codex reasoning replay
-                    if (errorType == ErrorClassifier.ErrorType.INVALID_ENCRYPTED_CONTENT
-                        && !retryState.isInvalidEncryptedContentRetryAttempted()) {
-                        retryState.setInvalidEncryptedContentRetryAttempted(true);
-                        log.info("INVALID_ENCRYPTED_CONTENT error, stripping encrypted reasoning and retrying (one-shot guard)");
-                        currentContext = ThinkBlockProcessor.stripThinkingBlocks(currentContext);
-                        attempt--;
-                        continue;
-                    }
-
-                    // Guard 6: LONG_CONTEXT_TIER with oauth_1m_beta — disable 1M context beta
-                    if (errorType == ErrorClassifier.ErrorType.LONG_CONTEXT_TIER
-                        && !retryState.isOauth1mBetaRetryAttempted()
-                        && lowerMessageContains(e, "long context beta")) {
-                        retryState.setOauth1mBetaRetryAttempted(true);
-                        log.info("LONG_CONTEXT_TIER with 1M beta, disabling beta and retrying (one-shot guard)");
-                        attempt--;
-                        continue;
-                    }
-
-                    // Guard 7: LLAMA_CPP_GRAMMAR — strip tool schema patterns
-                    if (errorType == ErrorClassifier.ErrorType.LLAMA_CPP_GRAMMAR
-                        && !retryState.isLlamaCppGrammarRetryAttempted()) {
-                        retryState.setLlamaCppGrammarRetryAttempted(true);
-                        log.info("LLAMA_CPP_GRAMMAR error, stripping pattern/format from tools and retrying (one-shot guard)");
-                        currentTools = stripGrammarPatternsFromTools(currentTools);
-                        attempt--;
-                        continue;
-                    }
-
-                    // ── Compression-disabled respect ──
-                    if ((errorType == ErrorClassifier.ErrorType.CONTEXT_OVERFLOW
-                         || errorType == ErrorClassifier.ErrorType.PAYLOAD_TOO_LARGE
-                         || errorType == ErrorClassifier.ErrorType.LONG_CONTEXT_TIER)
-                        && !properties.getCompression().isEnabled()) {
-                        log.warn("Context overflow ({}) detected, but auto-compaction is disabled (compression.enabled: false)", errorType);
-                        throw new RuntimeException(
-                            "Context limit exceeded. Enable compression or reduce context size. " +
-                            "Run /compress to compact manually, /new to start fresh, " +
-                            "or switch to a larger-context model.", e);
-                    }
-
-                    // ── Long-context tier handling ──
-                    if (errorType == ErrorClassifier.ErrorType.LONG_CONTEXT_TIER) {
-                        int reducedContext = 200_000;
-                        if (contextCompressor instanceof DefaultContextCompressor dcc) {
-                            int currentContextLength = 0;
-                            if (contextEngine instanceof DefaultContextEngine dce) {
-                                currentContextLength = dce.getContextLength();
-                            }
-                            if (currentContextLength > reducedContext) {
-                                dcc.recalculateThreshold(reducedContext);
-                                log.warn("⚠️  Anthropic long-context tier requires extra usage — reducing context: {} → {} tokens",
-                                    currentContextLength, reducedContext);
-                            }
-                        }
-                        if (contextCompressor != null) {
-                            int compressionAttempts = retryState.getCompressionAttempts();
-                            if (compressionAttempts >= 3) {
-                                log.error("Max compression attempts (3) reached for long-context-tier error.");
-                                break;
-                            }
-                            retryState.incrementCompressionAttempts();
-                            log.info("Long-context tier detected, triggering compression attempt {}/3", compressionAttempts + 1);
-                            try {
-                                int targetChars = properties.getContext().getTargetTokens() * 4;
-                                List<Message> compressed = contextCompressor.compress(currentContext, targetChars);
-                                currentContext = compressed;
-                                log.info("Context compressed for long-context tier (attempt {}/3), retrying model call",
-                                    compressionAttempts + 1);
-                                attempt--;
-                                continue;
-                            } catch (Exception ce) {
-                                log.warn("Context compression for long-context tier failed (attempt {}/3): {}",
-                                    compressionAttempts + 1, ce.getMessage());
-                                // Hermes parity: 600s summary-failure cooldown so a wedged
-                                // summarizer doesn't burn paid retries (context_compressor.py
-                                // _SUMMARY_FAILURE_COOLDOWN_SECONDS). Transient failures use
-                                // the 60/300/900s ladder instead.
-                                applyCompressionFailureCooldown(contextCompressor, compressionAttempts + 1, ce);
-                                if (compressionAttempts + 1 >= 3) {
-                                    break;
-                                }
-                                attempt--;
-                                continue;
-                            }
-                        }
-                    }
-
-                    // Context overflow: try compression (up to 3 attempts)
-                    if (errorType == ErrorClassifier.ErrorType.CONTEXT_OVERFLOW) {
-                        if (contextCompressor == null) {
-                            log.warn("Context overflow detected, compression unavailable, failing: {}", e.getMessage());
-                            break;
-                        }
-                        int compressionAttempts = retryState.getCompressionAttempts();
-                        if (compressionAttempts >= 3) {
-                            log.error("Max compression attempts (3) reached for context overflow.");
-                            break;
-                        }
-                        retryState.incrementCompressionAttempts();
-                        log.info("Context overflow detected, triggering compression attempt {}/3", compressionAttempts + 1);
-                        try {
-                            int targetChars = properties.getContext().getTargetTokens() * 4;
-                            List<Message> compressed = contextCompressor.compress(currentContext, targetChars);
-                            if (compressed.size() < currentContext.size()
-                                || (compressed.size() == currentContext.size()
-                                    && compressed.stream().mapToInt(m -> m.content() != null ? m.content().length() : 0).sum()
-                                    < currentContext.stream().mapToInt(m -> m.content() != null ? m.content().length() : 0).sum())) {
-                                currentContext = compressed;
-                                log.info("Context compressed from {} to {} messages, retrying model call (attempt {}/3)",
-                                    context.size(), compressed.size(), compressionAttempts + 1);
-                                attempt--;
-                                continue;
-                            } else {
-                                log.warn("Context overflow detected, compression did not reduce context (attempt {}/3): {}",
-                                    compressionAttempts + 1, e.getMessage());
-                                if (compressionAttempts + 1 >= 3) {
-                                    break;
-                                }
-                                attempt--;
-                                continue;
-                            }
-                        } catch (Exception ce) {
-                            log.warn("Context compression failed (attempt {}/3): {}", compressionAttempts + 1, ce.getMessage());
-                            // Hermes parity: failure cooldown (600s) / transient ladder (60/300/900s).
-                            applyCompressionFailureCooldown(contextCompressor, compressionAttempts + 1, ce);
-                            if (compressionAttempts + 1 >= 3) {
-                                break;
-                            }
-                            attempt--;
-                            continue;
-                        }
-                    }
-
-                    // Payload too large: try compression (up to 3 attempts)
-                    if (errorType == ErrorClassifier.ErrorType.PAYLOAD_TOO_LARGE) {
-                        if (contextCompressor == null) {
-                            log.warn("Payload too large, compression unavailable, failing: {}", e.getMessage());
-                            break;
-                        }
-                        int compressionAttempts = retryState.getCompressionAttempts();
-                        if (compressionAttempts >= 3) {
-                            log.error("Max compression attempts (3) reached for payload-too-large error.");
-                            break;
-                        }
-                        retryState.incrementCompressionAttempts();
-                        log.info("Payload too large, triggering compression attempt {}/3", compressionAttempts + 1);
-                        try {
-                            int targetChars = properties.getContext().getTargetTokens() * 4;
-                            List<Message> compressed = contextCompressor.compress(currentContext, targetChars);
-                            currentContext = compressed;
-                            log.info("Context compressed for payload size (attempt {}/3), retrying model call",
-                                compressionAttempts + 1);
-                            attempt--;
-                            continue;
-                        } catch (Exception ce) {
-                            log.warn("Context compression for payload too large failed (attempt {}/3): {}",
-                                compressionAttempts + 1, ce.getMessage());
-                            // Hermes parity: failure cooldown (600s) / transient ladder (60/300/900s).
-                            applyCompressionFailureCooldown(contextCompressor, compressionAttempts + 1, ce);
-                            if (compressionAttempts + 1 >= 3) {
-                                break;
-                            }
-                            attempt--;
-                            continue;
-                        }
-                    }
-
-                    // ── Immediate-fallback errors (no retry, try fallback immediately) ──
-                    if (errorType == ErrorClassifier.ErrorType.AUTH_PERMANENT
-                        || errorType == ErrorClassifier.ErrorType.MODEL_NOT_FOUND) {
-                        log.warn("{} error — attempting immediate fallback: {}", errorType, e.getMessage());
-                        if (tryActivateFallback(errorType, e, fallbackCtx)) {
-                            retryState = new TurnRetryState();
-                            currentContext = context;
-                            break;
-                        }
-                        log.warn("{} error, no fallback available, failing: {}", errorType, e.getMessage());
-                        break;
-                    }
-
-                    // ── Permanent errors that don't trigger fallback ──
-                    if (errorType == ErrorClassifier.ErrorType.PERMANENT
-                        || errorType == ErrorClassifier.ErrorType.BILLING
-                        || errorType == ErrorClassifier.ErrorType.PROVIDER_POLICY_BLOCKED
-                        || errorType == ErrorClassifier.ErrorType.SSL_CERT_VERIFICATION) {
-                        log.warn("Model call failed with {} error, not retrying: {}", errorType, e.getMessage());
-                        break;
-                    }
-
-                    // ── Credential rotation for RATE_LIMIT ──
-                    if (errorType == ErrorClassifier.ErrorType.RATE_LIMIT && !retryState.isHasRetried429()) {
-                        retryState.setHasRetried429(true);
-                        log.info("RATE_LIMIT (429) detected — tracking for credential rotation");
-                    }
-
-                    // ── Part C: Retry-After header parsing + backoff calculation ──
-                    long delayMs = computeBackoffMs(errorType, attempt, e);
-
-                    log.warn("Model call failed (attempt {}/{}), classified as {}, retrying in {} ms: {}",
-                        attempt + 1, retryAttempts + 1, errorType, delayMs, e.getMessage());
-
-                    // ── Part D: Interruptible backoff ──
-                    try {
-                        interruptibleSleep(delayMs);
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                        log.debug("Model call retry interrupted, stopping retries");
-                        break;
-                    }
-                }
-            }
-
-            // ── Retries exhausted — try fallback before failing ──
-            if (lastException != null) {
-                ErrorClassifier.ClassificationResult classification = errorClassifier.classifyWithHints(lastException);
-                if (classification.hints().shouldFallback() && tryActivateFallback(classification.type(), lastException, fallbackCtx)) {
-                    retryState = new TurnRetryState();
-                    currentContext = context;
-                    totalAttempts = 0;
-                    continue;
-                }
-            }
-
-            break;
-        }
-
-        throw new RuntimeException("Model call failed after " + totalAttempts + " attempt(s): "
-            + (lastException != null ? lastException.getMessage() : "unknown error"), lastException);
-    }
-
-    /**
-     * Tier-aware retry budget for the given classified error type
-     * (operator decision 2026-08-28): plain errors → error.retry-attempts (3),
-     * availability errors (RATE_LIMIT/OVERLOADED) → error.availability-retry-attempts (20).
-     */
-    public int retryBudgetFor(ErrorClassifier.ErrorType errorType) {
-        return ResponseRecoveryPolicy.retryBudget(properties.getError(), errorType);
     }
 
     /**
@@ -1059,7 +643,7 @@ public class TurnExecutor {
      * Mirrors Hermes {@code conversation_loop.py:3960-3998}: after each tool
      * batch, before the next model call, check if compression should be
      * triggered. This is IN ADDITION to the reactive compression on
-     * CONTEXT_OVERFLOW handled in {@link #callModelWithRetry}.
+     * CONTEXT_OVERFLOW handled by the model recovery path.
      * <p>
      * This is the "context compression check" shared by both runtimes.
      *
@@ -1232,89 +816,6 @@ public class TurnExecutor {
      */
     public static boolean lowerMessageContains(Exception e, String substring) {
         return TurnExecutorUtils.lowerMessageContains(e, substring);
-    }
-
-    /**
-     * Attempt to activate the next fallback model in the chain.
-     *
-     * @param errorType   the error type that triggered the fallback
-     * @param error       the exception that caused the fallback
-     * @param fallbackCtx the per-turn fallback context
-     * @return true if fallback was activated, false if chain is exhausted
-     */
-    private boolean tryActivateFallback(ErrorClassifier.ErrorType errorType, Exception error,
-                                         FallbackContext fallbackCtx) {
-        if (fallbackCtx == null || fallbackCtx.getFallbackManager() == null
-            || !fallbackCtx.getFallbackManager().hasPendingFallback()) {
-            return false;
-        }
-        FallbackManager fm = fallbackCtx.getFallbackManager();
-
-        if (errorType == ErrorClassifier.ErrorType.RATE_LIMIT || errorType == ErrorClassifier.ErrorType.BILLING) {
-            fm.setRateLimitCooldown();
-        }
-
-        FallbackConfig fallbackConfig = fm.activateFallback();
-        if (fallbackConfig == null) {
-            log.warn("Fallback chain exhausted — no more fallback models available");
-            return false;
-        }
-
-        try {
-            com.azhukov.agent.client.langchain4j.FallbackModelClient fallbackClient =
-                com.azhukov.agent.client.langchain4j.FallbackModelClient.from(fallbackConfig, properties, usageConsumer);
-            fallbackCtx.setActiveModelClient(fallbackClient);
-            log.info("🔄 Switched to fallback model: {} via {}",
-                fm.getCurrentModel(), fm.getCurrentProvider());
-            if (contextCompressor instanceof DefaultContextCompressor dcc) {
-                dcc.resetCompressionFailureCooldown(
-                    fm.getCurrentProvider() + "/" + fm.getCurrentModel());
-            }
-            return true;
-        } catch (Exception e) {
-            log.error("Failed to create fallback model client for {}/{}: {}",
-                fallbackConfig.getProvider(), fallbackConfig.getModel(), e.getMessage());
-            return tryActivateFallback(errorType, error, fallbackCtx);
-        }
-    }
-
-    // ──────────────────────────────────────────────────────────────────
-    //  Compression failure cooldown (Hermes parity: h60 wiring)
-    // ──────────────────────────────────────────────────────────────────
-
-    /** Hermes _SUMMARY_FAILURE_COOLDOWN_SECONDS: 600s cooldown after a hard summary failure. */
-    private static final long COMPRESSION_FAILURE_COOLDOWN_MS = 600_000L;
-
-    /** Hermes _TIMEOUT_COOLDOWN_LADDER (60, 300, 900)s for transient/timeout failures. */
-    private static final long[] TRANSIENT_COOLDOWN_LADDER_MS = {60_000L, 300_000L, 900_000L};
-
-    /**
-     * Applies the Hermes compression-failure cooldown after a failed compression attempt
-     * (context_compressor.py:4763, 4884-4901): transient failures get an escalating ladder —
-     * timeouts 60/300/900s, JSON-decode/stream-closed 30s, other transient 60s — and hard
-     * (non-transient) summary failures get the flat 600s cooldown. No-op for compressor
-     * implementations without cooldown support.
-     */
-    private void applyCompressionFailureCooldown(ContextCompressor compressor, int attempt, Exception cause) {
-        if (!(compressor instanceof DefaultContextCompressor dcc)) {
-            return;
-        }
-        String msg = cause.getMessage() != null ? cause.getMessage().toLowerCase(Locale.ROOT) : "";
-        long cooldownMs;
-        if (msg.contains("timeout") || msg.contains("timed out")) {
-            // Timeout ladder: 60/300/900s by consecutive failure count (attempt 1-based).
-            int idx = Math.min(attempt - 1, TRANSIENT_COOLDOWN_LADDER_MS.length - 1);
-            cooldownMs = TRANSIENT_COOLDOWN_LADDER_MS[idx];
-        } else if (msg.contains("json") || msg.contains("stream") && msg.contains("closed")) {
-            cooldownMs = 30_000L;
-        } else if (TurnExecutorUtils.isTransient(msg)) {
-            cooldownMs = 60_000L;
-        } else {
-            cooldownMs = COMPRESSION_FAILURE_COOLDOWN_MS;
-        }
-        dcc.setCompressionFailureCooldown(cooldownMs);
-        log.info("Compression failure cooldown set: {}s (attempt {}, {})",
-            cooldownMs / 1000, attempt, TurnExecutorUtils.classifyForLog(msg));
     }
 
     /** F16: create an approval request via the guardrail-owned queue path. */
