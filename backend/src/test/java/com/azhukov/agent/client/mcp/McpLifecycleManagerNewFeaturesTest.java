@@ -55,6 +55,7 @@ class McpLifecycleManagerNewFeaturesTest {
         var manager = spy(new McpLifecycleManager(properties, new ObjectMapper(),
             context, null, null, null, null, null, null));
         var oldClient = mock(McpSyncClient.class);
+        when(oldClient.closeGracefully()).thenReturn(true);
         var newClient = mock(McpSyncClient.class);
         when(newClient.listTools()).thenReturn(new McpSchema.ListToolsResult(List.of(), null));
         manager.getClientsForTest().put("fixture", new McpLifecycleManager.McpServerState(stale, oldClient, List.of()));
@@ -62,7 +63,7 @@ class McpLifecycleManagerNewFeaturesTest {
         var used = new java.util.concurrent.atomic.AtomicReference<String>();
         doAnswer(inv -> {
             AgentProperties.McpProperties.ServerProperties config = inv.getArgument(0);
-            verify(oldClient).close();
+            verify(oldClient).closeGracefully();
             used.set(config.getBaseUrl());
             called.countDown();
             return newClient;
@@ -1058,9 +1059,71 @@ class McpLifecycleManagerNewFeaturesTest {
         manager.reconnect("srv");
 
         // Retirement closes the detached client outside the caller.
-        verify(client, org.mockito.Mockito.timeout(2000)).close();
+        verify(client, org.mockito.Mockito.timeout(2000)).closeGracefully();
         // Server should be removed from clients map
         assertThat(manager.listServers()).isEmpty();
+    }
+
+    @Test
+    void reconnectWaitsForSdkTransportCompletion() throws Exception {
+        var properties = new AgentProperties();
+        var config = new AgentProperties.McpProperties.ServerProperties();
+        config.setName("fixture");
+        properties.getMcp().getServers().add(config);
+        var manager = spy(McpTestFactory.create(properties, null));
+        var transport = mock(io.modelcontextprotocol.spec.McpClientTransport.class);
+        var released = reactor.core.publisher.Sinks.<Void>one();
+        var closing = new CountDownLatch(1);
+        when(transport.closeGracefully()).thenReturn(reactor.core.publisher.Mono.defer(() -> {
+            closing.countDown();
+            return released.asMono();
+        }));
+        org.mockito.Mockito.doCallRealMethod().when(transport).protocolVersions();
+        var client = io.modelcontextprotocol.client.McpClient.sync(transport).build();
+        manager.getClientsForTest().put("fixture",
+            new McpLifecycleManager.McpServerState(config, client, List.of()));
+        var scheduler = mock(java.util.concurrent.ScheduledExecutorService.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(manager, "reconnectExecutor", scheduler);
+
+        try {
+            manager.reconnect("fixture");
+            assertThat(closing.await(2, TimeUnit.SECONDS)).isTrue();
+            org.mockito.Mockito.verifyNoInteractions(scheduler);
+            assertThat(released.tryEmitEmpty()).isEqualTo(reactor.core.publisher.Sinks.EmitResult.OK);
+            verify(scheduler, org.mockito.Mockito.timeout(2000)).schedule(
+                any(Runnable.class), eq(1L), eq(TimeUnit.SECONDS));
+        } finally {
+            released.tryEmitEmpty();
+            manager.closeAll();
+        }
+    }
+
+    @Test
+    void failedCloseKeepsTheConnectionReservedUntilAnExplicitRetrySucceeds() {
+        var properties = new AgentProperties();
+        var config = new AgentProperties.McpProperties.ServerProperties();
+        config.setName("fixture");
+        properties.getMcp().getServers().add(config);
+        var manager = spy(McpTestFactory.create(properties, null));
+        var client = mock(McpSyncClient.class);
+        when(client.closeGracefully()).thenReturn(false, true);
+        manager.getClientsForTest().put("fixture",
+            new McpLifecycleManager.McpServerState(config, client, List.of()));
+        var scheduler = mock(java.util.concurrent.ScheduledExecutorService.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(manager, "reconnectExecutor", scheduler);
+
+        try {
+            manager.reconnect("fixture");
+            verify(client, org.mockito.Mockito.timeout(2000)).closeGracefully();
+            org.mockito.Mockito.verifyNoInteractions(scheduler);
+            org.awaitility.Awaitility.await().atMost(2, TimeUnit.SECONDS).untilAsserted(() -> {
+                manager.reconnect("fixture");
+                verify(scheduler).schedule(any(Runnable.class), eq(1L), eq(TimeUnit.SECONDS));
+            });
+            verify(client, org.mockito.Mockito.times(2)).closeGracefully();
+        } finally {
+            manager.closeAll();
+        }
     }
 
     @Test

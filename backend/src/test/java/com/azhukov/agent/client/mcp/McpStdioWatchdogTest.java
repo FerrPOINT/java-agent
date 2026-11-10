@@ -95,9 +95,8 @@ class McpStdioWatchdogTest {
             .thenAnswer(inv -> { Thread.sleep(10_000); return null; });
         org.mockito.Mockito.doAnswer(inv -> {
             inClose.countDown();
-            assertThat(release.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
-            return null;
-        }).when(wedgedClient).close();
+            return release.await(5, java.util.concurrent.TimeUnit.SECONDS);
+        }).when(wedgedClient).closeGracefully();
 
         var server = properties.getMcp().getServers().getFirst();
         var state = new McpLifecycleManager.McpServerState(server, wedgedClient, List.of());
@@ -134,6 +133,6 @@ class McpStdioWatchdogTest {
 
         McpSchema.CallToolResult result = manager.executeTool("srv", "fast_tool", "{}");
         assertThat(result).isSameAs(ok);
-        verify(wedgedClient, never()).close();
+        verify(wedgedClient, never()).closeGracefully();
     }
 }
