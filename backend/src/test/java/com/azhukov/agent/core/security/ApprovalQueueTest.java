@@ -43,6 +43,35 @@ class ApprovalQueueTest {
     }
 
     @Test
+    void approvalWaitHonorsDeadlineDuringPersistence() throws Exception {
+        var queue = new ApprovalQueue();
+        var call = new ToolCall("fixture", "fixture", "{}");
+        UUID first = new UUID(0, 0);
+        var pending = queue.request(first, call, "first");
+        var persisting = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var decision = executor.submit(() -> queue.resolvePending(pending, true, () -> {
+                persisting.countDown();
+                try {
+                    if (!release.await(5, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("fixture timeout");
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError(e);
+                }
+            }));
+            try {
+                assertThat(persisting.await(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                var waiting = executor.submit(() -> queue.awaitDecision(first, 50));
+                assertThat(waiting.get(1, java.util.concurrent.TimeUnit.SECONDS)).isFalse();
+            } finally {
+                release.countDown();
+                assertThat(decision.get(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            }
+        }
+    }
+
+    @Test
     void requestApproveAndClear() {
         ApprovalQueue q = new ApprovalQueue();
         UUID session = UUID.randomUUID();
