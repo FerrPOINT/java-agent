@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -43,8 +44,7 @@ public class LongPollingService {
     });
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicLong lastUpdateId = new AtomicLong(0);
-    private final java.util.NavigableMap<Long, java.util.concurrent.CompletableFuture<Void>> pending =
-        new java.util.TreeMap<>();
+    private final Semaphore dispatchSlots = new Semaphore(100);
 
     // P0: Gateway lock — prevents concurrent instances with the same bot token
     private BotLockManager lockManager;
@@ -106,8 +106,6 @@ public class LongPollingService {
     private void pollLoop() {
         while (running.get()) {
             try {
-                acknowledgeHandledUpdates();
-                if (!running.get()) return;
                 var updates = fetchUpdates();
                 if (updates == null) {
                     // P0 fix: fetchUpdates returns null on transient network
@@ -131,11 +129,6 @@ public class LongPollingService {
                 // until the next real message.
                 reconnectWatcher.resetBackoff();
                 acceptUpdates(updates);
-                acknowledgeHandledUpdates();
-                if (!pending.isEmpty() && !updates.isEmpty()) {
-                    // Unacknowledged updates can be returned immediately by Telegram.
-                    TimeUnit.MILLISECONDS.sleep(250);
-                }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return;
@@ -151,31 +144,35 @@ public class LongPollingService {
         }
     }
 
-    private void acceptUpdates(List<Map<String, Object>> updates) {
+    private void acceptUpdates(List<Map<String, Object>> updates) throws InterruptedException {
         for (var update : updates.stream()
                 .sorted(java.util.Comparator.comparingLong(LongPollingService::updateId)).toList()) {
             long id = updateId(update);
-            if (id <= lastUpdateId.get() || pending.containsKey(id)) continue;
-            if (pending.size() >= 100) break;
-            pending.put(id, java.util.concurrent.CompletableFuture.runAsync(
-                () -> updateHandler.accept(UpdateEvent.from(update)), processPool));
+            if (!running.get()) return;
+            if (id <= lastUpdateId.get()) continue;
+            dispatchSlots.acquire();
+            boolean accepted = false;
+            try {
+                if (!running.get()) return;
+                processPool.execute(() -> {
+                    try {
+                        updateHandler.accept(UpdateEvent.from(update));
+                    } catch (Exception e) {
+                        log.error("Error processing admitted Telegram update {}", id, e);
+                    } finally {
+                        dispatchSlots.release();
+                    }
+                });
+                accepted = true;
+                lastUpdateId.set(id);
+            } finally {
+                if (!accepted) dispatchSlots.release();
+            }
         }
     }
 
     private static long updateId(Map<String, Object> update) {
         return update.get("update_id") instanceof Number id ? id.longValue() : 0;
-    }
-
-    private void acknowledgeHandledUpdates() {
-        while (!pending.isEmpty() && pending.firstEntry().getValue().isDone()) {
-            var first = pending.firstEntry();
-            if (first.getValue().isCompletedExceptionally()) {
-                running.set(false);
-                log.error("Stopping polling after failed handling of unacknowledged update {}", first.getKey());
-                return;
-            }
-            lastUpdateId.set(pending.pollFirstEntry().getKey());
-        }
     }
 
     List<Map<String, Object>> fetchUpdates() throws InterruptedException {

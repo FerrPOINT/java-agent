@@ -335,9 +335,9 @@ All settings in `application.yml` with env var overrides (`${ENV:default}`).
 **Problem:** Telegram bot needs to receive updates without a public webhook endpoint.
 
 **Solution:** `LongPollingService` polls through `ReconnectWatcher` and dispatches
-updates concurrently. It confirms only the earliest contiguous batch of updates
-whose handlers returned successfully. An unconfirmed update returned by a new poll
-shares its existing dispatch. Bot input batching and chat queues live in memory.
+updates concurrently. The offset advances after admission to a bounded in-memory
+executor. Handler failures are logged and other updates continue. This includes
+in-memory batching and chat queues, so a restart can lose admitted work.
 
 ```
 getUpdates → process → getUpdates → ...

@@ -145,8 +145,7 @@ class LongPollingServiceTest {
 
         try {
             assertThat(secondHandled.await(4, TimeUnit.SECONDS)).isTrue();
-            verify(telegramClient, never()).getUpdates(eq(2L), anyInt(), anyInt());
-            verify(telegramClient, never()).getUpdates(eq(3L), anyInt(), anyInt());
+            verify(telegramClient, timeout(2000)).getUpdates(eq(3L), anyInt(), anyInt());
         } finally {
             firstCanProceed.countDown();
         }
