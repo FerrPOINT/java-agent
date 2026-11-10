@@ -143,7 +143,13 @@ public class ReadFileTool implements ToolHandler {
             }
             byte[] rawBytes;
             try (var channel = com.azhukov.agent.core.security.SecureFileAccess.openRead(target)) {
-                rawBytes = java.nio.channels.Channels.newInputStream(channel).readAllBytes();
+                if (channel.size() > MAX_DOCUMENT_BYTES) {
+                    return jsonFail("File exceeds the " + formatCount(MAX_DOCUMENT_BYTES) + "-byte read limit.");
+                }
+                rawBytes = java.nio.channels.Channels.newInputStream(channel).readNBytes(MAX_DOCUMENT_BYTES + 1);
+            }
+            if (rawBytes.length > MAX_DOCUMENT_BYTES) {
+                return jsonFail("File exceeds the " + formatCount(MAX_DOCUMENT_BYTES) + "-byte read limit.");
             }
             String content;
             boolean extractedDocument = false;
@@ -162,17 +168,19 @@ public class ReadFileTool implements ToolHandler {
                 content = decodeText(rawBytes);
             }
 
-            List<String> lines = content.lines().toList();
+            int totalLines = (int) content.lines().count();
             int offset = Math.max(1, args.offset());
             int start = offset - 1;
             int limit = args.limit() > 0 ? args.limit() : 2000;
-            int end = (int) Math.min((long) lines.size(), (long) start + limit);
+            int end = (int) Math.min((long) totalLines, (long) start + limit);
 
             StringBuilder sb = new StringBuilder();
-            if (start < lines.size()) {
-                for (int i = start; i < end; i++) {
-                    sb.append(i + 1).append("|").append(lines.get(i)).append("\n");
-                }
+            var lines = content.lines().skip(start).limit(limit).iterator();
+            for (int i = start; lines.hasNext() && sb.length() <= MAX_READ_CHARS; i++) {
+                String line = lines.next();
+                sb.append(i + 1).append("|");
+                sb.append(line, 0, Math.min(line.length(), Math.max(0, MAX_READ_CHARS + 1 - sb.length())));
+                sb.append("\n");
             }
 
             // Remove trailing newline
@@ -183,26 +191,26 @@ public class ReadFileTool implements ToolHandler {
 
             Map<String, Object> resultMap = new LinkedHashMap<>();
             resultMap.put("content", result);
-            resultMap.put("total_lines", lines.size());
+            resultMap.put("total_lines", totalLines);
             resultMap.put("file_size", rawBytes.length);
-            resultMap.put("truncated", end < lines.size());
+            resultMap.put("truncated", end < totalLines);
             if (extractedDocument) {
                 resultMap.put("extracted_document", true);
             }
 
             // p10: Truncation UX — when output is truncated by limit, show remaining lines count.
-            if (end < lines.size()) {
+            if (end < totalLines) {
                 int shown = end - start;
-                int remaining = lines.size() - end;
+                int remaining = totalLines - end;
                 resultMap.put("hint", "Use offset=" + (end + 1) + " to continue reading "
-                    + "(showing " + offset + "-" + (start + shown) + " of " + lines.size()
+                    + "(showing " + offset + "-" + (start + shown) + " of " + totalLines
                     + " lines, " + remaining + " remaining)");
             }
             if (rawBytes.length == 0) {
                 resultMap.put("hint", "File is empty (0 bytes).");
-            } else if (offset > lines.size() && !lines.isEmpty()) {
+            } else if (offset > totalLines && totalLines > 0) {
                 resultMap.put("hint", "Note: offset " + offset + " is beyond the end of the file ("
-                    + lines.size() + " lines total). Retry with offset <= " + lines.size() + ".");
+                    + totalLines + " lines total). Retry with offset <= " + totalLines + ".");
             }
 
             // Char cap truncation — Hermes parity: return next_offset so the
@@ -226,7 +234,7 @@ public class ReadFileTool implements ToolHandler {
                 resultMap.put("next_offset", nextOffset);
                 resultMap.put("hint", "Output truncated at the " + formatCount(MAX_READ_CHARS)
                     + "-char read budget after " + linesShown + " line(s) "
-                    + "(showing lines " + offset + "-" + shownEnd + " of " + lines.size()
+                    + "(showing lines " + offset + "-" + shownEnd + " of " + totalLines
                     + "). Use offset=" + nextOffset + " to continue reading.");
             }
             return ToolResult.ok(toJson(resultMap));

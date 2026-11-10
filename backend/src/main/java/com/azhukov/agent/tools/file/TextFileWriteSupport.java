@@ -24,6 +24,7 @@ import java.nio.file.Path;
 
 final class TextFileWriteSupport {
 
+    private static final int MAX_EDIT_BYTES = 50 * 1024 * 1024;
     private static final ObjectMapper JSON = SharedObjectMapper.get();
     private static final byte[] UTF8_BOM = new byte[] {(byte) 0xEF, (byte) 0xBB, (byte) 0xBF};
 
@@ -51,6 +52,9 @@ final class TextFileWriteSupport {
         }
         String adjusted = preserveExistingEncodingShape(existing, content);
         byte[] bytes = adjusted.getBytes(StandardCharsets.UTF_8);
+        if (bytes.length > MAX_EDIT_BYTES) {
+            throw new IOException("Replacement exceeds the " + MAX_EDIT_BYTES + "-byte edit limit");
+        }
         parent.replaceFile(name, bytes, () -> {
             if (expected != null && !Arrays.equals(existing, readExistingBytes(parent, name))) {
                 throw new IOException("File changed before applying patch: " + path);
@@ -148,7 +152,14 @@ final class TextFileWriteSupport {
 
     private static byte[] readExistingBytes(SecureFileAccess.Directory parent, Path name) throws IOException {
         try (var channel = parent.openRead(name)) {
-            return Channels.newInputStream(channel).readAllBytes();
+            if (channel.size() > MAX_EDIT_BYTES) {
+                throw new IOException("File exceeds the " + MAX_EDIT_BYTES + "-byte edit limit");
+            }
+            byte[] bytes = Channels.newInputStream(channel).readNBytes(MAX_EDIT_BYTES + 1);
+            if (bytes.length > MAX_EDIT_BYTES) {
+                throw new IOException("File exceeds the " + MAX_EDIT_BYTES + "-byte edit limit");
+            }
+            return bytes;
         } catch (NoSuchFileException missing) {
             return null;
         }
