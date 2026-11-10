@@ -102,7 +102,12 @@ public class McpLifecycleManager {
     private OsvCheckService osvCheckService;
     private final Map<String, McpServerState> clients = new ConcurrentHashMap<>();
     // Guarded by clients. A reload revokes tokens before accepting new connections.
-    private final Map<String, CompletableFuture<Void>> connectionsInFlight = new java.util.HashMap<>();
+    private final Map<String, ConnectionAttempt> connectionsInFlight = new java.util.HashMap<>();
+
+    // Access under the clients monitor. A reservation in backoff has no handshake to join.
+    private static final class ConnectionAttempt {
+        private CompletableFuture<Void> handshake;
+    }
 
     /** Servers registered lazily from the schema cache; the first call connects them. */
     private final Map<String, List<McpSchema.Tool>> lazyServers = new ConcurrentHashMap<>();
@@ -312,45 +317,82 @@ public class McpLifecycleManager {
     /** @param allowLazy false forces a real connect after cached registration. */
     void connect(ConfiguredServer server, boolean allowLazy) {
         String name = server.properties().getName();
-        var token = new CompletableFuture<Void>();
-        CompletableFuture<Void> existing;
+        ConnectionAttempt owner;
+        CompletableFuture<Void> handshake;
         synchronized (clients) {
             if (shutdownRequested.get() || clients.containsKey(name)
                     || (allowLazy && lazyServers.containsKey(name))) {
                 return;
             }
-            existing = connectionsInFlight.putIfAbsent(name, token);
-        }
-        if (existing != null) {
-            if (!allowLazy) {
-                try {
-                    existing.get();
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    throw new IllegalStateException("Interrupted connecting to MCP server " + name, e);
-                } catch (ExecutionException e) {
-                    throw new IllegalStateException("Failed to connect to MCP server " + name, e.getCause());
+            var existing = connectionsInFlight.get(name);
+            if (existing == null) {
+                owner = new ConnectionAttempt();
+                handshake = new CompletableFuture<>();
+                owner.handshake = handshake;
+                connectionsInFlight.put(name, owner);
+                if (!allowLazy) {
+                    toolCallExecutor.execute(() -> connectAttempt(server, owner, handshake, false, 0, true));
                 }
+            } else {
+                if (allowLazy) {
+                    return;
+                }
+                owner = existing;
+                handshake = owner.handshake;
             }
-            return;
+        }
+        if (allowLazy) {
+            connectAttempt(server, owner, handshake, true, 0, true);
+        } else {
+            awaitHandshake(server.properties(), handshake);
+        }
+    }
+
+    private void awaitHandshake(AgentProperties.McpProperties.ServerProperties server,
+                                CompletableFuture<Void> handshake) {
+        String name = server.getName();
+        if (handshake == null) {
+            throw new IllegalStateException("MCP server is waiting to reconnect: " + name);
         }
         try {
-            if (!(allowLazy && lazyRegisterFromCache(server, token))) {
-                openConnection(server, token);
-            }
-            finishConnection(name, token, null);
-        } catch (Exception e) {
+            handshake.get(resolveMcpToolTimeout(server).toMillis(), TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted connecting to MCP server " + name, e);
+        } catch (TimeoutException e) {
+            throw new IllegalStateException("Timed out connecting to MCP server " + name, e);
+        } catch (ExecutionException e) {
+            throw new IllegalStateException("Failed to connect to MCP server " + name, e.getCause());
+        }
+    }
+
+    private void connectAttempt(ConfiguredServer server, ConnectionAttempt owner, CompletableFuture<Void> handshake,
+                                boolean allowLazy, int nextRetry, boolean initial) {
+        String name = server.properties().getName();
+        try {
             synchronized (clients) {
-                if (connectionsInFlight.get(name) == token) {
-                    finishConnection(name, token, e);
-                    scheduleReconnect(name, 0, true);
+                if (shutdownRequested.get() || connectionsInFlight.get(name) != owner) {
+                    return;
                 }
             }
+            if (!(allowLazy && lazyRegisterFromCache(server, owner))) {
+                openConnection(server, owner, handshake);
+            }
+            handshake.complete(null);
+        } catch (RuntimeException e) {
+            synchronized (clients) {
+                if (connectionsInFlight.get(name) == owner) {
+                    owner.handshake = null;
+                    scheduleReconnect(name, nextRetry, initial, owner);
+                }
+            }
+            handshake.completeExceptionally(e);
             log.warn("Failed to connect to MCP server {}: {}", name, e.getMessage());
         }
     }
 
-    private void openConnection(ConfiguredServer configured, CompletableFuture<Void> token) {
+    private void openConnection(ConfiguredServer configured, ConnectionAttempt owner,
+                                CompletableFuture<Void> handshake) {
         var server = configured.properties();
         String name = server.getName();
         var store = configStoreProvider == null ? null : configStoreProvider.getIfAvailable();
@@ -365,7 +407,7 @@ public class McpLifecycleManager {
             List<McpSchema.Tool> tools = hasTools ? listToolsWithPagination(client) : List.of();
             var registeredTools = selectedMcpTools(server, tools);
             synchronized (clients) {
-                if (connectionsInFlight.get(name) != token || shutdownRequested.get()) {
+                if (connectionsInFlight.get(name) != owner || shutdownRequested.get()) {
                     return;
                 }
                 var state = new McpServerState(server, client, tools);
@@ -381,8 +423,9 @@ public class McpLifecycleManager {
                     }
                     resetMcpServerError(name);
                     lazyServers.remove(name);
-                    connectionsInFlight.remove(name, token);
+                    connectionsInFlight.remove(name, owner);
                     published = true;
+                    handshake.complete(null);
                 } finally {
                     if (!published) {
                         clients.remove(name, state);
@@ -400,7 +443,11 @@ public class McpLifecycleManager {
             }
             log.info("Connected to MCP server {} ({}) with {} tools", name, server.getTransport(), tools.size());
         } catch (RuntimeException e) {
-            if (store != null && config != null && connectionsInFlight.get(name) == token) {
+            boolean current;
+            synchronized (clients) {
+                current = connectionsInFlight.get(name) == owner;
+            }
+            if (store != null && config != null && current) {
                 try {
                     store.recordSchemaError(config.getId(), config.getConfigRevision(), sanitizeError(e.getMessage()));
                 } catch (Exception ignored) {
@@ -415,23 +462,12 @@ public class McpLifecycleManager {
         }
     }
 
-    private void finishConnection(String name, CompletableFuture<Void> token, Exception failure) {
-        synchronized (clients) {
-            connectionsInFlight.remove(name, token);
-        }
-        if (failure == null) {
-            token.complete(null);
-        } else {
-            token.completeExceptionally(failure);
-        }
-    }
-
     /**
      * Hermes {@code _register_from_cache_sync} parity: register tools from the
      * persisted schema cache without spawning the server process. Returns true
      * when the lazy registration succeeded (connect() must not spawn).
      */
-    private boolean lazyRegisterFromCache(ConfiguredServer configured, CompletableFuture<Void> token) {
+    private boolean lazyRegisterFromCache(ConfiguredServer configured, ConnectionAttempt owner) {
         var server = configured.properties();
         var configEntity = configured.schemaConfig();
         if (!properties.getMcp().isLazyStartup() || configEntity == null) {
@@ -456,7 +492,7 @@ public class McpLifecycleManager {
                 return false;
             }
             synchronized (clients) {
-                if (connectionsInFlight.get(server.getName()) != token || shutdownRequested.get()) {
+                if (connectionsInFlight.get(server.getName()) != owner || shutdownRequested.get()) {
                     return true;
                 }
                 recordMcpToolTrustMetadata(server.getName(), server, registeredTools);
@@ -467,7 +503,7 @@ public class McpLifecycleManager {
                         definition, new McpToolHandler(server.getName(), tool.name()));
                 }
                 lazyServers.put(server.getName(), registeredTools);
-                connectionsInFlight.remove(server.getName(), token);
+                connectionsInFlight.remove(server.getName(), owner);
             }
             log.info("MCP server {} (lazy): registered {} tool(s) from the schema cache (no spawn)",
                 server.getName(), registeredTools.size());
@@ -928,46 +964,41 @@ public class McpLifecycleManager {
 
     // ── Reconnection with exponential backoff ────────────────────────────
     private void scheduleReconnect(String name, int attempt, boolean initial) {
-        var token = new CompletableFuture<Void>();
+        var owner = new ConnectionAttempt();
         synchronized (clients) {
             if (shutdownRequested.get() || clients.containsKey(name)
-                    || connectionsInFlight.putIfAbsent(name, token) != null) {
+                    || connectionsInFlight.putIfAbsent(name, owner) != null) {
                 return;
             }
-            scheduleReconnect(name, attempt, initial, token);
+            scheduleReconnect(name, attempt, initial, owner);
         }
     }
 
-    private void scheduleReconnect(String name, int attempt, boolean initial, CompletableFuture<Void> token) {
+    private void scheduleReconnect(String name, int attempt, boolean initial, ConnectionAttempt owner) {
         int maxRetries = initial ? MAX_INITIAL_CONNECT_RETRIES : MAX_RECONNECT_RETRIES;
         if (attempt >= maxRetries) {
-            finishConnection(name, token, new IllegalStateException("MCP reconnect attempts exhausted"));
+            connectionsInFlight.remove(name, owner);
             log.warn("MCP server {} failed after {} attempts, giving up", name, maxRetries);
             return;
         }
         long backoff = Math.min(1L << attempt, MAX_BACKOFF_SECONDS);
         reconnectExecutor.schedule(() -> {
+            var handshake = new CompletableFuture<Void>();
             synchronized (clients) {
-                if (shutdownRequested.get() || connectionsInFlight.get(name) != token) {
+                if (shutdownRequested.get() || connectionsInFlight.get(name) != owner) {
                     return;
                 }
+                owner.handshake = handshake;
             }
-            try {
-                var server = enabledServer(name);
-                if (server == null) {
-                    finishConnection(name, token, new IllegalStateException("MCP server is no longer enabled"));
-                    return;
-                }
-                openConnection(server, token);
-                finishConnection(name, token, null);
-            } catch (RuntimeException e) {
-                log.warn("MCP server {} attempt {}/{} failed: {}", name, attempt + 1, maxRetries, e.getMessage());
+            var server = enabledServer(name);
+            if (server == null) {
                 synchronized (clients) {
-                    if (!shutdownRequested.get() && connectionsInFlight.get(name) == token) {
-                        scheduleReconnect(name, attempt + 1, initial, token);
-                    }
+                    connectionsInFlight.remove(name, owner);
                 }
+                handshake.completeExceptionally(new IllegalStateException("MCP server is no longer enabled"));
+                return;
             }
+            connectAttempt(server, owner, handshake, false, attempt + 1, initial);
         }, backoff, TimeUnit.SECONDS);
     }
 
@@ -991,7 +1022,7 @@ public class McpLifecycleManager {
     }
 
     private void retireConnection(String name, McpServerState expected) {
-        var token = new CompletableFuture<Void>();
+        var owner = new ConnectionAttempt();
         synchronized (clients) {
             var current = clients.get(name);
             if (shutdownRequested.get() || current == null || current.client() != expected.client()) {
@@ -1003,12 +1034,12 @@ public class McpLifecycleManager {
             if (refresh != null) {
                 refresh.cancel(false);
             }
-            connectionsInFlight.put(name, token);
+            connectionsInFlight.put(name, owner);
         }
         safeCloseClient(expected.client());
         synchronized (clients) {
-            if (!shutdownRequested.get() && connectionsInFlight.get(name) == token) {
-                scheduleReconnect(name, 0, false, token);
+            if (!shutdownRequested.get() && connectionsInFlight.get(name) == owner) {
+                scheduleReconnect(name, 0, false, owner);
             }
         }
     }
@@ -1763,7 +1794,11 @@ public class McpLifecycleManager {
         // schedule throw RejectedExecutionException).
         synchronized (clients) {
             shutdownRequested.set(true);
-            connectionsInFlight.values().forEach(token -> token.cancel(false));
+            connectionsInFlight.values().forEach(owner -> {
+                if (owner.handshake != null) {
+                    owner.handshake.cancel(false);
+                }
+            });
             connectionsInFlight.clear();
             clients.forEach((name, state) -> unregisterTools(name, state.tools()));
             lazyServers.forEach(this::unregisterTools);

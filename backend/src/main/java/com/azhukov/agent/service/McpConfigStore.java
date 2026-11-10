@@ -21,12 +21,11 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Persisted MCP server config store + durable lazy schema cache (WP-3,
  * docs/35). Config writes validate before replacing runtime state; the schema
- * cache is single-flight per server and keeps the last known-good schema on a
+ * cache is serialized with config writes and keeps the last known-good schema on a
  * failed refresh (marked stale) instead of deleting usable tools.
  */
 @Service
@@ -42,8 +41,6 @@ public class McpConfigStore {
     private final ObjectProvider<McpSchemaCacheRepository> schemaCacheRepositoryProvider;
     private final ObjectMapper objectMapper;
 
-    private final ConcurrentHashMap<UUID, Object> refreshInFlight = new ConcurrentHashMap<>();
-
     // ── config CRUD ──────────────────────────────────────────────────────
 
     public record ServerConfigInput(
@@ -58,7 +55,7 @@ public class McpConfigStore {
         validate(profile, input);
         McpServerConfigRepository repository = configs();
         String canonProfile = normalizeProfile(profile);
-        McpServerConfigEntity entity = repository.findByProfileAndName(canonProfile, input.name())
+        McpServerConfigEntity entity = repository.lockByProfileAndName(canonProfile, input.name())
             .orElseGet(() -> {
                 McpServerConfigEntity created = new McpServerConfigEntity();
                 created.setProfile(canonProfile);
@@ -91,7 +88,7 @@ public class McpConfigStore {
         McpServerConfigRepository repository = configs();
         String canonProfile = normalizeProfile(profile);
         Optional<McpServerConfigEntity> existing =
-            repository.findByProfileAndName(canonProfile, name);
+            repository.lockByProfileAndName(canonProfile, name);
         if (existing.isEmpty()) {
             return false;
         }
@@ -103,7 +100,7 @@ public class McpConfigStore {
     @Transactional
     public Optional<McpServerConfigEntity> setEnabled(String profile, String name, boolean enabled) {
         McpServerConfigRepository repository = configs();
-        return repository.findByProfileAndName(normalizeProfile(profile), name)
+        return repository.lockByProfileAndName(normalizeProfile(profile), name)
             .map(entity -> {
                 entity.setEnabled(enabled);
                 entity.setConfigRevision(entity.getConfigRevision() + 1);
@@ -122,7 +119,7 @@ public class McpConfigStore {
         return configs().findByProfileAndName(normalizeProfile(profile), name);
     }
 
-    // ── schema cache (single-flight, TTL, stale-keep) ────────────────────
+    // ── schema cache (revision, TTL, stale-keep) ────────────────────
 
     /** Read the cached schema; empty when absent or config revision changed. */
     @Transactional(readOnly = true)
@@ -131,41 +128,38 @@ public class McpConfigStore {
             .filter(cache -> cache.getConfigRevision() == configRevision);
     }
 
-    /**
-     * Store a successful discovery result. Single-flight: concurrent callers
-     * for the same server collapse onto one store.
-     */
+    /** Store discovery only while the config revision used for the handshake is current. */
     @Transactional
     public void storeSchema(UUID serverConfigId, long configRevision,
                             String toolsJson, String resourcesJson, String promptsJson) {
-        Object lock = refreshInFlight.computeIfAbsent(serverConfigId, k -> new Object());
-        synchronized (lock) {
-            try {
-                McpSchemaCacheRepository repository = schemaCache();
-                McpSchemaCacheEntity entity = repository
-                    .findFirstByServerConfigIdOrderByFetchedAtDesc(serverConfigId)
-                    .orElseGet(() -> {
-                        McpSchemaCacheEntity created = new McpSchemaCacheEntity();
-                        created.setServerConfigId(serverConfigId);
-                        return created;
-                    });
-                if (entity.getConfigRevision() > configRevision) {
-                    return;
-                }
-                entity.setConfigRevision(configRevision);
-                entity.setContentHash(sha256(toolsJson));
-                entity.setToolsJson(toolsJson);
-                entity.setResourcesJson(resourcesJson);
-                entity.setPromptsJson(promptsJson);
-                entity.setFetchedAt(Instant.now());
-                entity.setExpiresAt(Instant.now().plus(SCHEMA_TTL));
-                entity.setLastSuccessAt(Instant.now());
-                entity.setLastError(null);
-                repository.save(entity);
-            } finally {
-                refreshInFlight.remove(serverConfigId, lock);
-            }
+        if (!lockCurrentRevision(serverConfigId, configRevision)) {
+            return;
         }
+        McpSchemaCacheRepository repository = schemaCache();
+        McpSchemaCacheEntity entity = repository
+            .findFirstByServerConfigIdOrderByFetchedAtDesc(serverConfigId)
+            .orElseGet(() -> {
+                McpSchemaCacheEntity created = new McpSchemaCacheEntity();
+                created.setServerConfigId(serverConfigId);
+                return created;
+            });
+        Instant now = Instant.now();
+        entity.setConfigRevision(configRevision);
+        entity.setContentHash(sha256(toolsJson));
+        entity.setToolsJson(toolsJson);
+        entity.setResourcesJson(resourcesJson);
+        entity.setPromptsJson(promptsJson);
+        entity.setFetchedAt(now);
+        entity.setExpiresAt(now.plus(SCHEMA_TTL));
+        entity.setLastSuccessAt(now);
+        entity.setLastError(null);
+        repository.save(entity);
+    }
+
+    private boolean lockCurrentRevision(UUID serverConfigId, long configRevision) {
+        return configs().lockById(serverConfigId)
+            .filter(config -> config.getConfigRevision() == configRevision)
+            .isPresent();
     }
 
     /**
@@ -174,6 +168,9 @@ public class McpConfigStore {
      */
     @Transactional
     public void recordSchemaError(UUID serverConfigId, long configRevision, String error) {
+        if (!lockCurrentRevision(serverConfigId, configRevision)) {
+            return;
+        }
         cachedSchema(serverConfigId, configRevision)
             .ifPresent(entity -> {
                 entity.setLastError(error);

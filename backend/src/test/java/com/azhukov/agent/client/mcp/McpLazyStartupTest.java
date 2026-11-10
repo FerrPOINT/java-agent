@@ -20,6 +20,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -143,6 +144,36 @@ class McpLazyStartupTest {
         verify(client).close();
         verify(toolRegistry, Mockito.atLeastOnce()).deregisterDynamic("mcp__cached_server__echo", "mcp-cached-server");
         assertThat(lifecycle.isConnected("cached-server")).isFalse();
+    }
+
+    @Test
+    void lazyCallerFailsDuringBackoffInsteadOfJoiningRecovery() throws Exception {
+        var lifecycle = Mockito.spy(manager);
+        var scheduler = mock(ScheduledExecutorService.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(lifecycle, "reconnectExecutor", scheduler);
+        var client = mock(io.modelcontextprotocol.client.McpSyncClient.class);
+        var cache = freshCache("[{\"name\":\"echo\"}]");
+        when(configStore.cachedSchema(any(), eq(3L))).thenReturn(Optional.of(cache));
+        when(configStore.isFresh(cache)).thenReturn(true);
+        Mockito.doReturn(client).when(lifecycle).createClient(any());
+        when(client.initialize()).thenThrow(new IllegalStateException("fixture offline"));
+
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            lifecycle.connect(configured, true);
+            try {
+                org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> lifecycle.executeTool("cached-server", "echo", "{}"))
+                    .hasMessageContaining("Failed to connect");
+                var second = executor.submit(() -> org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> lifecycle.executeTool("cached-server", "echo", "{}"))
+                    .hasMessageContaining("waiting to reconnect"));
+                second.get(2, TimeUnit.SECONDS);
+                verify(client).initialize();
+                verify(scheduler).schedule(any(Runnable.class), eq(1L), eq(TimeUnit.SECONDS));
+            } finally {
+                lifecycle.closeAll();
+            }
+        }
     }
 
     @Test

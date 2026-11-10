@@ -107,7 +107,7 @@ class McpConfigStoreTest {
         existing.setProfile("default");
         existing.setName("srv");
         existing.setConfigRevision(3);
-        when(configRepository.findByProfileAndName("default", "srv")).thenReturn(Optional.of(existing));
+        when(configRepository.lockByProfileAndName("default", "srv")).thenReturn(Optional.of(existing));
         when(configRepository.save(any(McpServerConfigEntity.class)))
             .thenAnswer(inv -> inv.getArgument(0));
 
@@ -142,6 +142,7 @@ class McpConfigStoreTest {
     @Test
     void staleSchemaSurvivesFailedRefresh() {
         UUID configId = UUID.randomUUID();
+        currentRevision(configId, 1);
         McpSchemaCacheEntity cached = new McpSchemaCacheEntity();
         cached.setServerConfigId(configId);
         cached.setConfigRevision(1);
@@ -172,8 +173,27 @@ class McpConfigStoreTest {
     }
 
     @Test
-    void storeSchemaIsSingleFlightAndSetsTtl() {
+    void retiredRevisionCannotWriteSchemaOrError() {
         UUID configId = UUID.randomUUID();
+        currentRevision(configId, 3);
+
+        store().storeSchema(configId, 2, "[]", null, null);
+        store().recordSchemaError(configId, 2, "old connection");
+
+        org.mockito.Mockito.verifyNoInteractions(schemaCacheRepository);
+    }
+
+    private void currentRevision(UUID id, long revision) {
+        var config = new McpServerConfigEntity();
+        config.setId(id);
+        config.setConfigRevision(revision);
+        when(configRepository.lockById(id)).thenReturn(Optional.of(config));
+    }
+
+    @Test
+    void storesCurrentSchemaAndSetsTtl() {
+        UUID configId = UUID.randomUUID();
+        currentRevision(configId, 2);
         when(schemaCacheRepository.findFirstByServerConfigIdOrderByFetchedAtDesc(configId))
             .thenReturn(Optional.empty());
         when(schemaCacheRepository.save(any(McpSchemaCacheEntity.class)))
