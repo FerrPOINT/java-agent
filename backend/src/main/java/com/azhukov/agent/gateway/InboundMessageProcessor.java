@@ -13,10 +13,10 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
 
+import java.util.ArrayDeque;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.function.Consumer;
 
 @RequiredArgsConstructor
@@ -44,7 +44,7 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
     private final ConcurrentHashMap<String, Boolean> activeSessions = new ConcurrentHashMap<>();
 
     /** Per-session queue for messages arriving while busy in "queue" mode. */
-    private final ConcurrentHashMap<String, ConcurrentLinkedQueue<MessageEvent>> pendingQueues = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, ArrayDeque<MessageEvent>> pendingQueues = new ConcurrentHashMap<>();
 
     /**
      * Bounded dedup of platform redeliveries: Telegram retries webhook POSTs
@@ -90,24 +90,24 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
             source.platform(), source.userId(), source.chatId(),
             event.text() != null ? event.text().substring(0, Math.min(event.text().length(), 80)) : "");
 
-        if (!isAuthorized(source)) {
-            log.warn("Skipping unauthorized inbound message from platform={} userId={} chatId={}",
-                source.platform(), source.userId(), source.chatId());
-            return;
-        }
-
-        // Platform redelivery dedup (Telegram retries webhook POSTs on
-        // timeout/5xx): a repeated eventId is a redelivery, not a new message.
-        if (newDelivery && isDuplicateRedelivery(event)) {
-            log.info("Skipping duplicate redelivery: platform={} eventId={}",
-                source.platform(), event.eventId());
-            return;
-        }
-
         java.util.UUID lockedSession = null;
         // A dequeued event owns progress until it hands back to an active turn.
         boolean drainQueue = !newDelivery;
         try {
+            if (!isAuthorized(source)) {
+                log.warn("Skipping unauthorized inbound message from platform={} userId={} chatId={}",
+                    source.platform(), source.userId(), source.chatId());
+                return;
+            }
+
+            // Platform redelivery dedup (Telegram retries webhook POSTs on
+            // timeout/5xx): a repeated eventId is a redelivery, not a new message.
+            if (newDelivery && isDuplicateRedelivery(event)) {
+                log.info("Skipping duplicate redelivery: platform={} eventId={}",
+                    source.platform(), event.eventId());
+                return;
+            }
+
             // Send typing indicator before LLM call (Telegram shows it for ~5s)
             routingServiceProvider.getIfAvailable().sendTyping(source.platform(), source);
             Session session = sessionResolver.resolve(source);
@@ -253,7 +253,7 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
 
     private void enqueue(String chatId, MessageEvent event) {
         pendingQueues.compute(chatId, (key, queue) -> {
-            if (queue == null) queue = new ConcurrentLinkedQueue<>();
+            if (queue == null) queue = new ArrayDeque<>();
             queue.add(event);
             return queue;
         });
