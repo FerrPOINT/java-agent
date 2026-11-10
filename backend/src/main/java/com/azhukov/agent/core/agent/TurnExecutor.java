@@ -624,11 +624,7 @@ public class TurnExecutor {
      * availability errors (RATE_LIMIT/OVERLOADED) → error.availability-retry-attempts (20).
      */
     public int retryBudgetFor(ErrorClassifier.ErrorType errorType) {
-        if (errorType == ErrorClassifier.ErrorType.RATE_LIMIT
-            || errorType == ErrorClassifier.ErrorType.OVERLOADED) {
-            return Math.max(1, properties.getError().getAvailabilityRetryAttempts());
-        }
-        return Math.max(1, properties.getError().getRetryAttempts());
+        return ResponseRecoveryPolicy.retryBudget(properties.getError(), errorType);
     }
 
     /**

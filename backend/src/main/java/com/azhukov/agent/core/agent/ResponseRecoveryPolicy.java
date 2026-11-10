@@ -1,5 +1,7 @@
 package com.azhukov.agent.core.agent;
 
+import com.azhukov.agent.client.langchain4j.ErrorClassifier.ErrorType;
+import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.model.ChatResponse;
 
 /**
@@ -14,6 +16,17 @@ import com.azhukov.agent.core.model.ChatResponse;
  * dropped-toolcall 3 consecutive with reset on a landed call (7918-7950).</p>
  */
 public final class ResponseRecoveryPolicy {
+
+    public static final int MAX_COMPRESSION_ATTEMPTS = 3;
+
+    public static int retryBudget(AgentProperties.ErrorProperties policy, ErrorType error) {
+        return Math.max(0, error == ErrorType.RATE_LIMIT || error == ErrorType.OVERLOADED
+            ? policy.getAvailabilityRetryAttempts() : policy.getRetryAttempts());
+    }
+
+    public static boolean canCompact(AgentProperties properties, int previousAttempts) {
+        return properties.getCompression().isEnabled() && previousAttempts < MAX_COMPRESSION_ATTEMPTS;
+    }
 
     /** Hermes parity: LENGTH continuation ceiling is 4 attempts. */
     public static final int MAX_LENGTH_CONTINUATION_ATTEMPTS = 4;
