@@ -162,6 +162,38 @@ class SessionCompressionHelperTest {
         assertThat(newer.getActive()).isTrue();
     }
 
+    @org.springframework.retry.annotation.EnableRetry(proxyTargetClass = true)
+    static class RetryConfig {}
+
+    @Test
+    @org.junit.jupiter.api.Tag("slow")
+    void retryingAPersistenceConflictOnlyCallsTheModelOnce() {
+        UUID sessionId = UUID.randomUUID();
+        var rows = List.of(entity("user", "one"), entity("assistant", "two"), entity("user", "three"),
+            entity("assistant", "four"), entity("user", "five"));
+        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId)).thenReturn(rows);
+        when(conversationCompressor.compress(anyList(), eq("focus")))
+            .thenReturn(List.of(Message.system("summary")));
+        when(sessionRepository.findMessageParentId(sessionId))
+            .thenThrow(new org.springframework.dao.PessimisticLockingFailureException("retryable"))
+            .thenReturn(java.util.Optional.of(sessionId));
+
+        try (var context = new org.springframework.context.annotation.AnnotationConfigApplicationContext()) {
+            context.register(RetryConfig.class);
+            context.registerBean(SessionCompressionHelper.class, () -> new SessionCompressionHelper(
+                messageRepository, Mappers.getMapper(MessageMapper.class), conversationCompressor,
+                context.getBeanProvider(SessionCompressionHelper.class),
+                context.getBeanProvider(com.azhukov.agent.core.memory.MemoryManager.class), sessionRepository));
+            context.refresh();
+
+            context.getBean(SessionCompressionHelper.class).compressSessionInternal(sessionId, "focus", null);
+        }
+
+        verify(conversationCompressor).compress(anyList(), eq("focus"));
+        verify(sessionRepository, org.mockito.Mockito.times(2)).findMessageParentId(sessionId);
+        verify(messageRepository).saveAll(rows);
+    }
+
     private static MessageEntity entity(String role, String content) {
         MessageEntity entity = new MessageEntity();
         entity.setId(UUID.nameUUIDFromBytes((role + ":" + content).getBytes(StandardCharsets.UTF_8)));
