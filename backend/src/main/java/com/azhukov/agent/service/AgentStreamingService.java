@@ -378,7 +378,16 @@ public class AgentStreamingService {
                 }
                 long __turnStart = System.currentTimeMillis();
                 try {
-                    runAgenticLoop(applyCliState(scopedRequest), emitter, streamCtx);
+                    ChatRequest applied = applyCliState(scopedRequest);
+                    var resolved = resolveStreamSession(applied);
+                    if (sessionTurnLockManager != null
+                            && (!locked || !resolved.session().id().equals(lockSessionId))) {
+                        if (locked) sessionTurnLockManager.release(lockSessionId);
+                        lockSessionId = resolved.session().id();
+                        locked = sessionTurnLockManager.tryAcquire(lockSessionId, 30);
+                        if (!locked) throw new IllegalStateException("Session is busy: " + lockSessionId);
+                    }
+                    runAgenticLoop(applied, emitter, streamCtx, resolved);
                 } finally {
                     long __turnMs = System.currentTimeMillis() - __turnStart;
                     if (agentMetrics != null) {
@@ -410,7 +419,22 @@ public class AgentStreamingService {
         return emitter;
     }
 
-    private void runAgenticLoop(ChatRequest request, SseEmitter emitter, StreamContext streamCtx) {
+    private AgentSessionResolver.ResolvedSession resolveStreamSession(ChatRequest request) {
+        // Resolve or create session — if sessionId is provided but not found in backend DB,
+        // create a new session (the bot may have a sessionId from its own bot_sessions table
+        // which is separate from backend's sessions table).
+        String sessionSource = request.chatType() != null && !request.chatType().isBlank()
+            ? "telegram" : "api_server";
+        String requestedUserId = request.userId() != null && !request.userId().isBlank()
+            ? request.userId() : AgentProperties.DEFAULT_USER_ID;
+        return sessionResolver.resolveOrCreate(
+            request.sessionId(),
+            requestedUserId,
+            properties.getModel().getModelName(), sessionSource);
+    }
+
+    private void runAgenticLoop(ChatRequest request, SseEmitter emitter, StreamContext streamCtx,
+                                AgentSessionResolver.ResolvedSession resolved) {
         ThinkScrubber scrubber = new ThinkScrubber();
         // rev-111 Hermes parity (#5719): stateful scrubber for <memory-context>
         // spans split across stream deltas. The one-shot sanitize_context regex
@@ -421,17 +445,8 @@ public class AgentStreamingService {
         MemoryContextFence.StreamingContextScrubber ctxScrubber =
             new MemoryContextFence.StreamingContextScrubber();
 
-        // Resolve or create session — if sessionId is provided but not found in backend DB,
-        // create a new session (the bot may have a sessionId from its own bot_sessions table
-        // which is separate from backend's sessions table).
         String sessionSource = request.chatType() != null && !request.chatType().isBlank()
             ? "telegram" : "api_server";
-        String requestedUserId = request.userId() != null && !request.userId().isBlank()
-            ? request.userId() : AgentProperties.DEFAULT_USER_ID;
-        var resolved = sessionResolver.resolveOrCreate(
-            request.sessionId(),
-            requestedUserId,
-            properties.getModel().getModelName(), sessionSource);
         boolean isNew = resolved.isNew();
         Session session = resolved.session();
         // A foreground streaming turn has the same priority as the sync path:

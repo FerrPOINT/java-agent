@@ -71,8 +71,20 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
         return !seenEventIds.add(key);
     }
 
+    private com.azhukov.agent.core.agent.SessionTurnLockManager turnLocks =
+        new com.azhukov.agent.core.agent.SessionTurnLockManager();
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setTurnLocks(com.azhukov.agent.core.agent.SessionTurnLockManager turnLocks) {
+        this.turnLocks = turnLocks;
+    }
+
     @Override
     public void accept(MessageEvent event) {
+        process(event, true);
+    }
+
+    private void process(MessageEvent event, boolean newDelivery) {
         SessionSource source = event.source();
         log.info("Processing inbound {} message from userId={} chatId={} text={}",
             source.platform(), source.userId(), source.chatId(),
@@ -86,12 +98,13 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
 
         // Platform redelivery dedup (Telegram retries webhook POSTs on
         // timeout/5xx): a repeated eventId is a redelivery, not a new message.
-        if (isDuplicateRedelivery(event)) {
+        if (newDelivery && isDuplicateRedelivery(event)) {
             log.info("Skipping duplicate redelivery: platform={} eventId={}",
                 source.platform(), event.eventId());
             return;
         }
 
+        java.util.UUID lockedSession = null;
         try {
             // Send typing indicator before LLM call (Telegram shows it for ~5s)
             routingServiceProvider.getIfAvailable().sendTyping(source.platform(), source);
@@ -162,6 +175,11 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
                 return;
             }
 
+            if (!turnLocks.tryAcquire(session.id(), 30)) {
+                throw new IllegalStateException("Session is busy: " + session.id());
+            }
+            lockedSession = session.id();
+
             // P1-5: When mid-turn persistence is active, persist only the user message
             // before the turn. The DefaultAgentRuntime persists assistant + tool messages
             // mid-turn via MidTurnPersistenceCallback. Skip full persistTurn to avoid duplicates.
@@ -217,21 +235,24 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
                 log.error("Failed to send error reply to userId={}: {}", source.userId(), sendEx.getMessage());
             }
         } finally {
-            activeSessions.remove(source.chatId());
-            // Drain pending queue: process any messages that arrived during the current turn
-            ConcurrentLinkedQueue<MessageEvent> queue = pendingQueues.remove(source.chatId());
-            if (queue != null && !queue.isEmpty()) {
-                MessageEvent next = queue.poll();
-                if (next != null) {
-                    log.debug("Draining queued message for chat {}", source.chatId());
-                    // Re-enqueue any remaining messages so they are processed in order
-                    if (!queue.isEmpty()) {
-                        ConcurrentLinkedQueue<MessageEvent> remaining = pendingQueues.computeIfAbsent(
-                            source.chatId(), k -> new ConcurrentLinkedQueue<>());
-                        remaining.addAll(queue);
+            if (lockedSession != null) {
+                activeSessions.remove(source.chatId());
+                turnLocks.release(lockedSession);
+                // Drain pending queue: process any messages that arrived during the current turn
+                ConcurrentLinkedQueue<MessageEvent> queue = pendingQueues.remove(source.chatId());
+                if (queue != null && !queue.isEmpty()) {
+                    MessageEvent next = queue.poll();
+                    if (next != null) {
+                        log.debug("Draining queued message for chat {}", source.chatId());
+                        // Re-enqueue any remaining messages so they are processed in order
+                        if (!queue.isEmpty()) {
+                            ConcurrentLinkedQueue<MessageEvent> remaining = pendingQueues.computeIfAbsent(
+                                source.chatId(), k -> new ConcurrentLinkedQueue<>());
+                            remaining.addAll(queue);
+                        }
+                        // Process the next queued message asynchronously
+                        java.util.concurrent.CompletableFuture.runAsync(() -> process(next, false));
                     }
-                    // Process the next queued message asynchronously
-                    java.util.concurrent.CompletableFuture.runAsync(() -> accept(next));
                 }
             }
         }

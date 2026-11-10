@@ -76,6 +76,23 @@ public class SessionTurnLockManager {
         }
     }
 
+    public boolean isBusy(UUID sessionId) {
+        TurnLock entry = locks.get(sessionId);
+        return entry != null && entry.lock.isLocked();
+    }
+
+    public <T> T withTurn(UUID sessionId, java.util.function.Supplier<T> work) {
+        if (!tryAcquire(sessionId, 30)) {
+            throw new IllegalStateException(
+                "Session " + sessionId + " is busy (another turn is in progress). Retry later.");
+        }
+        try {
+            return work.get();
+        } finally {
+            release(sessionId);
+        }
+    }
+
     /** Release one owned hold, retaining the identity for any other hold or waiter. */
     public void release(UUID sessionId) {
         TurnLock entry = locks.get(sessionId);
