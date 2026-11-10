@@ -37,6 +37,85 @@ import static org.mockito.Mockito.when;
 class McpToolHandlerTest {
 
     @Test
+    void nativeAndAliasCallsUseTheDefinitionObservedByApproval() {
+        var properties = new AgentProperties();
+        var mapper = new ObjectMapper();
+        var manager = new McpLifecycleManager(properties, mapper, null, new McpToolDefinitionScanner(mapper),
+            new McpResponseScanner(), new ToolArgumentInjectionScanner(), new ToolFingerprintStore(mapper),
+            new SlidingWindowRateLimiter(), null);
+        var trust = new com.azhukov.agent.core.security.McpToolTrustService();
+        var guard = new com.azhukov.agent.core.security.DefaultToolGuardrails(properties,
+            new com.azhukov.agent.core.security.ApprovalQueue());
+        guard.setMcpToolTrustService(trust);
+
+        var server = new AgentProperties.McpProperties.ServerProperties();
+        server.setName("srv");
+        server.setTrust("untrusted");
+        var client = mock(McpSyncClient.class);
+        when(client.callTool(any())).thenReturn(new McpSchema.CallToolResult(
+            List.of(new McpSchema.TextContent(null, "fixture response")), false, null, null));
+        var observed = McpSchema.Tool.builder("tool")
+            .annotations(McpSchema.ToolAnnotations.builder().readOnlyHint(true).build()).build();
+        var current = McpSchema.Tool.builder("tool").description("changed definition").build();
+        String fullName = McpLifecycleManager.mcpPrefixedToolName("srv", "tool");
+        trust.recordServerTools("srv", "untrusted", List.of(observed));
+        var nativeCall = new com.azhukov.agent.core.model.ToolCall("native", fullName, "{}");
+        String aliasArgs = "{\"server_name\":\"srv\",\"tool_name\":\"tool\"}";
+        var aliasCall = new com.azhukov.agent.core.model.ToolCall("alias", "mcp_tool", aliasArgs);
+        var expected = guard.mcpAdmission(nativeCall);
+        assertThat(expected).isNotNull().isSameAs(guard.mcpAdmission(aliasCall));
+        assertThat(guard.requiresApproval(nativeCall, expected)).isFalse();
+
+        manager.getClientsForTest().put("srv", new McpLifecycleManager.McpServerState(server, client, List.of(current)));
+        var nativeHandler = manager.new McpToolHandler("srv", "tool");
+        var oauth = mock(McpOAuthManager.class);
+        var aliasHandler = new com.azhukov.agent.tools.mcp.McpTool(manager, oauth);
+
+        assertThat(nativeHandler.execute("{}", null, null, expected).success()).isFalse();
+        assertThat(aliasHandler.execute(aliasArgs, null, null, expected).success()).isFalse();
+        assertThat(aliasHandler.execute(aliasArgs, null, null).success()).isFalse();
+        verify(client, times(0)).callTool(any());
+
+        trust.recordServerTools("srv", "untrusted", List.of(current));
+        var approved = guard.mcpAdmission(aliasCall);
+        assertThat(guard.requiresApproval(aliasCall, approved)).isTrue();
+        assertThat(aliasHandler.execute(aliasArgs, null, null, approved).success()).isTrue();
+        verify(client, times(1)).callTool(any());
+    }
+
+    @Test
+    void explicitAliasKeepsItsExactMcpToolName() {
+        var props = new AgentProperties();
+        var manager = new McpLifecycleManager(props, new ObjectMapper(), null, null, null, null, null, null, null);
+        var trust = new com.azhukov.agent.core.security.McpToolTrustService();
+        var guard = new com.azhukov.agent.core.security.DefaultToolGuardrails(props,
+            new com.azhukov.agent.core.security.ApprovalQueue());
+        guard.setMcpToolTrustService(trust);
+
+        var server = new AgentProperties.McpProperties.ServerProperties();
+        server.setName("srv");
+        var client = mock(McpSyncClient.class);
+        when(client.callTool(any())).thenReturn(new McpSchema.CallToolResult(
+            List.of(new McpSchema.TextContent(null, "fixture response")), false, null, null));
+        var requested = McpSchema.Tool.builder("fixture-a").build();
+        var other = McpSchema.Tool.builder("fixture_a").build();
+        String aliasName = McpLifecycleManager.mcpPrefixedToolName("srv", requested.name());
+        assertThat(McpLifecycleManager.mcpPrefixedToolName("srv", other.name())).isEqualTo(aliasName);
+        trust.recordServerTools("srv", "full", List.of(requested, other));
+        manager.getClientsForTest().put("srv",
+            new McpLifecycleManager.McpServerState(server, client, List.of(requested, other)));
+
+        var handler = new com.azhukov.agent.tools.mcp.McpTool(manager, mock(McpOAuthManager.class));
+        String args = "{\"server_name\":\"srv\",\"tool_name\":\"fixture-a\"}";
+        var call = new com.azhukov.agent.core.model.ToolCall("alias", "mcp_tool", args);
+        var admission = guard.mcpAdmission(call);
+        assertThat(admission.definition()).isEqualTo(requested);
+        assertThat(trust.metadata(aliasName).definition()).isEqualTo(other);
+        var result = handler.execute(args, null, null, admission);
+        assertThat(result.success()).as(result.error()).isTrue();
+    }
+
+    @Test
     void executeReturnsOkOnSuccess() throws Exception {
         AgentProperties properties = new AgentProperties();
         ObjectMapper objectMapper = new ObjectMapper();
@@ -51,7 +130,7 @@ class McpToolHandlerTest {
         McpSchema.CallToolResult result = new McpSchema.CallToolResult(
             List.of(new McpSchema.TextContent(null, "ok")), false, null, null);
         when(client.callTool(any())).thenReturn(result);
-        injectClient(manager, "srv", client, List.of());
+        injectClient(manager, "srv", client, List.of(McpSchema.Tool.builder("tool").build()));
 
         McpLifecycleManager.McpToolHandler handler = manager.new McpToolHandler("srv", "tool");
         ToolResult toolResult = handler.execute("{}", Message.user("hi"), Session.create("u", "p", "m"));
@@ -82,7 +161,7 @@ class McpToolHandlerTest {
             Map.of("count", 2),
             meta);
         when(client.callTool(any())).thenReturn(result);
-        injectClient(manager, "srv", client, List.of());
+        injectClient(manager, "srv", client, List.of(McpSchema.Tool.builder("tool").build()));
 
         McpLifecycleManager.McpToolHandler handler = manager.new McpToolHandler("srv", "tool");
         ToolResult toolResult = handler.execute("{}", Message.user("hi"), Session.create("u", "p", "m"));
@@ -116,7 +195,7 @@ class McpToolHandlerTest {
             null,
             null);
         when(client.callTool(any())).thenReturn(result);
-        injectClient(manager, "srv", client, List.of());
+        injectClient(manager, "srv", client, List.of(McpSchema.Tool.builder("tool").build()));
 
         McpLifecycleManager.McpToolHandler handler = manager.new McpToolHandler("srv", "tool");
         ToolResult toolResult = handler.execute("{}", Message.user("hi"), Session.create("u", "p", "m"));
@@ -155,7 +234,7 @@ class McpToolHandlerTest {
         McpSchema.CallToolResult result = new McpSchema.CallToolResult(
             List.of(new McpSchema.TextContent(null, "remote error")), true, null, null);
         when(client.callTool(any())).thenReturn(result);
-        injectClient(manager, "srv", client, List.of());
+        injectClient(manager, "srv", client, List.of(McpSchema.Tool.builder("tool").build()));
 
         McpLifecycleManager.McpToolHandler handler = manager.new McpToolHandler("srv", "tool");
         ToolResult toolResult = handler.execute("{}", Message.user("hi"), Session.create("u", "p", "m"));
@@ -181,7 +260,7 @@ class McpToolHandlerTest {
 
         McpSyncClient client = mock(McpSyncClient.class);
         when(client.callTool(any())).thenThrow(new RuntimeException("boom"));
-        injectClient(manager, "srv", client, List.of());
+        injectClient(manager, "srv", client, List.of(McpSchema.Tool.builder("tool").build()));
 
         McpLifecycleManager.McpToolHandler handler = manager.new McpToolHandler("srv", "tool");
         ToolResult toolResult = handler.execute("{}", Message.user("hi"), Session.create("u", "p", "m"));
@@ -218,7 +297,7 @@ class McpToolHandlerTest {
             }
             return ok;
         }).when(client).callTool(any());
-        injectClient(manager, "srv", client, List.of());
+        injectClient(manager, "srv", client, List.of(McpSchema.Tool.builder("tool").build()));
 
         try {
             McpLifecycleManager.McpToolHandler handler = manager.new McpToolHandler("srv", "tool");
@@ -252,7 +331,7 @@ class McpToolHandlerTest {
         McpSchema.CallToolResult result = new McpSchema.CallToolResult(
             List.of(new McpSchema.TextContent(null, "Bearer sk-secret123456 failed")), true, null, null);
         when(client.callTool(any())).thenReturn(result);
-        injectClient(manager, "srv", client, List.of());
+        injectClient(manager, "srv", client, List.of(McpSchema.Tool.builder("tool").build()));
 
         McpLifecycleManager.McpToolHandler handler = manager.new McpToolHandler("srv", "tool");
         ToolResult toolResult = handler.execute("{}", Message.user("hi"), Session.create("u", "p", "m"));
@@ -277,7 +356,7 @@ class McpToolHandlerTest {
 
         McpSyncClient client = mock(McpSyncClient.class);
         when(client.callTool(any())).thenThrow(new RuntimeException("still broken"));
-        injectClient(manager, "srv", client, List.of());
+        injectClient(manager, "srv", client, List.of(McpSchema.Tool.builder("tool").build()));
         McpLifecycleManager.McpToolHandler handler = manager.new McpToolHandler("srv", "tool");
 
         handler.execute("{}", Message.user("hi"), Session.create("u", "p", "m"));
@@ -305,7 +384,7 @@ class McpToolHandlerTest {
         McpSchema.CallToolResult ok = new McpSchema.CallToolResult(
             List.of(new McpSchema.TextContent(null, "ok")), false, null, null);
         when(client.callTool(any())).thenReturn(ok);
-        injectClient(manager, "srv", client, List.of());
+        injectClient(manager, "srv", client, List.of(McpSchema.Tool.builder("tool").build()));
         manager.forceMcpCircuitBreakerForTest("srv", McpLifecycleManager.MCP_CIRCUIT_BREAKER_THRESHOLD,
             McpLifecycleManager.MCP_CIRCUIT_BREAKER_COOLDOWN.plusSeconds(1));
 
@@ -330,7 +409,7 @@ class McpToolHandlerTest {
 
         McpSyncClient client = mock(McpSyncClient.class);
         when(client.callTool(any())).thenThrow(new RuntimeException("still broken"));
-        injectClient(manager, "srv", client, List.of());
+        injectClient(manager, "srv", client, List.of(McpSchema.Tool.builder("tool").build()));
         manager.forceMcpCircuitBreakerForTest("srv", McpLifecycleManager.MCP_CIRCUIT_BREAKER_THRESHOLD,
             McpLifecycleManager.MCP_CIRCUIT_BREAKER_COOLDOWN.plusSeconds(1));
         McpLifecycleManager.McpToolHandler handler = manager.new McpToolHandler("srv", "tool");
@@ -346,15 +425,9 @@ class McpToolHandlerTest {
 
     @SuppressWarnings("unchecked")
     private void injectClient(McpLifecycleManager manager, String name, McpSyncClient client, List<McpSchema.Tool> tools) throws Exception {
-        Field field = McpLifecycleManager.class.getDeclaredField("clients");
-        field.setAccessible(true);
-        ConcurrentHashMap<String, Object> map = (ConcurrentHashMap<String, Object>) field.get(manager);
-        Class<?> stateClass = Class.forName("com.azhukov.agent.client.mcp.McpLifecycleManager$McpServerState");
-        AgentProperties.McpProperties.ServerProperties props = new AgentProperties.McpProperties.ServerProperties();
+        var props = new AgentProperties.McpProperties.ServerProperties();
         props.setName(name);
-        java.lang.reflect.Constructor<?> ctor = stateClass.getDeclaredConstructors()[0];
-        ctor.setAccessible(true);
-        map.put(name, ctor.newInstance(props, client, tools));
+        manager.getClientsForTest().put(name, new McpLifecycleManager.McpServerState(props, client, tools));
     }
 
     private JsonNode errorPayload(ToolResult result) throws Exception {

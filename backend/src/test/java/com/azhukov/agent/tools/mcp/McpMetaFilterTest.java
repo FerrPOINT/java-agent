@@ -74,7 +74,7 @@ class McpMetaFilterTest {
         McpLifecycleManager lifecycleManager = mock(McpLifecycleManager.class);
         McpOAuthManager oauthManager = mock(McpOAuthManager.class);
         when(oauthManager.getToken("srv")).thenReturn(Optional.empty());
-        when(lifecycleManager.executeTool("srv", "tool", "{}")).thenReturn(
+        when(lifecycleManager.executeModelTool("srv", "tool", "{}", null)).thenReturn(
             new McpSchema.CallToolResult(
                 List.of(new McpSchema.TextContent(null, "remote error")),
                 true,

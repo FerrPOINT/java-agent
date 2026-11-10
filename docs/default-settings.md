@@ -652,6 +652,7 @@ Authoritative source: `backend/src/main/java/com/azhukov/agent/config/AgentPrope
 | `AgentProperties.McpProperties.Server.transport` | `"stdio"` |
 | `AgentProperties.McpProperties.Server.sseEndpoint` | `"/mcp/sse"` |
 | `AgentProperties.McpProperties.Server.messageEndpoint` | `"/mcp/message"` |
+| `AgentProperties.McpProperties.Server.sseKeepAliveInterval` | `PT15S` |
 | `AgentProperties.McpProperties.Server.name` | `"java-agent"` |
 | `AgentProperties.McpProperties.Server.version` | `"1.0.0"` |
 | `AgentProperties.SecurityProperties.approvalsEnabled` | `true` |

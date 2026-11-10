@@ -3,6 +3,8 @@ package com.azhukov.agent.core.security;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.agent.InterruptToken;
 import com.azhukov.agent.core.model.ToolCall;
+import com.azhukov.agent.tools.ToolHandler;
+import com.azhukov.agent.tools.mcp.McpTool;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -243,16 +245,32 @@ public class DefaultToolGuardrails implements ToolGuardrails {
  }
 
  @Override
+ public McpToolTrustService.ToolTrustMetadata mcpAdmission(ToolCall call) {
+  if (call == null || mcpToolTrustService == null) return null;
+  if ("mcp_tool".equals(call.name())) {
+   try {
+    var args = ToolHandler.parseJson(call.arguments(), McpTool.McpArgs.class);
+    if (args.serverName() == null || args.toolName() == null) return null;
+    return mcpToolTrustService.metadata(args.serverName(), args.toolName());
+   } catch (IllegalArgumentException e) {
+    return null;
+   }
+  }
+  return mcpToolTrustService.metadata(call.name());
+ }
+
+ @Override
  public boolean requiresApproval(ToolCall call) {
-  if (!properties.getSecurity().isApprovalsEnabled() || call == null) {
-  return false;
-  }
-  if (mcpToolTrustService != null && mcpToolTrustService.requiresApproval(call.name())) {
-  return true;
-  }
+  return requiresApproval(call, mcpAdmission(call));
+ }
+
+ @Override
+ public boolean requiresApproval(ToolCall call, McpToolTrustService.ToolTrustMetadata admission) {
+  if (!properties.getSecurity().isApprovalsEnabled() || call == null) return false;
+  if (admission != null && admission.requiresApproval()) return true;
   List<String> destructive = properties.getSecurity().getAlwaysRequireApprovalTools();
   return destructive != null && destructive.contains(call.name());
-  }
+ }
 
  public void setMcpToolTrustService(McpToolTrustService mcpToolTrustService) {
   this.mcpToolTrustService = mcpToolTrustService;

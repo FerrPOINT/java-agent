@@ -8,6 +8,14 @@ public interface ToolGuardrails {
 
     boolean requiresApproval(ToolCall call);
 
+    default McpToolTrustService.ToolTrustMetadata mcpAdmission(ToolCall call) {
+        return null;
+    }
+
+    default boolean requiresApproval(ToolCall call, McpToolTrustService.ToolTrustMetadata admission) {
+        return requiresApproval(call);
+    }
+
     /**
      * Creates a pending approval request in the {@link ApprovalQueue} for the
      * given tool call. F16 fix: this path is what actually enqueues a pending

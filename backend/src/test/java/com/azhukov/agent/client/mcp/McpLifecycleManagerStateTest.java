@@ -68,7 +68,7 @@ class McpLifecycleManagerStateTest {
         McpSyncClient client = mock(McpSyncClient.class);
         McpSchema.CallToolResult callResult = new McpSchema.CallToolResult(List.of(new McpSchema.TextContent(null, "done")), false, null, null);
         when(client.callTool(any())).thenReturn(callResult);
-        injectClient(manager, "srv", client, List.of());
+        injectClient(manager, "srv", client, List.of(McpSchema.Tool.builder("tool1").build()));
 
         McpSchema.CallToolResult result = manager.executeTool("srv", "tool1", "{\"x\":1}");
         assertThat(result.content()).hasSize(1);
@@ -101,7 +101,7 @@ class McpLifecycleManagerStateTest {
         Class<?> stateClass = Class.forName("com.azhukov.agent.client.mcp.McpLifecycleManager$McpServerState");
         AgentProperties.McpProperties.ServerProperties props = new AgentProperties.McpProperties.ServerProperties();
         props.setName(name);
-        java.lang.reflect.Constructor<?> ctor = stateClass.getDeclaredConstructors()[0];
+        java.lang.reflect.Constructor<?> ctor = stateClass.getDeclaredConstructor(AgentProperties.McpProperties.ServerProperties.class, McpSyncClient.class, List.class);
         ctor.setAccessible(true);
         return ctor.newInstance(props, client, tools);
     }

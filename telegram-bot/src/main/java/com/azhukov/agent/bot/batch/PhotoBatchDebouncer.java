@@ -143,6 +143,7 @@ public class PhotoBatchDebouncer {
 
     // ─── Internal ──────────────────────────────────────────────────
 
+    /** Tracks buffered album updates and the scheduled flush for one Telegram media group. */
     private static class PhotoGroup {
         final List<UpdateEvent> events = new CopyOnWriteArrayList<>();
 

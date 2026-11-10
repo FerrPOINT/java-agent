@@ -1,80 +1,18 @@
 # Java Agent — Prototype Documentation
 
-## 1. Purpose
+## Модули и документация
 
-This directory (`/opt/dev/java-agent/`) contains the **Java agent** — a standalone LLM agent runtime built on Spring Boot 4.1.
+| Модуль | Ответственность |
+|---|---|
+| `backend` | Agent runtime, HTTP/OpenAI API, модели, MCP, инструменты и PostgreSQL |
+| `telegram-bot` | Входящие обновления, пользовательские команды и доставка через Telegram |
+| `cli` | Standalone REPL и HTTP-клиент backend |
+| `shared` | Общие контракты и чтение HTTP-потока |
 
-Goal: build a **minimal stable core** of an agent runtime that runs in Java, document which parts are essential, which are platform/integration-specific, and track all architecture decisions.
-
-The `backend/` directory is the actual application. The `docs/` directory is the single source of truth for architecture and design.
-
-## 2. Repository Layout
-
-```
-/opt/dev/java-agent/
-├── backend/                # Gradle + Spring Boot 4 application
-│   ├── build.gradle
-│   ├── settings.gradle
-│   └── src/main/java/com/azhukov/agent/
-│       ├── api/            # REST controllers + DTOs
-│       ├── cli/            # Picocli / JLine REPL
-│       ├── client/         # LLM clients, MCP client
-│       ├── config/         # AgentProperties, beans
-│       ├── core/           # domain + runtime
-│       ├── gateway/        # Telegram gateway adapters
-│       ├── persistence/    # JPA entities + repositories
-│       ├── security/       # approvals, safety, redaction
-│       ├── service/        # application services
-│       └── tools/          # @AgentTool implementations
-├── prototype/              # removed (reference repos, not in git)
-└── docs/                   # this documentation
-    ├── README.md                         # this file
-    ├── 01-scope.md                       # what we port, what we skip
-    ├── 02-core-architecture.md           # essential modules and data flow
-    ├── 03-dependency-map.md              # Python → Java library mapping
-    ├── 04-proposed-java-structure.md     # package layout
-    ├── 05-migration-notes.md             # tricky parts and design decisions
-    ├── 06-vision-browser.md              # vision + browser porting details
-    ├── 07-mcp-client-status.md           # MCP client state and config
-    ├── 08-browser-vision.md              # browser/vision endpoints
-    ├── 09-builtin-tools.md               # matrix of implemented tools
-    ├── 10-production-readiness.md        # docker, systemd, logging, health, gateway
-    ├── default-settings.md                # shipped config defaults and fallback precedence
-    └── standards/
-        └── documentation.md              # ДЕЙСТВУЮЩИЙ стандарт документации и тестов (2026-09-20)
-```
-
-## 3. Implementation Status
-
-- **Phase 0**: Gradle build, Flyway PostgreSQL schema, config ✅
-- **Phase 1 skeleton**: domain model, contracts, tool registry, NoOp model, happy path HTTP endpoint ✅
-- **Phase 1.5**: real `LangChain4jModelClient`, JPA persistence, tool skeletons, CLI REPL, gateway `/v1/chat/completions`, approvals gate ✅
-- **Phase 2**: browser/vision tools, MCP client, skill/memory tools, delegation ✅
-- **Phase 3**: tests, NoOp profiles, docs, production readiness, CLI hardening ✅
-- **Phase 4**: Telegram gateway (webhook + long-polling + auth), E2E hardening ✅
-- **Phase 5**: Hermes parity (94%), memory + self-improvement, 36 tools, 26 migrations, 6386 tests, 85.3% coverage ✅
-- **Phase 6**: Deep code quality audit — 32 findings (1 CRITICAL, 5 HIGH, 16 MEDIUM, 10 LOW) identified and ALL fixed (commit e7197a1). Browser security (XSS/injection fixes via JSON.stringify), CDP dialog/snapshot fixes, terminal PTY mode + workdir, process notify-on-exit, per-session locks, MCP schema change detection + health monitoring, memory provenance, configurable SOUL.md path, parent-dir context file walk, image placeholder in compression, delegate blocked toolsets + subagent interrupt/pause + per-task timeout. 37 files changed, +722/-175 lines. 6393 tests, 494 source files.
-
-## 4. Quick Decisions
-
-| Decision | Value | Rationale |
-|----------|-------|-----------|
-| Language | **Java 25 LTS** | virtual threads, modern HTTP client |
-| Build tool | **Gradle 9.6.1** with Groovy DSL | user requirement |
-| Web server | **Spring Boot 4.1.0** | replaces FastAPI + Uvicorn |
-| Concurrency | **Virtual threads** (`spring.threads.virtual.enabled=true`) | simpler than WebFlux for I/O-bound tools |
-| LLM abstraction | **LangChain4j 1.18.0** | provider-agnostic, OpenAI-compatible |
-| Validation | Jakarta Bean Validation + Jackson | replaces Pydantic |
-| Templating | **Pebble 4.1.2** | Jinja-like |
-| HTTP client | `java.net.http.HttpClient` + `RestClient` + jsoup | replaces `httpx` / `requests` |
-| WebSocket | `org.java-websocket:Java-WebSocket` | CDP, replaces `websockets` |
-| Persistence | PostgreSQL (JDBC) + Flyway | dev DB is existing Postgres container; H2 for `noop` |
-| LLM provider | **OpenAI-compatible** (default Ollama Cloud `https://ollama.com/v1` in dev) | configurable endpoint |
-| MCP | `io.modelcontextprotocol.sdk:mcp:2.1.0` | official Anthropic Java SDK |
-| CLI | Picocli 4.7.7 + JLine 4.3.1 | REPL |
-| Rate limiting | Bucket4j 8.10.1 | HTTP filter |
-| Resilience | Resilience4j 2.4.0 | retry + time-limiter for model calls |
-| Gateway | Telegram webhook/long-polling | other messaging platforms deferred |
+Актуальные границы описаны в [карте архитектуры](architecture/README.md).
+Настройки перечислены в [справочнике](default-settings.md), а поддерживаемые
+команды и варианты установки — в [README репозитория](../README.md).
+Нумерованные документы о переносе описывают этапы, на которых были написаны.
 
 ## 5. Agent Name
 

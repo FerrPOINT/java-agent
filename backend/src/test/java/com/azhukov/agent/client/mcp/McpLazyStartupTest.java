@@ -75,6 +75,25 @@ class McpLazyStartupTest {
         configured = new McpLifecycleManager.ConfiguredServer(server, configEntity);
     }
 
+    @Test
+    void cachedDefinitionsUseTheCurrentAdmissionDecision() throws Exception {
+        var scanner = mock(com.azhukov.agent.core.security.McpToolDefinitionScanner.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(manager, "definitionScanner", scanner);
+        when(scanner.scan(eq("mcp__cached_server__allowed"), any(), any()))
+            .thenReturn(com.azhukov.agent.core.security.ScanResult.clean());
+        when(scanner.scan(eq("mcp__cached_server__denied"), any(), any()))
+            .thenReturn(com.azhukov.agent.core.security.ScanResult.of(
+                com.azhukov.agent.core.security.Severity.HIGH, "fixture decision", List.of()));
+        when(configStore.cachedSchema(any(), eq(3L))).thenReturn(Optional.of(freshCache(
+            "[{\"name\":\"allowed\"},{\"name\":\"denied\"}]")));
+        when(configStore.isFresh(any())).thenReturn(true);
+
+        manager.connect(configured);
+
+        verify(toolRegistry).registerDynamic(eq("mcp__cached_server__allowed"), any(), any(), any());
+        verify(toolRegistry, never()).registerDynamic(eq("mcp__cached_server__denied"), any(), any(), any());
+    }
+
     private McpSchemaCacheEntity freshCache(String toolsJson) throws Exception {
         McpSchemaCacheEntity cache = new McpSchemaCacheEntity();
         cache.setServerConfigId(UUID.randomUUID());
@@ -92,7 +111,7 @@ class McpLazyStartupTest {
         when(configStore.isFresh(any())).thenReturn(true);
         var lifecycle = Mockito.spy(manager);
         var client = mock(io.modelcontextprotocol.client.McpSyncClient.class);
-        when(client.listTools()).thenReturn(new McpSchema.ListToolsResult(List.of(), null));
+        when(client.listTools()).thenReturn(new McpSchema.ListToolsResult(List.of(McpSchema.Tool.builder("echo").build()), null));
         when(client.closeGracefully()).thenReturn(true);
         var replacement = mock(io.modelcontextprotocol.client.McpSyncClient.class);
         when(client.callTool(any())).thenAnswer(call -> {
@@ -234,7 +253,7 @@ class McpLazyStartupTest {
             assertThat(release.await(4, TimeUnit.SECONDS)).isTrue();
             return null;
         });
-        when(client.listTools()).thenReturn(new McpSchema.ListToolsResult(List.of(), null));
+        when(client.listTools()).thenReturn(new McpSchema.ListToolsResult(List.of(McpSchema.Tool.builder("echo").build()), null));
         var result = mock(McpSchema.CallToolResult.class);
         when(client.callTool(any())).thenReturn(result);
 

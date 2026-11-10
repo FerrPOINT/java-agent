@@ -5,6 +5,7 @@ import com.azhukov.agent.client.mcp.McpOAuthManager;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
+import com.azhukov.agent.core.security.McpToolTrustService.ToolTrustMetadata;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
@@ -37,6 +38,11 @@ public class McpTool implements ToolHandler {
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
+        return execute(arguments, lastAssistant, session, null);
+    }
+
+    @Override
+    public ToolResult execute(String arguments, Message lastAssistant, Session session, ToolTrustMetadata admission) {
         McpArgs args;
         try {
             args = ToolHandler.parseJson(arguments, McpArgs.class);
@@ -56,7 +62,7 @@ public class McpTool implements ToolHandler {
             .ifPresent(token -> log.debug("Using OAuth token for MCP server {}", args.serverName()));
         try {
             String argumentsJson = args.arguments() == null || args.arguments().isBlank() ? "{}" : args.arguments();
-            var result = mcpLifecycleManager.executeTool(args.serverName(), args.toolName(), argumentsJson);
+            var result = mcpLifecycleManager.executeModelTool(args.serverName(), args.toolName(), argumentsJson, admission);
             String text = result.content().stream()
                 .map(c -> c instanceof io.modelcontextprotocol.spec.McpSchema.TextContent tc ? tc.text() : c.toString())
                 .collect(Collectors.joining("\n"));
