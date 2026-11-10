@@ -449,7 +449,7 @@ public class McpLifecycleManager {
                         unregisterTools(name, cachedTools);
                     }
                     registerTools(name, server, registeredTools);
-                    registerUtilityTools(name, capabilities, nativeNames(name, tools));
+                    registerUtilityTools(name, capabilities, tools, registeredTools);
                     if (hasTools) {
                         scheduleToolRefresh(name);
                     }
@@ -1171,7 +1171,7 @@ public class McpLifecycleManager {
                     }
                 }
                 registerTools(serverName, state.properties(), admitted);
-                registerUtilityTools(serverName, capabilities, nativeNames(serverName, freshTools));
+                registerUtilityTools(serverName, capabilities, freshTools, admitted);
                 clients.put(serverName, new McpServerState(state.properties(), state.client(), freshTools, admitted));
             }
         } catch (Exception e) {
@@ -1228,7 +1228,7 @@ public class McpLifecycleManager {
         String toolset = mcpToolsetName(serverName);
         tools.stream().filter(java.util.Objects::nonNull)
             .forEach(tool -> registry.deregisterDynamic(mcpPrefixedToolName(serverName, tool.name()), toolset));
-        for (String utility : List.of("list_resources", "read_resource", "list_prompts", "get_prompt")) {
+        for (String utility : UTILITY_TOOL_NAMES) {
             registry.deregisterDynamic(mcpPrefixedToolName(serverName, utility), toolset);
         }
     }
@@ -1304,8 +1304,20 @@ public class McpLifecycleManager {
         return hasGlob && Pattern.compile(regex.toString()).matcher(value).matches();
     }
 
+    private static final List<String> UTILITY_TOOL_NAMES =
+        List.of("list_resources", "read_resource", "list_prompts", "get_prompt");
+
     private void registerUtilityTools(String serverName, McpSchema.ServerCapabilities capabilities,
-                                      Set<String> nativeFullNames) {
+                                      List<McpSchema.Tool> discovered, List<McpSchema.Tool> admitted) {
+        var nativeFullNames = nativeNames(serverName, discovered);
+        var admittedFullNames = nativeNames(serverName, admitted);
+        for (String utility : UTILITY_TOOL_NAMES) {
+            String fullName = mcpPrefixedToolName(serverName, utility);
+            if (nativeFullNames.contains(fullName) && !admittedFullNames.contains(fullName)) {
+                // The native tool reserves this name even when it is excluded.
+                toolRegistry().deregisterDynamic(fullName, mcpToolsetName(serverName));
+            }
+        }
         if (capabilities == null) {
             return;
         }

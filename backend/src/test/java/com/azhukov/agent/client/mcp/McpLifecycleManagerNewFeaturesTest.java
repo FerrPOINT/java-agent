@@ -401,6 +401,31 @@ class McpLifecycleManagerNewFeaturesTest {
     }
 
     @Test
+    void refreshRemovesPreviouslyPublishedUtilityWhenNativeNameBecomesReserved() throws Exception {
+        ToolRegistry registry = mock(ToolRegistry.class);
+        ApplicationContext ctx = mock(ApplicationContext.class);
+        when(ctx.getBean(ToolRegistry.class)).thenReturn(registry);
+        var manager = new McpLifecycleManager(new AgentProperties(), new ObjectMapper(), ctx,
+            null, null, null, null, null, null);
+        var client = mock(McpSyncClient.class);
+        injectClient(manager, "srv", client, List.of(), null, null, List.of("read_resource"));
+        when(client.getServerCapabilities()).thenReturn(new McpSchema.ServerCapabilities(
+            null, Map.of(), null, null,
+            new McpSchema.ServerCapabilities.ResourceCapabilities(false, false), null));
+        var ordinary = McpSchema.Tool.builder("ordinary").build();
+        var reserved = McpSchema.Tool.builder("read_resource").build();
+        when(client.listTools()).thenReturn(
+            new McpSchema.ListToolsResult(List.of(ordinary), null),
+            new McpSchema.ListToolsResult(List.of(ordinary, reserved), null));
+
+        manager.refreshTools("srv");
+        verify(registry).registerDynamic(eq("mcp__srv__read_resource"), eq("mcp-srv"), any(), any());
+        manager.refreshTools("srv");
+
+        verify(registry).deregisterDynamic("mcp__srv__read_resource", "mcp-srv");
+    }
+
+    @Test
     void refreshTools_keepsNativeToolWhenGeneratedUtilityNameWouldCollide() throws Exception {
         AgentProperties properties = new AgentProperties();
         ToolRegistry registry = mock(ToolRegistry.class);
