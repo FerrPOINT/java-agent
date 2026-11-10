@@ -10,7 +10,7 @@ public final class CronModelDriftPolicy {
     private CronModelDriftPolicy() {}
 
     public static boolean enabled(Map<String, Object> config) {
-        Map<String, Object> cron = cronConfig(config);
+        Map<?, ?> cron = cronConfig(config);
         return cron.get("model_drift_guard") != Boolean.FALSE;
     }
 
@@ -52,7 +52,7 @@ public final class CronModelDriftPolicy {
     }
 
     private static boolean cronFleetDefaultCoversAxis(String axis, Map<String, Object> config) {
-        Map<String, Object> cron = cronConfig(config);
+        Map<?, ?> cron = cronConfig(config);
         String key = "model".equals(axis) ? "model" : "model_provider";
         return configText(cron.get(key)) != null;
     }
