@@ -85,7 +85,6 @@ class LongPollingServiceReconnectTest {
                 }
                 return Optional.of(List.of(update(1, "hello after reconnect")));
             });
-        when(telegramClient.isLastCallConflict()).thenReturn(false);
 
         service = new LongPollingService(
             telegramClient, properties,
@@ -119,7 +118,6 @@ class LongPollingServiceReconnectTest {
                 attempts.countDown();
                 return Optional.empty();
             });
-        when(telegramClient.isLastCallConflict()).thenReturn(false);
 
         service = new LongPollingService(
             telegramClient, properties,

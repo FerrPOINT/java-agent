@@ -42,9 +42,6 @@ public class TelegramClient {
     static final int MAX_INLINE_RATE_LIMIT_RETRY_SECONDS = 5;
     private boolean linkPreviewEnabled = true; // B3.7: default to enabling link previews
 
-    // B3: Track whether the last API call returned HTTP 409 (conflict)
-    private volatile boolean lastCallConflict = false;
-
     public TelegramClient(RestClient restClient, ObjectMapper objectMapper, String botToken, int rateLimitPerSecond) {
         this(restClient, objectMapper, botToken, rateLimitPerSecond, true);
     }
@@ -68,17 +65,6 @@ public class TelegramClient {
             || Thread.currentThread().isInterrupted()) {
             throw new LocalSendRefusalException();
         }
-    }
-
-    /**
-     * B3: Returns true if the last callApi returned HTTP 409 (conflict —
-     * another polling instance is active). The flag is cleared at the start
-     * of each callApi invocation.
-     *
-     * @return true if the last API call was a 409 conflict
-     */
-    public boolean isLastCallConflict() {
-        return lastCallConflict;
     }
 
     /** Mask token for logging — show first 4 and last 4 chars only. */
@@ -841,9 +827,6 @@ public class TelegramClient {
      * throwing) only when the bot token is blank or the HTTP body is null
      * (e.g. network-level null response).
      *
-     * <p>The {@link #isLastCallConflict()} flag is retained for compatibility. New
-     * code should prefer catching {@link TelegramApiException}.
-     *
      * @param method Telegram Bot API method name
      * @param params request body parameters
      * @return the successful {@link TelegramResponse}, or empty when the
@@ -859,7 +842,6 @@ public class TelegramClient {
             log.warn("Bot token is empty; cannot call {}", method);
             return Optional.empty();
         }
-        lastCallConflict = false; // B3: clear at start of each call
         if (!maySend.getAsBoolean()) return Optional.empty();
         if (!"getUpdates".equals(method)) acquireRateLimit();
         try {
@@ -877,13 +859,7 @@ public class TelegramClient {
                 return Optional.empty();
             }
             if (!response.isSuccess()) {
-                var refusal = apiFailure(response);
-                // B3: Detect HTTP 409 conflict (another polling instance)
-                if (refusal.getErrorCode() == 409) {
-                    lastCallConflict = true;
-                    log.warn("Telegram {} returned 409 Conflict: {}", method, refusal.getErrorDescription());
-                }
-                throw refusal;
+                throw apiFailure(response);
             }
             return Optional.of(response);
         } catch (TelegramApiException e) {
@@ -891,13 +867,11 @@ public class TelegramClient {
         } catch (Exception e) {
             var refusal = telegramHttpRefusal(e);
             if (refusal != null) {
-                lastCallConflict = refusal.getErrorCode() == 409;
                 throw refusal;
             }
             if ("getUpdates".equals(method)
                     && e instanceof org.springframework.web.client.HttpClientErrorException httpError
                     && httpError.getStatusCode().value() == 409) {
-                lastCallConflict = true;
                 log.warn("Telegram {} returned HTTP 409", method);
                 throw new TelegramApiException(409, "Telegram polling conflict", -1);
             }

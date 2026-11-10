@@ -151,7 +151,6 @@ class TelegramClientTest {
             org.springframework.http.HttpStatus.CONFLICT, "Conflict", org.springframework.http.HttpHeaders.EMPTY, new byte[0], null));
         assertThatThrownBy(() -> client.callApi("getUpdates", Map.of()))
             .isInstanceOfSatisfying(TelegramApiException.class, e -> assertThat(e.getErrorCode()).isEqualTo(409));
-        assertThat(client.isLastCallConflict()).isTrue();
     }
 
     @Test
@@ -1181,38 +1180,12 @@ class TelegramClientTest {
         }
 
         @Test
-        @DisplayName("HTTP 409 conflict sets lastCallConflict=true and throws")
+        @DisplayName("HTTP 409 conflict throws a typed error")
         void conflict409() {
             stubPostChain(errorResponse(409, "Conflict: another polling instance"));
             assertThatThrownBy(() -> client.callApi("getUpdates", Map.of()))
                 .isInstanceOf(TelegramApiException.class)
                 .satisfies(ex -> assertThat(((TelegramApiException) ex).getErrorCode()).isEqualTo(409));
-            assertThat(client.isLastCallConflict()).isTrue();
-        }
-
-        @Test
-        @DisplayName("successful call resets lastCallConflict to false")
-        void conflictResetOnSuccess() {
-            // First set conflict by doing a 409 call
-            stubPostChain(errorResponse(409, "Conflict"));
-            assertThatThrownBy(() -> client.callApi("getUpdates", Map.of()))
-                .isInstanceOf(TelegramApiException.class);
-            assertThat(client.isLastCallConflict()).isTrue();
-
-            // Now a successful call should reset
-            // Need to re-stub since we consumed the mock
-            when(restClient.post()).thenReturn(postUriSpec);
-            when(postUriSpec.uri(anyString(), any(), any())).thenReturn(bodySpec);
-            when(bodySpec.accept(any(MediaType.class))).thenReturn(bodySpec);
-            when(bodySpec.contentType(any(MediaType.class))).thenReturn(bodySpec);
-            when(bodySpec.body(anyMap())).thenReturn(bodySpec);
-            when(bodySpec.retrieve()).thenReturn(responseSpec);
-            when(responseSpec.body(TelegramResponse.class))
-                    .thenReturn(successResponseWithResult(true));
-
-            Optional<TelegramResponse> result = client.callApi("sendMessage", Map.of("chat_id", 1));
-            assertThat(result).isPresent();
-            assertThat(client.isLastCallConflict()).isFalse();
         }
 
         @Test
@@ -1432,37 +1405,6 @@ class TelegramClientTest {
             assertThat(result).isTrue();
         }
 
-    }
-
-    // ─── isLastCallConflict tests ─────────────────────────────────
-
-    @Nested
-    @DisplayName("isLastCallConflict")
-    class IsLastCallConflictTest {
-
-        @Test
-        @DisplayName("initially false")
-        void initiallyFalse() {
-            assertThat(client.isLastCallConflict()).isFalse();
-        }
-
-        @Test
-        @DisplayName("true after 409 response")
-        void trueAfter409() {
-            stubPostChain(errorResponse(409, "Conflict"));
-            assertThatThrownBy(() -> client.callApi("getUpdates", Map.of()))
-                .isInstanceOf(TelegramApiException.class);
-            assertThat(client.isLastCallConflict()).isTrue();
-        }
-
-        @Test
-        @DisplayName("false after non-409 error")
-        void falseAfterNon409Error() {
-            stubPostChain(errorResponse(400, "Bad request"));
-            assertThatThrownBy(() -> client.callApi("sendMessage", Map.of("chat_id", 1)))
-                .isInstanceOf(TelegramApiException.class);
-            assertThat(client.isLastCallConflict()).isFalse();
-        }
     }
 
     // ─── TelegramApiException tests ──────────────────────────────

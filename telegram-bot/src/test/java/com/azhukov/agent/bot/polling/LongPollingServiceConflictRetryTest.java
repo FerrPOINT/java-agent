@@ -63,14 +63,13 @@ class LongPollingServiceConflictRetryTest {
 
     @Test
     void conflictRetryCountIncrementsAtomically() throws Exception {
-        // Simulate 409 conflict: empty result + isLastCallConflict=true
+        // Simulate a typed 409 conflict
         CountDownLatch getUpdatesCalled = new CountDownLatch(1);
         when(telegramClient.getUpdates(anyLong(), anyInt(), anyInt()))
             .thenAnswer(inv -> {
                 getUpdatesCalled.countDown();
                 return Optional.empty();
             });
-        when(telegramClient.isLastCallConflict()).thenReturn(true);
 
         service = new LongPollingService(
             telegramClient, properties,
