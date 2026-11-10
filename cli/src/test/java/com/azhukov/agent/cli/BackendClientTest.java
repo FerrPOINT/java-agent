@@ -171,6 +171,20 @@ class BackendClientTest {
         assertThat(tools.toString()).contains("ERROR: model overloaded");
     }
 
+    @Test
+    void chatStreamDoesNotCompleteAfterPartialEof() {
+        String sse = "data:{\"type\":\"token\",\"token\":\"partial\"}\n";
+        mockPostStream(new ByteArrayInputStream(sse.getBytes(StandardCharsets.UTF_8)));
+        StringBuilder tokens = new StringBuilder();
+        StringBuilder status = new StringBuilder();
+
+        backendClient.chatStream("hi", "sid", tokens::append, status::append,
+            () -> status.append("completed"));
+
+        assertThat(tokens.toString()).isEqualTo("partial");
+        assertThat(status.toString()).isEqualTo("ERROR: Backend stream closed before the done event");
+    }
+
     // ── Health ──
 
     @Test

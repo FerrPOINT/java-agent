@@ -44,6 +44,31 @@ class McpLifecycleManagerSchemaChangeTest {
     }
 
     @Test
+    void replacedClientCannotPublishAnOldRefresh() throws Exception {
+        var properties = new AgentProperties();
+        var context = mock(ApplicationContext.class);
+        var registry = mock(ToolRegistry.class);
+        when(context.getBean(ToolRegistry.class)).thenReturn(registry);
+        var manager = new McpLifecycleManager(properties, new ObjectMapper(), context,
+            null, null, null, null, null, null);
+        var oldClient = mock(McpSyncClient.class);
+        var replacement = mock(McpSyncClient.class);
+        var oldTool = McpSchema.Tool.builder("old").inputSchema(Map.of("type", "object")).build();
+        var newTool = McpSchema.Tool.builder("new").inputSchema(Map.of("type", "object")).build();
+        injectClient(manager, "srv", oldClient, List.of());
+        when(oldClient.listTools()).thenAnswer(invocation -> {
+            injectClient(manager, "srv", replacement, List.of(newTool));
+            return new McpSchema.ListToolsResult(List.of(oldTool), null);
+        });
+
+        manager.refreshTools("srv");
+
+        assertThat(manager.getClientsForTest().get("srv").client()).isSameAs(replacement);
+        assertThat(manager.getClientsForTest().get("srv").tools()).containsExactly(newTool);
+        verifyNoInteractions(registry);
+    }
+
+    @Test
     void mcpRefreshDetectsSchemaChangeWithSameNames() throws Exception {
         AgentProperties properties = new AgentProperties();
         ApplicationContext ctx = mock(ApplicationContext.class);

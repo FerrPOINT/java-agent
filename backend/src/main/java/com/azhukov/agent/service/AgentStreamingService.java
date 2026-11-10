@@ -113,23 +113,6 @@ public class AgentStreamingService {
     private final InterruptToken interruptToken;
 
     /**
-     * Operator-configured stream retry cap (Hermes api_max_retries parity).
-     * Two-tier (operator decision 2026-08-28): plain errors → 3 attempts,
-     * availability errors (RATE_LIMIT/OVERLOADED) → 20 attempts.
-     */
-    private int maxStreamRetries() {
-        return Math.max(1, properties.getError().getRetryAttempts());
-    }
-
-    private int maxStreamRetriesFor(ErrorClassifier.ErrorType errorType) {
-        if (errorType == ErrorClassifier.ErrorType.RATE_LIMIT
-            || errorType == ErrorClassifier.ErrorType.OVERLOADED) {
-            return Math.max(1, properties.getError().getAvailabilityRetryAttempts());
-        }
-        return maxStreamRetries();
-    }
-
-    /**
      * Hermes parity (gateway _TELEGRAM_NOISY_STATUS_RE): retry chatter is
      * suppressed from chat surfaces except the first attempt or waits >= 300s
      * ("rate limited. waiting \d" / "retrying in \d" are filtered). Backend
@@ -219,7 +202,7 @@ public class AgentStreamingService {
     // TurnExecutor contains the shared model-call-with-retry, tool execution,
     // think-block stripping, and context-compression-check logic. The streaming
     // path delegates error classification + backoff calculation to it via
-    // classifyForRetry(), and uses its static estimateResponseTokens helper.
+    // computeBackoffMs(), and uses its static estimateResponseTokens helper.
     // Lazily initialized from existing dependencies to preserve the
     // @RequiredArgsConstructor signature (tests construct this class positionally
     // without going through Spring's @PostConstruct lifecycle).
@@ -678,7 +661,6 @@ public class AgentStreamingService {
             // Hermes parity (conversation_loop.py:1862): per-turn compression
             // attempt cap — prevents infinite compress→retry→overflow loops.
             int compressionAttempts = 0;
-            final int MAX_COMPRESSION_ATTEMPTS = 3;
             StringBuilder truncatedParts = new StringBuilder();
             // R3/R4 (Hermes 7728-7760 + empty_response_guard): per-turn fallback chain
             // and deterministic-empty tracker for the streaming path too.
@@ -834,27 +816,21 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                 // Handle errors with retry
                 if (capturedError.get() != null) {
                     Throwable error = capturedError.get();
-                    ErrorClassifier.ErrorType preType = ErrorClassifier.ErrorType.RETRYABLE;
-                    try {
-                        preType = errorClassifier.classify(
-                            error instanceof Exception ex2 ? ex2 : new RuntimeException(error));
-                    } catch (Exception clsEx) { /* fall back to RETRYABLE */ }
-                    int tierCap = maxStreamRetriesFor(preType);
-                    var errorClassification = errorClassifier.classifyWithHints(
-                        error instanceof Exception ex2 ? ex2 : new RuntimeException(error));
+                    Exception failure = error instanceof Exception e ? e : new RuntimeException(error);
+                    var errorClassification = errorClassifier.classifyWithHints(failure);
+                    ErrorClassifier.ErrorType errorType = errorClassification.type();
+                    int tierCap = ResponseRecoveryPolicy.retryBudget(properties.getError(), errorType);
                     // The SSE loop owns its stream client, so it must activate fallbacks
                     // itself. Previously only empty responses could switch models; a hard
                     // billing/auth/model failure went straight to the user even with a
                     // configured fallback chain.
-                    if (errorClassification.hints().shouldFallback()
-                        && streamFallbackManager.hasPendingFallback()) {
+                    if (errorClassification.hints().shouldFallback()) {
                         com.azhukov.agent.core.agent.FallbackModelCaller.ModelCallContext fallbackContext =
                             new com.azhukov.agent.core.agent.FallbackModelCaller.ModelCallContext(
                                 modelClient, streamFallbackManager);
                         fallbackContext.activeClient = activeStreamClient == modelClient ? null : activeStreamClient;
-                        if (streamFallbackCaller.tryActivateFallback(
-                                fallbackContext, errorClassification.type(),
-                                error instanceof Exception ex3 ? ex3 : new RuntimeException(error))) {
+                        if (streamFallbackCaller.tryActivateFallbackForError(
+                                fallbackContext, errorClassification, failure)) {
                             activeStreamClient = fallbackContext.activeClient;
                             activeStreamClientRef.set(activeStreamClient);
                             streamRetries = 0;
@@ -867,28 +843,8 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                         }
                     }
                     if (streamRetries < tierCap) {
-                        // ── c2: delegate error classification + backoff to TurnExecutor ──
-                        // The streaming path can't reuse callModelWithRetry directly (it
-                        // streams tokens via a handler), but the error classification and
-                        // backoff-delay calculation are shared logic that TurnExecutor owns.
-                        ErrorClassifier.ErrorType errorType;
-                        long delayMs;
-                        if (error instanceof Exception exc) {
-                            com.azhukov.agent.core.agent.TurnExecutor.RetryClassification rc =
-                                turnExecutor().classifyForRetry(exc, streamRetries);
-                            errorType = rc.errorType();
-                            delayMs = rc.backoffMs();
-                            // Preserve the streaming path's jitter: add 0-500ms on top of
-                            // the computed backoff (the synchronous path's jitter is already
-                            // included in computeBackoffMs for non-RATE_LIMIT/OVERLOADED types).
-                            delayMs += ThreadLocalRandom.current().nextLong(0, 500);
-                        } else {
-                            errorType = ErrorClassifier.ErrorType.RETRYABLE;
-                            long baseMs = properties.getError().getRetryDelayMs();
-                            long capMs = properties.getError().getRetryCapMs();
-                            delayMs = Math.min(baseMs * (1L << streamRetries), capMs);
-                            delayMs += ThreadLocalRandom.current().nextLong(0, 500);
-                        }
+                        long delayMs = turnExecutor().computeBackoffMs(errorType, streamRetries, failure)
+                            + ThreadLocalRandom.current().nextLong(0, 500);
                         // An upstream Retry-After >= 60s is not a retryable interactive
                         // failure. LiteLLM emits this for exhausted weekly quota / every
                         // deployment on cooldown. Fail immediately with an actionable user
@@ -909,7 +865,8 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                             return;
                         }
                         if (errorType == ErrorClassifier.ErrorType.RETRYABLE
-                            || errorType == ErrorClassifier.ErrorType.RATE_LIMIT) {
+                            || errorType == ErrorClassifier.ErrorType.RATE_LIMIT
+                            || errorType == ErrorClassifier.ErrorType.OVERLOADED) {
                             String retryMsg = "⏳ Model overloaded, retrying (attempt "
                                 + (streamRetries + 1) + "/" + tierCap
                                 + ") in " + (delayMs / 1000) + "s...";
@@ -963,10 +920,10 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
 
                         // Context overflow: compress and retry without counting as a retry attempt
                         if (errorType == ErrorClassifier.ErrorType.CONTEXT_OVERFLOW
-                            && compressionAttempts < MAX_COMPRESSION_ATTEMPTS) {
+                            && ResponseRecoveryPolicy.canCompact(properties, compressionAttempts)) {
                             compressionAttempts++;
                             log.warn("Context overflow detected during streaming, triggering compression attempt {}/{}: {}",
-                                compressionAttempts, MAX_COMPRESSION_ATTEMPTS, error.getMessage());
+                                compressionAttempts, ResponseRecoveryPolicy.MAX_COMPRESSION_ATTEMPTS, error.getMessage());
                             eventHelper().send(emitter, new StreamEvent("retry", null, null,
                                 "Compressing context..."), streamCtx);
                             try {
@@ -1006,14 +963,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     // model thinking-phase transport kill and append specific guidance.
                     String modelName = streamOptions != null ? streamOptions.modelName() : null;
                     if (modelName == null) modelName = properties.getModel().getModelName();
-                    ErrorClassifier.ErrorType finalErrorType;
-                    try {
-                        finalErrorType = errorClassifier.classify(
-                            error instanceof Exception e ? e : new RuntimeException(error));
-                    } catch (Exception ce) {
-                        finalErrorType = ErrorClassifier.ErrorType.RETRYABLE;
-                    }
-                    if (ThinkingTimeoutGuidance.isThinkingTimeout(finalErrorType, modelName, error.getMessage())) {
+                    if (ThinkingTimeoutGuidance.isThinkingTimeout(errorType, modelName, error.getMessage())) {
                         log.info("Thinking-phase timeout detected for reasoning model {} — appending guidance", modelName);
                         String provider = !properties.getFallbackChain().isEmpty()
                             ? properties.getFallbackChain().get(0).getProvider()
@@ -1022,7 +972,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     }
                     // Hermes parity (_CONTENT_POLICY_RECOVERY_HINT): append recovery hint
                     // to content-policy refusal messages so the user gets actionable advice.
-                    if (finalErrorType == ErrorClassifier.ErrorType.CONTENT_POLICY
+                    if (errorType == ErrorClassifier.ErrorType.CONTENT_POLICY
                         && !errorMsg.contains(ResponseRecoveryPolicy.CONTENT_POLICY_RECOVERY_HINT)) {
                         errorMsg += "\n\n" + ResponseRecoveryPolicy.CONTENT_POLICY_RECOVERY_HINT;
                     }

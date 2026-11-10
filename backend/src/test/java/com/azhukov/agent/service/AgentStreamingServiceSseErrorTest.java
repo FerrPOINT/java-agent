@@ -256,6 +256,32 @@ class AgentStreamingServiceSseErrorTest {
         assertThat(emitter.error.get()).isNull();
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void zeroOrdinaryRetriesStillAllowsTheConfiguredAvailabilityBudget(boolean overloaded) throws Exception {
+        properties.getError().setRetryAttempts(0);
+        properties.getError().setAvailabilityRetryAttempts(2);
+        var request = ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L);
+        var emitter = new CollectingEmitter(30_000L);
+        var attempts = new java.util.concurrent.atomic.AtomicInteger();
+        doAnswer(invocation -> {
+            StreamingResponseHandler handler = invocation.getArgument(3);
+            if (attempts.incrementAndGet() == 1) {
+                handler.onError(new RuntimeException(overloaded ? "529 overloaded" : "connection reset"));
+            } else {
+                handler.onToken("provider recovered");
+                handler.onComplete();
+            }
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+
+        streamingService.streamTurn(request, emitter);
+        emitter.awaitDone();
+
+        assertThat(attempts).hasValue(overloaded ? 2 : 1);
+        assertThat(emitter.events.stream().anyMatch(event -> "error".equals(event.name))).isEqualTo(!overloaded);
+    }
+
     // ── Timeout: emitter completes normally, not with error ──
 
     @Test

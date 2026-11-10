@@ -1,7 +1,7 @@
 package com.azhukov.agent.bot.core;
 
 import com.azhukov.agent.bot.session.BotSessionEntity;
-import com.fasterxml.jackson.core.JsonProcessingException;
+import com.azhukov.agent.shared.http.ChatEventStream;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -10,18 +10,9 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
-import java.io.BufferedReader;
-import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 /**
@@ -31,9 +22,6 @@ import java.util.function.Consumer;
 @Service
 @Slf4j
 public class MessageApiClient extends BaseBackendClient {
-
-    // The delivery transport must exceed the recommended seven-day clarify window.
-    static final long STREAM_IDLE_TIMEOUT_MS = Duration.ofDays(8).toMillis();
 
     private final com.azhukov.agent.bot.config.BotProperties properties;
 
@@ -173,171 +161,110 @@ public class MessageApiClient extends BaseBackendClient {
                 .body(body)
                 .retrieve()
                 .body(InputStream.class);
-            if (is == null) {
-                throw new IllegalStateException("Backend stream returned no body");
-            }
-
-            try (BufferedReader reader = new BufferedReader(
-                new InputStreamReader(is, StandardCharsets.UTF_8))) {
-
-                // Idle-timeout watchdog: if no data arrives for STREAM_IDLE_TIMEOUT_MS,
-                // close the reader to unblock readLine() and abort the stream.
-                final long[] lastDataTime = {System.currentTimeMillis()};
-                ScheduledExecutorService watchdog =
-                    Executors.newSingleThreadScheduledExecutor(r -> {
-                        Thread t = new Thread(r, "sse-idle-watchdog");
-                        t.setDaemon(true);
-                        return t;
-                    });
-                final IOException[] timeoutSignal = new IOException[1];
-                ScheduledFuture<?> watchdogTask = watchdog.scheduleAtFixedRate(() -> {
-                    if (System.currentTimeMillis() - lastDataTime[0] > STREAM_IDLE_TIMEOUT_MS) {
-                        timeoutSignal[0] = new IOException("SSE stream idle timeout: no data for "
-                            + STREAM_IDLE_TIMEOUT_MS + "ms");
-                        try {
-                            reader.close(); // unblocks readLine()
-                        } catch (IOException e) { log.debug("SSE watchdog reader close exception: {}", e.getMessage()); }
-                    }
-                }, STREAM_IDLE_TIMEOUT_MS, 10_000, TimeUnit.MILLISECONDS);
-
-                try {
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        lastDataTime[0] = System.currentTimeMillis();
-                        if (line.startsWith("data:")) {
-                            String data = line.substring(5).strip();
-                            if (!data.isEmpty()) {
-                                JsonNode event;
-                                try {
-                                    event = objectMapper.readTree(data);
-                                } catch (JsonProcessingException parseEx) {
-                                    log.warn("Malformed SSE event for sessionId={}: {}", sessionId,
-                                        parseEx.getOriginalMessage());
-                                    continue;
-                                }
-                                String type = event.path("type").asText("");
-                                if ("error".equalsIgnoreCase(type)) {
-                                    String errorMsg = event.path("error").asText(
-                                        event.path("message").asText("Unknown stream error"));
-                                    onError.accept(new RuntimeException(errorMsg));
-                                    return streamResult(accumulated, metadataHolder[0], false);
-                                }
-                                if ("metadata".equalsIgnoreCase(type)) {
-                                    metadataHolder[0] = extractMetadata(event);
-                                    continue;
-                                }
-                                // tool_calls event — LLM decided to call tools.
-                                // Do NOT send a progress bubble here; the tool_start event
-                                // (fired per-tool right before execution) will send the bubble.
-                                // Sending here causes duplicate bubbles in Telegram.
-                                if ("tool_calls".equalsIgnoreCase(type)) {
-                                    continue;
-                                }
-                                // tool_start event — notify tool call consumer
-                                if ("tool_start".equalsIgnoreCase(type)) {
-                                    String toolName = event.path("toolName").asText("");
-                                    if (!toolName.isEmpty()) {
-                                        // Extract arguments from toolCalls array (added in AgentStreamingService)
-                                        String toolArgs = "";
-                                        JsonNode toolCallsNode = event.get("toolCalls");
-                                        if (toolCallsNode != null && toolCallsNode.isArray() && toolCallsNode.size() > 0) {
-                                            JsonNode tc = toolCallsNode.get(0);
-                                            toolArgs = tc.path("arguments").asText("");
-                                            if (toolArgs.isEmpty()) {
-                                                JsonNode argsNode = tc.path("arguments");
-                                                if (argsNode != null && !argsNode.isNull()) {
-                                                    toolArgs = argsNode.toString();
-                                                }
-                                            }
-                                        }
-                                        toolCallConsumer.accept(toolName + "\u0001" + toolArgs);
-                                    }
-                                    continue;
-                                }
-                                // tool_result event — notify tool result consumer
-                                if ("tool_result".equalsIgnoreCase(type)) {
-                                    String toolName = event.path("toolName").asText("");
-                                    String toolResult = event.path("toolResult").asText("");
-                                    if (!toolName.isEmpty()) {
-                                        toolResultConsumer.accept(toolName, toolResult);
-                                    }
-                                    continue;
-                                }
-                                // retry event — notify retry consumer so the bot can show retry status
-                                if ("retry".equalsIgnoreCase(type)) {
-                                    String retryMsg = event.path("error").asText(
-                                        event.path("message").asText("Retrying..."));
-                                    retryConsumer.accept(retryMsg);
-                                    continue;
-                                }
-                                // continuation event — also surface as retry status
-                                if ("continuation".equalsIgnoreCase(type)) {
-                                    String contMsg = event.path("error").asText(
-                                        event.path("message").asText("Continuing..."));
-                                    retryConsumer.accept(contMsg);
-                                    continue;
-                                }
-                                // commentary event — the text was already streamed via token events,
-                                // so skip it to avoid duplicating the text in the output.
-                                if ("commentary".equalsIgnoreCase(type)) {
-                                    continue;
-                                }
-                                // review event (Hermes parity: background_review_callback)
-                                // — "💾 Self-improvement review: …" summary from an
-                                // earlier turn's background review. Delivered to the
-                                // chat AFTER the main response (pending-release).
-                                if ("review".equalsIgnoreCase(type)) {
-                                    String reviewMsg = event.path("review").asText(null);
-                                    if (reviewMsg == null || reviewMsg.isBlank()) {
-                                        reviewMsg = event.path("summary").asText(null);
-                                    }
-                                    if (reviewMsg == null || reviewMsg.isBlank()) {
-                                        reviewMsg = event.path("message").asText(null);
-                                    }
-                                    if (reviewMsg == null || reviewMsg.isBlank()) {
-                                        reviewMsg = event.path("error").asText(null);
-                                    }
-                                    if (reviewMsg != null && !reviewMsg.isBlank() && reviewConsumer != null) {
-                                        reviewConsumer.accept(reviewMsg);
-                                    }
-                                    continue;
-                                }
-                                // clarify event (Hermes clarify_gateway parity): blocking
-                                // clarify prompt from the backend — payload JSON in `error`.
-                                if ("clarify".equalsIgnoreCase(type)) {
-                                    String payload = event.path("error").asText(null);
-                                    String clarifySessionId = event.path("sessionId").asText(sessionId);
-                                    if (payload != null && !payload.isEmpty() && clarifyConsumer != null) {
-                                        log.info("clarify_sse_received requestSession={} clarifySession={} payloadBytes={}",
-                                            sessionId, clarifySessionId, payload.length());
-                                        clarifyConsumer.accept(clarifySessionId + "\u0001" + payload);
-                                    }
-                                    continue;
-                                }
-                                JsonNode tokenNode = event.get("token");
-                                if (tokenNode != null && !tokenNode.isNull() && tokenNode.isTextual()) {
-                                    String token = tokenNode.asText();
-                                    accumulated.append(token);
-                                    tokenConsumer.accept(token);
-                                }
-                                if ("done".equalsIgnoreCase(type)) {
-                                    var result = streamResult(accumulated, metadataHolder[0], true);
-                                    onComplete.accept(result);
-                                    return result;
+            ChatEventStream.read(is, objectMapper, event -> {
+                String type = event.path("type").asText("");
+                if ("metadata".equalsIgnoreCase(type)) {
+                    metadataHolder[0] = extractMetadata(event);
+                    return;
+                }
+                // tool_calls event — LLM decided to call tools.
+                // Do NOT send a progress bubble here; the tool_start event
+                // (fired per-tool right before execution) will send the bubble.
+                // Sending here causes duplicate bubbles in Telegram.
+                if ("tool_calls".equalsIgnoreCase(type)) {
+                    return;
+                }
+                // tool_start event — notify tool call consumer
+                if ("tool_start".equalsIgnoreCase(type)) {
+                    String toolName = event.path("toolName").asText("");
+                    if (!toolName.isEmpty()) {
+                        // Extract arguments from toolCalls array (added in AgentStreamingService)
+                        String toolArgs = "";
+                        JsonNode toolCallsNode = event.get("toolCalls");
+                        if (toolCallsNode != null && toolCallsNode.isArray() && toolCallsNode.size() > 0) {
+                            JsonNode tc = toolCallsNode.get(0);
+                            toolArgs = tc.path("arguments").asText("");
+                            if (toolArgs.isEmpty()) {
+                                JsonNode argsNode = tc.path("arguments");
+                                if (argsNode != null && !argsNode.isNull()) {
+                                    toolArgs = argsNode.toString();
                                 }
                             }
                         }
+                        toolCallConsumer.accept(toolName + "\u0001" + toolArgs);
                     }
-                    // If the watchdog closed the reader, throw to signal timeout
-                    if (timeoutSignal[0] != null) {
-                        throw timeoutSignal[0];
-                    }
-                } finally {
-                    watchdogTask.cancel(false);
-                    watchdog.shutdownNow();
+                    return;
                 }
-                throw new java.io.EOFException("Backend stream closed before the done event");
-            }
+                // tool_result event — notify tool result consumer
+                if ("tool_result".equalsIgnoreCase(type)) {
+                    String toolName = event.path("toolName").asText("");
+                    String toolResult = event.path("toolResult").asText("");
+                    if (!toolName.isEmpty()) {
+                        toolResultConsumer.accept(toolName, toolResult);
+                    }
+                    return;
+                }
+                // retry event — notify retry consumer so the bot can show retry status
+                if ("retry".equalsIgnoreCase(type)) {
+                    String retryMsg = event.path("error").asText(
+                        event.path("message").asText("Retrying..."));
+                    retryConsumer.accept(retryMsg);
+                    return;
+                }
+                // continuation event — also surface as retry status
+                if ("continuation".equalsIgnoreCase(type)) {
+                    String contMsg = event.path("error").asText(
+                        event.path("message").asText("Continuing..."));
+                    retryConsumer.accept(contMsg);
+                    return;
+                }
+                // commentary event — the text was already streamed via token events,
+                // so skip it to avoid duplicating the text in the output.
+                if ("commentary".equalsIgnoreCase(type)) {
+                    return;
+                }
+                // review event (Hermes parity: background_review_callback)
+                // — "💾 Self-improvement review: …" summary from an
+                // earlier turn's background review. Delivered to the
+                // chat AFTER the main response (pending-release).
+                if ("review".equalsIgnoreCase(type)) {
+                    String reviewMsg = event.path("review").asText(null);
+                    if (reviewMsg == null || reviewMsg.isBlank()) {
+                        reviewMsg = event.path("summary").asText(null);
+                    }
+                    if (reviewMsg == null || reviewMsg.isBlank()) {
+                        reviewMsg = event.path("message").asText(null);
+                    }
+                    if (reviewMsg == null || reviewMsg.isBlank()) {
+                        reviewMsg = event.path("error").asText(null);
+                    }
+                    if (reviewMsg != null && !reviewMsg.isBlank() && reviewConsumer != null) {
+                        reviewConsumer.accept(reviewMsg);
+                    }
+                    return;
+                }
+                // clarify event (Hermes clarify_gateway parity): blocking
+                // clarify prompt from the backend — payload JSON in `error`.
+                if ("clarify".equalsIgnoreCase(type)) {
+                    String payload = event.path("error").asText(null);
+                    String clarifySessionId = event.path("sessionId").asText(sessionId);
+                    if (payload != null && !payload.isEmpty() && clarifyConsumer != null) {
+                        log.info("clarify_sse_received requestSession={} clarifySession={} payloadBytes={}",
+                            sessionId, clarifySessionId, payload.length());
+                        clarifyConsumer.accept(clarifySessionId + "\u0001" + payload);
+                    }
+                    return;
+                }
+                JsonNode tokenNode = event.get("token");
+                if (tokenNode != null && !tokenNode.isNull() && tokenNode.isTextual()) {
+                    String token = tokenNode.asText();
+                    accumulated.append(token);
+                    tokenConsumer.accept(token);
+                }
+            });
+            var result = streamResult(accumulated, metadataHolder[0], true);
+            onComplete.accept(result);
+            return result;
         } catch (Exception e) {
             log.warn("chatStream failed for sessionId={}: {}", sessionId, e.getMessage());
             onError.accept(e);
