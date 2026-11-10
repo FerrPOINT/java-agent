@@ -97,7 +97,7 @@ class McpLazyStartupTest {
         Mockito.doThrow(new AssertionError("connect must not spawn on a cache hit"))
             .when(spy).createClient(Mockito.any());
 
-        spy.connect(configured, true);
+        spy.connect(configured);
 
         verify(toolRegistry).registerDynamic(
             eq("mcp__cached_server__echo"), eq("mcp-cached-server"), any(), any());
@@ -128,7 +128,7 @@ class McpLazyStartupTest {
 
         var lifecycle = Mockito.spy(manager);
         Mockito.doReturn(client).when(lifecycle).createClient(any());
-        lifecycle.connect(configured, true);
+        lifecycle.connect(configured);
         try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
             var first = executor.submit(() -> lifecycle.executeTool("cached-server", "echo", "{}"));
             assertThat(connected.await(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
@@ -159,7 +159,7 @@ class McpLazyStartupTest {
         when(client.initialize()).thenThrow(new IllegalStateException("fixture offline"));
 
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
-            lifecycle.connect(configured, true);
+            lifecycle.connect(configured);
             try {
                 org.assertj.core.api.Assertions.assertThatThrownBy(
                         () -> lifecycle.executeTool("cached-server", "echo", "{}"))
@@ -197,7 +197,7 @@ class McpLazyStartupTest {
         }).when(configStore).storeSchema(any(), eq(3L), any(), any(), any());
 
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
-            var first = executor.submit(() -> lifecycle.connect(configured, true));
+            var first = executor.submit(() -> lifecycle.connect(configured));
             try {
                 assertThat(storing.await(5, TimeUnit.SECONDS)).isTrue();
                 executor.submit(() -> lifecycle.connect(neighbour)).get(5, TimeUnit.SECONDS);
@@ -221,7 +221,7 @@ class McpLazyStartupTest {
 
         // No HTTP server runs at localhost:9999 — the connect attempt fails and
         // the error is recorded in the cache WITHOUT deleting the schema.
-        manager.connect(configured, true);
+        manager.connect(configured);
 
         assertThat(manager.isConnected("cached-server")).isFalse();
         verify(configStore).recordSchemaError(any(), eq(3L), any());
@@ -231,7 +231,7 @@ class McpLazyStartupTest {
     void configRevisionMismatchIsAMiss() {
         when(configStore.cachedSchema(any(), eq(3L))).thenReturn(Optional.empty());
 
-        manager.connect(configured, true);
+        manager.connect(configured);
 
         // Cache miss (revision changed) — lazy registration declined; the full
         // connect path runs (and fails against localhost:9999).
