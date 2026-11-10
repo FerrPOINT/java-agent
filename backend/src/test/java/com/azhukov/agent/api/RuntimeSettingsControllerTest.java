@@ -644,10 +644,14 @@ class RuntimeSettingsControllerTest {
 
     @Test
     void codexRuntimeStatusReturnsDefaultModel() throws Exception {
+        properties.getError().setRetryAttempts(0);
+        properties.getError().setAvailabilityRetryAttempts(8);
         when(runtimeConfigService.getModelOverride()).thenReturn(null);
 
         mockMvc.perform(get("/api/v1/agent/codex-runtime"))
             .andExpect(status().isOk())
+            .andExpect(jsonPath("$.maxRetries").value(0))
+            .andExpect(jsonPath("$.availabilityMaxRetries").value(8))
             .andExpect(jsonPath("$.model").value(properties.getModel().getModelName()))
             .andExpect(jsonPath("$.provider").value(properties.getModel().getProvider()))
             .andExpect(jsonPath("$.modelOverride").doesNotExist());

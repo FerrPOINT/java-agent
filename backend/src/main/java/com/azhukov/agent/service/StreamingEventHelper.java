@@ -93,14 +93,13 @@ class StreamingEventHelper {
      *                        or {@code 0} to fall back to the usage-tracker estimate
      */
     void sendMetadataEvent(SseEmitter emitter, Session session, StreamContext streamCtx, int lastInputTokens) {
-        sendMetadataEvent(emitter, session, streamCtx, lastInputTokens, null);
+        sendMetadataEvent(emitter, session, streamCtx, lastInputTokens, null, resolveModelUsed(session));
     }
 
     /** Final metadata can carry the last structured provider reasoning for an opted-in UI. */
     void sendMetadataEvent(SseEmitter emitter, Session session, StreamContext streamCtx, int lastInputTokens,
-                           String lastReasoning) {
+                           String lastReasoning, String modelUsed) {
         try {
-            String modelUsed = resolveModelUsed(session);
             int contextLength = modelMetadataService.detectContextLength(modelUsed);
             if (contextLength <= 0) {
                 contextLength = properties.getContext().getMaxTokens();
@@ -166,7 +165,7 @@ class StreamingEventHelper {
 
     // ── Private helpers (moved from AgentStreamingService) ─────────────────
 
-    private String resolveModelUsed(Session session) {
+    String resolveModelUsed(Session session) {
         // Per-request override (from /model command or API model field) wins
         String requestOverride = session.getMetadata("modelOverride");
         if (requestOverride != null && !requestOverride.isBlank()) {
@@ -175,7 +174,7 @@ class StreamingEventHelper {
         if (session.modelName() != null && !session.modelName().isBlank()) {
             return session.modelName();
         }
-        String override = runtimeConfigService.getModelOverride();
+        String override = runtimeConfigService == null ? null : runtimeConfigService.getModelOverride();
         if (override != null && !override.isBlank()) {
             return override;
         }

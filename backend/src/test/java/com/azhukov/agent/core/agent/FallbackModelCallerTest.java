@@ -49,6 +49,35 @@ class FallbackModelCallerTest {
         assertThat(context.getValue()).noneMatch(message -> message.role().name().equals("TOOL"));
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints = {0, 1})
+    void triesTheOnlyFallbackOnceAfterThePrimaryRejectsTheModel(int ordinaryRetries) {
+        var properties = new AgentProperties();
+        properties.getError().setRetryAttempts(ordinaryRetries);
+        var reserve = new com.azhukov.agent.config.FallbackConfig();
+        reserve.setModel("reserve");
+        reserve.setBaseUrl("http://127.0.0.1:1/v1");
+        reserve.setApiKey("fixture");
+        var primary = mock(ModelClient.class);
+        var context = new FallbackModelCaller.ModelCallContext(primary,
+            new FallbackManager(List.of(reserve), "openai-compatible", "primary", "", ""));
+        var caller = new FallbackModelCaller(new ErrorClassifier(), properties, null, null);
+        var attempts = new java.util.ArrayList<ModelClient>();
+
+        var response = caller.call(context, List.of(Message.user("fixture")), List.of(),
+            ModelRequestOptions.empty(), () -> true, (client, messages, tools, options) -> {
+                attempts.add(client);
+                if (client == primary) {
+                    throw new IllegalStateException("404 model not found");
+                }
+                return ChatResponse.text("reserve response");
+            });
+
+        assertThat(response.content()).isEqualTo("reserve response");
+        assertThat(attempts).containsExactly(primary, context.client());
+        assertThat(context.client().getModelName()).isEqualTo("reserve");
+    }
+
     @Test
     void overloadUsesTheAvailabilityBudgetEvenWhenNormalRetriesAreOff() {
         AgentProperties properties = new AgentProperties();

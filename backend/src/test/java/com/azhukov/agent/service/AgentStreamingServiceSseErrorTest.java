@@ -123,8 +123,15 @@ class AgentStreamingServiceSseErrorTest {
 
             verify(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
             assertThat(fallbackCalls).hasValue(2);
+            verify(usageTracker, org.mockito.Mockito.times(2)).recordTurn(
+                org.mockito.ArgumentMatchers.eq(SESSION_ID), org.mockito.ArgumentMatchers.eq("user-1"),
+                org.mockito.ArgumentMatchers.eq("reserve"), org.mockito.ArgumentMatchers.anyInt(),
+                org.mockito.ArgumentMatchers.anyInt());
             assertThat(emitter.events).anyMatch(event ->
                 "token".equals(event.name) && event.data.contains("fallback completed the turn"));
+            var metadata = emitter.events.stream().filter(event -> "metadata".equals(event.name)).toList();
+            assertThat(objectMapper.readTree(metadata.getLast().data).path("modelUsed").asText())
+                .isEqualTo("reserve");
         } finally {
             server.stop(0);
         }

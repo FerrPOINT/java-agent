@@ -88,6 +88,10 @@ public class FallbackModelCaller {
         public ModelClient client() {
             return activeClient != null ? activeClient : defaultClient;
         }
+
+        public String modelName(String primaryModel) {
+            return client() == defaultClient ? primaryModel : client().getModelName();
+        }
     }
 
     @FunctionalInterface
@@ -133,18 +137,10 @@ public class FallbackModelCaller {
                         break;
                     }
 
-                    // ── Part F: Content policy handling — immediate-fallback trigger ──
-                    if (errorType == ErrorClassifier.ErrorType.CONTENT_POLICY) {
-                        log.warn("Content policy block: {} — attempting fallback", e.getMessage());
-                        if (tryActivateFallback(ctx, errorType, e)) {
-                            retryState = new TurnRetryState();
-                            currentContext = context; // reset context for the new model
-                            break; // break inner loop, continue outer fallback loop
-                        }
-                        String refusalMsg = detectRefusalPattern(e.getMessage());
-                        throw new ContentPolicyException(refusalMsg != null ? refusalMsg :
-                            "The model's safety filter blocked this request. Please rephrase your request and try again.",
-                            e);
+                    if (errorType == ErrorClassifier.ErrorType.CONTENT_POLICY
+                            || errorType == ErrorClassifier.ErrorType.AUTH_PERMANENT
+                            || errorType == ErrorClassifier.ErrorType.MODEL_NOT_FOUND) {
+                        break;
                     }
 
                     // ── One-shot recovery guards (parity with Hermes TurnRetryState — 14 total) ──
@@ -363,19 +359,6 @@ public class FallbackModelCaller {
                         }
                     }
 
-                    // ── Immediate-fallback errors (no retry, try fallback immediately) ──
-                    if (errorType == ErrorClassifier.ErrorType.AUTH_PERMANENT
-                        || errorType == ErrorClassifier.ErrorType.MODEL_NOT_FOUND) {
-                        log.warn("{} error — attempting immediate fallback: {}", errorType, e.getMessage());
-                        if (tryActivateFallback(ctx, errorType, e)) {
-                            retryState = new TurnRetryState();
-                            currentContext = context;
-                            break; // break inner loop, continue outer fallback loop
-                        }
-                        log.warn("{} error, no fallback available, failing: {}", errorType, e.getMessage());
-                        break;
-                    }
-
                     // ── Permanent errors that don't trigger fallback ──
                     if (errorType == ErrorClassifier.ErrorType.PERMANENT
                         || errorType == ErrorClassifier.ErrorType.BILLING
@@ -432,6 +415,12 @@ public class FallbackModelCaller {
                     currentContext = context; // reset context for the new model
                     totalAttempts = 0;
                     continue; // continue outer fallback loop
+                }
+                if (classification.type() == ErrorClassifier.ErrorType.CONTENT_POLICY) {
+                    String refusal = detectRefusalPattern(lastException.getMessage());
+                    throw new ContentPolicyException(refusal != null ? refusal :
+                        "The model's safety filter blocked this request. Please rephrase your request and try again.",
+                        lastException);
                 }
             }
 
