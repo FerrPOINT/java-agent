@@ -1,6 +1,7 @@
 package com.azhukov.agent.tools.terminal;
 
 import com.azhukov.agent.core.security.ChildProcessEnvironment;
+import com.azhukov.agent.core.security.SecureFileAccess;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.config.SharedObjectMapper;
@@ -27,7 +28,7 @@ import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.nio.file.LinkOption;
+import java.nio.channels.Channels;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.UUID;
@@ -507,8 +508,8 @@ public class TerminalTool implements ToolHandler {
             int exitCode = process.exitValue();
 
             if (shellState != null) {
-                try (var input = Files.newInputStream(shellState, LinkOption.NOFOLLOW_LINKS)) {
-                    byte[] state = input.readNBytes(MAX_SHELL_STATE_BYTES + 1);
+                try (var channel = SecureFileAccess.openRead(shellState)) {
+                    byte[] state = Channels.newInputStream(channel).readNBytes(MAX_SHELL_STATE_BYTES + 1);
                     if (state.length > MAX_SHELL_STATE_BYTES) {
                         output += "\n[Shell state exceeded the capture limit]";
                     } else {
