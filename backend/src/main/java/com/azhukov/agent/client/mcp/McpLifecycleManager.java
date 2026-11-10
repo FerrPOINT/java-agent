@@ -1218,11 +1218,7 @@ public class McpLifecycleManager {
             log.warn("Failed to refresh tools from MCP server {}: {}", serverName, e.getMessage());
             // Finding 8.2: A failed tool refresh may indicate the server is unhealthy.
             // Trigger a reconnect if the error looks like a connection failure.
-            String msg = e.getMessage() != null ? e.getMessage().toLowerCase() : "";
-            boolean isConnectionError = msg.contains("connection") || msg.contains("closed")
-                || msg.contains("disconnected") || msg.contains("refused")
-                || msg.contains("reset") || msg.contains("timeout");
-            if (isConnectionError) {
+            if (isConnectionError(e)) {
                 log.info("MCP server {} tool refresh failed with connection error, triggering reconnect", serverName);
                 retireConnection(serverName, state);
             }
@@ -1757,8 +1753,27 @@ public class McpLifecycleManager {
     private McpSchema.CallToolResult callToolWithTimeout(McpServerState state,
                                                          String toolName,
                                                          Map<String, Object> args, long startedAt) throws Exception {
-        return callMcpWithTimeout(state, "tool '" + toolName + "'",
-            () -> state.client().callTool(new McpSchema.CallToolRequest(toolName, args)), startedAt);
+        try {
+            return callMcpWithTimeout(state, "tool '" + toolName + "'",
+                () -> state.client().callTool(new McpSchema.CallToolRequest(toolName, args)), startedAt);
+        } catch (Exception e) {
+            String serverName = serverNameOf(state);
+            if (serverName != null && !isAuthError(e) && isConnectionError(e)) {
+                retireConnection(serverName, state);
+            }
+            throw e;
+        }
+    }
+
+    private static boolean isConnectionError(Throwable error) {
+        String message = error.getMessage();
+        if (message == null) {
+            return false;
+        }
+        String lower = message.toLowerCase(java.util.Locale.ROOT);
+        return lower.contains("connection") || lower.contains("closed")
+            || lower.contains("disconnected") || lower.contains("refused")
+            || lower.contains("reset") || lower.contains("timeout") || lower.contains("timed out");
     }
 
     private <T> T callMcpWithTimeout(McpServerState state, String operation, Callable<T> action) throws Exception {
@@ -2770,7 +2785,6 @@ public class McpLifecycleManager {
                     log.debug("Could not parse tool arguments for scanning: {}", e.getMessage());
                 }
             }
-            var observed = clients.get(serverName);
             try {
                 var result = executeTool(serverName, toolName, arguments);
                 // ── Response security scan ──
@@ -2801,21 +2815,6 @@ public class McpLifecycleManager {
                 return ToolResult.ok(safeOutput);
             } catch (Exception e) {
                 bumpMcpServerError(serverName);
-                // Only reconnect on actual connection failures, not tool execution errors.
-                // Tool execution errors (e.g. bad arguments, server-side logic errors) should
-                // NOT trigger a reconnect — that would unnecessarily tear down a working connection.
-                String msg = e.getMessage() != null ? e.getMessage().toLowerCase() : "";
-                boolean isConnectionError = msg.contains("connection") || msg.contains("closed")
-                    || msg.contains("disconnected") || msg.contains("refused")
-                    || msg.contains("reset") || msg.contains("not connected")
-                    || msg.contains("timeout") || msg.contains("timed out");
-                if (isConnectionError) {
-                    log.warn("MCP tool '{}' on server '{}' failed with connection error, triggering reconnect: {}",
-                        toolName, serverName, e.getMessage());
-                    if (observed != null) {
-                        retireConnection(serverName, observed);
-                    }
-                }
                 return mcpError("MCP tool failed: " + e.getMessage());
             }
         }
