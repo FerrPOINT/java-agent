@@ -275,7 +275,7 @@ public class OpenAiRunService {
                 record.emit("run.cancelled", Map.of());
                 return;
             }
-            ChatResponseDto response = turnLocks.withTurn(session.id(), () -> {
+            ChatResponseDto response = turnLocks.withHistoryTurn(session.id(), () -> {
                 if (record.stopRequested.get()) throw new IllegalStateException("Run stopped");
                 record.setStatus("running", Map.of("last_event", "run.started"));
                 record.emit("run.started", Map.of());
