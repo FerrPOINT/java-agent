@@ -1,6 +1,5 @@
 package com.azhukov.agent.core.security;
 
-import com.azhukov.agent.client.mcp.McpLifecycleManager;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.agent.InterruptToken;
 import com.azhukov.agent.core.model.ToolCall;
@@ -248,17 +247,16 @@ public class DefaultToolGuardrails implements ToolGuardrails {
  @Override
  public McpToolTrustService.ToolTrustMetadata mcpAdmission(ToolCall call) {
   if (call == null || mcpToolTrustService == null) return null;
-  String name = call.name();
-  if ("mcp_tool".equals(name)) {
+  if ("mcp_tool".equals(call.name())) {
    try {
     var args = ToolHandler.parseJson(call.arguments(), McpTool.McpArgs.class);
     if (args.serverName() == null || args.toolName() == null) return null;
-    name = McpLifecycleManager.mcpPrefixedToolName(args.serverName(), args.toolName());
+    return mcpToolTrustService.metadata(args.serverName(), args.toolName());
    } catch (IllegalArgumentException e) {
     return null;
    }
   }
-  return mcpToolTrustService.metadata(name);
+  return mcpToolTrustService.metadata(call.name());
  }
 
  @Override

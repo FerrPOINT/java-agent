@@ -58,7 +58,7 @@ class McpToolHandlerTest {
             .annotations(McpSchema.ToolAnnotations.builder().readOnlyHint(true).build()).build();
         var current = McpSchema.Tool.builder("tool").description("changed definition").build();
         String fullName = McpLifecycleManager.mcpPrefixedToolName("srv", "tool");
-        trust.recordServerTools("srv", "untrusted", Map.of(fullName, observed));
+        trust.recordServerTools("srv", "untrusted", List.of(observed));
         var nativeCall = new com.azhukov.agent.core.model.ToolCall("native", fullName, "{}");
         String aliasArgs = "{\"server_name\":\"srv\",\"tool_name\":\"tool\"}";
         var aliasCall = new com.azhukov.agent.core.model.ToolCall("alias", "mcp_tool", aliasArgs);
@@ -76,11 +76,43 @@ class McpToolHandlerTest {
         assertThat(aliasHandler.execute(aliasArgs, null, null).success()).isFalse();
         verify(client, times(0)).callTool(any());
 
-        trust.recordServerTools("srv", "untrusted", Map.of(fullName, current));
+        trust.recordServerTools("srv", "untrusted", List.of(current));
         var approved = guard.mcpAdmission(aliasCall);
         assertThat(guard.requiresApproval(aliasCall, approved)).isTrue();
         assertThat(aliasHandler.execute(aliasArgs, null, null, approved).success()).isTrue();
         verify(client, times(1)).callTool(any());
+    }
+
+    @Test
+    void explicitAliasKeepsItsExactMcpToolName() {
+        var props = new AgentProperties();
+        var manager = new McpLifecycleManager(props, new ObjectMapper(), null, null, null, null, null, null, null);
+        var trust = new com.azhukov.agent.core.security.McpToolTrustService();
+        var guard = new com.azhukov.agent.core.security.DefaultToolGuardrails(props,
+            new com.azhukov.agent.core.security.ApprovalQueue());
+        guard.setMcpToolTrustService(trust);
+
+        var server = new AgentProperties.McpProperties.ServerProperties();
+        server.setName("srv");
+        var client = mock(McpSyncClient.class);
+        when(client.callTool(any())).thenReturn(new McpSchema.CallToolResult(
+            List.of(new McpSchema.TextContent(null, "fixture response")), false, null, null));
+        var requested = McpSchema.Tool.builder("fixture-a").build();
+        var other = McpSchema.Tool.builder("fixture_a").build();
+        String aliasName = McpLifecycleManager.mcpPrefixedToolName("srv", requested.name());
+        assertThat(McpLifecycleManager.mcpPrefixedToolName("srv", other.name())).isEqualTo(aliasName);
+        trust.recordServerTools("srv", "full", List.of(requested, other));
+        manager.getClientsForTest().put("srv",
+            new McpLifecycleManager.McpServerState(server, client, List.of(requested, other)));
+
+        var handler = new com.azhukov.agent.tools.mcp.McpTool(manager, mock(McpOAuthManager.class));
+        String args = "{\"server_name\":\"srv\",\"tool_name\":\"fixture-a\"}";
+        var call = new com.azhukov.agent.core.model.ToolCall("alias", "mcp_tool", args);
+        var admission = guard.mcpAdmission(call);
+        assertThat(admission.definition()).isEqualTo(requested);
+        assertThat(trust.metadata(aliasName).definition()).isEqualTo(other);
+        var result = handler.execute(args, null, null, admission);
+        assertThat(result.success()).as(result.error()).isTrue();
     }
 
     @Test

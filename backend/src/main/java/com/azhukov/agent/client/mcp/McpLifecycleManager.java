@@ -1214,7 +1214,7 @@ public class McpLifecycleManager {
 
     private void unregisterTools(String serverName, List<McpSchema.Tool> tools) {
         if (mcpToolTrustService != null) {
-            mcpToolTrustService.recordServerTools(serverName, null, Map.of());
+            mcpToolTrustService.recordServerTools(serverName, null, List.of());
         }
         ToolRegistry registry = applicationContext != null ? toolRegistry() : null;
         if (registry == null) {
@@ -1368,16 +1368,7 @@ public class McpLifecycleManager {
         if (mcpToolTrustService == null || serverName == null || tools == null) {
             return;
         }
-        Map<String, McpSchema.Tool> definitions = new LinkedHashMap<>();
-        for (McpSchema.Tool tool : tools) {
-            if (tool == null || tool.name() == null || tool.name().isBlank()) {
-                continue;
-            }
-            String name = mcpPrefixedToolName(serverName, tool.name());
-            definitions.put(name, tool);
-        }
-        mcpToolTrustService.recordServerTools(serverName, server == null ? null : server.getTrust(),
-            definitions);
+        mcpToolTrustService.recordServerTools(serverName, server == null ? null : server.getTrust(), tools);
     }
 
     public List<McpServerInfo> listServers() {

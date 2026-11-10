@@ -5,7 +5,6 @@ import com.azhukov.agent.core.model.ToolCall;
 import io.modelcontextprotocol.spec.McpSchema;
 import org.junit.jupiter.api.Test;
 
-import java.util.Map;
 
 import java.util.List;
 import java.util.Set;
@@ -53,8 +52,8 @@ class DefaultToolGuardrailsTest {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setApprovalsEnabled(true);
         McpToolTrustService trustService = new McpToolTrustService();
-        trustService.recordServerTools("srv", "untrusted", Map.of(
-            "mcp__srv__delete_repo", McpSchema.Tool.builder("delete_repo").build()));
+        trustService.recordServerTools("srv", "untrusted", List.of(
+            McpSchema.Tool.builder("delete_repo").build()));
         DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties, new ApprovalQueue());
         guardrails.setMcpToolTrustService(trustService);
 
@@ -66,8 +65,8 @@ class DefaultToolGuardrailsTest {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setApprovalsEnabled(true);
         McpToolTrustService trustService = new McpToolTrustService();
-        trustService.recordServerTools("srv", "untrusted", Map.of(
-            "mcp__srv__list_repos", McpSchema.Tool.builder("list_repos")
+        trustService.recordServerTools("srv", "untrusted", List.of(
+            McpSchema.Tool.builder("list_repos")
                 .annotations(McpSchema.ToolAnnotations.builder().readOnlyHint(true).build()).build()));
         DefaultToolGuardrails guardrails = new DefaultToolGuardrails(properties, new ApprovalQueue());
         guardrails.setMcpToolTrustService(trustService);

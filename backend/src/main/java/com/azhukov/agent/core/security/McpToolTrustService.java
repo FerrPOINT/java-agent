@@ -1,11 +1,12 @@
 package com.azhukov.agent.core.security;
 
+import com.azhukov.agent.client.mcp.McpLifecycleManager;
 import io.modelcontextprotocol.spec.McpSchema;
 import org.springframework.stereotype.Component;
 
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Captures operator-side MCP server trust and discovery-time readOnlyHint metadata.
@@ -16,8 +17,10 @@ public class McpToolTrustService {
     public static final String TRUST_FULL = "full";
     public static final String TRUST_UNTRUSTED = "untrusted";
 
-    private final Map<String, Set<String>> serverToolNames = new ConcurrentHashMap<>();
-    private final Map<String, ToolTrustMetadata> toolMetadata = new ConcurrentHashMap<>();
+    private volatile Map<ToolName, ToolTrustMetadata> tools = Map.of();
+
+    // A missing server denotes the provider's generated name, not an MCP name.
+    private record ToolName(String server, String name) {}
 
     static String normalizeServerTrust(String value) {
         if (value == null || value.isBlank()) {
@@ -30,27 +33,24 @@ public class McpToolTrustService {
         return TRUST_UNTRUSTED;
     }
 
-    public void recordServerTools(String serverName, String trust, Map<String, McpSchema.Tool> definitions) {
-        if (serverName == null || serverName.isBlank()) {
-            return;
+    public synchronized void recordServerTools(String serverName, String trust, List<McpSchema.Tool> definitions) {
+        if (serverName == null || serverName.isBlank()) return;
+        var updated = new HashMap<>(tools);
+        updated.values().removeIf(metadata -> serverName.equals(metadata.serverName()));
+        for (var definition : definitions) {
+            var metadata = ToolTrustMetadata.nativeTool(serverName, trust, definition);
+            updated.put(new ToolName(serverName, definition.name()), metadata);
+            updated.put(new ToolName(null, McpLifecycleManager.mcpPrefixedToolName(serverName, definition.name())), metadata);
         }
-        Set<String> newToolNames = Set.copyOf(definitions.keySet());
-        Set<String> previousToolNames = newToolNames.isEmpty()
-            ? serverToolNames.remove(serverName)
-            : serverToolNames.put(serverName, newToolNames);
-        if (previousToolNames != null) {
-            for (String oldToolName : previousToolNames) {
-                if (!newToolNames.contains(oldToolName)) {
-                    toolMetadata.remove(oldToolName);
-                }
-            }
-        }
-        definitions.forEach((name, definition) ->
-            toolMetadata.put(name, ToolTrustMetadata.nativeTool(serverName, trust, definition)));
+        tools = Map.copyOf(updated);
     }
 
     public ToolTrustMetadata metadata(String fullToolName) {
-        return toolMetadata.get(fullToolName);
+        return tools.get(new ToolName(null, fullToolName));
+    }
+
+    public ToolTrustMetadata metadata(String serverName, String toolName) {
+        return tools.get(new ToolName(serverName, toolName));
     }
 
     public record ToolTrustMetadata(String serverName, String trust, boolean readOnlyHint, McpSchema.Tool definition) {
