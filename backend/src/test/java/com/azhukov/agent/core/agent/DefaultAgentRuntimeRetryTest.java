@@ -148,6 +148,41 @@ class DefaultAgentRuntimeRetryTest {
         assertThat(result.completed()).isEqualTo(limit == 2);
     }
 
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({
+        "1, LENGTH, visible partial",
+        "2, LENGTH, visible partial and the rest",
+        "2, STOP, visible partial and the rest"
+    })
+    void lengthContinuationPreservesTextWithinTheTurnBudget(int limit, String lastReason, String expected) {
+        properties.getBudget().setMaxModelCallsPerTurn(limit);
+        var actualBudget = new com.azhukov.agent.core.budget.DefaultIterationBudget(properties);
+        when(iterationBudget.startTurn(any(UUID.class))).thenAnswer(inv ->
+            actualBudget.startTurn(inv.getArgument(0)));
+        when(iterationBudget.isExhausted(any())).thenAnswer(inv ->
+            actualBudget.isExhausted(inv.getArgument(0)));
+        when(iterationBudget.recordModelCall(any(), any(int.class), any(int.class))).thenAnswer(inv ->
+            actualBudget.recordModelCall(inv.getArgument(0), inv.getArgument(1), inv.getArgument(2)));
+        when(modelClient.complete(any(List.class), any(List.class), any())).thenAnswer(inv -> {
+            List<Message> context = inv.getArgument(0);
+            if (context.stream().anyMatch(m -> ResponseRecoveryPolicy.LENGTH_NUDGE.equals(m.content()))) {
+                assertThat(context).anyMatch(m -> "visible partial".equals(m.content()));
+                return ChatResponse.text(" and the rest", lastReason);
+            }
+            return ChatResponse.text("visible partial", "LENGTH");
+        });
+
+        var result = runtime.runTurn(Session.create("user-1", "openai-compatible", "test-model"), "Hello");
+
+        verify(modelClient, times(limit)).complete(any(List.class), any(List.class), any());
+        assertThat(result.completed()).isTrue();
+        assertThat(result.finalText()).isEqualTo(expected);
+        if (limit == 1) {
+            assertThat(result.messages()).noneMatch(m -> ResponseRecoveryPolicy.LENGTH_NUDGE.equals(m.content()));
+        }
+    }
+
     // ─── Retry on transient errors ───
 
     @Test
