@@ -4,6 +4,7 @@ import com.azhukov.agent.persistence.entity.CronJobEntity;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 public final class CronModelDriftPolicy {
@@ -14,47 +15,27 @@ public final class CronModelDriftPolicy {
         return cron.get("model_drift_guard") != Boolean.FALSE;
     }
 
-    public static List<String> axes(CronJobEntity job,
-                                                   String currentProvider,
-                                                   String currentModel,
-                                                   Map<String, Object> config) {
-        List<String> axes = new ArrayList<>();
-        if (cronAxisDrifted(
-            "provider",
-            job.getModelProvider(),
-            job.getProviderSnapshot(),
-            currentProvider,
-            config)) {
+    public static List<String> axes(CronJobEntity job, String currentProvider, String currentModel,
+                                    Map<String, Object> config) {
+        Map<?, ?> cron = cronConfig(config);
+        List<String> axes = new ArrayList<>(2);
+        if (drifted(job.getModelProvider(), job.getProviderSnapshot(), currentProvider, cron.get("model_provider"))) {
             axes.add("provider");
         }
-        if (cronAxisDrifted(
-            "model",
-            job.getModelName(),
-            job.getModelSnapshot(),
-            currentModel,
-            config)) {
+        if (drifted(job.getModelName(), job.getModelSnapshot(), currentModel, cron.get("model"))) {
             axes.add("model");
         }
         return axes;
     }
 
-    private static boolean cronAxisDrifted(String axis,
-                                           String pinnedValue,
-                                           String snapshotValue,
-                                           String currentValue,
-                                           Map<String, Object> config) {
-        if (cronFleetDefaultCoversAxis(axis, config) || (pinnedValue != null && !pinnedValue.isBlank())) {
+    private static boolean drifted(String pinned, String snapshot, String current, Object fleetDefault) {
+        if (configText(fleetDefault) != null || (pinned != null && !pinned.isBlank())) {
             return false;
         }
-        String snapshot = configText(snapshotValue);
-        String current = configText(currentValue);
-        return snapshot != null && current != null && !snapshot.equalsIgnoreCase(current);
-    }
-
-    private static boolean cronFleetDefaultCoversAxis(String axis, Map<String, Object> config) {
-        Map<?, ?> cron = cronConfig(config);
-        String key = "model".equals(axis) ? "model" : "model_provider";
-        return configText(cron.get(key)) != null;
+        String previous = configText(snapshot);
+        String resolved = configText(current);
+        return previous != null && resolved != null
+            && !previous.toLowerCase(Locale.ROOT).equals(resolved.toLowerCase(Locale.ROOT));
     }
 
     private static Map<?, ?> cronConfig(Map<String, Object> config) {
