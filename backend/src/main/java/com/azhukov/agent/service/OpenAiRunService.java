@@ -225,10 +225,10 @@ public class OpenAiRunService {
             Map<String, Object> payload = new LinkedHashMap<>();
             payload.put("choice", choice);
             if (requestId != null) payload.put("request_id", requestId);
-            // ApprovalQueue owns one current request for each run control session.
-            payload.put("resolved", 1);
+            // Persist the response before releasing the waiter. The approval monitor
+            // publishes the status change once the request is no longer pending.
             if (!approvalQueue.resolvePending(pending, !"deny".equals(choice),
-                    () -> record.publish("running", "approval.responded", payload))) {
+                    () -> record.publish(null, "approval.responded", payload))) {
                 return ControlResult.conflict("Run has no pending approval: " + runId, "approval_not_pending");
             }
         }

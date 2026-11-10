@@ -1086,6 +1086,40 @@ class OpenAiRunsControllerTest {
     }
 
     @Test
+    void withdrawnApprovalDoesNotPublishResolvedEvent() throws Exception {
+        BlockingRun blockingRun = blockRuntime();
+        String runId = createRun("needs approval");
+        var record = runService.get(runId);
+        var pending = approvalQueue.request(record.controlSessionId(),
+            new ToolCall("approval-call", "fixture_tool", "{}"), "fixture approval");
+        waitForStatus(runId, "waiting_for_approval");
+        var stateMachine = mock(OpenAiRunStateMachine.class);
+        var responseEvent = new java.util.concurrent.atomic.AtomicReference<Map<String, Object>>();
+        when(stateMachine.recordEvent(eq(runId), org.mockito.ArgumentMatchers.isNull(), any()))
+            .thenAnswer(call -> {
+                Map<String, Object> event = call.getArgument(2);
+                if ("approval.responded".equals(event.get("event"))) {
+                    approvalQueue.clear(record.controlSessionId());
+                    responseEvent.set(event);
+                }
+                return 1L;
+            });
+        org.springframework.test.util.ReflectionTestUtils.setField(record, "stateMachine", stateMachine);
+        try {
+            String body = "{\"choice\":\"once\",\"request_id\":\"" + pending.requestId() + "\"}";
+            mockMvc.perform(post("/v1/runs/{runId}/approval", runId)
+                    .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isConflict());
+            assertThat(approvalQueue.getPending(record.controlSessionId())).isNull();
+            assertThat(responseEvent.get()).containsEntry("choice", "once")
+                .containsEntry("request_id", pending.requestId().toString()).doesNotContainKey("resolved");
+        } finally {
+            blockingRun.complete();
+        }
+        waitForStatus(runId, "completed");
+    }
+
+    @Test
     void approvalRemainsPendingWhenDecisionEventCannotBeSaved() throws Exception {
         BlockingRun blockingRun = blockRuntime();
         String runId = createRun("needs approval");
@@ -1094,7 +1128,7 @@ class OpenAiRunsControllerTest {
             new ToolCall("approval-call", "fixture_tool", "{}"), "fixture approval");
         waitForStatus(runId, "waiting_for_approval");
         var stateMachine = mock(OpenAiRunStateMachine.class);
-        when(stateMachine.recordEvent(eq(runId), eq(OpenAiRunStateMachine.IN_PROGRESS), any()))
+        when(stateMachine.recordEvent(eq(runId), org.mockito.ArgumentMatchers.isNull(), any()))
             .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("fixture storage failure"))
             .thenReturn(1L);
         org.springframework.test.util.ReflectionTestUtils.setField(record, "stateMachine", stateMachine);
