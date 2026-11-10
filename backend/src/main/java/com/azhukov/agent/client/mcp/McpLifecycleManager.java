@@ -360,7 +360,9 @@ public class McpLifecycleManager {
         try {
             client = createClient(server);
             client.initialize();
-            var tools = listToolsWithPagination(client);
+            var capabilities = client.getServerCapabilities();
+            boolean hasTools = capabilities == null || capabilities.tools() != null;
+            List<McpSchema.Tool> tools = hasTools ? listToolsWithPagination(client) : List.of();
             synchronized (clients) {
                 if (connectionsInFlight.get(name) != token || shutdownRequested.get()) {
                     return;
@@ -373,7 +375,9 @@ public class McpLifecycleManager {
                         unregisterTools(name, cachedTools);
                     }
                     registerTools(name, client, tools);
-                    scheduleToolRefresh(name);
+                    if (hasTools) {
+                        scheduleToolRefresh(name);
+                    }
                     resetMcpServerError(name);
                     lazyServers.remove(name);
                     connectionsInFlight.remove(name, token);
@@ -545,36 +549,26 @@ public class McpLifecycleManager {
     // Safety-capped at 100 pages to survive a misbehaving server looping its cursor.
     private List<McpSchema.Tool> listToolsWithPagination(McpSyncClient client) {
         List<McpSchema.Tool> allTools = new ArrayList<>();
-        try {
-            var result = client.listTools();
+        var result = client.listTools();
+        int maxPages = 100;
+        for (int page = 0; ; page++) {
             if (result.tools() != null) {
                 allTools.addAll(result.tools());
             }
             String cursor = result.nextCursor();
-            int maxPages = 100; // Safety limit (Hermes has the same class of cap)
-            while (cursor != null && !cursor.isEmpty() && maxPages-- > 0) {
-                log.debug("MCP tool pagination: fetching next page with cursor '{}'", cursor);
-                try {
-                    var nextResult = client.listTools(cursor);
-                    if (nextResult.tools() != null) {
-                        allTools.addAll(nextResult.tools());
-                    }
-                    String next = nextResult.nextCursor();
-                    // Guard against a server returning the same cursor forever.
-                    if (cursor.equals(next)) {
-                        log.warn("MCP tool pagination: server returned the same cursor twice — stopping");
-                        break;
-                    }
-                    cursor = next;
-                } catch (Exception e) {
-                    log.warn("MCP tool pagination: failed to fetch next page: {}", e.getMessage());
-                    break;
-                }
+            if (cursor == null || cursor.isEmpty() || page == maxPages) {
+                return allTools;
             }
-        } catch (Exception e) {
-            log.warn("MCP tool listing failed: {}", e.getMessage());
+            var next = client.listTools(cursor);
+            if (cursor.equals(next.nextCursor())) {
+                log.warn("MCP tool pagination: server returned the same cursor twice — stopping");
+                if (next.tools() != null) {
+                    allTools.addAll(next.tools());
+                }
+                return allTools;
+            }
+            result = next;
         }
-        return allTools;
     }
 
     private List<McpSchema.Resource> listResourcesWithPagination(McpSyncClient client) {
