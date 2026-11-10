@@ -1086,6 +1086,36 @@ class OpenAiRunsControllerTest {
     }
 
     @Test
+    void approvalMonitorResumesRunAfterTransientClearWriteFailure() throws Exception {
+        BlockingRun blockingRun = blockRuntime();
+        String runId = createRun("needs approval");
+        var record = runService.get(runId);
+        var pending = approvalQueue.request(record.controlSessionId(),
+            new ToolCall("approval-call", "fixture_tool", "{}"), "fixture approval");
+        waitForStatus(runId, "waiting_for_approval");
+        var stateMachine = mock(OpenAiRunStateMachine.class);
+        var attempts = new java.util.concurrent.atomic.AtomicInteger();
+        when(stateMachine.recordEvent(eq(runId), org.mockito.ArgumentMatchers.nullable(String.class), any()))
+            .thenAnswer(call -> {
+                Map<String, Object> event = call.getArgument(2);
+                if ("approval.cleared".equals(event.get("event")) && attempts.incrementAndGet() == 1) {
+                    throw new org.springframework.dao.DataAccessResourceFailureException("fixture transient failure");
+                }
+                return 1L;
+            });
+        org.springframework.test.util.ReflectionTestUtils.setField(record, "stateMachine", stateMachine);
+        try {
+            mockMvc.perform(post("/v1/runs/{runId}/approval", runId).contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"choice\":\"once\",\"request_id\":\"" + pending.requestId() + "\"}"))
+                .andExpect(status().isOk());
+            waitForStatus(runId, "running");
+            assertThat(attempts.get()).isEqualTo(2);
+        } finally {
+            blockingRun.complete();
+        }
+    }
+
+    @Test
     void withdrawnApprovalDoesNotPublishResolvedEvent() throws Exception {
         BlockingRun blockingRun = blockRuntime();
         String runId = createRun("needs approval");

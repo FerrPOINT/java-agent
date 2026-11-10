@@ -17,7 +17,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.TransientDataAccessException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
@@ -327,19 +330,29 @@ public class OpenAiRunService {
 
     private void monitorApprovals(RunRecord record) {
         UUID lastApprovalId = null;
+        boolean writeFailed = false;
         try {
             while (!record.isTerminal()) {
-                synchronized (record) {
-                    if (record.isTerminal() || record.stopRequested.get()) return;
-                    ApprovalQueue.PendingApproval pending = approvalQueue.getPending(record.controlSessionId());
-                    if (pending != null && !pending.approved() && !pending.denied() && !pending.superseded()) {
-                        if (!pending.requestId().equals(lastApprovalId)) {
-                            record.publish("waiting_for_approval", "approval.request", approvalPayload(pending));
-                            lastApprovalId = pending.requestId();
+                try {
+                    synchronized (record) {
+                        if (record.isTerminal() || record.stopRequested.get()) return;
+                        ApprovalQueue.PendingApproval pending = approvalQueue.getPending(record.controlSessionId());
+                        if (pending != null && !pending.approved() && !pending.denied() && !pending.superseded()) {
+                            if (!pending.requestId().equals(lastApprovalId)) {
+                                record.publish("waiting_for_approval", "approval.request", approvalPayload(pending));
+                                lastApprovalId = pending.requestId();
+                            }
+                        } else if ("waiting_for_approval".equals(record.status())) {
+                            record.publish("running", "approval.cleared", Map.of());
                         }
-                    } else if ("waiting_for_approval".equals(record.status())) {
-                        record.publish("running", "approval.cleared", Map.of());
                     }
+                    writeFailed = false;
+                } catch (TransientDataAccessException | DataAccessResourceFailureException
+                        | CannotCreateTransactionException e) {
+                    if (!writeFailed) {
+                        log.warn("Run {} approval update failed; will retry on the next poll", record.runId(), e);
+                    }
+                    writeFailed = true;
                 }
                 TimeUnit.MILLISECONDS.sleep(250);
             }
