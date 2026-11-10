@@ -59,7 +59,7 @@ class FallbackModelCallerTest {
         properties.getError().setRetryCapMs(1);
         ModelClient client = mock(ModelClient.class);
         when(client.complete(any(), any(), any()))
-            .thenThrow(new RuntimeException("503 Service Unavailable"))
+            .thenThrow(new RuntimeException("529 overloaded"))
             .thenReturn(ChatResponse.text("available"));
         var caller = new FallbackModelCaller(
             new ErrorClassifier(), properties, mock(ContextCompressor.class), mock(ContextEngine.class));
