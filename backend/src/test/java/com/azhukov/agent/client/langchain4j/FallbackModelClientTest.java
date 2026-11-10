@@ -325,7 +325,6 @@ class FallbackModelClientTest {
 
         AgentProperties properties = new AgentProperties();
         properties.getModel().setTimeoutSeconds(60);
-        properties.getModel().setMaxRetries(5);
         properties.getModel().setTemperature(0.3);
 
         OpenAiChatModel.OpenAiChatModelBuilder mockBuilder = mock(OpenAiChatModel.OpenAiChatModelBuilder.class);
@@ -341,6 +340,7 @@ class FallbackModelClientTest {
 
             FallbackModelClient client = FallbackModelClient.from(config, properties);
 
+            verify(mockBuilder).maxRetries(0);
             assertThat(client.getModelName()).isEqualTo("claude-3");
         }
     }

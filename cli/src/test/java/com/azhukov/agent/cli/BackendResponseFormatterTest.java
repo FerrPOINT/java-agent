@@ -243,6 +243,7 @@ class BackendResponseFormatterTest {
         node.put("model", "gpt-4o");
         node.put("provider", "openai");
         node.put("maxRetries", 3);
+        node.put("availabilityMaxRetries", 8);
         node.put("maxTokens", 8192);
         node.put("timeoutSeconds", 120);
         node.put("modelOverride", "gpt-4o-mini");
@@ -250,7 +251,7 @@ class BackendResponseFormatterTest {
         String result = formatter.formatCodexRuntime(node);
         assertThat(result).startsWith("Codex runtime:");
         assertThat(result).contains("Model: gpt-4o").contains("Provider: openai");
-        assertThat(result).contains("Max retries: 3").contains("Max tokens: 8192");
+        assertThat(result).contains("Max retries: 3", "Availability retries: 8", "Max tokens: 8192");
         assertThat(result).contains("Timeout (seconds): 120").contains("Model override: gpt-4o-mini");
     }
 
