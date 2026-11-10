@@ -1213,6 +1213,9 @@ public class McpLifecycleManager {
     }
 
     private void unregisterTools(String serverName, List<McpSchema.Tool> tools) {
+        if (mcpToolTrustService != null) {
+            mcpToolTrustService.recordServerTools(serverName, null, Map.of());
+        }
         ToolRegistry registry = applicationContext != null ? toolRegistry() : null;
         if (registry == null) {
             return;
@@ -1357,7 +1360,6 @@ public class McpLifecycleManager {
         parameters.put("required", required);
         toolRegistry().registerDynamic(fullName, mcpToolsetName(serverName),
             new ToolDefinition(fullName, description, parameters), handler);
-        recordGeneratedMcpUtilityToolTrustMetadata(serverName, fullName);
     }
 
     private void recordMcpToolTrustMetadata(String serverName,
@@ -1376,15 +1378,6 @@ public class McpLifecycleManager {
         }
         mcpToolTrustService.recordServerTools(serverName, server == null ? null : server.getTrust(),
             definitions);
-    }
-
-    private void recordGeneratedMcpUtilityToolTrustMetadata(String serverName, String fullName) {
-        if (mcpToolTrustService == null) {
-            return;
-        }
-        McpServerState state = clients.get(serverName);
-        AgentProperties.McpProperties.ServerProperties server = state == null ? null : state.properties();
-        mcpToolTrustService.recordTool(serverName, server == null ? null : server.getTrust(), fullName, true);
     }
 
     public List<McpServerInfo> listServers() {

@@ -16,11 +16,10 @@ public class McpToolTrustService {
     public static final String TRUST_FULL = "full";
     public static final String TRUST_UNTRUSTED = "untrusted";
 
-    private final Map<String, String> serverTrust = new ConcurrentHashMap<>();
     private final Map<String, Set<String>> serverToolNames = new ConcurrentHashMap<>();
     private final Map<String, ToolTrustMetadata> toolMetadata = new ConcurrentHashMap<>();
 
-    public static String normalizeServerTrust(String value) {
+    static String normalizeServerTrust(String value) {
         if (value == null || value.isBlank()) {
             return TRUST_FULL;
         }
@@ -35,11 +34,10 @@ public class McpToolTrustService {
         if (serverName == null || serverName.isBlank()) {
             return;
         }
-        String normalizedTrust = normalizeServerTrust(trust);
-        serverTrust.put(serverName, normalizedTrust);
-
         Set<String> newToolNames = Set.copyOf(definitions.keySet());
-        Set<String> previousToolNames = serverToolNames.put(serverName, newToolNames);
+        Set<String> previousToolNames = newToolNames.isEmpty()
+            ? serverToolNames.remove(serverName)
+            : serverToolNames.put(serverName, newToolNames);
         if (previousToolNames != null) {
             for (String oldToolName : previousToolNames) {
                 if (!newToolNames.contains(oldToolName)) {
@@ -48,34 +46,11 @@ public class McpToolTrustService {
             }
         }
         definitions.forEach((name, definition) ->
-            toolMetadata.put(name, ToolTrustMetadata.nativeTool(serverName, normalizedTrust, definition)));
-    }
-
-    public void recordTool(String serverName, String trust, String fullToolName, boolean readOnlyHint) {
-        if (serverName == null || serverName.isBlank() || fullToolName == null || fullToolName.isBlank()) {
-            return;
-        }
-        String normalizedTrust = normalizeServerTrust(trust);
-        serverTrust.put(serverName, normalizedTrust);
-        serverToolNames.merge(serverName, Set.of(fullToolName), (oldSet, newSet) -> {
-            java.util.LinkedHashSet<String> merged = new java.util.LinkedHashSet<>(oldSet);
-            merged.addAll(newSet);
-            return Set.copyOf(merged);
-        });
-        toolMetadata.put(fullToolName, new ToolTrustMetadata(serverName, normalizedTrust, readOnlyHint, null));
-    }
-
-    public boolean requiresApproval(String fullToolName) {
-        ToolTrustMetadata metadata = toolMetadata.get(fullToolName);
-        return metadata != null && metadata.requiresApproval();
+            toolMetadata.put(name, ToolTrustMetadata.nativeTool(serverName, trust, definition)));
     }
 
     public ToolTrustMetadata metadata(String fullToolName) {
         return toolMetadata.get(fullToolName);
-    }
-
-    public String serverTrust(String serverName) {
-        return serverTrust.getOrDefault(serverName, TRUST_FULL);
     }
 
     public record ToolTrustMetadata(String serverName, String trust, boolean readOnlyHint, McpSchema.Tool definition) {

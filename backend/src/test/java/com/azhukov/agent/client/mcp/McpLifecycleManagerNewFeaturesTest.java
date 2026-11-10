@@ -442,9 +442,9 @@ class McpLifecycleManagerNewFeaturesTest {
 
         manager.refreshTools("srv");
 
-        assertThat(trustService.serverTrust("srv")).isEqualTo("untrusted");
-        assertThat(trustService.requiresApproval("mcp__srv__delete_repo")).isTrue();
-        assertThat(trustService.requiresApproval("mcp__srv__list_repos")).isFalse();
+        assertThat(trustService.metadata("mcp__srv__delete_repo").trust()).isEqualTo("untrusted");
+        assertThat(trustService.metadata("mcp__srv__delete_repo").requiresApproval()).isTrue();
+        assertThat(trustService.metadata("mcp__srv__list_repos").requiresApproval()).isFalse();
         verify(registry).registerDynamic(eq("mcp__srv__delete_repo"), eq("mcp-srv"), any(), any());
         verify(registry).registerDynamic(eq("mcp__srv__list_repos"), eq("mcp-srv"), any(), any());
     }

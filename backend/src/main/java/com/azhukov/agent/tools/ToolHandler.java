@@ -17,7 +17,7 @@ public interface ToolHandler {
     ToolResult execute(String arguments, Message lastAssistant, Session session);
 
     default ToolResult execute(String arguments, Message lastAssistant, Session session, ToolTrustMetadata mcpAdmission) {
-        if (mcpAdmission != null && mcpAdmission.definition() != null) {
+        if (mcpAdmission != null) {
             return ToolResult.fail("The MCP tool changed after admission");
         }
         return execute(arguments, lastAssistant, session);

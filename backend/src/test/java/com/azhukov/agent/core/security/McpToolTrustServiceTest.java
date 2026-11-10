@@ -29,18 +29,18 @@ class McpToolTrustServiceTest {
             "mcp__srv__delete_repo", tool("delete_repo", false),
             "mcp__srv__missing_hint", McpSchema.Tool.builder("missing_hint").build()));
 
-        assertThat(service.requiresApproval("mcp__srv__list_repos")).isFalse();
-        assertThat(service.requiresApproval("mcp__srv__delete_repo")).isTrue();
-        assertThat(service.requiresApproval("mcp__srv__missing_hint")).isTrue();
+        assertThat(service.metadata("mcp__srv__list_repos").requiresApproval()).isFalse();
+        assertThat(service.metadata("mcp__srv__delete_repo").requiresApproval()).isTrue();
+        assertThat(service.metadata("mcp__srv__missing_hint").requiresApproval()).isTrue();
     }
 
     @Test
     void trustedServerDoesNotRequireApprovalForWriteCapableTool() {
         McpToolTrustService service = new McpToolTrustService();
 
-        service.recordTool("srv", "full", "mcp__srv__delete_repo", false);
+        service.recordServerTools("srv", "full", Map.of("mcp__srv__delete_repo", tool("delete_repo", false)));
 
-        assertThat(service.requiresApproval("mcp__srv__delete_repo")).isFalse();
+        assertThat(service.metadata("mcp__srv__delete_repo").requiresApproval()).isFalse();
     }
 
     @Test
@@ -54,6 +54,8 @@ class McpToolTrustServiceTest {
 
         assertThat(service.metadata("mcp__srv__old")).isNull();
         assertThat(service.metadata("mcp__srv__new")).isNotNull();
+        service.recordServerTools("srv", null, Map.of());
+        assertThat(service.metadata("mcp__srv__new")).isNull();
     }
     private static McpSchema.Tool tool(String name, boolean readOnly) {
         return McpSchema.Tool.builder(name)
