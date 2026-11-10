@@ -13,11 +13,11 @@ import com.azhukov.agent.core.context.ContextCompressor;
 import com.azhukov.agent.core.context.HistorySanitizer;
 import com.azhukov.agent.core.model.ChatResponse;
 import com.azhukov.agent.core.model.Message;
-import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolDefinition;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.List;
+import java.util.function.BooleanSupplier;
 import java.util.Locale;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -84,12 +84,25 @@ public class FallbackModelCaller {
             this.fallbackManager = fallbackManager;
             this.activeClient = null;
         }
+
+        public ModelClient client() {
+            return activeClient != null ? activeClient : defaultClient;
+        }
+
+        public String modelName(String primaryModel) {
+            return client() == defaultClient ? primaryModel : client().getModelName();
+        }
     }
 
-    public ChatResponse call(ModelCallContext ctx, List<Message> context, List<ToolDefinition> tools,
-                             Session session, ModelRequestOptions options) {
-        int retryAttempts = properties.getError().getRetryAttempts();
-        int tierRetryAttempts = retryAttempts;
+    @FunctionalInterface
+    interface ModelAttempt {
+        ChatResponse complete(ModelClient client, List<Message> context, List<ToolDefinition> tools,
+                              ModelRequestOptions options);
+    }
+
+    ChatResponse call(ModelCallContext ctx, List<Message> context, List<ToolDefinition> tools,
+                      ModelRequestOptions options, BooleanSupplier canAttempt, ModelAttempt invoke) {
+        int retryAttempts = ResponseRecoveryPolicy.retryBudget(properties.getError(), null);
         Exception lastException = null;
         int totalAttempts = 0;
         List<Message> currentContext = context;
@@ -100,42 +113,34 @@ public class FallbackModelCaller {
         // fallback model, reset retry state (but NOT budget), and continue.
         // Immediate-fallback errors (AUTH_PERMANENT, CONTENT_POLICY, MODEL_NOT_FOUND)
         // skip retries entirely and go straight to fallback.
-        for (;;) {
+        fallbackLoop: for (;;) {
+            int tierRetryAttempts = retryAttempts;
             for (int attempt = 0; attempt <= tierRetryAttempts; attempt++) {
+                if (!canAttempt.getAsBoolean()) {
+                    break fallbackLoop;
+                }
                 totalAttempts++;
                 try {
-                    ModelClient client = ctx.activeClient != null ? ctx.activeClient : ctx.defaultClient;
                     // Compression and retry recovery can reshape the transcript after
                     // context preparation, so repair it at the wire boundary.
                     currentContext = HistorySanitizer.sanitizeForModelRequest(currentContext);
-                    return client.complete(currentContext, tools, options);
+                    return invoke.complete(ctx.client(), currentContext, tools, options);
                 } catch (Exception e) {
                     lastException = e;
-                    if (attempt >= retryAttempts) {
+                    if (!canAttempt.getAsBoolean()) {
                         break;
                     }
                     ErrorClassifier.ClassificationResult classification = errorClassifier.classifyWithHints(e);
                     ErrorClassifier.ErrorType errorType = classification.type();
-                    // Two-tier budget (operator 2026-08-28): availability errors
-                    // (RATE_LIMIT/OVERLOADED) expand the budget for this loop.
-                    if (errorType == ErrorClassifier.ErrorType.RATE_LIMIT
-                        || errorType == ErrorClassifier.ErrorType.OVERLOADED) {
-                        tierRetryAttempts = Math.max(tierRetryAttempts,
-                            Math.max(1, properties.getError().getAvailabilityRetryAttempts()));
+                    tierRetryAttempts = ResponseRecoveryPolicy.retryBudget(properties.getError(), errorType);
+                    if (attempt >= tierRetryAttempts || Thread.currentThread().isInterrupted()) {
+                        break;
                     }
 
-                    // ── Part F: Content policy handling — immediate-fallback trigger ──
-                    if (errorType == ErrorClassifier.ErrorType.CONTENT_POLICY) {
-                        log.warn("Content policy block: {} — attempting fallback", e.getMessage());
-                        if (tryActivateFallback(ctx, errorType, e)) {
-                            retryState = new TurnRetryState();
-                            currentContext = context; // reset context for the new model
-                            break; // break inner loop, continue outer fallback loop
-                        }
-                        String refusalMsg = detectRefusalPattern(e.getMessage());
-                        throw new ContentPolicyException(refusalMsg != null ? refusalMsg :
-                            "The model's safety filter blocked this request. Please rephrase your request and try again.",
-                            e);
+                    if (errorType == ErrorClassifier.ErrorType.CONTENT_POLICY
+                            || errorType == ErrorClassifier.ErrorType.AUTH_PERMANENT
+                            || errorType == ErrorClassifier.ErrorType.MODEL_NOT_FOUND) {
+                        break;
                     }
 
                     // ── One-shot recovery guards (parity with Hermes TurnRetryState — 14 total) ──
@@ -252,7 +257,7 @@ public class FallbackModelCaller {
                         }
                         if (contextCompressor != null) {
                             int compressionAttempts = retryState.getCompressionAttempts();
-                            if (compressionAttempts >= 3) {
+                            if (!ResponseRecoveryPolicy.canCompact(properties, compressionAttempts)) {
                                 log.error("Max compression attempts (3) reached for long-context-tier error.");
                                 break;
                             }
@@ -269,7 +274,7 @@ public class FallbackModelCaller {
                             } catch (Exception ce) {
                                 log.warn("Context compression for long-context tier failed (attempt {}/3): {}",
                                     compressionAttempts + 1, ce.getMessage());
-                                if (compressionAttempts + 1 >= 3) {
+                                if (!ResponseRecoveryPolicy.canCompact(properties, compressionAttempts + 1)) {
                                     break;
                                 }
                                 attempt--;
@@ -285,7 +290,7 @@ public class FallbackModelCaller {
                             break;
                         }
                         int compressionAttempts = retryState.getCompressionAttempts();
-                        if (compressionAttempts >= 3) {
+                        if (!ResponseRecoveryPolicy.canCompact(properties, compressionAttempts)) {
                             log.error("Max compression attempts (3) reached for context overflow.");
                             break;
                         }
@@ -306,7 +311,7 @@ public class FallbackModelCaller {
                             } else {
                                 log.warn("Context overflow detected, compression did not reduce context (attempt {}/3): {}",
                                     compressionAttempts + 1, e.getMessage());
-                                if (compressionAttempts + 1 >= 3) {
+                                if (!ResponseRecoveryPolicy.canCompact(properties, compressionAttempts + 1)) {
                                     break;
                                 }
                                 attempt--;
@@ -314,7 +319,7 @@ public class FallbackModelCaller {
                             }
                         } catch (Exception ce) {
                             log.warn("Context compression failed (attempt {}/3): {}", compressionAttempts + 1, ce.getMessage());
-                            if (compressionAttempts + 1 >= 3) {
+                            if (!ResponseRecoveryPolicy.canCompact(properties, compressionAttempts + 1)) {
                                 break;
                             }
                             attempt--;
@@ -329,7 +334,7 @@ public class FallbackModelCaller {
                             break;
                         }
                         int compressionAttempts = retryState.getCompressionAttempts();
-                        if (compressionAttempts >= 3) {
+                        if (!ResponseRecoveryPolicy.canCompact(properties, compressionAttempts)) {
                             log.error("Max compression attempts (3) reached for payload-too-large error.");
                             break;
                         }
@@ -346,25 +351,12 @@ public class FallbackModelCaller {
                         } catch (Exception ce) {
                             log.warn("Context compression for payload too large failed (attempt {}/3): {}",
                                 compressionAttempts + 1, ce.getMessage());
-                            if (compressionAttempts + 1 >= 3) {
+                            if (!ResponseRecoveryPolicy.canCompact(properties, compressionAttempts + 1)) {
                                 break;
                             }
                             attempt--;
                             continue;
                         }
-                    }
-
-                    // ── Immediate-fallback errors (no retry, try fallback immediately) ──
-                    if (errorType == ErrorClassifier.ErrorType.AUTH_PERMANENT
-                        || errorType == ErrorClassifier.ErrorType.MODEL_NOT_FOUND) {
-                        log.warn("{} error — attempting immediate fallback: {}", errorType, e.getMessage());
-                        if (tryActivateFallback(ctx, errorType, e)) {
-                            retryState = new TurnRetryState();
-                            currentContext = context;
-                            break; // break inner loop, continue outer fallback loop
-                        }
-                        log.warn("{} error, no fallback available, failing: {}", errorType, e.getMessage());
-                        break;
                     }
 
                     // ── Permanent errors that don't trigger fallback ──
@@ -416,13 +408,19 @@ public class FallbackModelCaller {
             }
 
             // ── Retries exhausted — try fallback before failing (Hermes 3278-3296) ──
-            if (lastException != null) {
+            if (lastException != null && !Thread.currentThread().isInterrupted()) {
                 ErrorClassifier.ClassificationResult classification = errorClassifier.classifyWithHints(lastException);
-                if (classification.hints().shouldFallback() && tryActivateFallback(ctx, classification.type(), lastException)) {
+                if (canAttempt.getAsBoolean() && tryActivateFallbackForError(ctx, classification, lastException)) {
                     retryState = new TurnRetryState();
                     currentContext = context; // reset context for the new model
                     totalAttempts = 0;
                     continue; // continue outer fallback loop
+                }
+                if (classification.type() == ErrorClassifier.ErrorType.CONTENT_POLICY) {
+                    String refusal = detectRefusalPattern(lastException.getMessage());
+                    throw new ContentPolicyException(refusal != null ? refusal :
+                        "The model's safety filter blocked this request. Please rephrase your request and try again.",
+                        lastException);
                 }
             }
 
@@ -453,6 +451,12 @@ public class FallbackModelCaller {
         return tryActivateFallback(ctx, null, null);
     }
 
+    public boolean tryActivateFallbackForError(ModelCallContext ctx,
+                                               ErrorClassifier.ClassificationResult classification,
+                                               Exception error) {
+        return classification.hints().shouldFallback() && tryActivateFallback(ctx, classification.type(), error);
+    }
+
     public boolean tryActivateFallback(ModelCallContext ctx, ErrorClassifier.ErrorType errorType, Exception error) {
         if (ctx.fallbackManager == null || !ctx.fallbackManager.hasPendingFallback()) {
             // Hermes parity: arm a short cooldown when the chain is exhausted
@@ -462,7 +466,9 @@ public class FallbackModelCaller {
             if (errorType != ErrorClassifier.ErrorType.RATE_LIMIT
                 && errorType != ErrorClassifier.ErrorType.BILLING
                 && errorType != ErrorClassifier.ErrorType.OVERLOADED) {
-                ctx.fallbackManager.setChainExhaustedCooldown();
+                if (ctx.fallbackManager != null) {
+                    ctx.fallbackManager.setChainExhaustedCooldown();
+                }
             }
             return false;
         }

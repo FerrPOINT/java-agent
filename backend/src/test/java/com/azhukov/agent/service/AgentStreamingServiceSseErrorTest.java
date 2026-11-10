@@ -3,12 +3,14 @@ package com.azhukov.agent.service;
 import com.azhukov.agent.api.dto.ChatRequest;
 import com.azhukov.agent.api.dto.StreamEvent;
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.config.FallbackConfig;
 import com.azhukov.agent.core.agent.InterruptToken;
 import com.azhukov.agent.core.agent.SteerBuffer;
 import com.azhukov.agent.core.agent.AgentSessionResolver;
 import com.azhukov.agent.core.agent.CliStateApplier;
 import com.azhukov.agent.core.agent.TokenEstimator;
 import com.azhukov.agent.core.agent.ToolResultFormatter;
+import com.azhukov.agent.core.budget.DefaultIterationBudget;
 import com.azhukov.agent.core.budget.IterationBudget;
 import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.client.StreamingResponseHandler;
@@ -16,6 +18,7 @@ import com.azhukov.agent.core.context.ContextEngine;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolDefinition;
+import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.prompt.PromptBuilder;
 import com.azhukov.agent.core.state.TurnStateManager;
 import com.azhukov.agent.core.tool.ToolExecutionService;
@@ -26,6 +29,7 @@ import com.azhukov.agent.persistence.mapper.SessionEntityMapper;
 import com.azhukov.agent.persistence.repository.MessageRepository;
 import com.azhukov.agent.persistence.repository.SessionRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -33,14 +37,18 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
 import java.lang.reflect.Field;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -49,6 +57,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -68,6 +77,218 @@ import static org.mockito.Mockito.when;
  * the emitter completes cleanly without propagating to GlobalExceptionHandler.
  */
 class AgentStreamingServiceSseErrorTest {
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"3, false", "4, false", "4, true"})
+    void fallbackContinuationPreservesVisibleText(int maxModelCalls, boolean failContinuation) throws Exception {
+        useRealBudget(maxModelCalls);
+        var fallbackCalls = new AtomicInteger();
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            try (exchange) {
+                exchange.getRequestBody().readAllBytes();
+                int attempt = fallbackCalls.incrementAndGet();
+                if (attempt == 3 && failContinuation) {
+                    byte[] error = "{\"error\":{\"message\":\"model not found\"}}".getBytes(StandardCharsets.UTF_8);
+                    exchange.getResponseHeaders().set("Content-Type", "application/json");
+                    exchange.sendResponseHeaders(404, error.length);
+                    exchange.getResponseBody().write(error);
+                    return;
+                }
+                String choice = switch (attempt) {
+                    case 1 -> """
+                        {"message":{"role":"assistant","content":"checking the weather","tool_calls":[
+                         {"id":"call-1","type":"function","function":{"name":"weather","arguments":"{}"}}]},
+                         "finish_reason":"tool_calls"}
+                        """;
+                    case 2 -> """
+                        {"message":{"role":"assistant","content":"fallback answer was truncated"},"finish_reason":"length"}
+                        """;
+                    default -> """
+                        {"message":{"role":"assistant","content":"fallback completed the turn"},"finish_reason":"stop"}
+                        """;
+                };
+                byte[] body = ("""
+                    {"id":"fixture","object":"chat.completion","created":1,"model":"reserve","choices":[%s],
+                     "usage":{"prompt_tokens":8,"completion_tokens":4,"total_tokens":12}}
+                    """.formatted(choice)).getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", "application/json");
+                exchange.sendResponseHeaders(200, body.length);
+                exchange.getResponseBody().write(body);
+            }
+        });
+        server.start();
+        try {
+            var fallback = new FallbackConfig();
+            fallback.setModel("reserve");
+            fallback.setApiKey("fixture");
+            fallback.setBaseUrl("http://127.0.0.1:" + server.getAddress().getPort() + "/v1");
+            properties.setFallbackChain(List.of(fallback));
+            when(toolRegistry.getDefinitions(any(Set.class))).thenReturn(List.of(
+                new ToolDefinition("weather", "Fixture tool", Map.of("type", "object"))));
+            when(toolExecutionService.execute(any(), any(), any(), any(), any(), any()))
+                .thenReturn(ToolResult.ok("sunny"));
+            when(toolExecutionService.enforceToolResultBudget(any())).thenAnswer(call -> call.getArgument(0));
+            doAnswer(call -> {
+                StreamingResponseHandler handler = call.getArgument(3);
+                handler.onError(new RuntimeException("404 model not found"));
+                return null;
+            }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+
+            when(sessionRepository.findMessageParentId(SESSION_ID)).thenReturn(Optional.of(SESSION_ID));
+            var emitter = new CollectingEmitter(10_000L);
+            streamingService.streamTurn(ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L), emitter);
+            emitter.awaitDone();
+
+            verify(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+            int expectedFallbackCalls = maxModelCalls - 1;
+            assertThat(fallbackCalls).hasValue(expectedFallbackCalls);
+            assertThat(emitter.events.stream().anyMatch(event -> "error".equals(event.name)))
+                .isEqualTo(failContinuation);
+            verify(usageTracker, org.mockito.Mockito.times(expectedFallbackCalls - (failContinuation ? 1 : 0))).recordTurn(
+                org.mockito.ArgumentMatchers.eq(SESSION_ID), org.mockito.ArgumentMatchers.eq("user-1"),
+                org.mockito.ArgumentMatchers.eq("reserve"), org.mockito.ArgumentMatchers.anyInt(),
+                org.mockito.ArgumentMatchers.anyInt());
+            boolean continued = maxModelCalls == 4 && !failContinuation;
+            String lastFragment = continued
+                ? "fallback completed the turn" : "fallback answer was truncated";
+            assertThat(emitter.events).anyMatch(event ->
+                "token".equals(event.name) && event.data.contains(lastFragment));
+            assertThat(emitter.events).anyMatch(event ->
+                "token".equals(event.name) && event.data.contains("checking the weather"));
+            assertThat(emitter.events.stream().anyMatch(event -> "continuation".equals(event.name)))
+                .isEqualTo(maxModelCalls == 4);
+            String expectedSavedText = continued
+                ? "fallback answer was truncated" + lastFragment : lastFragment;
+            verify(messageRepository, org.mockito.Mockito.timeout(2000)).save(
+                org.mockito.ArgumentMatchers.argThat(message -> expectedSavedText.equals(message.getContent())));
+            if (!failContinuation) {
+                var metadata = emitter.events.stream().filter(event -> "metadata".equals(event.name)).toList();
+                assertThat(objectMapper.readTree(metadata.getLast().data).path("modelUsed").asText())
+                    .isEqualTo("reserve");
+            }
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"1, stop, false", "10, stop, false", "1, tool_calls, false",
+        "1, stop, true", "1, tool_calls, true"})
+    void budgetExhaustionKeepsVisibleTextAndReportsTheLimit(int maxTurns, String finishReason,
+                                                           boolean precedingFragment) throws Exception {
+        properties.getCore().setMaxTurns(maxTurns);
+        int maxCalls = precedingFragment ? 2 : 1;
+        useRealBudget(maxCalls);
+        when(sessionRepository.findMessageParentId(SESSION_ID)).thenReturn(Optional.of(SESSION_ID));
+        String earlier = "The provider already showed the first fragment. ".repeat(12).stripTrailing();
+        String current = "tool_calls".equals(finishReason)
+            ? "The provider already showed an explanation. ".repeat(12).stripTrailing() : "";
+        var calls = new AtomicInteger();
+        doAnswer(call -> {
+            StreamingResponseHandler handler = call.getArgument(3);
+            if (calls.incrementAndGet() == 1 && precedingFragment) {
+                handler.onToken(earlier);
+                handler.onComplete("length", 12L);
+            } else {
+                if (!current.isEmpty()) {
+                    handler.onToken(current);
+                }
+                handler.onComplete(finishReason, 12L);
+            }
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+
+        var emitter = new CollectingEmitter(10_000L);
+        streamingService.streamTurn(ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L), emitter);
+        emitter.awaitDone();
+
+        assertThat(calls).hasValue(maxCalls);
+        verify(modelClient, org.mockito.Mockito.never()).complete(any(List.class), any(List.class), any());
+        assertThat(emitter.events).anyMatch(event ->
+            "token".equals(event.name) && event.data.contains("Iteration budget exhausted"));
+        assertThat(emitter.events).noneMatch(event -> event.data.contains("Reached maximum turns"));
+        String expectedVisible = (precedingFragment ? earlier : "") + current;
+        if (!expectedVisible.isEmpty()) {
+            verify(messageRepository, org.mockito.Mockito.timeout(2000)).save(
+                org.mockito.ArgumentMatchers.argThat(message -> expectedVisible.equals(message.getContent())));
+        }
+        verify(messageRepository, org.mockito.Mockito.timeout(2000)).save(
+            org.mockito.ArgumentMatchers.argThat(message -> message.getContent() != null
+                && message.getContent().contains("Iteration budget exhausted")));
+    }
+
+    private void useRealBudget(int maxModelCalls) {
+        properties.getBudget().setMaxModelCallsPerTurn(maxModelCalls);
+        var actualBudget = new DefaultIterationBudget(properties);
+        when(iterationBudget.startTurn(any(UUID.class))).thenAnswer(call -> actualBudget.startTurn(call.getArgument(0)));
+        when(iterationBudget.isExhausted(any())).thenAnswer(call -> actualBudget.isExhausted(call.getArgument(0)));
+        when(iterationBudget.recordModelCall(any(), any(int.class), any(int.class))).thenAnswer(call ->
+            actualBudget.recordModelCall(call.getArgument(0), call.getArgument(1), call.getArgument(2)));
+        when(iterationBudget.recordToolExecution(any(), any(String.class), any(long.class))).thenAnswer(call ->
+            actualBudget.recordToolExecution(call.getArgument(0), call.getArgument(1), call.getArgument(2)));
+    }
+
+    @Test
+    void overloadAfterEmittedTokenDoesNotRestartResponse() throws Exception {
+        properties.getError().setRetryAttempts(1);
+        properties.getError().setAvailabilityRetryAttempts(2);
+        var request = ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L);
+        var emitter = new CollectingEmitter(30_000L);
+        var attempts = new java.util.concurrent.atomic.AtomicInteger();
+        doAnswer(invocation -> {
+            StreamingResponseHandler handler = invocation.getArgument(3);
+            if (attempts.incrementAndGet() == 1) {
+                handler.onToken("first attempt text ".repeat(16));
+                handler.onError(new RuntimeException("529 overloaded"));
+            } else {
+                handler.onToken("second attempt text ".repeat(16));
+                handler.onComplete();
+            }
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+
+        when(sessionRepository.findMessageParentId(SESSION_ID)).thenReturn(Optional.of(SESSION_ID));
+        streamingService.streamTurn(request, emitter);
+        emitter.awaitDone();
+        assertThat(emitter.events.stream().anyMatch(event ->
+            "token".equals(event.name) && event.data.contains("first attempt text"))).isTrue();
+        verify(messageRepository, org.mockito.Mockito.timeout(2000)).save(
+            org.mockito.ArgumentMatchers.argThat(message -> message.getContent().contains("first attempt text")));
+        assertThat(attempts).hasValue(1);
+        assertThat(emitter.events).anyMatch(event -> "error".equals(event.name));
+    }
+
+    @Test
+    void overloadCannotSendAnotherRequestWhenTurnBudgetIsSpent() throws Exception {
+        properties.getError().setRetryAttempts(1);
+        properties.getError().setAvailabilityRetryAttempts(2);
+        var exhausted = new AtomicBoolean();
+        when(iterationBudget.isExhausted(any())).thenAnswer(invocation -> exhausted.get());
+        when(iterationBudget.recordModelCall(any(), any(int.class), any(int.class))).thenAnswer(invocation -> {
+            exhausted.set(true);
+            return invocation.getArgument(0);
+        });
+        var request = ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L);
+        var emitter = new CollectingEmitter(30_000L);
+        var attempts = new java.util.concurrent.atomic.AtomicInteger();
+        doAnswer(invocation -> {
+            StreamingResponseHandler handler = invocation.getArgument(3);
+            if (attempts.incrementAndGet() == 1) {
+                handler.onError(new RuntimeException("529 overloaded"));
+            } else {
+                handler.onToken("extra provider call");
+                handler.onComplete();
+            }
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+
+        streamingService.streamTurn(request, emitter);
+        emitter.awaitDone();
+        assertThat(exhausted).isTrue();
+        assertThat(attempts).hasValue(1);
+        assertThat(emitter.events).anyMatch(event -> "error".equals(event.name));
+    }
 
     private static final UUID SESSION_ID = UUID.fromString("44444444-5555-6666-7777-888888888888");
     private static final String SYSTEM_PROMPT = "You are a helpful assistant.";
@@ -254,6 +475,32 @@ class AgentStreamingServiceSseErrorTest {
         // Emitter should complete normally, not with error
         assertThat(emitter.completed.get()).isTrue();
         assertThat(emitter.error.get()).isNull();
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void zeroOrdinaryRetriesStillAllowsTheConfiguredAvailabilityBudget(boolean overloaded) throws Exception {
+        properties.getError().setRetryAttempts(0);
+        properties.getError().setAvailabilityRetryAttempts(2);
+        var request = ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L);
+        var emitter = new CollectingEmitter(30_000L);
+        var attempts = new java.util.concurrent.atomic.AtomicInteger();
+        doAnswer(invocation -> {
+            StreamingResponseHandler handler = invocation.getArgument(3);
+            if (attempts.incrementAndGet() == 1) {
+                handler.onError(new RuntimeException(overloaded ? "529 overloaded" : "connection reset"));
+            } else {
+                handler.onToken("provider recovered");
+                handler.onComplete();
+            }
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+
+        streamingService.streamTurn(request, emitter);
+        emitter.awaitDone();
+
+        assertThat(attempts).hasValue(overloaded ? 2 : 1);
+        assertThat(emitter.events.stream().anyMatch(event -> "error".equals(event.name))).isEqualTo(!overloaded);
     }
 
     // ── Timeout: emitter completes normally, not with error ──

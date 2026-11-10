@@ -64,6 +64,7 @@ class DefaultAgentRuntimeRetryTest {
     private BackgroundReviewService backgroundReviewService;
     private ToolCallGuardrail guardrail;
     private ErrorClassifier errorClassifier;
+    private AgentProperties properties;
 
     @BeforeEach
     void setUp() {
@@ -77,7 +78,7 @@ class DefaultAgentRuntimeRetryTest {
         iterationBudget = mock(IterationBudget.class);
         MessageSanitizer messageSanitizer = mock(MessageSanitizer.class);
         ContextReferenceService contextReferenceService = mock(ContextReferenceService.class);
-        AgentProperties properties = new AgentProperties();
+        properties = new AgentProperties();
         properties.getCore().setMaxTurns(10);
         // Set retry attempts to 3 (default) for predictable test behaviour
         properties.getError().setRetryAttempts(3);
@@ -121,6 +122,65 @@ class DefaultAgentRuntimeRetryTest {
             interruptToken, turnFinalizer, steerBuffer, errorClassifier, null,
             new com.azhukov.agent.core.security.ApprovalQueue(), null, null,
             new TokenEstimator(), new ToolResultFormatter(), null, null);
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints = {1, 2})
+    void availabilityRetriesChargeFailedAttemptsAgainstTheTurnLimit(int limit) {
+        properties.getBudget().setMaxModelCallsPerTurn(limit);
+        properties.getError().setRetryAttempts(0);
+        properties.getError().setAvailabilityRetryAttempts(2);
+        properties.getError().setRetryDelayMs(1);
+        properties.getError().setRetryCapMs(1);
+        var actualBudget = new com.azhukov.agent.core.budget.DefaultIterationBudget(properties);
+        when(iterationBudget.startTurn(any(UUID.class))).thenAnswer(inv ->
+            actualBudget.startTurn(inv.getArgument(0)));
+        when(iterationBudget.isExhausted(any())).thenAnswer(inv ->
+            actualBudget.isExhausted(inv.getArgument(0)));
+        when(iterationBudget.recordModelCall(any(), any(int.class), any(int.class))).thenAnswer(inv ->
+            actualBudget.recordModelCall(inv.getArgument(0), inv.getArgument(1), inv.getArgument(2)));
+        when(modelClient.complete(any(List.class), any(List.class), any()))
+            .thenThrow(new RuntimeException("529 overloaded")).thenReturn(ChatResponse.text("available"));
+
+        var result = runtime.runTurn(Session.create("user-1", "openai-compatible", "test-model"), "Hello");
+
+        verify(modelClient, times(limit)).complete(any(List.class), any(List.class), any());
+        assertThat(result.completed()).isEqualTo(limit == 2);
+    }
+
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({
+        "1, LENGTH, visible partial",
+        "2, LENGTH, visible partial and the rest",
+        "2, STOP, visible partial and the rest"
+    })
+    void lengthContinuationPreservesTextWithinTheTurnBudget(int limit, String lastReason, String expected) {
+        properties.getBudget().setMaxModelCallsPerTurn(limit);
+        var actualBudget = new com.azhukov.agent.core.budget.DefaultIterationBudget(properties);
+        when(iterationBudget.startTurn(any(UUID.class))).thenAnswer(inv ->
+            actualBudget.startTurn(inv.getArgument(0)));
+        when(iterationBudget.isExhausted(any())).thenAnswer(inv ->
+            actualBudget.isExhausted(inv.getArgument(0)));
+        when(iterationBudget.recordModelCall(any(), any(int.class), any(int.class))).thenAnswer(inv ->
+            actualBudget.recordModelCall(inv.getArgument(0), inv.getArgument(1), inv.getArgument(2)));
+        when(modelClient.complete(any(List.class), any(List.class), any())).thenAnswer(inv -> {
+            List<Message> context = inv.getArgument(0);
+            if (context.stream().anyMatch(m -> ResponseRecoveryPolicy.LENGTH_NUDGE.equals(m.content()))) {
+                assertThat(context).anyMatch(m -> "visible partial".equals(m.content()));
+                return ChatResponse.text(" and the rest", lastReason);
+            }
+            return ChatResponse.text("visible partial", "LENGTH");
+        });
+
+        var result = runtime.runTurn(Session.create("user-1", "openai-compatible", "test-model"), "Hello");
+
+        verify(modelClient, times(limit)).complete(any(List.class), any(List.class), any());
+        assertThat(result.completed()).isTrue();
+        assertThat(result.finalText()).isEqualTo(expected);
+        if (limit == 1) {
+            assertThat(result.messages()).noneMatch(m -> ResponseRecoveryPolicy.LENGTH_NUDGE.equals(m.content()));
+        }
     }
 
     // ─── Retry on transient errors ───
@@ -219,6 +279,27 @@ class DefaultAgentRuntimeRetryTest {
         assertThat(result.completed()).isFalse();
         assertThat(result.error()).contains("Model call failed");
         verify(modelClient, times(1)).complete(any(List.class), any(List.class), any());
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints = {1, 2})
+    void contentPolicyOutcomeIsStableAtTheBudgetBoundary(int limit) {
+        properties.getBudget().setMaxModelCallsPerTurn(limit);
+        var actualBudget = new com.azhukov.agent.core.budget.DefaultIterationBudget(properties);
+        when(iterationBudget.startTurn(any(UUID.class))).thenAnswer(inv ->
+            actualBudget.startTurn(inv.getArgument(0)));
+        when(iterationBudget.isExhausted(any())).thenAnswer(inv ->
+            actualBudget.isExhausted(inv.getArgument(0)));
+        when(iterationBudget.recordModelCall(any(), any(int.class), any(int.class))).thenAnswer(inv ->
+            actualBudget.recordModelCall(inv.getArgument(0), inv.getArgument(1), inv.getArgument(2)));
+        when(modelClient.complete(any(List.class), any(List.class), any()))
+            .thenThrow(new RuntimeException("content policy violation"));
+        var result = runtime.runTurn(Session.create("user-1", "openai-compatible", "test-model"), "Hello");
+        verify(modelClient).complete(any(List.class), any(List.class), any());
+        assertThat(result.completed()).isTrue();
+        assertThat(result.error()).isNull();
+        verify(turnFinalizer).finalize(any(UUID.class), any(List.class), org.mockito.ArgumentMatchers.eq(false),
+            org.mockito.ArgumentMatchers.eq(TurnExitReason.CONTENT_POLICY));
     }
 
     @Test
@@ -393,8 +474,7 @@ class DefaultAgentRuntimeRetryTest {
         assertThat(properties.getError().getRetryAttempts()).isEqualTo(3);
         assertThat(properties.getError().getRetryDelayMs()).isEqualTo(1000);
         assertThat(properties.getError().getBackoffMultiplier()).isEqualTo(2);
-        // Also model-level retry config
-        assertThat(properties.getModel().getMaxRetries()).isEqualTo(3);
+        assertThat(properties.getError().getAvailabilityRetryAttempts()).isEqualTo(20);
     }
 
     @Test

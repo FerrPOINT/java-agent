@@ -216,8 +216,10 @@ class AgentStreamingInterruptTest {
      * When interruptToken.cancel() is called during streaming (between tokens),
      * the onToken handler should stop emitting further tokens.
      */
-    @Test
-    void interruptMidStream_stopsEmittingTokens() throws Exception {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"stop", "length"})
+    void interruptMidStream_stopsEmittingTokens(String finishReason) throws Exception {
+        properties.getCore().setMaxTurns(1);
         ChatRequest request = ChatRequest.simple(SESSION_ID, USER_MESSAGE, null, 10_000L);
 
         CollectingEmitter emitter = new CollectingEmitter(500L);
@@ -228,7 +230,7 @@ class AgentStreamingInterruptTest {
             interruptToken.cancel(SESSION_ID);
             handler.onToken("second");  // should be skipped due to interrupt check
             handler.onToken("third");   // should be skipped
-            handler.onComplete();
+            handler.onComplete(finishReason, 1L);
             return null;
         }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
@@ -245,6 +247,8 @@ class AgentStreamingInterruptTest {
         assertThat(tokenEvents).hasSize(1);
         StreamEvent firstToken = deserialize(tokenEvents.get(0).data, StreamEvent.class);
         assertThat(firstToken.token()).isEqualTo("first");
+        org.mockito.Mockito.verify(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+        assertThat(emitter.events).noneMatch(e -> "continuation".equals(e.name));
 
         // Should have an "interrupted" event from the loop check after streaming returns
         boolean hasInterrupted = emitter.events.stream()

@@ -7,7 +7,6 @@ import com.azhukov.agent.core.model.ChatResponse;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.ToolDefinition;
 import dev.langchain4j.model.chat.ChatModel;
-import dev.langchain4j.model.chat.StreamingChatModel;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.List;
@@ -107,22 +106,8 @@ public class FallbackModelClient implements ModelClient {
 
         try {
             dev.langchain4j.model.chat.response.ChatResponse response = chatModel.chat(request);
-            dev.langchain4j.data.message.AiMessage aiMessage = response.aiMessage();
             persistUsage(response);
-
-            if (aiMessage.hasToolExecutionRequests()) {
-                List<com.azhukov.agent.core.model.ToolCall> calls = aiMessage.toolExecutionRequests().stream()
-                    .map(r -> new com.azhukov.agent.core.model.ToolCall(r.id(), r.name(), r.arguments()))
-                    .collect(java.util.stream.Collectors.toList());
-                // Preserve text alongside tool calls — the text is "commentary"
-                String text = aiMessage.text();
-                if (text != null && !text.isBlank()) {
-                    return ChatResponse.textAndToolCalls(text, calls).withReasoning(aiMessage.thinking());
-                }
-                return ChatResponse.toolCalls(calls).withReasoning(aiMessage.thinking());
-            }
-
-            return ChatResponse.text(aiMessage.text() != null ? aiMessage.text() : "").withReasoning(aiMessage.thinking());
+            return LangChain4jMessageMapper.fromLangChain(response);
         } catch (Exception e) {
             log.warn("FallbackModelClient complete() failed for {}/{}: {}", provider, modelName, e.getMessage());
             throw e;
@@ -179,7 +164,7 @@ public class FallbackModelClient implements ModelClient {
             config.getBaseUrl(),
             config.getApiKey(),
             properties.getModel().getTimeoutSeconds(),
-            properties.getModel().getMaxRetries(),
+            0, // Turn recovery owns retry admission and accounting.
             properties.getModel().getTemperature(),
             usageConsumer
         );

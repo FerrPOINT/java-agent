@@ -184,7 +184,6 @@ agent:
     api-key: ${AGENT_MODEL_API_KEY:}
     model-name: ${AGENT_MODEL_NAME:qwen2.5:3b}
     timeout-seconds: ${AGENT_MODEL_TIMEOUT_SECONDS:60}
-    max-retries: ${AGENT_MODEL_MAX_RETRIES:3}
     max-tokens: ${AGENT_MODEL_MAX_TOKENS:4096}
     temperature: ${AGENT_MODEL_TEMPERATURE:0.7}
 

@@ -182,7 +182,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
         TurnExecutor te = turnExecutor;
         if (te == null) {
             te = new TurnExecutor(
-                errorClassifier, properties, contextCompressor, contextEngine,
+                properties, contextCompressor, contextEngine,
                 toolExecutionService, toolResultFormatter, tokenEstimator,
                 interruptToken, approvalQueue, toolGuardrails,
                 memoryNudgeManagerOrNull(), steerBuffer);
@@ -525,9 +525,10 @@ public class DefaultAgentRuntime implements AgentRuntime {
     }
 
     private TurnResult runTurnLoop(Session session, List<Message> turnMessages, List<ToolDefinition> tools,
-                                   int maxTurns, int turnIndex, TurnSnapshot budget, TurnState turnState,
+                                   int maxTurns, int turnIndex, TurnSnapshot initialBudget, TurnState turnState,
                                    String sessionId, UUID sessionIdUuid, ModelRequestOptions options,
                                    Set<String> effectiveToolsets) {
+        var modelAttempts = new TurnModelAttempts(initialBudget, turnState);
         // Thinking-specific retry counters — reset per turn (parity with Hermes
         // _thinking_prefill_retries / _incomplete_scratchpad_retries).
         // These track recovery attempts across loop iterations within a single turn.
@@ -586,7 +587,8 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 }
                 return new TurnResult(turnMessages, true, null);
             }
-            if (iterationBudget.isExhausted(budget)) {
+            if (modelAttempts.exhausted()) {
+                var budget = modelAttempts.budget;
                 var budgetStatus = iterationBudget.status(budget);
                 String exhaustionReason = budgetStatus == null ? "iteration budget exhausted" : budgetStatus.reason();
                 log.warn("Iteration budget exhausted for session {} after {} model calls, {} tool executions, {} estimated tokens, {} ms tool time; reason={}",
@@ -636,14 +638,10 @@ public class DefaultAgentRuntime implements AgentRuntime {
             ChatResponse response;
             try {
                 long callStart = System.currentTimeMillis();
-                response = callModelWithRetry(context, tools, session, options);
+                response = callModelWithRetry(context, tools, options, modelAttempts);
                 // P-06: the retry flag applies to exactly one model call
                 com.azhukov.agent.client.langchain4j.EmptyRetryCacheBypass.clear();
                 int duration = (int) (System.currentTimeMillis() - callStart);
-                int estimatedInput = tokenEstimator.estimateTokens(context);
-                int estimatedOutput = estimateResponseTokens(response);
-                budget = iterationBudget.recordModelCall(budget, estimatedInput, estimatedOutput);
-                turnState.recordModelCall();
                 log.debug("Turn {} model returned in {} ms: toolCalls={}, content length={}",
                     i, duration, response.toolCalls() != null ? response.toolCalls().size() : 0,
                     response.content() != null ? response.content().length() : 0);
@@ -699,7 +697,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
             while (ResponseRecoveryPolicy.isTruncatedToolCall(response.finishReason(), response.hasToolCalls())
                     && truncatedToolCallRetries < ResponseRecoveryPolicy.MAX_TRUNCATED_TOOL_CALL_RETRIES) {
                 if (interruptToken != null && interruptToken.isCancelled(session.id())) break;
-                if (iterationBudget.isExhausted(budget)) break;
+                if (modelAttempts.exhausted()) break;
                 truncatedToolCallRetries++;
                 int boostedMax = ResponseRecoveryPolicy.boostedMaxTokens(
                     properties.getModel().getMaxTokens(), truncatedToolCallRetries);
@@ -710,10 +708,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 ModelRequestOptions boostedOptions = TurnExecutorUtils.withBoostedMaxTokens(options, boostedMax);
                 context = contextEngine.prepareContext(session, turnMessages);
                 session = resolveRotatedSession(session);
-                response = callModelWithRetry(context, tools, session, boostedOptions);
-                budget = iterationBudget.recordModelCall(budget,
-                    tokenEstimator.estimateTokens(context), estimateResponseTokens(response));
-                turnState.recordModelCall();
+                response = callModelWithRetry(context, tools, boostedOptions, modelAttempts);
             }
 
             if (interruptToken != null && interruptToken.isCancelled(session.id())) {
@@ -734,7 +729,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 return new TurnResult(turnMessages, true, null);
             }
             if (ResponseRecoveryPolicy.isTruncatedToolCall(response.finishReason(), response.hasToolCalls())
-                    && iterationBudget.isExhausted(budget)) {
+                    && modelAttempts.exhausted()) {
                 continue;
             }
 
@@ -759,41 +754,22 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 continue;
             }
 
-            // ── c2: LENGTH continuation (Hermes conversation_loop.py:3711-3775) ──
-            // Sync-path parity with the streaming loop: the partial fragment is
-            // ACCUMULATED (stitched) and the model is asked to continue; ceiling 4;
-            // on exhaustion the stitched partial is KEPT, not discarded.
-            if (ResponseRecoveryPolicy.isLengthContinuable(response, lengthContinueRetries)) {
+            boolean budgetExhausted = modelAttempts.exhausted();
+            if (!budgetExhausted && ResponseRecoveryPolicy.isLengthContinuable(response, lengthContinueRetries)) {
                 lengthContinueRetries++;
                 log.info("LENGTH truncation detected — partial content ({} chars), continuation attempt {}/{}",
                     response.content().length(), lengthContinueRetries,
                     ResponseRecoveryPolicy.MAX_LENGTH_CONTINUATION_ATTEMPTS);
-                String partialContent = response.content();
-                // The continuation fragment and nudge must become part of the live
-                // transcript. Building a throwaway context loses both at the next loop
-                // iteration, so the model simply repeats the original request.
-                if (partialContent != null && !partialContent.isEmpty()) {
-                    truncatedParts.append(partialContent);
-                    turnMessages.add(Message.assistant(partialContent, turnIndex));
-                }
+                truncatedParts.append(response.content());
+                turnMessages.add(Message.assistant(response.content(), turnIndex));
                 turnMessages.add(Message.user(ResponseRecoveryPolicy.LENGTH_NUDGE));
                 turnIndex++;
                 session = resolveRotatedSession(session);
                 continue;
             }
-            if (("length".equalsIgnoreCase(response.finishReason()) || "incomplete".equalsIgnoreCase(response.finishReason()))
-                    && response.hasContent() && !response.hasToolCalls()
-                    && lengthContinueRetries >= ResponseRecoveryPolicy.MAX_LENGTH_CONTINUATION_ATTEMPTS) {
-                String stitched = truncatedParts + response.content();
-                log.warn("Response still truncated after {} continuation attempts — keeping partial ({} chars)",
-                    lengthContinueRetries, stitched.length());
-                response = ChatResponse.text(stitched, "STOP");
-                truncatedParts.setLength(0);
-                // fall through to the no-tool-calls completion path below
-            } else if (truncatedParts.length() > 0 && !response.hasToolCalls() && response.hasContent()) {
-                // c2: successful STOP after LENGTH continuations — join the stitched
-                // fragments (streaming parity: response construction concatenates).
-                response = ChatResponse.text(truncatedParts + response.content(), "STOP");
+            if (!truncatedParts.isEmpty() && !response.hasToolCalls() && response.hasContent()) {
+                response = ChatResponse.text(truncatedParts + response.content(), "STOP")
+                    .withReasoning(response.reasoning());
                 truncatedParts.setLength(0);
             }
 
@@ -875,6 +851,9 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     && !containsAnyThinkTag(rawContent);
                 boolean prefillExhausted = thinkingPrefillRetries >= 2;
                 if (isTrulyEmpty && (!containsAnyThinkTag(rawContent) || prefillExhausted)) {
+                    if (budgetExhausted) {
+                        continue;
+                    }
                     // h63: When the model returns a deterministic empty response (not an error, just empty),
                     // don't retry it — return immediately with a message, unless config overrides.
                     if (!properties.getCore().isEmptyResponseRetry()) {
@@ -978,7 +957,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 // ── Verify-on-stop guard (Hermes parity: verification_stop.py) ──
                 // When the model finishes (STOP) after editing code without fresh
                 // verification evidence, inject a nudge requesting tests/build.
-                if (properties.getVerifyOnStop().isEnabled() && toolExecutionService != null
+                if (properties.getVerifyOnStop().isEnabled() && !budgetExhausted && toolExecutionService != null
                     && toolExecutionService.getFileMutationTracker() != null) {
                     var tracker = toolExecutionService.getFileMutationTracker();
                     var changedPaths = tracker.getTurnMutationPaths();
@@ -1131,10 +1110,10 @@ public class DefaultAgentRuntime implements AgentRuntime {
             // Post-batch budget accounting (incl. the execute_code refund,
             // previously streaming-only — Hermes conversation_loop.py:7277-7280).
             for (TurnExecutor.ToolExecutionRecord rec : batchResult.executions()) {
-                budget = iterationBudget.recordToolExecution(
-                    budget, rec.toolName(), rec.chargesDurationBudget() ? rec.durationMs() : 0);
+                modelAttempts.budget = iterationBudget.recordToolExecution(
+                    modelAttempts.budget, rec.toolName(), rec.chargesDurationBudget() ? rec.durationMs() : 0);
                 if (rec.refunded()) {
-                    budget = iterationBudget.refundToolExecution(budget);
+                    modelAttempts.budget = iterationBudget.refundToolExecution(modelAttempts.budget);
                 }
             }
             if (batchResult.isInterrupted()) {
@@ -1274,14 +1253,15 @@ public class DefaultAgentRuntime implements AgentRuntime {
      * The per-turn {@link FallbackModelCaller.ModelCallContext} carries the
      * active/fallback client state this runtime owns.
      */
-    private ChatResponse callModelWithRetry(List<Message> context, List<ToolDefinition> tools, Session session,
-                                             ModelRequestOptions options) {
+    private ChatResponse callModelWithRetry(List<Message> context, List<ToolDefinition> tools,
+                                            ModelRequestOptions options, TurnModelAttempts attempts) {
         TurnModelState modelState = turnModelState.get();
         FallbackModelCaller.ModelCallContext callCtx = new FallbackModelCaller.ModelCallContext(
             modelClient, modelState != null ? modelState.fallbackManager : null);
         // Adopt a previously-activated fallback client from an earlier turn iteration.
         callCtx.activeClient = modelState != null ? modelState.activeClient : null;
-        ChatResponse response = fallbackModelCaller().call(callCtx, context, tools, session, options);
+        ChatResponse response = fallbackModelCaller().call(callCtx, context, tools, options,
+            () -> !attempts.exhausted(), attempts::complete);
         // Persist a fallback activated during this call for the rest of the turn.
         if (modelState != null) {
             modelState.activeClient = callCtx.activeClient;
@@ -1289,6 +1269,34 @@ public class DefaultAgentRuntime implements AgentRuntime {
         return response;
     }
 
+
+    private final class TurnModelAttempts {
+        private TurnSnapshot budget;
+        private final TurnState turnState;
+
+        private TurnModelAttempts(TurnSnapshot budget, TurnState turnState) {
+            this.budget = budget;
+            this.turnState = turnState;
+        }
+
+        private boolean exhausted() {
+            return iterationBudget.isExhausted(budget);
+        }
+
+        private ChatResponse complete(ModelClient client, List<Message> context, List<ToolDefinition> tools,
+                                      ModelRequestOptions options) {
+            int inputTokens = tokenEstimator.estimateTokens(context);
+            ChatResponse response = null;
+            try {
+                response = client.complete(context, tools, options);
+                return response;
+            } finally {
+                int outputTokens = response != null ? estimateResponseTokens(response) : 0;
+                budget = iterationBudget.recordModelCall(budget, inputTokens, outputTokens);
+                turnState.recordModelCall();
+            }
+        }
+    }
 
     /**
      * Sleep for the given delay in 200ms increments, checking for thread interrupts

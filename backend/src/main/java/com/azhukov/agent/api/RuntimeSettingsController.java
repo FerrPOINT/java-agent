@@ -17,7 +17,9 @@ import com.azhukov.agent.api.dto.SessionIdRequest;
 import com.azhukov.agent.api.dto.SubgoalRequest;
 import com.azhukov.agent.api.dto.TitleRequest;
 import com.azhukov.agent.api.dto.VoiceModeRequest;
+import com.azhukov.agent.client.langchain4j.ErrorClassifier.ErrorType;
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.agent.ResponseRecoveryPolicy;
 import com.azhukov.agent.core.memory.MemoryProvider;
 import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.security.UrlSafetyHandler;
@@ -335,7 +337,8 @@ public class RuntimeSettingsController {
         status.put("provider", selection != null && selection.provider() != null
             ? selection.provider()
             : properties.getModel().getProvider());
-        status.put("maxRetries", properties.getModel().getMaxRetries());
+        status.put("maxRetries", ResponseRecoveryPolicy.retryBudget(properties.getError(), null));
+        status.put("availabilityMaxRetries", ResponseRecoveryPolicy.retryBudget(properties.getError(), ErrorType.OVERLOADED));
         status.put("maxTokens", properties.getModel().getMaxTokens());
         status.put("timeoutSeconds", properties.getModel().getTimeoutSeconds());
         status.put("modelOverride", override);

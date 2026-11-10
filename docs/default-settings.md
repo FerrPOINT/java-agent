@@ -90,7 +90,6 @@ Authoritative source: `backend/src/main/resources/application.yml`. The value is
 | `agent.model.model-name` | `${AGENT_MODEL_NAME:kimi-k2.6}` |
 | `agent.model.timeout-seconds` | `${AGENT_MODEL_TIMEOUT_SECONDS:600}` |
 | `agent.model.health-timeout-seconds` | `${AGENT_MODEL_HEALTH_TIMEOUT_SECONDS:10}` |
-| `agent.model.max-retries` | `${AGENT_MODEL_MAX_RETRIES:3}` |
 | `agent.model.max-tokens` | `${AGENT_MODEL_MAX_TOKENS:4096}` |
 | `agent.model.temperature` | `${AGENT_MODEL_TEMPERATURE:0.7}` |
 | `agent.model.reasoning-effort` | `${AGENT_MODEL_REASONING_EFFORT:100}` |
@@ -331,7 +330,6 @@ Authoritative source: `backend/src/main/resources/application.yml`. The value is
 | `agent.model.api-key` | `<operator supplied>` |
 | `agent.model.model-name` | `${AGENT_MODEL_NAME:kimi-k2.6}` |
 | `agent.model.timeout-seconds` | `600` |
-| `agent.model.max-retries` | `2` |
 | `agent.model.max-tokens` | `4096` |
 | `agent.model.temperature` | `0.7` |
 | `agent.model.reasoning-effort` | `100` |
@@ -515,7 +513,6 @@ Authoritative source: `backend/src/main/java/com/azhukov/agent/config/AgentPrope
 | `AgentProperties.ModelProperties.timeoutSeconds` | `120` |
 | `AgentProperties.ModelProperties.healthTimeoutSeconds` | `10` |
 | `AgentProperties.ModelProperties.streamStallSeconds` | `180` |
-| `AgentProperties.ModelProperties.maxRetries` | `3` |
 | `AgentProperties.ModelProperties.maxTokens` | `4096` |
 | `AgentProperties.ModelProperties.temperature` | `0.7` |
 | `AgentProperties.ModelProperties.reasoningEffort` | `70` |

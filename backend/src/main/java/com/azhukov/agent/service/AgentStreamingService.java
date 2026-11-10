@@ -113,23 +113,6 @@ public class AgentStreamingService {
     private final InterruptToken interruptToken;
 
     /**
-     * Operator-configured stream retry cap (Hermes api_max_retries parity).
-     * Two-tier (operator decision 2026-08-28): plain errors → 3 attempts,
-     * availability errors (RATE_LIMIT/OVERLOADED) → 20 attempts.
-     */
-    private int maxStreamRetries() {
-        return Math.max(1, properties.getError().getRetryAttempts());
-    }
-
-    private int maxStreamRetriesFor(ErrorClassifier.ErrorType errorType) {
-        if (errorType == ErrorClassifier.ErrorType.RATE_LIMIT
-            || errorType == ErrorClassifier.ErrorType.OVERLOADED) {
-            return Math.max(1, properties.getError().getAvailabilityRetryAttempts());
-        }
-        return maxStreamRetries();
-    }
-
-    /**
      * Hermes parity (gateway _TELEGRAM_NOISY_STATUS_RE): retry chatter is
      * suppressed from chat surfaces except the first attempt or waits >= 300s
      * ("rate limited. waiting \d" / "retrying in \d" are filtered). Backend
@@ -149,10 +132,6 @@ public class AgentStreamingService {
     private final ModelMetadataService modelMetadataService;
     private final MidTurnPersistenceCallback midTurnPersistenceCallback;
     private final ErrorClassifier errorClassifier = new ErrorClassifier();
-
-    /** DEBT-2 (M32): optional turn usage sink (field injection — ctor is used positionally by tests). */
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    private TurnUsageCollector turnUsageCollector;
 
     // ── Background self-improvement wiring (Hermes parity, ported 0.1.16) ──
     // The streaming path previously NEVER initialized or incremented the
@@ -219,13 +198,13 @@ public class AgentStreamingService {
     // TurnExecutor contains the shared model-call-with-retry, tool execution,
     // think-block stripping, and context-compression-check logic. The streaming
     // path delegates error classification + backoff calculation to it via
-    // classifyForRetry(), and uses its static estimateResponseTokens helper.
+    // computeBackoffMs(), and uses its static estimateResponseTokens helper.
     // Lazily initialized from existing dependencies to preserve the
     // @RequiredArgsConstructor signature (tests construct this class positionally
     // without going through Spring's @PostConstruct lifecycle).
     // The deps not available here (contextCompressor, approvalQueue,
     // memoryNudgeManager) are passed as null — they are only used by
-    // callModelWithRetry/executeToolBatch which the streaming path doesn't call.
+    // proactive compression and other sync-only helpers.
     private com.azhukov.agent.core.agent.TurnExecutor turnExecutor;
 
     private com.azhukov.agent.core.agent.TurnExecutor turnExecutor() {
@@ -235,14 +214,9 @@ public class AgentStreamingService {
             // are wired here too (previously null — executeToolBatch had no
             // streaming callers).
             turnExecutor = new com.azhukov.agent.core.agent.TurnExecutor(
-                errorClassifier, properties, null, contextEngine,
+                properties, null, contextEngine,
                 toolExecutionService, toolResultFormatter, tokenEstimator,
                 interruptToken, approvalQueue, toolGuardrails, memoryNudgeManager, steerBuffer);
-            // DEBT-2 (M32): fallback-model tokens must be billed in the streaming path too.
-            if (turnUsageCollector != null) {
-                turnExecutor.setUsageConsumer(usage ->
-                    turnUsageCollector.record(usage.promptTokens(), usage.completionTokens()));
-            }
         }
         return turnExecutor;
     }
@@ -599,16 +573,19 @@ public class AgentStreamingService {
         if (resolvedModel != null) {
             session = session.withMetadata("modelOverride", resolvedModel);
         }
-        eventHelper().sendMetadataEvent(emitter, session, streamCtx);
+        String primaryModel = eventHelper().resolveModelUsed(session);
+        eventHelper().sendMetadataEvent(emitter, session, streamCtx, 0, null, primaryModel);
 
         // P-08 (Hermes #92450): bound escaped outer-loop exceptions per turn.
         com.azhukov.agent.core.agent.OuterErrorBudget outerErrors =
             new com.azhukov.agent.core.agent.OuterErrorBudget(maxTurns);
-        // c2 B4: holder so the budget-exhaustion summary (outer loop, declared
-        // before the per-iteration fallback state below) uses the same
-        // active/fallback client the inner stream loop switched to.
-        final java.util.concurrent.atomic.AtomicReference<ModelClient> activeStreamClientRef =
-            new java.util.concurrent.atomic.AtomicReference<>(modelClient);
+        var streamFallbackManager = new com.azhukov.agent.core.agent.FallbackManager(
+            properties.getFallbackChain(), properties.getModel().getProvider(), properties.getModel().getModelName(),
+            properties.getModel().getBaseUrl(), properties.getModel().getApiKey());
+        var streamFallbackCaller = new com.azhukov.agent.core.agent.FallbackModelCaller(
+            errorClassifier, properties, null, contextEngine);
+        var streamModel = new com.azhukov.agent.core.agent.FallbackModelCaller.ModelCallContext(
+            modelClient, streamFallbackManager);
         boolean lastResponseHadToolCalls = false;
         agentLoop: for (int i = 0; i < maxTurns; i++) {
           try {
@@ -644,7 +621,7 @@ public class AgentStreamingService {
                 String budgetMsg;
                 try {
                     String summary = turnExecutor().requestBudgetExhaustionSummary(
-                        activeStreamClientRef.get(), session, turnMessages, streamOptions);
+                        streamModel.client(), session, turnMessages, streamOptions);
                     budgetMsg = summary != null && !summary.isBlank() ? summary
                         : turnExecutor().formatBudgetExhaustionMessage(budget, exhaustionReason);
                 } catch (Exception summaryEx) {
@@ -678,26 +655,10 @@ public class AgentStreamingService {
             // Hermes parity (conversation_loop.py:1862): per-turn compression
             // attempt cap — prevents infinite compress→retry→overflow loops.
             int compressionAttempts = 0;
-            final int MAX_COMPRESSION_ATTEMPTS = 3;
             StringBuilder truncatedParts = new StringBuilder();
-            // R3/R4 (Hermes 7728-7760 + empty_response_guard): per-turn fallback chain
-            // and deterministic-empty tracker for the streaming path too.
-            com.azhukov.agent.core.agent.FallbackManager streamFallbackManager =
-                new com.azhukov.agent.core.agent.FallbackManager(
-                    properties.getFallbackChain(),
-                    properties.getModel().getProvider(),
-                    properties.getModel().getModelName(),
-                    properties.getModel().getBaseUrl(),
-                    properties.getModel().getApiKey());
-            // Compressor is null: this caller is only used for the empty-exhausted
-            // fallback activation (no compression paths run through it).
-            com.azhukov.agent.core.agent.FallbackModelCaller streamFallbackCaller =
-                new com.azhukov.agent.core.agent.FallbackModelCaller(
-                    errorClassifier, properties, null, contextEngine);
-            com.azhukov.agent.core.agent.EmptyResponseGuard streamEmptyGuard =
-                new com.azhukov.agent.core.agent.EmptyResponseGuard();
-            ModelClient activeStreamClient = modelClient;
+            var streamEmptyGuard = new com.azhukov.agent.core.agent.EmptyResponseGuard();
             ChatResponse response;
+            TurnExitReason exitReason = TurnExitReason.PENDING_TOOL_RESULT;
             final UUID sessionId = session.id();
             while (true) {
                 UserContext.requireCurrentAccess();
@@ -745,7 +706,7 @@ public class AgentStreamingService {
                     // cache; the flag is set after each empty attempt and cleared
                     // once the handler completes.
                     com.azhukov.agent.client.langchain4j.EmptyRetryCacheBypass.clear();
-                    activeStreamClient.stream(context, tools, streamOptions, new StreamingResponseHandler() {
+                    streamModel.client().stream(context, tools, streamOptions, new StreamingResponseHandler() {
                         @Override
                         public void onToken(String token) {
                             // Check interrupt before emitting each token/chunk
@@ -823,7 +784,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                 if (capturedError.get() == null) {
                     try {
                         usageTracker.recordTurn(session.id(), session.userId(),
-                            properties.getModel().getModelName(),
+                            streamModel.modelName(primaryModel),
                             tokenEstimator.estimateTokens(context),
                             estimateResponseTokens(contentBuilder.toString(), collectedToolCalls));
                     } catch (Exception usageEx) {
@@ -831,64 +792,38 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     }
                 }
 
+                if (interruptToken != null && interruptToken.isCancelled(session.id())) {
+                    response = ChatResponse.text(truncatedParts.toString() + contentBuilder)
+                        .withReasoning(capturedReasoning.get());
+                    break;
+                }
+
                 // Handle errors with retry
                 if (capturedError.get() != null) {
+                    boolean canRetry = contentBuilder.isEmpty() && collectedToolCalls.isEmpty()
+                        && !iterationBudget.isExhausted(budget);
                     Throwable error = capturedError.get();
-                    ErrorClassifier.ErrorType preType = ErrorClassifier.ErrorType.RETRYABLE;
-                    try {
-                        preType = errorClassifier.classify(
-                            error instanceof Exception ex2 ? ex2 : new RuntimeException(error));
-                    } catch (Exception clsEx) { /* fall back to RETRYABLE */ }
-                    int tierCap = maxStreamRetriesFor(preType);
-                    var errorClassification = errorClassifier.classifyWithHints(
-                        error instanceof Exception ex2 ? ex2 : new RuntimeException(error));
+                    Exception failure = error instanceof Exception e ? e : new RuntimeException(error);
+                    var errorClassification = errorClassifier.classifyWithHints(failure);
+                    ErrorClassifier.ErrorType errorType = errorClassification.type();
+                    int tierCap = ResponseRecoveryPolicy.retryBudget(properties.getError(), errorType);
                     // The SSE loop owns its stream client, so it must activate fallbacks
                     // itself. Previously only empty responses could switch models; a hard
                     // billing/auth/model failure went straight to the user even with a
                     // configured fallback chain.
-                    if (errorClassification.hints().shouldFallback()
-                        && streamFallbackManager.hasPendingFallback()) {
-                        com.azhukov.agent.core.agent.FallbackModelCaller.ModelCallContext fallbackContext =
-                            new com.azhukov.agent.core.agent.FallbackModelCaller.ModelCallContext(
-                                modelClient, streamFallbackManager);
-                        fallbackContext.activeClient = activeStreamClient == modelClient ? null : activeStreamClient;
-                        if (streamFallbackCaller.tryActivateFallback(
-                                fallbackContext, errorClassification.type(),
-                                error instanceof Exception ex3 ? ex3 : new RuntimeException(error))) {
-                            activeStreamClient = fallbackContext.activeClient;
-                            activeStreamClientRef.set(activeStreamClient);
-                            streamRetries = 0;
-                            compressionAttempts = 0;
-                            eventHelper().send(emitter, new StreamEvent("retry", null, null,
-                                "Switching to a fallback model after provider failure."), streamCtx);
-                            log.warn("Streaming provider failure ({}) switched to fallback model for session {}",
-                                errorClassification.type(), session.id());
-                            continue;
-                        }
+                    if (canRetry && streamFallbackCaller.tryActivateFallbackForError(
+                            streamModel, errorClassification, failure)) {
+                        streamRetries = 0;
+                        compressionAttempts = 0;
+                        eventHelper().send(emitter, new StreamEvent("retry", null, null,
+                            "Switching to a fallback model after provider failure."), streamCtx);
+                        log.warn("Streaming provider failure ({}) switched to fallback model for session {}",
+                            errorClassification.type(), session.id());
+                        continue;
                     }
-                    if (streamRetries < tierCap) {
-                        // ── c2: delegate error classification + backoff to TurnExecutor ──
-                        // The streaming path can't reuse callModelWithRetry directly (it
-                        // streams tokens via a handler), but the error classification and
-                        // backoff-delay calculation are shared logic that TurnExecutor owns.
-                        ErrorClassifier.ErrorType errorType;
-                        long delayMs;
-                        if (error instanceof Exception exc) {
-                            com.azhukov.agent.core.agent.TurnExecutor.RetryClassification rc =
-                                turnExecutor().classifyForRetry(exc, streamRetries);
-                            errorType = rc.errorType();
-                            delayMs = rc.backoffMs();
-                            // Preserve the streaming path's jitter: add 0-500ms on top of
-                            // the computed backoff (the synchronous path's jitter is already
-                            // included in computeBackoffMs for non-RATE_LIMIT/OVERLOADED types).
-                            delayMs += ThreadLocalRandom.current().nextLong(0, 500);
-                        } else {
-                            errorType = ErrorClassifier.ErrorType.RETRYABLE;
-                            long baseMs = properties.getError().getRetryDelayMs();
-                            long capMs = properties.getError().getRetryCapMs();
-                            delayMs = Math.min(baseMs * (1L << streamRetries), capMs);
-                            delayMs += ThreadLocalRandom.current().nextLong(0, 500);
-                        }
+                    if (canRetry && streamRetries < tierCap) {
+                        long delayMs = turnExecutor().computeBackoffMs(errorType, streamRetries, failure)
+                            + ThreadLocalRandom.current().nextLong(0, 500);
                         // An upstream Retry-After >= 60s is not a retryable interactive
                         // failure. LiteLLM emits this for exhausted weekly quota / every
                         // deployment on cooldown. Fail immediately with an actionable user
@@ -902,6 +837,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                                     || error.getMessage().toLowerCase().contains("add extra usage"))
                                 ? "Model provider usage limit reached. Add usage or select a model with available capacity."
                                 : "All deployments for this model are cooling down. Try another model or wait until capacity returns.";
+                            retainVisibleText(turnMessages, turnIndex, truncatedParts.toString());
                             eventHelper().send(emitter, new StreamEvent("error", null, null, quotaHint), streamCtx);
                             eventHelper().safeCompleteWithError(emitter, error instanceof Exception e ? e : new RuntimeException(error));
                             if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew,
@@ -909,7 +845,8 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                             return;
                         }
                         if (errorType == ErrorClassifier.ErrorType.RETRYABLE
-                            || errorType == ErrorClassifier.ErrorType.RATE_LIMIT) {
+                            || errorType == ErrorClassifier.ErrorType.RATE_LIMIT
+                            || errorType == ErrorClassifier.ErrorType.OVERLOADED) {
                             String retryMsg = "⏳ Model overloaded, retrying (attempt "
                                 + (streamRetries + 1) + "/" + tierCap
                                 + ") in " + (delayMs / 1000) + "s...";
@@ -939,6 +876,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                                         sinceKeepalive = 0;
                                     }
                                     if (interruptToken != null && interruptToken.isCancelled(session.id())) {
+                                        retainVisibleText(turnMessages, turnIndex, truncatedParts.toString());
                                         log.info("Retry backoff cancelled by interrupt for session {}", session.id());
                                         eventHelper().send(emitter, new StreamEvent("interrupted", null, null,
                                             "Turn cancelled by user."), streamCtx);
@@ -950,6 +888,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                                 }
                             } catch (InterruptedException ie) {
                                 Thread.currentThread().interrupt();
+                                retainVisibleText(turnMessages, turnIndex, truncatedParts.toString());
                                 log.warn("Retry backoff interrupted for session {}", session.id());
                                 eventHelper().send(emitter, new StreamEvent("error", null, null,
                                     "Retry interrupted: " + ie.getMessage()), streamCtx);
@@ -963,10 +902,10 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
 
                         // Context overflow: compress and retry without counting as a retry attempt
                         if (errorType == ErrorClassifier.ErrorType.CONTEXT_OVERFLOW
-                            && compressionAttempts < MAX_COMPRESSION_ATTEMPTS) {
+                            && ResponseRecoveryPolicy.canCompact(properties, compressionAttempts)) {
                             compressionAttempts++;
                             log.warn("Context overflow detected during streaming, triggering compression attempt {}/{}: {}",
-                                compressionAttempts, MAX_COMPRESSION_ATTEMPTS, error.getMessage());
+                                compressionAttempts, ResponseRecoveryPolicy.MAX_COMPRESSION_ATTEMPTS, error.getMessage());
                             eventHelper().send(emitter, new StreamEvent("retry", null, null,
                                 "Compressing context..."), streamCtx);
                             try {
@@ -1006,14 +945,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     // model thinking-phase transport kill and append specific guidance.
                     String modelName = streamOptions != null ? streamOptions.modelName() : null;
                     if (modelName == null) modelName = properties.getModel().getModelName();
-                    ErrorClassifier.ErrorType finalErrorType;
-                    try {
-                        finalErrorType = errorClassifier.classify(
-                            error instanceof Exception e ? e : new RuntimeException(error));
-                    } catch (Exception ce) {
-                        finalErrorType = ErrorClassifier.ErrorType.RETRYABLE;
-                    }
-                    if (ThinkingTimeoutGuidance.isThinkingTimeout(finalErrorType, modelName, error.getMessage())) {
+                    if (ThinkingTimeoutGuidance.isThinkingTimeout(errorType, modelName, error.getMessage())) {
                         log.info("Thinking-phase timeout detected for reasoning model {} — appending guidance", modelName);
                         String provider = !properties.getFallbackChain().isEmpty()
                             ? properties.getFallbackChain().get(0).getProvider()
@@ -1022,10 +954,11 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     }
                     // Hermes parity (_CONTENT_POLICY_RECOVERY_HINT): append recovery hint
                     // to content-policy refusal messages so the user gets actionable advice.
-                    if (finalErrorType == ErrorClassifier.ErrorType.CONTENT_POLICY
+                    if (errorType == ErrorClassifier.ErrorType.CONTENT_POLICY
                         && !errorMsg.contains(ResponseRecoveryPolicy.CONTENT_POLICY_RECOVERY_HINT)) {
                         errorMsg += "\n\n" + ResponseRecoveryPolicy.CONTENT_POLICY_RECOVERY_HINT;
                     }
+                    retainVisibleText(turnMessages, turnIndex, truncatedParts.toString() + contentBuilder);
                     eventHelper().send(emitter, new StreamEvent("error", null, null, errorMsg), streamCtx);
                     eventHelper().safeCompleteWithError(emitter, error instanceof Exception
                         ? (Exception) error : new RuntimeException(error));
@@ -1084,7 +1017,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     session = resolveRotatedSession(session);
                     // Re-issue the stream call with boosted max_tokens
                     try {
-                    activeStreamClient.stream(context, tools, boostedOptions, new StreamingResponseHandler() {
+                    streamModel.client().stream(context, tools, boostedOptions, new StreamingResponseHandler() {
                         @Override
                         public void onToken(String token) {
                             String scrubbed = ctxScrubber.feed(scrubber.scrub(token));
@@ -1132,7 +1065,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                         tokenEstimator.estimateTokens(context), estimateResponseTokens(contentBuilder.toString(), collectedToolCalls));
                     if (capturedError.get() == null) {
                         try {
-                            usageTracker.recordTurn(session.id(), session.userId(), properties.getModel().getModelName(),
+                            usageTracker.recordTurn(session.id(), session.userId(), streamModel.modelName(primaryModel),
                                 tokenEstimator.estimateTokens(context), estimateResponseTokens(contentBuilder.toString(), collectedToolCalls));
                         } catch (Exception usageEx) {
                             log.debug("Failed to record streaming usage: {}", usageEx.getMessage());
@@ -1145,6 +1078,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     // and silently discard the re-streamed response.
                     if (capturedError.get() != null) {
                         Throwable retryError = capturedError.get();
+                        retainVisibleText(turnMessages, turnIndex, truncatedParts.toString());
                         log.error("Re-stream with boosted max_tokens failed for session {}: {}",
                             session.id(), retryError.getMessage());
                         eventHelper().send(emitter, new StreamEvent("error", null, null,
@@ -1220,8 +1154,9 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                 // (conversation_loop.py:3555-3563).
                 boolean isLengthTruncation = "length".equalsIgnoreCase(finishReason)
                     || "incomplete".equalsIgnoreCase(finishReason);
-                if (isLengthTruncation && hasContent && !hasToolCalls
-                        && lengthContinueRetries < MAX_LENGTH_CONTINUATION_ATTEMPTS) {
+                boolean canRequestMore = !iterationBudget.isExhausted(budget);
+                boolean partialText = isLengthTruncation && hasContent && !hasToolCalls;
+                if (partialText && canRequestMore && lengthContinueRetries < MAX_LENGTH_CONTINUATION_ATTEMPTS) {
                     log.info("LENGTH truncation detected for session {} — partial content ({} chars), sending continuation (attempt {}/{})",
                         session.id(), contentBuilder.length(), lengthContinueRetries + 1, MAX_LENGTH_CONTINUATION_ATTEMPTS);
                     eventHelper().send(emitter, new StreamEvent("continuation", null, null,
@@ -1242,15 +1177,14 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     continue;
                 }
 
-                // LENGTH ceiling reached with partial content — Hermes keeps the stitched
-                // partial instead of discarding it (conversation_loop.py:3779-3813).
-                if (isLengthTruncation && hasContent && !hasToolCalls
-                        && lengthContinueRetries >= MAX_LENGTH_CONTINUATION_ATTEMPTS) {
+                if (partialText) {
                     String stitched = truncatedParts.toString() + contentBuilder;
-                    log.warn("Response still truncated after {} continuation attempts for session {} — keeping partial ({} chars)",
-                        lengthContinueRetries, session.id(), stitched.length());
-                    eventHelper().send(emitter, new StreamEvent("token", "\n\n⚠️ Ответ остался обрезанным после "
-                        + lengthContinueRetries + " попыток продолжения — сохранена полученная часть.", null, null), streamCtx);
+                    log.warn("Response still truncated for session {} — keeping partial ({} chars, turn budget exhausted: {})",
+                        session.id(), stitched.length(), !canRequestMore);
+                    eventHelper().send(emitter, new StreamEvent("token", !canRequestMore
+                        ? "\n\n⚠️ Лимит хода исчерпан — сохранена полученная часть ответа."
+                        : "\n\n⚠️ Ответ остался обрезанным после " + lengthContinueRetries
+                            + " попыток продолжения — сохранена полученная часть.", null, null), streamCtx);
                     response = ChatResponse.text(stitched);
                     break;
                 }
@@ -1261,8 +1195,8 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                 // finalization with that mismatch would end the turn with the task unstarted.
                 // Re-prompt (bounded to 3 CONSECUTIVE stalls; budget resets after any
                 // successful tool round). finish_reason="stop" text finishes never enter this.
-                if ("tool_calls".equalsIgnoreCase(finishReason) && collectedToolCalls.isEmpty()
-                        && droppedToolcallRetries < MAX_DROPPED_TOOLCALL_RETRIES) {
+                boolean droppedToolCall = "tool_calls".equalsIgnoreCase(finishReason) && collectedToolCalls.isEmpty();
+                if (canRequestMore && droppedToolCall && droppedToolcallRetries < MAX_DROPPED_TOOLCALL_RETRIES) {
                     droppedToolcallRetries++;
                     log.warn("finish_reason=tool_calls with empty tool_calls array (narration only) — re-prompting to emit the call (retry {}/{}, session {})",
                         droppedToolcallRetries, MAX_DROPPED_TOOLCALL_RETRIES, session.id());
@@ -1289,6 +1223,12 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                 // the response is NOT truncated — the model just produced reasoning only.
                 boolean isEmpty = (contentBuilder.length() == 0) && collectedToolCalls.isEmpty()
                     && !scrubber.hadThinkContent();
+                if (!canRequestMore && (isEmpty || droppedToolCall)) {
+                    response = ChatResponse.text(truncatedParts.toString() + contentBuilder)
+                        .withReasoning(capturedReasoning.get());
+                    exitReason = TurnExitReason.BUDGET_EXHAUSTED;
+                    break;
+                }
                 streamEmptyGuard.recordEmptyAttempt(
                     properties.getModel().getModelName(),
                     properties.getModel().getProvider(),
@@ -1299,26 +1239,16 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     eventHelper().send(emitter, new StreamEvent("continuation", null, null,
                         "⚠️ Модель детерминированно возвращает пустой ответ — ретраи остановлены"), streamCtx);
                 }
-                if (isEmpty && !streamDeterministicEmpty && emptyContentRetries >= MAX_EMPTY_RESPONSE_ATTEMPTS
-                        && streamFallbackManager.hasPendingFallback()) {
-                    // R3 (Hermes 7728-7760): empty budget burned — try the next fallback
-                    // provider BEFORE the terminal "(empty)".
-                    com.azhukov.agent.core.agent.FallbackModelCaller.ModelCallContext fmc =
-                        new com.azhukov.agent.core.agent.FallbackModelCaller.ModelCallContext(
-                            modelClient, streamFallbackManager);
-                    fmc.activeClient = activeStreamClient == modelClient ? null : activeStreamClient;
-                    if (streamFallbackCaller.tryActivateFallbackForEmpty(fmc)) {
-                        activeStreamClient = fmc.activeClient;
-                        activeStreamClientRef.set(activeStreamClient);
-                        emptyContentRetries = 0;
-                        streamEmptyGuard.reset();
-                        eventHelper().send(emitter, new StreamEvent("continuation", null, null,
-                            "↻ Переключение на fallback-провайдера после пустых ответов"), streamCtx);
-                        log.warn("Empty responses exhausted in stream — switched to fallback model");
-                        continue;
-                    }
+                if (canRequestMore && isEmpty && !streamDeterministicEmpty && emptyContentRetries >= MAX_EMPTY_RESPONSE_ATTEMPTS
+                        && streamFallbackCaller.tryActivateFallbackForEmpty(streamModel)) {
+                    emptyContentRetries = 0;
+                    streamEmptyGuard.reset();
+                    eventHelper().send(emitter, new StreamEvent("continuation", null, null,
+                        "↻ Переключение на fallback-провайдера после пустых ответов"), streamCtx);
+                    log.warn("Empty responses exhausted in stream — switched to fallback model");
+                    continue;
                 }
-                if (isEmpty && !streamDeterministicEmpty && emptyContentRetries < MAX_EMPTY_RESPONSE_ATTEMPTS) {
+                if (canRequestMore && isEmpty && !streamDeterministicEmpty && emptyContentRetries < MAX_EMPTY_RESPONSE_ATTEMPTS) {
                     emptyContentRetries++;
                     log.warn("Empty response (no content or reasoning) — retry {}/{} with backoff (model returned empty)",
                         emptyContentRetries, MAX_EMPTY_RESPONSE_ATTEMPTS);
@@ -1415,6 +1345,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                 // When the model finishes (STOP) after editing code without fresh
                 // verification evidence, inject a nudge requesting tests/build.
                 if (properties.getVerifyOnStop().isEnabled()
+                    && !iterationBudget.isExhausted(budget)
                     && toolExecutionService.getFileMutationTracker() != null) {
                     var tracker = toolExecutionService.getFileMutationTracker();
                     var changedPaths = tracker.getTurnMutationPaths();
@@ -1453,12 +1384,26 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                         + " попыток продолжения. Попробуйте переформулировать запрос.";
                     eventHelper().send(emitter, new StreamEvent("token", errorMsg, null, null), streamCtx);
                 }
-                turnMessages.add(Message.assistant(response.content(), turnIndex, response.reasoning()));
+                if (exitReason == TurnExitReason.BUDGET_EXHAUSTED) {
+                    if (response.hasContent()) {
+                        turnMessages.add(Message.assistant(response.content(), turnIndex, response.reasoning()));
+                    }
+                    var status = iterationBudget.status(budget);
+                    String reason = status == null ? "iteration budget exhausted" : status.reason();
+                    String notice = turnExecutor().formatBudgetExhaustionMessage(budget, reason);
+                    turnMessages.add(Message.assistant(notice, turnIndex));
+                    eventHelper().send(emitter, new StreamEvent("token",
+                        response.hasContent() ? "\n\n" + notice : notice, null, null), streamCtx);
+                } else {
+                    turnMessages.add(Message.assistant(response.content(), turnIndex, response.reasoning()));
+                }
                 triggerBackgroundReview(session, turnMessages);
-                eventHelper().sendMetadataEvent(emitter, session, streamCtx, budget.totalInputTokens(), response.reasoning());
+                eventHelper().sendMetadataEvent(emitter, session, streamCtx, budget.totalInputTokens(),
+                    response.reasoning(), streamModel.modelName(primaryModel));
                 eventHelper().send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                 eventHelper().safeComplete(emitter);
-                if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
+                if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew,
+                    midTurnPersistenceCallback != null ? persistedUpTo : 0, exitReason);
                 return;
             }
 
@@ -1738,6 +1683,12 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
         } catch (Exception e) {
             log.debug("Background review trigger failed for {}: {}", session.id(), e.getMessage());
             return null;
+        }
+    }
+
+    private static void retainVisibleText(List<Message> turnMessages, int turnIndex, String text) {
+        if (!text.isBlank()) {
+            turnMessages.add(Message.assistant(text, turnIndex));
         }
     }
 

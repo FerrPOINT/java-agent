@@ -182,54 +182,12 @@ public class LangChain4jModelClient implements ModelClient {
 
         try {
             dev.langchain4j.model.chat.response.ChatResponse response = chatModelFor(options).chat(request);
-            AiMessage aiMessage = response.aiMessage();
             persistUsage(response, options);
-
-            if (aiMessage.hasToolExecutionRequests()) {
-                List<ToolCall> calls = new java.util.ArrayList<>();
-                int callIdx = 0;
-                for (var r : aiMessage.toolExecutionRequests()) {
-                    String id = r.id();
-                    if (id == null || id.isBlank()) {
-                        id = ToolCall.deterministicCallId(r.name(), r.arguments(), callIdx);
-                    }
-                    calls.add(new ToolCall(id, r.name(), r.arguments()));
-                    callIdx++;
-                }
-                // Preserve text alongside tool calls — the text is "commentary"
-                // (interim assistant message) shown to the user before tool execution.
-                // Mirrors Hermes _emit_interim_assistant_message().
-                String text = aiMessage.text();
-                String thinking = aiMessage.thinking();
-                if (text != null && !text.isBlank()) {
-                    return new ChatResponse(text, calls, finishReasonOf(response)).withReasoning(thinking);
-                }
-                return new ChatResponse("", calls, finishReasonOf(response)).withReasoning(thinking);
-            }
-
-            // c2: carry the provider finish reason so BOTH runtimes can run the
-            // shared recovery policies (LENGTH continuation). Missing → "STOP".
-            return ChatResponse.text(aiMessage.text() != null ? aiMessage.text() : "", finishReasonOf(response))
-                .withReasoning(aiMessage.thinking());
+            return LangChain4jMessageMapper.fromLangChain(response);
         } catch (Exception e) {
             ErrorClassifier.ErrorType errorType = errorClassifier != null ? errorClassifier.classify(e) : ErrorClassifier.ErrorType.RETRYABLE;
             log.warn("Model complete() failed — errorType={}: {}", errorType, e.getMessage());
             throw e;
-        }
-    }
-
-    /**
-     * Extract the langchain4j finish reason name, "STOP" when absent.
-     * Aliased/uppercase wire values the SDK maps to null (MAX_TOKENS, end,
-     * legacy function_call) fold through {@link #normalizeFinishReason} so
-     * stop handling and LENGTH recovery never silently skip.
-     */
-    private static String finishReasonOf(dev.langchain4j.model.chat.response.ChatResponse response) {
-        try {
-            var fr = response.finishReason();
-            return fr != null ? fr.name() : "STOP";
-        } catch (Exception e) {
-            return "STOP";
         }
     }
 
