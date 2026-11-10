@@ -104,6 +104,28 @@ class DefaultContextCompressorFailureTest {
     }
 
     @Test
+    void disabledDeadlineKeepsTheProviderCallOnTheCallerThread() {
+        var model = mock(com.azhukov.agent.core.client.ModelClient.class);
+        Thread caller = Thread.currentThread();
+        when(model.complete(any(), any())).thenAnswer(invocation -> {
+            assertThat(Thread.currentThread()).isSameAs(caller);
+            return ChatResponse.text("summary on caller thread");
+        });
+        var props = new AgentProperties();
+        props.getContext().setProtectFirstN(1);
+        props.getContext().setProtectLastN(1);
+        props.getCompression().setSummaryTimeoutSeconds(0);
+        props.getCompression().setTotalCeilingSeconds(1);
+
+        var result = new DefaultContextCompressor(model, null, props).compress(List.of(
+            Message.user("a".repeat(2000)), Message.assistant("b".repeat(2000), 1),
+            Message.user("filler q ".repeat(100)), Message.assistant("filler a ".repeat(100), 2),
+            Message.user("current")), 100);
+
+        assertThat(result).anyMatch(message -> message.content() != null && message.content().contains("summary on caller thread"));
+    }
+
+    @Test
     void compress_fallsBackToTruncationWhenModelFails() {
         var model = mock(com.azhukov.agent.core.client.ModelClient.class);
         Mockito.when(model.complete(Mockito.any(), Mockito.any())).thenThrow(new RuntimeException("boom"));
