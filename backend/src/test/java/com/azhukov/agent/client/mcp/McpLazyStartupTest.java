@@ -147,12 +147,12 @@ class McpLazyStartupTest {
     }
 
     @Test
-    void unavailableConfigurationLookupDoesNotStopScheduledRecovery() {
+    void unavailableConfigurationLookupDoesNotStopScheduledRecovery() throws Exception {
         properties.getMcp().setLazyStartup(false);
         var lifecycle = Mockito.spy(manager);
         var scheduler = mock(ScheduledExecutorService.class);
         org.springframework.test.util.ReflectionTestUtils.setField(lifecycle, "reconnectExecutor", scheduler);
-        var scheduled = new java.util.ArrayDeque<Runnable>();
+        var scheduled = new java.util.concurrent.LinkedBlockingQueue<Runnable>();
         when(scheduler.schedule(any(Runnable.class), Mockito.anyLong(), eq(TimeUnit.SECONDS)))
             .thenAnswer(call -> { scheduled.add(call.getArgument(0)); return null; });
         when(configStore.find("default", "cached-server"))
@@ -160,14 +160,16 @@ class McpLazyStartupTest {
             .thenReturn(Optional.of(configured.schemaConfig()));
         var failed = mock(io.modelcontextprotocol.client.McpSyncClient.class);
         when(failed.initialize()).thenThrow(new IllegalStateException("fixture offline"));
+        when(failed.closeGracefully()).thenReturn(true);
         var live = mock(io.modelcontextprotocol.client.McpSyncClient.class);
         when(live.listTools()).thenReturn(new McpSchema.ListToolsResult(List.of(), null));
         Mockito.doReturn(failed, live).when(lifecycle).createClient(any());
 
         try {
             lifecycle.connect(configured);
-            assertThat(scheduled).hasSize(1);
-            scheduled.removeFirst().run();
+            var retry = scheduled.poll(2, TimeUnit.SECONDS);
+            assertThat(retry).isNotNull();
+            retry.run();
             assertThat(lifecycle.isConnected("cached-server")).isFalse();
             assertThat(scheduled).hasSize(1);
             scheduled.removeFirst().run();
@@ -222,6 +224,7 @@ class McpLazyStartupTest {
         when(configStore.isFresh(cache)).thenReturn(true);
         Mockito.doReturn(client).when(lifecycle).createClient(any());
         when(client.initialize()).thenThrow(new IllegalStateException("fixture offline"));
+        when(client.closeGracefully()).thenReturn(true);
 
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
             lifecycle.connect(configured);
@@ -229,12 +232,12 @@ class McpLazyStartupTest {
                 org.assertj.core.api.Assertions.assertThatThrownBy(
                         () -> lifecycle.executeTool("cached-server", "echo", "{}"))
                     .hasMessageContaining("Failed to connect");
+                verify(scheduler, Mockito.timeout(2000)).schedule(any(Runnable.class), eq(1L), eq(TimeUnit.SECONDS));
                 var second = executor.submit(() -> org.assertj.core.api.Assertions.assertThatThrownBy(
                         () -> lifecycle.executeTool("cached-server", "echo", "{}"))
                     .hasMessageContaining("waiting to reconnect"));
                 second.get(2, TimeUnit.SECONDS);
                 verify(client).initialize();
-                verify(scheduler).schedule(any(Runnable.class), eq(1L), eq(TimeUnit.SECONDS));
             } finally {
                 lifecycle.closeAll();
             }
