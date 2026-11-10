@@ -833,6 +833,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                                     || error.getMessage().toLowerCase().contains("add extra usage"))
                                 ? "Model provider usage limit reached. Add usage or select a model with available capacity."
                                 : "All deployments for this model are cooling down. Try another model or wait until capacity returns.";
+                            retainVisibleText(turnMessages, turnIndex, truncatedParts.toString());
                             eventHelper().send(emitter, new StreamEvent("error", null, null, quotaHint), streamCtx);
                             eventHelper().safeCompleteWithError(emitter, error instanceof Exception e ? e : new RuntimeException(error));
                             if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew,
@@ -871,6 +872,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                                         sinceKeepalive = 0;
                                     }
                                     if (interruptToken != null && interruptToken.isCancelled(session.id())) {
+                                        retainVisibleText(turnMessages, turnIndex, truncatedParts.toString());
                                         log.info("Retry backoff cancelled by interrupt for session {}", session.id());
                                         eventHelper().send(emitter, new StreamEvent("interrupted", null, null,
                                             "Turn cancelled by user."), streamCtx);
@@ -882,6 +884,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                                 }
                             } catch (InterruptedException ie) {
                                 Thread.currentThread().interrupt();
+                                retainVisibleText(turnMessages, turnIndex, truncatedParts.toString());
                                 log.warn("Retry backoff interrupted for session {}", session.id());
                                 eventHelper().send(emitter, new StreamEvent("error", null, null,
                                     "Retry interrupted: " + ie.getMessage()), streamCtx);
@@ -951,6 +954,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                         && !errorMsg.contains(ResponseRecoveryPolicy.CONTENT_POLICY_RECOVERY_HINT)) {
                         errorMsg += "\n\n" + ResponseRecoveryPolicy.CONTENT_POLICY_RECOVERY_HINT;
                     }
+                    retainVisibleText(turnMessages, turnIndex, truncatedParts.toString() + contentBuilder);
                     eventHelper().send(emitter, new StreamEvent("error", null, null, errorMsg), streamCtx);
                     eventHelper().safeCompleteWithError(emitter, error instanceof Exception
                         ? (Exception) error : new RuntimeException(error));
@@ -1070,6 +1074,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     // and silently discard the re-streamed response.
                     if (capturedError.get() != null) {
                         Throwable retryError = capturedError.get();
+                        retainVisibleText(turnMessages, turnIndex, truncatedParts.toString());
                         log.error("Re-stream with boosted max_tokens failed for session {}: {}",
                             session.id(), retryError.getMessage());
                         eventHelper().send(emitter, new StreamEvent("error", null, null,
@@ -1658,6 +1663,12 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
         } catch (Exception e) {
             log.debug("Background review trigger failed for {}: {}", session.id(), e.getMessage());
             return null;
+        }
+    }
+
+    private static void retainVisibleText(List<Message> turnMessages, int turnIndex, String text) {
+        if (!text.isBlank()) {
+            turnMessages.add(Message.assistant(text, turnIndex));
         }
     }
 
