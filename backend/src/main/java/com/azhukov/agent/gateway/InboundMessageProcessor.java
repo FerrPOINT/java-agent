@@ -105,6 +105,7 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
         }
 
         java.util.UUID lockedSession = null;
+        boolean drainQueue = false;
         try {
             // Send typing indicator before LLM call (Telegram shows it for ~5s)
             routingServiceProvider.getIfAvailable().sendTyping(source.platform(), source);
@@ -175,6 +176,8 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
                 return;
             }
 
+            // A dequeued event owns progress of the tail even if another entry point holds history.
+            drainQueue = !newDelivery;
             if (!turnLocks.tryAcquire(session.id(), 30)) {
                 throw new IllegalStateException("Session is busy: " + session.id());
             }
@@ -238,6 +241,8 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
             if (lockedSession != null) {
                 activeSessions.remove(source.chatId());
                 turnLocks.release(lockedSession);
+            }
+            if (lockedSession != null || drainQueue) {
                 // Drain pending queue: process any messages that arrived during the current turn
                 ConcurrentLinkedQueue<MessageEvent> queue = pendingQueues.remove(source.chatId());
                 if (queue != null && !queue.isEmpty()) {
