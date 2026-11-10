@@ -22,7 +22,8 @@ def fixture() -> dict:
                     {"type": "volume", "source": "state", "target": "/home/agent/.java-agent"}],
     }
     bot = copy.deepcopy(backend)
-    bot["environment"] = {"BOT_WORKING_DIRECTORY": "/workspace", "AGENT_ATTACHMENTS_CACHE_ROOT": "/artifacts",
+    bot["volumes"] = bot["volumes"][2:]
+    bot["environment"] = {"BOT_WORKING_DIRECTORY": "/workspace",
                           "HERMES_HOME": "/home/agent/.java-agent",
                           "BOT_BACKEND_URL": "http://backend:8090", "BOT_BACKEND_API_KEY": "${TEST_KEY:-}"}
     return {"services": {"backend": backend, "bot": bot}, "volumes": {"work": {}, "artifacts": {}, "state": {}, "other": {}}}
@@ -42,7 +43,7 @@ class ComposeBackendAuthTest(unittest.TestCase):
 
     def test_missing_mount_is_rejected_with_environment_still_present(self):
         for name in ("backend", "bot"):
-            for index in (0, 1, 2):
+            for index in range(len(fixture()["services"][name]["volumes"])):
                 with self.subTest(service=name, index=index):
                     model = fixture()
                     del model["services"][name]["volumes"][index]
@@ -54,7 +55,7 @@ class ComposeBackendAuthTest(unittest.TestCase):
                    {"source": "undeclared"}, {"read_only": True}, {"volume": {"nocopy": True}},
                    {"volume": {"subpath": "different-tree"}})
         for name in ("backend", "bot"):
-            for index in (0, 1, 2):
+            for index in range(len(fixture()["services"][name]["volumes"])):
                 for change in changes:
                     with self.subTest(service=name, index=index, change=change):
                         model = fixture()
@@ -63,10 +64,17 @@ class ComposeBackendAuthTest(unittest.TestCase):
                             self.validate(model)
 
     def test_different_shared_source_is_rejected(self):
-        for index in (0, 1, 2):
+        model = fixture()
+        model["services"]["bot"]["volumes"][0]["source"] = "other"
+        with self.assertRaisesRegex(AssertionError, "must share"):
+            self.validate(model)
+
+    def test_bot_cannot_mount_backend_artifacts(self):
+        for target in ("/artifacts", "/elsewhere"):
             model = fixture()
-            model["services"]["bot"]["volumes"][index]["source"] = "other"
-            with self.assertRaisesRegex(AssertionError, "must share"):
+            model["services"]["bot"]["volumes"].append(
+                {"type": "volume", "source": "artifacts", "target": target})
+            with self.assertRaisesRegex(AssertionError, "belongs to backend"):
                 self.validate(model)
 
     def test_duplicate_mount_and_wrong_environment_are_rejected(self):
