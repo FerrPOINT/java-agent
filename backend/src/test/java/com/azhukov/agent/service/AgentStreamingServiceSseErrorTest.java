@@ -84,12 +84,19 @@ class AgentStreamingServiceSseErrorTest {
         server.createContext("/v1/chat/completions", exchange -> {
             try (exchange) {
                 exchange.getRequestBody().readAllBytes();
-                String choice = fallbackCalls.incrementAndGet() == 1 ? """
-                    {"message":{"role":"assistant","tool_calls":[{"id":"call-1","type":"function",
-                     "function":{"name":"weather","arguments":"{}"}}]},"finish_reason":"tool_calls"}
-                    """ : """
-                    {"message":{"role":"assistant","content":"fallback completed the turn"},"finish_reason":"stop"}
-                    """;
+                String choice = switch (fallbackCalls.incrementAndGet()) {
+                    case 1 -> """
+                        {"message":{"role":"assistant","content":"checking the weather","tool_calls":[
+                         {"id":"call-1","type":"function","function":{"name":"weather","arguments":"{}"}}]},
+                         "finish_reason":"tool_calls"}
+                        """;
+                    case 2 -> """
+                        {"message":{"role":"assistant","content":"fallback answer was truncated"},"finish_reason":"length"}
+                        """;
+                    default -> """
+                        {"message":{"role":"assistant","content":"fallback completed the turn"},"finish_reason":"stop"}
+                        """;
+                };
                 byte[] body = ("""
                     {"id":"fixture","object":"chat.completion","created":1,"model":"reserve","choices":[%s],
                      "usage":{"prompt_tokens":8,"completion_tokens":4,"total_tokens":12}}
@@ -122,13 +129,16 @@ class AgentStreamingServiceSseErrorTest {
             emitter.awaitDone();
 
             verify(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
-            assertThat(fallbackCalls).hasValue(2);
-            verify(usageTracker, org.mockito.Mockito.times(2)).recordTurn(
+            assertThat(fallbackCalls).hasValue(3);
+            verify(usageTracker, org.mockito.Mockito.times(3)).recordTurn(
                 org.mockito.ArgumentMatchers.eq(SESSION_ID), org.mockito.ArgumentMatchers.eq("user-1"),
                 org.mockito.ArgumentMatchers.eq("reserve"), org.mockito.ArgumentMatchers.anyInt(),
                 org.mockito.ArgumentMatchers.anyInt());
             assertThat(emitter.events).anyMatch(event ->
                 "token".equals(event.name) && event.data.contains("fallback completed the turn"));
+            assertThat(emitter.events).anyMatch(event ->
+                "token".equals(event.name) && event.data.contains("checking the weather"));
+            assertThat(emitter.events).anyMatch(event -> "continuation".equals(event.name));
             var metadata = emitter.events.stream().filter(event -> "metadata".equals(event.name)).toList();
             assertThat(objectMapper.readTree(metadata.getLast().data).path("modelUsed").asText())
                 .isEqualTo("reserve");
