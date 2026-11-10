@@ -20,6 +20,39 @@ import static org.mockito.Mockito.when;
 class DefaultContextCompressorFailureTest {
 
     @Test
+    @Tag("slow")
+    void smallerCeilingInterruptsTheActiveModelCall() throws Exception {
+        var model = mock(com.azhukov.agent.core.client.ModelClient.class);
+        var interrupted = new java.util.concurrent.CountDownLatch(1);
+        when(model.complete(any(), any())).thenAnswer(invocation -> {
+            try {
+                Thread.sleep(4_000);
+            } catch (InterruptedException e) {
+                interrupted.countDown();
+                throw e;
+            }
+            return ChatResponse.text("late model summary");
+        });
+        var props = new AgentProperties();
+        props.getContext().setProtectFirstN(1);
+        props.getContext().setProtectLastN(1);
+        props.getCompression().setSummaryTimeoutSeconds(10);
+        props.getCompression().setTotalCeilingSeconds(1);
+        var compressor = new DefaultContextCompressor(model, null, props);
+        var result = compressor.compress(List.of(
+            Message.user("a".repeat(2000)),
+            Message.assistant("b".repeat(2000), 1),
+            Message.user("filler q ".repeat(100)),
+            Message.assistant("filler a ".repeat(100), 2),
+            Message.user("current")
+        ), 100);
+
+        assertThat(interrupted.await(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        assertThat(result.getLast().content()).isEqualTo("current");
+        assertThat(result).noneMatch(message -> "late model summary".equals(message.content()));
+    }
+
+    @Test
     void compress_fallsBackToTruncationWhenModelFails() {
         var model = mock(com.azhukov.agent.core.client.ModelClient.class);
         Mockito.when(model.complete(Mockito.any(), Mockito.any())).thenThrow(new RuntimeException("boom"));
