@@ -791,11 +791,13 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     }
                 }
 
+                if (interruptToken != null && interruptToken.isCancelled(session.id())) {
+                    retainVisibleText(turnMessages, turnIndex, truncatedParts.toString() + contentBuilder);
+                    continue agentLoop;
+                }
+
                 // Handle errors with retry
                 if (capturedError.get() != null) {
-                    if (interruptToken != null && interruptToken.isCancelled(session.id())) {
-                        continue agentLoop;
-                    }
                     boolean canRetry = contentBuilder.isEmpty() && collectedToolCalls.isEmpty()
                         && !iterationBudget.isExhausted(budget);
                     Throwable error = capturedError.get();

@@ -138,11 +138,14 @@ public class TurnExecutor {
      * the streaming loop emitted the raw budget message with no summary call.
      *
      * @param activeClient the model client to use (the caller's active/fallback client)
-     * @return the trimmed summary, or null when the call failed or was blank
+     * @return the trimmed summary, or null when there are no tool results, the call failed, or it was blank
      */
     public String requestBudgetExhaustionSummary(ModelClient activeClient, Session session,
                                                   List<Message> turnMessages,
                                                   com.azhukov.agent.core.client.ModelRequestOptions options) {
+        if (turnMessages.stream().noneMatch(message -> message.role() == com.azhukov.agent.core.model.Role.TOOL)) {
+            return null;
+        }
         String summaryPrompt =
             "You've reached the maximum number of tool-calling iterations allowed. " +
             "Please provide a final response summarizing what you've found and accomplished so far, " +

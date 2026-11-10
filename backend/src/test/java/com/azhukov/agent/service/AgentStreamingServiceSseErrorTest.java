@@ -173,7 +173,7 @@ class AgentStreamingServiceSseErrorTest {
     }
 
     @Test
-    void emptyLastAttemptReportsBudgetExhaustionWithoutAnotherStream() throws Exception {
+    void emptyLastAttemptReportsBudgetExhaustionWithoutAnotherModelCall() throws Exception {
         useRealBudget(1);
         doAnswer(call -> {
             StreamingResponseHandler handler = call.getArgument(3);
@@ -186,6 +186,7 @@ class AgentStreamingServiceSseErrorTest {
         emitter.awaitDone();
 
         verify(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+        verify(modelClient, org.mockito.Mockito.never()).complete(any(List.class), any(List.class), any());
         assertThat(emitter.events).anyMatch(event ->
             "token".equals(event.name) && event.data.contains("Iteration budget exhausted"));
     }
