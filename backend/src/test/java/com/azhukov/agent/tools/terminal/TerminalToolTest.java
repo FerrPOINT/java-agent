@@ -254,6 +254,29 @@ class TerminalToolTest {
     }
 
     @Test
+    void shellStateFileContainsOnlyAllowedExports() {
+        var captured = new java.util.concurrent.atomic.AtomicReference<String>();
+        when(redactor.redact(anyString())).thenAnswer(call -> {
+            try (var files = java.nio.file.Files.list(java.nio.file.Path.of(System.getProperty("java.io.tmpdir")))) {
+                for (var file : files.filter(path -> path.getFileName().toString().startsWith("java-agent-terminal-"))
+                        .toList()) {
+                    if (!java.nio.file.Files.isRegularFile(file)) continue;
+                    String state = java.nio.file.Files.readString(file);
+                    if (state.contains("REVIEW_SETTING=synthetic-state-marker=with-equals")) captured.set(state);
+                }
+            }
+            return call.getArgument(0);
+        });
+        var result = newTool(properties()).execute(
+            """
+            {"command":"export REVIEW_SETTING=synthetic-state-marker=with-equals review_token=excluded PATH=/none; printf ready"}
+            """, null, session());
+        assertThat(result.success()).as(result.error()).isTrue();
+        assertThat(captured.get()).contains("REVIEW_SETTING=synthetic-state-marker=with-equals\0")
+            .doesNotContain("review_token=", "PATH=");
+    }
+
+    @Test
     void sessionEnvironmentCannotPersistSecretsOrShellControlVariables() throws Exception {
         AgentProperties p = properties();
         TerminalTool tool = newTool(p);

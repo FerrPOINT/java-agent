@@ -4,6 +4,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /** Builds a minimal environment for agent-started shell processes. */
 public final class ChildProcessEnvironment {
@@ -11,6 +12,7 @@ public final class ChildProcessEnvironment {
         "PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_", "TERM", "TMPDIR", "TMP", "TEMP",
         "SHELL", "XDG_", "JAVA_HOME"
     );
+    private static final String SESSION_NAME = "[A-Za-z_][A-Za-z0-9_]*";
     private static final List<String> SECRET_SUBSTRINGS = List.of(
         "KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL", "PASSWD", "AUTH",
         "DSN", "WEBHOOK", "CREDS", "BEARER", "APIKEY"
@@ -42,11 +44,31 @@ public final class ChildProcessEnvironment {
     }
 
     public static boolean isSafeSessionVariable(String name) {
-        if (name == null || !name.matches("[A-Za-z_][A-Za-z0-9_]*")) {
+        if (name == null || !name.matches(SESSION_NAME)) {
             return false;
         }
         String upper = name.toUpperCase(Locale.ROOT);
         return !containsSecretMarker(upper) && !UNSAFE_SESSION_VARIABLES.contains(upper);
+    }
+
+    /** Emit the allowed exports as NUL-delimited records without writing the raw environment. */
+    public static String bashSessionEnvironmentCapture() {
+        String secretPatterns = SECRET_SUBSTRINGS.stream()
+            .map(marker -> "*" + marker + "*")
+            .collect(Collectors.joining("|"));
+        return """
+            command -p env -0 | (
+              LC_ALL=C
+              while IFS= builtin read -r -d '' entry; do
+                name=${entry%%%%=*}
+                [[ $name =~ ^%s$ ]] || continue
+                case ${name^^} in
+                  %s|%s) continue ;;
+                esac
+                builtin printf '%%s\\0' "$entry"
+              done
+            )
+            """.formatted(SESSION_NAME, secretPatterns, String.join("|", UNSAFE_SESSION_VARIABLES));
     }
 
     private static boolean isSafeParentVariable(String name) {
