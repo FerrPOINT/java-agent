@@ -81,14 +81,7 @@ class AgentStreamingServiceSseErrorTest {
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(ints = {3, 4})
     void fallbackContinuesTruncatedTextOnlyWithBudgetAfterToolExecution(int maxModelCalls) throws Exception {
-        properties.getBudget().setMaxModelCallsPerTurn(maxModelCalls);
-        var actualBudget = new DefaultIterationBudget(properties);
-        when(iterationBudget.startTurn(any(UUID.class))).thenAnswer(call -> actualBudget.startTurn(call.getArgument(0)));
-        when(iterationBudget.isExhausted(any())).thenAnswer(call -> actualBudget.isExhausted(call.getArgument(0)));
-        when(iterationBudget.recordModelCall(any(), any(int.class), any(int.class))).thenAnswer(call ->
-            actualBudget.recordModelCall(call.getArgument(0), call.getArgument(1), call.getArgument(2)));
-        when(iterationBudget.recordToolExecution(any(), any(String.class), any(long.class))).thenAnswer(call ->
-            actualBudget.recordToolExecution(call.getArgument(0), call.getArgument(1), call.getArgument(2)));
+        useRealBudget(maxModelCalls);
         var fallbackCalls = new AtomicInteger();
         var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/v1/chat/completions", exchange -> {
@@ -164,6 +157,35 @@ class AgentStreamingServiceSseErrorTest {
         } finally {
             server.stop(0);
         }
+    }
+
+    @Test
+    void emptyLastAttemptReportsBudgetExhaustionWithoutAnotherStream() throws Exception {
+        useRealBudget(1);
+        doAnswer(call -> {
+            StreamingResponseHandler handler = call.getArgument(3);
+            handler.onComplete();
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+
+        var emitter = new CollectingEmitter(10_000L);
+        streamingService.streamTurn(ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L), emitter);
+        emitter.awaitDone();
+
+        verify(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+        assertThat(emitter.events).anyMatch(event ->
+            "token".equals(event.name) && event.data.contains("Iteration budget exhausted"));
+    }
+
+    private void useRealBudget(int maxModelCalls) {
+        properties.getBudget().setMaxModelCallsPerTurn(maxModelCalls);
+        var actualBudget = new DefaultIterationBudget(properties);
+        when(iterationBudget.startTurn(any(UUID.class))).thenAnswer(call -> actualBudget.startTurn(call.getArgument(0)));
+        when(iterationBudget.isExhausted(any())).thenAnswer(call -> actualBudget.isExhausted(call.getArgument(0)));
+        when(iterationBudget.recordModelCall(any(), any(int.class), any(int.class))).thenAnswer(call ->
+            actualBudget.recordModelCall(call.getArgument(0), call.getArgument(1), call.getArgument(2)));
+        when(iterationBudget.recordToolExecution(any(), any(String.class), any(long.class))).thenAnswer(call ->
+            actualBudget.recordToolExecution(call.getArgument(0), call.getArgument(1), call.getArgument(2)));
     }
 
     @Test
