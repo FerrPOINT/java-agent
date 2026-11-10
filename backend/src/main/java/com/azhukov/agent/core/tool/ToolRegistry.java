@@ -5,6 +5,7 @@ import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.core.model.ToolResult;
+import com.azhukov.agent.core.security.McpToolTrustService.ToolTrustMetadata;
 import com.azhukov.agent.tools.ToolHandler;
 import java.util.List;
 import java.util.Set;
@@ -16,6 +17,9 @@ public interface ToolRegistry {
     List<ToolDefinition> getDefinitions(Set<String> toolsets);
 
     ToolResult execute(String toolName, String toolCallId, String arguments, Message lastAssistant, Session session);
+
+    ToolResult execute(String toolName, String toolCallId, String arguments, Message lastAssistant, Session session,
+                       ToolTrustMetadata mcpAdmission);
 
     Set<String> getToolsets();
 

@@ -342,8 +342,10 @@ public class TurnExecutor {
                 // Calculate this once before the subagent policy check. Only
                 // approval-gated calls are dangerous: a child must still be able
                 // to use ordinary read-only tools to finish its delegated work.
+                var mcpAdmission = toolGuardrails != null ? toolGuardrails.mcpAdmission(call) : null;
                 boolean flagRequiresApproval = !skipApproval && toolGuardrails != null
-                    && toolGuardrails.requiresApproval(call);
+                    && (mcpAdmission != null ? toolGuardrails.requiresApproval(call, mcpAdmission)
+                        : toolGuardrails.requiresApproval(call));
                 boolean isSubagentChild = !skipApproval && session.getMetadata("delegation_parent_session") != null;
                 if (isSubagentChild && flagRequiresApproval) {
                     log.warn("Subagent session {} auto-denied dangerous tool {} (delegation.subagent_auto-approve=false)", session.id(), call.name());
@@ -426,7 +428,10 @@ public class TurnExecutor {
                     resetNudgeCounters(call, session.id());
                     if (events != null) events.onToolStart(call);
                     long toolStart = System.currentTimeMillis();
-                    ToolResult result = toolExecutionService.execute(call.name(), call.id(), call.arguments(), null, session, turnState);
+                    ToolResult result = mcpAdmission == null
+                        ? toolExecutionService.execute(call.name(), call.id(), call.arguments(), null, session, turnState)
+                        : toolExecutionService.execute(call.name(), call.id(), call.arguments(), null, session, turnState,
+                            mcpAdmission);
                     long duration = System.currentTimeMillis() - toolStart;
                     String formatted = toolResultFormatter.formatResult(result);
                     toolResults.add(Message.toolResult(call.pairingId(), formatted, currentTurnIndex));

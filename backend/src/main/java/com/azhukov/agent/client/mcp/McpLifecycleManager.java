@@ -10,6 +10,7 @@ import com.azhukov.agent.core.tool.ToolRegistry;
 import com.azhukov.agent.core.security.McpResponseScanner;
 import com.azhukov.agent.core.security.McpToolDefinitionScanner;
 import com.azhukov.agent.core.security.McpToolTrustService;
+import com.azhukov.agent.core.security.McpToolTrustService.ToolTrustMetadata;
 import com.azhukov.agent.core.security.OsvCheckService;
 import com.azhukov.agent.core.security.ScanResult;
 import com.azhukov.agent.core.security.Severity;
@@ -1366,13 +1367,17 @@ public class McpLifecycleManager {
             return;
         }
         Map<String, Boolean> readOnlyByFullName = new LinkedHashMap<>();
+        Map<String, McpSchema.Tool> definitions = new LinkedHashMap<>();
         for (McpSchema.Tool tool : tools) {
             if (tool == null || tool.name() == null || tool.name().isBlank()) {
                 continue;
             }
-            readOnlyByFullName.put(mcpPrefixedToolName(serverName, tool.name()), isReadOnlyHint(tool));
+            String name = mcpPrefixedToolName(serverName, tool.name());
+            readOnlyByFullName.put(name, isReadOnlyHint(tool));
+            definitions.put(name, tool);
         }
-        mcpToolTrustService.recordServerTools(serverName, server == null ? null : server.getTrust(), readOnlyByFullName);
+        mcpToolTrustService.recordServerTools(serverName, server == null ? null : server.getTrust(),
+            readOnlyByFullName, definitions);
     }
 
     private void recordGeneratedMcpUtilityToolTrustMetadata(String serverName, String fullName) {
@@ -1642,6 +1647,16 @@ public class McpLifecycleManager {
     }
 
     public McpSchema.CallToolResult executeTool(String serverName, String toolName, String argumentsJson) {
+        return executeTool(serverName, toolName, argumentsJson, false, null);
+    }
+
+    public McpSchema.CallToolResult executeModelTool(String serverName, String toolName, String argumentsJson,
+                                                    ToolTrustMetadata admission) {
+        return executeTool(serverName, toolName, argumentsJson, true, admission);
+    }
+
+    private McpSchema.CallToolResult executeTool(String serverName, String toolName, String argumentsJson,
+                                                boolean modelCall, ToolTrustMetadata admission) {
         // Hermes _ensure_lazy_server_connected parity: a lazily-registered
         // server connects on the first real call.
         long startedAt = System.nanoTime();
@@ -1653,7 +1668,7 @@ public class McpLifecycleManager {
         try {
             Map<String, Object> args = objectMapper.readValue(argumentsJson, new TypeReference<>() {});
             try {
-                return callToolWithTimeout(state, toolName, args, startedAt);
+                return callToolWithTimeout(state, serverName, toolName, args, startedAt, modelCall, admission);
             } catch (Exception callError) {
                 if (!isAuthError(callError)) {
                     throw callError;
@@ -1661,7 +1676,7 @@ public class McpLifecycleManager {
                 recoverOAuthOrThrow(serverName, callError);
                 try {
                     var retryState = clients.getOrDefault(serverName, state);
-                    return callToolWithTimeout(retryState, toolName, args, startedAt);
+                    return callToolWithTimeout(retryState, serverName, toolName, args, startedAt, modelCall, admission);
                 } catch (Exception retryError) {
                     if (isAuthError(retryError)) {
                         throw reauthRequired(serverName, retryError);
@@ -1675,15 +1690,29 @@ public class McpLifecycleManager {
         }
     }
 
-    private McpSchema.CallToolResult callToolWithTimeout(McpServerState state,
-                                                         String toolName,
-                                                         Map<String, Object> args, long startedAt) throws Exception {
-        if (state.admittedTools().stream().noneMatch(tool -> toolName.equals(tool.name()))) {
-            throw new IllegalStateException("MCP tool is not admitted: " + toolName);
+    private McpSchema.CallToolResult callToolWithTimeout(McpServerState state, String serverName, String toolName,
+                                                         Map<String, Object> args, long startedAt,
+                                                         boolean modelCall, ToolTrustMetadata admission) throws Exception {
+        var definition = state.admittedTools().stream().filter(tool -> toolName.equals(tool.name())).findFirst()
+            .orElseThrow(() -> new IllegalStateException("MCP tool is not admitted: " + toolName));
+        if (modelCall) {
+            String trust = McpToolTrustService.normalizeServerTrust(state.properties().getTrust());
+            var current = new ToolTrustMetadata(serverName, trust, isReadOnlyHint(definition), definition);
+            if (admission != null && !admission.equals(current)) {
+                throw new IllegalStateException("MCP tool changed after admission: " + toolName);
+            }
+            if (admission == null && properties.getSecurity().isApprovalsEnabled() && current.requiresApproval()) {
+                throw new IllegalStateException("MCP tool requires approval: " + toolName);
+            }
         }
         try {
             return callMcpWithTimeout(state, "tool '" + toolName + "'",
-                () -> state.client().callTool(new McpSchema.CallToolRequest(toolName, args)), startedAt);
+                () -> {
+                    if (modelCall && clients.get(serverName) != state) {
+                        throw new IllegalStateException("MCP connection changed after admission: " + toolName);
+                    }
+                    return state.client().callTool(new McpSchema.CallToolRequest(toolName, args));
+                }, startedAt);
         } catch (Exception e) {
             String serverName = serverNameOf(state);
             if (serverName != null && !isAuthError(e) && isConnectionError(e)) {
@@ -2131,7 +2160,7 @@ public class McpLifecycleManager {
         return MCP_NAME_COMPONENT_UNSAFE.matcher(String.valueOf(value == null ? "" : value)).replaceAll("_");
     }
 
-    static String mcpPrefixedToolName(String serverName, String toolName) {
+    public static String mcpPrefixedToolName(String serverName, String toolName) {
         String fullName = MCP_TOOL_NAME_PREFIX + sanitizeMcpNameComponent(serverName)
             + MCP_NAME_DELIMITER + sanitizeMcpNameComponent(toolName);
         return clampMcpToolName(fullName);
@@ -2700,6 +2729,11 @@ public class McpLifecycleManager {
 
         @Override
         public ToolResult execute(String arguments, Message lastAssistant, Session session) {
+            return execute(arguments, lastAssistant, session, null);
+        }
+
+        @Override
+        public ToolResult execute(String arguments, Message lastAssistant, Session session, ToolTrustMetadata admission) {
             // h42: When an MCP server reuses the same tool_call_id for different calls,
             // keep the tool results instead of overwriting/dropping. The tool_call_id is
             // available in the session metadata if needed, but the result is always
@@ -2734,7 +2768,7 @@ public class McpLifecycleManager {
                 }
             }
             try {
-                var result = executeTool(serverName, toolName, arguments);
+                var result = executeModelTool(serverName, toolName, arguments, admission);
                 // ── Response security scan ──
                 String output;
                 MediaPublisher publisher = publisherFor(session);

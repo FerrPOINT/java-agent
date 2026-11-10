@@ -7,6 +7,7 @@ import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.core.model.ToolResult;
+import com.azhukov.agent.core.security.McpToolTrustService.ToolTrustMetadata;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
@@ -1215,11 +1216,19 @@ public class SpringToolRegistry implements ToolRegistry {
 
     @Override
     public ToolResult execute(String toolName, String toolCallId, String arguments, Message lastAssistant, Session session) {
+        return execute(toolName, toolCallId, arguments, lastAssistant, session, null);
+    }
+
+    @Override
+    public ToolResult execute(String toolName, String toolCallId, String arguments, Message lastAssistant, Session session,
+                              ToolTrustMetadata mcpAdmission) {
         ToolEntry entry = entries.get(toolName);
         if (entry == null) {
             return failureResult("Unknown tool: " + toolName);
         }
-        return entry.handler().execute(arguments, lastAssistant, session);
+        return mcpAdmission == null
+            ? entry.handler().execute(arguments, lastAssistant, session)
+            : entry.handler().execute(arguments, lastAssistant, session, mcpAdmission);
     }
 
     private ToolResult failureResult(String error) {

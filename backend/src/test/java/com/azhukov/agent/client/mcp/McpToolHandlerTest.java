@@ -37,6 +37,53 @@ import static org.mockito.Mockito.when;
 class McpToolHandlerTest {
 
     @Test
+    void nativeAndAliasCallsUseTheDefinitionObservedByApproval() {
+        var properties = new AgentProperties();
+        var mapper = new ObjectMapper();
+        var manager = new McpLifecycleManager(properties, mapper, null, new McpToolDefinitionScanner(mapper),
+            new McpResponseScanner(), new ToolArgumentInjectionScanner(), new ToolFingerprintStore(mapper),
+            new SlidingWindowRateLimiter(), null);
+        var trust = new com.azhukov.agent.core.security.McpToolTrustService();
+        var guard = new com.azhukov.agent.core.security.DefaultToolGuardrails(properties,
+            new com.azhukov.agent.core.security.ApprovalQueue());
+        guard.setMcpToolTrustService(trust);
+
+        var server = new AgentProperties.McpProperties.ServerProperties();
+        server.setName("srv");
+        server.setTrust("untrusted");
+        var client = mock(McpSyncClient.class);
+        when(client.callTool(any())).thenReturn(new McpSchema.CallToolResult(
+            List.of(new McpSchema.TextContent(null, "fixture response")), false, null, null));
+        var observed = McpSchema.Tool.builder("tool")
+            .annotations(McpSchema.ToolAnnotations.builder().readOnlyHint(true).build()).build();
+        var current = McpSchema.Tool.builder("tool").description("changed definition").build();
+        String fullName = McpLifecycleManager.mcpPrefixedToolName("srv", "tool");
+        trust.recordServerTools("srv", "untrusted", Map.of(fullName, true), Map.of(fullName, observed));
+        var nativeCall = new com.azhukov.agent.core.model.ToolCall("native", fullName, "{}");
+        String aliasArgs = "{\"server_name\":\"srv\",\"tool_name\":\"tool\"}";
+        var aliasCall = new com.azhukov.agent.core.model.ToolCall("alias", "mcp_tool", aliasArgs);
+        var expected = guard.mcpAdmission(nativeCall);
+        assertThat(expected).isNotNull().isSameAs(guard.mcpAdmission(aliasCall));
+        assertThat(guard.requiresApproval(nativeCall, expected)).isFalse();
+
+        manager.getClientsForTest().put("srv", new McpLifecycleManager.McpServerState(server, client, List.of(current)));
+        var nativeHandler = manager.new McpToolHandler("srv", "tool");
+        var oauth = mock(McpOAuthManager.class);
+        var aliasHandler = new com.azhukov.agent.tools.mcp.McpTool(manager, oauth);
+
+        assertThat(nativeHandler.execute("{}", null, null, expected).success()).isFalse();
+        assertThat(aliasHandler.execute(aliasArgs, null, null, expected).success()).isFalse();
+        assertThat(aliasHandler.execute(aliasArgs, null, null).success()).isFalse();
+        verify(client, times(0)).callTool(any());
+
+        trust.recordServerTools("srv", "untrusted", Map.of(fullName, false), Map.of(fullName, current));
+        var approved = guard.mcpAdmission(aliasCall);
+        assertThat(guard.requiresApproval(aliasCall, approved)).isTrue();
+        assertThat(aliasHandler.execute(aliasArgs, null, null, approved).success()).isTrue();
+        verify(client, times(1)).callTool(any());
+    }
+
+    @Test
     void executeReturnsOkOnSuccess() throws Exception {
         AgentProperties properties = new AgentProperties();
         ObjectMapper objectMapper = new ObjectMapper();

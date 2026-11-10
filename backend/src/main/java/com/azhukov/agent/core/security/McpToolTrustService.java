@@ -1,5 +1,6 @@
 package com.azhukov.agent.core.security;
 
+import io.modelcontextprotocol.spec.McpSchema;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
@@ -20,7 +21,7 @@ public class McpToolTrustService {
     private final Map<String, Set<String>> serverToolNames = new ConcurrentHashMap<>();
     private final Map<String, ToolTrustMetadata> toolMetadata = new ConcurrentHashMap<>();
 
-    public String normalizeServerTrust(String value) {
+    public static String normalizeServerTrust(String value) {
         if (value == null || value.isBlank()) {
             return TRUST_FULL;
         }
@@ -32,6 +33,11 @@ public class McpToolTrustService {
     }
 
     public void recordServerTools(String serverName, String trust, Map<String, Boolean> readOnlyByFullToolName) {
+        recordServerTools(serverName, trust, readOnlyByFullToolName, Map.of());
+    }
+
+    public void recordServerTools(String serverName, String trust, Map<String, Boolean> readOnlyByFullToolName,
+                                  Map<String, McpSchema.Tool> definitions) {
         if (serverName == null || serverName.isBlank()) {
             return;
         }
@@ -54,7 +60,7 @@ public class McpToolTrustService {
             toolMetadata.put(entry.getKey(), new ToolTrustMetadata(
                 serverName,
                 normalizedTrust,
-                Boolean.TRUE.equals(entry.getValue())));
+                Boolean.TRUE.equals(entry.getValue()), definitions.get(entry.getKey())));
         }
     }
 
@@ -69,14 +75,12 @@ public class McpToolTrustService {
             merged.addAll(newSet);
             return Set.copyOf(merged);
         });
-        toolMetadata.put(fullToolName, new ToolTrustMetadata(serverName, normalizedTrust, readOnlyHint));
+        toolMetadata.put(fullToolName, new ToolTrustMetadata(serverName, normalizedTrust, readOnlyHint, null));
     }
 
     public boolean requiresApproval(String fullToolName) {
         ToolTrustMetadata metadata = toolMetadata.get(fullToolName);
-        return metadata != null
-            && TRUST_UNTRUSTED.equals(metadata.trust())
-            && !metadata.readOnlyHint();
+        return metadata != null && metadata.requiresApproval();
     }
 
     public ToolTrustMetadata metadata(String fullToolName) {
@@ -87,5 +91,9 @@ public class McpToolTrustService {
         return serverTrust.getOrDefault(serverName, TRUST_FULL);
     }
 
-    public record ToolTrustMetadata(String serverName, String trust, boolean readOnlyHint) {}
+    public record ToolTrustMetadata(String serverName, String trust, boolean readOnlyHint, McpSchema.Tool definition) {
+        public boolean requiresApproval() {
+            return TRUST_UNTRUSTED.equals(trust) && !readOnlyHint;
+        }
+    }
 }

@@ -3,6 +3,7 @@ package com.azhukov.agent.tools;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
+import com.azhukov.agent.core.security.McpToolTrustService.ToolTrustMetadata;
 import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.MapperFeature;
@@ -14,6 +15,13 @@ import java.util.Set;
 public interface ToolHandler {
 
     ToolResult execute(String arguments, Message lastAssistant, Session session);
+
+    default ToolResult execute(String arguments, Message lastAssistant, Session session, ToolTrustMetadata mcpAdmission) {
+        if (mcpAdmission != null && mcpAdmission.definition() != null) {
+            return ToolResult.fail("The MCP tool changed after admission");
+        }
+        return execute(arguments, lastAssistant, session);
+    }
 
     ObjectMapper TOOL_ARGS_MAPPER = new ObjectMapper()
         .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
