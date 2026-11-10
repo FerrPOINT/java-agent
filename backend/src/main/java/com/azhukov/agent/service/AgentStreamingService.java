@@ -1145,8 +1145,9 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                 // (conversation_loop.py:3555-3563).
                 boolean isLengthTruncation = "length".equalsIgnoreCase(finishReason)
                     || "incomplete".equalsIgnoreCase(finishReason);
-                if (isLengthTruncation && hasContent && !hasToolCalls
-                        && lengthContinueRetries < MAX_LENGTH_CONTINUATION_ATTEMPTS) {
+                boolean canRequestMore = !iterationBudget.isExhausted(budget);
+                boolean partialText = isLengthTruncation && hasContent && !hasToolCalls;
+                if (partialText && canRequestMore && lengthContinueRetries < MAX_LENGTH_CONTINUATION_ATTEMPTS) {
                     log.info("LENGTH truncation detected for session {} — partial content ({} chars), sending continuation (attempt {}/{})",
                         session.id(), contentBuilder.length(), lengthContinueRetries + 1, MAX_LENGTH_CONTINUATION_ATTEMPTS);
                     eventHelper().send(emitter, new StreamEvent("continuation", null, null,
@@ -1167,15 +1168,14 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     continue;
                 }
 
-                // LENGTH ceiling reached with partial content — Hermes keeps the stitched
-                // partial instead of discarding it (conversation_loop.py:3779-3813).
-                if (isLengthTruncation && hasContent && !hasToolCalls
-                        && lengthContinueRetries >= MAX_LENGTH_CONTINUATION_ATTEMPTS) {
+                if (partialText) {
                     String stitched = truncatedParts.toString() + contentBuilder;
-                    log.warn("Response still truncated after {} continuation attempts for session {} — keeping partial ({} chars)",
-                        lengthContinueRetries, session.id(), stitched.length());
-                    eventHelper().send(emitter, new StreamEvent("token", "\n\n⚠️ Ответ остался обрезанным после "
-                        + lengthContinueRetries + " попыток продолжения — сохранена полученная часть.", null, null), streamCtx);
+                    log.warn("Response still truncated for session {} — keeping partial ({} chars, turn budget exhausted: {})",
+                        session.id(), stitched.length(), !canRequestMore);
+                    eventHelper().send(emitter, new StreamEvent("token", !canRequestMore
+                        ? "\n\n⚠️ Лимит хода исчерпан — сохранена полученная часть ответа."
+                        : "\n\n⚠️ Ответ остался обрезанным после " + lengthContinueRetries
+                            + " попыток продолжения — сохранена полученная часть.", null, null), streamCtx);
                     response = ChatResponse.text(stitched);
                     break;
                 }
@@ -1186,7 +1186,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                 // finalization with that mismatch would end the turn with the task unstarted.
                 // Re-prompt (bounded to 3 CONSECUTIVE stalls; budget resets after any
                 // successful tool round). finish_reason="stop" text finishes never enter this.
-                if ("tool_calls".equalsIgnoreCase(finishReason) && collectedToolCalls.isEmpty()
+                if (canRequestMore && "tool_calls".equalsIgnoreCase(finishReason) && collectedToolCalls.isEmpty()
                         && droppedToolcallRetries < MAX_DROPPED_TOOLCALL_RETRIES) {
                     droppedToolcallRetries++;
                     log.warn("finish_reason=tool_calls with empty tool_calls array (narration only) — re-prompting to emit the call (retry {}/{}, session {})",
@@ -1224,7 +1224,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     eventHelper().send(emitter, new StreamEvent("continuation", null, null,
                         "⚠️ Модель детерминированно возвращает пустой ответ — ретраи остановлены"), streamCtx);
                 }
-                if (isEmpty && !streamDeterministicEmpty && emptyContentRetries >= MAX_EMPTY_RESPONSE_ATTEMPTS
+                if (canRequestMore && isEmpty && !streamDeterministicEmpty && emptyContentRetries >= MAX_EMPTY_RESPONSE_ATTEMPTS
                         && streamFallbackCaller.tryActivateFallbackForEmpty(streamModel)) {
                     emptyContentRetries = 0;
                     streamEmptyGuard.reset();
@@ -1233,7 +1233,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     log.warn("Empty responses exhausted in stream — switched to fallback model");
                     continue;
                 }
-                if (isEmpty && !streamDeterministicEmpty && emptyContentRetries < MAX_EMPTY_RESPONSE_ATTEMPTS) {
+                if (canRequestMore && isEmpty && !streamDeterministicEmpty && emptyContentRetries < MAX_EMPTY_RESPONSE_ATTEMPTS) {
                     emptyContentRetries++;
                     log.warn("Empty response (no content or reasoning) — retry {}/{} with backoff (model returned empty)",
                         emptyContentRetries, MAX_EMPTY_RESPONSE_ATTEMPTS);

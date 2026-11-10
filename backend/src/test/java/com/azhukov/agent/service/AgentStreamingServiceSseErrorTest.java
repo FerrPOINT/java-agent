@@ -10,6 +10,7 @@ import com.azhukov.agent.core.agent.AgentSessionResolver;
 import com.azhukov.agent.core.agent.CliStateApplier;
 import com.azhukov.agent.core.agent.TokenEstimator;
 import com.azhukov.agent.core.agent.ToolResultFormatter;
+import com.azhukov.agent.core.budget.DefaultIterationBudget;
 import com.azhukov.agent.core.budget.IterationBudget;
 import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.client.StreamingResponseHandler;
@@ -77,8 +78,17 @@ import static org.mockito.Mockito.when;
  */
 class AgentStreamingServiceSseErrorTest {
 
-    @Test
-    void errorFallbackRemainsActiveAfterToolExecution() throws Exception {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints = {3, 4})
+    void fallbackContinuesTruncatedTextOnlyWithBudgetAfterToolExecution(int maxModelCalls) throws Exception {
+        properties.getBudget().setMaxModelCallsPerTurn(maxModelCalls);
+        var actualBudget = new DefaultIterationBudget(properties);
+        when(iterationBudget.startTurn(any(UUID.class))).thenAnswer(call -> actualBudget.startTurn(call.getArgument(0)));
+        when(iterationBudget.isExhausted(any())).thenAnswer(call -> actualBudget.isExhausted(call.getArgument(0)));
+        when(iterationBudget.recordModelCall(any(), any(int.class), any(int.class))).thenAnswer(call ->
+            actualBudget.recordModelCall(call.getArgument(0), call.getArgument(1), call.getArgument(2)));
+        when(iterationBudget.recordToolExecution(any(), any(String.class), any(long.class))).thenAnswer(call ->
+            actualBudget.recordToolExecution(call.getArgument(0), call.getArgument(1), call.getArgument(2)));
         var fallbackCalls = new AtomicInteger();
         var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/v1/chat/completions", exchange -> {
@@ -129,16 +139,20 @@ class AgentStreamingServiceSseErrorTest {
             emitter.awaitDone();
 
             verify(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
-            assertThat(fallbackCalls).hasValue(3);
-            verify(usageTracker, org.mockito.Mockito.times(3)).recordTurn(
+            int expectedFallbackCalls = maxModelCalls - 1;
+            assertThat(fallbackCalls).hasValue(expectedFallbackCalls);
+            verify(usageTracker, org.mockito.Mockito.times(expectedFallbackCalls)).recordTurn(
                 org.mockito.ArgumentMatchers.eq(SESSION_ID), org.mockito.ArgumentMatchers.eq("user-1"),
                 org.mockito.ArgumentMatchers.eq("reserve"), org.mockito.ArgumentMatchers.anyInt(),
                 org.mockito.ArgumentMatchers.anyInt());
+            String lastFragment = maxModelCalls == 4
+                ? "fallback completed the turn" : "fallback answer was truncated";
             assertThat(emitter.events).anyMatch(event ->
-                "token".equals(event.name) && event.data.contains("fallback completed the turn"));
+                "token".equals(event.name) && event.data.contains(lastFragment));
             assertThat(emitter.events).anyMatch(event ->
                 "token".equals(event.name) && event.data.contains("checking the weather"));
-            assertThat(emitter.events).anyMatch(event -> "continuation".equals(event.name));
+            assertThat(emitter.events.stream().anyMatch(event -> "continuation".equals(event.name)))
+                .isEqualTo(maxModelCalls == 4);
             var metadata = emitter.events.stream().filter(event -> "metadata".equals(event.name)).toList();
             assertThat(objectMapper.readTree(metadata.getLast().data).path("modelUsed").asText())
                 .isEqualTo("reserve");
