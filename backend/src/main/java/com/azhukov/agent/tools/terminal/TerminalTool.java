@@ -52,6 +52,7 @@ public class TerminalTool implements ToolHandler {
     public static final String META_WORKDIR = "cron_workdir";
     /** Hermes parity: FOREGROUND_MAX_TIMEOUT = 600s. Foreground timeout above this is rejected. */
     private static final int FOREGROUND_MAX_TIMEOUT = 600;
+    private static final int MAX_CAPTURE_CHARS = 1024 * 1024;
     private static final ObjectMapper JSON = SharedObjectMapper.get();
     private static final Pattern SHELL_LEVEL_BACKGROUND_RE = Pattern.compile(
         "(?:^|[;&|]\\s*|&&\\s*|\\|\\|\\s*|\\$\\(\\s*)(?:nohup|disown|setsid)\\b",
@@ -356,7 +357,8 @@ public class TerminalTool implements ToolHandler {
         AtomicBoolean interrupted = new AtomicBoolean(false);
         // Read output concurrently with waitFor() to avoid losing buffered data
         // when the PTY closes the stream before all output is flushed (Finding 1.4).
-        StringBuilder outputBuffer = new StringBuilder();
+        StringBuffer outputBuffer = new StringBuffer();
+        var outputTruncated = new java.util.concurrent.atomic.AtomicBoolean();
         Thread outputReader = null;
         try {
             ProcessBuilder pb;
@@ -436,9 +438,13 @@ public class TerminalTool implements ToolHandler {
             outputReader = new Thread(() -> {
                 try (BufferedReader reader = new BufferedReader(
                         new InputStreamReader(procForReader.getInputStream(), StandardCharsets.UTF_8))) {
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        outputBuffer.append(line).append('\n');
+                    char[] chunk = new char[8192];
+                    for (int read; (read = reader.read(chunk)) != -1;) {
+                        outputBuffer.append(chunk, 0, read);
+                        if (outputBuffer.length() > 2 * MAX_CAPTURE_CHARS) {
+                            outputBuffer.delete(0, MAX_CAPTURE_CHARS);
+                            outputTruncated.set(true);
+                        }
                     }
                 } catch (java.io.IOException e) {
                     // Stream closed — expected when process exits
@@ -484,6 +490,7 @@ public class TerminalTool implements ToolHandler {
                     outputReader.join(2000);
                 }
                 String partialOutput = redact(AnsiStrip.strip(stripTrailingNewline(outputBuffer.toString(), usePty)));
+                if (outputTruncated.get()) partialOutput = "[earlier output truncated]\n" + partialOutput;
                 String enhanced = TerminalOutputEnhancer.enhance(
                     partialOutput, -1, workdir, true, actualCwd);
                 return jsonFail("Command timed out after " + timeoutSeconds + " seconds" + enhanced);
@@ -537,6 +544,7 @@ public class TerminalTool implements ToolHandler {
                 }
             }
 
+            if (outputTruncated.get()) output = "[earlier output truncated]\n" + output;
             String redactedOutput = redact(output);
 
             // Finding 1.3: Call notifyPostExecution after process completes

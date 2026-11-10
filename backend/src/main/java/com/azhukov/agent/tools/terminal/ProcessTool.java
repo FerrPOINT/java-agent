@@ -365,6 +365,15 @@ public class ProcessTool implements ToolHandler {
         );
     }
 
+    @org.springframework.scheduling.annotation.Scheduled(fixedDelay = 60_000)
+    void removeExpiredResults() {
+        Instant cutoff = Instant.now().minusSeconds(15 * 60);
+        processes.entrySet().removeIf(entry -> {
+            Instant exited = entry.getValue().exitedAt;
+            return exited != null && exited.isBefore(cutoff);
+        });
+    }
+
     @PreDestroy
     public void cleanup() {
         for (ManagedProcess p : processes.values()) {
@@ -408,6 +417,8 @@ public class ProcessTool implements ToolHandler {
         String terminationSource() { return terminationSource; }
         // Rolling buffer limit
         private static final int MAX_LINES = 2000;
+        private static final int MAX_LINE_CHARS = 1024;
+        private volatile Instant exitedAt;
 
         ManagedProcess(String id, String command, Process process, int timeoutSeconds) {
             this(id, command, process, timeoutSeconds, null, null);
@@ -444,6 +455,7 @@ public class ProcessTool implements ToolHandler {
             this.exitWatcherThread = new Thread(() -> {
                 try {
                     process.waitFor();
+                    exitedAt = Instant.now();
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     return;
@@ -470,18 +482,33 @@ public class ProcessTool implements ToolHandler {
         private void readOutput() {
             try (BufferedReader reader = new BufferedReader(
                     new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    outputBuffer.addLast(line);
-                    // M11 fix: single atomic step — append and prune keep lineCount and the
-                    // deque consistent under concurrent getRecentOutput() readers.
-                    if (lineCount.incrementAndGet() > MAX_LINES) {
-                        if (outputBuffer.pollFirst() != null) {
-                            lineCount.decrementAndGet();
+                char[] chunk = new char[4096];
+                var line = new StringBuilder();
+                boolean truncated = false;
+                boolean carriageReturn = false;
+                for (int count; (count = reader.read(chunk)) != -1;) {
+                    for (int i = 0; i < count; i++) {
+                        char ch = chunk[i];
+                        if (ch == '\r' || (ch == '\n' && !carriageReturn)) {
+                            addOutputLine(line, truncated);
+                            line.setLength(0);
+                            truncated = false;
+                        } else if (ch != '\n') {
+                            if (line.length() < MAX_LINE_CHARS) line.append(ch);
+                            else truncated = true;
                         }
+                        carriageReturn = ch == '\r';
                     }
                 }
+                if (!line.isEmpty() || truncated) addOutputLine(line, truncated);
             } catch (IOException ignored) {
+            }
+        }
+
+        private void addOutputLine(StringBuilder line, boolean truncated) {
+            outputBuffer.addLast(line + (truncated ? " [line truncated]" : ""));
+            if (lineCount.incrementAndGet() > MAX_LINES && outputBuffer.pollFirst() != null) {
+                lineCount.decrementAndGet();
             }
         }
 
