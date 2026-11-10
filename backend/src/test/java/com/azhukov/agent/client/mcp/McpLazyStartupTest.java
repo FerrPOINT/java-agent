@@ -147,6 +147,39 @@ class McpLazyStartupTest {
     }
 
     @Test
+    void lazyWaitExpiresWithoutCancellingSharedHandshake() throws Exception {
+        configured.schemaConfig().setTimeoutSeconds(1);
+        var lifecycle = Mockito.spy(manager);
+        var client = mock(io.modelcontextprotocol.client.McpSyncClient.class);
+        var cache = freshCache("[{\"name\":\"echo\"}]");
+        when(configStore.cachedSchema(any(), eq(3L))).thenReturn(Optional.of(cache));
+        when(configStore.isFresh(cache)).thenReturn(true);
+        Mockito.doReturn(client).when(lifecycle).createClient(any());
+        var release = new CountDownLatch(1);
+        when(client.initialize()).thenAnswer(call -> {
+            assertThat(release.await(4, TimeUnit.SECONDS)).isTrue();
+            return null;
+        });
+        when(client.listTools()).thenReturn(new McpSchema.ListToolsResult(List.of(), null));
+        var result = mock(McpSchema.CallToolResult.class);
+        when(client.callTool(any())).thenReturn(result);
+
+        lifecycle.connect(configured);
+        try {
+            org.assertj.core.api.Assertions.assertThatThrownBy(
+                    () -> lifecycle.executeTool("cached-server", "echo", "{}"))
+                .hasMessageContaining("Timed out connecting");
+            verify(client, never()).callTool(any());
+            release.countDown();
+            assertThat(lifecycle.executeTool("cached-server", "echo", "{}")).isSameAs(result);
+            verify(client).initialize();
+        } finally {
+            release.countDown();
+            lifecycle.closeAll();
+        }
+    }
+
+    @Test
     void lazyCallerFailsDuringBackoffInsteadOfJoiningRecovery() throws Exception {
         var lifecycle = Mockito.spy(manager);
         var scheduler = mock(ScheduledExecutorService.class);
