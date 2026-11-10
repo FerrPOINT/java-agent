@@ -105,7 +105,8 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
         }
 
         java.util.UUID lockedSession = null;
-        boolean drainQueue = false;
+        // A dequeued event owns progress until it hands back to an active turn.
+        boolean drainQueue = !newDelivery;
         try {
             // Send typing indicator before LLM call (Telegram shows it for ~5s)
             routingServiceProvider.getIfAvailable().sendTyping(source.platform(), source);
@@ -121,6 +122,7 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
                 if (steerBuffer != null && session.id() != null) {
                     boolean steered = steerBuffer.steer(session.id(), event.text());
                     if (steered) {
+                        drainQueue = false;
                         log.info("Steered message for session {}", session.id());
                         routingServiceProvider.getIfAvailable().send(source.platform(), source,
                             "⏩ Steered into current run. Your message arrives after the next tool call.");
@@ -131,7 +133,8 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
                 // event so it is processed after the current turn, instead of
                 // telling the user "queued" and then dropping the message.
                 log.debug("Steer failed, falling back to queue for session {}", session.id());
-                pendingQueues.computeIfAbsent(sessionKey, k -> new ConcurrentLinkedQueue<>()).add(event);
+                enqueue(sessionKey, event);
+                drainQueue = false;
                 routingServiceProvider.getIfAvailable().send(source.platform(), source,
                     "⏳ Queued for the next turn. I'll respond once the current task finishes.");
                 return;
@@ -145,7 +148,8 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
                 if (delegateTaskTool != null && delegateTaskTool.getActiveSubagentCount() > 0) {
                     log.info("Demoting busy-input-mode 'interrupt' to 'queue' for session {} "
                         + "because the running agent has active subagents (#30170)", session.id());
-                    pendingQueues.computeIfAbsent(sessionKey, k -> new ConcurrentLinkedQueue<>()).add(event);
+                    enqueue(sessionKey, event);
+                    drainQueue = false;
                     routingServiceProvider.getIfAvailable().send(source.platform(), source,
                         "⏳ Queued for the next turn. Active subagents detected — I'll respond once they finish.");
                     return;
@@ -154,7 +158,8 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
                 // request_hard_interrupt) and queue the message for immediate
                 // processing after the turn is interrupted.
                 log.debug("Interrupt mode for busy session {} — queuing and cancelling", session.id());
-                pendingQueues.computeIfAbsent(sessionKey, k -> new ConcurrentLinkedQueue<>()).add(event);
+                enqueue(sessionKey, event);
+                drainQueue = false;
                 // Actually cancel the running turn so it stops at the next
                 // tool boundary instead of running to completion.
                 if (interruptTokenProvider != null && session.id() != null) {
@@ -170,14 +175,13 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
             } else if (isBusy && "queue".equalsIgnoreCase(busyInputMode)) {
                 // Queue mode: store the message for processing after the current turn completes
                 log.debug("Queueing message for busy session {}", session.id());
-                pendingQueues.computeIfAbsent(sessionKey, k -> new ConcurrentLinkedQueue<>()).add(event);
+                enqueue(sessionKey, event);
+                drainQueue = false;
                 routingServiceProvider.getIfAvailable().send(source.platform(), source,
                     "⏳ Queued for the next turn. I'll respond once the current task finishes.");
                 return;
             }
 
-            // A dequeued event owns progress of the tail even if another entry point holds history.
-            drainQueue = !newDelivery;
             if (!turnLocks.tryAcquire(session.id(), 30)) {
                 throw new IllegalStateException("Session is busy: " + session.id());
             }
@@ -208,8 +212,7 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
             // being silently cleared from SteerBuffer.
             String lateSteer = turnResult.pendingSteer();
             if (lateSteer != null && !lateSteer.isBlank()) {
-                pendingQueues.computeIfAbsent(sessionKey, k -> new ConcurrentLinkedQueue<>()).add(
-                    new MessageEvent(java.util.UUID.randomUUID().toString(), source,
+                enqueue(sessionKey, new MessageEvent(java.util.UUID.randomUUID().toString(), source,
                         event.type(), lateSteer, List.of(), java.util.Map.of("steer_handoff", "true"),
                         java.time.Instant.now()));
                 log.info("steer_handoff_queued_after_turn session={}", session.id());
@@ -243,24 +246,27 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
                 turnLocks.release(lockedSession);
             }
             if (lockedSession != null || drainQueue) {
-                // Drain pending queue: process any messages that arrived during the current turn
-                ConcurrentLinkedQueue<MessageEvent> queue = pendingQueues.remove(source.chatId());
-                if (queue != null && !queue.isEmpty()) {
-                    MessageEvent next = queue.poll();
-                    if (next != null) {
-                        log.debug("Draining queued message for chat {}", source.chatId());
-                        // Re-enqueue any remaining messages so they are processed in order
-                        if (!queue.isEmpty()) {
-                            ConcurrentLinkedQueue<MessageEvent> remaining = pendingQueues.computeIfAbsent(
-                                source.chatId(), k -> new ConcurrentLinkedQueue<>());
-                            remaining.addAll(queue);
-                        }
-                        // Process the next queued message asynchronously
-                        java.util.concurrent.CompletableFuture.runAsync(() -> process(next, false));
-                    }
-                }
+                dispatchNext(source.chatId());
             }
         }
+    }
+
+    private void enqueue(String chatId, MessageEvent event) {
+        pendingQueues.compute(chatId, (key, queue) -> {
+            if (queue == null) queue = new ConcurrentLinkedQueue<>();
+            queue.add(event);
+            return queue;
+        });
+    }
+
+    private void dispatchNext(String chatId) {
+        pendingQueues.computeIfPresent(chatId, (key, queue) -> {
+            MessageEvent next = queue.poll();
+            if (next != null) {
+                java.util.concurrent.CompletableFuture.runAsync(() -> process(next, false));
+            }
+            return queue.isEmpty() ? null : queue;
+        });
     }
 
     private boolean isAuthorized(SessionSource source) {
