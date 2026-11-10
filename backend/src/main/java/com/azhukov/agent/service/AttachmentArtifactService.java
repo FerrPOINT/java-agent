@@ -332,17 +332,6 @@ public class AttachmentArtifactService {
         }
     }
 
-    @org.springframework.transaction.event.TransactionalEventListener
-    @org.springframework.transaction.annotation.Transactional(
-        propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
-    public void onSessionDeleted(com.azhukov.agent.core.agent.SessionDeletedEvent event) {
-        Instant cutoff = Instant.now();
-        var expired = repository().findBySessionIdOrderByCreatedAtAsc(event.sessionId()).stream()
-            .filter(entity -> entity.getExpiresAt().isBefore(cutoff))
-            .toList();
-        removeExpired(expired, cutoff);
-    }
-
     // ── internals ────────────────────────────────────────────────────────
 
     private String validate(String disposition, String origin, String fileName, byte[] data) {

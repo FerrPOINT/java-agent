@@ -211,7 +211,7 @@ class AttachmentArtifactServiceTest {
         AttachmentArtifactEntity failed = entity("att-2", sessionId, Instant.now().minusSeconds(1));
         ReflectionTestUtils.setField(expired, "cachePath", "att_session.bin");
         ReflectionTestUtils.setField(failed, "cachePath", "blocked");
-        when(repository.findBySessionIdOrderByCreatedAtAsc(sessionId)).thenReturn(List.of(expired, failed));
+        when(repository.findByExpiresAtBefore(any(Instant.class))).thenReturn(List.of(expired, failed));
         var service = service();
         var event = new com.azhukov.agent.core.agent.SessionDeletedEvent(sessionId);
 
@@ -219,7 +219,7 @@ class AttachmentArtifactServiceTest {
         assertThat(blob).exists();
         verify(repository).expireForSession(eq(sessionId), any(Instant.class));
 
-        service.onSessionDeleted(event);
+        service.scheduledSweep();
         assertThat(blob).doesNotExist();
         assertThat(blocked).exists();
         verify(repository).deleteExpiredByIds(eq(List.of("att-1")), any(Instant.class));
