@@ -65,6 +65,36 @@ class McpLifecycleManagerReconnectTest {
         return mgr;
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+    void directRpcDistinguishesServerErrorFromTransportFailure(boolean protocolError) {
+        var properties = new AgentProperties();
+        var server = new AgentProperties.McpProperties.ServerProperties();
+        server.setName("fixture");
+        properties.getMcp().getServers().add(server);
+        var manager = McpTestFactory.create(properties, null);
+        var client = mock(McpSyncClient.class);
+        var responseError = new io.modelcontextprotocol.spec.McpError(
+            new McpSchema.JSONRPCResponse.JSONRPCError(McpSchema.ErrorCodes.INVALID_PARAMS, "Cannot reset the database connection pool with these arguments"));
+        when(client.callTool(any())).thenThrow(protocolError ? responseError : new RuntimeException("connection reset by peer"));
+        when(client.closeGracefully()).thenReturn(true);
+        manager.getClientsForTest().put("fixture",
+            new McpLifecycleManager.McpServerState(server, client, List.of()));
+        try {
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> manager.executeTool("fixture", "pool_status", "{}"))
+                .hasMessageContaining("MCP tool call failed");
+            verify(client).callTool(any());
+            assertThat(manager.isConnected("fixture")).isEqualTo(protocolError);
+            if (protocolError) {
+                verify(client, never()).closeGracefully();
+            } else {
+                verify(client, org.mockito.Mockito.timeout(2000)).closeGracefully();
+            }
+        } finally {
+            manager.closeAll();
+        }
+    }
+
     @Test
     void toolExecutionErrorDoesNotTriggerReconnect() throws Exception {
         McpSyncClient mockClient = mock(McpSyncClient.class);
