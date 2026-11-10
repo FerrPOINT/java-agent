@@ -815,6 +815,11 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
 
                 // Handle errors with retry
                 if (capturedError.get() != null) {
+                    if (interruptToken != null && interruptToken.isCancelled(session.id())) {
+                        continue agentLoop;
+                    }
+                    boolean canRetry = contentBuilder.isEmpty() && collectedToolCalls.isEmpty()
+                        && !iterationBudget.isExhausted(budget);
                     Throwable error = capturedError.get();
                     Exception failure = error instanceof Exception e ? e : new RuntimeException(error);
                     var errorClassification = errorClassifier.classifyWithHints(failure);
@@ -824,7 +829,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     // itself. Previously only empty responses could switch models; a hard
                     // billing/auth/model failure went straight to the user even with a
                     // configured fallback chain.
-                    if (errorClassification.hints().shouldFallback()) {
+                    if (canRetry && errorClassification.hints().shouldFallback()) {
                         com.azhukov.agent.core.agent.FallbackModelCaller.ModelCallContext fallbackContext =
                             new com.azhukov.agent.core.agent.FallbackModelCaller.ModelCallContext(
                                 modelClient, streamFallbackManager);
@@ -842,7 +847,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                             continue;
                         }
                     }
-                    if (streamRetries < tierCap) {
+                    if (canRetry && streamRetries < tierCap) {
                         long delayMs = turnExecutor().computeBackoffMs(errorType, streamRetries, failure)
                             + ThreadLocalRandom.current().nextLong(0, 500);
                         // An upstream Retry-After >= 60s is not a retryable interactive
