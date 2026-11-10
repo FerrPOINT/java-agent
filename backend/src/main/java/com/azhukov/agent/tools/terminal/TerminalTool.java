@@ -26,6 +26,9 @@ import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -53,6 +56,7 @@ public class TerminalTool implements ToolHandler {
     /** Hermes parity: FOREGROUND_MAX_TIMEOUT = 600s. Foreground timeout above this is rejected. */
     private static final int FOREGROUND_MAX_TIMEOUT = 600;
     private static final int MAX_CAPTURE_CHARS = 1024 * 1024;
+    private static final int MAX_SHELL_STATE_BYTES = 4 * 1024 * 1024;
     private static final ObjectMapper JSON = SharedObjectMapper.get();
     private static final Pattern SHELL_LEVEL_BACKGROUND_RE = Pattern.compile(
         "(?:^|[;&|]\\s*|&&\\s*|\\|\\|\\s*|\\$\\(\\s*)(?:nohup|disown|setsid)\\b",
@@ -360,25 +364,19 @@ public class TerminalTool implements ToolHandler {
         StringBuffer outputBuffer = new StringBuffer();
         var outputTruncated = new AtomicBoolean();
         Thread outputReader = null;
+        Path shellState = null;
         try {
             ProcessBuilder pb;
             String shellScript = null;
-            // Hermes parity (terminal_tool.py:3559): track session cwd by
-            // appending a marker + pwd after the command. The marker lets us
-            // extract the post-command cwd and persist it for the next call.
-            // Also capture exported env vars by printing them after the command.
-            // Only for foreground non-PTY commands (PTY output is messy).
-            String cwdMarker = null;
             if (usePty) {
                 pb = new ProcessBuilder("script", "-qec", command, "/dev/null");
             } else {
                 if (sessionId != null) {
-                    cwdMarker = "\n__CWD_MARKER__:";
-                    // Capture both cwd and exported env vars after the command runs.
-                    // env_marker uses a unique format unlikely to appear in command output.
-                    String envCapture = "\nJAVA_AGENT_EXIT_CODE=$?; printf '" + cwdMarker
-                        + "'; pwd; printf '\\n__ENV_MARKER__\\n'; env -0; exit $JAVA_AGENT_EXIT_CODE";
-                    shellScript = shellExportPrologue(SESSION_ENV.get(sessionId)) + command + envCapture;
+                    // Keep the shell's state out of the bounded user-visible output.
+                    shellState = Files.createTempFile("java-agent-terminal-", ".state");
+                    String captureState = "\nJAVA_AGENT_EXIT_CODE=$?; { printf '%s\\0' \"$PWD\"; env -0; } > "
+                        + shellQuote(shellState.toString()) + "; exit $JAVA_AGENT_EXIT_CODE";
+                    shellScript = shellExportPrologue(SESSION_ENV.get(sessionId)) + command + captureState;
                 } else {
                     shellScript = command;
                 }
@@ -508,39 +506,26 @@ public class TerminalTool implements ToolHandler {
             output = AnsiStrip.strip(output);
             int exitCode = process.exitValue();
 
-            // Hermes parity (terminal_tool.py:3559): extract post-command cwd
-            // and exported env vars from markers and persist for the next call.
-            if (cwdMarker != null) {
-                int markerIdx = output.indexOf("__CWD_MARKER__:");
-                if (markerIdx >= 0) {
-                    String afterMarker = output.substring(markerIdx + "__CWD_MARKER__:".length());
-                    // cwd is the first line after the marker
-                    int newlineIdx = afterMarker.indexOf('\n');
-                    String postCwd = newlineIdx >= 0
-                        ? afterMarker.substring(0, newlineIdx).trim()
-                        : afterMarker.trim();
-                    // Check for env marker
-                    int envMarkerIdx = output.indexOf("__ENV_MARKER__");
-                    if (envMarkerIdx >= 0) {
-                        // Everything after __ENV_MARKER__\n is env -0 output
-                        String envBlob = output.substring(envMarkerIdx + "__ENV_MARKER__\n".length());
-                        parseAndStoreEnv(sessionId, envBlob);
-                        // Remove env marker section from visible output
-                        output = output.substring(0, envMarkerIdx).trim();
+            if (shellState != null) {
+                try (var input = Files.newInputStream(shellState, LinkOption.NOFOLLOW_LINKS)) {
+                    byte[] state = input.readNBytes(MAX_SHELL_STATE_BYTES + 1);
+                    if (state.length > MAX_SHELL_STATE_BYTES) {
+                        output += "\n[Shell state exceeded the capture limit]";
                     } else {
-                        // Remove cwd marker from visible output
-                        output = output.substring(0, markerIdx).trim();
-                    }
-                    // Also remove the cwd marker line if env marker was found after it
-                    if (envMarkerIdx >= 0 && markerIdx < envMarkerIdx) {
-                        output = output.substring(0, markerIdx).trim();
-                    }
-                    if (!postCwd.isEmpty() && new java.io.File(postCwd).isDirectory()) {
-                        if (recordSessionCwd) {
-                            SESSION_CWD.put(sessionId, postCwd);
+                        String snapshot = new String(state, StandardCharsets.UTF_8);
+                        int separator = snapshot.indexOf('\0');
+                        if (separator >= 0) {
+                            String postCwd = snapshot.substring(0, separator);
+                            parseAndStoreEnv(sessionId, snapshot.substring(separator + 1));
+                            if (!postCwd.isEmpty() && new java.io.File(postCwd).isDirectory()) {
+                                if (recordSessionCwd) SESSION_CWD.put(sessionId, postCwd);
+                                actualCwd = postCwd;
+                            }
                         }
-                        actualCwd = postCwd;
                     }
+                } catch (java.io.IOException e) {
+                    log.warn("Unable to read terminal shell state for session {}", sessionId, e);
+                    output += "\n[Shell state could not be captured]";
                 }
             }
 
@@ -578,6 +563,14 @@ public class TerminalTool implements ToolHandler {
                 interruptToken.unregister(sessionId);
             }
             return jsonFail("Failed to execute command: " + e.getMessage());
+        } finally {
+            if (shellState != null) {
+                try {
+                    Files.deleteIfExists(shellState);
+                } catch (java.io.IOException e) {
+                    log.warn("Unable to remove terminal shell state for session {}", sessionId, e);
+                }
+            }
         }
     }
 
