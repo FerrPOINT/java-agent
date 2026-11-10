@@ -1,7 +1,7 @@
 package com.azhukov.agent.service;
 
 import com.azhukov.agent.api.dto.ChatRequest;
-import com.azhukov.agent.api.dto.ChatResponseDto;
+import com.azhukov.agent.shared.dto.ChatResponseDto;
 import com.azhukov.agent.api.dto.InsightsDto;
 import com.azhukov.agent.api.dto.SessionSummaryDto;
 import com.azhukov.agent.config.AgentProperties;

@@ -5,6 +5,7 @@ import com.azhukov.agent.config.FallbackConfig;
 import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.persistence.entity.CronJobEntity;
 import com.azhukov.agent.service.CronJobService;
+import com.azhukov.agent.service.CronModelDriftPolicy;
 import com.azhukov.agent.service.ProfileService;
 import com.azhukov.agent.service.RuntimeConfigService;
 import com.fasterxml.jackson.annotation.JsonAlias;
@@ -766,7 +767,13 @@ public class ModelOptionsController {
     }
 
     private Map<String, Object> cronModelImpact(String profile, String currentProvider, String currentModel) {
-        boolean guardEnabled = cronModelDriftGuardEnabled(profile);
+        Map<String, Object> config;
+        try {
+            config = profileService.readConfig(profile);
+        } catch (IOException | RuntimeException e) {
+            return unavailableCronModelImpact(true);
+        }
+        boolean guardEnabled = CronModelDriftPolicy.enabled(config);
         if (cronJobService == null) {
             return unavailableCronModelImpact(guardEnabled);
         }
@@ -788,7 +795,6 @@ public class ModelOptionsController {
             return result;
         }
 
-        Map<String, Object> config = impactConfig(profile);
         Set<String> seenIds = new HashSet<>();
         int affectedCount = 0;
         for (CronJobEntity job : jobs) {
@@ -799,7 +805,7 @@ public class ModelOptionsController {
             if (id == null || !seenIds.add(id)) {
                 continue;
             }
-            List<String> axes = cronModelDriftAxes(job, currentProvider, currentModel, config);
+            List<String> axes = CronModelDriftPolicy.axes(job, currentProvider, currentModel, config);
             if (axes.isEmpty()) {
                 continue;
             }
@@ -815,66 +821,6 @@ public class ModelOptionsController {
         result.put("affected_count", affectedCount);
         result.put("truncated", affectedCount > affectedJobs.size());
         return result;
-    }
-
-    private Map<String, Object> impactConfig(String profile) {
-        if (profileService == null) {
-            return Map.of();
-        }
-        try {
-            return profileService.readConfig(profile);
-        } catch (IOException | RuntimeException e) {
-            return Map.of();
-        }
-    }
-
-    private boolean cronModelDriftGuardEnabled(String profile) {
-        Map<String, Object> config = impactConfig(profile);
-        Map<String, Object> cron = configMap(config.get("cron"));
-        return cron.get("model_drift_guard") != Boolean.FALSE;
-    }
-
-    private static List<String> cronModelDriftAxes(CronJobEntity job,
-                                                   String currentProvider,
-                                                   String currentModel,
-                                                   Map<String, Object> config) {
-        List<String> axes = new ArrayList<>();
-        if (cronAxisDrifted(
-            "provider",
-            job.getModelProvider(),
-            job.getProviderSnapshot(),
-            currentProvider,
-            config)) {
-            axes.add("provider");
-        }
-        if (cronAxisDrifted(
-            "model",
-            job.getModelName(),
-            job.getModelSnapshot(),
-            currentModel,
-            config)) {
-            axes.add("model");
-        }
-        return axes;
-    }
-
-    private static boolean cronAxisDrifted(String axis,
-                                           String pinnedValue,
-                                           String snapshotValue,
-                                           String currentValue,
-                                           Map<String, Object> config) {
-        if (cronFleetDefaultCoversAxis(axis, config) || !isBlank(pinnedValue)) {
-            return false;
-        }
-        String snapshot = defaultIfBlank(snapshotValue, "").toLowerCase(Locale.ROOT);
-        String current = defaultIfBlank(currentValue, "").toLowerCase(Locale.ROOT);
-        return !snapshot.isBlank() && !current.isBlank() && !snapshot.equals(current);
-    }
-
-    private static boolean cronFleetDefaultCoversAxis(String axis, Map<String, Object> config) {
-        Map<String, Object> cron = configMap(config.get("cron"));
-        String key = "model".equals(axis) ? "model" : "model_provider";
-        return !isBlank(stringValue(cron.get(key)));
     }
 
     private static String compactJobId(CronJobEntity job) {

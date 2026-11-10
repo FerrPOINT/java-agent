@@ -1,5 +1,7 @@
 package com.azhukov.agent.api.dto;
 
+import com.azhukov.agent.shared.dto.ChatResponseDto;
+
 import com.azhukov.agent.core.model.ToolCall;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeAll;
