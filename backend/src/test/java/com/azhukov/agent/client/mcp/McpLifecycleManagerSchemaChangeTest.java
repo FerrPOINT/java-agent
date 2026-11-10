@@ -139,6 +139,6 @@ class McpLifecycleManagerSchemaChangeTest {
         // Verify registerDynamic was NOT called
         verify(toolRegistry, never()).registerDynamic(any(), any(), any());
         verify(toolRegistry, never()).registerDynamic(any(), any(), any(), any());
-        verify(toolRegistry, never()).deregisterDynamic(any());
+        verify(toolRegistry, never()).deregisterDynamic(any(), any());
     }
 }

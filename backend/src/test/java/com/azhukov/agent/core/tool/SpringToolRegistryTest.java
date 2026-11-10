@@ -1127,7 +1127,7 @@ class SpringToolRegistryTest {
         assertThat(registry.getDefinitions()).extracting(ToolDefinition::name).contains("to_remove");
 
         // Deregister it
-        registry.deregisterDynamic("to_remove");
+        registry.deregisterDynamic("to_remove", null);
 
         // No longer in definitions
         assertThat(registry.getDefinitions()).extracting(ToolDefinition::name).doesNotContain("to_remove");
@@ -1139,9 +1139,21 @@ class SpringToolRegistryTest {
     }
 
     @Test
+    void deregisterDynamicOnlyRemovesTheRegisteredOwnersTool() {
+        var tool = new ToolDefinition("shared_name", "Current tool", Map.of());
+        registry.registerDynamic("shared_name", "mcp-current", tool,
+            (args, lastAssistant, session) -> ToolResult.ok("current"));
+
+        assertThat(registry.deregisterDynamic("shared_name", "mcp-previous")).isFalse();
+        assertThat(registry.getDefinitions()).contains(tool);
+        assertThat(registry.deregisterDynamic("shared_name", "mcp-current")).isTrue();
+        assertThat(registry.getDefinitions()).doesNotContain(tool);
+    }
+
+    @Test
     void deregisterDynamic_nonExistentTool_doesNotThrow() {
         // Should be a no-op, not throw
-        registry.deregisterDynamic("never_registered");
+        registry.deregisterDynamic("never_registered", null);
         // Other tools still present
         assertThat(registry.getDefinitions()).hasSize(3);
     }

@@ -149,6 +149,9 @@ public class McpConfigStore {
                         created.setServerConfigId(serverConfigId);
                         return created;
                     });
+                if (entity.getConfigRevision() > configRevision) {
+                    return;
+                }
                 entity.setConfigRevision(configRevision);
                 entity.setContentHash(sha256(toolsJson));
                 entity.setToolsJson(toolsJson);
@@ -171,7 +174,7 @@ public class McpConfigStore {
      */
     @Transactional
     public void recordSchemaError(UUID serverConfigId, long configRevision, String error) {
-        schemaCache().findFirstByServerConfigIdOrderByFetchedAtDesc(serverConfigId)
+        cachedSchema(serverConfigId, configRevision)
             .ifPresent(entity -> {
                 entity.setLastError(error);
                 schemaCache().save(entity);

@@ -345,7 +345,7 @@ public class McpLifecycleManager {
             synchronized (clients) {
                 if (connectionsInFlight.get(name) == token) {
                     finishConnection(name, token, e);
-                    scheduleReconnect(server, 0, true);
+                    scheduleReconnect(name, 0, true);
                 }
             }
             log.warn("Failed to connect to MCP server {}: {}", name, e.getMessage());
@@ -355,6 +355,8 @@ public class McpLifecycleManager {
     private void openConnection(AgentProperties.McpProperties.ServerProperties server,
                                 CompletableFuture<Void> token) {
         String name = server.getName();
+        var store = configStoreProvider == null ? null : configStoreProvider.getIfAvailable();
+        var config = findSchemaConfig(store, name);
         McpSyncClient client = null;
         boolean published = false;
         try {
@@ -374,7 +376,7 @@ public class McpLifecycleManager {
                     if (cachedTools != null) {
                         unregisterTools(name, cachedTools);
                     }
-                    registerTools(name, client, tools);
+                    registerTools(name, server, capabilities, tools);
                     if (hasTools) {
                         scheduleToolRefresh(name);
                     }
@@ -389,11 +391,21 @@ public class McpLifecycleManager {
                     }
                 }
             }
+            if (config != null) {
+                try {
+                    store.storeSchema(config.getId(), config.getConfigRevision(),
+                        objectMapper.writeValueAsString(selectedMcpTools(server, tools)), null, null);
+                } catch (Exception e) {
+                    log.debug("MCP schema cache write failed for '{}': {}", name, e.getMessage());
+                }
+            }
             log.info("Connected to MCP server {} ({}) with {} tools", name, server.getTransport(), tools.size());
         } catch (RuntimeException e) {
-            synchronized (clients) {
-                if (connectionsInFlight.get(name) == token) {
-                    recordSchemaConnectError(server, e);
+            if (config != null && connectionsInFlight.get(name) == token) {
+                try {
+                    store.recordSchemaError(config.getId(), config.getConfigRevision(), sanitizeError(e.getMessage()));
+                } catch (Exception ignored) {
+                    // Cache bookkeeping is best-effort.
                 }
             }
             throw e;
@@ -470,41 +482,16 @@ public class McpLifecycleManager {
         }
     }
 
-    /** Hermes {@code _write_schema_cache} write-through: persist a live manifest. */
-    private void writeSchemaCache(AgentProperties.McpProperties.ServerProperties server,
-                                  List<McpSchema.Tool> tools) {
-        var store = configStoreProvider == null ? null : configStoreProvider.getIfAvailable();
+    private com.azhukov.agent.persistence.entity.McpServerConfigEntity findSchemaConfig(
+            McpConfigStore store, String name) {
         if (store == null) {
-            return;
+            return null;
         }
         try {
-            var configEntity = store.find("default", server.getName()).orElse(null);
-            if (configEntity == null) {
-                return;
-            }
-            List<McpSchema.Tool> selected = selectedMcpTools(server, tools);
-            store.storeSchema(configEntity.getId(), configEntity.getConfigRevision(),
-                objectMapper.writeValueAsString(selected), null, null);
+            return store.find("default", name).orElse(null);
         } catch (Exception e) {
-            // Cache failures never break registration (Hermes parity).
-            log.debug("MCP schema cache write failed for '{}': {}", server.getName(), e.getMessage());
-        }
-    }
-
-    /** Mark a failed connect in the cache WITHOUT deleting the prior schema. */
-    private void recordSchemaConnectError(AgentProperties.McpProperties.ServerProperties server, Exception error) {
-        var store = configStoreProvider == null ? null : configStoreProvider.getIfAvailable();
-        if (store == null) {
-            return;
-        }
-        try {
-            var configEntity = store.find("default", server.getName()).orElse(null);
-            if (configEntity != null) {
-                store.recordSchemaError(configEntity.getId(), configEntity.getConfigRevision(),
-                    sanitizeError(error.getMessage()));
-            }
-        } catch (Exception ignored) {
-            // error recording is best-effort
+            log.debug("MCP schema config unavailable for '{}': {}", name, e.getMessage());
+            return null;
         }
     }
 
@@ -519,9 +506,7 @@ public class McpLifecycleManager {
                 return;
             }
         }
-        var serverProps = effectiveServers().stream()
-            .filter(s -> serverName.equals(s.getName()))
-            .findFirst().orElse(null);
+        var serverProps = enabledServer(serverName);
         if (serverProps == null) {
             throw new IllegalStateException("MCP server not configured: " + serverName);
         }
@@ -959,21 +944,18 @@ public class McpLifecycleManager {
     }
 
     // ── Reconnection with exponential backoff ────────────────────────────
-    private void scheduleReconnect(AgentProperties.McpProperties.ServerProperties server, int attempt, boolean initial) {
-        String name = server.getName();
+    private void scheduleReconnect(String name, int attempt, boolean initial) {
         var token = new CompletableFuture<Void>();
         synchronized (clients) {
             if (shutdownRequested.get() || clients.containsKey(name)
                     || connectionsInFlight.putIfAbsent(name, token) != null) {
                 return;
             }
-            scheduleReconnect(server, attempt, initial, token);
+            scheduleReconnect(name, attempt, initial, token);
         }
     }
 
-    private void scheduleReconnect(AgentProperties.McpProperties.ServerProperties server, int attempt, boolean initial,
-                                   CompletableFuture<Void> token) {
-        String name = server.getName();
+    private void scheduleReconnect(String name, int attempt, boolean initial, CompletableFuture<Void> token) {
         int maxRetries = initial ? MAX_INITIAL_CONNECT_RETRIES : MAX_RECONNECT_RETRIES;
         if (attempt >= maxRetries) {
             finishConnection(name, token, new IllegalStateException("MCP reconnect attempts exhausted"));
@@ -988,25 +970,32 @@ public class McpLifecycleManager {
                 }
             }
             try {
+                var server = enabledServer(name);
+                if (server == null) {
+                    finishConnection(name, token, new IllegalStateException("MCP server is no longer enabled"));
+                    return;
+                }
                 openConnection(server, token);
                 finishConnection(name, token, null);
             } catch (RuntimeException e) {
                 log.warn("MCP server {} attempt {}/{} failed: {}", name, attempt + 1, maxRetries, e.getMessage());
                 synchronized (clients) {
                     if (!shutdownRequested.get() && connectionsInFlight.get(name) == token) {
-                        scheduleReconnect(server, attempt + 1, initial, token);
+                        scheduleReconnect(name, attempt + 1, initial, token);
                     }
                 }
             }
         }, backoff, TimeUnit.SECONDS);
     }
 
+    private AgentProperties.McpProperties.ServerProperties enabledServer(String name) {
+        return effectiveServers().stream()
+            .filter(server -> name.equals(server.getName()) && server.isEnabled())
+            .findFirst().orElse(null);
+    }
+
     public void reconnect(String serverName) {
-        AgentProperties.McpProperties.ServerProperties serverProps = effectiveServers().stream()
-            .filter(s -> s.getName().equals(serverName))
-            .findFirst()
-            .orElse(null);
-        if (serverProps == null) {
+        if (enabledServer(serverName) == null) {
             log.warn("Cannot reconnect unknown MCP server: {}", serverName);
             return;
         }
@@ -1014,14 +1003,15 @@ public class McpLifecycleManager {
         if (existing != null) {
             retireConnection(serverName, existing);
         } else {
-            scheduleReconnect(serverProps, 0, false);
+            scheduleReconnect(serverName, 0, false);
         }
     }
 
     private void retireConnection(String name, McpServerState expected) {
+        var token = new CompletableFuture<Void>();
         synchronized (clients) {
             var current = clients.get(name);
-            if (current == null || current.client() != expected.client()) {
+            if (shutdownRequested.get() || current == null || current.client() != expected.client()) {
                 return;
             }
             clients.remove(name);
@@ -1030,9 +1020,14 @@ public class McpLifecycleManager {
             if (refresh != null) {
                 refresh.cancel(false);
             }
-            scheduleReconnect(expected.properties(), 0, false);
+            connectionsInFlight.put(name, token);
         }
         safeCloseClient(expected.client());
+        synchronized (clients) {
+            if (!shutdownRequested.get() && connectionsInFlight.get(name) == token) {
+                scheduleReconnect(name, 0, false, token);
+            }
+        }
     }
 
     // ── Dynamic tool refresh ─────────────────────────────────────────────
@@ -1069,6 +1064,7 @@ public class McpLifecycleManager {
         }
         try {
             var freshTools = listToolsWithPagination(state.client());
+            var capabilities = safeServerCapabilities(serverName, state.client());
             synchronized (clients) {
                 if (shutdownRequested.get() || clients.get(serverName) != state) {
                     return;
@@ -1094,9 +1090,10 @@ public class McpLifecycleManager {
                 for (String oldName : oldNames) {
                     if (!newNames.contains(oldName)) {
                         String fullName = mcpPrefixedToolName(serverName, oldName);
-                        toolRegistry().deregisterDynamic(fullName);
-                        if (fingerprintStore != null) fingerprintStore.remove(fullName);
-                        log.info("Deregistered stale MCP tool: {}", fullName);
+                        if (toolRegistry().deregisterDynamic(fullName, mcpToolsetName(serverName))) {
+                            if (fingerprintStore != null) fingerprintStore.remove(fullName);
+                            log.info("Deregistered stale MCP tool: {}", fullName);
+                        }
                     }
                 }
                 // Register new/updated tools
@@ -1120,7 +1117,7 @@ public class McpLifecycleManager {
                     toolRegistry().registerDynamic(fullName, mcpToolsetName(serverName),
                         definition, new McpToolHandler(serverName, tool.name()));
                 }
-                registerUtilityTools(serverName, state.client(), newNames.stream()
+                registerUtilityTools(serverName, capabilities, newNames.stream()
                     .map(name -> mcpPrefixedToolName(serverName, name))
                     .collect(Collectors.toSet()));
                 clients.put(serverName, new McpServerState(state.properties(), state.client(), freshTools));
@@ -1180,9 +1177,8 @@ public class McpLifecycleManager {
         }
     }
 
-    private void registerTools(String serverName, McpSyncClient client, List<McpSchema.Tool> tools) {
-        var state = clients.get(serverName);
-        AgentProperties.McpProperties.ServerProperties server = state == null ? null : state.properties();
+    private void registerTools(String serverName, AgentProperties.McpProperties.ServerProperties server,
+                               McpSchema.ServerCapabilities capabilities, List<McpSchema.Tool> tools) {
         List<McpSchema.Tool> registeredTools = selectedMcpTools(server, tools);
         recordMcpToolTrustMetadata(serverName, server, registeredTools);
         Set<String> nativeFullNames = registeredTools.stream()
@@ -1221,10 +1217,7 @@ public class McpLifecycleManager {
             toolRegistry().registerDynamic(fullName, mcpToolsetName(serverName),
                 definition, new McpToolHandler(serverName, tool.name()));
         }
-        registerUtilityTools(serverName, client, nativeFullNames);
-        // Hermes #56832 write-through: persist the live manifest so the NEXT
-        // startup registers this server lazily (no spawn).
-        writeSchemaCache(server, registeredTools);
+        registerUtilityTools(serverName, capabilities, nativeFullNames);
     }
 
     private void unregisterTools(String serverName, List<McpSchema.Tool> tools) {
@@ -1232,9 +1225,11 @@ public class McpLifecycleManager {
         if (registry == null) {
             return;
         }
-        tools.forEach(tool -> registry.deregisterDynamic(mcpPrefixedToolName(serverName, tool.name())));
+        String toolset = mcpToolsetName(serverName);
+        tools.stream().filter(java.util.Objects::nonNull)
+            .forEach(tool -> registry.deregisterDynamic(mcpPrefixedToolName(serverName, tool.name()), toolset));
         for (String utility : List.of("list_resources", "read_resource", "list_prompts", "get_prompt")) {
-            registry.deregisterDynamic(mcpPrefixedToolName(serverName, utility));
+            registry.deregisterDynamic(mcpPrefixedToolName(serverName, utility), toolset);
         }
     }
 
@@ -1296,8 +1291,8 @@ public class McpLifecycleManager {
         return hasGlob && Pattern.compile(regex.toString()).matcher(value).matches();
     }
 
-    private void registerUtilityTools(String serverName, McpSyncClient client, Set<String> nativeFullNames) {
-        McpSchema.ServerCapabilities capabilities = safeServerCapabilities(serverName, client);
+    private void registerUtilityTools(String serverName, McpSchema.ServerCapabilities capabilities,
+                                      Set<String> nativeFullNames) {
         if (capabilities == null) {
             return;
         }
