@@ -97,8 +97,7 @@ class AgentRuntimeServiceRestartTest {
         verifyNoInteractions(messageRepository);
         // runtime reload path exercised: skills + mcp + model override
         verify(skillManager).reload();
-        verify(mcpLifecycleManager).closeAll();
-        verify(mcpLifecycleManager).connectConfiguredServers();
+        verify(mcpLifecycleManager).reloadConfiguredServers();
     }
 
     @Test

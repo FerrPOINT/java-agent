@@ -40,6 +40,61 @@ import static org.mockito.Mockito.*;
 class McpLifecycleManagerNewFeaturesTest {
 
     @Test
+    void concurrentReloadsKeepRefreshOfTheCurrentClient() throws Exception {
+        var properties = new AgentProperties();
+        properties.getMcp().setEnabled(true);
+        var config = new AgentProperties.McpProperties.ServerProperties();
+        config.setName("fixture");
+        properties.getMcp().getServers().add(config);
+        var manager = spy(McpTestFactory.create(properties, null));
+        var firstClient = mock(McpSyncClient.class);
+        var finalClient = mock(McpSyncClient.class);
+        for (var client : List.of(firstClient, finalClient)) {
+            when(client.listTools()).thenReturn(new McpSchema.ListToolsResult(List.of(), null));
+            when(client.closeGracefully()).thenReturn(true);
+        }
+        doReturn(firstClient, finalClient).when(manager).createClient(any());
+        var scheduler = mock(java.util.concurrent.ScheduledExecutorService.class);
+        var closing = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        when(scheduler.shutdownNow()).thenAnswer(call -> {
+            closing.countDown();
+            assertThat(release.await(5, TimeUnit.SECONDS)).isTrue();
+            return List.of();
+        });
+        org.springframework.test.util.ReflectionTestUtils.setField(manager, "reconnectExecutor", scheduler);
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var first = executor.submit(manager::reloadConfiguredServers);
+            try {
+                assertThat(closing.await(2, TimeUnit.SECONDS)).isTrue();
+                var secondStarted = new CountDownLatch(1);
+                var second = executor.submit(() -> {
+                    secondStarted.countDown();
+                    manager.reloadConfiguredServers();
+                });
+                assertThat(secondStarted.await(2, TimeUnit.SECONDS)).isTrue();
+                assertThatThrownBy(() -> second.get(100, TimeUnit.MILLISECONDS))
+                    .isInstanceOf(java.util.concurrent.TimeoutException.class);
+                release.countDown();
+                first.get(5, TimeUnit.SECONDS);
+                second.get(5, TimeUnit.SECONDS);
+                org.awaitility.Awaitility.await().atMost(5, TimeUnit.SECONDS).untilAsserted(() -> {
+                    assertThat(manager.getClientsForTest().get("fixture")).isNotNull();
+                    assertThat(manager.getClientsForTest().get("fixture").client()).isSameAs(finalClient);
+                    var scheduled = (Map<?, ?>) org.springframework.test.util.ReflectionTestUtils
+                        .getField(manager, "toolRefreshFutures");
+                    assertThat(scheduled.get("fixture")).isInstanceOfSatisfying(
+                        java.util.concurrent.ScheduledFuture.class, future -> assertThat(future.isCancelled()).isFalse());
+                });
+            } finally {
+                release.countDown();
+            }
+        } finally {
+            manager.closeAll();
+        }
+    }
+
+    @Test
     void reconnectUsesCurrentConfigAfterRetiringOldClient() throws Exception {
         var properties = new AgentProperties();
         properties.getMcp().setEnabled(true);

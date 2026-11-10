@@ -221,7 +221,7 @@ public class McpLifecycleManager {
         }
     }
 
-    public void connectConfiguredServers() {
+    synchronized void connectConfiguredServers() {
         if (!properties.getMcp().isEnabled()) {
             log.info("MCP is disabled.");
             return;
@@ -1870,12 +1870,16 @@ public class McpLifecycleManager {
 
     private final AtomicBoolean shutdownRequested = new AtomicBoolean(false);
 
+    public synchronized void reloadConfiguredServers() {
+        closeAll();
+        connectConfiguredServers();
+    }
+
     @EventListener(ContextClosedEvent.class)
-    public void closeAll() {
-        // Reload-safe shutdown: terminators ran on the OLD pools; fresh pools are
-        // created so connectConfiguredServers() works after a reload (reload-mcp
-        // calls closeAll() then reconnects — one-shot shutdown made every later
-        // schedule throw RejectedExecutionException).
+    public synchronized void closeAll() {
+        var closingReconnect = reconnectExecutor;
+        var closingRefresh = toolRefreshExecutor;
+        var closingCalls = toolCallExecutor;
         synchronized (clients) {
             shutdownRequested.set(true);
             connectionsInFlight.values().forEach(owner -> {
@@ -1894,30 +1898,25 @@ public class McpLifecycleManager {
             clients.clear();
             lazyServers.forEach(this::unregisterTools);
             lazyServers.clear();
-            toolCallExecutor.shutdownNow();
+            toolRefreshFutures.values().forEach(future -> future.cancel(false));
+            toolRefreshFutures.clear();
+            closingCalls.shutdownNow();
         }
-        // M29 fix: bounded drain of in-flight work before replacing the pools —
-        // shutdownNow() alone abandons running tool calls mid-write.
-        reconnectExecutor.shutdownNow();
-        toolRefreshExecutor.shutdownNow();
-        awaitTerminationBounded(reconnectExecutor, "reconnectExecutor");
-        awaitTerminationBounded(toolRefreshExecutor, "toolRefreshExecutor");
-        awaitTerminationBounded(toolCallExecutor, "toolCallExecutor");
+        closingReconnect.shutdownNow();
+        closingRefresh.shutdownNow();
+        awaitTerminationBounded(closingReconnect, "reconnectExecutor");
+        awaitTerminationBounded(closingRefresh, "toolRefreshExecutor");
+        awaitTerminationBounded(closingCalls, "toolCallExecutor");
+        if (fingerprintStore != null) fingerprintStore.clear();
+        if (rateLimiter != null) rateLimiter.clear();
+        mcpServerErrorCounts.clear();
+        mcpServerBreakerOpenedAtNanos.clear();
         synchronized (clients) {
             reconnectExecutor = newReconnectExecutor();
             toolRefreshExecutor = newToolRefreshExecutor();
             toolCallExecutor = newToolCallExecutor();
             connectionsInFlight.forEach(this::closeRetiredClient);
         }
-        // Cancel all tool refresh futures
-        for (ScheduledFuture<?> f : toolRefreshFutures.values()) {
-            f.cancel(false);
-        }
-        toolRefreshFutures.clear();
-        if (fingerprintStore != null) fingerprintStore.clear();
-        if (rateLimiter != null) rateLimiter.clear();
-        mcpServerErrorCounts.clear();
-        mcpServerBreakerOpenedAtNanos.clear();
     }
 
     /** M29: bounded awaitTermination so closeAll never hangs on a stuck task. */
