@@ -368,6 +368,10 @@ public class McpLifecycleManager {
                 var state = new McpServerState(server, client, tools);
                 clients.put(name, state);
                 try {
+                    var cachedTools = lazyServers.get(name);
+                    if (cachedTools != null) {
+                        unregisterTools(name, cachedTools);
+                    }
                     registerTools(name, client, tools);
                     scheduleToolRefresh(name);
                     resetMcpServerError(name);
@@ -451,6 +455,7 @@ public class McpLifecycleManager {
                         definition, new McpToolHandler(server.getName(), tool.name()));
                 }
                 lazyServers.put(server.getName(), registeredTools);
+                connectionsInFlight.remove(server.getName(), token);
             }
             log.info("MCP server {} (lazy): registered {} tool(s) from the schema cache (no spawn)",
                 server.getName(), registeredTools.size());
@@ -505,8 +510,10 @@ public class McpLifecycleManager {
      * normal call when the server is already live.
      */
     private void ensureConnectedForCall(String serverName) {
-        if (clients.containsKey(serverName) || !lazyServers.containsKey(serverName)) {
-            return;
+        synchronized (clients) {
+            if (clients.containsKey(serverName) || !lazyServers.containsKey(serverName)) {
+                return;
+            }
         }
         var serverProps = effectiveServers().stream()
             .filter(s -> serverName.equals(s.getName()))
