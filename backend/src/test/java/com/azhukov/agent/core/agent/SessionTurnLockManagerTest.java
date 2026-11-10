@@ -15,6 +15,23 @@ import static org.assertj.core.api.Assertions.assertThat;
 class SessionTurnLockManagerTest {
 
     @Test
+    void historyTurnWithSeparateControlsDoesNotAdmitSessionSteer() {
+        UUID id = UUID.randomUUID();
+        var manager = new SessionTurnLockManager();
+        manager.withHistoryTurn(id, () -> {
+            assertThat(manager.isBusy(id)).isTrue();
+            return manager.withTurn(id, () -> {
+                assertThat(manager.runIfLocked(id, () -> true)).isFalse();
+                return null;
+            });
+        });
+        manager.withTurn(id, () -> {
+            assertThat(manager.runIfLocked(id, () -> true)).isTrue();
+            return null;
+        });
+    }
+
+    @Test
     void releasingNestedHoldKeepsOuterTurnAdmitted() {
         SessionTurnLockManager manager = new SessionTurnLockManager();
         UUID id = UUID.randomUUID();

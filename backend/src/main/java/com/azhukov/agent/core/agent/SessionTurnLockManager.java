@@ -36,6 +36,7 @@ public class SessionTurnLockManager {
     private static final class TurnLock {
         private final ReentrantLock lock = new ReentrantLock();
         private int references;
+        private boolean acceptsSessionSteer;
     }
 
     /**
@@ -44,6 +45,10 @@ public class SessionTurnLockManager {
      * @return true if acquired, false on timeout (session busy)
      */
     public boolean tryAcquire(UUID sessionId, long timeoutSeconds) {
+        return tryAcquire(sessionId, timeoutSeconds, true);
+    }
+
+    private boolean tryAcquire(UUID sessionId, long timeoutSeconds, boolean acceptsSessionSteer) {
         TurnLock entry = locks.compute(sessionId, (id, current) -> {
             TurnLock retained = current != null ? current : new TurnLock();
             retained.references++;
@@ -52,6 +57,11 @@ public class SessionTurnLockManager {
         boolean acquired = false;
         try {
             acquired = entry.lock.tryLock(timeoutSeconds, TimeUnit.SECONDS);
+            if (acquired && entry.lock.getHoldCount() == 1) {
+                synchronized (entry.lock) {
+                    entry.acceptsSessionSteer = acceptsSessionSteer;
+                }
+            }
             return acquired;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -72,7 +82,7 @@ public class SessionTurnLockManager {
             return false;
         }
         synchronized (entry.lock) {
-            return entry.lock.isLocked() && action.getAsBoolean();
+            return entry.acceptsSessionSteer && action.getAsBoolean();
         }
     }
 
@@ -82,7 +92,16 @@ public class SessionTurnLockManager {
     }
 
     public <T> T withTurn(UUID sessionId, java.util.function.Supplier<T> work) {
-        if (!tryAcquire(sessionId, 30)) {
+        return withTurn(sessionId, true, work);
+    }
+
+    /** Serialize history changes for a turn with its own control channel. */
+    public <T> T withHistoryTurn(UUID sessionId, java.util.function.Supplier<T> work) {
+        return withTurn(sessionId, false, work);
+    }
+
+    private <T> T withTurn(UUID sessionId, boolean acceptsSessionSteer, java.util.function.Supplier<T> work) {
+        if (!tryAcquire(sessionId, 30, acceptsSessionSteer)) {
             throw new IllegalStateException(
                 "Session " + sessionId + " is busy (another turn is in progress). Retry later.");
         }
@@ -101,6 +120,7 @@ public class SessionTurnLockManager {
         }
         synchronized (entry.lock) {
             if (!entry.lock.isHeldByCurrentThread()) return;
+            if (entry.lock.getHoldCount() == 1) entry.acceptsSessionSteer = false;
             entry.lock.unlock();
             releaseReference(sessionId, entry);
         }
