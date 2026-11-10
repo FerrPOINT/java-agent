@@ -43,6 +43,25 @@ class AttachmentArtifactRepositoryTest extends PostgresTestContainer {
     }
 
     @Test
+    void retiringSessionArtifactsRollsBackWithSessionDeletion() {
+        UUID sessionId = UUID.randomUUID();
+        var artifact = entity("alice", "session-file", "photo");
+        artifact.setSessionId(sessionId);
+        repository.saveAndFlush(artifact);
+        var cutoff = java.time.Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+
+        transactionTemplate.executeWithoutResult(tx -> {
+            assertThat(repository.expireForSession(sessionId, cutoff)).isEqualTo(1);
+            tx.setRollbackOnly();
+        });
+        assertThat(repository.findById(artifact.getId()).orElseThrow().getExpiresAt()).isAfter(cutoff);
+
+        transactionTemplate.executeWithoutResult(tx ->
+            assertThat(repository.expireForSession(sessionId, cutoff)).isEqualTo(1));
+        assertThat(repository.findById(artifact.getId()).orElseThrow().getExpiresAt()).isEqualTo(cutoff);
+    }
+
+    @Test
     void dedupeLookupFindsOwnerScopedArtifact() {
         repository.save(entity("alice", "hash-a", "photo"));
         repository.save(entity("bob", "hash-a", "photo"));

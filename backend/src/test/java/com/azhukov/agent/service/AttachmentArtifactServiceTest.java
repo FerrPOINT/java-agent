@@ -195,36 +195,28 @@ class AttachmentArtifactServiceTest {
     }
 
     @Test
-    void sessionDeleteCascadesToArtifacts() {
+    void sessionDeletionLeavesBytesUntilCommitAndKeepsFailedCleanupForRetry() throws Exception {
         UUID sessionId = UUID.randomUUID();
-        Path blob = tempDir.resolve("att_session.bin");
-        try {
-            Files.writeString(blob, "data");
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
-        AttachmentArtifactEntity artifact = entity("att-1", sessionId, Instant.now().plusSeconds(3600));
-        ReflectionTestUtils.setField(artifact, "cachePath", "att_session.bin");
-        when(repository.findBySessionIdOrderByCreatedAtAsc(sessionId)).thenReturn(List.of(artifact));
+        Path blob = Files.writeString(tempDir.resolve("att_session.bin"), "data");
+        Path blocked = Files.createDirectory(tempDir.resolve("blocked"));
+        AttachmentArtifactEntity expired = entity("att-1", sessionId, Instant.now().minusSeconds(1));
+        AttachmentArtifactEntity failed = entity("att-2", sessionId, Instant.now().minusSeconds(1));
+        ReflectionTestUtils.setField(expired, "cachePath", "att_session.bin");
+        ReflectionTestUtils.setField(failed, "cachePath", "blocked");
+        when(repository.findBySessionIdOrderByCreatedAtAsc(sessionId)).thenReturn(List.of(expired, failed));
+        var service = service();
+        var event = new com.azhukov.agent.core.agent.SessionDeletedEvent(sessionId);
 
-        int removed = service().cleanupForSession(sessionId);
+        service.expireDeletedSessionArtifacts(event);
+        assertThat(blob).exists();
+        verify(repository).expireForSession(eq(sessionId), any(Instant.class));
 
-        assertThat(removed).isEqualTo(1);
+        service.onSessionDeleted(event);
         assertThat(blob).doesNotExist();
-        verify(repository).deleteAllById(List.of("att-1"));
+        assertThat(blocked).exists();
+        verify(repository).deleteExpiredByIds(eq(List.of("att-1")), any(Instant.class));
     }
 
-    @Test
-    void sessionDeleteListenerSwallowsFailures() {
-        UUID sessionId = UUID.randomUUID();
-        when(repository.findBySessionIdOrderByCreatedAtAsc(sessionId))
-            .thenThrow(new IllegalStateException("db gone"));
-
-        // Must not throw — session deletion must never be blocked by cleanup.
-        service().onSessionDeleted(new com.azhukov.agent.core.agent.SessionDeletedEvent(sessionId));
-
-        verify(repository, never()).deleteAllById(any());
-    }
     @Test
     void configuredCacheSurvivesServiceRecreation() throws Exception {
         byte[] data = "persist across process configuration".getBytes();
