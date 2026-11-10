@@ -85,6 +85,46 @@ class McpLazyStartupTest {
         return cache;
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"true, false", "false, false", "true, true"})
+    void firstLazyRpcRetiresOnlyBrokenTransport(boolean brokenTransport, boolean replaced) throws Exception {
+        when(configStore.cachedSchema(any(), eq(3L))).thenReturn(Optional.of(freshCache("[{\"name\":\"echo\"}]")));
+        when(configStore.isFresh(any())).thenReturn(true);
+        var lifecycle = Mockito.spy(manager);
+        var client = mock(io.modelcontextprotocol.client.McpSyncClient.class);
+        when(client.listTools()).thenReturn(new McpSchema.ListToolsResult(List.of(), null));
+        when(client.closeGracefully()).thenReturn(true);
+        var replacement = mock(io.modelcontextprotocol.client.McpSyncClient.class);
+        when(client.callTool(any())).thenAnswer(call -> {
+            if (replaced) {
+                lifecycle.getClientsForTest().put("cached-server",
+                    new McpLifecycleManager.McpServerState(server, replacement, List.of()));
+            }
+            throw new IllegalStateException(brokenTransport ? "connection reset by peer" : "invalid tool arguments");
+        });
+        Mockito.doReturn(client).when(lifecycle).createClient(any());
+        try {
+            lifecycle.connect(configured);
+            assertThat(lifecycle.isConnected("cached-server")).isFalse();
+            var result = lifecycle.new McpToolHandler("cached-server", "echo").execute("{}", null, null);
+            assertThat(result.success()).isFalse();
+            verify(client).initialize();
+            verify(client).callTool(any());
+            boolean retire = brokenTransport && !replaced;
+            assertThat(lifecycle.isConnected("cached-server")).isEqualTo(!retire);
+            if (replaced) {
+                assertThat(lifecycle.getClientsForTest().get("cached-server").client()).isSameAs(replacement);
+            }
+            if (retire) {
+                verify(client, Mockito.timeout(2000)).closeGracefully();
+            } else {
+                verify(client, never()).closeGracefully();
+            }
+        } finally {
+            lifecycle.closeAll();
+        }
+    }
+
     @Test
     void freshCacheRegistersWithoutConnecting() throws Exception {
         String toolsJson = objectMapper.writeValueAsString(List.of(
