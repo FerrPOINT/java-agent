@@ -43,7 +43,7 @@ class ApprovalQueueTest {
     }
 
     @Test
-    void approvalWaitHonorsDeadlineDuringPersistence() throws Exception {
+    void timedOutApprovalClearsWithoutWaitingForPersistence() throws Exception {
         var queue = new ApprovalQueue();
         var call = new ToolCall("fixture", "fixture", "{}");
         UUID first = new UUID(0, 0);
@@ -62,11 +62,16 @@ class ApprovalQueueTest {
             }));
             try {
                 assertThat(persisting.await(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
-                var waiting = executor.submit(() -> queue.awaitDecision(first, 50));
+                var waiting = executor.submit(() -> {
+                    boolean decided = queue.awaitDecision(first, 50);
+                    queue.clear(first);
+                    return decided;
+                });
                 assertThat(waiting.get(1, java.util.concurrent.TimeUnit.SECONDS)).isFalse();
+                assertThat(queue.getPending(first)).isNull();
             } finally {
                 release.countDown();
-                assertThat(decision.get(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                assertThat(decision.get(2, java.util.concurrent.TimeUnit.SECONDS)).isFalse();
             }
         }
     }

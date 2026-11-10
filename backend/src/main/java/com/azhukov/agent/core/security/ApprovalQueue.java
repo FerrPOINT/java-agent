@@ -128,8 +128,15 @@ public class ApprovalQueue {
                 return false;
             }
             persistDecision.run();
-            decide(current, approved, null);
-            return true;
+            // The wait can end while the response is being recorded. Publish only
+            // if this request is still current and within its deadline.
+            Request resolved = pending.computeIfPresent(sessionId, (id, request) -> {
+                if (request == current && !isExpired(expected)) {
+                    decide(request, approved, null);
+                }
+                return request;
+            });
+            return resolved == current && current.approval != expected;
         }
     }
 
@@ -199,16 +206,8 @@ public class ApprovalQueue {
     }
 
     public void clear(UUID sessionId) {
-        for (;;) {
-            Request current = pending.get(sessionId);
-            if (current == null) return;
-            synchronized (current) {
-                if (pending.remove(sessionId, current)) {
-                    current.decided.countDown();
-                    return;
-                }
-            }
-        }
+        Request current = pending.remove(sessionId);
+        if (current != null) current.decided.countDown();
     }
 
     public boolean awaitDecision(UUID sessionId, long timeoutMs) {
