@@ -1388,13 +1388,13 @@ private static final String CRON_EXECUTION_HINT = """
     private void enforceCronModelDriftGuard(CronJobEntity job) {
         String profile = jobProfile(job);
         Map<String, Object> config = profileConfig(profile);
-        if (!cronModelDriftGuardEnabled(config)) {
+        if (!CronModelDriftPolicy.enabled(config)) {
             return;
         }
         String currentProvider = cleanModelSnapshot(resolveCurrentCronProvider(profile, job.getBaseUrl()), true);
         String currentModel = cleanModelSnapshot(resolveCurrentCronModel(profile), true);
         List<String> changes = new ArrayList<>();
-        for (String axis : cronModelDriftAxes(job, currentProvider, currentModel, config)) {
+        for (String axis : CronModelDriftPolicy.axes(job, currentProvider, currentModel, config)) {
             String snapshot = "provider".equals(axis)
                 ? cleanModelSnapshot(job.getProviderSnapshot(), true)
                 : cleanModelSnapshot(job.getModelSnapshot(), true);
@@ -1410,54 +1410,6 @@ private static final String CRON_EXECUTION_HINT = """
                 + String.join("; ", changes)
                 + "), and this job is unpinned. No inference call was made. "
                 + remediation);
-    }
-
-    private static boolean cronModelDriftGuardEnabled(Map<String, Object> config) {
-        Map<String, Object> cron = configMap(config.get("cron"));
-        return cron.get("model_drift_guard") != Boolean.FALSE;
-    }
-
-    private static List<String> cronModelDriftAxes(CronJobEntity job,
-                                                   String currentProvider,
-                                                   String currentModel,
-                                                   Map<String, Object> config) {
-        List<String> axes = new ArrayList<>();
-        if (cronAxisDrifted(
-            "provider",
-            job.getModelProvider(),
-            job.getProviderSnapshot(),
-            currentProvider,
-            config)) {
-            axes.add("provider");
-        }
-        if (cronAxisDrifted(
-            "model",
-            job.getModelName(),
-            job.getModelSnapshot(),
-            currentModel,
-            config)) {
-            axes.add("model");
-        }
-        return axes;
-    }
-
-    private static boolean cronAxisDrifted(String axis,
-                                           String pinnedValue,
-                                           String snapshotValue,
-                                           String currentValue,
-                                           Map<String, Object> config) {
-        if (cronFleetDefaultCoversAxis(axis, config) || !isBlank(pinnedValue)) {
-            return false;
-        }
-        String snapshot = cleanModelSnapshot(snapshotValue, true);
-        String current = cleanModelSnapshot(currentValue, true);
-        return snapshot != null && current != null && !snapshot.equals(current);
-    }
-
-    private static boolean cronFleetDefaultCoversAxis(String axis, Map<String, Object> config) {
-        Map<String, Object> cron = configMap(config.get("cron"));
-        String key = "model".equals(axis) ? "model" : "model_provider";
-        return configText(cron.get(key)) != null;
     }
 
     private static Map<String, Object> configMap(Object raw) {

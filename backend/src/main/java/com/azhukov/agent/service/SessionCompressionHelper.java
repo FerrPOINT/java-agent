@@ -69,10 +69,6 @@ public class SessionCompressionHelper {
      * Main entry point — no @Transactional here so the LLM call runs without
      * holding a DB connection. Delegates to transactional inner methods.
      */
-    @Retryable(retryFor = {org.springframework.dao.OptimisticLockingFailureException.class,
-                           org.springframework.dao.PessimisticLockingFailureException.class},
-               maxAttempts = 3,
-               backoff = @Backoff(delay = 1000, multiplier = 2))
     public void compressSessionInternal(UUID sessionId, String focusTopic, Integer keepLastN) {
         // Use self-proxy to engage @Transactional proxies on inner methods
         // (same pattern as CheckpointManager — avoids self-invocation bypass).
@@ -187,6 +183,10 @@ public class SessionCompressionHelper {
         persistCompressed(sessionId, compressed, cutoffTimestamp, null);
     }
 
+    @Retryable(retryFor = {org.springframework.dao.OptimisticLockingFailureException.class,
+                           org.springframework.dao.PessimisticLockingFailureException.class},
+               maxAttempts = 3,
+               backoff = @Backoff(delay = 1000, multiplier = 2))
     @Transactional
     void persistCompressed(UUID sessionId, List<Message> compressed, Instant cutoffTimestamp,
                            java.util.Set<UUID> watermarkIds) {
@@ -219,6 +219,10 @@ public class SessionCompressionHelper {
                     && cutoffTimestamp != null
                     && entity.getCreatedAt().isBefore(cutoffTimestamp))
                 .toList());
+        if (watermarkIds != null && !messageIds(currentActive).containsAll(watermarkIds)) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.CONFLICT, "Session history changed during compression");
+        }
         List<MessageEntity> concurrentTail = currentActive.stream()
             .filter(entity -> entity.getId() != null && !originalIds.contains(entity.getId()))
             .toList();

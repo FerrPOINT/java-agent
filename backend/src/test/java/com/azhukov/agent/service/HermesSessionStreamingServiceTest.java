@@ -1,7 +1,7 @@
 package com.azhukov.agent.service;
 
 import com.azhukov.agent.api.dto.ChatRequest;
-import com.azhukov.agent.api.dto.ChatResponseDto;
+import com.azhukov.agent.shared.dto.ChatResponseDto;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;

@@ -1,7 +1,7 @@
 package com.azhukov.agent.e2e;
 
 import com.azhukov.agent.api.dto.ChatRequest;
-import com.azhukov.agent.api.dto.ChatResponseDto;
+import com.azhukov.agent.shared.dto.ChatResponseDto;
 import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.repository.MessageRepository;
 import com.azhukov.agent.persistence.repository.SessionRepository;

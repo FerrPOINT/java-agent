@@ -4,13 +4,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-/**
- * Wire-format chat response shared by all client modules (h10).
- * Field-for-field identical to the backend's
- * {@code com.azhukov.agent.api.dto.ChatResponseDto}; the two are kept in
- * sync deliberately (same field names/order) so clients parse exactly what
- * the backend serializes.
- */
+/** Wire-format chat response shared by the backend and its clients. */
 public record ChatResponseDto(
     UUID sessionId,
     String content,
