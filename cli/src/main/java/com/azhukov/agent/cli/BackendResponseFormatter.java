@@ -218,6 +218,7 @@ public class BackendResponseFormatter {
         sb.append("  Model: ").append(node.path("model").asText("?")).append("\n");
         sb.append("  Provider: ").append(node.path("provider").asText("?")).append("\n");
         sb.append("  Max retries: ").append(node.path("maxRetries").asInt(0)).append("\n");
+        sb.append("  Availability retries: ").append(node.path("availabilityMaxRetries").asText("?")).append("\n");
         sb.append("  Max tokens: ").append(node.path("maxTokens").asInt(0)).append("\n");
         sb.append("  Timeout (seconds): ").append(node.path("timeoutSeconds").asInt(0));
         String override = node.path("modelOverride").asText(null);

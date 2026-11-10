@@ -1176,9 +1176,9 @@ class AgentControllerBranchCoverageTest {
         when(runtimeConfigService.getModelOverride()).thenReturn("claude-sonnet-4");
         when(agentProperties.getModel()).thenReturn(modelProperties);
         when(modelProperties.getProvider()).thenReturn("openai");
-        when(modelProperties.getMaxRetries()).thenReturn(3);
         when(modelProperties.getMaxTokens()).thenReturn(4096);
         when(modelProperties.getTimeoutSeconds()).thenReturn(600);
+        when(agentProperties.getError()).thenReturn(new AgentProperties.ErrorProperties());
 
         mockMvc.perform(get("/api/v1/agent/codex-runtime"))
             .andExpect(status().isOk())

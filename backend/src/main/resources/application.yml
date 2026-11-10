@@ -91,7 +91,6 @@ agent:
     model-name: ${AGENT_MODEL_NAME:kimi-k2.6}
     timeout-seconds: ${AGENT_MODEL_TIMEOUT_SECONDS:600}
     health-timeout-seconds: ${AGENT_MODEL_HEALTH_TIMEOUT_SECONDS:10}
-    max-retries: ${AGENT_MODEL_MAX_RETRIES:3}
     max-tokens: ${AGENT_MODEL_MAX_TOKENS:4096}
     temperature: ${AGENT_MODEL_TEMPERATURE:0.7}
     reasoning-effort: ${AGENT_MODEL_REASONING_EFFORT:100}
@@ -528,7 +527,6 @@ agent:
     api-key: ${OLLAMA_API_KEY:}
     model-name: ${AGENT_MODEL_NAME:kimi-k2.6}
     timeout-seconds: 600
-    max-retries: 2
     max-tokens: 4096
     temperature: 0.7
     reasoning-effort: 100

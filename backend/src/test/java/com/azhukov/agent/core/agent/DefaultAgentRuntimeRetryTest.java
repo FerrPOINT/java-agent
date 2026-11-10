@@ -418,8 +418,7 @@ class DefaultAgentRuntimeRetryTest {
         assertThat(properties.getError().getRetryAttempts()).isEqualTo(3);
         assertThat(properties.getError().getRetryDelayMs()).isEqualTo(1000);
         assertThat(properties.getError().getBackoffMultiplier()).isEqualTo(2);
-        // Also model-level retry config
-        assertThat(properties.getModel().getMaxRetries()).isEqualTo(3);
+        assertThat(properties.getError().getAvailabilityRetryAttempts()).isEqualTo(20);
     }
 
     @Test

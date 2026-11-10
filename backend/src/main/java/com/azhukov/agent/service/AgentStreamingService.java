@@ -573,7 +573,8 @@ public class AgentStreamingService {
         if (resolvedModel != null) {
             session = session.withMetadata("modelOverride", resolvedModel);
         }
-        eventHelper().sendMetadataEvent(emitter, session, streamCtx);
+        String primaryModel = eventHelper().resolveModelUsed(session);
+        eventHelper().sendMetadataEvent(emitter, session, streamCtx, 0, null, primaryModel);
 
         // P-08 (Hermes #92450): bound escaped outer-loop exceptions per turn.
         com.azhukov.agent.core.agent.OuterErrorBudget outerErrors =
@@ -782,7 +783,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                 if (capturedError.get() == null) {
                     try {
                         usageTracker.recordTurn(session.id(), session.userId(),
-                            properties.getModel().getModelName(),
+                            streamModel.modelName(primaryModel),
                             tokenEstimator.estimateTokens(context),
                             estimateResponseTokens(contentBuilder.toString(), collectedToolCalls));
                     } catch (Exception usageEx) {
@@ -1056,7 +1057,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                         tokenEstimator.estimateTokens(context), estimateResponseTokens(contentBuilder.toString(), collectedToolCalls));
                     if (capturedError.get() == null) {
                         try {
-                            usageTracker.recordTurn(session.id(), session.userId(), properties.getModel().getModelName(),
+                            usageTracker.recordTurn(session.id(), session.userId(), streamModel.modelName(primaryModel),
                                 tokenEstimator.estimateTokens(context), estimateResponseTokens(contentBuilder.toString(), collectedToolCalls));
                         } catch (Exception usageEx) {
                             log.debug("Failed to record streaming usage: {}", usageEx.getMessage());
@@ -1369,7 +1370,8 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                 }
                 turnMessages.add(Message.assistant(response.content(), turnIndex, response.reasoning()));
                 triggerBackgroundReview(session, turnMessages);
-                eventHelper().sendMetadataEvent(emitter, session, streamCtx, budget.totalInputTokens(), response.reasoning());
+                eventHelper().sendMetadataEvent(emitter, session, streamCtx, budget.totalInputTokens(),
+                    response.reasoning(), streamModel.modelName(primaryModel));
                 eventHelper().send(emitter, new StreamEvent("done", null, null, null), streamCtx);
                 eventHelper().safeComplete(emitter);
                 if (persisted.compareAndSet(false, true)) persistTurn(session, turnMessages, isNew, midTurnPersistenceCallback != null ? persistedUpTo : 0);
