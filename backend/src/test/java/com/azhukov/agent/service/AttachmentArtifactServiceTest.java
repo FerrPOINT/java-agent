@@ -114,11 +114,19 @@ class AttachmentArtifactServiceTest {
             org.mockito.ArgumentMatchers.eq("u1"), any(), org.mockito.ArgumentMatchers.eq("photo"), org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.eq("")))
             .thenReturn(Optional.of(existing));
 
-        var result = service().register("u1", "default", null, null,
+        var service = service();
+        var result = service.register("u1", "default", null, null,
             "telegram", "photo", "image/png", "p.png", data);
 
         assertThat(result.duplicate()).isTrue();
         assertThat(result.id()).isEqualTo("att_existing");
+
+        existing.setExpiresAt(Instant.now().minusSeconds(1));
+        var expired = service.register("u1", "default", null, null,
+            "telegram", "photo", "image/png", "p.png", data);
+        assertThat(expired.id()).isNull();
+        assertThat(expired.rejection()).contains("expired");
+        assertThat(tempDir.resolve(existing.getCachePath())).exists();
         verify(repository, never()).save(any());
     }
 

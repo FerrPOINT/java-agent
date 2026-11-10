@@ -105,16 +105,20 @@ public class AttachmentArtifactService {
                 ownerId, hash, disposition, sessionId, "")
             : Optional.empty();
         if (existing.isPresent()) {
+            AttachmentArtifactEntity artifact = existing.get();
+            if (!artifact.getExpiresAt().isAfter(Instant.now())) {
+                return new ArtifactRegistration(null, hash, null, false,
+                    "Matching attachment has expired; retry after attachment cleanup");
+            }
             try {
-                Path cached = safeCachePath(existing.get().getCachePath());
+                Path cached = safeCachePath(artifact.getCachePath());
                 if (!Files.isRegularFile(cached, java.nio.file.LinkOption.NOFOLLOW_LINKS)
                     || Files.size(cached) != data.length
                     || !sha256(Files.readAllBytes(cached)).equals(hash)) {
                     return new ArtifactRegistration(null, hash, null, false,
                         "cached attachment content is missing or inconsistent");
                 }
-                return new ArtifactRegistration(existing.get().getId(), hash,
-                    existing.get().getCachePath(), true, null);
+                return new ArtifactRegistration(artifact.getId(), hash, artifact.getCachePath(), true, null);
             } catch (IOException | IllegalArgumentException e) {
                 return new ArtifactRegistration(null, hash, null, false,
                     "cached attachment content is unavailable");
