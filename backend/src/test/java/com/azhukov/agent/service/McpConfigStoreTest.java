@@ -11,6 +11,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.beans.factory.ObjectProvider;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -152,7 +153,7 @@ class McpConfigStoreTest {
         when(schemaCacheRepository.save(any(McpSchemaCacheEntity.class)))
             .thenAnswer(inv -> inv.getArgument(0));
 
-        store().recordSchemaError(configId, 1, "connection refused");
+        store().recordSchemaError(configId, 1, cached.getFetchedAt().plusSeconds(1), "connection refused");
 
         assertThat(cached.getToolsJson()).isNotNull(); // prior schema kept
         assertThat(cached.getLastError()).isEqualTo("connection refused");
@@ -177,8 +178,8 @@ class McpConfigStoreTest {
         UUID configId = UUID.randomUUID();
         currentRevision(configId, 3);
 
-        store().storeSchema(configId, 2, "[]", null, null);
-        store().recordSchemaError(configId, 2, "old connection");
+        store().storeSchema(configId, 2, Instant.now(), "[]", null, null);
+        store().recordSchemaError(configId, 2, Instant.now(), "old connection");
 
         org.mockito.Mockito.verifyNoInteractions(schemaCacheRepository);
     }
@@ -199,7 +200,7 @@ class McpConfigStoreTest {
         when(schemaCacheRepository.save(any(McpSchemaCacheEntity.class)))
             .thenAnswer(inv -> inv.getArgument(0));
 
-        store().storeSchema(configId, 2, "[{\"name\":\"t\"}]", "[]", "[]");
+        store().storeSchema(configId, 2, Instant.now(), "[{\"name\":\"t\"}]", "[]", "[]");
 
         verify(schemaCacheRepository).save(any(McpSchemaCacheEntity.class));
         McpSchemaCacheEntity saved = org.mockito.Mockito.mockingDetails(schemaCacheRepository)

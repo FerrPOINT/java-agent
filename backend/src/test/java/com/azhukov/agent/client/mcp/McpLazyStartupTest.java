@@ -285,6 +285,56 @@ class McpLazyStartupTest {
     }
 
     @Test
+    void schemaObservationsAreOrderedBeforeWrites() throws Exception {
+        properties.getMcp().setLazyStartup(false);
+        var lifecycle = Mockito.spy(manager);
+        var oldClient = mock(io.modelcontextprotocol.client.McpSyncClient.class);
+        var newClient = mock(io.modelcontextprotocol.client.McpSyncClient.class);
+        var oldTool = McpSchema.Tool.builder("old_manifest_tool").inputSchema(Map.of("type", "object")).build();
+        var newTool = McpSchema.Tool.builder("new_manifest_tool").inputSchema(Map.of("type", "object")).build();
+        when(oldClient.listTools()).thenReturn(new McpSchema.ListToolsResult(List.of(oldTool), null));
+        when(newClient.listTools()).thenReturn(new McpSchema.ListToolsResult(List.of(newTool), null));
+        when(oldClient.closeGracefully()).thenReturn(true);
+        when(newClient.closeGracefully()).thenReturn(true);
+        Mockito.doReturn(oldClient, newClient).when(lifecycle).createClient(any());
+
+        var oldWrite = new CountDownLatch(1);
+        var newWrite = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        var firstObservedAt = new java.util.concurrent.atomic.AtomicReference<Instant>();
+        var nextObservedAt = new java.util.concurrent.atomic.AtomicReference<Instant>();
+        Mockito.doAnswer(call -> {
+            Instant observedAt = call.getArgument(2);
+            String json = call.getArgument(3);
+            if (json.contains("old_manifest_tool")) {
+                firstObservedAt.set(observedAt);
+                oldWrite.countDown();
+                assertThat(release.await(5, TimeUnit.SECONDS)).isTrue();
+            } else {
+                nextObservedAt.set(observedAt);
+                newWrite.countDown();
+            }
+            return null;
+        }).when(configStore).storeSchema(eq(configured.schemaConfig().getId()), eq(3L), any(), any(), any(), any());
+
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var first = executor.submit(() -> lifecycle.connect(configured));
+            try {
+                assertThat(oldWrite.await(2, TimeUnit.SECONDS)).isTrue();
+                lifecycle.reconnect("cached-server");
+                assertThat(newWrite.await(4, TimeUnit.SECONDS)).isTrue();
+                assertThat(lifecycle.getClientsForTest().get("cached-server").client()).isSameAs(newClient);
+            } finally {
+                release.countDown();
+            }
+            first.get(5, TimeUnit.SECONDS);
+            assertThat(firstObservedAt.get()).isBefore(nextObservedAt.get());
+        } finally {
+            lifecycle.closeAll();
+        }
+    }
+
+    @Test
     void slowSchemaStoreDoesNotLockOtherConnections() throws Exception {
         properties.getMcp().setLazyStartup(false);
         var neighbour = new AgentProperties.McpProperties.ServerProperties();
@@ -302,7 +352,7 @@ class McpLazyStartupTest {
             storing.countDown();
             release.await();
             return null;
-        }).when(configStore).storeSchema(any(), eq(3L), any(), any(), any());
+        }).when(configStore).storeSchema(any(), eq(3L), any(), any(), any(), any());
 
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
             var first = executor.submit(() -> lifecycle.connect(configured));
@@ -332,7 +382,7 @@ class McpLazyStartupTest {
         manager.connect(configured);
 
         assertThat(manager.isConnected("cached-server")).isFalse();
-        verify(configStore).recordSchemaError(any(), eq(3L), any());
+        verify(configStore).recordSchemaError(any(), eq(3L), any(), any());
     }
 
     @Test
@@ -344,6 +394,6 @@ class McpLazyStartupTest {
         // Cache miss (revision changed) — lazy registration declined; the full
         // connect path runs (and fails against localhost:9999).
         verify(configStore, never()).storeSchema(any(), org.mockito.ArgumentMatchers.anyLong(),
-            any(), any(), any());
+            any(), any(), any(), any());
     }
 }

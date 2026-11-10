@@ -128,30 +128,32 @@ public class McpConfigStore {
             .filter(cache -> cache.getConfigRevision() == configRevision);
     }
 
-    /** Store discovery only while the config revision used for the handshake is current. */
+    /** Store a discovery only if its configuration and observation are still current. */
     @Transactional
-    public void storeSchema(UUID serverConfigId, long configRevision,
+    public void storeSchema(UUID serverConfigId, long configRevision, Instant observedAt,
                             String toolsJson, String resourcesJson, String promptsJson) {
         if (!lockCurrentRevision(serverConfigId, configRevision)) {
             return;
         }
         McpSchemaCacheRepository repository = schemaCache();
-        McpSchemaCacheEntity entity = repository
-            .findFirstByServerConfigIdOrderByFetchedAtDesc(serverConfigId)
-            .orElseGet(() -> {
-                McpSchemaCacheEntity created = new McpSchemaCacheEntity();
-                created.setServerConfigId(serverConfigId);
-                return created;
-            });
-        Instant now = Instant.now();
+        var existing = repository.findFirstByServerConfigIdOrderByFetchedAtDesc(serverConfigId);
+        if (existing.filter(cache -> cache.getConfigRevision() == configRevision
+                && !observedAt.isAfter(cache.getFetchedAt())).isPresent()) {
+            return;
+        }
+        McpSchemaCacheEntity entity = existing.orElseGet(() -> {
+            McpSchemaCacheEntity created = new McpSchemaCacheEntity();
+            created.setServerConfigId(serverConfigId);
+            return created;
+        });
         entity.setConfigRevision(configRevision);
         entity.setContentHash(sha256(toolsJson));
         entity.setToolsJson(toolsJson);
         entity.setResourcesJson(resourcesJson);
         entity.setPromptsJson(promptsJson);
-        entity.setFetchedAt(now);
-        entity.setExpiresAt(now.plus(SCHEMA_TTL));
-        entity.setLastSuccessAt(now);
+        entity.setFetchedAt(observedAt);
+        entity.setExpiresAt(observedAt.plus(SCHEMA_TTL));
+        entity.setLastSuccessAt(observedAt);
         entity.setLastError(null);
         repository.save(entity);
     }
@@ -167,12 +169,14 @@ public class McpConfigStore {
      * row stays readable (marked with the error) so usable tools survive.
      */
     @Transactional
-    public void recordSchemaError(UUID serverConfigId, long configRevision, String error) {
+    public void recordSchemaError(UUID serverConfigId, long configRevision, Instant observedAt, String error) {
         if (!lockCurrentRevision(serverConfigId, configRevision)) {
             return;
         }
         cachedSchema(serverConfigId, configRevision)
+            .filter(entity -> observedAt.isAfter(entity.getFetchedAt()))
             .ifPresent(entity -> {
+                entity.setFetchedAt(observedAt);
                 entity.setLastError(error);
                 schemaCache().save(entity);
             });

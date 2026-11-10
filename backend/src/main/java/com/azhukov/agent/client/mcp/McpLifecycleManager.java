@@ -46,6 +46,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.text.NumberFormat;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
@@ -434,6 +435,7 @@ public class McpLifecycleManager {
             boolean hasTools = capabilities == null || capabilities.tools() != null;
             List<McpSchema.Tool> tools = hasTools ? listToolsWithPagination(client) : List.of();
             var registeredTools = selectedMcpTools(server, tools);
+            Instant observedAt;
             synchronized (clients) {
                 if (connectionsInFlight.get(name) != owner || shutdownRequested.get() || handshake.isCancelled()) {
                     return;
@@ -452,6 +454,7 @@ public class McpLifecycleManager {
                     resetMcpServerError(name);
                     lazyServers.remove(name);
                     connectionsInFlight.remove(name, owner);
+                    observedAt = Instant.now();
                     published = true;
                     handshake.complete(null);
                 } finally {
@@ -463,7 +466,7 @@ public class McpLifecycleManager {
             }
             if (store != null && config != null) {
                 try {
-                    store.storeSchema(config.getId(), config.getConfigRevision(),
+                    store.storeSchema(config.getId(), config.getConfigRevision(), observedAt,
                         objectMapper.writeValueAsString(registeredTools), null, null);
                 } catch (Exception e) {
                     log.debug("MCP schema cache write failed for '{}': {}", name, e.getMessage());
@@ -471,13 +474,14 @@ public class McpLifecycleManager {
             }
             log.info("Connected to MCP server {} ({}) with {} tools", name, server.getTransport(), tools.size());
         } catch (RuntimeException e) {
-            boolean current;
+            Instant observedAt;
             synchronized (clients) {
-                current = connectionsInFlight.get(name) == owner && !handshake.isCancelled();
+                observedAt = connectionsInFlight.get(name) == owner && !handshake.isCancelled() ? Instant.now() : null;
             }
-            if (store != null && config != null && current) {
+            if (store != null && config != null && observedAt != null) {
                 try {
-                    store.recordSchemaError(config.getId(), config.getConfigRevision(), sanitizeError(e.getMessage()));
+                    store.recordSchemaError(config.getId(), config.getConfigRevision(), observedAt,
+                        sanitizeError(e.getMessage()));
                 } catch (Exception ignored) {
                     // Cache bookkeeping is best-effort.
                 }

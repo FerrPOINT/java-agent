@@ -38,6 +38,7 @@ public class McpSchemaCacheEntity {
     @Column(name = "prompts_json", columnDefinition = "TEXT")
     private String promptsJson;
 
+    /** Time of the last applied observation. Expiry tracks the last successful discovery. */
     @Column(name = "fetched_at", nullable = false)
     private Instant fetchedAt = Instant.now();
 
