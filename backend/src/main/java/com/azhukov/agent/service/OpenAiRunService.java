@@ -1,6 +1,6 @@
 package com.azhukov.agent.service;
 
-import com.azhukov.agent.api.dto.ChatResponseDto;
+import com.azhukov.agent.shared.dto.ChatResponseDto;
 import com.azhukov.agent.core.agent.InterruptToken;
 import com.azhukov.agent.core.agent.RunControlScope;
 import com.azhukov.agent.core.agent.SteerBuffer;

@@ -1,6 +1,6 @@
 package com.azhukov.agent.api;
 
-import com.azhukov.agent.api.dto.ChatResponseDto;
+import com.azhukov.agent.shared.dto.ChatResponseDto;
 import com.azhukov.agent.api.dto.MessageListDto;
 import com.azhukov.agent.api.dto.MessageDto;
 import com.azhukov.agent.service.AgentRuntimeService;
