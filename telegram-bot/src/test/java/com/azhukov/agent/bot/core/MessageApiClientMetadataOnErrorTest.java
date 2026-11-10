@@ -159,7 +159,7 @@ class MessageApiClientMetadataOnErrorTest {
 
     @Test
     void cancelledCallbackStopsReadingBeforeDone() {
-        serveSse("{malformed", "{\"type\":\"token\",\"token\":\"partial\"}", "{\"type\":\"done\"}");
+        serveSse("{\"type\":\"token\",\"token\":\"partial\"}", "{\"type\":\"done\"}");
         var completed = new AtomicReference<AgentBackendClient.ChatResult>();
         var error = new AtomicReference<Throwable>();
         var cancellation = new CancellationException("stop");
@@ -174,8 +174,62 @@ class MessageApiClientMetadataOnErrorTest {
     }
 
     @Test
+    void backendInterruptDoesNotCompleteTheTurn() {
+        serveSse("{\"type\":\"token\",\"token\":\"partial\"}",
+            "{\"type\":\"interrupted\",\"message\":\"Turn cancelled by user.\"}", "{\"type\":\"done\"}");
+        var completed = new AtomicReference<AgentBackendClient.ChatResult>();
+        var error = new AtomicReference<Throwable>();
+        var client = new MessageApiClient(restClient, mapper, new com.azhukov.agent.bot.config.BotProperties());
+
+        var result = client.chatStream("hi", null, null, token -> {}, tool -> {},
+            (name, preview) -> {}, retry -> {}, review -> {}, clarify -> {}, completed::set, error::set);
+
+        assertThat(result.turnSucceeded()).isFalse();
+        assertThat(completed.get()).isNull();
+        assertThat(error.get()).isInstanceOf(CancellationException.class);
+    }
+
+    @Test
+    void idleHttpReadTimesOutWithoutRepeatingPost() {
+        var requests = new AtomicInteger();
+        var release = new java.util.concurrent.CountDownLatch(1);
+        server.createContext("/api/v1/agent/chat/stream", exchange -> {
+            try (exchange) {
+                exchange.getRequestBody().readAllBytes();
+                requests.incrementAndGet();
+                exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
+                exchange.sendResponseHeaders(200, 0);
+                exchange.getResponseBody().write(": keepalive\n\n".getBytes(StandardCharsets.UTF_8));
+                exchange.getResponseBody().flush();
+                release.await(3, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
+        server.start();
+        var factory = new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        factory.setReadTimeout(Duration.ofMillis(300));
+        var shortClient = RestClient.builder().baseUrl("http://127.0.0.1:" + server.getAddress().getPort())
+            .requestFactory(factory).build();
+        var complete = new AtomicReference<AgentBackendClient.ChatResult>();
+        var error = new AtomicReference<Throwable>();
+        var client = new MessageApiClient(shortClient, mapper, new com.azhukov.agent.bot.config.BotProperties());
+
+        try {
+            var result = client.chatStream("hi", null, null, text -> {}, tool -> {}, (name, preview) -> {},
+                retry -> {}, review -> {}, clarify -> {}, complete::set, error::set);
+            assertThat(result.turnSucceeded()).isFalse();
+            assertThat(error.get()).isInstanceOf(java.net.SocketTimeoutException.class);
+            assertThat(complete.get()).isNull();
+            assertThat(requests).hasValue(1);
+        } finally {
+            release.countDown();
+        }
+    }
+
+    @Test
     void streamingIdleTimeoutOutlivesTheRecommendedClarifyWindow() {
-        assertThat(MessageApiClient.STREAM_IDLE_TIMEOUT_MS)
+        assertThat(BackendRestClientFactory.STREAMING_READ_TIMEOUT.toMillis())
             .isGreaterThan(Duration.ofDays(7).toMillis());
     }
 

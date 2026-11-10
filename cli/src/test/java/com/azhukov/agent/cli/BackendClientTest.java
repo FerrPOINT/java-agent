@@ -4,11 +4,16 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.http.MediaType;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.client.RestClient;
 
 import java.io.ByteArrayInputStream;
@@ -29,6 +34,29 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
 class BackendClientTest {
+
+    @ExtendWith(OutputCaptureExtension.class)
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "", "data:[DONE]\n", "data:{\"type\":\"interrupted\"}\ndata:{\"type\":\"done\"}\n",
+        "data:{\"type\":\"error\",\"message\":\"provider failure\"}\n",
+        "data:{malformed\ndata:{\"type\":\"done\"}\n",
+        "data:{\"type\":\"done\"}{}\n",
+        "data:{\"type\":\"done\"}\n"
+    })
+    void replFlushesPartialOutputAndConsumesQueueOnlyOnDone(String tail, CapturedOutput output) {
+        var sse = "data:{\"type\":\"token\",\"token\":\"partial result\"}\n" + tail;
+        mockPostStream(new ByteArrayInputStream(sse.getBytes(StandardCharsets.UTF_8)));
+        var state = new CliState();
+        state.setQueuedPrompt("keep for next turn");
+        var runner = new CliReplRunner(backendClient, null, null, new MarkdownRenderer(false), null);
+
+        ReflectionTestUtils.invokeMethod(runner, "handleChatStream", "hi", "sid", state);
+
+        assertThat(output.getOut()).contains("partial result");
+        assertThat(state.getQueuedPrompt()).isEqualTo(tail.equals("data:{\"type\":\"done\"}\n")
+            ? null : "keep for next turn");
+    }
 
     @Mock
     private RestClient restClient;
@@ -135,7 +163,7 @@ class BackendClientTest {
     void chatStreamParsesTokenEvents() {
         String sse = "data:{\"type\":\"token\",\"token\":\"Hello\"}\n" +
             "data:{\"type\":\"token\",\"token\":\" world\"}\n" +
-            "data:[DONE]\n";
+            "data:{\"type\":\"done\"}\n";
         mockPostStream(new ByteArrayInputStream(sse.getBytes(StandardCharsets.UTF_8)));
 
         StringBuilder tokens = new StringBuilder();
@@ -150,7 +178,7 @@ class BackendClientTest {
     @Test
     void chatStreamHandlesToolStartEvent() {
         String sse = "data:{\"type\":\"tool_start\",\"toolName\":\"web_search\"}\n" +
-            "data:[DONE]\n";
+            "data:{\"type\":\"done\"}\n";
         mockPostStream(new ByteArrayInputStream(sse.getBytes(StandardCharsets.UTF_8)));
 
         StringBuilder tools = new StringBuilder();
@@ -162,13 +190,27 @@ class BackendClientTest {
     @Test
     void chatStreamHandlesErrorEvent() {
         String sse = "data:{\"type\":\"error\",\"error\":\"model overloaded\"}\n" +
-            "data:[DONE]\n";
+            "data:{\"type\":\"done\"}\n";
         mockPostStream(new ByteArrayInputStream(sse.getBytes(StandardCharsets.UTF_8)));
 
         StringBuilder tools = new StringBuilder();
         backendClient.chatStream("msg", "sid", t -> {}, tools::append, () -> {});
 
         assertThat(tools.toString()).contains("ERROR: model overloaded");
+    }
+
+    @Test
+    void chatStreamDoesNotCompleteAfterPartialEof() {
+        String sse = "data:{\"type\":\"token\",\"token\":\"partial\"}\n";
+        mockPostStream(new ByteArrayInputStream(sse.getBytes(StandardCharsets.UTF_8)));
+        StringBuilder tokens = new StringBuilder();
+        StringBuilder status = new StringBuilder();
+
+        backendClient.chatStream("hi", "sid", tokens::append, status::append,
+            () -> status.append("completed"));
+
+        assertThat(tokens.toString()).isEqualTo("partial");
+        assertThat(status.toString()).isEqualTo("ERROR: Backend stream closed before the done event");
     }
 
     // ── Health ──
