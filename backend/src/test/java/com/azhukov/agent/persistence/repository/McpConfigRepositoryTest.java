@@ -3,6 +3,7 @@ package com.azhukov.agent.persistence.repository;
 import com.azhukov.agent.persistence.PostgresTestContainer;
 import com.azhukov.agent.persistence.entity.McpSchemaCacheEntity;
 import com.azhukov.agent.persistence.entity.McpServerConfigEntity;
+import com.azhukov.agent.service.McpConfigStore;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -11,6 +12,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -30,6 +34,9 @@ class McpConfigRepositoryTest extends PostgresTestContainer {
 
     @Autowired
     private TransactionTemplate transactionTemplate;
+
+    @Autowired
+    private McpConfigStore configStore;
 
     private McpServerConfigEntity config(String profile, String name) {
         McpServerConfigEntity entity = new McpServerConfigEntity();
@@ -66,6 +73,43 @@ class McpConfigRepositoryTest extends PostgresTestContainer {
                 configRepository.saveAndFlush(config("wp3-unique", "srv"))))
             .isInstanceOf(Exception.class);
         transactionTemplate.executeWithoutResult(tx -> configRepository.deleteAll());
+    }
+
+    @Test
+    void delayedOldDiscoveryCannotReplaceTheCommittedSchema() throws Exception {
+        UUID configId = transactionTemplate.execute(tx ->
+            configRepository.save(config("wp3-cache-race", "srv")).getId());
+        var uncommitted = new CountDownLatch(1);
+        var commit = new CountDownLatch(1);
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var newer = executor.submit(() -> transactionTemplate.executeWithoutResult(tx -> {
+                var config = configRepository.lockById(configId).orElseThrow();
+                config.setConfigRevision(2);
+                configStore.storeSchema(configId, 2, "[\"current\"]", null, null);
+                uncommitted.countDown();
+                try {
+                    assertThat(commit.await(5, TimeUnit.SECONDS)).isTrue();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException(e);
+                }
+            }));
+            try {
+                assertThat(uncommitted.await(5, TimeUnit.SECONDS)).isTrue();
+                var old = executor.submit(() -> configStore.storeSchema(configId, 1, "[\"old\"]", null, null));
+                assertThatThrownBy(() -> old.get(100, TimeUnit.MILLISECONDS))
+                    .isInstanceOf(java.util.concurrent.TimeoutException.class);
+                commit.countDown();
+                newer.get(5, TimeUnit.SECONDS);
+                old.get(5, TimeUnit.SECONDS);
+                assertThat(configStore.cachedSchema(configId, 2)).get()
+                    .extracting(McpSchemaCacheEntity::getToolsJson).isEqualTo("[\"current\"]");
+            } finally {
+                commit.countDown();
+            }
+        } finally {
+            transactionTemplate.executeWithoutResult(tx -> configRepository.deleteById(configId));
+        }
     }
 
     @Test
