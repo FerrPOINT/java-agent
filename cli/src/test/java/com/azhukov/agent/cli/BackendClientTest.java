@@ -40,6 +40,7 @@ class BackendClientTest {
     @ValueSource(strings = {
         "", "data:[DONE]\n", "data:{\"type\":\"interrupted\"}\ndata:{\"type\":\"done\"}\n",
         "data:{\"type\":\"error\",\"message\":\"provider failure\"}\n",
+        "data:{malformed\ndata:{\"type\":\"done\"}\n",
         "data:{\"type\":\"done\"}\n"
     })
     void replFlushesPartialOutputAndConsumesQueueOnlyOnDone(String tail, CapturedOutput output) {

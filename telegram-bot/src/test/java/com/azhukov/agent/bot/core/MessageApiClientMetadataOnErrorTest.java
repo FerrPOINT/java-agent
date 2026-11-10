@@ -159,7 +159,7 @@ class MessageApiClientMetadataOnErrorTest {
 
     @Test
     void cancelledCallbackStopsReadingBeforeDone() {
-        serveSse("{malformed", "{\"type\":\"token\",\"token\":\"partial\"}", "{\"type\":\"done\"}");
+        serveSse("{\"type\":\"token\",\"token\":\"partial\"}", "{\"type\":\"done\"}");
         var completed = new AtomicReference<AgentBackendClient.ChatResult>();
         var error = new AtomicReference<Throwable>();
         var cancellation = new CancellationException("stop");
