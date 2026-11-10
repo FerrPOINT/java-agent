@@ -230,7 +230,7 @@ public class McpLifecycleManager {
                 log.info("Skipping disabled MCP server {}", server.properties().getName());
                 continue;
             }
-            connect(server, true);
+            connect(server);
         }
     }
 
@@ -311,11 +311,15 @@ public class McpLifecycleManager {
     }
 
     public void connect(AgentProperties.McpProperties.ServerProperties server) {
-        connect(new ConfiguredServer(server, null), true);
+        connect(new ConfiguredServer(server, null));
+    }
+
+    void connect(ConfiguredServer server) {
+        connect(server, true, 0);
     }
 
     /** @param allowLazy false forces a real connect after cached registration. */
-    void connect(ConfiguredServer server, boolean allowLazy) {
+    private void connect(ConfiguredServer server, boolean allowLazy, long startedAt) {
         String name = server.properties().getName();
         ConnectionAttempt owner;
         CompletableFuture<Void> handshake;
@@ -344,18 +348,18 @@ public class McpLifecycleManager {
         if (allowLazy) {
             connectAttempt(server, owner, handshake, true, 0, true);
         } else {
-            awaitHandshake(server.properties(), handshake);
+            awaitHandshake(server.properties(), handshake, startedAt);
         }
     }
 
     private void awaitHandshake(AgentProperties.McpProperties.ServerProperties server,
-                                CompletableFuture<Void> handshake) {
+                                CompletableFuture<Void> handshake, long startedAt) {
         String name = server.getName();
         if (handshake == null) {
             throw new IllegalStateException("MCP server is waiting to reconnect: " + name);
         }
         try {
-            handshake.get(resolveMcpToolTimeout(server).toMillis(), TimeUnit.MILLISECONDS);
+            handshake.get(remainingNanos(resolveMcpToolTimeout(server), startedAt), TimeUnit.NANOSECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("Interrupted connecting to MCP server " + name, e);
@@ -519,7 +523,7 @@ public class McpLifecycleManager {
      * call on a lazily-registered server connects it now. Falls through to a
      * normal call when the server is already live.
      */
-    private void ensureConnectedForCall(String serverName) {
+    private void ensureConnectedForCall(String serverName, long startedAt) {
         synchronized (clients) {
             if (clients.containsKey(serverName) || !lazyServers.containsKey(serverName)) {
                 return;
@@ -530,7 +534,7 @@ public class McpLifecycleManager {
             throw new IllegalStateException("MCP server not configured: " + serverName);
         }
         log.info("MCP server {}: first call — connecting now (lazy startup)", serverName);
-        connect(serverProps, false);
+        connect(serverProps, false, startedAt);
         if (!clients.containsKey(serverName)) {
             throw new IllegalStateException("MCP server failed to connect on demand: " + serverName);
         }
@@ -1653,7 +1657,8 @@ public class McpLifecycleManager {
     public McpSchema.CallToolResult executeTool(String serverName, String toolName, String argumentsJson) {
         // Hermes _ensure_lazy_server_connected parity: a lazily-registered
         // server connects on the first real call.
-        ensureConnectedForCall(serverName);
+        long startedAt = System.nanoTime();
+        ensureConnectedForCall(serverName, startedAt);
         var state = clients.get(serverName);
         if (state == null) {
             throw new IllegalStateException("MCP server not connected: " + serverName);
@@ -1661,7 +1666,7 @@ public class McpLifecycleManager {
         try {
             Map<String, Object> args = objectMapper.readValue(argumentsJson, new TypeReference<>() {});
             try {
-                return callToolWithTimeout(state, toolName, args);
+                return callToolWithTimeout(state, toolName, args, startedAt);
             } catch (Exception callError) {
                 if (!isAuthError(callError)) {
                     throw callError;
@@ -1669,7 +1674,7 @@ public class McpLifecycleManager {
                 recoverOAuthOrThrow(serverName, callError);
                 try {
                     var retryState = clients.getOrDefault(serverName, state);
-                    return callToolWithTimeout(retryState, toolName, args);
+                    return callToolWithTimeout(retryState, toolName, args, startedAt);
                 } catch (Exception retryError) {
                     if (isAuthError(retryError)) {
                         throw reauthRequired(serverName, retryError);
@@ -1685,16 +1690,25 @@ public class McpLifecycleManager {
 
     private McpSchema.CallToolResult callToolWithTimeout(McpServerState state,
                                                          String toolName,
-                                                         Map<String, Object> args) throws Exception {
+                                                         Map<String, Object> args, long startedAt) throws Exception {
         return callMcpWithTimeout(state, "tool '" + toolName + "'",
-            () -> state.client().callTool(new McpSchema.CallToolRequest(toolName, args)));
+            () -> state.client().callTool(new McpSchema.CallToolRequest(toolName, args)), startedAt);
     }
 
     private <T> T callMcpWithTimeout(McpServerState state, String operation, Callable<T> action) throws Exception {
+        return callMcpWithTimeout(state, operation, action, System.nanoTime());
+    }
+
+    private <T> T callMcpWithTimeout(McpServerState state, String operation, Callable<T> action, long startedAt)
+            throws Exception {
         Duration timeout = resolveMcpToolTimeout(state == null ? null : state.properties());
+        long remaining = remainingNanos(timeout, startedAt);
+        if (remaining <= 0) {
+            throw new TimeoutException("MCP deadline expired before " + operation);
+        }
         Future<T> future = toolCallExecutor.submit(action);
         try {
-            return future.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
+            return future.get(remainingNanos(timeout, startedAt), TimeUnit.NANOSECONDS);
         } catch (TimeoutException e) {
             future.cancel(true);
             // WP-i (Hermes in-flight RPC teardown parity): a timed-out stdio call
@@ -1715,6 +1729,10 @@ public class McpLifecycleManager {
             Thread.currentThread().interrupt();
             throw e;
         }
+    }
+
+    private static long remainingNanos(Duration timeout, long startedAt) {
+        return timeout.toNanos() - (System.nanoTime() - startedAt);
     }
 
     /**
