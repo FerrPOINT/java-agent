@@ -284,8 +284,11 @@ public class ReadFileTool implements ToolHandler {
                 }
                 boolean newline = ch == '\r' || ch == '\n';
                 if (line >= start && line - start < limit && page.length() <= MAX_READ_CHARS) {
-                    if (firstChar) page.append(line + 1).append('|');
-                    page.append(newline ? '\n' : ch);
+                    if (firstChar) {
+                        if (!page.isEmpty()) page.append('\n');
+                        page.append(line + 1).append('|');
+                    }
+                    if (!newline) page.append(ch);
                 }
                 if (newline) line++;
                 firstChar = newline;
@@ -293,14 +296,23 @@ public class ReadFileTool implements ToolHandler {
             }
         }
         if (!firstChar) line++;
-        if (!page.isEmpty() && page.charAt(page.length() - 1) == '\n') {
-            page.setLength(page.length() - 1);
-        }
         return new TextPage(page.toString(), line);
     }
 
     private static ToolResult binaryFile(String rawPath) {
         return jsonFail("Cannot read binary file: " + rawPath + ". Use vision_analyze for images.");
+    }
+
+    private static String decodeText(byte[] rawBytes) {
+        Utf16Encoding utf16 = detectUtf16Encoding(rawBytes);
+        if (utf16 != null) {
+            int offset = hasUtf16Bom(rawBytes) ? 2 : 0;
+            return new String(rawBytes, offset, rawBytes.length - offset, utf16.charset());
+        }
+        if (hasUtf8Bom(rawBytes)) {
+            return new String(rawBytes, 3, rawBytes.length - 3, StandardCharsets.UTF_8);
+        }
+        return new String(rawBytes, StandardCharsets.UTF_8);
     }
 
     private static String extractNotebookText(JsonNode notebook, String notebookName) {
