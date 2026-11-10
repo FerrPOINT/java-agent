@@ -37,5 +37,5 @@ public interface ToolRegistry {
         registerDynamic(toolName, definition, handler);
     }
 
-    void deregisterDynamic(String toolName);
+    boolean deregisterDynamic(String toolName, String toolset);
 }

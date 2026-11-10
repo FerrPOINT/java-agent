@@ -43,7 +43,7 @@ class McpLifecycleManagerExtraBranchTest {
 
         manager.closeAll();
 
-        verify(client).close();
+        verify(client, org.mockito.Mockito.timeout(2000)).closeGracefully();
         assertThat(manager.listServers()).isEmpty();
     }
 
@@ -67,8 +67,8 @@ class McpLifecycleManagerExtraBranchTest {
 
         manager.closeAll();
 
-        verify(client1).close();
-        verify(client2).close();
+        verify(client1, org.mockito.Mockito.timeout(2000)).closeGracefully();
+        verify(client2, org.mockito.Mockito.timeout(2000)).closeGracefully();
     }
 
     @Test

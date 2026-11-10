@@ -40,6 +40,99 @@ import static org.mockito.Mockito.*;
 class McpLifecycleManagerNewFeaturesTest {
 
     @Test
+    void concurrentReloadsKeepRefreshOfTheCurrentClient() throws Exception {
+        var properties = new AgentProperties();
+        properties.getMcp().setEnabled(true);
+        var config = new AgentProperties.McpProperties.ServerProperties();
+        config.setName("fixture");
+        properties.getMcp().getServers().add(config);
+        var manager = spy(McpTestFactory.create(properties, null));
+        var firstClient = mock(McpSyncClient.class);
+        var finalClient = mock(McpSyncClient.class);
+        for (var client : List.of(firstClient, finalClient)) {
+            when(client.listTools()).thenReturn(new McpSchema.ListToolsResult(List.of(), null));
+            when(client.closeGracefully()).thenReturn(true);
+        }
+        doReturn(firstClient, finalClient).when(manager).createClient(any());
+        var scheduler = mock(java.util.concurrent.ScheduledExecutorService.class);
+        var closing = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        when(scheduler.shutdownNow()).thenAnswer(call -> {
+            closing.countDown();
+            assertThat(release.await(5, TimeUnit.SECONDS)).isTrue();
+            return List.of();
+        });
+        org.springframework.test.util.ReflectionTestUtils.setField(manager, "reconnectExecutor", scheduler);
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var first = executor.submit(manager::reloadConfiguredServers);
+            try {
+                assertThat(closing.await(2, TimeUnit.SECONDS)).isTrue();
+                var secondStarted = new CountDownLatch(1);
+                var second = executor.submit(() -> {
+                    secondStarted.countDown();
+                    manager.reloadConfiguredServers();
+                });
+                assertThat(secondStarted.await(2, TimeUnit.SECONDS)).isTrue();
+                assertThatThrownBy(() -> second.get(100, TimeUnit.MILLISECONDS))
+                    .isInstanceOf(java.util.concurrent.TimeoutException.class);
+                release.countDown();
+                first.get(5, TimeUnit.SECONDS);
+                second.get(5, TimeUnit.SECONDS);
+                org.awaitility.Awaitility.await().atMost(5, TimeUnit.SECONDS).untilAsserted(() -> {
+                    assertThat(manager.getClientsForTest().get("fixture")).isNotNull();
+                    assertThat(manager.getClientsForTest().get("fixture").client()).isSameAs(finalClient);
+                    var scheduled = (Map<?, ?>) org.springframework.test.util.ReflectionTestUtils
+                        .getField(manager, "toolRefreshFutures");
+                    assertThat(scheduled.get("fixture")).isInstanceOfSatisfying(
+                        java.util.concurrent.ScheduledFuture.class, future -> assertThat(future.isCancelled()).isFalse());
+                });
+            } finally {
+                release.countDown();
+            }
+        } finally {
+            manager.closeAll();
+        }
+    }
+
+    @Test
+    void reconnectUsesCurrentConfigAfterRetiringOldClient() throws Exception {
+        var properties = new AgentProperties();
+        properties.getMcp().setEnabled(true);
+        var fresh = new AgentProperties.McpProperties.ServerProperties();
+        fresh.setName("fixture");
+        fresh.setBaseUrl("https://current.example.test");
+        properties.getMcp().getServers().add(fresh);
+        var stale = new AgentProperties.McpProperties.ServerProperties();
+        stale.setName("fixture");
+        stale.setBaseUrl("https://old.example.test");
+        var context = mock(ApplicationContext.class);
+        when(context.getBean(ToolRegistry.class)).thenReturn(mock(ToolRegistry.class));
+        var manager = spy(new McpLifecycleManager(properties, new ObjectMapper(),
+            context, null, null, null, null, null, null));
+        var oldClient = mock(McpSyncClient.class);
+        when(oldClient.closeGracefully()).thenReturn(true);
+        var newClient = mock(McpSyncClient.class);
+        when(newClient.listTools()).thenReturn(new McpSchema.ListToolsResult(List.of(), null));
+        manager.getClientsForTest().put("fixture", new McpLifecycleManager.McpServerState(stale, oldClient, List.of()));
+        var called = new CountDownLatch(1);
+        var used = new java.util.concurrent.atomic.AtomicReference<String>();
+        doAnswer(inv -> {
+            AgentProperties.McpProperties.ServerProperties config = inv.getArgument(0);
+            verify(oldClient).closeGracefully();
+            used.set(config.getBaseUrl());
+            called.countDown();
+            return newClient;
+        }).when(manager).createClient(any());
+        try {
+            manager.reconnect("fixture");
+            assertThat(called.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(used.get()).isEqualTo(fresh.getBaseUrl());
+        } finally {
+            manager.closeAll();
+        }
+    }
+
+    @Test
     void sanitizeError_stripsBearerTokens() {
         assertThat(McpLifecycleManager.sanitizeError("Bearer sk-abc123 error"))
             .contains("[REDACTED]")
@@ -165,7 +258,7 @@ class McpLifecycleManagerNewFeaturesTest {
         manager.refreshTools("srv");
 
         // Verify stale tool was deregistered and new tool was registered
-        verify(registry).deregisterDynamic("mcp__srv__tool1");
+        verify(registry).deregisterDynamic("mcp__srv__tool1", "mcp-srv");
         verify(registry).registerDynamic(eq("mcp__srv__tool2"), eq("mcp-srv"), any(), any());
 
         // Verify state was updated
@@ -198,7 +291,7 @@ class McpLifecycleManagerNewFeaturesTest {
         manager.refreshTools("srv");
 
         verify(client).listTools("cursor-1");
-        verify(registry).deregisterDynamic("mcp__srv__old");
+        verify(registry).deregisterDynamic("mcp__srv__old", "mcp-srv");
         verify(registry).registerDynamic(eq("mcp__srv__page_one"), eq("mcp-srv"), any(), any());
         verify(registry).registerDynamic(eq("mcp__srv__page_two"), eq("mcp-srv"), any(), any());
         assertThat(manager.listServers().get(0).toolNames()).containsExactly("page-one", "page-two");
@@ -936,7 +1029,7 @@ class McpLifecycleManagerNewFeaturesTest {
         manager.refreshTools("srv");
 
         // Should NOT deregister or register anything
-        verify(registry, never()).deregisterDynamic(any());
+        verify(registry, never()).deregisterDynamic(any(), any());
         verify(registry, never()).registerDynamic(any(), any(), any());
         verify(registry, never()).registerDynamic(any(), any(), any(), any());
     }
@@ -1020,10 +1113,96 @@ class McpLifecycleManagerNewFeaturesTest {
 
         manager.reconnect("srv");
 
-        // Existing client should be closed
-        verify(client).close();
+        // Retirement closes the detached client outside the caller.
+        verify(client, org.mockito.Mockito.timeout(2000)).closeGracefully();
         // Server should be removed from clients map
         assertThat(manager.listServers()).isEmpty();
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"reconnect", "reload", "failed initialization"})
+    void replacementWaitsForSdkTransportCompletion(String trigger) throws Exception {
+        var properties = new AgentProperties();
+        properties.getMcp().setEnabled(true);
+        var config = new AgentProperties.McpProperties.ServerProperties();
+        config.setName("fixture");
+        properties.getMcp().getServers().add(config);
+        var manager = spy(McpTestFactory.create(properties, null));
+        var transport = mock(io.modelcontextprotocol.spec.McpClientTransport.class);
+        var released = reactor.core.publisher.Sinks.<Void>one();
+        var closing = new CountDownLatch(1);
+        when(transport.closeGracefully()).thenReturn(reactor.core.publisher.Mono.defer(() -> {
+            closing.countDown();
+            return released.asMono();
+        }));
+        doCallRealMethod().when(transport).protocolVersions();
+        doCallRealMethod().when(transport).close();
+        var client = spy(io.modelcontextprotocol.client.McpClient.sync(transport).build());
+        var replacement = mock(McpSyncClient.class);
+        when(replacement.listTools()).thenReturn(new McpSchema.ListToolsResult(List.of(), null));
+        when(replacement.closeGracefully()).thenReturn(true);
+        if ("failed initialization".equals(trigger)) {
+            doThrow(new IllegalStateException("initialization failed")).when(client).initialize();
+            doReturn(client, replacement).when(manager).createClient(any());
+        } else {
+            doReturn(replacement).when(manager).createClient(any());
+            manager.getClientsForTest().put("fixture",
+                new McpLifecycleManager.McpServerState(config, client, List.of()));
+        }
+
+        var scheduler = mock(java.util.concurrent.ScheduledExecutorService.class);
+        try {
+            if ("reload".equals(trigger)) {
+                manager.closeAll();
+            }
+            org.springframework.test.util.ReflectionTestUtils.setField(manager, "reconnectExecutor", scheduler);
+            switch (trigger) {
+                case "reload" -> manager.connectConfiguredServers();
+                case "reconnect" -> manager.reconnect("fixture");
+                default -> manager.connect(config);
+            }
+            assertThat(closing.await(2, TimeUnit.SECONDS)).isTrue();
+            verifyNoInteractions(scheduler);
+            verify(replacement, never()).initialize();
+            assertThat(manager.isConnected("fixture")).isFalse();
+            assertThat(released.tryEmitEmpty()).isEqualTo(reactor.core.publisher.Sinks.EmitResult.OK);
+            var reconnect = ArgumentCaptor.forClass(Runnable.class);
+            verify(scheduler, timeout(2000)).schedule(reconnect.capture(), eq(1L), eq(TimeUnit.SECONDS));
+            reconnect.getValue().run();
+            verify(replacement).initialize();
+            assertThat(manager.isConnected("fixture")).isTrue();
+        } finally {
+            released.tryEmitEmpty();
+            manager.closeAll();
+        }
+    }
+
+    @Test
+    void failedCloseKeepsTheConnectionReservedUntilAnExplicitRetrySucceeds() {
+        var properties = new AgentProperties();
+        var config = new AgentProperties.McpProperties.ServerProperties();
+        config.setName("fixture");
+        properties.getMcp().getServers().add(config);
+        var manager = spy(McpTestFactory.create(properties, null));
+        var client = mock(McpSyncClient.class);
+        when(client.closeGracefully()).thenReturn(false, true);
+        manager.getClientsForTest().put("fixture",
+            new McpLifecycleManager.McpServerState(config, client, List.of()));
+        var scheduler = mock(java.util.concurrent.ScheduledExecutorService.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(manager, "reconnectExecutor", scheduler);
+
+        try {
+            manager.reconnect("fixture");
+            verify(client, org.mockito.Mockito.timeout(2000)).closeGracefully();
+            org.mockito.Mockito.verifyNoInteractions(scheduler);
+            org.awaitility.Awaitility.await().atMost(2, TimeUnit.SECONDS).untilAsserted(() -> {
+                manager.reconnect("fixture");
+                verify(scheduler).schedule(any(Runnable.class), eq(1L), eq(TimeUnit.SECONDS));
+            });
+            verify(client, org.mockito.Mockito.times(2)).closeGracefully();
+        } finally {
+            manager.closeAll();
+        }
     }
 
     @Test

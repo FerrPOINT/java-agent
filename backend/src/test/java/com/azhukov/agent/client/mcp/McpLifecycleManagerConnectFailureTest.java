@@ -11,6 +11,32 @@ import static org.mockito.Mockito.when;
 
 class McpLifecycleManagerConnectFailureTest {
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void closesClientWhenHandshakeFails(boolean failListing) {
+        var properties = new AgentProperties();
+        var server = new AgentProperties.McpProperties.ServerProperties();
+        server.setName("test");
+        var client = mock(io.modelcontextprotocol.client.McpSyncClient.class);
+        var failure = new IllegalStateException("handshake failed");
+        if (failListing) {
+            when(client.listTools()).thenThrow(failure);
+        } else {
+            org.mockito.Mockito.doThrow(failure).when(client).initialize();
+        }
+        var manager = org.mockito.Mockito.spy(new McpLifecycleManager(properties, new ObjectMapper(),
+            mock(ApplicationContext.class), null, null, null, null, null, null));
+        org.mockito.Mockito.doReturn(client).when(manager).createClient(server);
+
+        try {
+            manager.connect(server);
+            org.mockito.Mockito.verify(client, org.mockito.Mockito.timeout(2000)).closeGracefully();
+            org.assertj.core.api.Assertions.assertThat(manager.isConnected("test")).isFalse();
+        } finally {
+            manager.closeAll();
+        }
+    }
+
     @Test
     void connectStdioFailureIsLoggedAndSwallowed() {
         AgentProperties properties = new AgentProperties();

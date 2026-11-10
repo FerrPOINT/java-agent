@@ -84,7 +84,7 @@ class McpLifecycleManagerStateTest {
 
         manager.closeAll();
 
-        verify(client).close();
+        verify(client, org.mockito.Mockito.timeout(2000)).closeGracefully();
         assertThat(manager.listServers()).isEmpty();
     }
 
