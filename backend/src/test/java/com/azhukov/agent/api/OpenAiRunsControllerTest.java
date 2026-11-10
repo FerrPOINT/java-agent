@@ -714,7 +714,7 @@ class OpenAiRunsControllerTest {
 
         @SuppressWarnings({"rawtypes", "unchecked"})
         ArgumentCaptor<List<Message>> historyCaptor = ArgumentCaptor.forClass((Class) List.class);
-        verify(openAiSessionService).persistHistory(eq(SESSION_ID), historyCaptor.capture());
+        verify(openAiSessionService, org.mockito.Mockito.timeout(2_000)).persistHistory(eq(SESSION_ID), historyCaptor.capture());
         assertThat(historyCaptor.getValue()).extracting(Message::content)
             .containsExactly("old question", "old answer");
     }
@@ -753,7 +753,7 @@ class OpenAiRunsControllerTest {
 
         @SuppressWarnings({"rawtypes", "unchecked"})
         ArgumentCaptor<List<Message>> historyCaptor = ArgumentCaptor.forClass((Class) List.class);
-        verify(openAiSessionService).persistHistory(eq(SESSION_ID), historyCaptor.capture());
+        verify(openAiSessionService, org.mockito.Mockito.timeout(2_000)).persistHistory(eq(SESSION_ID), historyCaptor.capture());
 
         List<Message> history = historyCaptor.getValue();
         assertThat(history).extracting(Message::role)
@@ -795,7 +795,7 @@ class OpenAiRunsControllerTest {
 
         @SuppressWarnings({"rawtypes", "unchecked"})
         ArgumentCaptor<List<Message>> historyCaptor = ArgumentCaptor.forClass((Class) List.class);
-        verify(openAiSessionService).persistHistory(eq(SESSION_ID), historyCaptor.capture());
+        verify(openAiSessionService, org.mockito.Mockito.timeout(2_000)).persistHistory(eq(SESSION_ID), historyCaptor.capture());
 
         List<Message> history = historyCaptor.getValue();
         assertThat(history).extracting(Message::role)
@@ -1155,7 +1155,7 @@ class OpenAiRunsControllerTest {
         String firstRunId = createRun("first");
         String secondRunId = createRun("second");
         waitForStatus(firstRunId, "running");
-        waitForStatus(secondRunId, "running");
+        waitForStatus(secondRunId, "queued");
         UUID firstControlSessionId = runService.get(firstRunId).controlSessionId();
         UUID secondControlSessionId = runService.get(secondRunId).controlSessionId();
         assertThat(firstControlSessionId).isNotEqualTo(secondControlSessionId);
@@ -1299,7 +1299,7 @@ class OpenAiRunsControllerTest {
 
         @SuppressWarnings({"rawtypes", "unchecked"})
         ArgumentCaptor<List<Message>> historyCaptor = ArgumentCaptor.forClass((Class) List.class);
-        verify(openAiSessionService).persistHistory(eq(SESSION_ID), historyCaptor.capture());
+        verify(openAiSessionService, org.mockito.Mockito.timeout(2_000)).persistHistory(eq(SESSION_ID), historyCaptor.capture());
         assertThat(historyCaptor.getValue()).hasSize(1);
         assertThat(historyCaptor.getValue().get(0).content())
             .isEqualTo("old question\n[image_url: https://example.com/a.png]");

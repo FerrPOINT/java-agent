@@ -65,6 +65,14 @@ public class OpenAiRunService {
     private final ExecutorService executor = Executors.newThreadPerTaskExecutor(
         Thread.ofVirtual().name("openai-runs-", 0).factory());
 
+    private com.azhukov.agent.core.agent.SessionTurnLockManager turnLocks =
+        new com.azhukov.agent.core.agent.SessionTurnLockManager();
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setTurnLocks(com.azhukov.agent.core.agent.SessionTurnLockManager turnLocks) {
+        this.turnLocks = turnLocks;
+    }
+
     public RunRecord submit(OpenAiSessionContext sessionContext,
                             String userMessage,
                             String requestedModel,
@@ -92,10 +100,6 @@ public class OpenAiRunService {
                             ApiRunAdmissionService.Reservation reservation) {
         sweepTerminalRuns();
         UUID sessionId = sessionContext.session().id();
-        if (historyToPersist != null && !historyToPersist.isEmpty()) {
-            openAiSessionService.persistHistory(sessionId, historyToPersist);
-        }
-
         String runId = "run_" + UUID.randomUUID().toString().replace("-", "");
         UUID controlSessionId = UUID.randomUUID();
         String userId = sessionContext.session().userId();
@@ -110,7 +114,7 @@ public class OpenAiRunService {
         }
         Session effectiveSession = runSession;
         try {
-            executor.submit(UserContext.wrap(() -> run(record, effectiveSession, userMessage, options, reservation)));
+            executor.submit(UserContext.wrap(() -> run(record, effectiveSession, userMessage, options, historyToPersist, reservation)));
             executor.submit(() -> monitorApprovals(record));
             return record;
         } catch (RuntimeException e) {
@@ -262,9 +266,8 @@ public class OpenAiRunService {
                      Session session,
                      Message userMessage,
                      ModelRequestOptions options,
+                     List<Message> historyToPersist,
                      ApiRunAdmissionService.Reservation reservation) {
-        record.setStatus("running", Map.of("last_event", "run.started"));
-        record.emit("run.started", Map.of());
         try {
             UserContext.requireCurrentAccess();
             if (record.stopRequested.get() || interruptToken.isCancelled(record.controlSessionId())) {
@@ -272,11 +275,19 @@ public class OpenAiRunService {
                 record.emit("run.cancelled", Map.of());
                 return;
             }
-            ChatResponseDto response = userMessage != null
-                    && userMessage.imageCount() != null
-                    && userMessage.imageCount() > 0
-                ? agentRuntimeService.runApiTurn(session, userMessage, options)
-                : agentRuntimeService.runApiTurn(session, userMessage != null ? userMessage.content() : "", options);
+            ChatResponseDto response = turnLocks.withHistoryTurn(session.id(), () -> {
+                if (record.stopRequested.get()) throw new IllegalStateException("Run stopped");
+                record.setStatus("running", Map.of("last_event", "run.started"));
+                record.emit("run.started", Map.of());
+                if (historyToPersist != null && !historyToPersist.isEmpty()) {
+                    openAiSessionService.persistHistory(session.id(), historyToPersist);
+                }
+                return userMessage != null
+                        && userMessage.imageCount() != null
+                        && userMessage.imageCount() > 0
+                    ? agentRuntimeService.runApiTurn(session, userMessage, options)
+                    : agentRuntimeService.runApiTurn(session, userMessage != null ? userMessage.content() : "", options);
+            });
             if (record.stopRequested.get() || interruptToken.isCancelled(record.controlSessionId())) {
                 record.setStatus("cancelled", Map.of("last_event", "run.cancelled"));
                 record.emit("run.cancelled", Map.of());

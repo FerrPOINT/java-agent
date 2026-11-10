@@ -143,15 +143,7 @@ public class AgentRuntimeService {
             applied.sessionId(), sessionUserId, properties.getModel().getModelName());
         boolean isNew = resolved.isNew();
         Session session = resolved.session();
-        boolean acquired = sessionTurnLockManager.tryAcquire(session.id(), 30);
-        if (!acquired) {
-            throw new IllegalStateException("Session " + session.id() + " is busy (another turn is in progress). Retry later.");
-        }
-        try {
-            return runResolvedTurn(applied, session, isNew);
-        } finally {
-            sessionTurnLockManager.release(session.id());
-        }
+        return sessionTurnLockManager.withTurn(session.id(), () -> runResolvedTurn(applied, session, isNew));
     }
 
     private ChatResponseDto runResolvedTurn(ChatRequest applied, Session session, boolean isNew) {
@@ -484,8 +476,11 @@ public class AgentRuntimeService {
         } else {
             session = createSession(AgentProperties.DEFAULT_USER_ID, "openai-compatible", "");
         }
-        TurnResult result = agentRuntime.runTurn(session, prompt);
-        persistMessages(session.id(), result.messages());
+        TurnResult result = sessionTurnLockManager.withTurn(session.id(), () -> {
+            TurnResult turn = agentRuntime.runTurn(session, prompt);
+            persistMessages(session.id(), turn.messages());
+            return turn;
+        });
         return result.messages().stream()
             .filter(m -> m.role() != null && m.role().name().equalsIgnoreCase("assistant"))
             .reduce((a, b) -> b)
@@ -727,11 +722,15 @@ public class AgentRuntimeService {
             request.yoloMode(), request.verboseMode());
     }
 
-public ChatResponseDto runApiTurn(Session session, String message, ModelRequestOptions options) {
+    public ChatResponseDto runApiTurn(Session session, String message, ModelRequestOptions options) {
         return runApiTurn(session, Message.user(message), options);
     }
 
-public ChatResponseDto runApiTurn(Session session, Message message, ModelRequestOptions options) {
+    public ChatResponseDto runApiTurn(Session session, Message message, ModelRequestOptions options) {
+        return sessionTurnLockManager.withTurn(session.id(), () -> runApiTurnLocked(session, message, options));
+    }
+
+    private ChatResponseDto runApiTurnLocked(Session session, Message message, ModelRequestOptions options) {
         ModelRequestOptions effectiveOptions = options != null ? options : ModelRequestOptions.empty();
         Session runtimeSession = RuntimeModelOptionsResolver.applyEffectiveRuntime(session, properties, effectiveOptions);
         Message userMessage = apiUserMessage(message);
