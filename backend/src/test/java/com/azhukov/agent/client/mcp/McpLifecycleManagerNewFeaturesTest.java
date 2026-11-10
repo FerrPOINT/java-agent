@@ -1276,6 +1276,32 @@ class McpLifecycleManagerNewFeaturesTest {
     }
 
     @Test
+    void oauthRetryCannotDispatchAChangedToolDefinition() throws Exception {
+        var manager = new McpLifecycleManager(new AgentProperties(), new ObjectMapper(), null, null,
+            null, null, null, null, null);
+        var oauth = mock(McpOAuthManager.class);
+        injectOAuthManager(manager, oauth);
+        var originalClient = mock(McpSyncClient.class);
+        var replacementClient = mock(McpSyncClient.class);
+        var original = McpSchema.Tool.builder("tool").description("original fixture").build();
+        var replacement = McpSchema.Tool.builder("tool").description("replacement fixture").build();
+        injectClient(manager, "srv", originalClient, List.of(original));
+        when(originalClient.callTool(any())).thenThrow(new RuntimeException("401 Unauthorized"));
+        org.mockito.Mockito.doAnswer(invocation -> {
+            injectClient(manager, "srv", replacementClient, List.of(replacement));
+            return null;
+        }).when(oauth).refreshToken("srv");
+
+        var admission = com.azhukov.agent.core.security.McpToolTrustService.ToolTrustMetadata
+            .nativeTool("srv", "full", original);
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> manager.executeModelTool("srv", "tool", "{}", admission))
+            .hasMessageContaining("changed after admission");
+        verify(originalClient, times(1)).callTool(any());
+        verify(replacementClient, times(0)).callTool(any());
+    }
+
+    @Test
     void executeToolReportsNeedsReauthWhenOauthRecoveryFails() throws Exception {
         AgentProperties properties = new AgentProperties();
         McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null, null, null, null, null, null, null);
