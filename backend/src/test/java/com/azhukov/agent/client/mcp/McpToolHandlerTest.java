@@ -51,7 +51,7 @@ class McpToolHandlerTest {
         McpSchema.CallToolResult result = new McpSchema.CallToolResult(
             List.of(new McpSchema.TextContent(null, "ok")), false, null, null);
         when(client.callTool(any())).thenReturn(result);
-        injectClient(manager, "srv", client, List.of());
+        injectClient(manager, "srv", client, List.of(McpSchema.Tool.builder("tool").build()));
 
         McpLifecycleManager.McpToolHandler handler = manager.new McpToolHandler("srv", "tool");
         ToolResult toolResult = handler.execute("{}", Message.user("hi"), Session.create("u", "p", "m"));
@@ -82,7 +82,7 @@ class McpToolHandlerTest {
             Map.of("count", 2),
             meta);
         when(client.callTool(any())).thenReturn(result);
-        injectClient(manager, "srv", client, List.of());
+        injectClient(manager, "srv", client, List.of(McpSchema.Tool.builder("tool").build()));
 
         McpLifecycleManager.McpToolHandler handler = manager.new McpToolHandler("srv", "tool");
         ToolResult toolResult = handler.execute("{}", Message.user("hi"), Session.create("u", "p", "m"));
@@ -116,7 +116,7 @@ class McpToolHandlerTest {
             null,
             null);
         when(client.callTool(any())).thenReturn(result);
-        injectClient(manager, "srv", client, List.of());
+        injectClient(manager, "srv", client, List.of(McpSchema.Tool.builder("tool").build()));
 
         McpLifecycleManager.McpToolHandler handler = manager.new McpToolHandler("srv", "tool");
         ToolResult toolResult = handler.execute("{}", Message.user("hi"), Session.create("u", "p", "m"));
@@ -155,7 +155,7 @@ class McpToolHandlerTest {
         McpSchema.CallToolResult result = new McpSchema.CallToolResult(
             List.of(new McpSchema.TextContent(null, "remote error")), true, null, null);
         when(client.callTool(any())).thenReturn(result);
-        injectClient(manager, "srv", client, List.of());
+        injectClient(manager, "srv", client, List.of(McpSchema.Tool.builder("tool").build()));
 
         McpLifecycleManager.McpToolHandler handler = manager.new McpToolHandler("srv", "tool");
         ToolResult toolResult = handler.execute("{}", Message.user("hi"), Session.create("u", "p", "m"));
@@ -181,7 +181,7 @@ class McpToolHandlerTest {
 
         McpSyncClient client = mock(McpSyncClient.class);
         when(client.callTool(any())).thenThrow(new RuntimeException("boom"));
-        injectClient(manager, "srv", client, List.of());
+        injectClient(manager, "srv", client, List.of(McpSchema.Tool.builder("tool").build()));
 
         McpLifecycleManager.McpToolHandler handler = manager.new McpToolHandler("srv", "tool");
         ToolResult toolResult = handler.execute("{}", Message.user("hi"), Session.create("u", "p", "m"));
@@ -218,7 +218,7 @@ class McpToolHandlerTest {
             }
             return ok;
         }).when(client).callTool(any());
-        injectClient(manager, "srv", client, List.of());
+        injectClient(manager, "srv", client, List.of(McpSchema.Tool.builder("tool").build()));
 
         try {
             McpLifecycleManager.McpToolHandler handler = manager.new McpToolHandler("srv", "tool");
@@ -252,7 +252,7 @@ class McpToolHandlerTest {
         McpSchema.CallToolResult result = new McpSchema.CallToolResult(
             List.of(new McpSchema.TextContent(null, "Bearer sk-secret123456 failed")), true, null, null);
         when(client.callTool(any())).thenReturn(result);
-        injectClient(manager, "srv", client, List.of());
+        injectClient(manager, "srv", client, List.of(McpSchema.Tool.builder("tool").build()));
 
         McpLifecycleManager.McpToolHandler handler = manager.new McpToolHandler("srv", "tool");
         ToolResult toolResult = handler.execute("{}", Message.user("hi"), Session.create("u", "p", "m"));
@@ -277,7 +277,7 @@ class McpToolHandlerTest {
 
         McpSyncClient client = mock(McpSyncClient.class);
         when(client.callTool(any())).thenThrow(new RuntimeException("still broken"));
-        injectClient(manager, "srv", client, List.of());
+        injectClient(manager, "srv", client, List.of(McpSchema.Tool.builder("tool").build()));
         McpLifecycleManager.McpToolHandler handler = manager.new McpToolHandler("srv", "tool");
 
         handler.execute("{}", Message.user("hi"), Session.create("u", "p", "m"));
@@ -305,7 +305,7 @@ class McpToolHandlerTest {
         McpSchema.CallToolResult ok = new McpSchema.CallToolResult(
             List.of(new McpSchema.TextContent(null, "ok")), false, null, null);
         when(client.callTool(any())).thenReturn(ok);
-        injectClient(manager, "srv", client, List.of());
+        injectClient(manager, "srv", client, List.of(McpSchema.Tool.builder("tool").build()));
         manager.forceMcpCircuitBreakerForTest("srv", McpLifecycleManager.MCP_CIRCUIT_BREAKER_THRESHOLD,
             McpLifecycleManager.MCP_CIRCUIT_BREAKER_COOLDOWN.plusSeconds(1));
 
@@ -330,7 +330,7 @@ class McpToolHandlerTest {
 
         McpSyncClient client = mock(McpSyncClient.class);
         when(client.callTool(any())).thenThrow(new RuntimeException("still broken"));
-        injectClient(manager, "srv", client, List.of());
+        injectClient(manager, "srv", client, List.of(McpSchema.Tool.builder("tool").build()));
         manager.forceMcpCircuitBreakerForTest("srv", McpLifecycleManager.MCP_CIRCUIT_BREAKER_THRESHOLD,
             McpLifecycleManager.MCP_CIRCUIT_BREAKER_COOLDOWN.plusSeconds(1));
         McpLifecycleManager.McpToolHandler handler = manager.new McpToolHandler("srv", "tool");
@@ -346,15 +346,9 @@ class McpToolHandlerTest {
 
     @SuppressWarnings("unchecked")
     private void injectClient(McpLifecycleManager manager, String name, McpSyncClient client, List<McpSchema.Tool> tools) throws Exception {
-        Field field = McpLifecycleManager.class.getDeclaredField("clients");
-        field.setAccessible(true);
-        ConcurrentHashMap<String, Object> map = (ConcurrentHashMap<String, Object>) field.get(manager);
-        Class<?> stateClass = Class.forName("com.azhukov.agent.client.mcp.McpLifecycleManager$McpServerState");
-        AgentProperties.McpProperties.ServerProperties props = new AgentProperties.McpProperties.ServerProperties();
+        var props = new AgentProperties.McpProperties.ServerProperties();
         props.setName(name);
-        java.lang.reflect.Constructor<?> ctor = stateClass.getDeclaredConstructors()[0];
-        ctor.setAccessible(true);
-        map.put(name, ctor.newInstance(props, client, tools));
+        manager.getClientsForTest().put(name, new McpLifecycleManager.McpServerState(props, client, tools));
     }
 
     private JsonNode errorPayload(ToolResult result) throws Exception {

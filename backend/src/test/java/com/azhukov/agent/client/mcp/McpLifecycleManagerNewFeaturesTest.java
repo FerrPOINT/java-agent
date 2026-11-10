@@ -570,7 +570,7 @@ class McpLifecycleManagerNewFeaturesTest {
         McpSyncClient client = mock(McpSyncClient.class);
         when(client.callTool(any())).thenReturn(new McpSchema.CallToolResult(
             List.of(new McpSchema.TextContent(null, huge)), false, null, null));
-        injectClient(manager, "srv", client, List.of());
+        injectClient(manager, "srv", client, List.of(McpSchema.Tool.builder("tool").build()));
 
         ToolResult result = manager.new McpToolHandler("srv", "tool").execute("{}", null, null);
 
@@ -1224,7 +1224,7 @@ class McpLifecycleManagerNewFeaturesTest {
 
         McpSyncClient client = mock(McpSyncClient.class);
         when(client.callTool(any())).thenThrow(new RuntimeException("Bearer sk-secret123456 failed"));
-        injectClient(manager, "srv", client, List.of());
+        injectClient(manager, "srv", client, List.of(McpSchema.Tool.builder("tool").build()));
 
         McpLifecycleManager.McpToolHandler handler = manager.new McpToolHandler("srv", "tool");
         ToolResult toolResult = handler.execute("{}", null, null);
@@ -1242,7 +1242,7 @@ class McpLifecycleManagerNewFeaturesTest {
 
         McpSyncClient client = mock(McpSyncClient.class);
         when(client.callTool(any())).thenThrow(new RuntimeException("key=supersecret leaked"));
-        injectClient(manager, "srv", client, List.of());
+        injectClient(manager, "srv", client, List.of(McpSchema.Tool.builder("tool").build()));
 
         try {
             manager.executeTool("srv", "tool", "{}");
@@ -1266,7 +1266,7 @@ class McpLifecycleManagerNewFeaturesTest {
         when(client.callTool(any()))
             .thenThrow(new RuntimeException("401 Unauthorized Bearer sk-old-token"))
             .thenReturn(success);
-        injectClient(manager, "srv", client, List.of());
+        injectClient(manager, "srv", client, List.of(McpSchema.Tool.builder("tool").build()));
 
         McpSchema.CallToolResult result = manager.executeTool("srv", "tool", "{}");
 
@@ -1286,7 +1286,7 @@ class McpLifecycleManagerNewFeaturesTest {
 
         McpSyncClient client = mock(McpSyncClient.class);
         when(client.callTool(any())).thenThrow(new RuntimeException("401 Unauthorized Bearer sk-old-token"));
-        injectClient(manager, "srv", client, List.of());
+        injectClient(manager, "srv", client, List.of(McpSchema.Tool.builder("tool").build()));
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> manager.executeTool("srv", "tool", "{}"))
             .isInstanceOf(RuntimeException.class)
@@ -1329,20 +1329,12 @@ class McpLifecycleManagerNewFeaturesTest {
     private void injectClient(McpLifecycleManager manager, String name, McpSyncClient client,
                               List<McpSchema.Tool> tools, String trust,
                               List<String> include, List<String> exclude) throws Exception {
-        Field field = McpLifecycleManager.class.getDeclaredField("clients");
-        field.setAccessible(true);
-        ConcurrentHashMap<String, Object> map = (ConcurrentHashMap<String, Object>) field.get(manager);
-        Class<?> stateClass = Class.forName("com.azhukov.agent.client.mcp.McpLifecycleManager$McpServerState");
-        AgentProperties.McpProperties.ServerProperties props = new AgentProperties.McpProperties.ServerProperties();
+        var props = new AgentProperties.McpProperties.ServerProperties();
         props.setName(name);
-        if (trust != null) {
-            props.setTrust(trust);
-        }
+        if (trust != null) props.setTrust(trust);
         props.getTools().setInclude(include);
         props.getTools().setExclude(exclude);
-        java.lang.reflect.Constructor<?> ctor = stateClass.getDeclaredConstructors()[0];
-        ctor.setAccessible(true);
-        map.put(name, ctor.newInstance(props, client, tools));
+        manager.getClientsForTest().put(name, new McpLifecycleManager.McpServerState(props, client, tools));
     }
 
     private void injectOAuthManager(McpLifecycleManager manager, McpOAuthManager oauthManager) throws Exception {

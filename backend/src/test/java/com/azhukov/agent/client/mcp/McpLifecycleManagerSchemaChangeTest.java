@@ -32,15 +32,9 @@ class McpLifecycleManagerSchemaChangeTest {
     @SuppressWarnings("unchecked")
     private void injectClient(McpLifecycleManager manager, String name, McpSyncClient client,
                               List<McpSchema.Tool> tools) throws Exception {
-        Field field = McpLifecycleManager.class.getDeclaredField("clients");
-        field.setAccessible(true);
-        ConcurrentHashMap<String, Object> map = (ConcurrentHashMap<String, Object>) field.get(manager);
-        Class<?> stateClass = Class.forName("com.azhukov.agent.client.mcp.McpLifecycleManager$McpServerState");
-        AgentProperties.McpProperties.ServerProperties props = new AgentProperties.McpProperties.ServerProperties();
+        var props = new AgentProperties.McpProperties.ServerProperties();
         props.setName(name);
-        java.lang.reflect.Constructor<?> ctor = stateClass.getDeclaredConstructors()[0];
-        ctor.setAccessible(true);
-        map.put(name, ctor.newInstance(props, client, tools));
+        manager.getClientsForTest().put(name, new McpLifecycleManager.McpServerState(props, client, tools));
     }
 
     @Test
