@@ -25,7 +25,10 @@ import javax.xml.parsers.ParserConfigurationException;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.nio.ByteBuffer;
+import java.io.InputStreamReader;
+import java.io.Reader;
+import java.io.StringReader;
+import java.nio.channels.Channels;
 import java.nio.charset.StandardCharsets;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.Charset;
@@ -141,68 +144,71 @@ public class ReadFileTool implements ToolHandler {
             if (targetCheck != null) {
                 return jsonFail(targetCheck.error());
             }
-            byte[] rawBytes;
+            int offset = Math.max(1, args.offset());
+            int start = offset - 1;
+            int limit = args.limit() > 0 ? args.limit() : 2000;
+            TextPage page;
+            boolean extractedDocument;
+            boolean empty;
+            long fileSize;
             try (var channel = com.azhukov.agent.core.security.SecureFileAccess.openRead(target)) {
-                rawBytes = java.nio.channels.Channels.newInputStream(channel).readAllBytes();
-            }
-            String content;
-            boolean extractedDocument = false;
-            try {
-                content = extractStructuredDocument(path, rawBytes);
-                extractedDocument = content != null;
+                fileSize = channel.size();
+                var input = Channels.newInputStream(channel);
+                byte[] prefix = input.readNBytes(200);
+                empty = prefix.length == 0;
+                channel.position(0);
+                String document = switch (extension(path)) {
+                    case ".ipynb", ".docx", ".xlsx", ".pptx", ".pdf" ->
+                        extractStructuredDocument(path, input.readNBytes(MAX_DOCUMENT_BYTES + 1));
+                    default -> null;
+                };
+                extractedDocument = document != null;
+                if (extractedDocument) {
+                    page = readPage(new StringReader(document), start, limit, false);
+                } else {
+                    Utf16Encoding utf16 = detectUtf16Encoding(prefix);
+                    if (utf16 == null && hasBinaryExtension(path)) {
+                        return binaryFile(rawPath);
+                    }
+                    channel.position(hasUtf16Bom(prefix) ? 2 : hasUtf8Bom(prefix) ? 3 : 0);
+                    var decoder = utf16 != null
+                        ? utf16.charset().newDecoder().onMalformedInput(CodingErrorAction.REPLACE)
+                        : StandardCharsets.UTF_8.newDecoder();
+                    page = readPage(new InputStreamReader(input, decoder), start, limit, utf16 == null);
+                }
             } catch (DocumentExtractionException e) {
                 return jsonFail("Cannot read '" + rawPath + "' (" + extension(path)
                     + "): document extraction failed - " + e.getMessage()
                     + ". Use terminal utilities to inspect or convert the file.");
-            }
-            if (content == null) {
-                if (isBinaryFile(path, rawBytes)) {
-                    return jsonFail("Cannot read binary file: " + rawPath + ". Use vision_analyze for images.");
-                }
-                content = decodeText(rawBytes);
+            } catch (CharacterCodingException e) {
+                return binaryFile(rawPath);
             }
 
-            List<String> lines = content.lines().toList();
-            int offset = Math.max(1, args.offset());
-            int start = offset - 1;
-            int limit = args.limit() > 0 ? args.limit() : 2000;
-            int end = (int) Math.min((long) lines.size(), (long) start + limit);
-
-            StringBuilder sb = new StringBuilder();
-            if (start < lines.size()) {
-                for (int i = start; i < end; i++) {
-                    sb.append(i + 1).append("|").append(lines.get(i)).append("\n");
-                }
-            }
-
-            // Remove trailing newline
-            String result = sb.toString();
-            if (result.endsWith("\n")) {
-                result = result.substring(0, result.length() - 1);
-            }
-
+            int totalLines = page.totalLines();
+            int end = (int) Math.min((long) totalLines, (long) start + limit);
+            String result = page.content();
             Map<String, Object> resultMap = new LinkedHashMap<>();
             resultMap.put("content", result);
-            resultMap.put("total_lines", lines.size());
-            resultMap.put("file_size", rawBytes.length);
-            resultMap.put("truncated", end < lines.size());
+            resultMap.put("total_lines", totalLines);
+            resultMap.put("file_size", fileSize);
+            resultMap.put("truncated", end < totalLines);
             if (extractedDocument) {
                 resultMap.put("extracted_document", true);
             }
 
             // p10: Truncation UX — when output is truncated by limit, show remaining lines count.
-            if (end < lines.size()) {
+            if (end < totalLines) {
                 int shown = end - start;
-                int remaining = lines.size() - end;
+                int remaining = totalLines - end;
                 resultMap.put("hint", "Use offset=" + (end + 1) + " to continue reading "
-                    + "(showing " + offset + "-" + (start + shown) + " of " + lines.size()
+                    + "(showing " + offset + "-" + (start + shown) + " of " + totalLines
                     + " lines, " + remaining + " remaining)");
             }
-            if (rawBytes.length == 0) {
+            if (empty) {
                 resultMap.put("hint", "File is empty (0 bytes).");
-            } else if (offset > lines.size() && !lines.isEmpty()) {
+            } else if (offset > totalLines && totalLines > 0) {
                 resultMap.put("hint", "Note: offset " + offset + " is beyond the end of the file ("
-                    + lines.size() + " lines total). Retry with offset <= " + lines.size() + ".");
+                    + totalLines + " lines total). Retry with offset <= " + totalLines + ".");
             }
 
             // Char cap truncation — Hermes parity: return next_offset so the
@@ -226,7 +232,7 @@ public class ReadFileTool implements ToolHandler {
                 resultMap.put("next_offset", nextOffset);
                 resultMap.put("hint", "Output truncated at the " + formatCount(MAX_READ_CHARS)
                     + "-char read budget after " + linesShown + " line(s) "
-                    + "(showing lines " + offset + "-" + shownEnd + " of " + lines.size()
+                    + "(showing lines " + offset + "-" + shownEnd + " of " + totalLines
                     + "). Use offset=" + nextOffset + " to continue reading.");
             }
             return ToolResult.ok(toJson(resultMap));
@@ -259,6 +265,44 @@ public class ReadFileTool implements ToolHandler {
             if (s.charAt(i) == '\n') count++;
         }
         return count + 1;
+    }
+
+    private record TextPage(String content, int totalLines) {}
+
+    // Preserve exact total_lines without holding the file or an entire line in memory.
+    private static TextPage readPage(Reader reader, int start, int limit, boolean rejectNul) throws IOException {
+        StringBuilder page = new StringBuilder();
+        char[] chunk = new char[8192];
+        int line = 0;
+        boolean firstChar = true;
+        boolean afterCr = false;
+        for (int count; (count = reader.read(chunk)) != -1;) {
+            for (int i = 0; i < count; i++) {
+                char ch = chunk[i];
+                if (ch == 0 && rejectNul) throw new CharacterCodingException();
+                if (ch == '\n' && afterCr) {
+                    afterCr = false;
+                    continue;
+                }
+                boolean newline = ch == '\r' || ch == '\n';
+                if (line >= start && line - start < limit && page.length() <= MAX_READ_CHARS) {
+                    if (firstChar) {
+                        if (!page.isEmpty()) page.append('\n');
+                        page.append(line + 1).append('|');
+                    }
+                    if (!newline) page.append(ch);
+                }
+                if (newline) line++;
+                firstChar = newline;
+                afterCr = ch == '\r';
+            }
+        }
+        if (!firstChar) line++;
+        return new TextPage(page.toString(), line);
+    }
+
+    private static ToolResult binaryFile(String rawPath) {
+        return jsonFail("Cannot read binary file: " + rawPath + ". Use vision_analyze for images.");
     }
 
     private static String decodeText(byte[] rawBytes) {
@@ -447,8 +491,8 @@ public class ReadFileTool implements ToolHandler {
     }
 
     private static String extractStructuredDocument(Path path, byte[] rawBytes) throws DocumentExtractionException {
-        String ext = extension(path);
-        return switch (ext) {
+        ensureDocumentSize(rawBytes);
+        return switch (extension(path)) {
             case ".ipynb" -> extractNotebookOrNull(path, rawBytes);
             case ".docx" -> extractDocx(rawBytes);
             case ".xlsx" -> extractXlsx(rawBytes);
@@ -840,16 +884,6 @@ public class ReadFileTool implements ToolHandler {
         return dot >= 0 ? name.substring(dot) : "";
     }
 
-    private boolean isBinaryFile(Path path, byte[] rawBytes) {
-        if (detectUtf16Encoding(rawBytes) != null) {
-            return false;
-        }
-        if (hasBinaryExtension(path)) {
-            return true;
-        }
-        return isLikelyBinaryBytes(rawBytes);
-    }
-
     private boolean hasBinaryExtension(Path path) {
         String fileName = path.getFileName().toString().toLowerCase(Locale.ROOT);
         int dotIndex = fileName.lastIndexOf('.');
@@ -858,26 +892,6 @@ public class ReadFileTool implements ToolHandler {
         }
         String ext = fileName.substring(dotIndex);
         return BINARY_EXTENSIONS.contains(ext);
-    }
-
-    private static boolean isLikelyBinaryBytes(byte[] rawBytes) {
-        if (rawBytes.length == 0) {
-            return false;
-        }
-        for (byte b : rawBytes) {
-            if (b == 0) {
-                return true;
-            }
-        }
-        try {
-            StandardCharsets.UTF_8.newDecoder()
-                .onMalformedInput(CodingErrorAction.REPORT)
-                .onUnmappableCharacter(CodingErrorAction.REPORT)
-                .decode(ByteBuffer.wrap(rawBytes));
-            return false;
-        } catch (CharacterCodingException e) {
-            return true;
-        }
     }
 
     private static boolean hasUtf8Bom(byte[] rawBytes) {
