@@ -23,12 +23,14 @@ public interface ModelClient {
                         StreamingResponseHandler handler) {
         try {
             ChatResponse response = complete(messages, tools, options);
-            if (response.hasToolCalls()) {
-                handler.onToolCalls(response.toolCalls());
-            } else {
+            if (response.hasContent() || !response.hasToolCalls()) {
                 handler.onToken(response.content());
             }
-            handler.onComplete();
+            if (response.hasToolCalls()) {
+                handler.onToolCalls(response.toolCalls());
+            }
+            Long outputTokens = response.usage() == null ? null : (long) response.usage().completionTokens();
+            handler.onComplete(response.finishReason(), outputTokens, response.reasoning());
         } catch (Exception e) {
             handler.onError(e);
         }
