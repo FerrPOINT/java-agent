@@ -1186,8 +1186,8 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                 // finalization with that mismatch would end the turn with the task unstarted.
                 // Re-prompt (bounded to 3 CONSECUTIVE stalls; budget resets after any
                 // successful tool round). finish_reason="stop" text finishes never enter this.
-                if (canRequestMore && "tool_calls".equalsIgnoreCase(finishReason) && collectedToolCalls.isEmpty()
-                        && droppedToolcallRetries < MAX_DROPPED_TOOLCALL_RETRIES) {
+                boolean droppedToolCall = "tool_calls".equalsIgnoreCase(finishReason) && collectedToolCalls.isEmpty();
+                if (canRequestMore && droppedToolCall && droppedToolcallRetries < MAX_DROPPED_TOOLCALL_RETRIES) {
                     droppedToolcallRetries++;
                     log.warn("finish_reason=tool_calls with empty tool_calls array (narration only) — re-prompting to emit the call (retry {}/{}, session {})",
                         droppedToolcallRetries, MAX_DROPPED_TOOLCALL_RETRIES, session.id());
@@ -1214,6 +1214,9 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                 // the response is NOT truncated — the model just produced reasoning only.
                 boolean isEmpty = (contentBuilder.length() == 0) && collectedToolCalls.isEmpty()
                     && !scrubber.hadThinkContent();
+                if (!canRequestMore && truncatedParts.isEmpty() && (isEmpty || droppedToolCall)) {
+                    continue agentLoop;
+                }
                 streamEmptyGuard.recordEmptyAttempt(
                     properties.getModel().getModelName(),
                     properties.getModel().getProvider(),
@@ -1330,6 +1333,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                 // When the model finishes (STOP) after editing code without fresh
                 // verification evidence, inject a nudge requesting tests/build.
                 if (properties.getVerifyOnStop().isEnabled()
+                    && !iterationBudget.isExhausted(budget)
                     && toolExecutionService.getFileMutationTracker() != null) {
                     var tracker = toolExecutionService.getFileMutationTracker();
                     var changedPaths = tracker.getTurnMutationPaths();
