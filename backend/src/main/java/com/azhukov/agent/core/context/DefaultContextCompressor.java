@@ -31,7 +31,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -1254,54 +1254,30 @@ public class DefaultContextCompressor implements ContextCompressor {
  + m.content().substring(m.content().length() - TOOL_OUTPUT_KEEP_TAIL);
  }
 
-     /**
-     * HERMES-SYNC Bug 4: Wraps the summarize() call with a timeout budget.
-     * <p>
-     * If the LLM summary generation takes longer than the configured
-     * {@code agent.compression.summary-timeout-seconds} (default 120s), the method
-     * falls back to {@link #fallbackSummarize(String)} to ensure compression
-     * completes without hanging.
-     * <p>
-     * Uses {@link CompletableFuture#supplyAsync} to run the summary generation
-     * off the calling thread, with {@link CompletableFuture#orTimeout} to enforce
-     * the deadline. On timeout, the underlying LLM call is not cancelled (the
-     * HTTP client may continue), but the compression proceeds with the fallback.
-     *
-     * @param text the text to summarize
-     * @param summaryBudgetTokens the token budget for the summary
-     * @return the LLM-generated summary, or a fallback truncation if timed out
-     */
+     /** Bounds the entire synchronous model request and its retry delays. */
     private String summarizeWithTimeout(String text, int summaryBudgetTokens) {
-        int idleSeconds = properties.getCompression().getSummaryTimeoutSeconds();
-        // Hermes parity (conversation_compression.py:789): ceiling clamped to at least
-        // one idle window; effective pre-commit budget = min(idle, ceiling).
-        int ceilingSeconds = properties.getCompression().getTotalCeilingSeconds();
-        int timeoutSeconds = Math.min(idleSeconds, Math.max(ceilingSeconds, idleSeconds)) == idleSeconds
-            ? idleSeconds
-            : Math.min(idleSeconds, ceilingSeconds);
-        // If timeout is disabled (0 or negative), call summarize directly
-        if (timeoutSeconds <= 0) {
+        int configured = properties.getCompression().getSummaryTimeoutSeconds();
+        if (configured <= 0) {
             return summarize(text, summaryBudgetTokens);
         }
+        int ceiling = properties.getCompression().getTotalCeilingSeconds();
+        int timeoutSeconds = ceiling > 0 ? Math.min(configured, ceiling) : configured;
+        var summary = new FutureTask<>(() -> summarize(text, summaryBudgetTokens));
+        Thread.ofVirtual().name("compression-summary").start(summary);
         try {
-            CompletableFuture<String> future = CompletableFuture.supplyAsync(
-                () -> summarize(text, summaryBudgetTokens));
-            try {
-                return future.get(timeoutSeconds, TimeUnit.SECONDS);
-            } catch (TimeoutException e) {
-                future.cancel(true);
-                log.warn("Compression summary timed out after {}s — falling back to truncation", timeoutSeconds);
-                return fallbackSummarize(text, null, summaryBudgetTokens);
-            } catch (InterruptedException e) {
-                future.cancel(true);
-                Thread.currentThread().interrupt();
-                log.warn("Compression summary interrupted — falling back to truncation");
-                return fallbackSummarize(text, null, summaryBudgetTokens);
-            }
+            return summary.get(timeoutSeconds, TimeUnit.SECONDS);
+        } catch (TimeoutException e) {
+            log.warn("Compression summary exceeded its {}s deadline", timeoutSeconds);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("Compression summary interrupted");
         } catch (ExecutionException e) {
-            log.warn("Compression summary failed with execution exception — falling back: {}", e.getMessage());
-            return fallbackSummarize(text, null, summaryBudgetTokens);
+            log.warn("Compression summary failed: {}", e.getCause().getMessage());
+        } finally {
+            // Interrupt the synchronous provider call or any outstanding retry delay.
+            summary.cancel(true);
         }
+        return fallbackSummarize(text, null, summaryBudgetTokens);
     }
 
     private String summarize(String text, int summaryBudgetTokens) {
@@ -1343,7 +1319,7 @@ public class DefaultContextCompressor implements ContextCompressor {
              || msg.contains("429") || msg.contains("token limit")
              || msg.contains("too many requests") || msg.contains("insufficient_quota")
              || msg.contains("resource_exhausted");
-         if (isQuotaError && attempt < maxRetries) {
+         if (isQuotaError && attempt < maxRetries && !Thread.currentThread().isInterrupted()) {
              long waitMs = backoffMs[Math.min(attempt, backoffMs.length - 1)];
              log.warn("Compression summary model quota exhausted (attempt {}/{}), retrying in {} ms: {}",
                  attempt + 1, maxRetries + 1, waitMs, e.getMessage());
