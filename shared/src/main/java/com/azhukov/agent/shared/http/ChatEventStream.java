@@ -42,11 +42,10 @@ public final class ChatEventStream {
                 try {
                     event = mapper.readTree(data);
                 } catch (JsonProcessingException ignored) {
-                    // Ignore malformed records, but still require an explicit terminal event.
-                    continue;
+                    throw new IOException("Malformed JSON in backend chat stream");
                 }
                 if (event == null || !event.isObject()) {
-                    continue;
+                    throw new IOException("Expected a JSON object in backend chat stream");
                 }
                 String type = event.path("type").asText();
                 if ("error".equalsIgnoreCase(type)) {

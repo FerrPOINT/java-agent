@@ -617,19 +617,22 @@ class AgentBackendClientTest {
     }
 
     @Test
-    void chatStream_malformedSSEDataLine_skipped() {
+    void chatStream_malformedFrameFailsEvenWithDone() {
         when(responseSpec.body(InputStream.class)).thenReturn(sseStream(
-            "data:not valid json",
-            "data:{\"type\":\"token\",\"token\":\"OK\"}",
+            "data:{\"type\":\"token\",\"token\":\"partial\"}",
+            "data:{invalid private payload",
             "data:{\"type\":\"done\"}"
         ));
 
-        StringBuilder received = new StringBuilder();
+        var error = new AtomicReference<Throwable>();
+        var completed = new AtomicReference<AgentBackendClient.ChatResult>();
+        var result = client.chatStream("Hi", "s1",
+            t -> {}, t -> {}, (n, r) -> {}, completed::set, error::set);
 
-        AgentBackendClient.ChatResult result = client.chatStream("Hi", "s1",
-            received::append, t -> {}, (n, r) -> {}, r -> {}, e -> {});
-
-        assertThat(result.content()).isEqualTo("OK");
+        assertThat(result.content()).isEqualTo("partial");
+        assertThat(result.turnSucceeded()).isFalse();
+        assertThat(completed.get()).isNull();
+        assertThat(error.get()).hasMessage("Malformed JSON in backend chat stream");
     }
 
     @Test
