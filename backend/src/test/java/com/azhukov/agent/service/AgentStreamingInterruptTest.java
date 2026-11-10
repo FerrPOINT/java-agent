@@ -219,6 +219,7 @@ class AgentStreamingInterruptTest {
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(strings = {"stop", "length"})
     void interruptMidStream_stopsEmittingTokens(String finishReason) throws Exception {
+        properties.getCore().setMaxTurns(1);
         ChatRequest request = ChatRequest.simple(SESSION_ID, USER_MESSAGE, null, 10_000L);
 
         CollectingEmitter emitter = new CollectingEmitter(500L);
@@ -246,7 +247,7 @@ class AgentStreamingInterruptTest {
         assertThat(tokenEvents).hasSize(1);
         StreamEvent firstToken = deserialize(tokenEvents.get(0).data, StreamEvent.class);
         assertThat(firstToken.token()).isEqualTo("first");
-        verify(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+        org.mockito.Mockito.verify(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
         assertThat(emitter.events).noneMatch(e -> "continuation".equals(e.name));
 
         // Should have an "interrupted" event from the loop check after streaming returns

@@ -792,8 +792,9 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                 }
 
                 if (interruptToken != null && interruptToken.isCancelled(session.id())) {
-                    retainVisibleText(turnMessages, turnIndex, truncatedParts.toString() + contentBuilder);
-                    continue agentLoop;
+                    response = ChatResponse.text(truncatedParts.toString() + contentBuilder)
+                        .withReasoning(capturedReasoning.get());
+                    break;
                 }
 
                 // Handle errors with retry
