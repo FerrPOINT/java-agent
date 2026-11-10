@@ -174,6 +174,22 @@ class MessageApiClientMetadataOnErrorTest {
     }
 
     @Test
+    void backendInterruptDoesNotCompleteTheTurn() {
+        serveSse("{\"type\":\"token\",\"token\":\"partial\"}",
+            "{\"type\":\"interrupted\",\"message\":\"Turn cancelled by user.\"}", "{\"type\":\"done\"}");
+        var completed = new AtomicReference<AgentBackendClient.ChatResult>();
+        var error = new AtomicReference<Throwable>();
+        var client = new MessageApiClient(restClient, mapper, new com.azhukov.agent.bot.config.BotProperties());
+
+        var result = client.chatStream("hi", null, null, token -> {}, tool -> {},
+            (name, preview) -> {}, retry -> {}, review -> {}, clarify -> {}, completed::set, error::set);
+
+        assertThat(result.turnSucceeded()).isFalse();
+        assertThat(completed.get()).isNull();
+        assertThat(error.get()).isInstanceOf(CancellationException.class);
+    }
+
+    @Test
     void idleHttpReadTimesOutWithoutRepeatingPost() {
         var requests = new AtomicInteger();
         var release = new java.util.concurrent.CountDownLatch(1);

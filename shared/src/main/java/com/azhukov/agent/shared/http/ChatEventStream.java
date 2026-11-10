@@ -38,9 +38,6 @@ public final class ChatEventStream {
                 if (data.isEmpty()) {
                     continue;
                 }
-                if ("[DONE]".equals(data)) {
-                    return;
-                }
                 JsonNode event;
                 try {
                     event = mapper.readTree(data);
@@ -55,6 +52,9 @@ public final class ChatEventStream {
                 if ("error".equalsIgnoreCase(type)) {
                     throw new IOException(event.path("error").asText(
                         event.path("message").asText("Unknown stream error")));
+                }
+                if ("interrupted".equalsIgnoreCase(type)) {
+                    throw new CancellationException(event.path("message").asText("Backend stream cancelled"));
                 }
                 onEvent.accept(event);
                 if ("done".equalsIgnoreCase(type)) {
