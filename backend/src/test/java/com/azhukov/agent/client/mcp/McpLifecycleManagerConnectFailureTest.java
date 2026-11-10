@@ -30,7 +30,7 @@ class McpLifecycleManagerConnectFailureTest {
 
         try {
             manager.connect(server);
-            org.mockito.Mockito.verify(client).close();
+            org.mockito.Mockito.verify(client, org.mockito.Mockito.timeout(2000)).closeGracefully();
             org.assertj.core.api.Assertions.assertThat(manager.isConnected("test")).isFalse();
         } finally {
             manager.closeAll();

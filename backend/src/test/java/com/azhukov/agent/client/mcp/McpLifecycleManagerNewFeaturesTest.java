@@ -1064,9 +1064,11 @@ class McpLifecycleManagerNewFeaturesTest {
         assertThat(manager.listServers()).isEmpty();
     }
 
-    @Test
-    void reconnectWaitsForSdkTransportCompletion() throws Exception {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"reconnect", "reload", "failed initialization"})
+    void replacementWaitsForSdkTransportCompletion(String trigger) throws Exception {
         var properties = new AgentProperties();
+        properties.getMcp().setEnabled(true);
         var config = new AgentProperties.McpProperties.ServerProperties();
         config.setName("fixture");
         properties.getMcp().getServers().add(config);
@@ -1078,20 +1080,37 @@ class McpLifecycleManagerNewFeaturesTest {
             closing.countDown();
             return released.asMono();
         }));
-        org.mockito.Mockito.doCallRealMethod().when(transport).protocolVersions();
-        var client = io.modelcontextprotocol.client.McpClient.sync(transport).build();
-        manager.getClientsForTest().put("fixture",
-            new McpLifecycleManager.McpServerState(config, client, List.of()));
-        var scheduler = mock(java.util.concurrent.ScheduledExecutorService.class);
-        org.springframework.test.util.ReflectionTestUtils.setField(manager, "reconnectExecutor", scheduler);
+        doCallRealMethod().when(transport).protocolVersions();
+        doCallRealMethod().when(transport).close();
+        var client = spy(io.modelcontextprotocol.client.McpClient.sync(transport).build());
+        var replacement = mock(McpSyncClient.class);
+        when(replacement.listTools()).thenReturn(new McpSchema.ListToolsResult(List.of(), null));
+        when(replacement.closeGracefully()).thenReturn(true);
+        if ("failed initialization".equals(trigger)) {
+            doThrow(new IllegalStateException("initialization failed")).when(client).initialize();
+            doReturn(client, replacement).when(manager).createClient(any());
+        } else {
+            doReturn(replacement).when(manager).createClient(any());
+            manager.getClientsForTest().put("fixture",
+                new McpLifecycleManager.McpServerState(config, client, List.of()));
+        }
 
         try {
-            manager.reconnect("fixture");
+            switch (trigger) {
+                case "reload" -> {
+                    manager.closeAll();
+                    manager.connectConfiguredServers();
+                }
+                case "reconnect" -> manager.reconnect("fixture");
+                default -> manager.connect(config);
+            }
             assertThat(closing.await(2, TimeUnit.SECONDS)).isTrue();
-            org.mockito.Mockito.verifyNoInteractions(scheduler);
+            verify(replacement, never()).initialize();
+            assertThat(manager.isConnected("fixture")).isFalse();
             assertThat(released.tryEmitEmpty()).isEqualTo(reactor.core.publisher.Sinks.EmitResult.OK);
-            verify(scheduler, org.mockito.Mockito.timeout(2000)).schedule(
-                any(Runnable.class), eq(1L), eq(TimeUnit.SECONDS));
+            org.awaitility.Awaitility.await().atMost(3, TimeUnit.SECONDS)
+                .until(() -> manager.isConnected("fixture"));
+            verify(replacement).initialize();
         } finally {
             released.tryEmitEmpty();
             manager.closeAll();
