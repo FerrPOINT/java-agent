@@ -972,7 +972,7 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
                     }
                     // Hermes parity (_CONTENT_POLICY_RECOVERY_HINT): append recovery hint
                     // to content-policy refusal messages so the user gets actionable advice.
-                    if (finalErrorType == ErrorClassifier.ErrorType.CONTENT_POLICY
+                    if (errorType == ErrorClassifier.ErrorType.CONTENT_POLICY
                         && !errorMsg.contains(ResponseRecoveryPolicy.CONTENT_POLICY_RECOVERY_HINT)) {
                         errorMsg += "\n\n" + ResponseRecoveryPolicy.CONTENT_POLICY_RECOVERY_HINT;
                     }
