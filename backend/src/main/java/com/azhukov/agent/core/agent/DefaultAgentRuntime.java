@@ -754,41 +754,22 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 continue;
             }
 
-            // ── c2: LENGTH continuation (Hermes conversation_loop.py:3711-3775) ──
-            // Sync-path parity with the streaming loop: the partial fragment is
-            // ACCUMULATED (stitched) and the model is asked to continue; ceiling 4;
-            // on exhaustion the stitched partial is KEPT, not discarded.
-            if (ResponseRecoveryPolicy.isLengthContinuable(response, lengthContinueRetries)) {
+            boolean budgetExhausted = modelAttempts.exhausted();
+            if (!budgetExhausted && ResponseRecoveryPolicy.isLengthContinuable(response, lengthContinueRetries)) {
                 lengthContinueRetries++;
                 log.info("LENGTH truncation detected — partial content ({} chars), continuation attempt {}/{}",
                     response.content().length(), lengthContinueRetries,
                     ResponseRecoveryPolicy.MAX_LENGTH_CONTINUATION_ATTEMPTS);
-                String partialContent = response.content();
-                // The continuation fragment and nudge must become part of the live
-                // transcript. Building a throwaway context loses both at the next loop
-                // iteration, so the model simply repeats the original request.
-                if (partialContent != null && !partialContent.isEmpty()) {
-                    truncatedParts.append(partialContent);
-                    turnMessages.add(Message.assistant(partialContent, turnIndex));
-                }
+                truncatedParts.append(response.content());
+                turnMessages.add(Message.assistant(response.content(), turnIndex));
                 turnMessages.add(Message.user(ResponseRecoveryPolicy.LENGTH_NUDGE));
                 turnIndex++;
                 session = resolveRotatedSession(session);
                 continue;
             }
-            if (("length".equalsIgnoreCase(response.finishReason()) || "incomplete".equalsIgnoreCase(response.finishReason()))
-                    && response.hasContent() && !response.hasToolCalls()
-                    && lengthContinueRetries >= ResponseRecoveryPolicy.MAX_LENGTH_CONTINUATION_ATTEMPTS) {
-                String stitched = truncatedParts + response.content();
-                log.warn("Response still truncated after {} continuation attempts — keeping partial ({} chars)",
-                    lengthContinueRetries, stitched.length());
-                response = ChatResponse.text(stitched, "STOP");
-                truncatedParts.setLength(0);
-                // fall through to the no-tool-calls completion path below
-            } else if (truncatedParts.length() > 0 && !response.hasToolCalls() && response.hasContent()) {
-                // c2: successful STOP after LENGTH continuations — join the stitched
-                // fragments (streaming parity: response construction concatenates).
-                response = ChatResponse.text(truncatedParts + response.content(), "STOP");
+            if (!truncatedParts.isEmpty() && !response.hasToolCalls() && response.hasContent()) {
+                response = ChatResponse.text(truncatedParts + response.content(), "STOP")
+                    .withReasoning(response.reasoning());
                 truncatedParts.setLength(0);
             }
 
@@ -973,7 +954,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 // ── Verify-on-stop guard (Hermes parity: verification_stop.py) ──
                 // When the model finishes (STOP) after editing code without fresh
                 // verification evidence, inject a nudge requesting tests/build.
-                if (properties.getVerifyOnStop().isEnabled() && toolExecutionService != null
+                if (properties.getVerifyOnStop().isEnabled() && !budgetExhausted && toolExecutionService != null
                     && toolExecutionService.getFileMutationTracker() != null) {
                     var tracker = toolExecutionService.getFileMutationTracker();
                     var changedPaths = tracker.getTurnMutationPaths();
