@@ -26,6 +26,7 @@ import io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTranspor
 import io.modelcontextprotocol.client.transport.ServerParameters;
 import io.modelcontextprotocol.client.transport.StdioClientTransport;
 import io.modelcontextprotocol.client.transport.customizer.McpSyncHttpClientRequestCustomizer;
+import io.modelcontextprotocol.spec.McpError;
 import io.modelcontextprotocol.spec.McpSchema;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -1766,6 +1767,9 @@ public class McpLifecycleManager {
     }
 
     private static boolean isConnectionError(Throwable error) {
+        if (isJsonRpcError(error)) {
+            return false;
+        }
         String message = error.getMessage();
         if (message == null) {
             return false;
@@ -1864,7 +1868,19 @@ public class McpLifecycleManager {
             + sanitizeError(cause.getMessage()), cause);
     }
 
+    private static boolean isJsonRpcError(Throwable error) {
+        for (Throwable cause = error; cause != null; cause = cause.getCause()) {
+            if (cause instanceof McpError mcpError && mcpError.getJsonRpcError() != null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private boolean isAuthError(Throwable error) {
+        if (isJsonRpcError(error)) {
+            return false;
+        }
         Throwable current = error;
         while (current != null) {
             String message = current.getMessage();
