@@ -202,7 +202,7 @@ public class AgentStreamingService {
     // TurnExecutor contains the shared model-call-with-retry, tool execution,
     // think-block stripping, and context-compression-check logic. The streaming
     // path delegates error classification + backoff calculation to it via
-    // classifyForRetry(), and uses its static estimateResponseTokens helper.
+    // computeBackoffMs(), and uses its static estimateResponseTokens helper.
     // Lazily initialized from existing dependencies to preserve the
     // @RequiredArgsConstructor signature (tests construct this class positionally
     // without going through Spring's @PostConstruct lifecycle).
