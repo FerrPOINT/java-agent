@@ -1,6 +1,6 @@
 package com.azhukov.agent.api;
 
-import com.azhukov.agent.api.dto.ChatResponseDto;
+import com.azhukov.agent.shared.dto.ChatResponseDto;
 import com.azhukov.agent.api.mapper.OpenAiMapper;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.agent.InterruptToken;
