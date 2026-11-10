@@ -107,6 +107,8 @@ public class McpLifecycleManager {
     // Access under the clients monitor. A reservation in backoff has no handshake to join.
     private static final class ConnectionAttempt {
         private CompletableFuture<Void> handshake;
+        private McpSyncClient retiringClient;
+        private boolean closing;
     }
 
     /** Servers registered lazily from the schema cache; the first call connects them. */
@@ -339,6 +341,7 @@ public class McpLifecycleManager {
                 }
             } else {
                 if (allowLazy) {
+                    closeRetiredClient(name, existing);
                     return;
                 }
                 owner = existing;
@@ -975,8 +978,12 @@ public class McpLifecycleManager {
     private void scheduleReconnect(String name, int attempt, boolean initial) {
         var owner = new ConnectionAttempt();
         synchronized (clients) {
-            if (shutdownRequested.get() || clients.containsKey(name)
-                    || connectionsInFlight.putIfAbsent(name, owner) != null) {
+            if (shutdownRequested.get() || clients.containsKey(name)) {
+                return;
+            }
+            var existing = connectionsInFlight.putIfAbsent(name, owner);
+            if (existing != null) {
+                closeRetiredClient(name, existing);
                 return;
             }
             scheduleReconnect(name, attempt, initial, owner);
@@ -1058,16 +1065,41 @@ public class McpLifecycleManager {
             if (refresh != null) {
                 refresh.cancel(false);
             }
+            owner.retiringClient = current.client();
             connectionsInFlight.put(name, owner);
-            toolCallExecutor.execute(() -> {
-                safeCloseClient(expected.client());
+            closeRetiredClient(name, owner);
+        }
+    }
+
+    /** Called under the clients monitor; the SDK wait runs outside it. */
+    private void closeRetiredClient(String name, ConnectionAttempt owner) {
+        var retired = owner.retiringClient;
+        if (retired == null || owner.closing) {
+            return;
+        }
+        owner.closing = true;
+        toolCallExecutor.execute(() -> {
+            boolean closed = false;
+            try {
+                closed = retired.closeGracefully();
+            } catch (RuntimeException failure) {
+                log.warn("MCP client {} close failed: {}", name, sanitizeError(failure.getMessage()));
+            } finally {
                 synchronized (clients) {
-                    if (!shutdownRequested.get() && connectionsInFlight.get(name) == owner) {
-                        scheduleReconnect(name, 0, false, owner);
+                    owner.closing = false;
+                    if (closed) {
+                        owner.retiringClient = null;
+                        if (shutdownRequested.get()) {
+                            connectionsInFlight.remove(name, owner);
+                        } else if (connectionsInFlight.get(name) == owner) {
+                            scheduleReconnect(name, 0, false, owner);
+                        }
+                    } else {
+                        log.warn("MCP client {} is still retiring; reconnect suspended until close is confirmed", name);
                     }
                 }
-            });
-        }
+            }
+        });
     }
 
     // ── Dynamic tool refresh ─────────────────────────────────────────────
@@ -1839,7 +1871,8 @@ public class McpLifecycleManager {
                     owner.handshake.cancel(false);
                 }
             });
-            connectionsInFlight.clear();
+            // Keep custody of retired clients whose transport has not confirmed closure.
+            connectionsInFlight.values().removeIf(owner -> owner.retiringClient == null);
             clients.forEach((name, state) -> unregisterTools(name, state.tools()));
             lazyServers.forEach(this::unregisterTools);
             lazyServers.clear();
