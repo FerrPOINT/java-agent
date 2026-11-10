@@ -1,6 +1,7 @@
 package com.azhukov.agent.shared.http;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -22,6 +23,7 @@ public final class ChatEventStream {
         if (body == null) {
             throw new IllegalStateException("Backend stream returned no body");
         }
+        var json = mapper.reader().with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
         try (var reader = new BufferedReader(new InputStreamReader(body, StandardCharsets.UTF_8))) {
             while (true) {
                 if (Thread.currentThread().isInterrupted()) {
@@ -40,7 +42,7 @@ public final class ChatEventStream {
                 }
                 JsonNode event;
                 try {
-                    event = mapper.readTree(data);
+                    event = json.readTree(data);
                 } catch (JsonProcessingException ignored) {
                     throw new IOException("Malformed JSON in backend chat stream");
                 }
