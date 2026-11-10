@@ -104,7 +104,7 @@ public class McpLifecycleManager {
     private final Map<String, CompletableFuture<Void>> connectionsInFlight = new java.util.HashMap<>();
 
     /** Servers registered lazily from the schema cache; the first call connects them. */
-    private final java.util.Set<String> lazyServers = ConcurrentHashMap.newKeySet();
+    private final Map<String, List<McpSchema.Tool>> lazyServers = new ConcurrentHashMap<>();
     @Autowired(required = false)
     private McpOAuthManager mcpOAuthManager;
     @Autowired(required = false)
@@ -318,7 +318,7 @@ public class McpLifecycleManager {
         CompletableFuture<Void> existing;
         synchronized (clients) {
             if (shutdownRequested.get() || clients.containsKey(name)
-                    || (allowLazy && lazyServers.contains(name))) {
+                    || (allowLazy && lazyServers.containsKey(name))) {
                 return;
             }
             existing = connectionsInFlight.putIfAbsent(name, token);
@@ -377,6 +377,7 @@ public class McpLifecycleManager {
                 } finally {
                     if (!published) {
                         clients.remove(name, state);
+                        unregisterTools(name, tools);
                     }
                 }
             }
@@ -449,7 +450,7 @@ public class McpLifecycleManager {
                     toolRegistry().registerDynamic(fullName, mcpToolsetName(server.getName()),
                         definition, new McpToolHandler(server.getName(), tool.name()));
                 }
-                lazyServers.add(server.getName());
+                lazyServers.put(server.getName(), registeredTools);
             }
             log.info("MCP server {} (lazy): registered {} tool(s) from the schema cache (no spawn)",
                 server.getName(), registeredTools.size());
@@ -504,7 +505,7 @@ public class McpLifecycleManager {
      * normal call when the server is already live.
      */
     private void ensureConnectedForCall(String serverName) {
-        if (clients.containsKey(serverName) || !lazyServers.contains(serverName)) {
+        if (clients.containsKey(serverName) || !lazyServers.containsKey(serverName)) {
             return;
         }
         var serverProps = effectiveServers().stream()
@@ -1023,6 +1024,7 @@ public class McpLifecycleManager {
                 return;
             }
             clients.remove(name);
+            unregisterTools(name, current.tools());
             var refresh = toolRefreshFutures.remove(name);
             if (refresh != null) {
                 refresh.cancel(false);
@@ -1222,6 +1224,17 @@ public class McpLifecycleManager {
         // Hermes #56832 write-through: persist the live manifest so the NEXT
         // startup registers this server lazily (no spawn).
         writeSchemaCache(server, registeredTools);
+    }
+
+    private void unregisterTools(String serverName, List<McpSchema.Tool> tools) {
+        ToolRegistry registry = applicationContext != null ? toolRegistry() : null;
+        if (registry == null) {
+            return;
+        }
+        tools.forEach(tool -> registry.deregisterDynamic(mcpPrefixedToolName(serverName, tool.name())));
+        for (String utility : List.of("list_resources", "read_resource", "list_prompts", "get_prompt")) {
+            registry.deregisterDynamic(mcpPrefixedToolName(serverName, utility));
+        }
     }
 
     private List<McpSchema.Tool> selectedMcpTools(AgentProperties.McpProperties.ServerProperties server,
@@ -1774,6 +1787,8 @@ public class McpLifecycleManager {
             shutdownRequested.set(true);
             connectionsInFlight.values().forEach(token -> token.cancel(false));
             connectionsInFlight.clear();
+            clients.forEach((name, state) -> unregisterTools(name, state.tools()));
+            lazyServers.forEach(this::unregisterTools);
             lazyServers.clear();
         }
         // M29 fix: bounded drain of in-flight work before replacing the pools —
