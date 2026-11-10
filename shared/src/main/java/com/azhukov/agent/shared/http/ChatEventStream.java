@@ -20,7 +20,7 @@ public final class ChatEventStream {
     public static void read(InputStream body, ObjectMapper mapper, Consumer<JsonNode> onEvent)
             throws IOException {
         if (body == null) {
-            throw new EOFException("Backend stream returned no body");
+            throw new IllegalStateException("Backend stream returned no body");
         }
         try (var reader = new BufferedReader(new InputStreamReader(body, StandardCharsets.UTF_8))) {
             while (true) {
