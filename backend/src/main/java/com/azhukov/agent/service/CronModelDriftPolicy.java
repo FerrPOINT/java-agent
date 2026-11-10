@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
+/** Shared model-drift rules for cron execution and the configuration preview. */
 public final class CronModelDriftPolicy {
     private CronModelDriftPolicy() {}
 
