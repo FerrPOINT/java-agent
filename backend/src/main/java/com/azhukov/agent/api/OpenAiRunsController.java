@@ -298,7 +298,7 @@ public class OpenAiRunsController {
         }
         return stateMachine.state(runId)
             .filter(state -> isAccessible(state.getUserId()))
-            .map(this::persistedRunRecord)
+            .map(state -> persistedRunRecord(stateMachine, state))
             .orElse(null);
     }
 
@@ -307,10 +307,13 @@ public class OpenAiRunsController {
         return scopedUserId == null || scopedUserId.equals(ownerId);
     }
 
-    private RunRecord persistedRunRecord(com.azhukov.agent.persistence.entity.OpenAiRunStateEntity state) {
+    private RunRecord persistedRunRecord(com.azhukov.agent.service.OpenAiRunStateMachine stateMachine,
+                                         com.azhukov.agent.persistence.entity.OpenAiRunStateEntity state) {
+        Map<String, Object> lastEvent = stateMachine.replayParsed(state.getRunId(), Math.max(0, state.getLastSeq() - 1), 1)
+            .stream().findFirst().map(event -> event.payload()).orElseGet(Map::of);
         return OpenAiRunService.restoredRun(
             state.getRunId(), state.getSessionId(), state.getUserId(), state.getModel(),
-            state.getState(), state.getCreatedAt(), state.getUpdatedAt());
+            state.getState(), state.getCreatedAt(), state.getUpdatedAt(), lastEvent);
     }
 
     private ResponseEntity<Map<String, Object>> controlResponse(String runId, ControlResult result) {

@@ -41,44 +41,53 @@ class OpenAiRunStateRepositoryTest extends PostgresTestContainer {
         return entity;
     }
 
+    @Autowired
+    private com.azhukov.agent.service.OpenAiRunStateMachine stateMachine;
+
     @Test
-    void guardedTransitionMovesStateExactlyOnce() {
-        transactionTemplate.executeWithoutResult(tx -> {
-            stateRepository.deleteAll();
-            stateRepository.save(row("wp6-r1", "in_progress"));
-        });
+    void durableLifecycleReplaysCommittedOutcomeAndRejectsLateEvents() {
+        String id = "run-" + UUID.randomUUID();
+        stateMachine.createRun(id, UUID.randomUUID(), null, "default", "model", null);
+        try {
+            stateMachine.recordEvent(id, "in_progress", java.util.Map.of("event", "run.started"));
+            stateMachine.recordEvent(id, null, java.util.Map.of("event", "run.stopping"));
+            assertThat(stateMachine.state(id).orElseThrow().getState()).isEqualTo("in_progress");
+            stateMachine.recordEvent(id, "cancelled", java.util.Map.of("event", "run.cancelled"));
 
-        int first = transactionTemplate.execute(tx -> stateRepository.transition(
-            "wp6-r1", "in_progress", "requires_action", null, null, null, null, Instant.now()));
-        int second = transactionTemplate.execute(tx -> stateRepository.transition(
-            "wp6-r1", "in_progress", "requires_action", null, null, null, null, Instant.now()));
-
-        assertThat(first).isEqualTo(1);
-        assertThat(second).isEqualTo(0); // state already moved — race loser
-        assertThat(stateRepository.findById("wp6-r1").orElseThrow().getState())
-            .isEqualTo("requires_action");
-        transactionTemplate.executeWithoutResult(tx -> stateRepository.deleteAll());
+            assertThatThrownBy(() -> stateMachine.recordEvent(id, "completed",
+                java.util.Map.of("event", "run.completed"))).isInstanceOf(IllegalStateException.class);
+            assertThat(stateMachine.state(id).orElseThrow().getState()).isEqualTo("cancelled");
+            assertThat(stateMachine.replayParsed(id, 1, 10)).extracting(event -> event.payload().get("event"))
+                .containsExactly("run.started", "run.stopping", "run.cancelled");
+        } finally {
+            stateRepository.deleteById(id);
+        }
     }
 
     @Test
-    void cancelStampsCancelledAtOnce() {
-        transactionTemplate.executeWithoutResult(tx ->
-            stateRepository.save(row("wp6-r2", "requires_action")));
+    void concurrentTerminalEventsHaveOneWinner() throws Exception {
+        String id = "run-" + UUID.randomUUID();
+        stateMachine.createRun(id, UUID.randomUUID(), null, "default", "model", null);
+        stateMachine.recordEvent(id, "in_progress", java.util.Map.of("event", "run.started"));
+        try (var workers = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var complete = workers.submit(() -> recordTerminal(id, "completed"));
+            var cancel = workers.submit(() -> recordTerminal(id, "cancelled"));
+            assertThat(List.of(complete.get(), cancel.get())).containsExactlyInAnyOrder(true, false);
+            assertThat(stateMachine.state(id).orElseThrow().getLastSeq()).isEqualTo(3L);
+            assertThat(stateMachine.replayParsed(id, 2, 10)).hasSize(1);
+        } finally {
+            stateRepository.deleteById(id);
+        }
+    }
 
-        transactionTemplate.executeWithoutResult(tx -> stateRepository.transition(
-            "wp6-r2", "requires_action", "cancelled", "user request",
-            "user request", Instant.now(), null, Instant.now()));
-
-        var state = stateRepository.findById("wp6-r2").orElseThrow();
-        assertThat(state.getState()).isEqualTo("cancelled");
-        assertThat(state.getCancelledAt()).isNotNull();
-        assertThat(state.getCancelReason()).isEqualTo("user request");
-
-        // second cancel loses the race (state no longer requires_action)
-        int second = transactionTemplate.execute(tx -> stateRepository.transition(
-            "wp6-r2", "requires_action", "cancelled", null, null, null, null, Instant.now()));
-        assertThat(second).isZero();
-        transactionTemplate.executeWithoutResult(tx -> stateRepository.deleteAll());
+    private boolean recordTerminal(String id, String status) {
+        try {
+            stateMachine.recordEvent(id, status, java.util.Map.of("event", "run." + status));
+            return true;
+        } catch (IllegalStateException e) {
+            assertThat(e).hasMessageContaining("already terminal");
+            return false;
+        }
     }
 
     @Test
