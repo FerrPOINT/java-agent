@@ -60,23 +60,11 @@ public class ApprovalQueue {
         Instant expiresAt = now.plus(timeout);
         PendingApproval p = new PendingApproval(
             UUID.randomUUID(), sessionId, call, reason, now, false, false, null, expiresAt);
-        // HERMES-SYNC Bug 2: Approval coalesce — supersede any existing pending approval.
-        // Mark the old pending (undecided) approval as superseded before replacing it,
-        // so consumers can distinguish "replaced" from "silently dropped".
-        PendingApproval old = pending.get(sessionId);
-        if (old != null && !old.approved() && !old.denied() && !old.superseded()) {
-            PendingApproval superseded = new PendingApproval(
-                old.requestId(), old.sessionId(), old.call(), old.reason(), old.requestedAt(),
-                false, false, "Superseded by a newer approval request", old.expiresAt(), true);
-            pending.put(sessionId, superseded);
-            signalLatch(sessionId);
-        }
-        pending.put(sessionId, p);
-        // Replace any existing latch with a fresh one
-        CountDownLatch oldLatch = latches.put(sessionId, new CountDownLatch(1));
-        if (oldLatch != null) {
-            oldLatch.countDown(); // Release any previous waiter
-        }
+        pending.compute(sessionId, (id, old) -> {
+            CountDownLatch oldLatch = latches.put(id, new CountDownLatch(1));
+            if (oldLatch != null) oldLatch.countDown();
+            return p;
+        });
         return p;
     }
 
@@ -90,9 +78,11 @@ public class ApprovalQueue {
             PendingApproval denied = new PendingApproval(
                 p.requestId(), p.sessionId(), p.call(), p.reason(), p.requestedAt(),
                 false, true, "Auto-denied: timeout", p.expiresAt());
-            pending.put(sessionId, denied);
-            signalLatch(sessionId);
-            return denied;
+            if (pending.replace(sessionId, p, denied)) {
+                signalLatch(sessionId);
+                return denied;
+            }
+            return pending.get(sessionId);
         }
         return p;
     }
@@ -112,7 +102,7 @@ public class ApprovalQueue {
         PendingApproval updated = new PendingApproval(
             p.requestId(), p.sessionId(), p.call(), p.reason(), p.requestedAt(),
             approved, !approved, note, p.expiresAt());
-        pending.put(sessionId, updated);
+        if (!pending.replace(sessionId, p, updated)) return null;
         signalLatch(sessionId);
         return updated;
     }
@@ -130,9 +120,31 @@ public class ApprovalQueue {
         PendingApproval updated = new PendingApproval(
             p.requestId(), p.sessionId(), p.call(), p.reason(), p.requestedAt(),
             false, true, note, p.expiresAt());
-        pending.put(sessionId, updated);
+        if (!pending.replace(sessionId, p, updated)) return null;
         signalLatch(sessionId);
         return updated;
+    }
+
+    /**
+     * Persist a decision for the exact pending request before publishing it to its waiter.
+     * A failed persistence callback leaves the request pending.
+     */
+    public boolean resolvePending(PendingApproval expected, boolean approved, Runnable persistDecision) {
+        UUID sessionId = expected.sessionId();
+        var latch = latches.get(sessionId);
+        var resolved = new PendingApproval(expected.requestId(), sessionId, expected.call(), expected.reason(),
+            expected.requestedAt(), approved, !approved, null, expected.expiresAt());
+        var current = pending.computeIfPresent(sessionId, (id, entry) -> {
+            if (entry != expected || entry.approved() || entry.denied() || entry.superseded()
+                    || (entry.expiresAt() != null && !Instant.now().isBefore(entry.expiresAt()))) {
+                return entry;
+            }
+            persistDecision.run();
+            return resolved;
+        });
+        if (current != resolved) return false;
+        if (latch != null) latch.countDown();
+        return true;
     }
 
     /**
@@ -209,8 +221,9 @@ public class ApprovalQueue {
                 PendingApproval denied = new PendingApproval(
                     p.requestId(), p.sessionId(), p.call(), p.reason(), p.requestedAt(),
                     false, true, "Auto-denied: timeout", p.expiresAt());
-                pending.put(entry.getKey(), denied);
-                signalLatch(entry.getKey());
+                if (pending.replace(entry.getKey(), p, denied)) {
+                    signalLatch(entry.getKey());
+                }
             }
         }
     }

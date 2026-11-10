@@ -1086,6 +1086,36 @@ class OpenAiRunsControllerTest {
     }
 
     @Test
+    void approvalRemainsPendingWhenDecisionEventCannotBeSaved() throws Exception {
+        BlockingRun blockingRun = blockRuntime();
+        String runId = createRun("needs approval");
+        var record = runService.get(runId);
+        var pending = approvalQueue.request(record.controlSessionId(),
+            new ToolCall("approval-call", "fixture_tool", "{}"), "fixture approval");
+        waitForStatus(runId, "waiting_for_approval");
+        var stateMachine = mock(OpenAiRunStateMachine.class);
+        when(stateMachine.recordEvent(eq(runId), eq(OpenAiRunStateMachine.IN_PROGRESS), any()))
+            .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("fixture storage failure"))
+            .thenReturn(1L);
+        org.springframework.test.util.ReflectionTestUtils.setField(record, "stateMachine", stateMachine);
+
+        try {
+            String body = "{\"choice\":\"once\",\"request_id\":\"" + pending.requestId() + "\"}";
+            mockMvc.perform(post("/v1/runs/{runId}/approval", runId)
+                    .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().is5xxServerError());
+            assertThat(approvalQueue.getPending(record.controlSessionId())).isSameAs(pending);
+            mockMvc.perform(post("/v1/runs/{runId}/approval", runId)
+                    .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk());
+            assertThat(approvalQueue.isApproved(record.controlSessionId())).isTrue();
+        } finally {
+            blockingRun.complete();
+        }
+        waitForStatus(runId, "completed");
+    }
+
+    @Test
     void approvalRequestIdEchoesBackAndMismatchedIdIsRejected() throws Exception {
         BlockingRun blockingRun = blockRuntime();
         String runId = createRun("needs approval request_id");

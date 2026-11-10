@@ -170,22 +170,20 @@ public class OpenAiRunService {
         if (record == null) {
             return ControlResult.notFound();
         }
-        String status = record.status();
-        if (!"running".equals(status)) {
-            return ControlResult.conflict(
-                "Run is not currently accepting steer input: " + runId,
-                "run_not_accepting_steer");
+        synchronized (record) {
+            if (!"running".equals(record.status()) || record.stopRequested.get()) {
+                return ControlResult.conflict(
+                    "Run is not currently accepting steer input: " + runId,
+                    "run_not_accepting_steer");
+            }
+            if (text == null || text.isBlank()) {
+                return ControlResult.badRequest(
+                    "Missing non-empty steer text; expected 'input', 'message', or 'text'.",
+                    "invalid_steer_input");
+            }
+            record.publish(null, "run.steered", Map.of("accepted", true));
+            steerBuffer.steer(record.controlSessionId(), text);
         }
-        if (text == null || text.isBlank()) {
-            return ControlResult.badRequest(
-                "Missing non-empty steer text; expected 'input', 'message', or 'text'.",
-                "invalid_steer_input");
-        }
-        boolean accepted = steerBuffer.steer(record.controlSessionId(), text);
-        if (!accepted) {
-            return ControlResult.conflict("Run did not accept steer text: " + runId, "steer_not_accepted");
-        }
-        record.publish(null, "run.steered", Map.of("accepted", true));
         return ControlResult.ok(Map.of("object", "hermes.run.steer", "run_id", runId, "accepted", true));
     }
 
@@ -198,9 +196,8 @@ public class OpenAiRunService {
      * approval. {@code requestId} optionally targets one exact pending request
      * (its UUID must match, else 409 approval_not_pending — never a silent
      * resolve of a different request); {@code resolveAll} resolves every
-     * pending request for the run's control session. The {@code session} and
-     * {@code always} scopes record a standing decision so later approvals of
-     * the same tool auto-resolve instead of blocking the run.
+     * pending request for the run's control session. The queue holds at most
+     * one request and the decision only resolves that request.
      */
     public ControlResult approval(String runId, String rawChoice, boolean resolveAll, String requestId) {
         RunRecord record = runs.get(runId);
@@ -216,42 +213,25 @@ public class OpenAiRunService {
         if (requestId != null && (requestId.isBlank() || requestId.length() > 256)) {
             return ControlResult.badRequest("Approval request_id is invalid.", "invalid_approval_request");
         }
-        if (record.isTerminal()) {
-            return ControlResult.conflict(
-                "Run has no active approval session: " + runId,
-                "approval_not_active");
+        synchronized (record) {
+            if (record.isTerminal() || record.stopRequested.get()) {
+                return ControlResult.conflict(
+                    "Run has no active approval session: " + runId, "approval_not_active");
+            }
+            ApprovalQueue.PendingApproval pending = approvalQueue.getPending(record.controlSessionId());
+            if (pending == null || (requestId != null && !requestId.equals(pending.requestId().toString()))) {
+                return ControlResult.conflict("Run has no matching pending approval: " + runId, "approval_not_pending");
+            }
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("choice", choice);
+            if (requestId != null) payload.put("request_id", requestId);
+            // ApprovalQueue owns one current request for each run control session.
+            payload.put("resolved", 1);
+            if (!approvalQueue.resolvePending(pending, !"deny".equals(choice),
+                    () -> record.publish("running", "approval.responded", payload))) {
+                return ControlResult.conflict("Run has no pending approval: " + runId, "approval_not_pending");
+            }
         }
-        ApprovalQueue.PendingApproval pending = approvalQueue.getPending(record.controlSessionId());
-        if (pending == null || pending.approved() || pending.denied() || pending.superseded()) {
-            return ControlResult.conflict("Run has no pending approval: " + runId, "approval_not_pending");
-        }
-        if (requestId != null && !requestId.equals(String.valueOf(pending.requestId()))) {
-            return ControlResult.conflict(
-                "Run has no pending approval matching request_id " + requestId + ": " + runId,
-                "approval_not_pending");
-        }
-
-        if ("deny".equals(choice)) {
-            approvalQueue.deny(record.controlSessionId(), null);
-        } else {
-            approvalQueue.approve(record.controlSessionId(),
-                "session".equals(choice) || "always".equals(choice) ? choice : "approve", null);
-        }
-        // Hermes resolve_gateway_approval parity: resolve_all clears every
-        // still-pending request for this control session, not just the head.
-        int resolved = 1;
-        if (resolveAll) {
-            int extra = approvalQueue.resolveAllPending(record.controlSessionId(),
-                !"deny".equals(choice));
-            resolved += extra;
-        }
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("choice", choice);
-        if (requestId != null) {
-            payload.put("request_id", requestId);
-        }
-        payload.put("resolved", resolved);
-        record.publish("running", "approval.responded", payload);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("object", "hermes.run.approval_response");
         body.put("run_id", runId);
@@ -259,7 +239,7 @@ public class OpenAiRunService {
         if (requestId != null) {
             body.put("request_id", requestId);
         }
-        body.put("resolved", resolved);
+        body.put("resolved", 1);
         return ControlResult.ok(body);
     }
 
@@ -303,13 +283,13 @@ public class OpenAiRunService {
             }
             if (response.completed()) {
                 Map<String, Object> usage = usage(response);
-                String pendingSteer = steerBuffer.consume(record.controlSessionId());
                 String output = response.content() != null ? response.content() : "";
                 Map<String, Object> event = new LinkedHashMap<>();
                 event.put("output", output);
                 event.put("usage", usage);
-                if (pendingSteer != null && !pendingSteer.isBlank()) event.put("pending_steer", pendingSteer);
                 synchronized (record) {
+                    String pendingSteer = steerBuffer.consume(record.controlSessionId());
+                    if (pendingSteer != null && !pendingSteer.isBlank()) event.put("pending_steer", pendingSteer);
                     if (record.stopRequested.get()) {
                         record.publish("cancelled", "run.cancelled", Map.of());
                     } else {
@@ -349,14 +329,17 @@ public class OpenAiRunService {
         UUID lastApprovalId = null;
         try {
             while (!record.isTerminal()) {
-                ApprovalQueue.PendingApproval pending = approvalQueue.getPending(record.controlSessionId());
-                if (pending != null && !pending.approved() && !pending.denied() && !pending.superseded()) {
-                    if (!pending.requestId().equals(lastApprovalId)) {
-                        lastApprovalId = pending.requestId();
-                        record.publish("waiting_for_approval", "approval.request", approvalPayload(pending));
+                synchronized (record) {
+                    if (record.isTerminal() || record.stopRequested.get()) return;
+                    ApprovalQueue.PendingApproval pending = approvalQueue.getPending(record.controlSessionId());
+                    if (pending != null && !pending.approved() && !pending.denied() && !pending.superseded()) {
+                        if (!pending.requestId().equals(lastApprovalId)) {
+                            record.publish("waiting_for_approval", "approval.request", approvalPayload(pending));
+                            lastApprovalId = pending.requestId();
+                        }
+                    } else if ("waiting_for_approval".equals(record.status())) {
+                        record.publish("running", "approval.cleared", Map.of());
                     }
-                } else if ("waiting_for_approval".equals(record.status())) {
-                    record.publish("running", "approval.cleared", Map.of());
                 }
                 TimeUnit.MILLISECONDS.sleep(250);
             }
