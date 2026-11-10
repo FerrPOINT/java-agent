@@ -1156,8 +1156,12 @@ public class McpLifecycleManager {
                 }
                 var oldTools = state.admittedTools();
                 var admitted = admittedMcpTools(state.properties(), freshTools);
-                if (state.tools().equals(freshTools) && oldTools.equals(admitted)) return;
-                clients.put(serverName, new McpServerState(state.properties(), state.client(), freshTools, admitted));
+                if (state.registrationComplete() && state.tools().equals(freshTools) && oldTools.equals(admitted)) {
+                    return;
+                }
+                // Invalidate in-flight admissions before touching the registry. A failed
+                // update stays unpublished and the next refresh reconciles it again.
+                clients.put(serverName, new McpServerState(state.properties(), state.client(), freshTools, admitted, false));
                 Set<String> newNames = admitted.stream().map(McpSchema.Tool::name).collect(Collectors.toSet());
                 for (var previous : oldTools) {
                     if (!newNames.contains(previous.name())) {
@@ -1168,6 +1172,7 @@ public class McpLifecycleManager {
                 }
                 registerTools(serverName, state.properties(), admitted);
                 registerUtilityTools(serverName, capabilities, nativeNames(serverName, freshTools));
+                clients.put(serverName, new McpServerState(state.properties(), state.client(), freshTools, admitted));
             }
         } catch (Exception e) {
             log.warn("Failed to refresh tools from MCP server {}: {}", serverName, e.getMessage());
@@ -1669,6 +1674,9 @@ public class McpLifecycleManager {
     private McpSchema.CallToolResult callToolWithTimeout(McpServerState state, String serverName, String toolName,
                                                          Map<String, Object> args, long startedAt,
                                                          boolean modelCall, ToolTrustMetadata admission) throws Exception {
+        if (!state.registrationComplete()) {
+            throw new IllegalStateException("MCP tool registration is incomplete: " + serverName);
+        }
         var definition = state.admittedTools().stream().filter(tool -> toolName.equals(tool.name())).findFirst()
             .orElseThrow(() -> new IllegalStateException("MCP tool is not admitted: " + toolName));
         if (modelCall) {
@@ -2676,7 +2684,12 @@ public class McpLifecycleManager {
 
     record McpServerState(AgentProperties.McpProperties.ServerProperties properties,
                           McpSyncClient client,
-                          List<McpSchema.Tool> tools, List<McpSchema.Tool> admittedTools) {
+                          List<McpSchema.Tool> tools, List<McpSchema.Tool> admittedTools, boolean registrationComplete) {
+        McpServerState(AgentProperties.McpProperties.ServerProperties properties, McpSyncClient client,
+                       List<McpSchema.Tool> tools, List<McpSchema.Tool> admittedTools) {
+            this(properties, client, tools, admittedTools, true);
+        }
+
         McpServerState(AgentProperties.McpProperties.ServerProperties properties,
                        McpSyncClient client, List<McpSchema.Tool> tools) {
             this(properties, client, tools, tools);

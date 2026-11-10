@@ -298,6 +298,28 @@ class McpLifecycleManagerNewFeaturesTest {
     }
 
     @Test
+    void refreshRetriesRegistrationAfterTransientFailure() throws Exception {
+        ToolRegistry registry = mock(ToolRegistry.class);
+        ApplicationContext ctx = mock(ApplicationContext.class);
+        when(ctx.getBean(ToolRegistry.class)).thenReturn(registry);
+        var manager = new McpLifecycleManager(new AgentProperties(), new ObjectMapper(), ctx,
+            null, null, null, null, null, null);
+        var client = mock(McpSyncClient.class);
+        injectClient(manager, "srv", client, List.of(McpSchema.Tool.builder("old").build()));
+        when(client.listTools()).thenReturn(new McpSchema.ListToolsResult(
+            List.of(McpSchema.Tool.builder("updated").build()), null));
+        doThrow(new IllegalStateException("fixture registry failed")).doNothing()
+            .when(registry).registerDynamic(eq("mcp__srv__updated"), eq("mcp-srv"), any(), any());
+
+        manager.refreshTools("srv");
+        assertThat(manager.getClientsForTest().get("srv").registrationComplete()).isFalse();
+
+        manager.refreshTools("srv");
+        assertThat(manager.getClientsForTest().get("srv").registrationComplete()).isTrue();
+        verify(registry, times(2)).registerDynamic(eq("mcp__srv__updated"), eq("mcp-srv"), any(), any());
+    }
+
+    @Test
     void refreshTools_registersResourceAndPromptUtilityToolsWhenCapabilitiesAdvertised() throws Exception {
         AgentProperties properties = new AgentProperties();
         ToolRegistry registry = mock(ToolRegistry.class);
