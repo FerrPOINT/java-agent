@@ -81,7 +81,7 @@ class McpLifecycleManagerReconnectTest {
         // The error should NOT mention "connection error" since it's a tool execution error
         assertThat(result.error()).doesNotContain("connection error");
         // Verify the client was NOT closed (no reconnect for tool execution errors)
-        verify(mockClient, never()).close();
+        verify(mockClient, never()).closeGracefully();
     }
 
     @Test
@@ -114,6 +114,6 @@ class McpLifecycleManagerReconnectTest {
         assertThat(result.success()).isFalse();
         // Before the fix, any IOException would trigger reconnect.
         // After the fix, "tool returned malformed response" does NOT contain connection keywords.
-        verify(mockClient, never()).close();
+        verify(mockClient, never()).closeGracefully();
     }
 }

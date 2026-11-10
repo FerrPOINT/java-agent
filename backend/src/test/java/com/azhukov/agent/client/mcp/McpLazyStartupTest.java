@@ -141,7 +141,7 @@ class McpLazyStartupTest {
         }
 
         verify(lifecycle).createClient(any());
-        verify(client).close();
+        verify(client, org.mockito.Mockito.timeout(2000)).closeGracefully();
         verify(toolRegistry, Mockito.atLeastOnce()).deregisterDynamic("mcp__cached_server__echo", "mcp-cached-server");
         assertThat(lifecycle.isConnected("cached-server")).isFalse();
     }
