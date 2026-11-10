@@ -150,7 +150,9 @@ public class ReadFileTool implements ToolHandler {
             TextPage page;
             boolean extractedDocument;
             boolean empty;
+            long fileSize;
             try (var channel = com.azhukov.agent.core.security.SecureFileAccess.openRead(target)) {
+                fileSize = channel.size();
                 var input = Channels.newInputStream(channel);
                 byte[] prefix = input.readNBytes(200);
                 empty = prefix.length == 0;
@@ -188,7 +190,7 @@ public class ReadFileTool implements ToolHandler {
             Map<String, Object> resultMap = new LinkedHashMap<>();
             resultMap.put("content", result);
             resultMap.put("total_lines", totalLines);
-            resultMap.put("file_size", rawBytes.length);
+            resultMap.put("file_size", fileSize);
             resultMap.put("truncated", end < totalLines);
             if (extractedDocument) {
                 resultMap.put("extracted_document", true);
