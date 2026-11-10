@@ -79,15 +79,23 @@ import static org.mockito.Mockito.when;
 class AgentStreamingServiceSseErrorTest {
 
     @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.ValueSource(ints = {3, 4})
-    void fallbackContinuesTruncatedTextOnlyWithBudgetAfterToolExecution(int maxModelCalls) throws Exception {
+    @org.junit.jupiter.params.provider.CsvSource({"3, false", "4, false", "4, true"})
+    void fallbackContinuationPreservesVisibleText(int maxModelCalls, boolean failContinuation) throws Exception {
         useRealBudget(maxModelCalls);
         var fallbackCalls = new AtomicInteger();
         var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/v1/chat/completions", exchange -> {
             try (exchange) {
                 exchange.getRequestBody().readAllBytes();
-                String choice = switch (fallbackCalls.incrementAndGet()) {
+                int attempt = fallbackCalls.incrementAndGet();
+                if (attempt == 3 && failContinuation) {
+                    byte[] error = "{\"error\":{\"message\":\"model not found\"}}".getBytes(StandardCharsets.UTF_8);
+                    exchange.getResponseHeaders().set("Content-Type", "application/json");
+                    exchange.sendResponseHeaders(404, error.length);
+                    exchange.getResponseBody().write(error);
+                    return;
+                }
+                String choice = switch (attempt) {
                     case 1 -> """
                         {"message":{"role":"assistant","content":"checking the weather","tool_calls":[
                          {"id":"call-1","type":"function","function":{"name":"weather","arguments":"{}"}}]},
@@ -135,11 +143,14 @@ class AgentStreamingServiceSseErrorTest {
             verify(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
             int expectedFallbackCalls = maxModelCalls - 1;
             assertThat(fallbackCalls).hasValue(expectedFallbackCalls);
-            verify(usageTracker, org.mockito.Mockito.times(expectedFallbackCalls)).recordTurn(
+            assertThat(emitter.events.stream().anyMatch(event -> "error".equals(event.name)))
+                .isEqualTo(failContinuation);
+            verify(usageTracker, org.mockito.Mockito.times(expectedFallbackCalls - (failContinuation ? 1 : 0))).recordTurn(
                 org.mockito.ArgumentMatchers.eq(SESSION_ID), org.mockito.ArgumentMatchers.eq("user-1"),
                 org.mockito.ArgumentMatchers.eq("reserve"), org.mockito.ArgumentMatchers.anyInt(),
                 org.mockito.ArgumentMatchers.anyInt());
-            String lastFragment = maxModelCalls == 4
+            boolean continued = maxModelCalls == 4 && !failContinuation;
+            String lastFragment = continued
                 ? "fallback completed the turn" : "fallback answer was truncated";
             assertThat(emitter.events).anyMatch(event ->
                 "token".equals(event.name) && event.data.contains(lastFragment));
@@ -147,13 +158,15 @@ class AgentStreamingServiceSseErrorTest {
                 "token".equals(event.name) && event.data.contains("checking the weather"));
             assertThat(emitter.events.stream().anyMatch(event -> "continuation".equals(event.name)))
                 .isEqualTo(maxModelCalls == 4);
-            String expectedSavedText = maxModelCalls == 4
+            String expectedSavedText = continued
                 ? "fallback answer was truncated" + lastFragment : lastFragment;
             verify(messageRepository, org.mockito.Mockito.timeout(2000)).save(
                 org.mockito.ArgumentMatchers.argThat(message -> expectedSavedText.equals(message.getContent())));
-            var metadata = emitter.events.stream().filter(event -> "metadata".equals(event.name)).toList();
-            assertThat(objectMapper.readTree(metadata.getLast().data).path("modelUsed").asText())
-                .isEqualTo("reserve");
+            if (!failContinuation) {
+                var metadata = emitter.events.stream().filter(event -> "metadata".equals(event.name)).toList();
+                assertThat(objectMapper.readTree(metadata.getLast().data).path("modelUsed").asText())
+                    .isEqualTo("reserve");
+            }
         } finally {
             server.stop(0);
         }
@@ -207,10 +220,13 @@ class AgentStreamingServiceSseErrorTest {
             return null;
         }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
+        when(sessionRepository.findMessageParentId(SESSION_ID)).thenReturn(Optional.of(SESSION_ID));
         streamingService.streamTurn(request, emitter);
         emitter.awaitDone();
         assertThat(emitter.events.stream().anyMatch(event ->
             "token".equals(event.name) && event.data.contains("first attempt text"))).isTrue();
+        verify(messageRepository, org.mockito.Mockito.timeout(2000)).save(
+            org.mockito.ArgumentMatchers.argThat(message -> message.getContent().contains("first attempt text")));
         assertThat(attempts).hasValue(1);
         assertThat(emitter.events).anyMatch(event -> "error".equals(event.name));
     }
