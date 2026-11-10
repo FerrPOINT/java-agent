@@ -65,8 +65,8 @@ class DefaultContextCompressorFailureTest {
                     var line = new StringBuilder();
                     int contentLength = 0;
                     for (int c; (c = request.read()) >= 0;) {
-                        if (c != '\\n') {
-                            if (c != '\\r') line.append((char) c);
+                        if (c != '\n') {
+                            if (c != '\r') line.append((char) c);
                             continue;
                         }
                         if (line.isEmpty()) break;
