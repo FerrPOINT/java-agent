@@ -145,17 +145,22 @@ public class OpenAiRunService {
         if (record == null || record.isTerminal()) {
             return ControlResult.notFound();
         }
-        synchronized (record) {
-            if (record.isTerminal()) return ControlResult.notFound();
-            if (record.stopRequested.get()) {
-                return ControlResult.ok(Map.of("run_id", runId, "status", "stopping"));
+        boolean signalProcesses = false;
+        try {
+            synchronized (record) {
+                if (record.isTerminal()) return ControlResult.notFound();
+                if (record.stopRequested.compareAndSet(false, true)) {
+                    signalProcesses = true;
+                    interruptToken.cancel(record.controlSessionId());
+                }
+                if (!"stopping".equals(record.status())) {
+                    record.publish("stopping", "run.stopping", Map.of());
+                }
             }
-            record.publish("stopping", "run.stopping", Map.of());
-            record.stopRequested.set(true);
-            interruptToken.cancel(record.controlSessionId());
-        }
-        if (processTool != null) {
-            processTool.killOwnedBy(record.controlSessionId());
+        } finally {
+            if (signalProcesses && processTool != null) {
+                processTool.killOwnedBy(record.controlSessionId());
+            }
         }
         return ControlResult.ok(Map.of("run_id", runId, "status", "stopping"));
     }

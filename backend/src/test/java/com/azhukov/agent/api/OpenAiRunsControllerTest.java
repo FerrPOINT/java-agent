@@ -892,6 +892,38 @@ class OpenAiRunsControllerTest {
     }
 
     @Test
+    void stopSignalsCancellationEvenWhenTheEventCannotBeSaved() throws Exception {
+        CountDownLatch enteredRuntime = new CountDownLatch(1);
+        CountDownLatch releaseRuntime = new CountDownLatch(1);
+        doAnswer(invocation -> {
+            enteredRuntime.countDown();
+            releaseRuntime.await(5, TimeUnit.SECONDS);
+            return new ChatResponseDto(SESSION_ID, "", List.of(), false);
+        }).when(agentRuntimeService).runApiTurn(any(Session.class), anyString(), any(ModelRequestOptions.class));
+
+        String runId = createRun("wait");
+        try {
+            assertThat(enteredRuntime.await(2, TimeUnit.SECONDS)).isTrue();
+            var record = runService.get(runId);
+            var stateMachine = mock(OpenAiRunStateMachine.class);
+            doThrow(new org.springframework.dao.DataAccessResourceFailureException("fixture storage failure"))
+                .doNothing().when(stateMachine).recordEvent(eq(runId), isNull(), anyMap());
+            org.springframework.test.util.ReflectionTestUtils.setField(record, "stateMachine", stateMachine);
+
+            mockMvc.perform(post("/v1/runs/{runId}/stop", runId))
+                .andExpect(status().is5xxServerError());
+            assertThat(interruptToken.isCancelled(record.controlSessionId())).isTrue();
+            verify(processTool).killOwnedBy(record.controlSessionId());
+            mockMvc.perform(post("/v1/runs/{runId}/stop", runId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("stopping"));
+        } finally {
+            releaseRuntime.countDown();
+        }
+        waitForStatus(runId, "cancelled");
+    }
+
+    @Test
     void stopAfterCompletedRunReturnsNotFoundLikeHermes() throws Exception {
         when(agentRuntimeService.runApiTurn(any(Session.class), anyString(), any(ModelRequestOptions.class)))
             .thenReturn(new ChatResponseDto(SESSION_ID, "done", List.of(), true));
