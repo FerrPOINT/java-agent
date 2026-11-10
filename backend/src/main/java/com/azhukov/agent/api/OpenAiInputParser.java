@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
+/** Converts OpenAI input and history to messages for Responses and Runs. */
 final class OpenAiInputParser {
     private final ObjectMapper objectMapper;
 
@@ -206,6 +207,7 @@ final class OpenAiInputParser {
         return value == null ? "" : String.valueOf(value).trim();
     }
 
+    /** Parsed messages or an error with the original request parameter path. */
     record ParseResult(List<Message> messages, String error, String code, String param) {
         static ParseResult success(List<Message> messages) {
             return new ParseResult(messages, null, null, null);
