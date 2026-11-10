@@ -415,6 +415,50 @@ class InboundMessageProcessorTest {
         verify(agentRuntime, timeout(1000)).runTurn(any(Session.class), eq("third"), eq(List.of()));
     }
 
+    @Test
+    void messageStillRunsWhenActiveTurnFinishesBeforeEnqueue() throws Exception {
+        agentProperties.getGateway().getTelegram().setAllowByDefault(true);
+        agentProperties.getGateway().setBusyInputMode("interrupt");
+        SessionSource source = new SessionSource(Platform.TELEGRAM, CHAT_ID, USER_ID, USERNAME, USERNAME);
+        when(sessionResolver.resolve(source)).thenReturn(new Session(SESSION_ID, USER_ID, "Review",
+            MODEL_PROVIDER, MODEL_NAME, null, Map.of()));
+        var firstEntered = new java.util.concurrent.CountDownLatch(1);
+        var finishFirst = new java.util.concurrent.CountDownLatch(1);
+        var checkedBusy = new java.util.concurrent.CountDownLatch(1);
+        var allowEnqueue = new java.util.concurrent.CountDownLatch(1);
+        var delegate = mock(com.azhukov.agent.tools.delegate.DelegateTaskTool.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(processor, "delegateTaskTool", delegate);
+        when(delegate.getActiveSubagentCount()).thenAnswer(call -> {
+            checkedBusy.countDown();
+            if (!allowEnqueue.await(5, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("fixture timeout");
+            return 1;
+        });
+        var reply = new TurnResult(List.of(Message.assistant(REPLY_TEXT, 1)), true, null);
+        when(agentRuntime.runTurn(any(Session.class), eq("first"), eq(List.of()))).thenAnswer(call -> {
+            firstEntered.countDown();
+            if (!finishFirst.await(5, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("fixture timeout");
+            return reply;
+        });
+        when(agentRuntime.runTurn(any(Session.class), eq("second"), eq(List.of()))).thenReturn(reply);
+        when(routingService.send(Platform.TELEGRAM, source, REPLY_TEXT))
+            .thenReturn(CompletableFuture.completedFuture(new SendResult(true, "fixture", null)));
+
+        var first = CompletableFuture.runAsync(() -> processor.accept(messageEvent(source, "first")), command -> Thread.ofVirtual().start(command));
+        try {
+            assertThat(firstEntered.await(3, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            var second = CompletableFuture.runAsync(() -> processor.accept(messageEvent(source, "second")), command -> Thread.ofVirtual().start(command));
+            assertThat(checkedBusy.await(3, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            finishFirst.countDown();
+            first.get(3, java.util.concurrent.TimeUnit.SECONDS);
+            allowEnqueue.countDown();
+            second.get(3, java.util.concurrent.TimeUnit.SECONDS);
+        } finally {
+            finishFirst.countDown();
+            allowEnqueue.countDown();
+        }
+        verify(agentRuntime, timeout(1000)).runTurn(any(Session.class), eq("second"), eq(List.of()));
+    }
+
     private final java.util.concurrent.atomic.AtomicInteger evtCounter =
         new java.util.concurrent.atomic.AtomicInteger();
 
