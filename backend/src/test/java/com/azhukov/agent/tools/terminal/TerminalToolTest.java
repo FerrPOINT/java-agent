@@ -240,6 +240,20 @@ class TerminalToolTest {
     }
 
     @Test
+    void noclobberPreservesShellState(@org.junit.jupiter.api.io.TempDir java.nio.file.Path dir)
+            throws Exception {
+        var tool = newTool(properties());
+        var current = session();
+        String command = "set -C; cd '" + dir + "'; export REVIEW_SETTING=retained; printf ready";
+        var result = tool.execute(JSON.writeValueAsString(Map.of("command", command)), null, current);
+
+        assertThat(result.success()).as(result.error()).isTrue();
+        assertThat(result.content()).contains("ready");
+        assertThat(TerminalTool.trackedCwd(current.id())).isEqualTo(dir.toString());
+        assertThat(TerminalTool.trackedEnv(current.id())).containsEntry("REVIEW_SETTING", "retained");
+    }
+
+    @Test
     void sessionEnvironmentCannotPersistSecretsOrShellControlVariables() throws Exception {
         AgentProperties p = properties();
         TerminalTool tool = newTool(p);
