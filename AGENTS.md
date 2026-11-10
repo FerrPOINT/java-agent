@@ -257,7 +257,7 @@ private final ScheduledExecutorService executor = Executors.newSingleThreadSched
 - Memory limits: `agent.memory.char-limit` and `agent.user.char-limit` in `application.yml` cap memory and user input sizes.
 - SOUL.md path: `agent.soul-md-path` in `application.yml` — configurable path to the soul/personality file (defaults to `~/.hermes/soul.md`).
 - Profiles: `dev` (LiteLLM proxy), `noop` (H2 + mock LLM), `cli` (REPL), `prod` (production).
-- Flyway migrations: `backend/src/main/resources/db/migration/` — 30 migrations (V1–V30).
+- Flyway migrations: `backend/src/main/resources/db/migration/`; vendor-specific migrations are in the sibling PostgreSQL and H2 directories.
 - Repomix MCP: `agent.mcp.servers[0]` — stdio server `repomix --mcp --sandbox .`, enabled when `AGENT_MCP_ENABLED=true`. Config in `repomix.config.json`.
 - Coding posture: `agent.core.coding-context` — `auto`/`focus`/`on`/`off`, controls workspace snapshot injection.
 - Verify-on-stop: `agent.verify-on-stop.enabled` — nudges agent to run tests after code mutations (default false).
