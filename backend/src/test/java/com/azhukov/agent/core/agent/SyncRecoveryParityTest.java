@@ -186,8 +186,7 @@ class SyncRecoveryParityTest {
         var runtime = buildRuntime(calls, (n, total) ->
             new ChatResponse("", List.of(new ToolCall("c1", "weather", "{}")), "LENGTH"), budget);
         runtime.runTurn(Session.create("user", "noop", "noop"), "hi");
-        // One ordinary call plus the documented toolless budget-summary call.
-        assertThat(calls.get()).isLessThanOrEqualTo(2);
+        assertThat(calls.get()).isEqualTo(1);
     }
 
     @Test

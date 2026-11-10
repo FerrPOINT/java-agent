@@ -851,6 +851,9 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     && !containsAnyThinkTag(rawContent);
                 boolean prefillExhausted = thinkingPrefillRetries >= 2;
                 if (isTrulyEmpty && (!containsAnyThinkTag(rawContent) || prefillExhausted)) {
+                    if (budgetExhausted) {
+                        continue;
+                    }
                     // h63: When the model returns a deterministic empty response (not an error, just empty),
                     // don't retry it — return immediately with a message, unless config overrides.
                     if (!properties.getCore().isEmptyResponseRetry()) {
