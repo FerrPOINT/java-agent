@@ -49,7 +49,7 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('backend/**/gradle-wrapper.properties', 'backend/**/*.gradle', 'backend/**/gradle.properties') }}
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/gradle-wrapper.properties', '**/*.gradle', '**/gradle.properties') }}
           restore-keys: |
             ${{ runner.os }}-gradle-
       - name: Explicit slow PostgreSQL and real-wait tests
