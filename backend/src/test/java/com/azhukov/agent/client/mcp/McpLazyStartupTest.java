@@ -172,7 +172,7 @@ class McpLazyStartupTest {
             retry.run();
             assertThat(lifecycle.isConnected("cached-server")).isFalse();
             assertThat(scheduled).hasSize(1);
-            scheduled.removeFirst().run();
+            scheduled.remove().run();
             assertThat(lifecycle.isConnected("cached-server")).isTrue();
             verify(live).initialize();
         } finally {
