@@ -22,8 +22,6 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class EventsController {
 
-    private static final int DEFAULT_LIMIT = 100;
-    private static final int MAX_LIMIT = 500;
 
     private final EventService eventService;
     private final ProfileService profileService;
@@ -38,7 +36,7 @@ public class EventsController {
     ) {
         String profileScope;
         try {
-            profileScope = resolveProfileScope(pathProfile, queryProfile);
+            profileScope = EventSubscription.resolveProfileScope(profileService, pathProfile, queryProfile);
         } catch (FileNotFoundException e) {
             return notFound(e.getMessage());
         } catch (IllegalArgumentException e) {
@@ -50,8 +48,8 @@ public class EventsController {
         long afterCursor;
         int boundedLimit;
         try {
-            afterCursor = parseCursor(after != null ? after : cursor);
-            boundedLimit = parseLimit(limit);
+            afterCursor = EventSubscription.parseCursor(after != null ? after : cursor);
+            boundedLimit = EventSubscription.parseLimit(limit);
         } catch (IllegalArgumentException e) {
             return badRequest(e.getMessage());
         }
@@ -71,57 +69,6 @@ public class EventsController {
         response.put("latest_cursor", eventService.latestCursor());
         response.put("limit", boundedLimit);
         return ResponseEntity.ok(response);
-    }
-
-    private String resolveProfileScope(String pathProfile, String queryProfile) throws IOException {
-        if (hasText(pathProfile)) {
-            return requireKnownProfile(pathProfile);
-        }
-        if (!hasText(queryProfile) || "all".equalsIgnoreCase(queryProfile.trim())) {
-            return null;
-        }
-        return requireKnownProfile(queryProfile);
-    }
-
-    private String requireKnownProfile(String rawProfile) throws IOException {
-        String profile = profileService.normalizeProfileName(rawProfile);
-        profileService.validateProfileName(profile);
-        profileService.requireKnownProfile(profile);
-        return profile;
-    }
-
-    private static long parseCursor(String raw) {
-        if (!hasText(raw)) {
-            return 0L;
-        }
-        try {
-            long parsed = Long.parseLong(raw.trim());
-            if (parsed < 0L) {
-                throw new IllegalArgumentException("cursor must be greater than or equal to 0");
-            }
-            return parsed;
-        } catch (NumberFormatException e) {
-            throw new IllegalArgumentException("cursor must be an integer");
-        }
-    }
-
-    private static int parseLimit(String raw) {
-        if (!hasText(raw)) {
-            return DEFAULT_LIMIT;
-        }
-        try {
-            int parsed = Integer.parseInt(raw.trim());
-            if (parsed < 1 || parsed > MAX_LIMIT) {
-                throw new IllegalArgumentException("limit must be between 1 and " + MAX_LIMIT);
-            }
-            return parsed;
-        } catch (NumberFormatException e) {
-            throw new IllegalArgumentException("limit must be an integer");
-        }
-    }
-
-    private static boolean hasText(String value) {
-        return value != null && !value.isBlank();
     }
 
     private static ResponseEntity<Map<String, Object>> badRequest(String detail) {
