@@ -51,6 +51,29 @@ class FallbackModelCallerTest {
     }
 
     @Test
+    void overloadUsesTheAvailabilityBudgetEvenWhenNormalRetriesAreOff() {
+        AgentProperties properties = new AgentProperties();
+        properties.getError().setRetryAttempts(0);
+        properties.getError().setAvailabilityRetryAttempts(2);
+        properties.getError().setRetryDelayMs(1);
+        properties.getError().setRetryCapMs(1);
+        ModelClient client = mock(ModelClient.class);
+        when(client.complete(any(), any(), any()))
+            .thenThrow(new RuntimeException("503 Service Unavailable"))
+            .thenReturn(ChatResponse.text("available"));
+        var caller = new FallbackModelCaller(
+            new ErrorClassifier(), properties, mock(ContextCompressor.class), mock(ContextEngine.class));
+        var context = new FallbackModelCaller.ModelCallContext(client,
+            new FallbackManager(List.of(), "p", "m", "", ""));
+
+        ChatResponse response = caller.call(context, List.of(Message.user("request")), List.of(),
+            Session.create("user", "p", "m"), ModelRequestOptions.empty());
+
+        assertThat(response.content()).isEqualTo("available");
+        verify(client, org.mockito.Mockito.times(2)).complete(any(), any(), any());
+    }
+
+    @Test
     void retryReceivesSanitizedContextAfterOverflowRecovery() {
         AgentProperties properties = new AgentProperties();
         properties.getError().setRetryAttempts(1);
