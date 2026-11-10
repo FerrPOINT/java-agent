@@ -358,7 +358,7 @@ public class TerminalTool implements ToolHandler {
         // Read output concurrently with waitFor() to avoid losing buffered data
         // when the PTY closes the stream before all output is flushed (Finding 1.4).
         StringBuffer outputBuffer = new StringBuffer();
-        var outputTruncated = new java.util.concurrent.atomic.AtomicBoolean();
+        var outputTruncated = new AtomicBoolean();
         Thread outputReader = null;
         try {
             ProcessBuilder pb;
@@ -489,7 +489,7 @@ public class TerminalTool implements ToolHandler {
                 if (outputReader != null) {
                     outputReader.join(2000);
                 }
-                String partialOutput = redact(AnsiStrip.strip(stripTrailingNewline(outputBuffer.toString(), usePty)));
+                String partialOutput = redact(AnsiStrip.strip(normalizeOutput(outputBuffer.toString())));
                 if (outputTruncated.get()) partialOutput = "[earlier output truncated]\n" + partialOutput;
                 String enhanced = TerminalOutputEnhancer.enhance(
                     partialOutput, -1, workdir, true, actualCwd);
@@ -502,7 +502,7 @@ public class TerminalTool implements ToolHandler {
             }
 
             String output = outputBuffer.toString();
-            output = stripTrailingNewline(output, usePty);
+            output = normalizeOutput(output);
             // Hermes parity (tools/terminal_tool.py:3466): strip ANSI escapes from ALL
             // terminal output — full ECMA-48 coverage (CSI private-mode, OSC, DCS, 8-bit C1).
             output = AnsiStrip.strip(output);
@@ -647,13 +647,11 @@ public class TerminalTool implements ToolHandler {
      * Strips the trailing newline added by the reader loop and normalises
      * PTY {@code \r\n} line endings to {@code \n}.
      */
-    private static String stripTrailingNewline(String output, boolean usePty) {
+    private static String normalizeOutput(String output) {
         if (output == null || output.isEmpty()) {
             return output;
         }
-        if (usePty) {
-            output = output.replace("\r\n", "\n").replace("\r", "\n");
-        }
+        output = output.replace("\r\n", "\n").replace('\r', '\n');
         if (output.endsWith("\n")) {
             output = output.substring(0, output.length() - 1);
         }
