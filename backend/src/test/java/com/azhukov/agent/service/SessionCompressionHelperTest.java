@@ -138,6 +138,30 @@ class SessionCompressionHelperTest {
         verify(sessionRepository).updateLastActiveAndMessageCount(eq(sessionId), org.mockito.Mockito.any(), eq(3));
     }
 
+    @Test
+    void staleSummaryDoesNotOverwriteACompactedSnapshot() {
+        UUID sessionId = UUID.randomUUID();
+        when(sessionRepository.findMessageParentId(sessionId)).thenReturn(java.util.Optional.of(sessionId));
+        List<MessageEntity> initial = List.of(
+            entity("user", "one"), entity("assistant", "two"), entity("user", "three"),
+            entity("assistant", "four"), entity("user", "five")
+        );
+        var newer = entity("assistant", "newer summary");
+        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId))
+            .thenReturn(initial, List.of(newer));
+        when(conversationCompressor.compress(anyList(), eq("focus")))
+            .thenReturn(List.of(Message.system("stale summary")));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> helper.compressSessionInternal(sessionId, "focus", null))
+            .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+            .hasMessageContaining("Session history changed during compression");
+
+        verify(conversationCompressor).compress(anyList(), eq("focus"));
+        verify(messageRepository, org.mockito.Mockito.never()).saveAll(anyList());
+        assertThat(newer.getActive()).isTrue();
+    }
+
     private static MessageEntity entity(String role, String content) {
         MessageEntity entity = new MessageEntity();
         entity.setId(UUID.nameUUIDFromBytes((role + ":" + content).getBytes(StandardCharsets.UTF_8)));
