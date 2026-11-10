@@ -50,6 +50,21 @@ class ReadFileToolTest {
     }
 
     @Test
+    void readsFirstLineOfLargePlainText(@TempDir Path dir) throws Exception {
+        Path file = dir.resolve("large.txt");
+        byte[] lines = ("x".repeat(1023) + "\n").repeat(1024).getBytes(StandardCharsets.UTF_8);
+        try (var out = Files.newOutputStream(file)) {
+            out.write("expected first line\n".getBytes(StandardCharsets.UTF_8));
+            for (int n = 0; n < 51; n++) out.write(lines);
+        }
+        var response = newTool().execute("{\"path\":\"" + jsonPath(file)
+            + "\",\"offset\":1,\"limit\":1}", null, session);
+        assertThat(response.success()).as(response.error()).isTrue();
+        assertThat(readContent(response)).isEqualTo("1|expected first line");
+        assertThat(jsonContent(response).path("total_lines").asInt()).isEqualTo(51 * 1024 + 1);
+    }
+
+    @Test
     void artifactStoreIsPrivateForReadAndSearchTools() {
         AgentProperties properties = new AgentProperties();
         properties.getSecurity().setFileSafetyEnabled(false);
