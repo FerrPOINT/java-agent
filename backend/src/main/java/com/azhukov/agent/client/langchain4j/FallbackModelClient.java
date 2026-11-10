@@ -179,7 +179,7 @@ public class FallbackModelClient implements ModelClient {
             config.getBaseUrl(),
             config.getApiKey(),
             properties.getModel().getTimeoutSeconds(),
-            properties.getModel().getMaxRetries(),
+            0, // Turn recovery owns retry admission and accounting.
             properties.getModel().getTemperature(),
             usageConsumer
         );

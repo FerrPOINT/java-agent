@@ -3,6 +3,7 @@ package com.azhukov.agent.service;
 import com.azhukov.agent.api.dto.ChatRequest;
 import com.azhukov.agent.api.dto.StreamEvent;
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.config.FallbackConfig;
 import com.azhukov.agent.core.agent.InterruptToken;
 import com.azhukov.agent.core.agent.SteerBuffer;
 import com.azhukov.agent.core.agent.AgentSessionResolver;
@@ -16,6 +17,7 @@ import com.azhukov.agent.core.context.ContextEngine;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolDefinition;
+import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.prompt.PromptBuilder;
 import com.azhukov.agent.core.state.TurnStateManager;
 import com.azhukov.agent.core.tool.ToolExecutionService;
@@ -26,6 +28,7 @@ import com.azhukov.agent.persistence.mapper.SessionEntityMapper;
 import com.azhukov.agent.persistence.repository.MessageRepository;
 import com.azhukov.agent.persistence.repository.SessionRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -33,14 +36,18 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
 import java.lang.reflect.Field;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -49,6 +56,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -68,6 +76,59 @@ import static org.mockito.Mockito.when;
  * the emitter completes cleanly without propagating to GlobalExceptionHandler.
  */
 class AgentStreamingServiceSseErrorTest {
+
+    @Test
+    void errorFallbackRemainsActiveAfterToolExecution() throws Exception {
+        var fallbackCalls = new AtomicInteger();
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            try (exchange) {
+                exchange.getRequestBody().readAllBytes();
+                String choice = fallbackCalls.incrementAndGet() == 1 ? """
+                    {"message":{"role":"assistant","tool_calls":[{"id":"call-1","type":"function",
+                     "function":{"name":"weather","arguments":"{}"}}]},"finish_reason":"tool_calls"}
+                    """ : """
+                    {"message":{"role":"assistant","content":"fallback completed the turn"},"finish_reason":"stop"}
+                    """;
+                byte[] body = ("""
+                    {"id":"fixture","object":"chat.completion","created":1,"model":"reserve","choices":[%s],
+                     "usage":{"prompt_tokens":8,"completion_tokens":4,"total_tokens":12}}
+                    """.formatted(choice)).getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", "application/json");
+                exchange.sendResponseHeaders(200, body.length);
+                exchange.getResponseBody().write(body);
+            }
+        });
+        server.start();
+        try {
+            var fallback = new FallbackConfig();
+            fallback.setModel("reserve");
+            fallback.setApiKey("fixture");
+            fallback.setBaseUrl("http://127.0.0.1:" + server.getAddress().getPort() + "/v1");
+            properties.setFallbackChain(List.of(fallback));
+            when(toolRegistry.getDefinitions(any(Set.class))).thenReturn(List.of(
+                new ToolDefinition("weather", "Fixture tool", Map.of("type", "object"))));
+            when(toolExecutionService.execute(any(), any(), any(), any(), any(), any()))
+                .thenReturn(ToolResult.ok("sunny"));
+            when(toolExecutionService.enforceToolResultBudget(any())).thenAnswer(call -> call.getArgument(0));
+            doAnswer(call -> {
+                StreamingResponseHandler handler = call.getArgument(3);
+                handler.onError(new RuntimeException("404 model not found"));
+                return null;
+            }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+
+            var emitter = new CollectingEmitter(10_000L);
+            streamingService.streamTurn(ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L), emitter);
+            emitter.awaitDone();
+
+            verify(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+            assertThat(fallbackCalls).hasValue(2);
+            assertThat(emitter.events).anyMatch(event ->
+                "token".equals(event.name) && event.data.contains("fallback completed the turn"));
+        } finally {
+            server.stop(0);
+        }
+    }
 
     @Test
     void overloadAfterEmittedTokenDoesNotRestartResponse() throws Exception {

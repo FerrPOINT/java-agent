@@ -13,11 +13,11 @@ import com.azhukov.agent.core.context.ContextCompressor;
 import com.azhukov.agent.core.context.HistorySanitizer;
 import com.azhukov.agent.core.model.ChatResponse;
 import com.azhukov.agent.core.model.Message;
-import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolDefinition;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.List;
+import java.util.function.BooleanSupplier;
 import java.util.Locale;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -84,10 +84,20 @@ public class FallbackModelCaller {
             this.fallbackManager = fallbackManager;
             this.activeClient = null;
         }
+
+        public ModelClient client() {
+            return activeClient != null ? activeClient : defaultClient;
+        }
     }
 
-    public ChatResponse call(ModelCallContext ctx, List<Message> context, List<ToolDefinition> tools,
-                             Session session, ModelRequestOptions options) {
+    @FunctionalInterface
+    interface ModelAttempt {
+        ChatResponse complete(ModelClient client, List<Message> context, List<ToolDefinition> tools,
+                              ModelRequestOptions options);
+    }
+
+    ChatResponse call(ModelCallContext ctx, List<Message> context, List<ToolDefinition> tools,
+                      ModelRequestOptions options, BooleanSupplier canAttempt, ModelAttempt invoke) {
         int retryAttempts = ResponseRecoveryPolicy.retryBudget(properties.getError(), null);
         Exception lastException = null;
         int totalAttempts = 0;
@@ -99,18 +109,23 @@ public class FallbackModelCaller {
         // fallback model, reset retry state (but NOT budget), and continue.
         // Immediate-fallback errors (AUTH_PERMANENT, CONTENT_POLICY, MODEL_NOT_FOUND)
         // skip retries entirely and go straight to fallback.
-        for (;;) {
+        fallbackLoop: for (;;) {
             int tierRetryAttempts = retryAttempts;
             for (int attempt = 0; attempt <= tierRetryAttempts; attempt++) {
+                if (!canAttempt.getAsBoolean()) {
+                    break fallbackLoop;
+                }
                 totalAttempts++;
                 try {
-                    ModelClient client = ctx.activeClient != null ? ctx.activeClient : ctx.defaultClient;
                     // Compression and retry recovery can reshape the transcript after
                     // context preparation, so repair it at the wire boundary.
                     currentContext = HistorySanitizer.sanitizeForModelRequest(currentContext);
-                    return client.complete(currentContext, tools, options);
+                    return invoke.complete(ctx.client(), currentContext, tools, options);
                 } catch (Exception e) {
                     lastException = e;
+                    if (!canAttempt.getAsBoolean()) {
+                        break fallbackLoop;
+                    }
                     ErrorClassifier.ClassificationResult classification = errorClassifier.classifyWithHints(e);
                     ErrorClassifier.ErrorType errorType = classification.type();
                     tierRetryAttempts = ResponseRecoveryPolicy.retryBudget(properties.getError(), errorType);
