@@ -9,8 +9,11 @@
 CI и четыре Dockerfiles используют Temurin 25.0.4.1+1-LTS. Docker закрепляет
 manifest digest для JDK и JRE. Bot/CLI больше не выбирают JDK через плавающий
 Gradle image: Gradle загружается существующим committed wrapper.
-Backend standalone wrapper 9.8.0 и workspace wrapper 9.6.1 проверяются отдельно;
-они не объявляются одним инструментом сборки без соответствующих прогонов.
+Backend standalone wrapper 9.8.2 используется в backend CI и сборке backend Docker.
+Корневой wrapper 9.6.1 используется в многомодульном workspace. Оба рецепта
+собирают backend, но выпускают JAR с разными именами и значениями
+\`Implementation-Title\`. Переход на один рецепт требует сохранить
+контракт поставки и обновить его потребителей.
 
 `setup-java@v6` сравнивает Adoptium `version_data.semver`, поэтому используется
 `25.0.4+101.0.LTS`; фактический runtime дополнительно проверяется в CI.
