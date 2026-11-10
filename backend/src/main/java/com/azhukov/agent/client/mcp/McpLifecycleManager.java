@@ -55,6 +55,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -99,6 +100,8 @@ public class McpLifecycleManager {
     /** Derived: OSV malware gate for stdio MCP servers (null when disabled). Created in init() so tests can inject their own via a visible field. */
     private OsvCheckService osvCheckService;
     private final Map<String, McpServerState> clients = new ConcurrentHashMap<>();
+    // Guarded by clients. A reload revokes tokens before accepting new connections.
+    private final Map<String, CompletableFuture<Void>> connectionsInFlight = new java.util.HashMap<>();
 
     /** Servers registered lazily from the schema cache; the first call connects them. */
     private final java.util.Set<String> lazyServers = ConcurrentHashMap.newKeySet();
@@ -308,53 +311,98 @@ public class McpLifecycleManager {
         connect(server, true);
     }
 
-    /** @param allowLazy false forces a real connect (lazy registration was already done). */
+    /** @param allowLazy false forces a real connect after cached registration. */
     void connect(AgentProperties.McpProperties.ServerProperties server, boolean allowLazy) {
-        // H18: Synchronize only the check-then-act, not the initialization.
-        // client.initialize() and listToolsWithPagination() involve network I/O
-        // that must NOT be held under the lock — it would block all other connect/
-        // reconnect operations for the entire duration of the handshake.
+        String name = server.getName();
+        var token = new CompletableFuture<Void>();
+        CompletableFuture<Void> existing;
         synchronized (clients) {
-            if (clients.containsKey(server.getName())) {
+            if (shutdownRequested.get() || clients.containsKey(name)
+                    || (allowLazy && lazyServers.contains(name))) {
                 return;
             }
+            existing = connectionsInFlight.putIfAbsent(name, token);
         }
-        // Hermes #56832 lazy startup: with a fresh persisted schema cache the
-        // tools register from the cache with NO server spawn; the first real
-        // call routes through ensureConnectedForCall. A cache miss (or a
-        // config revision change) falls through to a full connect.
-        if (allowLazy && lazyRegisterFromCache(server)) {
+        if (existing != null) {
+            if (!allowLazy) {
+                try {
+                    existing.get();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("Interrupted connecting to MCP server " + name, e);
+                } catch (ExecutionException e) {
+                    throw new IllegalStateException("Failed to connect to MCP server " + name, e.getCause());
+                }
+            }
             return;
         }
+        try {
+            if (!(allowLazy && lazyRegisterFromCache(server, token))) {
+                openConnection(server, token);
+            }
+            finishConnection(name, token, null);
+        } catch (Exception e) {
+            synchronized (clients) {
+                if (connectionsInFlight.get(name) == token) {
+                    finishConnection(name, token, e);
+                    scheduleReconnect(server, 0, true);
+                }
+            }
+            log.warn("Failed to connect to MCP server {}: {}", name, e.getMessage());
+        }
+    }
+
+    private void openConnection(AgentProperties.McpProperties.ServerProperties server,
+                                CompletableFuture<Void> token) {
+        String name = server.getName();
         McpSyncClient client = null;
+        boolean published = false;
         try {
             client = createClient(server);
             client.initialize();
-            // h43: Follow nextCursor pagination when listing tools.
             var tools = listToolsWithPagination(client);
-            // H18: Re-check under lock to prevent duplicate connections from
-            // concurrent callers that both passed the initial check.
             synchronized (clients) {
-                if (clients.containsKey(server.getName())) {
-                    // Another thread already connected — close this duplicate client.
-                    safeCloseClient(client);
+                if (connectionsInFlight.get(name) != token || shutdownRequested.get()) {
                     return;
                 }
-                clients.put(server.getName(), new McpServerState(server, client, tools));
+                var state = new McpServerState(server, client, tools);
+                clients.put(name, state);
+                try {
+                    registerTools(name, client, tools);
+                    scheduleToolRefresh(name);
+                    resetMcpServerError(name);
+                    lazyServers.remove(name);
+                    connectionsInFlight.remove(name, token);
+                    published = true;
+                } finally {
+                    if (!published) {
+                        clients.remove(name, state);
+                    }
+                }
             }
-            registerTools(server.getName(), client, tools);
-            scheduleToolRefresh(server.getName());
-            resetMcpServerError(server.getName());
-            log.info("Connected to MCP server {} ({}) with {} tools", server.getName(), server.getTransport(), tools.size());
-        } catch (Exception e) {
-            recordSchemaConnectError(server, e);
-            log.warn("Failed to connect to MCP server {}: {}", server.getName(), e.getMessage());
-            // H17: Close the client in the catch block before scheduleReconnect
-            // to avoid leaking the underlying transport/resources.
-            if (client != null) {
+            log.info("Connected to MCP server {} ({}) with {} tools", name, server.getTransport(), tools.size());
+        } catch (RuntimeException e) {
+            synchronized (clients) {
+                if (connectionsInFlight.get(name) == token) {
+                    recordSchemaConnectError(server, e);
+                }
+            }
+            throw e;
+        } finally {
+            if (!published && client != null) {
                 safeCloseClient(client);
             }
-            scheduleReconnect(server, 0, true);
+        }
+    }
+
+    private void finishConnection(String name, CompletableFuture<Void> token, Exception failure) {
+        synchronized (clients) {
+            connectionsInFlight.remove(name, token);
+        }
+        if (failure == null) {
+            token.complete(null);
+        } else {
+            token.completeExceptionally(failure);
         }
     }
 
@@ -363,7 +411,8 @@ public class McpLifecycleManager {
      * persisted schema cache without spawning the server process. Returns true
      * when the lazy registration succeeded (connect() must not spawn).
      */
-    private boolean lazyRegisterFromCache(AgentProperties.McpProperties.ServerProperties server) {
+    private boolean lazyRegisterFromCache(AgentProperties.McpProperties.ServerProperties server,
+                                          CompletableFuture<Void> token) {
         if (!properties.getMcp().isLazyStartup()) {
             return false;
         }
@@ -389,14 +438,19 @@ public class McpLifecycleManager {
             if (registeredTools.isEmpty()) {
                 return false;
             }
-            recordMcpToolTrustMetadata(server.getName(), server, registeredTools);
-            for (McpSchema.Tool tool : registeredTools) {
-                String fullName = mcpPrefixedToolName(server.getName(), tool.name());
-                ToolDefinition definition = convertToolDefinition(fullName, tool);
-                toolRegistry().registerDynamic(fullName, mcpToolsetName(server.getName()),
-                    definition, new McpToolHandler(server.getName(), tool.name()));
+            synchronized (clients) {
+                if (connectionsInFlight.get(server.getName()) != token || shutdownRequested.get()) {
+                    return true;
+                }
+                recordMcpToolTrustMetadata(server.getName(), server, registeredTools);
+                for (McpSchema.Tool tool : registeredTools) {
+                    String fullName = mcpPrefixedToolName(server.getName(), tool.name());
+                    ToolDefinition definition = convertToolDefinition(fullName, tool);
+                    toolRegistry().registerDynamic(fullName, mcpToolsetName(server.getName()),
+                        definition, new McpToolHandler(server.getName(), tool.name()));
+                }
+                lazyServers.add(server.getName());
             }
-            lazyServers.add(server.getName());
             log.info("MCP server {} (lazy): registered {} tool(s) from the schema cache (no spawn)",
                 server.getName(), registeredTools.size());
             return true;
@@ -459,7 +513,6 @@ public class McpLifecycleManager {
         if (serverProps == null) {
             throw new IllegalStateException("MCP server not configured: " + serverName);
         }
-        lazyServers.remove(serverName);
         log.info("MCP server {}: first call — connecting now (lazy startup)", serverName);
         connect(serverProps, false);
         if (!clients.containsKey(serverName)) {
@@ -905,49 +958,45 @@ public class McpLifecycleManager {
 
     // ── Reconnection with exponential backoff ────────────────────────────
     private void scheduleReconnect(AgentProperties.McpProperties.ServerProperties server, int attempt, boolean initial) {
-        int maxRetries = initial ? MAX_INITIAL_CONNECT_RETRIES : MAX_RECONNECT_RETRIES;
-        if (attempt >= maxRetries) {
-            log.warn("MCP server {} failed after {} {} attempts, giving up",
-                server.getName(), maxRetries, initial ? "initial connect" : "reconnect");
-            return;
-        }
-        long backoffSeconds = Math.min((long) (1L << attempt), MAX_BACKOFF_SECONDS);
-        log.info("MCP server {} {} attempt {}/{} in {}s",
-            server.getName(), initial ? "initial connect" : "reconnect", attempt + 1, maxRetries, backoffSeconds);
-        reconnectExecutor.schedule(() -> {
-            if (shutdownRequested.get()) {
+        String name = server.getName();
+        var token = new CompletableFuture<Void>();
+        synchronized (clients) {
+            if (shutdownRequested.get() || clients.containsKey(name)
+                    || connectionsInFlight.putIfAbsent(name, token) != null) {
                 return;
             }
-            try {
-                McpSyncClient client = createClient(server);
-                client.initialize();
-                var tools = listToolsWithPagination(client);
-                // WARNING 4: Synchronize the read-compare-write to prevent duplicate registrations
-                synchronized (clients) {
-                    // M27 fix: close the client we are replacing — an un-closed stale
-                    // client leaks its transport (process/socket) on every reconnect.
-                    McpServerState previous = clients.get(server.getName());
-                    if (previous != null && previous.client() != null && previous.client() != client) {
-                        try {
-                            previous.client().close();
-                            log.debug("Closed replaced MCP client for {} on reconnect", server.getName());
-                        } catch (Exception closeEx) {
-                            log.debug("Error closing replaced MCP client for {}: {}",
-                                server.getName(), closeEx.getMessage());
-                        }
-                    }
-                    clients.put(server.getName(), new McpServerState(server, client, tools));
+            scheduleReconnect(server, attempt, initial, token);
+        }
+    }
+
+    private void scheduleReconnect(AgentProperties.McpProperties.ServerProperties server, int attempt, boolean initial,
+                                   CompletableFuture<Void> token) {
+        String name = server.getName();
+        int maxRetries = initial ? MAX_INITIAL_CONNECT_RETRIES : MAX_RECONNECT_RETRIES;
+        if (attempt >= maxRetries) {
+            finishConnection(name, token, new IllegalStateException("MCP reconnect attempts exhausted"));
+            log.warn("MCP server {} failed after {} attempts, giving up", name, maxRetries);
+            return;
+        }
+        long backoff = Math.min(1L << attempt, MAX_BACKOFF_SECONDS);
+        reconnectExecutor.schedule(() -> {
+            synchronized (clients) {
+                if (shutdownRequested.get() || connectionsInFlight.get(name) != token) {
+                    return;
                 }
-                registerTools(server.getName(), client, tools);
-                scheduleToolRefresh(server.getName());
-                resetMcpServerError(server.getName());
-                log.info("Reconnected to MCP server {} with {} tools", server.getName(), tools.size());
-            } catch (Exception e) {
-                log.warn("MCP server {} {} attempt {}/{} failed: {}",
-                    server.getName(), initial ? "initial connect" : "reconnect", attempt + 1, maxRetries, e.getMessage());
-                scheduleReconnect(server, attempt + 1, initial);
             }
-        }, backoffSeconds, TimeUnit.SECONDS);
+            try {
+                openConnection(server, token);
+                finishConnection(name, token, null);
+            } catch (RuntimeException e) {
+                log.warn("MCP server {} attempt {}/{} failed: {}", name, attempt + 1, maxRetries, e.getMessage());
+                synchronized (clients) {
+                    if (!shutdownRequested.get() && connectionsInFlight.get(name) == token) {
+                        scheduleReconnect(server, attempt + 1, initial, token);
+                    }
+                }
+            }
+        }, backoff, TimeUnit.SECONDS);
     }
 
     public void reconnect(String serverName) {
@@ -959,21 +1008,28 @@ public class McpLifecycleManager {
             log.warn("Cannot reconnect unknown MCP server: {}", serverName);
             return;
         }
-        // Close existing connection if any
-        var existing = clients.remove(serverName);
+        var existing = clients.get(serverName);
         if (existing != null) {
-            try {
-                existing.client().close();
-            } catch (Exception e) {
-                log.debug("Error closing existing MCP client before reconnect: {}", e.getMessage());
+            retireConnection(serverName, existing);
+        } else {
+            scheduleReconnect(serverProps, 0, false);
+        }
+    }
+
+    private void retireConnection(String name, McpServerState expected) {
+        synchronized (clients) {
+            var current = clients.get(name);
+            if (current == null || current.client() != expected.client()) {
+                return;
             }
+            clients.remove(name);
+            var refresh = toolRefreshFutures.remove(name);
+            if (refresh != null) {
+                refresh.cancel(false);
+            }
+            scheduleReconnect(expected.properties(), 0, false);
         }
-        // Cancel and remove any pending tool refresh task for this server
-        ScheduledFuture<?> oldRefresh = toolRefreshFutures.remove(serverName);
-        if (oldRefresh != null) {
-            oldRefresh.cancel(false);
-        }
-        scheduleReconnect(serverProps, 0, false);
+        safeCloseClient(expected.client());
     }
 
     // ── Dynamic tool refresh ─────────────────────────────────────────────
@@ -986,9 +1042,13 @@ public class McpLifecycleManager {
             oldFuture.cancel(false);
             log.debug("Cancelled previous tool refresh for MCP server {}", serverName);
         }
+        McpSyncClient expected = clients.get(serverName).client();
         ScheduledFuture<?> future = toolRefreshExecutor.scheduleWithFixedDelay(() -> {
             try {
-                refreshTools(serverName);
+                var current = clients.get(serverName);
+                if (current != null && current.client() == expected) {
+                    refreshTools(serverName, current);
+                }
             } catch (Exception e) {
                 log.warn("Tool refresh for MCP server {} failed: {}", serverName, e.getMessage());
             }
@@ -997,74 +1057,78 @@ public class McpLifecycleManager {
     }
 
     public void refreshTools(String serverName) {
-        var state = clients.get(serverName);
+        refreshTools(serverName, clients.get(serverName));
+    }
+
+    private void refreshTools(String serverName, McpServerState state) {
         if (state == null) {
             return;
         }
         try {
             var freshTools = listToolsWithPagination(state.client());
-            List<McpSchema.Tool> oldRegisteredTools = selectedMcpTools(state.properties(), state.tools());
-            List<McpSchema.Tool> freshRegisteredTools = selectedMcpTools(state.properties(), freshTools);
-            recordMcpToolTrustMetadata(serverName, state.properties(), freshRegisteredTools);
-            // Finding 8.1: Compare tool inputSchema JSON, not just names.
-            // A schema change (e.g. new required parameter) with the same name
-            // must trigger re-registration to avoid stale schemas being sent to the model.
-            boolean schemasChanged = schemasDiffer(oldRegisteredTools, freshRegisteredTools);
-            Set<String> oldNames = oldRegisteredTools.stream().map(McpSchema.Tool::name).collect(Collectors.toSet());
-            Set<String> newNames = freshRegisteredTools.stream().map(McpSchema.Tool::name).collect(Collectors.toSet());
-            if (oldNames.equals(newNames) && !schemasChanged) {
-                return; // No changes detected
-            }
-            if (schemasChanged && oldNames.equals(newNames)) {
-                log.info("MCP server {} tool schema changed (names unchanged): {} tools", serverName, newNames.size());
-            } else {
-                log.info("MCP server {} tool list changed: {} -> {} tools", serverName, oldNames.size(), newNames.size());
-            }
-            // Deregister stale tools
-            for (String oldName : oldNames) {
-                if (!newNames.contains(oldName)) {
-                    String fullName = mcpPrefixedToolName(serverName, oldName);
-                    toolRegistry().deregisterDynamic(fullName);
-                    if (fingerprintStore != null) fingerprintStore.remove(fullName);
-                    log.info("Deregistered stale MCP tool: {}", fullName);
-                }
-            }
-            // Register new/updated tools
-            for (McpSchema.Tool tool : freshRegisteredTools) {
-                String fullName = mcpPrefixedToolName(serverName, tool.name());
-                // ── Security scan: check tool definition before registering ──
-                Map<String, Object> schema = tool.inputSchema() != null ? tool.inputSchema() : Map.of();
-                ScanResult defScan = definitionScanner.scan(fullName, tool.description(), schema);
-                if (defScan.isBlocked()) {
-                    log.warn("Blocking registration of MCP tool '{}' due to security findings: {}",
-                        fullName, defScan.getThreatDescription());
-                    continue;
-                }
-                if (!defScan.isClean()) {
-                    log.warn("Registering MCP tool '{}' with security warnings: {}",
-                        fullName, defScan.getThreatDescription());
-                }
-                // ── Rug pull detection: check fingerprint ──
-                fingerprintStore.recordFingerprint(fullName, tool.description(), schema);
-                ToolDefinition definition = convertToolDefinition(fullName, tool);
-                toolRegistry().registerDynamic(fullName, mcpToolsetName(serverName),
-                    definition, new McpToolHandler(serverName, tool.name()));
-            }
-            registerUtilityTools(serverName, state.client(), newNames.stream()
-                .map(name -> mcpPrefixedToolName(serverName, name))
-                .collect(Collectors.toSet()));
-            // Update state atomically (Finding 8.3: synchronize replacement to prevent
-            // in-flight tool calls from referencing stale tool definitions)
             synchronized (clients) {
+                if (shutdownRequested.get() || clients.get(serverName) != state) {
+                    return;
+                }
+                List<McpSchema.Tool> oldRegisteredTools = selectedMcpTools(state.properties(), state.tools());
+                List<McpSchema.Tool> freshRegisteredTools = selectedMcpTools(state.properties(), freshTools);
+                recordMcpToolTrustMetadata(serverName, state.properties(), freshRegisteredTools);
+                // Finding 8.1: Compare tool inputSchema JSON, not just names.
+                // A schema change (e.g. new required parameter) with the same name
+                // must trigger re-registration to avoid stale schemas being sent to the model.
+                boolean schemasChanged = schemasDiffer(oldRegisteredTools, freshRegisteredTools);
+                Set<String> oldNames = oldRegisteredTools.stream().map(McpSchema.Tool::name).collect(Collectors.toSet());
+                Set<String> newNames = freshRegisteredTools.stream().map(McpSchema.Tool::name).collect(Collectors.toSet());
+                if (oldNames.equals(newNames) && !schemasChanged) {
+                    return; // No changes detected
+                }
+                if (schemasChanged && oldNames.equals(newNames)) {
+                    log.info("MCP server {} tool schema changed (names unchanged): {} tools", serverName, newNames.size());
+                } else {
+                    log.info("MCP server {} tool list changed: {} -> {} tools", serverName, oldNames.size(), newNames.size());
+                }
+                // Deregister stale tools
+                for (String oldName : oldNames) {
+                    if (!newNames.contains(oldName)) {
+                        String fullName = mcpPrefixedToolName(serverName, oldName);
+                        toolRegistry().deregisterDynamic(fullName);
+                        if (fingerprintStore != null) fingerprintStore.remove(fullName);
+                        log.info("Deregistered stale MCP tool: {}", fullName);
+                    }
+                }
+                // Register new/updated tools
+                for (McpSchema.Tool tool : freshRegisteredTools) {
+                    String fullName = mcpPrefixedToolName(serverName, tool.name());
+                    // ── Security scan: check tool definition before registering ──
+                    Map<String, Object> schema = tool.inputSchema() != null ? tool.inputSchema() : Map.of();
+                    ScanResult defScan = definitionScanner.scan(fullName, tool.description(), schema);
+                    if (defScan.isBlocked()) {
+                        log.warn("Blocking registration of MCP tool '{}' due to security findings: {}",
+                            fullName, defScan.getThreatDescription());
+                        continue;
+                    }
+                    if (!defScan.isClean()) {
+                        log.warn("Registering MCP tool '{}' with security warnings: {}",
+                            fullName, defScan.getThreatDescription());
+                    }
+                    // ── Rug pull detection: check fingerprint ──
+                    fingerprintStore.recordFingerprint(fullName, tool.description(), schema);
+                    ToolDefinition definition = convertToolDefinition(fullName, tool);
+                    toolRegistry().registerDynamic(fullName, mcpToolsetName(serverName),
+                        definition, new McpToolHandler(serverName, tool.name()));
+                }
+                registerUtilityTools(serverName, state.client(), newNames.stream()
+                    .map(name -> mcpPrefixedToolName(serverName, name))
+                    .collect(Collectors.toSet()));
                 clients.put(serverName, new McpServerState(state.properties(), state.client(), freshTools));
-            }
-            Set<String> added = newNames.stream().filter(n -> !oldNames.contains(n)).collect(Collectors.toSet());
-            Set<String> removed = oldNames.stream().filter(n -> !newNames.contains(n)).collect(Collectors.toSet());
-            if (!added.isEmpty()) {
-                log.info("MCP server {} added tools: {}", serverName, added);
-            }
-            if (!removed.isEmpty()) {
-                log.info("MCP server {} removed tools: {}", serverName, removed);
+                Set<String> added = newNames.stream().filter(n -> !oldNames.contains(n)).collect(Collectors.toSet());
+                Set<String> removed = oldNames.stream().filter(n -> !newNames.contains(n)).collect(Collectors.toSet());
+                if (!added.isEmpty()) {
+                    log.info("MCP server {} added tools: {}", serverName, added);
+                }
+                if (!removed.isEmpty()) {
+                    log.info("MCP server {} removed tools: {}", serverName, removed);
+                }
             }
         } catch (Exception e) {
             log.warn("Failed to refresh tools from MCP server {}: {}", serverName, e.getMessage());
@@ -1076,27 +1140,7 @@ public class McpLifecycleManager {
                 || msg.contains("reset") || msg.contains("timeout");
             if (isConnectionError) {
                 log.info("MCP server {} tool refresh failed with connection error, triggering reconnect", serverName);
-                effectiveServers().stream()
-                    .filter(s -> s.getName().equals(serverName))
-                    .findFirst()
-                    .ifPresent(server -> {
-                        // M28 fix: close the stale client before dropping the reference —
-                        // remove-without-close leaked the transport on refresh-triggered reconnect.
-                        McpServerState stale = clients.remove(serverName);
-                        if (stale != null && stale.client() != null) {
-                            try {
-                                stale.client().close();
-                            } catch (Exception closeEx) {
-                                log.debug("Error closing stale MCP client for {}: {}",
-                                    serverName, closeEx.getMessage());
-                            }
-                        }
-                        ScheduledFuture<?> oldRefresh = toolRefreshFutures.remove(serverName);
-                        if (oldRefresh != null) {
-                            oldRefresh.cancel(false);
-                        }
-                        scheduleReconnect(server, 0, false);
-                    });
+                retireConnection(serverName, state);
             }
         }
     }
@@ -1664,26 +1708,7 @@ public class McpLifecycleManager {
         if (serverName == null) {
             return;
         }
-        try {
-            state.client().close();
-        } catch (Exception closeEx) {
-            log.debug("close of wedged MCP client {} failed: {}", serverName, closeEx.getMessage());
-        }
-        // Remove and reconnect in the background; callers keep failing fast
-        // with "not connected"/breaker semantics until it is healthy again.
-        McpServerState stale = clients.remove(serverName);
-        if (stale == null) {
-            clients.put(serverName, state); // someone re-registered; leave it
-            return;
-        }
-        ScheduledFuture<?> oldRefresh = toolRefreshFutures.remove(serverName);
-        if (oldRefresh != null) {
-            oldRefresh.cancel(false);
-        }
-        effectiveServers().stream()
-            .filter(s -> s.getName().equals(serverName))
-            .findFirst()
-            .ifPresent(server -> scheduleReconnect(server, 0, false));
+        retireConnection(serverName, state);
         log.info("MCP {} wedged ({} timeout {}); client torn down, reconnect scheduled",
             serverName, operation, formatSeconds(timeout));
     }
@@ -1745,8 +1770,12 @@ public class McpLifecycleManager {
         // created so connectConfiguredServers() works after a reload (reload-mcp
         // calls closeAll() then reconnects — one-shot shutdown made every later
         // schedule throw RejectedExecutionException).
-        shutdownRequested.set(true);
-        lazyServers.clear();
+        synchronized (clients) {
+            shutdownRequested.set(true);
+            connectionsInFlight.values().forEach(token -> token.cancel(false));
+            connectionsInFlight.clear();
+            lazyServers.clear();
+        }
         // M29 fix: bounded drain of in-flight work before replacing the pools —
         // shutdownNow() alone abandons running tool calls mid-write.
         reconnectExecutor.shutdownNow();
@@ -2628,6 +2657,7 @@ public class McpLifecycleManager {
                     log.debug("Could not parse tool arguments for scanning: {}", e.getMessage());
                 }
             }
+            var observed = clients.get(serverName);
             try {
                 var result = executeTool(serverName, toolName, arguments);
                 // ── Response security scan ──
@@ -2669,20 +2699,9 @@ public class McpLifecycleManager {
                 if (isConnectionError) {
                     log.warn("MCP tool '{}' on server '{}' failed with connection error, triggering reconnect: {}",
                         toolName, serverName, e.getMessage());
-                    // Find the server properties and schedule a reconnect
-                    effectiveServers().stream()
-                        .filter(s -> s.getName().equals(serverName))
-                        .findFirst()
-                        .ifPresent(server -> {
-                            // Remove stale client entry
-                            clients.remove(serverName);
-                            // Cancel and remove any pending tool refresh task
-                            ScheduledFuture<?> oldRefresh = toolRefreshFutures.remove(serverName);
-                            if (oldRefresh != null) {
-                                oldRefresh.cancel(false);
-                            }
-                            scheduleReconnect(server, 0, false);
-                        });
+                    if (observed != null) {
+                        retireConnection(serverName, observed);
+                    }
                 }
                 return mcpError("MCP tool failed: " + e.getMessage());
             }
