@@ -1095,22 +1095,27 @@ class McpLifecycleManagerNewFeaturesTest {
                 new McpLifecycleManager.McpServerState(config, client, List.of()));
         }
 
+        var scheduler = mock(java.util.concurrent.ScheduledExecutorService.class);
         try {
+            if ("reload".equals(trigger)) {
+                manager.closeAll();
+            }
+            org.springframework.test.util.ReflectionTestUtils.setField(manager, "reconnectExecutor", scheduler);
             switch (trigger) {
-                case "reload" -> {
-                    manager.closeAll();
-                    manager.connectConfiguredServers();
-                }
+                case "reload" -> manager.connectConfiguredServers();
                 case "reconnect" -> manager.reconnect("fixture");
                 default -> manager.connect(config);
             }
             assertThat(closing.await(2, TimeUnit.SECONDS)).isTrue();
+            verifyNoInteractions(scheduler);
             verify(replacement, never()).initialize();
             assertThat(manager.isConnected("fixture")).isFalse();
             assertThat(released.tryEmitEmpty()).isEqualTo(reactor.core.publisher.Sinks.EmitResult.OK);
-            org.awaitility.Awaitility.await().atMost(3, TimeUnit.SECONDS)
-                .until(() -> manager.isConnected("fixture"));
+            var reconnect = ArgumentCaptor.forClass(Runnable.class);
+            verify(scheduler, timeout(2000)).schedule(reconnect.capture(), eq(1L), eq(TimeUnit.SECONDS));
+            reconnect.getValue().run();
             verify(replacement).initialize();
+            assertThat(manager.isConnected("fixture")).isTrue();
         } finally {
             released.tryEmitEmpty();
             manager.closeAll();
