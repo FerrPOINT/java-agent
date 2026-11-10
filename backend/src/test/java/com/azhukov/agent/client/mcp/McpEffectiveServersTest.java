@@ -45,11 +45,12 @@ class McpEffectiveServersTest {
 
         McpLifecycleManager manager = McpTestFactory.create(properties, provider);
 
-        List<AgentProperties.McpProperties.ServerProperties> merged = manager.effectiveServers();
+        var merged = manager.effectiveServers();
+        assertThat(merged.get(1).schemaConfig()).isSameAs(entity);
 
-        assertThat(merged).extracting(AgentProperties.McpProperties.ServerProperties::getName)
+        assertThat(merged).extracting(server -> server.properties().getName())
             .containsExactly("yaml-server", "echo-dev");
-        var echo = merged.get(1);
+        var echo = merged.get(1).properties();
         assertThat(echo.getCommand()).isEqualTo("sh");
         assertThat(echo.getArgs()).containsExactly("/tmp/mcp-echo-server.sh");
         assertThat(echo.getTransport()).isEqualTo("stdio");
@@ -82,7 +83,7 @@ class McpEffectiveServersTest {
         McpLifecycleManager manager = McpTestFactory.create(properties, provider);
 
         assertThat(manager.effectiveServers()).hasSize(1);
-        assertThat(manager.effectiveServers().getFirst().getCommand()).isEqualTo("repomix-yaml");
+        assertThat(manager.effectiveServers().getFirst().properties().getCommand()).isEqualTo("repomix-yaml");
     }
 
     @Test
@@ -97,7 +98,7 @@ class McpEffectiveServersTest {
         McpLifecycleManager manager = McpTestFactory.create(properties, null);
 
         assertThat(manager.effectiveServers())
-            .extracting(AgentProperties.McpProperties.ServerProperties::getName)
+            .extracting(server -> server.properties().getName())
             .containsExactly("only-yaml");
     }
 }
