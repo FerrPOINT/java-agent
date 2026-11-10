@@ -4,6 +4,7 @@ import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
+import com.azhukov.agent.core.security.McpToolTrustService.ToolTrustMetadata;
 import com.azhukov.agent.metrics.AgentMetrics;
 import com.azhukov.agent.core.security.SecretRedactor;
 import com.azhukov.agent.core.security.ToolCallGuardrail;
@@ -95,6 +96,11 @@ public class ToolExecutionService {
             .build());
 
     public ToolResult execute(String toolName, String toolCallId, String arguments, Message lastAssistant, Session session, TurnState turnState) {
+        return execute(toolName, toolCallId, arguments, lastAssistant, session, turnState, null);
+    }
+
+    public ToolResult execute(String toolName, String toolCallId, String arguments, Message lastAssistant, Session session,
+                              TurnState turnState, ToolTrustMetadata mcpAdmission) {
         com.azhukov.agent.core.security.UserContext.requireCurrentAccess();
         var requestAccess = com.azhukov.agent.core.security.UserContext.centralAccess();
         // PR-3 parity: guardrails must observe the executing session (scope
@@ -144,7 +150,9 @@ public class ToolExecutionService {
             if (requestAccess != null) com.azhukov.agent.core.security.UserContext.setCentral(requestAccess);
             try {
                 com.azhukov.agent.core.security.UserContext.requireCurrentAccess();
-                return toolRegistry.execute(toolName, toolCallId, arguments, lastAssistant, session);
+                return mcpAdmission == null
+                    ? toolRegistry.execute(toolName, toolCallId, arguments, lastAssistant, session)
+                    : toolRegistry.execute(toolName, toolCallId, arguments, lastAssistant, session, mcpAdmission);
             } finally {
                 if (requestAccess != null) com.azhukov.agent.core.security.UserContext.clear();
             }

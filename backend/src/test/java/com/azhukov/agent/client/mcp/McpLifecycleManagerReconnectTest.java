@@ -57,9 +57,9 @@ class McpLifecycleManagerReconnectTest {
             }
         }
         assertThat(stateClass).isNotNull();
-        var stateConstructor = stateClass.getDeclaredConstructors()[0];
+        var stateConstructor = stateClass.getDeclaredConstructor(AgentProperties.McpProperties.ServerProperties.class, McpSyncClient.class, List.class);
         stateConstructor.setAccessible(true);
-        Object state = stateConstructor.newInstance(serverProps, mockClient, List.of());
+        Object state = stateConstructor.newInstance(serverProps, mockClient, List.of(McpSchema.Tool.builder("someTool").build()));
         clients.put(serverName, state);
 
         return mgr;
@@ -79,7 +79,7 @@ class McpLifecycleManagerReconnectTest {
         when(client.callTool(any())).thenThrow(protocolError ? responseError : new RuntimeException("connection reset by peer"));
         when(client.closeGracefully()).thenReturn(true);
         manager.getClientsForTest().put("fixture",
-            new McpLifecycleManager.McpServerState(server, client, List.of()));
+            new McpLifecycleManager.McpServerState(server, client, List.of(McpSchema.Tool.builder("pool_status").build())));
         try {
             org.assertj.core.api.Assertions.assertThatThrownBy(() -> manager.executeTool("fixture", "pool_status", "{}"))
                 .hasMessageContaining("MCP tool call failed");

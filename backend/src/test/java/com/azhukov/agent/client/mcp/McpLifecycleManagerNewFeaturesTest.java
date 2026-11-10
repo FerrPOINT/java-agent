@@ -298,6 +298,28 @@ class McpLifecycleManagerNewFeaturesTest {
     }
 
     @Test
+    void refreshRetriesRegistrationAfterTransientFailure() throws Exception {
+        ToolRegistry registry = mock(ToolRegistry.class);
+        ApplicationContext ctx = mock(ApplicationContext.class);
+        when(ctx.getBean(ToolRegistry.class)).thenReturn(registry);
+        var manager = new McpLifecycleManager(new AgentProperties(), new ObjectMapper(), ctx,
+            null, null, null, null, null, null);
+        var client = mock(McpSyncClient.class);
+        injectClient(manager, "srv", client, List.of(McpSchema.Tool.builder("old").build()));
+        when(client.listTools()).thenReturn(new McpSchema.ListToolsResult(
+            List.of(McpSchema.Tool.builder("updated").build()), null));
+        doThrow(new IllegalStateException("fixture registry failed")).doNothing()
+            .when(registry).registerDynamic(eq("mcp__srv__updated"), eq("mcp-srv"), any(), any());
+
+        manager.refreshTools("srv");
+        assertThat(manager.getClientsForTest().get("srv").registrationComplete()).isFalse();
+
+        manager.refreshTools("srv");
+        assertThat(manager.getClientsForTest().get("srv").registrationComplete()).isTrue();
+        verify(registry, times(2)).registerDynamic(eq("mcp__srv__updated"), eq("mcp-srv"), any(), any());
+    }
+
+    @Test
     void refreshTools_registersResourceAndPromptUtilityToolsWhenCapabilitiesAdvertised() throws Exception {
         AgentProperties properties = new AgentProperties();
         ToolRegistry registry = mock(ToolRegistry.class);
@@ -379,6 +401,31 @@ class McpLifecycleManagerNewFeaturesTest {
     }
 
     @Test
+    void refreshRemovesPreviouslyPublishedUtilityWhenNativeNameBecomesReserved() throws Exception {
+        ToolRegistry registry = mock(ToolRegistry.class);
+        ApplicationContext ctx = mock(ApplicationContext.class);
+        when(ctx.getBean(ToolRegistry.class)).thenReturn(registry);
+        var manager = new McpLifecycleManager(new AgentProperties(), new ObjectMapper(), ctx,
+            null, null, null, null, null, null);
+        var client = mock(McpSyncClient.class);
+        injectClient(manager, "srv", client, List.of(), null, null, List.of("read_resource"));
+        when(client.getServerCapabilities()).thenReturn(new McpSchema.ServerCapabilities(
+            null, Map.of(), null, null,
+            new McpSchema.ServerCapabilities.ResourceCapabilities(false, false), null));
+        var ordinary = McpSchema.Tool.builder("ordinary").build();
+        var reserved = McpSchema.Tool.builder("read_resource").build();
+        when(client.listTools()).thenReturn(
+            new McpSchema.ListToolsResult(List.of(ordinary), null),
+            new McpSchema.ListToolsResult(List.of(ordinary, reserved), null));
+
+        manager.refreshTools("srv");
+        verify(registry).registerDynamic(eq("mcp__srv__read_resource"), eq("mcp-srv"), any(), any());
+        manager.refreshTools("srv");
+
+        verify(registry).deregisterDynamic("mcp__srv__read_resource", "mcp-srv");
+    }
+
+    @Test
     void refreshTools_keepsNativeToolWhenGeneratedUtilityNameWouldCollide() throws Exception {
         AgentProperties properties = new AgentProperties();
         ToolRegistry registry = mock(ToolRegistry.class);
@@ -442,9 +489,9 @@ class McpLifecycleManagerNewFeaturesTest {
 
         manager.refreshTools("srv");
 
-        assertThat(trustService.serverTrust("srv")).isEqualTo("untrusted");
-        assertThat(trustService.requiresApproval("mcp__srv__delete_repo")).isTrue();
-        assertThat(trustService.requiresApproval("mcp__srv__list_repos")).isFalse();
+        assertThat(trustService.metadata("mcp__srv__delete_repo").trust()).isEqualTo("untrusted");
+        assertThat(trustService.metadata("mcp__srv__delete_repo").requiresApproval()).isTrue();
+        assertThat(trustService.metadata("mcp__srv__list_repos").requiresApproval()).isFalse();
         verify(registry).registerDynamic(eq("mcp__srv__delete_repo"), eq("mcp-srv"), any(), any());
         verify(registry).registerDynamic(eq("mcp__srv__list_repos"), eq("mcp-srv"), any(), any());
     }
@@ -570,7 +617,7 @@ class McpLifecycleManagerNewFeaturesTest {
         McpSyncClient client = mock(McpSyncClient.class);
         when(client.callTool(any())).thenReturn(new McpSchema.CallToolResult(
             List.of(new McpSchema.TextContent(null, huge)), false, null, null));
-        injectClient(manager, "srv", client, List.of());
+        injectClient(manager, "srv", client, List.of(McpSchema.Tool.builder("tool").build()));
 
         ToolResult result = manager.new McpToolHandler("srv", "tool").execute("{}", null, null);
 
@@ -1005,9 +1052,9 @@ class McpLifecycleManagerNewFeaturesTest {
             .annotations(McpSchema.ToolAnnotations.builder().readOnlyHint(true).build())
             .build();
 
-        assertThat(McpLifecycleManager.isReadOnlyHint(missing)).isFalse();
-        assertThat(McpLifecycleManager.isReadOnlyHint(falseHint)).isFalse();
-        assertThat(McpLifecycleManager.isReadOnlyHint(trueHint)).isTrue();
+        assertThat(com.azhukov.agent.core.security.McpToolTrustService.ToolTrustMetadata.nativeTool("srv", "untrusted", missing).readOnlyHint()).isFalse();
+        assertThat(com.azhukov.agent.core.security.McpToolTrustService.ToolTrustMetadata.nativeTool("srv", "untrusted", falseHint).readOnlyHint()).isFalse();
+        assertThat(com.azhukov.agent.core.security.McpToolTrustService.ToolTrustMetadata.nativeTool("srv", "untrusted", trueHint).readOnlyHint()).isTrue();
     }
 
     @Test
@@ -1224,7 +1271,7 @@ class McpLifecycleManagerNewFeaturesTest {
 
         McpSyncClient client = mock(McpSyncClient.class);
         when(client.callTool(any())).thenThrow(new RuntimeException("Bearer sk-secret123456 failed"));
-        injectClient(manager, "srv", client, List.of());
+        injectClient(manager, "srv", client, List.of(McpSchema.Tool.builder("tool").build()));
 
         McpLifecycleManager.McpToolHandler handler = manager.new McpToolHandler("srv", "tool");
         ToolResult toolResult = handler.execute("{}", null, null);
@@ -1242,7 +1289,7 @@ class McpLifecycleManagerNewFeaturesTest {
 
         McpSyncClient client = mock(McpSyncClient.class);
         when(client.callTool(any())).thenThrow(new RuntimeException("key=supersecret leaked"));
-        injectClient(manager, "srv", client, List.of());
+        injectClient(manager, "srv", client, List.of(McpSchema.Tool.builder("tool").build()));
 
         try {
             manager.executeTool("srv", "tool", "{}");
@@ -1266,13 +1313,39 @@ class McpLifecycleManagerNewFeaturesTest {
         when(client.callTool(any()))
             .thenThrow(new RuntimeException("401 Unauthorized Bearer sk-old-token"))
             .thenReturn(success);
-        injectClient(manager, "srv", client, List.of());
+        injectClient(manager, "srv", client, List.of(McpSchema.Tool.builder("tool").build()));
 
         McpSchema.CallToolResult result = manager.executeTool("srv", "tool", "{}");
 
         assertThat(result.content()).hasSize(1);
         verify(oauthManager).refreshToken("srv");
         verify(client, times(2)).callTool(any());
+    }
+
+    @Test
+    void oauthRetryCannotDispatchAChangedToolDefinition() throws Exception {
+        var manager = new McpLifecycleManager(new AgentProperties(), new ObjectMapper(), null, null,
+            null, null, null, null, null);
+        var oauth = mock(McpOAuthManager.class);
+        injectOAuthManager(manager, oauth);
+        var originalClient = mock(McpSyncClient.class);
+        var replacementClient = mock(McpSyncClient.class);
+        var original = McpSchema.Tool.builder("tool").description("original fixture").build();
+        var replacement = McpSchema.Tool.builder("tool").description("replacement fixture").build();
+        injectClient(manager, "srv", originalClient, List.of(original));
+        when(originalClient.callTool(any())).thenThrow(new RuntimeException("401 Unauthorized"));
+        org.mockito.Mockito.doAnswer(invocation -> {
+            injectClient(manager, "srv", replacementClient, List.of(replacement));
+            return null;
+        }).when(oauth).refreshToken("srv");
+
+        var admission = com.azhukov.agent.core.security.McpToolTrustService.ToolTrustMetadata
+            .nativeTool("srv", "full", original);
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> manager.executeModelTool("srv", "tool", "{}", admission))
+            .hasMessageContaining("changed after admission");
+        verify(originalClient, times(1)).callTool(any());
+        verify(replacementClient, times(0)).callTool(any());
     }
 
     @Test
@@ -1286,7 +1359,7 @@ class McpLifecycleManagerNewFeaturesTest {
 
         McpSyncClient client = mock(McpSyncClient.class);
         when(client.callTool(any())).thenThrow(new RuntimeException("401 Unauthorized Bearer sk-old-token"));
-        injectClient(manager, "srv", client, List.of());
+        injectClient(manager, "srv", client, List.of(McpSchema.Tool.builder("tool").build()));
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> manager.executeTool("srv", "tool", "{}"))
             .isInstanceOf(RuntimeException.class)
@@ -1329,20 +1402,12 @@ class McpLifecycleManagerNewFeaturesTest {
     private void injectClient(McpLifecycleManager manager, String name, McpSyncClient client,
                               List<McpSchema.Tool> tools, String trust,
                               List<String> include, List<String> exclude) throws Exception {
-        Field field = McpLifecycleManager.class.getDeclaredField("clients");
-        field.setAccessible(true);
-        ConcurrentHashMap<String, Object> map = (ConcurrentHashMap<String, Object>) field.get(manager);
-        Class<?> stateClass = Class.forName("com.azhukov.agent.client.mcp.McpLifecycleManager$McpServerState");
-        AgentProperties.McpProperties.ServerProperties props = new AgentProperties.McpProperties.ServerProperties();
+        var props = new AgentProperties.McpProperties.ServerProperties();
         props.setName(name);
-        if (trust != null) {
-            props.setTrust(trust);
-        }
+        if (trust != null) props.setTrust(trust);
         props.getTools().setInclude(include);
         props.getTools().setExclude(exclude);
-        java.lang.reflect.Constructor<?> ctor = stateClass.getDeclaredConstructors()[0];
-        ctor.setAccessible(true);
-        map.put(name, ctor.newInstance(props, client, tools));
+        manager.getClientsForTest().put(name, new McpLifecycleManager.McpServerState(props, client, tools));
     }
 
     private void injectOAuthManager(McpLifecycleManager manager, McpOAuthManager oauthManager) throws Exception {

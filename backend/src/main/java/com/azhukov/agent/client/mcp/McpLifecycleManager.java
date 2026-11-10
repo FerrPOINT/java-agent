@@ -10,6 +10,7 @@ import com.azhukov.agent.core.tool.ToolRegistry;
 import com.azhukov.agent.core.security.McpResponseScanner;
 import com.azhukov.agent.core.security.McpToolDefinitionScanner;
 import com.azhukov.agent.core.security.McpToolTrustService;
+import com.azhukov.agent.core.security.McpToolTrustService.ToolTrustMetadata;
 import com.azhukov.agent.core.security.OsvCheckService;
 import com.azhukov.agent.core.security.ScanResult;
 import com.azhukov.agent.core.security.Severity;
@@ -434,20 +435,21 @@ public class McpLifecycleManager {
             var capabilities = client.getServerCapabilities();
             boolean hasTools = capabilities == null || capabilities.tools() != null;
             List<McpSchema.Tool> tools = hasTools ? listToolsWithPagination(client) : List.of();
-            var registeredTools = selectedMcpTools(server, tools);
+            var registeredTools = admittedMcpTools(server, tools);
             Instant observedAt;
             synchronized (clients) {
                 if (connectionsInFlight.get(name) != owner || shutdownRequested.get() || handshake.isCancelled()) {
                     return;
                 }
-                var state = new McpServerState(server, client, tools);
+                var state = new McpServerState(server, client, tools, registeredTools);
                 clients.put(name, state);
                 try {
                     var cachedTools = lazyServers.get(name);
                     if (cachedTools != null) {
                         unregisterTools(name, cachedTools);
                     }
-                    registerTools(name, server, capabilities, registeredTools);
+                    registerTools(name, server, registeredTools);
+                    registerUtilityTools(name, capabilities, tools, registeredTools);
                     if (hasTools) {
                         scheduleToolRefresh(name);
                     }
@@ -467,7 +469,7 @@ public class McpLifecycleManager {
             if (store != null && config != null) {
                 try {
                     store.storeSchema(config.getId(), config.getConfigRevision(), observedAt,
-                        objectMapper.writeValueAsString(registeredTools), null, null);
+                        objectMapper.writeValueAsString(tools), null, null);
                 } catch (Exception e) {
                     log.debug("MCP schema cache write failed for '{}': {}", name, e.getMessage());
                 }
@@ -522,7 +524,7 @@ public class McpLifecycleManager {
             List<McpSchema.Tool> cachedTools = objectMapper.readValue(
                 cache.getToolsJson(), objectMapper.getTypeFactory()
                     .constructCollectionType(List.class, McpSchema.Tool.class));
-            List<McpSchema.Tool> registeredTools = selectedMcpTools(server, cachedTools);
+            List<McpSchema.Tool> registeredTools = admittedMcpTools(server, cachedTools);
             if (registeredTools.isEmpty()) {
                 return false;
             }
@@ -531,13 +533,7 @@ public class McpLifecycleManager {
                         || handshake.isCancelled()) {
                     return true;
                 }
-                recordMcpToolTrustMetadata(server.getName(), server, registeredTools);
-                for (McpSchema.Tool tool : registeredTools) {
-                    String fullName = mcpPrefixedToolName(server.getName(), tool.name());
-                    ToolDefinition definition = convertToolDefinition(fullName, tool);
-                    toolRegistry().registerDynamic(fullName, mcpToolsetName(server.getName()),
-                        definition, new McpToolHandler(server.getName(), tool.name()));
-                }
+                registerTools(server.getName(), server, registeredTools);
                 lazyServers.put(server.getName(), registeredTools);
                 connectionsInFlight.remove(server.getName(), owner);
             }
@@ -1158,66 +1154,25 @@ public class McpLifecycleManager {
                 if (shutdownRequested.get() || clients.get(serverName) != state) {
                     return;
                 }
-                List<McpSchema.Tool> oldRegisteredTools = selectedMcpTools(state.properties(), state.tools());
-                List<McpSchema.Tool> freshRegisteredTools = selectedMcpTools(state.properties(), freshTools);
-                recordMcpToolTrustMetadata(serverName, state.properties(), freshRegisteredTools);
-                // Finding 8.1: Compare tool inputSchema JSON, not just names.
-                // A schema change (e.g. new required parameter) with the same name
-                // must trigger re-registration to avoid stale schemas being sent to the model.
-                boolean schemasChanged = schemasDiffer(oldRegisteredTools, freshRegisteredTools);
-                Set<String> oldNames = oldRegisteredTools.stream().map(McpSchema.Tool::name).collect(Collectors.toSet());
-                Set<String> newNames = freshRegisteredTools.stream().map(McpSchema.Tool::name).collect(Collectors.toSet());
-                if (oldNames.equals(newNames) && !schemasChanged) {
-                    return; // No changes detected
+                var oldTools = state.admittedTools();
+                var admitted = admittedMcpTools(state.properties(), freshTools);
+                if (state.registrationComplete() && state.tools().equals(freshTools) && oldTools.equals(admitted)) {
+                    return;
                 }
-                if (schemasChanged && oldNames.equals(newNames)) {
-                    log.info("MCP server {} tool schema changed (names unchanged): {} tools", serverName, newNames.size());
-                } else {
-                    log.info("MCP server {} tool list changed: {} -> {} tools", serverName, oldNames.size(), newNames.size());
-                }
-                // Deregister stale tools
-                for (String oldName : oldNames) {
-                    if (!newNames.contains(oldName)) {
-                        String fullName = mcpPrefixedToolName(serverName, oldName);
-                        if (toolRegistry().deregisterDynamic(fullName, mcpToolsetName(serverName))) {
-                            if (fingerprintStore != null) fingerprintStore.remove(fullName);
-                            log.info("Deregistered stale MCP tool: {}", fullName);
-                        }
+                // Invalidate in-flight admissions before touching the registry. A failed
+                // update stays unpublished and the next refresh reconciles it again.
+                clients.put(serverName, new McpServerState(state.properties(), state.client(), freshTools, admitted, false));
+                Set<String> newNames = admitted.stream().map(McpSchema.Tool::name).collect(Collectors.toSet());
+                for (var previous : oldTools) {
+                    if (!newNames.contains(previous.name())) {
+                        String fullName = mcpPrefixedToolName(serverName, previous.name());
+                        toolRegistry().deregisterDynamic(fullName, mcpToolsetName(serverName));
+                        if (fingerprintStore != null) fingerprintStore.remove(fullName);
                     }
                 }
-                // Register new/updated tools
-                for (McpSchema.Tool tool : freshRegisteredTools) {
-                    String fullName = mcpPrefixedToolName(serverName, tool.name());
-                    // ── Security scan: check tool definition before registering ──
-                    Map<String, Object> schema = tool.inputSchema() != null ? tool.inputSchema() : Map.of();
-                    ScanResult defScan = definitionScanner.scan(fullName, tool.description(), schema);
-                    if (defScan.isBlocked()) {
-                        log.warn("Blocking registration of MCP tool '{}' due to security findings: {}",
-                            fullName, defScan.getThreatDescription());
-                        continue;
-                    }
-                    if (!defScan.isClean()) {
-                        log.warn("Registering MCP tool '{}' with security warnings: {}",
-                            fullName, defScan.getThreatDescription());
-                    }
-                    // ── Rug pull detection: check fingerprint ──
-                    fingerprintStore.recordFingerprint(fullName, tool.description(), schema);
-                    ToolDefinition definition = convertToolDefinition(fullName, tool);
-                    toolRegistry().registerDynamic(fullName, mcpToolsetName(serverName),
-                        definition, new McpToolHandler(serverName, tool.name()));
-                }
-                registerUtilityTools(serverName, capabilities, newNames.stream()
-                    .map(name -> mcpPrefixedToolName(serverName, name))
-                    .collect(Collectors.toSet()));
-                clients.put(serverName, new McpServerState(state.properties(), state.client(), freshTools));
-                Set<String> added = newNames.stream().filter(n -> !oldNames.contains(n)).collect(Collectors.toSet());
-                Set<String> removed = oldNames.stream().filter(n -> !newNames.contains(n)).collect(Collectors.toSet());
-                if (!added.isEmpty()) {
-                    log.info("MCP server {} added tools: {}", serverName, added);
-                }
-                if (!removed.isEmpty()) {
-                    log.info("MCP server {} removed tools: {}", serverName, removed);
-                }
+                registerTools(serverName, state.properties(), admitted);
+                registerUtilityTools(serverName, capabilities, freshTools, admitted);
+                clients.put(serverName, new McpServerState(state.properties(), state.client(), freshTools, admitted));
             }
         } catch (Exception e) {
             log.warn("Failed to refresh tools from MCP server {}: {}", serverName, e.getMessage());
@@ -1230,60 +1185,12 @@ public class McpLifecycleManager {
         }
     }
 
-    /**
-     * Finding 8.1: Compare tool inputSchema JSON between old and fresh tool lists.
-     * Returns true if any tool's schema has changed (even if the name is the same).
-     */
-    private boolean schemasDiffer(List<McpSchema.Tool> oldTools, List<McpSchema.Tool> freshTools) {
-        Map<String, String> oldSchemas = new LinkedHashMap<>();
-        for (McpSchema.Tool t : oldTools) {
-            oldSchemas.put(t.name(), schemaToComparableJson(t));
-        }
-        for (McpSchema.Tool t : freshTools) {
-            String oldJson = oldSchemas.get(t.name());
-            if (oldJson == null) continue; // new tool — handled by name diff
-            String freshJson = schemaToComparableJson(t);
-            if (!oldJson.equals(freshJson)) {
-                log.debug("Schema changed for tool {}: old={}, new={}", t.name(), oldJson, freshJson);
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /** Convert a tool's inputSchema to a comparable JSON string. */
-    private String schemaToComparableJson(McpSchema.Tool tool) {
-        try {
-            Map<String, Object> schema = tool.inputSchema() != null ? tool.inputSchema() : Map.of();
-            return objectMapper.writeValueAsString(schema);
-        } catch (Exception e) {
-            // If serialization fails, compare by toString as fallback
-            return String.valueOf(tool.inputSchema());
-        }
-    }
-
     private void registerTools(String serverName, AgentProperties.McpProperties.ServerProperties server,
-                               McpSchema.ServerCapabilities capabilities, List<McpSchema.Tool> registeredTools) {
+                               List<McpSchema.Tool> registeredTools) {
         recordMcpToolTrustMetadata(serverName, server, registeredTools);
-        Set<String> nativeFullNames = registeredTools.stream()
-            .map(tool -> mcpPrefixedToolName(serverName, tool.name()))
-            .collect(Collectors.toSet());
         for (McpSchema.Tool tool : registeredTools) {
             String fullName = mcpPrefixedToolName(serverName, tool.name());
-            // ── Security scan: check tool definition before registering ──
             Map<String, Object> schema = tool.inputSchema() != null ? tool.inputSchema() : Map.of();
-            if (definitionScanner != null) {
-                ScanResult defScan = definitionScanner.scan(fullName, tool.description(), schema);
-                if (defScan.isBlocked()) {
-                    log.warn("Blocking registration of MCP tool '{}' due to security findings: {}",
-                        fullName, defScan.getThreatDescription());
-                    continue;
-                }
-                if (!defScan.isClean()) {
-                    log.warn("Registering MCP tool '{}' with security warnings: {}",
-                        fullName, defScan.getThreatDescription());
-                }
-            }
             // ── Rug pull detection: check fingerprint ──
             if (fingerprintStore != null) {
                 fingerprintStore.recordFingerprint(fullName, tool.description(), schema);
@@ -1301,10 +1208,19 @@ public class McpLifecycleManager {
             toolRegistry().registerDynamic(fullName, mcpToolsetName(serverName),
                 definition, new McpToolHandler(serverName, tool.name()));
         }
-        registerUtilityTools(serverName, capabilities, nativeFullNames);
+    }
+
+    private Set<String> nativeNames(String serverName, List<McpSchema.Tool> tools) {
+        return tools.stream()
+            .filter(tool -> tool != null && tool.name() != null && !tool.name().isBlank())
+            .map(tool -> mcpPrefixedToolName(serverName, tool.name()))
+            .collect(Collectors.toSet());
     }
 
     private void unregisterTools(String serverName, List<McpSchema.Tool> tools) {
+        if (mcpToolTrustService != null) {
+            mcpToolTrustService.recordServerTools(serverName, null, List.of());
+        }
         ToolRegistry registry = applicationContext != null ? toolRegistry() : null;
         if (registry == null) {
             return;
@@ -1312,19 +1228,32 @@ public class McpLifecycleManager {
         String toolset = mcpToolsetName(serverName);
         tools.stream().filter(java.util.Objects::nonNull)
             .forEach(tool -> registry.deregisterDynamic(mcpPrefixedToolName(serverName, tool.name()), toolset));
-        for (String utility : List.of("list_resources", "read_resource", "list_prompts", "get_prompt")) {
+        for (String utility : UTILITY_TOOL_NAMES) {
             registry.deregisterDynamic(mcpPrefixedToolName(serverName, utility), toolset);
         }
     }
 
-    private List<McpSchema.Tool> selectedMcpTools(AgentProperties.McpProperties.ServerProperties server,
+    private List<McpSchema.Tool> admittedMcpTools(AgentProperties.McpProperties.ServerProperties server,
                                                   List<McpSchema.Tool> tools) {
         if (tools == null || tools.isEmpty()) {
             return List.of();
         }
         return tools.stream()
             .filter(tool -> tool != null && shouldRegisterMcpTool(server, tool.name()))
+            .filter(tool -> passesDefinitionScan(server.getName(), tool))
             .toList();
+    }
+
+    private boolean passesDefinitionScan(String serverName, McpSchema.Tool tool) {
+        if (definitionScanner == null) return true;
+        String fullName = mcpPrefixedToolName(serverName, tool.name());
+        var result = definitionScanner.scan(fullName, tool.description(),
+            tool.inputSchema() != null ? tool.inputSchema() : Map.of());
+        if (!result.isClean()) {
+            log.warn("MCP tool '{}' definition scan (blocked={}): {}",
+                fullName, result.isBlocked(), result.getThreatDescription());
+        }
+        return !result.isBlocked();
     }
 
     private boolean shouldRegisterMcpTool(AgentProperties.McpProperties.ServerProperties server, String toolName) {
@@ -1375,8 +1304,20 @@ public class McpLifecycleManager {
         return hasGlob && Pattern.compile(regex.toString()).matcher(value).matches();
     }
 
+    private static final List<String> UTILITY_TOOL_NAMES =
+        List.of("list_resources", "read_resource", "list_prompts", "get_prompt");
+
     private void registerUtilityTools(String serverName, McpSchema.ServerCapabilities capabilities,
-                                      Set<String> nativeFullNames) {
+                                      List<McpSchema.Tool> discovered, List<McpSchema.Tool> admitted) {
+        var nativeFullNames = nativeNames(serverName, discovered);
+        var admittedFullNames = nativeNames(serverName, admitted);
+        for (String utility : UTILITY_TOOL_NAMES) {
+            String fullName = mcpPrefixedToolName(serverName, utility);
+            if (nativeFullNames.contains(fullName) && !admittedFullNames.contains(fullName)) {
+                // The native tool reserves this name even when it is excluded.
+                toolRegistry().deregisterDynamic(fullName, mcpToolsetName(serverName));
+            }
+        }
         if (capabilities == null) {
             return;
         }
@@ -1436,7 +1377,6 @@ public class McpLifecycleManager {
         parameters.put("required", required);
         toolRegistry().registerDynamic(fullName, mcpToolsetName(serverName),
             new ToolDefinition(fullName, description, parameters), handler);
-        recordGeneratedMcpUtilityToolTrustMetadata(serverName, fullName);
     }
 
     private void recordMcpToolTrustMetadata(String serverName,
@@ -1445,29 +1385,7 @@ public class McpLifecycleManager {
         if (mcpToolTrustService == null || serverName == null || tools == null) {
             return;
         }
-        Map<String, Boolean> readOnlyByFullName = new LinkedHashMap<>();
-        for (McpSchema.Tool tool : tools) {
-            if (tool == null || tool.name() == null || tool.name().isBlank()) {
-                continue;
-            }
-            readOnlyByFullName.put(mcpPrefixedToolName(serverName, tool.name()), isReadOnlyHint(tool));
-        }
-        mcpToolTrustService.recordServerTools(serverName, server == null ? null : server.getTrust(), readOnlyByFullName);
-    }
-
-    private void recordGeneratedMcpUtilityToolTrustMetadata(String serverName, String fullName) {
-        if (mcpToolTrustService == null) {
-            return;
-        }
-        McpServerState state = clients.get(serverName);
-        AgentProperties.McpProperties.ServerProperties server = state == null ? null : state.properties();
-        mcpToolTrustService.recordTool(serverName, server == null ? null : server.getTrust(), fullName, true);
-    }
-
-    static boolean isReadOnlyHint(McpSchema.Tool tool) {
-        return tool != null
-            && tool.annotations() != null
-            && Boolean.TRUE.equals(tool.annotations().readOnlyHint());
+        mcpToolTrustService.recordServerTools(serverName, server == null ? null : server.getTrust(), tools);
     }
 
     public List<McpServerInfo> listServers() {
@@ -1722,6 +1640,16 @@ public class McpLifecycleManager {
     }
 
     public McpSchema.CallToolResult executeTool(String serverName, String toolName, String argumentsJson) {
+        return executeTool(serverName, toolName, argumentsJson, false, null);
+    }
+
+    public McpSchema.CallToolResult executeModelTool(String serverName, String toolName, String argumentsJson,
+                                                    ToolTrustMetadata admission) {
+        return executeTool(serverName, toolName, argumentsJson, true, admission);
+    }
+
+    private McpSchema.CallToolResult executeTool(String serverName, String toolName, String argumentsJson,
+                                                boolean modelCall, ToolTrustMetadata admission) {
         // Hermes _ensure_lazy_server_connected parity: a lazily-registered
         // server connects on the first real call.
         long startedAt = System.nanoTime();
@@ -1733,7 +1661,7 @@ public class McpLifecycleManager {
         try {
             Map<String, Object> args = objectMapper.readValue(argumentsJson, new TypeReference<>() {});
             try {
-                return callToolWithTimeout(state, toolName, args, startedAt);
+                return callToolWithTimeout(state, serverName, toolName, args, startedAt, modelCall, admission);
             } catch (Exception callError) {
                 if (!isAuthError(callError)) {
                     throw callError;
@@ -1741,7 +1669,7 @@ public class McpLifecycleManager {
                 recoverOAuthOrThrow(serverName, callError);
                 try {
                     var retryState = clients.getOrDefault(serverName, state);
-                    return callToolWithTimeout(retryState, toolName, args, startedAt);
+                    return callToolWithTimeout(retryState, serverName, toolName, args, startedAt, modelCall, admission);
                 } catch (Exception retryError) {
                     if (isAuthError(retryError)) {
                         throw reauthRequired(serverName, retryError);
@@ -1755,15 +1683,33 @@ public class McpLifecycleManager {
         }
     }
 
-    private McpSchema.CallToolResult callToolWithTimeout(McpServerState state,
-                                                         String toolName,
-                                                         Map<String, Object> args, long startedAt) throws Exception {
+    private McpSchema.CallToolResult callToolWithTimeout(McpServerState state, String serverName, String toolName,
+                                                         Map<String, Object> args, long startedAt,
+                                                         boolean modelCall, ToolTrustMetadata admission) throws Exception {
+        if (!state.registrationComplete()) {
+            throw new IllegalStateException("MCP tool registration is incomplete: " + serverName);
+        }
+        var definition = state.admittedTools().stream().filter(tool -> toolName.equals(tool.name())).findFirst()
+            .orElseThrow(() -> new IllegalStateException("MCP tool is not admitted: " + toolName));
+        if (modelCall) {
+            var current = ToolTrustMetadata.nativeTool(serverName, state.properties().getTrust(), definition);
+            if (admission != null && !admission.equals(current)) {
+                throw new IllegalStateException("MCP tool changed after admission: " + toolName);
+            }
+            if (admission == null && properties.getSecurity().isApprovalsEnabled() && current.requiresApproval()) {
+                throw new IllegalStateException("MCP tool requires approval: " + toolName);
+            }
+        }
         try {
             return callMcpWithTimeout(state, "tool '" + toolName + "'",
-                () -> state.client().callTool(new McpSchema.CallToolRequest(toolName, args)), startedAt);
+                () -> {
+                    if (modelCall && clients.get(serverName) != state) {
+                        throw new IllegalStateException("MCP tool changed before dispatch: " + toolName);
+                    }
+                    return state.client().callTool(new McpSchema.CallToolRequest(toolName, args));
+                }, startedAt);
         } catch (Exception e) {
-            String serverName = serverNameOf(state);
-            if (serverName != null && !isAuthError(e) && isConnectionError(e)) {
+            if (!isAuthError(e) && isConnectionError(e)) {
                 retireConnection(serverName, state);
             }
             throw e;
@@ -2208,7 +2154,7 @@ public class McpLifecycleManager {
         return MCP_NAME_COMPONENT_UNSAFE.matcher(String.valueOf(value == null ? "" : value)).replaceAll("_");
     }
 
-    static String mcpPrefixedToolName(String serverName, String toolName) {
+    public static String mcpPrefixedToolName(String serverName, String toolName) {
         String fullName = MCP_TOOL_NAME_PREFIX + sanitizeMcpNameComponent(serverName)
             + MCP_NAME_DELIMITER + sanitizeMcpNameComponent(toolName);
         return clampMcpToolName(fullName);
@@ -2750,7 +2696,17 @@ public class McpLifecycleManager {
 
     record McpServerState(AgentProperties.McpProperties.ServerProperties properties,
                           McpSyncClient client,
-                          List<McpSchema.Tool> tools) {}
+                          List<McpSchema.Tool> tools, List<McpSchema.Tool> admittedTools, boolean registrationComplete) {
+        McpServerState(AgentProperties.McpProperties.ServerProperties properties, McpSyncClient client,
+                       List<McpSchema.Tool> tools, List<McpSchema.Tool> admittedTools) {
+            this(properties, client, tools, admittedTools, true);
+        }
+
+        McpServerState(AgentProperties.McpProperties.ServerProperties properties,
+                       McpSyncClient client, List<McpSchema.Tool> tools) {
+            this(properties, client, tools, tools);
+        }
+    }
 
     /** Test seam: direct access to the connected-clients map. */
     Map<String, McpServerState> getClientsForTest() {
@@ -2772,6 +2728,11 @@ public class McpLifecycleManager {
 
         @Override
         public ToolResult execute(String arguments, Message lastAssistant, Session session) {
+            return execute(arguments, lastAssistant, session, null);
+        }
+
+        @Override
+        public ToolResult execute(String arguments, Message lastAssistant, Session session, ToolTrustMetadata admission) {
             // h42: When an MCP server reuses the same tool_call_id for different calls,
             // keep the tool results instead of overwriting/dropping. The tool_call_id is
             // available in the session metadata if needed, but the result is always
@@ -2806,7 +2767,7 @@ public class McpLifecycleManager {
                 }
             }
             try {
-                var result = executeTool(serverName, toolName, arguments);
+                var result = executeModelTool(serverName, toolName, arguments, admission);
                 // ── Response security scan ──
                 String output;
                 MediaPublisher publisher = publisherFor(session);
