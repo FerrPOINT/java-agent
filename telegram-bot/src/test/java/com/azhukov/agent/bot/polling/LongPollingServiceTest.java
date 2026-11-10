@@ -115,6 +115,7 @@ class LongPollingServiceTest {
             .thenReturn(Optional.empty());
 
         AtomicInteger count = new AtomicInteger(0);
+        CountDownLatch secondHandled = new CountDownLatch(1);
         CountDownLatch firstStarted = new CountDownLatch(1);
         CountDownLatch firstCanProceed = new CountDownLatch(1);
         CountDownLatch bothDone = new CountDownLatch(2);
@@ -122,7 +123,7 @@ class LongPollingServiceTest {
         service = new LongPollingService(
             telegramClient, properties,
             event -> {
-                if (count.get() == 0) {
+                if (event.updateId() == 1) {
                     firstStarted.countDown();
                     try {
                         firstCanProceed.await(5, TimeUnit.SECONDS);
@@ -131,6 +132,7 @@ class LongPollingServiceTest {
                     }
                 }
                 count.incrementAndGet();
+                if (event.updateId() == 2) secondHandled.countDown();
                 bothDone.countDown();
             },
             reconnectWatcher
@@ -141,8 +143,13 @@ class LongPollingServiceTest {
         // Wait for first handler to start
         assertThat(firstStarted.await(10, TimeUnit.SECONDS)).isTrue();
 
-        // Release the slow handler
-        firstCanProceed.countDown();
+        try {
+            assertThat(secondHandled.await(4, TimeUnit.SECONDS)).isTrue();
+            verify(telegramClient, never()).getUpdates(eq(2L), anyInt(), anyInt());
+            verify(telegramClient, never()).getUpdates(eq(3L), anyInt(), anyInt());
+        } finally {
+            firstCanProceed.countDown();
+        }
 
         // Both should complete
         assertThat(bothDone.await(10, TimeUnit.SECONDS)).isTrue();

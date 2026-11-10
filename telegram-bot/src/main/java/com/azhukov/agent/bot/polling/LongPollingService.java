@@ -43,6 +43,8 @@ public class LongPollingService {
     });
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicLong lastUpdateId = new AtomicLong(0);
+    private final java.util.NavigableMap<Long, java.util.concurrent.CompletableFuture<Void>> pending =
+        new java.util.TreeMap<>();
 
     // P0: Gateway lock — prevents concurrent instances with the same bot token
     private BotLockManager lockManager;
@@ -104,6 +106,8 @@ public class LongPollingService {
     private void pollLoop() {
         while (running.get()) {
             try {
+                acknowledgeHandledUpdates();
+                if (!running.get()) return;
                 var updates = fetchUpdates();
                 if (updates == null) {
                     // P0 fix: fetchUpdates returns null on transient network
@@ -126,20 +130,11 @@ public class LongPollingService {
                 // arrived — otherwise the backoff never decays back to 5s
                 // until the next real message.
                 reconnectWatcher.resetBackoff();
-                for (Map<String, Object> update : updates) {
-                    try {
-                        UpdateEvent event = UpdateEvent.from(update);
-                        lastUpdateId.updateAndGet(current -> Math.max(current, event.updateId()));
-                        processPool.submit(() -> {
-                            try {
-                                updateHandler.accept(event);
-                            } catch (Exception e) {
-                                log.error("Error processing update: {}", e.getMessage(), e);
-                            }
-                        });
-                    } catch (Exception e) {
-                        log.error("Error parsing update: {}", e.getMessage(), e);
-                    }
+                acceptUpdates(updates);
+                acknowledgeHandledUpdates();
+                if (!pending.isEmpty() && !updates.isEmpty()) {
+                    // Unacknowledged updates can be returned immediately by Telegram.
+                    TimeUnit.MILLISECONDS.sleep(250);
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -153,6 +148,33 @@ public class LongPollingService {
                 }
                 return;
             }
+        }
+    }
+
+    private void acceptUpdates(List<Map<String, Object>> updates) {
+        for (var update : updates.stream()
+                .sorted(java.util.Comparator.comparingLong(LongPollingService::updateId)).toList()) {
+            long id = updateId(update);
+            if (id <= lastUpdateId.get() || pending.containsKey(id)) continue;
+            if (pending.size() >= 100) break;
+            pending.put(id, java.util.concurrent.CompletableFuture.runAsync(
+                () -> updateHandler.accept(UpdateEvent.from(update)), processPool));
+        }
+    }
+
+    private static long updateId(Map<String, Object> update) {
+        return update.get("update_id") instanceof Number id ? id.longValue() : 0;
+    }
+
+    private void acknowledgeHandledUpdates() {
+        while (!pending.isEmpty() && pending.firstEntry().getValue().isDone()) {
+            var first = pending.firstEntry();
+            if (first.getValue().isCompletedExceptionally()) {
+                running.set(false);
+                log.error("Stopping polling after failed handling of unacknowledged update {}", first.getKey());
+                return;
+            }
+            lastUpdateId.set(pending.pollFirstEntry().getKey());
         }
     }
 
