@@ -41,7 +41,12 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
     private com.azhukov.agent.tools.delegate.DelegateTaskTool delegateTaskTool;
 
     /** Each entry owns the chat until its current message and any queued messages finish. */
-    private final ConcurrentHashMap<String, ArrayDeque<MessageEvent>> activeChats = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, ChatQueue> activeChats = new ConcurrentHashMap<>();
+
+    private static final class ChatQueue {
+        private final ArrayDeque<MessageEvent> pending = new ArrayDeque<>();
+        private UUID runningSession;
+    }
 
     /**
      * Bounded dedup of platform redeliveries: Telegram retries webhook POSTs
@@ -78,17 +83,17 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
 
     @Override
     public void accept(MessageEvent event) {
-        process(event, true);
+        process(event, null);
     }
 
-    private void process(MessageEvent event, boolean newDelivery) {
+    private void process(MessageEvent event, ChatQueue ownedQueue) {
         SessionSource source = event.source();
         log.info("Processing inbound {} message from userId={} chatId={} text={}",
             source.platform(), source.userId(), source.chatId(),
             event.text() != null ? event.text().substring(0, Math.min(event.text().length(), 80)) : "");
 
         String chatId = source.chatId();
-        ArrayDeque<MessageEvent> ownedQueue = newDelivery ? null : activeChats.get(chatId);
+        boolean newDelivery = ownedQueue == null;
         UUID lockedSession = null;
         try {
             if (!isAuthorized(source)) {
@@ -110,8 +115,8 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
             Session session = sessionResolver.resolve(source);
 
             if (newDelivery) {
-                var queue = new ArrayDeque<MessageEvent>();
-                ArrayDeque<MessageEvent> active;
+                var queue = new ChatQueue();
+                ChatQueue active;
                 while ((active = activeChats.putIfAbsent(chatId, queue)) != null) {
                     if (handleBusy(chatId, active, session, event)) {
                         return;
@@ -124,6 +129,9 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
                 throw new IllegalStateException("Session is busy: " + session.id());
             }
             lockedSession = session.id();
+            synchronized (ownedQueue) {
+                ownedQueue.runningSession = lockedSession;
+            }
 
             // P1-5: When mid-turn persistence is active, persist only the user message
             // before the turn. The DefaultAgentRuntime persists assistant + tool messages
@@ -150,7 +158,7 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
             String lateSteer = turnResult.pendingSteer();
             if (lateSteer != null && !lateSteer.isBlank()) {
                 synchronized (ownedQueue) {
-                    ownedQueue.add(new MessageEvent(UUID.randomUUID().toString(), source,
+                    ownedQueue.pending.add(new MessageEvent(UUID.randomUUID().toString(), source,
                         event.type(), lateSteer, List.of(), java.util.Map.of("steer_handoff", "true"),
                         java.time.Instant.now()));
                 }
@@ -181,6 +189,9 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
             }
         } finally {
             if (lockedSession != null) {
+                synchronized (ownedQueue) {
+                    ownedQueue.runningSession = null;
+                }
                 turnLocks.release(lockedSession);
             }
             if (ownedQueue != null) {
@@ -189,7 +200,7 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
         }
     }
 
-    private boolean handleBusy(String chatId, ArrayDeque<MessageEvent> queue, Session session, MessageEvent event) {
+    private boolean handleBusy(String chatId, ChatQueue queue, Session session, MessageEvent event) {
         String mode = agentProperties.getGateway().getBusyInputMode();
         boolean interrupt = "interrupt".equalsIgnoreCase(mode);
         boolean protectSubagents = interrupt && delegateTaskTool != null && delegateTaskTool.getActiveSubagentCount() > 0;
@@ -198,18 +209,19 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
             if (activeChats.get(chatId) != queue) {
                 return false;
             }
-            if ("steer".equalsIgnoreCase(mode) && steerBuffer != null && session.id() != null
+            boolean ownsTurn = session.id() != null && session.id().equals(queue.runningSession);
+            if (ownsTurn && "steer".equalsIgnoreCase(mode) && steerBuffer != null
                     && steerBuffer.steer(session.id(), event.text())) {
                 reply = "⏩ Steered into current run. Your message arrives after the next tool call.";
             } else {
-                queue.add(event);
-                if (interrupt && !protectSubagents) {
-                    if (interruptTokenProvider != null && session.id() != null) {
+                queue.pending.add(event);
+                if (ownsTurn && interrupt && !protectSubagents) {
+                    if (interruptTokenProvider != null) {
                         var token = interruptTokenProvider.getIfAvailable();
                         if (token != null) token.cancel(session.id());
                     }
                     reply = "⚡ Interrupting current task. I'll respond to your message shortly.";
-                } else if (protectSubagents) {
+                } else if (ownsTurn && protectSubagents) {
                     reply = "⏳ Queued for the next turn. Active subagents detected — I'll respond once they finish.";
                 } else {
                     reply = "⏳ Queued for the next turn. I'll respond once the current task finishes.";
@@ -221,16 +233,16 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
         return true;
     }
 
-    private void dispatchNext(String chatId, ArrayDeque<MessageEvent> queue) {
+    private void dispatchNext(String chatId, ChatQueue queue) {
         MessageEvent next;
         synchronized (queue) {
-            next = queue.poll();
+            next = queue.pending.poll();
             if (next == null) {
                 activeChats.remove(chatId, queue);
                 return;
             }
         }
-        java.util.concurrent.CompletableFuture.runAsync(() -> process(next, false));
+        java.util.concurrent.CompletableFuture.runAsync(() -> process(next, queue));
     }
 
     private boolean isAuthorized(SessionSource source) {
