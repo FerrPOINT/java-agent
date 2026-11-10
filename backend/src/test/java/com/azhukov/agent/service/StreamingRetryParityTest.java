@@ -39,14 +39,9 @@ class StreamingRetryParityTest {
     }
 
     @Test
-    void retryCapUsesOperatorConfigNotHardcodedFive() throws java.io.IOException {
-        // The emitter code path reads properties.getError().getRetryAttempts()
-        // (Hermes agent.api_max_retries, default 3).
+    void emitterHasNoFixedContainerTimeout() throws java.io.IOException {
         String src = Files.readString(Path.of(
             "src/main/java/com/azhukov/agent/service/AgentStreamingService.java"));
-        assertThat(src).contains("private int maxStreamRetries()");
-        assertThat(src).contains("properties.getError().getRetryAttempts()");
-        // No fixed container cap: SseEmitter must be created with 0L default.
         assertThat(src).contains("request.timeoutMs() != null ? request.timeoutMs() : 0L");
     }
 

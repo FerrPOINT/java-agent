@@ -69,6 +69,64 @@ import static org.mockito.Mockito.when;
  */
 class AgentStreamingServiceSseErrorTest {
 
+    @Test
+    void overloadAfterEmittedTokenDoesNotRestartResponse() throws Exception {
+        properties.getError().setRetryAttempts(1);
+        properties.getError().setAvailabilityRetryAttempts(2);
+        var request = ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L);
+        var emitter = new CollectingEmitter(30_000L);
+        var attempts = new java.util.concurrent.atomic.AtomicInteger();
+        doAnswer(invocation -> {
+            StreamingResponseHandler handler = invocation.getArgument(3);
+            if (attempts.incrementAndGet() == 1) {
+                handler.onToken("first attempt text ".repeat(16));
+                handler.onError(new RuntimeException("529 overloaded"));
+            } else {
+                handler.onToken("second attempt text ".repeat(16));
+                handler.onComplete();
+            }
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+
+        streamingService.streamTurn(request, emitter);
+        emitter.awaitDone();
+        assertThat(emitter.events.stream().anyMatch(event ->
+            "token".equals(event.name) && event.data.contains("first attempt text"))).isTrue();
+        assertThat(attempts).hasValue(1);
+        assertThat(emitter.events).anyMatch(event -> "error".equals(event.name));
+    }
+
+    @Test
+    void overloadCannotSendAnotherRequestWhenTurnBudgetIsSpent() throws Exception {
+        properties.getError().setRetryAttempts(1);
+        properties.getError().setAvailabilityRetryAttempts(2);
+        var exhausted = new AtomicBoolean();
+        when(iterationBudget.isExhausted(any())).thenAnswer(invocation -> exhausted.get());
+        when(iterationBudget.recordModelCall(any(), any(int.class), any(int.class))).thenAnswer(invocation -> {
+            exhausted.set(true);
+            return invocation.getArgument(0);
+        });
+        var request = ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L);
+        var emitter = new CollectingEmitter(30_000L);
+        var attempts = new java.util.concurrent.atomic.AtomicInteger();
+        doAnswer(invocation -> {
+            StreamingResponseHandler handler = invocation.getArgument(3);
+            if (attempts.incrementAndGet() == 1) {
+                handler.onError(new RuntimeException("529 overloaded"));
+            } else {
+                handler.onToken("extra provider call");
+                handler.onComplete();
+            }
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+
+        streamingService.streamTurn(request, emitter);
+        emitter.awaitDone();
+        assertThat(exhausted).isTrue();
+        assertThat(attempts).hasValue(1);
+        assertThat(emitter.events).anyMatch(event -> "error".equals(event.name));
+    }
+
     private static final UUID SESSION_ID = UUID.fromString("44444444-5555-6666-7777-888888888888");
     private static final String SYSTEM_PROMPT = "You are a helpful assistant.";
 
@@ -254,6 +312,32 @@ class AgentStreamingServiceSseErrorTest {
         // Emitter should complete normally, not with error
         assertThat(emitter.completed.get()).isTrue();
         assertThat(emitter.error.get()).isNull();
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void zeroOrdinaryRetriesStillAllowsTheConfiguredAvailabilityBudget(boolean overloaded) throws Exception {
+        properties.getError().setRetryAttempts(0);
+        properties.getError().setAvailabilityRetryAttempts(2);
+        var request = ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L);
+        var emitter = new CollectingEmitter(30_000L);
+        var attempts = new java.util.concurrent.atomic.AtomicInteger();
+        doAnswer(invocation -> {
+            StreamingResponseHandler handler = invocation.getArgument(3);
+            if (attempts.incrementAndGet() == 1) {
+                handler.onError(new RuntimeException(overloaded ? "529 overloaded" : "connection reset"));
+            } else {
+                handler.onToken("provider recovered");
+                handler.onComplete();
+            }
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+
+        streamingService.streamTurn(request, emitter);
+        emitter.awaitDone();
+
+        assertThat(attempts).hasValue(overloaded ? 2 : 1);
+        assertThat(emitter.events.stream().anyMatch(event -> "error".equals(event.name))).isEqualTo(!overloaded);
     }
 
     // ── Timeout: emitter completes normally, not with error ──

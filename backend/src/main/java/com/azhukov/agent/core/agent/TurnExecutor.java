@@ -54,7 +54,7 @@ import java.util.concurrent.ThreadLocalRandom;
  *       memory-nudge counter resets</li>
  *   <li>{@link #checkProactiveCompression} — post-tool-batch context
  *       compression check</li>
- *   <li>{@link #classifyForRetry} — error classification + backoff calculation
+ *   <li>{@link #computeBackoffMs} — error classification + backoff calculation
  *       shared by the streaming path (which cannot reuse the synchronous
  *       retry loop directly)</li>
  *   <li>Static helpers: {@link #interruptibleSleep}, {@link #detectRefusalPattern},
@@ -245,7 +245,7 @@ public class TurnExecutor {
      * This is the canonical "model call with retry" extracted from
      * {@code DefaultAgentRuntime.callModelWithRetry}. Both runtimes use it:
      * {@code DefaultAgentRuntime} directly, and {@code AgentStreamingService}
-     * uses {@link #classifyForRetry} for the parts that are reusable in the
+     * uses {@link #computeBackoffMs} for the parts that are reusable in the
      * streaming path.
      *
      * @param context          the prepared message context
@@ -592,43 +592,12 @@ public class TurnExecutor {
     }
 
     /**
-     * Result of classifying a streaming error for retry purposes.
-     * <p>
-     * Carries the classified error type and the computed backoff delay so the
-     * streaming path can decide whether to retry and how long to wait without
-     * duplicating the classification + backoff logic.
-     */
-    public record RetryClassification(ErrorClassifier.ErrorType errorType, long backoffMs) {}
-
-    /**
-     * Classify a streaming error and compute the backoff delay, without
-     * performing the retry itself (the streaming path owns its own loop).
-     * <p>
-     * This is the shared, SSE-agnostic half of "model call with retry" that
-     * {@code AgentStreamingService} delegates to so it doesn't duplicate the
-     * error-classification + backoff calculation logic.
-     *
-     * @param error   the exception from the streaming call
-     * @param attempt zero-based attempt index (for exponential backoff)
-     * @return classification result with error type and a computed backoff delay in ms
-     */
-    public RetryClassification classifyForRetry(Exception error, int attempt) {
-        ErrorClassifier.ErrorType errorType = errorClassifier.classify(error);
-        long delayMs = computeBackoffMs(errorType, attempt, error);
-        return new RetryClassification(errorType, delayMs);
-    }
-
-    /**
      * Tier-aware retry budget for the given classified error type
      * (operator decision 2026-08-28): plain errors → error.retry-attempts (3),
      * availability errors (RATE_LIMIT/OVERLOADED) → error.availability-retry-attempts (20).
      */
     public int retryBudgetFor(ErrorClassifier.ErrorType errorType) {
-        if (errorType == ErrorClassifier.ErrorType.RATE_LIMIT
-            || errorType == ErrorClassifier.ErrorType.OVERLOADED) {
-            return Math.max(1, properties.getError().getAvailabilityRetryAttempts());
-        }
-        return Math.max(1, properties.getError().getRetryAttempts());
+        return ResponseRecoveryPolicy.retryBudget(properties.getError(), errorType);
     }
 
     /**
