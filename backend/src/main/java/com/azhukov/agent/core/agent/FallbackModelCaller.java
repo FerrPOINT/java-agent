@@ -128,7 +128,7 @@ public class FallbackModelCaller {
                 } catch (Exception e) {
                     lastException = e;
                     if (!canAttempt.getAsBoolean()) {
-                        break fallbackLoop;
+                        break;
                     }
                     ErrorClassifier.ClassificationResult classification = errorClassifier.classifyWithHints(e);
                     ErrorClassifier.ErrorType errorType = classification.type();
@@ -410,7 +410,7 @@ public class FallbackModelCaller {
             // ── Retries exhausted — try fallback before failing (Hermes 3278-3296) ──
             if (lastException != null && !Thread.currentThread().isInterrupted()) {
                 ErrorClassifier.ClassificationResult classification = errorClassifier.classifyWithHints(lastException);
-                if (tryActivateFallbackForError(ctx, classification, lastException)) {
+                if (canAttempt.getAsBoolean() && tryActivateFallbackForError(ctx, classification, lastException)) {
                     retryState = new TurnRetryState();
                     currentContext = context; // reset context for the new model
                     totalAttempts = 0;
