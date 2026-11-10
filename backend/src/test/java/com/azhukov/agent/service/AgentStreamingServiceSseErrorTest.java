@@ -134,6 +134,7 @@ class AgentStreamingServiceSseErrorTest {
                 return null;
             }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
 
+            when(sessionRepository.findMessageParentId(SESSION_ID)).thenReturn(Optional.of(SESSION_ID));
             var emitter = new CollectingEmitter(10_000L);
             streamingService.streamTurn(ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L), emitter);
             emitter.awaitDone();
@@ -153,6 +154,10 @@ class AgentStreamingServiceSseErrorTest {
                 "token".equals(event.name) && event.data.contains("checking the weather"));
             assertThat(emitter.events.stream().anyMatch(event -> "continuation".equals(event.name)))
                 .isEqualTo(maxModelCalls == 4);
+            String expectedSavedText = maxModelCalls == 4
+                ? "fallback answer was truncated" + lastFragment : lastFragment;
+            verify(messageRepository, org.mockito.Mockito.timeout(2000)).save(
+                org.mockito.ArgumentMatchers.argThat(message -> expectedSavedText.equals(message.getContent())));
             var metadata = emitter.events.stream().filter(event -> "metadata".equals(event.name)).toList();
             assertThat(objectMapper.readTree(metadata.getLast().data).path("modelUsed").asText())
                 .isEqualTo("reserve");
