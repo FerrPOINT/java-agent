@@ -417,7 +417,6 @@ public class ProcessTool implements ToolHandler {
         String terminationSource() { return terminationSource; }
         // Rolling buffer limit
         private static final int MAX_LINES = 2000;
-        private static final int MAX_LINE_CHARS = 1024;
         private volatile Instant exitedAt;
 
         ManagedProcess(String id, String command, Process process, int timeoutSeconds) {
@@ -482,33 +481,18 @@ public class ProcessTool implements ToolHandler {
         private void readOutput() {
             try (BufferedReader reader = new BufferedReader(
                     new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
-                char[] chunk = new char[4096];
-                var line = new StringBuilder();
-                boolean truncated = false;
-                boolean carriageReturn = false;
-                for (int count; (count = reader.read(chunk)) != -1;) {
-                    for (int i = 0; i < count; i++) {
-                        char ch = chunk[i];
-                        if (ch == '\r' || (ch == '\n' && !carriageReturn)) {
-                            addOutputLine(line, truncated);
-                            line.setLength(0);
-                            truncated = false;
-                        } else if (ch != '\n') {
-                            if (line.length() < MAX_LINE_CHARS) line.append(ch);
-                            else truncated = true;
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    outputBuffer.addLast(line);
+                    // M11 fix: single atomic step — append and prune keep lineCount and the
+                    // deque consistent under concurrent getRecentOutput() readers.
+                    if (lineCount.incrementAndGet() > MAX_LINES) {
+                        if (outputBuffer.pollFirst() != null) {
+                            lineCount.decrementAndGet();
                         }
-                        carriageReturn = ch == '\r';
                     }
                 }
-                if (!line.isEmpty() || truncated) addOutputLine(line, truncated);
             } catch (IOException ignored) {
-            }
-        }
-
-        private void addOutputLine(StringBuilder line, boolean truncated) {
-            outputBuffer.addLast(line + (truncated ? " [line truncated]" : ""));
-            if (lineCount.incrementAndGet() > MAX_LINES && outputBuffer.pollFirst() != null) {
-                lineCount.decrementAndGet();
             }
         }
 
