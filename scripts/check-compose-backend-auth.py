@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify backend auth and writable, shared named paths in Compose's canonical model."""
+"""Verify backend auth and service ownership of persistent paths in Compose's canonical model."""
 
 from __future__ import annotations
 
@@ -40,12 +40,16 @@ def persistent_paths(model: dict, block: dict, label: str, source: Path) -> dict
         raise AssertionError(f"{source.name}: {label} must retain the image's agent identity")
     environment = block.get("environment", {})
     working_key = "AGENT_CORE_WORKING_DIRECTORY" if label == "backend" else "BOT_WORKING_DIRECTORY"
-    for key, value in ((working_key, "/workspace"), ("AGENT_ATTACHMENTS_CACHE_ROOT", "/artifacts"),
-                       ("HERMES_HOME", "/home/agent/.java-agent")):
+    settings = {working_key: "/workspace", "HERMES_HOME": "/home/agent/.java-agent"}
+    targets = ["/home/agent/.java-agent"]
+    if label == "backend":
+        settings["AGENT_ATTACHMENTS_CACHE_ROOT"] = "/artifacts"
+        targets += ["/workspace", "/artifacts"]
+    for key, value in settings.items():
         if environment.get(key) != value:
             raise AssertionError(f"{source.name}: {label} must set {key} to {value}")
     paths = {}
-    for target in ("/workspace", "/artifacts", "/home/agent/.java-agent"):
+    for target in targets:
         mounts = [mount for mount in block.get("volumes", []) if mount.get("target") == target]
         if len(mounts) != 1:
             raise AssertionError(f"{source.name}: {label} must mount {target} exactly once")
@@ -69,8 +73,11 @@ def validate_compose(model: dict, source: Path, *, require_bot: bool) -> None:
     environment = bot.get("environment", {})
     if not environment.get("BOT_BACKEND_URL") or not environment.get("BOT_BACKEND_API_KEY"):
         raise AssertionError(f"{source.name}: bot must receive the backend URL and API key")
-    if persistent_paths(model, bot, "bot", source) != backend_paths:
-        raise AssertionError(f"{source.name}: backend and bot must share the same named volumes")
+    if any(mount.get("target") == "/artifacts" or mount.get("source") == backend_paths["/artifacts"]
+           for mount in bot.get("volumes", [])):
+        raise AssertionError(f"{source.name}: the artifacts volume belongs to backend")
+    if persistent_paths(model, bot, "bot", source)["/home/agent/.java-agent"] != backend_paths["/home/agent/.java-agent"]:
+        raise AssertionError(f"{source.name}: backend and bot must share the same named state volume")
 
 
 def main() -> None:

@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -43,6 +44,7 @@ public class LongPollingService {
     });
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicLong lastUpdateId = new AtomicLong(0);
+    private final Semaphore dispatchSlots = new Semaphore(100);
 
     // P0: Gateway lock — prevents concurrent instances with the same bot token
     private BotLockManager lockManager;
@@ -126,21 +128,7 @@ public class LongPollingService {
                 // arrived — otherwise the backoff never decays back to 5s
                 // until the next real message.
                 reconnectWatcher.resetBackoff();
-                for (Map<String, Object> update : updates) {
-                    try {
-                        UpdateEvent event = UpdateEvent.from(update);
-                        lastUpdateId.updateAndGet(current -> Math.max(current, event.updateId()));
-                        processPool.submit(() -> {
-                            try {
-                                updateHandler.accept(event);
-                            } catch (Exception e) {
-                                log.error("Error processing update: {}", e.getMessage(), e);
-                            }
-                        });
-                    } catch (Exception e) {
-                        log.error("Error parsing update: {}", e.getMessage(), e);
-                    }
-                }
+                acceptUpdates(updates);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return;
@@ -154,6 +142,37 @@ public class LongPollingService {
                 return;
             }
         }
+    }
+
+    private void acceptUpdates(List<Map<String, Object>> updates) throws InterruptedException {
+        for (var update : updates.stream()
+                .sorted(java.util.Comparator.comparingLong(LongPollingService::updateId)).toList()) {
+            long id = updateId(update);
+            if (!running.get()) return;
+            if (id <= lastUpdateId.get()) continue;
+            dispatchSlots.acquire();
+            boolean accepted = false;
+            try {
+                if (!running.get()) return;
+                processPool.execute(() -> {
+                    try {
+                        updateHandler.accept(UpdateEvent.from(update));
+                    } catch (Exception e) {
+                        log.error("Error processing admitted Telegram update {}", id, e);
+                    } finally {
+                        dispatchSlots.release();
+                    }
+                });
+                accepted = true;
+                lastUpdateId.set(id);
+            } finally {
+                if (!accepted) dispatchSlots.release();
+            }
+        }
+    }
+
+    private static long updateId(Map<String, Object> update) {
+        return update.get("update_id") instanceof Number id ? id.longValue() : 0;
     }
 
     List<Map<String, Object>> fetchUpdates() throws InterruptedException {

@@ -346,6 +346,161 @@ class InboundMessageProcessorTest {
         verify(agentRuntime).runTurn(any(Session.class), eq(USER_TEXT), eq(List.of()));
     }
 
+    @Test
+    void gatewayStillDrainsQueueAfterOneEntryCannotLockHistory() throws Exception {
+        agentProperties.getGateway().getTelegram().setAllowByDefault(true);
+        agentProperties.getGateway().setBusyInputMode("queue");
+        SessionSource source = new SessionSource(Platform.TELEGRAM, CHAT_ID, USER_ID, USERNAME, USERNAME);
+        when(sessionResolver.resolve(source)).thenReturn(new Session(SESSION_ID, USER_ID, "Review",
+            MODEL_PROVIDER, MODEL_NAME, null, Map.of()));
+        var locks = mock(com.azhukov.agent.core.agent.SessionTurnLockManager.class);
+        when(locks.tryAcquire(SESSION_ID, 30)).thenReturn(true, false, true);
+        processor.setTurnLocks(locks);
+        var firstEntered = new java.util.concurrent.CountDownLatch(1);
+        var firstCanFinish = new java.util.concurrent.CountDownLatch(1);
+        when(agentRuntime.runTurn(any(Session.class), eq("first"), eq(List.of()))).thenAnswer(call -> {
+            firstEntered.countDown();
+            if (!firstCanFinish.await(5, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("fixture timeout");
+            return new TurnResult(List.of(Message.assistant(REPLY_TEXT, 1)), true, null);
+        });
+        when(routingService.send(Platform.TELEGRAM, source, REPLY_TEXT))
+            .thenReturn(CompletableFuture.completedFuture(new SendResult(true, "review-first", null)));
+
+        var first = CompletableFuture.runAsync(() -> processor.accept(messageEvent(source, "first")));
+        try {
+            assertThat(firstEntered.await(3, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            processor.accept(messageEvent(source, "second"));
+            processor.accept(messageEvent(source, "third"));
+        } finally {
+            firstCanFinish.countDown();
+        }
+        first.get(3, java.util.concurrent.TimeUnit.SECONDS);
+        verify(routingService, timeout(1000)).send(Platform.TELEGRAM, source,
+            "Ошибка обработки: Session is busy: " + SESSION_ID);
+        verify(agentRuntime, timeout(1000)).runTurn(any(Session.class), eq("third"), eq(List.of()));
+    }
+
+    @Test
+    void gatewayDrainsAfterSessionResolutionFails() throws Exception {
+        agentProperties.getGateway().getTelegram().setAllowByDefault(true);
+        agentProperties.getGateway().setBusyInputMode("queue");
+        SessionSource source = new SessionSource(Platform.TELEGRAM, CHAT_ID, USER_ID, USERNAME, USERNAME);
+        var session = new Session(SESSION_ID, USER_ID, "Review", MODEL_PROVIDER, MODEL_NAME, null, Map.of());
+        when(sessionResolver.resolve(source)).thenReturn(session, session, session)
+            .thenThrow(new IllegalStateException("fixture resolver failure")).thenReturn(session);
+        var locks = mock(com.azhukov.agent.core.agent.SessionTurnLockManager.class);
+        when(locks.tryAcquire(SESSION_ID, 30)).thenReturn(true);
+        processor.setTurnLocks(locks);
+        var firstEntered = new java.util.concurrent.CountDownLatch(1);
+        var firstCanFinish = new java.util.concurrent.CountDownLatch(1);
+        when(agentRuntime.runTurn(any(Session.class), eq("first"), eq(List.of()))).thenAnswer(call -> {
+            firstEntered.countDown();
+            if (!firstCanFinish.await(5, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("fixture timeout");
+            return new TurnResult(List.of(Message.assistant(REPLY_TEXT, 1)), true, null);
+        });
+        when(routingService.send(Platform.TELEGRAM, source, REPLY_TEXT))
+            .thenReturn(CompletableFuture.completedFuture(new SendResult(true, "review-first", null)));
+
+        var first = CompletableFuture.runAsync(() -> processor.accept(messageEvent(source, "first")));
+        try {
+            assertThat(firstEntered.await(3, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            processor.accept(messageEvent(source, "second"));
+            processor.accept(messageEvent(source, "third"));
+        } finally {
+            firstCanFinish.countDown();
+        }
+        first.get(3, java.util.concurrent.TimeUnit.SECONDS);
+        verify(routingService, timeout(1000)).send(Platform.TELEGRAM, source,
+            "Ошибка обработки: fixture resolver failure");
+        verify(agentRuntime, timeout(1000)).runTurn(any(Session.class), eq("third"), eq(List.of()));
+    }
+
+    @Test
+    void interruptDoesNotCancelOtherTurnWhileGatewayWaitsForSessionLock() throws Exception {
+        agentProperties.getGateway().getTelegram().setAllowByDefault(true);
+        agentProperties.getGateway().setBusyInputMode("interrupt");
+        var source = new SessionSource(Platform.TELEGRAM, CHAT_ID, USER_ID, USERNAME, USERNAME);
+        when(sessionResolver.resolve(source)).thenReturn(new Session(SESSION_ID, USER_ID, "Review",
+            MODEL_PROVIDER, MODEL_NAME, null, Map.of()));
+        var token = new com.azhukov.agent.core.agent.InterruptToken();
+        @SuppressWarnings("unchecked")
+        ObjectProvider<com.azhukov.agent.core.agent.InterruptToken> tokens = mock(ObjectProvider.class);
+        when(tokens.getIfAvailable()).thenReturn(token);
+        processor = new InboundMessageProcessor(sessionResolver, agentRuntime, routingServiceProvider,
+            messagePersistenceService, null, agentProperties, new com.azhukov.agent.core.agent.SteerBuffer(),
+            tokens, null);
+        var waiter = new java.util.concurrent.CountDownLatch(1);
+        var locks = new com.azhukov.agent.core.agent.SessionTurnLockManager() {
+            @Override public boolean tryAcquire(UUID id, long timeout) {
+                if (timeout == 30) waiter.countDown();
+                return super.tryAcquire(id, timeout);
+            }
+        };
+        processor.setTurnLocks(locks);
+        when(agentRuntime.runTurn(any(Session.class), any(String.class), eq(List.of())))
+            .thenReturn(new TurnResult(List.of(Message.assistant(REPLY_TEXT, 1)), true, null));
+        when(routingService.send(Platform.TELEGRAM, source, REPLY_TEXT))
+            .thenReturn(CompletableFuture.completedFuture(new SendResult(true, "fixture", null)));
+
+        assertThat(locks.tryAcquire(SESSION_ID, 1)).isTrue();
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var first = executor.submit(() -> processor.accept(messageEvent(source, "first")));
+            try {
+                assertThat(waiter.await(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                var second = executor.submit(() -> processor.accept(messageEvent(source, "second")));
+                second.get(2, java.util.concurrent.TimeUnit.SECONDS);
+                assertThat(token.isCancelled(SESSION_ID)).isFalse();
+            } finally {
+                locks.release(SESSION_ID);
+            }
+            first.get(3, java.util.concurrent.TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    void messageStillRunsWhenActiveTurnFinishesBeforeEnqueue() throws Exception {
+        agentProperties.getGateway().getTelegram().setAllowByDefault(true);
+        agentProperties.getGateway().setBusyInputMode("interrupt");
+        SessionSource source = new SessionSource(Platform.TELEGRAM, CHAT_ID, USER_ID, USERNAME, USERNAME);
+        when(sessionResolver.resolve(source)).thenReturn(new Session(SESSION_ID, USER_ID, "Review",
+            MODEL_PROVIDER, MODEL_NAME, null, Map.of()));
+        var firstEntered = new java.util.concurrent.CountDownLatch(1);
+        var finishFirst = new java.util.concurrent.CountDownLatch(1);
+        var checkedBusy = new java.util.concurrent.CountDownLatch(1);
+        var allowEnqueue = new java.util.concurrent.CountDownLatch(1);
+        var delegate = mock(com.azhukov.agent.tools.delegate.DelegateTaskTool.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(processor, "delegateTaskTool", delegate);
+        when(delegate.getActiveSubagentCount()).thenAnswer(call -> {
+            checkedBusy.countDown();
+            if (!allowEnqueue.await(5, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("fixture timeout");
+            return 1;
+        });
+        var reply = new TurnResult(List.of(Message.assistant(REPLY_TEXT, 1)), true, null);
+        when(agentRuntime.runTurn(any(Session.class), eq("first"), eq(List.of()))).thenAnswer(call -> {
+            firstEntered.countDown();
+            if (!finishFirst.await(5, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("fixture timeout");
+            return reply;
+        });
+        when(agentRuntime.runTurn(any(Session.class), eq("second"), eq(List.of()))).thenReturn(reply);
+        when(routingService.send(Platform.TELEGRAM, source, REPLY_TEXT))
+            .thenReturn(CompletableFuture.completedFuture(new SendResult(true, "fixture", null)));
+
+        var first = CompletableFuture.runAsync(() -> processor.accept(messageEvent(source, "first")), command -> Thread.ofVirtual().start(command));
+        try {
+            assertThat(firstEntered.await(3, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            var second = CompletableFuture.runAsync(() -> processor.accept(messageEvent(source, "second")), command -> Thread.ofVirtual().start(command));
+            assertThat(checkedBusy.await(3, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            finishFirst.countDown();
+            first.get(3, java.util.concurrent.TimeUnit.SECONDS);
+            allowEnqueue.countDown();
+            second.get(3, java.util.concurrent.TimeUnit.SECONDS);
+        } finally {
+            finishFirst.countDown();
+            allowEnqueue.countDown();
+        }
+        verify(agentRuntime, timeout(1000)).runTurn(any(Session.class), eq("second"), eq(List.of()));
+    }
+
     private final java.util.concurrent.atomic.AtomicInteger evtCounter =
         new java.util.concurrent.atomic.AtomicInteger();
 

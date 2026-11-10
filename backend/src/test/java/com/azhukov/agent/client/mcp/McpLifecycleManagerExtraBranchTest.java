@@ -112,7 +112,7 @@ class McpLifecycleManagerExtraBranchTest {
 
         McpSyncClient client = mock(McpSyncClient.class);
         when(client.callTool(any())).thenThrow(new RuntimeException("Bearer sk-abc123 error"));
-        injectClient(manager, "srv", client, List.of());
+        injectClient(manager, "srv", client, List.of(McpSchema.Tool.builder("tool").build()));
 
         assertThatThrownBy(() -> manager.executeTool("srv", "tool", "{}"))
             .isInstanceOf(RuntimeException.class)
@@ -126,7 +126,7 @@ class McpLifecycleManagerExtraBranchTest {
         McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null, null, null, null, null, null, null);
 
         McpSyncClient client = mock(McpSyncClient.class);
-        injectClient(manager, "srv", client, List.of());
+        injectClient(manager, "srv", client, List.of(McpSchema.Tool.builder("tool").build()));
 
         assertThatThrownBy(() -> manager.executeTool("srv", "tool", "not valid json {{{"))
             .isInstanceOf(RuntimeException.class);
@@ -224,7 +224,7 @@ class McpLifecycleManagerExtraBranchTest {
 
         McpSyncClient client = mock(McpSyncClient.class);
         when(client.callTool(any())).thenThrow(new RuntimeException("key=supersecret leaked"));
-        injectClient(manager, "srv", client, List.of());
+        injectClient(manager, "srv", client, List.of(McpSchema.Tool.builder("tool").build()));
 
         McpLifecycleManager.McpToolHandler handler = manager.new McpToolHandler("srv", "tool");
         ToolResult result = handler.execute("{}", null, null);
@@ -244,7 +244,7 @@ class McpLifecycleManagerExtraBranchTest {
             new SlidingWindowRateLimiter(), null);
 
         McpSyncClient client = mock(McpSyncClient.class);
-        injectClient(manager, "srv", client, List.of());
+        injectClient(manager, "srv", client, List.of(McpSchema.Tool.builder("tool").build()));
 
         McpLifecycleManager.McpToolHandler handler = manager.new McpToolHandler("srv", "tool");
         // Null arguments → JSON parse error → failed result
@@ -305,15 +305,9 @@ class McpLifecycleManagerExtraBranchTest {
 
     @SuppressWarnings("unchecked")
     private void injectClient(McpLifecycleManager manager, String name, McpSyncClient client, List<McpSchema.Tool> tools) throws Exception {
-        Field field = McpLifecycleManager.class.getDeclaredField("clients");
-        field.setAccessible(true);
-        ConcurrentHashMap<String, Object> map = (ConcurrentHashMap<String, Object>) field.get(manager);
-        Class<?> stateClass = Class.forName("com.azhukov.agent.client.mcp.McpLifecycleManager$McpServerState");
-        AgentProperties.McpProperties.ServerProperties props = new AgentProperties.McpProperties.ServerProperties();
+        var props = new AgentProperties.McpProperties.ServerProperties();
         props.setName(name);
-        java.lang.reflect.Constructor<?> ctor = stateClass.getDeclaredConstructors()[0];
-        ctor.setAccessible(true);
-        map.put(name, ctor.newInstance(props, client, tools));
+        manager.getClientsForTest().put(name, new McpLifecycleManager.McpServerState(props, client, tools));
     }
 
     private String assertJsonError(ToolResult result) throws Exception {

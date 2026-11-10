@@ -171,6 +171,7 @@ public class TextBatchDebouncer {
 
     // ─── Internal ──────────────────────────────────────────────────
 
+    /** Keeps pending text updates and their flush timer together for a single chat. */
     private static class BatchEntry {
         private final List<String> texts = new CopyOnWriteArrayList<>();
         private UpdateEvent firstEvent;

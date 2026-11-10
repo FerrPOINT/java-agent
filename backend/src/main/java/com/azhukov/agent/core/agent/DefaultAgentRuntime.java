@@ -223,9 +223,12 @@ public class DefaultAgentRuntime implements AgentRuntime {
     private final ConcurrentHashMap<UUID, AtomicInteger> turnsSinceMemory = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<UUID, AtomicInteger> itersSinceSkill = new ConcurrentHashMap<>();
 
-    // Per-session locks to prevent concurrent turns on the same session (parity with Hermes _session_locks).
-    // Serializes turn execution so that messages, turn state, and DB writes don't interleave.
-    private final ConcurrentHashMap<UUID, java.util.concurrent.locks.ReentrantLock> sessionLocks = new ConcurrentHashMap<>();
+    private SessionTurnLockManager turnLocks = new SessionTurnLockManager();
+
+    @Autowired
+    void setTurnLocks(SessionTurnLockManager turnLocks) {
+        this.turnLocks = turnLocks;
+    }
 
     @PreDestroy
     void shutdown() {
@@ -250,8 +253,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
 
     @Override
     public boolean isSessionBusy(UUID sessionId) {
-        java.util.concurrent.locks.ReentrantLock lock = sessionLocks.get(sessionId);
-        return lock != null && lock.isLocked();
+        return turnLocks.isBusy(sessionId);
     }
 
     @Override
@@ -275,34 +277,17 @@ public class DefaultAgentRuntime implements AgentRuntime {
     public TurnResult runTurn(Session session, String userInput, List<String> references,
                               ModelRequestOptions options) {
         ModelRequestOptions effectiveOptions = options != null ? options : ModelRequestOptions.empty();
-        // Runtime callers include delegate and gateway paths that do not pass
-        // through AgentRuntimeService, so this remains the canonical safety lock.
         UUID sid = session.id();
-        java.util.concurrent.locks.ReentrantLock lock = sessionLocks.computeIfAbsent(
-            sid, k -> new java.util.concurrent.locks.ReentrantLock());
-        boolean acquired;
-        try {
-            acquired = lock.tryLock(30, java.util.concurrent.TimeUnit.SECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new RuntimeException("Interrupted while waiting for session lock", e);
-        }
-        if (!acquired) {
-            throw new IllegalStateException(
-                "Session " + sid + " is busy (another turn is in progress). Retry later.");
-        }
-        try {
-            return runTurnInternal(session, userInput, references, effectiveOptions);
-        } finally {
-            lock.unlock();
-            // rev-81: clear the ThreadLocal turn-history snapshot — virtual threads
-            // are reused, and a stale snapshot leaks memory (full lineage history
-            // retained on the thread).
-            turnModelState.remove();
-            if (contextEngine instanceof com.azhukov.agent.core.context.DefaultContextEngine dce) {
-                dce.evictTurnCache(sid);
+        return turnLocks.withTurn(sid, () -> {
+            try {
+                return runTurnInternal(session, userInput, references, effectiveOptions);
+            } finally {
+                turnModelState.remove();
+                if (contextEngine instanceof com.azhukov.agent.core.context.DefaultContextEngine dce) {
+                    dce.evictTurnCache(sid);
+                }
             }
-        }
+        });
     }
 
     private TurnResult runTurnInternal(Session session, String userInput, List<String> references,
@@ -1460,7 +1445,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
     /**
      * WARNING 1: Clean up per-session state maps to prevent memory leaks.
      * <p>
-     * Removes entries from {@code sessionLocks}, {@code turnsSinceMemory}, and
+     * Removes entries from {@code turnsSinceMemory} and
      * {@code itersSinceSkill} for the given session. This should be called when a
      * session is deleted, rotated, or otherwise no longer needs runtime tracking.
      * <p>
@@ -1471,7 +1456,6 @@ public class DefaultAgentRuntime implements AgentRuntime {
      */
     public void cleanupSession(UUID sessionId) {
         if (sessionId == null) return;
-        sessionLocks.remove(sessionId);
         turnsSinceMemory.remove(sessionId);
         itersSinceSkill.remove(sessionId);
         // Evict per-session state held by collaborating components so that

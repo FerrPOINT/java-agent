@@ -13,10 +13,10 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
 
+import java.util.ArrayDeque;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.function.Consumer;
 
 @RequiredArgsConstructor
@@ -40,11 +40,13 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.azhukov.agent.tools.delegate.DelegateTaskTool delegateTaskTool;
 
-    /** Tracks active sessions per chat to detect busy state. */
-    private final ConcurrentHashMap<String, Boolean> activeSessions = new ConcurrentHashMap<>();
+    /** Each entry owns the chat until its current message and any queued messages finish. */
+    private final ConcurrentHashMap<String, ChatQueue> activeChats = new ConcurrentHashMap<>();
 
-    /** Per-session queue for messages arriving while busy in "queue" mode. */
-    private final ConcurrentHashMap<String, ConcurrentLinkedQueue<MessageEvent>> pendingQueues = new ConcurrentHashMap<>();
+    private static final class ChatQueue {
+        private final ArrayDeque<MessageEvent> pending = new ArrayDeque<>();
+        private UUID runningSession;
+    }
 
     /**
      * Bounded dedup of platform redeliveries: Telegram retries webhook POSTs
@@ -71,95 +73,64 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
         return !seenEventIds.add(key);
     }
 
+    private com.azhukov.agent.core.agent.SessionTurnLockManager turnLocks =
+        new com.azhukov.agent.core.agent.SessionTurnLockManager();
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setTurnLocks(com.azhukov.agent.core.agent.SessionTurnLockManager turnLocks) {
+        this.turnLocks = turnLocks;
+    }
+
     @Override
     public void accept(MessageEvent event) {
+        process(event, null);
+    }
+
+    private void process(MessageEvent event, ChatQueue ownedQueue) {
         SessionSource source = event.source();
         log.info("Processing inbound {} message from userId={} chatId={} text={}",
             source.platform(), source.userId(), source.chatId(),
             event.text() != null ? event.text().substring(0, Math.min(event.text().length(), 80)) : "");
 
-        if (!isAuthorized(source)) {
-            log.warn("Skipping unauthorized inbound message from platform={} userId={} chatId={}",
-                source.platform(), source.userId(), source.chatId());
-            return;
-        }
-
-        // Platform redelivery dedup (Telegram retries webhook POSTs on
-        // timeout/5xx): a repeated eventId is a redelivery, not a new message.
-        if (isDuplicateRedelivery(event)) {
-            log.info("Skipping duplicate redelivery: platform={} eventId={}",
-                source.platform(), event.eventId());
-            return;
-        }
-
+        String chatId = source.chatId();
+        boolean newDelivery = ownedQueue == null;
+        UUID lockedSession = null;
         try {
+            if (!isAuthorized(source)) {
+                log.warn("Skipping unauthorized inbound message from platform={} userId={} chatId={}",
+                    source.platform(), source.userId(), source.chatId());
+                return;
+            }
+
+            // Platform redelivery dedup (Telegram retries webhook POSTs on
+            // timeout/5xx): a repeated eventId is a redelivery, not a new message.
+            if (newDelivery && isDuplicateRedelivery(event)) {
+                log.info("Skipping duplicate redelivery: platform={} eventId={}",
+                    source.platform(), event.eventId());
+                return;
+            }
+
             // Send typing indicator before LLM call (Telegram shows it for ~5s)
             routingServiceProvider.getIfAvailable().sendTyping(source.platform(), source);
             Session session = sessionResolver.resolve(source);
 
-            // Check busy-input mode for mid-run message handling
-            String busyInputMode = agentProperties.getGateway().getBusyInputMode();
-            String sessionKey = source.chatId();
-            boolean isBusy = activeSessions.containsKey(sessionKey);
-
-            if (isBusy && "steer".equalsIgnoreCase(busyInputMode)) {
-                // Steer mode: inject mid-run via SteerBuffer
-                if (steerBuffer != null && session.id() != null) {
-                    boolean steered = steerBuffer.steer(session.id(), event.text());
-                    if (steered) {
-                        log.info("Steered message for session {}", session.id());
-                        routingServiceProvider.getIfAvailable().send(source.platform(), source,
-                            "⏩ Steered into current run. Your message arrives after the next tool call.");
+            if (newDelivery) {
+                var queue = new ChatQueue();
+                ChatQueue active;
+                while ((active = activeChats.putIfAbsent(chatId, queue)) != null) {
+                    if (handleBusy(chatId, active, session, event)) {
                         return;
                     }
                 }
-                // Fall back to queue if steer failed — actually enqueue the
-                // event so it is processed after the current turn, instead of
-                // telling the user "queued" and then dropping the message.
-                log.debug("Steer failed, falling back to queue for session {}", session.id());
-                pendingQueues.computeIfAbsent(sessionKey, k -> new ConcurrentLinkedQueue<>()).add(event);
-                routingServiceProvider.getIfAvailable().send(source.platform(), source,
-                    "⏳ Queued for the next turn. I'll respond once the current task finishes.");
-                return;
-            } else if (isBusy && "interrupt".equalsIgnoreCase(busyInputMode)) {
-                // rev-83: subagent protection (#30170 parity) — demote interrupt
-                // to queue when the running agent has active subagents, so a
-                // conversational follow-up doesn't destroy minutes of subagent
-                // work. Explicit /stop and /new slash commands bypass the
-                // gateway entirely (handled by BotCommandDispatcher), so the
-                // operator still has a way to force-cancel everything.
-                if (delegateTaskTool != null && delegateTaskTool.getActiveSubagentCount() > 0) {
-                    log.info("Demoting busy-input-mode 'interrupt' to 'queue' for session {} "
-                        + "because the running agent has active subagents (#30170)", session.id());
-                    pendingQueues.computeIfAbsent(sessionKey, k -> new ConcurrentLinkedQueue<>()).add(event);
-                    routingServiceProvider.getIfAvailable().send(source.platform(), source,
-                        "⏳ Queued for the next turn. Active subagents detected — I'll respond once they finish.");
-                    return;
-                }
-                // Interrupt mode — cancel the current turn (Hermes parity:
-                // request_hard_interrupt) and queue the message for immediate
-                // processing after the turn is interrupted.
-                log.debug("Interrupt mode for busy session {} — queuing and cancelling", session.id());
-                pendingQueues.computeIfAbsent(sessionKey, k -> new ConcurrentLinkedQueue<>()).add(event);
-                // Actually cancel the running turn so it stops at the next
-                // tool boundary instead of running to completion.
-                if (interruptTokenProvider != null && session.id() != null) {
-                    com.azhukov.agent.core.agent.InterruptToken token = interruptTokenProvider.getIfAvailable();
-                    if (token != null) {
-                        token.cancel(session.id());
-                        log.info("Interrupted running turn for session {}", session.id());
-                    }
-                }
-                routingServiceProvider.getIfAvailable().send(source.platform(), source,
-                    "⚡ Interrupting current task. I'll respond to your message shortly.");
-                return;
-            } else if (isBusy && "queue".equalsIgnoreCase(busyInputMode)) {
-                // Queue mode: store the message for processing after the current turn completes
-                log.debug("Queueing message for busy session {}", session.id());
-                pendingQueues.computeIfAbsent(sessionKey, k -> new ConcurrentLinkedQueue<>()).add(event);
-                routingServiceProvider.getIfAvailable().send(source.platform(), source,
-                    "⏳ Queued for the next turn. I'll respond once the current task finishes.");
-                return;
+                ownedQueue = queue;
+            }
+
+            if (!turnLocks.tryAcquire(session.id(), 30)) {
+                throw new IllegalStateException("Session is busy: " + session.id());
+            }
+            lockedSession = session.id();
+            synchronized (ownedQueue) {
+                ownedQueue.runningSession = lockedSession;
             }
 
             // P1-5: When mid-turn persistence is active, persist only the user message
@@ -169,7 +140,6 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
                 messagePersistenceService.persistUserMessage(session, event.text());
             }
 
-            activeSessions.put(sessionKey, true);
             var turnResult = agentRuntime.runTurn(session, event.text(),
                 registerAttachments(session, event, source));
 
@@ -187,10 +157,11 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
             // being silently cleared from SteerBuffer.
             String lateSteer = turnResult.pendingSteer();
             if (lateSteer != null && !lateSteer.isBlank()) {
-                pendingQueues.computeIfAbsent(sessionKey, k -> new ConcurrentLinkedQueue<>()).add(
-                    new MessageEvent(java.util.UUID.randomUUID().toString(), source,
+                synchronized (ownedQueue) {
+                    ownedQueue.pending.add(new MessageEvent(UUID.randomUUID().toString(), source,
                         event.type(), lateSteer, List.of(), java.util.Map.of("steer_handoff", "true"),
                         java.time.Instant.now()));
+                }
                 log.info("steer_handoff_queued_after_turn session={}", session.id());
             }
 
@@ -217,24 +188,61 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
                 log.error("Failed to send error reply to userId={}: {}", source.userId(), sendEx.getMessage());
             }
         } finally {
-            activeSessions.remove(source.chatId());
-            // Drain pending queue: process any messages that arrived during the current turn
-            ConcurrentLinkedQueue<MessageEvent> queue = pendingQueues.remove(source.chatId());
-            if (queue != null && !queue.isEmpty()) {
-                MessageEvent next = queue.poll();
-                if (next != null) {
-                    log.debug("Draining queued message for chat {}", source.chatId());
-                    // Re-enqueue any remaining messages so they are processed in order
-                    if (!queue.isEmpty()) {
-                        ConcurrentLinkedQueue<MessageEvent> remaining = pendingQueues.computeIfAbsent(
-                            source.chatId(), k -> new ConcurrentLinkedQueue<>());
-                        remaining.addAll(queue);
+            if (lockedSession != null) {
+                synchronized (ownedQueue) {
+                    ownedQueue.runningSession = null;
+                }
+                turnLocks.release(lockedSession);
+            }
+            if (ownedQueue != null) {
+                dispatchNext(chatId, ownedQueue);
+            }
+        }
+    }
+
+    private boolean handleBusy(String chatId, ChatQueue queue, Session session, MessageEvent event) {
+        String mode = agentProperties.getGateway().getBusyInputMode();
+        boolean interrupt = "interrupt".equalsIgnoreCase(mode);
+        boolean protectSubagents = interrupt && delegateTaskTool != null && delegateTaskTool.getActiveSubagentCount() > 0;
+        String reply;
+        synchronized (queue) {
+            if (activeChats.get(chatId) != queue) {
+                return false;
+            }
+            boolean ownsTurn = session.id() != null && session.id().equals(queue.runningSession);
+            if (ownsTurn && "steer".equalsIgnoreCase(mode) && steerBuffer != null
+                    && steerBuffer.steer(session.id(), event.text())) {
+                reply = "⏩ Steered into current run. Your message arrives after the next tool call.";
+            } else {
+                queue.pending.add(event);
+                if (ownsTurn && interrupt && !protectSubagents) {
+                    if (interruptTokenProvider != null) {
+                        var token = interruptTokenProvider.getIfAvailable();
+                        if (token != null) token.cancel(session.id());
                     }
-                    // Process the next queued message asynchronously
-                    java.util.concurrent.CompletableFuture.runAsync(() -> accept(next));
+                    reply = "⚡ Interrupting current task. I'll respond to your message shortly.";
+                } else if (ownsTurn && protectSubagents) {
+                    reply = "⏳ Queued for the next turn. Active subagents detected — I'll respond once they finish.";
+                } else {
+                    reply = "⏳ Queued for the next turn. I'll respond once the current task finishes.";
                 }
             }
         }
+        var source = event.source();
+        routingServiceProvider.getIfAvailable().send(source.platform(), source, reply);
+        return true;
+    }
+
+    private void dispatchNext(String chatId, ChatQueue queue) {
+        MessageEvent next;
+        synchronized (queue) {
+            next = queue.pending.poll();
+            if (next == null) {
+                activeChats.remove(chatId, queue);
+                return;
+            }
+        }
+        java.util.concurrent.CompletableFuture.runAsync(() -> process(next, queue));
     }
 
     private boolean isAuthorized(SessionSource source) {

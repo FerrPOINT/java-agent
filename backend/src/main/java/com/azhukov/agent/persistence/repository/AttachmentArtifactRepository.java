@@ -58,6 +58,10 @@ public interface AttachmentArtifactRepository extends JpaRepository<AttachmentAr
                               @Param("now") Instant now);
 
     @Modifying
+    @Query("UPDATE AttachmentArtifactEntity a SET a.expiresAt = :cutoff WHERE a.sessionId = :session AND a.expiresAt > :cutoff")
+    int expireForSession(@Param("session") UUID session, @Param("cutoff") Instant cutoff);
+
+    @Modifying
     @Query("DELETE FROM AttachmentArtifactEntity a WHERE a.id IN :ids AND a.expiresAt < :cutoff")
     int deleteExpiredByIds(@Param("ids") List<String> ids, @Param("cutoff") Instant cutoff);
 }

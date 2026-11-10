@@ -99,7 +99,7 @@ class McpStdioWatchdogTest {
         }).when(wedgedClient).closeGracefully();
 
         var server = properties.getMcp().getServers().getFirst();
-        var state = new McpLifecycleManager.McpServerState(server, wedgedClient, List.of());
+        var state = new McpLifecycleManager.McpServerState(server, wedgedClient, List.of(McpSchema.Tool.builder("slow_tool").build()));
         manager.getClientsForTest().put("srv", state);
 
         ExecutorService ex = Executors.newSingleThreadExecutor();
@@ -128,7 +128,7 @@ class McpStdioWatchdogTest {
         when(wedgedClient.callTool(any(McpSchema.CallToolRequest.class))).thenReturn(ok);
 
         AgentProperties.McpProperties.ServerProperties server = properties.getMcp().getServers().get(0);
-        var state = new McpLifecycleManager.McpServerState(server, wedgedClient, List.of());
+        var state = new McpLifecycleManager.McpServerState(server, wedgedClient, List.of(McpSchema.Tool.builder("fast_tool").build()));
         manager.getClientsForTest().put("srv", state);
 
         McpSchema.CallToolResult result = manager.executeTool("srv", "fast_tool", "{}");

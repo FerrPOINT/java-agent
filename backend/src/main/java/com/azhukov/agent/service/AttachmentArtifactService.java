@@ -105,16 +105,20 @@ public class AttachmentArtifactService {
                 ownerId, hash, disposition, sessionId, "")
             : Optional.empty();
         if (existing.isPresent()) {
+            AttachmentArtifactEntity artifact = existing.get();
+            if (!artifact.getExpiresAt().isAfter(Instant.now())) {
+                return new ArtifactRegistration(null, hash, null, false,
+                    "Matching attachment has expired; retry after attachment cleanup");
+            }
             try {
-                Path cached = safeCachePath(existing.get().getCachePath());
+                Path cached = safeCachePath(artifact.getCachePath());
                 if (!Files.isRegularFile(cached, java.nio.file.LinkOption.NOFOLLOW_LINKS)
                     || Files.size(cached) != data.length
                     || !sha256(Files.readAllBytes(cached)).equals(hash)) {
                     return new ArtifactRegistration(null, hash, null, false,
                         "cached attachment content is missing or inconsistent");
                 }
-                return new ArtifactRegistration(existing.get().getId(), hash,
-                    existing.get().getCachePath(), true, null);
+                return new ArtifactRegistration(artifact.getId(), hash, artifact.getCachePath(), true, null);
             } catch (IOException | IllegalArgumentException e) {
                 return new ArtifactRegistration(null, hash, null, false,
                     "cached attachment content is unavailable");
@@ -254,7 +258,9 @@ public class AttachmentArtifactService {
     }
 
     public List<AttachmentArtifact> bySession(UUID sessionId, String ownerId) {
+        Instant now = Instant.now();
         return repository().findBySessionIdOrderByCreatedAtAsc(sessionId).stream()
+            .filter(entity -> entity.getExpiresAt().isAfter(now))
             .filter(entity -> ownerId == null || java.util.Objects.equals(ownerId, entity.getOwnerId()))
             .map(AttachmentArtifact::from).toList();
     }
@@ -280,10 +286,13 @@ public class AttachmentArtifactService {
 
     /** Internal body shared by direct calls and the scheduler's proxy entry point. */
     private int sweepExpiredWithinTransaction() {
-        AttachmentArtifactRepository repository = repository();
         Instant cutoff = Instant.now();
+        return removeExpired(repository().findByExpiresAtBefore(cutoff), cutoff);
+    }
+
+    private int removeExpired(List<AttachmentArtifactEntity> candidates, Instant cutoff) {
         List<String> removed = new ArrayList<>();
-        for (AttachmentArtifactEntity entity : repository.findByExpiresAtBefore(cutoff)) {
+        for (AttachmentArtifactEntity entity : candidates) {
             try {
                 if (entity.getCachePath() != null) {
                     Path path = safeCachePath(entity.getCachePath());
@@ -299,41 +308,14 @@ public class AttachmentArtifactService {
         }
         int deleted = 0;
         for (int from = 0; from < removed.size(); from += 500) {
-            deleted += repository.deleteExpiredByIds(removed.subList(from, Math.min(from + 500, removed.size())), cutoff);
+            deleted += repository().deleteExpiredByIds(removed.subList(from, Math.min(from + 500, removed.size())), cutoff);
         }
         return deleted;
     }
 
-    /**
-     * Hermes `_remove_session_files` parity (prune/delete file-cleanup
-     * fidelity, WP-4 tail): when a session is deleted (direct delete or
-     * prune), its attachment blobs and metadata rows must go too —
-     * otherwise expired-on-paper artifacts sit on disk forever with no
-     * sweep ever selecting them again (the session row that named them is
-     * gone). File deletions are best-effort; row deletion always runs.
-     */
-    public int cleanupForSession(UUID sessionId) {
-        if (sessionId == null) {
-            return 0;
-        }
-        AttachmentArtifactRepository repository = repository();
-        List<AttachmentArtifactEntity> artifacts =
-            repository.findBySessionIdOrderByCreatedAtAsc(sessionId);
-        if (artifacts.isEmpty()) {
-            return 0;
-        }
-        for (AttachmentArtifactEntity entity : artifacts) {
-            try {
-                if (entity.getCachePath() != null) {
-                    Files.deleteIfExists(safeCachePath(entity.getCachePath()));
-                }
-            } catch (Exception e) {
-                log.debug("Attachment blob cleanup failed for {}: {}",
-                    entity.getId(), e.getMessage());
-            }
-        }
-        repository.deleteAllById(artifacts.stream().map(AttachmentArtifactEntity::getId).toList());
-        return artifacts.size();
+    @org.springframework.context.event.EventListener
+    public void expireDeletedSessionArtifacts(com.azhukov.agent.core.agent.SessionDeletedEvent event) {
+        repository().expireForSession(event.sessionId(), Instant.now());
     }
 
     /** Scheduled wrapper so the TTL sweep actually runs (WP-4 tail: the method existed with zero callers). */
@@ -347,27 +329,6 @@ public class AttachmentArtifactService {
             }
         } catch (Exception e) {
             log.warn("Attachment TTL sweep failed: {}", e.getMessage());
-        }
-    }
-
-    /**
-     * Session delete/prune cascade (Hermes `_remove_session_files` parity):
-     * a deleted session's attachment blobs and rows must not outlive it.
-     * Failures are swallowed — session deletion must never be blocked by
-     * attachment cleanup (mirrors Hermes "filesystem hiccup never blocks a
-     * DB operation").
-     */
-    @org.springframework.context.event.EventListener
-    public void onSessionDeleted(com.azhukov.agent.core.agent.SessionDeletedEvent event) {
-        try {
-            int removed = cleanupForSession(event.sessionId());
-            if (removed > 0) {
-                log.info("Cleaned up {} attachment artifact(s) of deleted session {}",
-                    removed, event.sessionId());
-            }
-        } catch (Exception e) {
-            log.warn("Attachment cleanup for deleted session {} failed: {}",
-                event.sessionId(), e.getMessage());
         }
     }
 
@@ -468,7 +429,9 @@ public class AttachmentArtifactService {
     }
 
     private Optional<AttachmentArtifactEntity> findEntity(String artifactId, String ownerId) {
+        Instant now = Instant.now();
         return repository().findById(artifactId)
+            .filter(entity -> entity.getExpiresAt().isAfter(now))
             .filter(entity -> ownerId == null || java.util.Objects.equals(ownerId, entity.getOwnerId()));
     }
 

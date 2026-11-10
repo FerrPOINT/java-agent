@@ -115,6 +115,7 @@ class LongPollingServiceTest {
             .thenReturn(Optional.empty());
 
         AtomicInteger count = new AtomicInteger(0);
+        CountDownLatch secondHandled = new CountDownLatch(1);
         CountDownLatch firstStarted = new CountDownLatch(1);
         CountDownLatch firstCanProceed = new CountDownLatch(1);
         CountDownLatch bothDone = new CountDownLatch(2);
@@ -122,7 +123,7 @@ class LongPollingServiceTest {
         service = new LongPollingService(
             telegramClient, properties,
             event -> {
-                if (count.get() == 0) {
+                if (event.updateId() == 1) {
                     firstStarted.countDown();
                     try {
                         firstCanProceed.await(5, TimeUnit.SECONDS);
@@ -131,6 +132,7 @@ class LongPollingServiceTest {
                     }
                 }
                 count.incrementAndGet();
+                if (event.updateId() == 2) secondHandled.countDown();
                 bothDone.countDown();
             },
             reconnectWatcher
@@ -141,14 +143,39 @@ class LongPollingServiceTest {
         // Wait for first handler to start
         assertThat(firstStarted.await(10, TimeUnit.SECONDS)).isTrue();
 
-        // Release the slow handler
-        firstCanProceed.countDown();
+        try {
+            assertThat(secondHandled.await(4, TimeUnit.SECONDS)).isTrue();
+            verify(telegramClient, timeout(2000)).getUpdates(eq(3L), anyInt(), anyInt());
+        } finally {
+            firstCanProceed.countDown();
+        }
 
         // Both should complete
         assertThat(bothDone.await(10, TimeUnit.SECONDS)).isTrue();
         service.stop();
 
         assertThat(count.get()).isEqualTo(2);
+    }
+
+    @Test
+    void failedHandlerDoesNotStopAdmissionOfLaterUpdates() throws Exception {
+        when(telegramClient.getUpdates(eq(1L), anyInt(), anyInt()))
+            .thenReturn(Optional.of(List.of(Map.of("update_id", 1))));
+        when(telegramClient.getUpdates(eq(2L), anyInt(), anyInt()))
+            .thenReturn(Optional.of(List.of(Map.of("update_id", 2))));
+        when(telegramClient.getUpdates(eq(3L), anyInt(), anyInt()))
+            .thenReturn(Optional.empty());
+
+        CountDownLatch handled = new CountDownLatch(1);
+        service = new LongPollingService(telegramClient, properties, event -> {
+            if (event.updateId() == 1) throw new IllegalStateException("fixture handler failure");
+            if (event.updateId() == 2) handled.countDown();
+        }, reconnectWatcher);
+
+        service.start();
+        assertThat(handled.await(5, TimeUnit.SECONDS)).isTrue();
+        verify(telegramClient, timeout(2000)).getUpdates(eq(3L), anyInt(), anyInt());
+        assertThat(service.isRunning()).isTrue();
     }
 
     @Test
