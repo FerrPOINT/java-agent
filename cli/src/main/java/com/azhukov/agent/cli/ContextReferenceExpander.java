@@ -1,6 +1,5 @@
 package com.azhukov.agent.cli;
 
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
 
 import java.io.IOException;
@@ -37,11 +36,10 @@ import java.util.regex.Pattern;
  *   <li>{@code @url:url} — fetches URL content (basic HTTP GET)</li>
  * </ul>
  */
-@Slf4j
 public class ContextReferenceExpander {
 
     private static final Pattern REF_PATTERN = Pattern.compile(
-        "@(diff|staged|git|file:|folder:|url:)");
+        "@(?:(diff|staged|git)\\b|(file|folder|url):(\\S+))");
 
     private static final int CONTENT_LIMIT = 50_000;
     private static final int URL_READ_LIMIT = 4 * CONTENT_LIMIT;
@@ -70,170 +68,118 @@ public class ContextReferenceExpander {
             return input;
         }
 
-        // Expand @diff
-        input = expandRef(input, "@diff", () -> safeRunCommand("git diff"));
-
-        // Expand @staged
-        input = expandRef(input, "@staged", () -> safeRunCommand("git diff --cached --stat"));
-
-        // Expand @git
-        input = expandRef(input, "@git", () -> safeRunCommand("git log --oneline -10"));
-
-        // Expand @file:path
-        input = expandFileRef(input);
-
-        // Expand @folder:path
-        input = expandFolderRef(input);
-
-        // Expand @url:url
-        input = expandUrlRef(input);
-
-        return input;
+        Matcher references = REF_PATTERN.matcher(input);
+        StringBuilder result = new StringBuilder();
+        var gitOutputs = new java.util.HashMap<String, String>();
+        while (references.find()) {
+            String command = references.group(1);
+            String value = references.group(3);
+            String content = command != null ? gitOutputs.computeIfAbsent(command, this::gitContext)
+                : switch (references.group(2)) {
+                    case "file" -> fileContext(value);
+                    case "folder" -> folderContext(value);
+                    case "url" -> urlContext(value);
+                    default -> throw new IllegalStateException("Unknown context reference");
+                };
+            references.appendReplacement(result, Matcher.quoteReplacement(
+                "\n--- " + references.group() + " ---\n" + content + "\n--- end ---\n"));
+        }
+        return references.appendTail(result).toString();
     }
 
-    /**
-     * Check if input contains any @-references.
-     */
     public static boolean hasReferences(String input) {
-        if (input == null || input.isEmpty()) return false;
-        return REF_PATTERN.matcher(input).find();
+        return input != null && REF_PATTERN.matcher(input).find();
     }
 
-    private String expandRef(String input, String ref, java.util.function.Supplier<String> expander) {
-        if (!input.contains(ref)) {
-            return input;
-        }
-        String content;
+    private String fileContext(String name) {
         try {
-            content = expander.get();
-        } catch (RuntimeException e) {
-            log.warn("Failed to expand {}: {}", ref, e.getMessage());
-            content = "[Error expanding " + ref + ": " + e.getMessage() + "]";
+            Path path = Path.of(name);
+            if (!Files.exists(path)) return "[File not found: " + name + "]";
+            if (Files.isDirectory(path)) return "[Path is a directory, use @folder: instead: " + name + "]";
+            if (!Files.isRegularFile(path)) return "[Path is not a regular file: " + name + "]";
+            try (var input = Files.newInputStream(path)) {
+                return limitedUtf8(input);
+            }
+        } catch (IOException | IllegalArgumentException e) {
+            return "[Error reading " + name + ": " + e.getMessage() + "]";
+        }
+    }
+
+    private String folderContext(String name) {
+        try {
+            Path path = Path.of(name);
+            if (!Files.exists(path)) return "[Folder not found: " + name + "]";
+            if (!Files.isDirectory(path)) return "[Path is a file, use @file: instead: " + name + "]";
+            try (var entries = Files.list(path)) {
+                var paths = entries.limit(513).toList();
+                StringBuilder listing = new StringBuilder();
+                for (Path child : paths.stream().limit(512).sorted().toList()) {
+                    String line = (Files.isDirectory(child) ? "  [dir] " : "  [file] ") + child.getFileName() + "\n";
+                    if (listing.length() + line.length() > CONTENT_LIMIT) return listing + "... [truncated]";
+                    listing.append(line);
+                }
+                return listing.toString().trim() + (paths.size() > 512 ? "\n... [truncated]" : "");
+            }
+        } catch (IOException | IllegalArgumentException | java.io.UncheckedIOException e) {
+            return "[Error listing " + name + ": " + e.getMessage() + "]";
+        }
+    }
+
+    private String urlContext(String url) {
+        try {
+            String content = fetchUrl(url);
+            return content.isBlank() ? "[No content from " + url + "]" : content;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return "[Error fetching " + url + ": interrupted]";
         } catch (Exception e) {
-            log.warn("Failed to expand {}: {}", ref, e.getMessage());
-            content = "[Error expanding " + ref + ": " + e.getMessage() + "]";
+            return "[Error fetching " + url + ": " + e.getMessage() + "]";
         }
-        if (content == null || content.isBlank()) {
-            content = "[No content for " + ref + "]";
-        }
-        return input.replace(ref, "\n--- " + ref + " ---\n" + content + "\n--- end ---\n");
     }
 
-    private String expandFileRef(String input) {
-        Pattern p = Pattern.compile("@file:(\\S+)");
-        Matcher m = p.matcher(input);
-        StringBuilder sb = new StringBuilder();
-        while (m.find()) {
-            String filePath = m.group(1);
-            String content;
-            try {
-                Path path = Path.of(filePath);
-                if (!Files.exists(path)) {
-                    content = "[File not found: " + filePath + "]";
-                } else if (Files.isDirectory(path)) {
-                    content = "[Path is a directory, use @folder: instead: " + filePath + "]";
-                } else if (!Files.isRegularFile(path)) {
-                    content = "[Path is not a regular file: " + filePath + "]";
-                } else {
-                    try (var file = Files.newInputStream(path)) {
-                        byte[] bytes = file.readNBytes(CONTENT_LIMIT + 1);
-                        content = decodePrefix(bytes, CONTENT_LIMIT, StandardCharsets.UTF_8);
-                        if (bytes.length > CONTENT_LIMIT) {
-                            content += "\n... [truncated]";
-                        }
-                    }
-                }
-            } catch (IOException e) {
-                content = "[Error reading " + filePath + ": " + e.getMessage() + "]";
-            }
-            m.appendReplacement(sb, Matcher.quoteReplacement(
-                "\n--- @file:" + filePath + " ---\n" + content + "\n--- end ---\n"));
-        }
-        m.appendTail(sb);
-        return sb.toString();
-    }
-
-    private String expandFolderRef(String input) {
-        Pattern p = Pattern.compile("@folder:(\\S+)");
-        Matcher m = p.matcher(input);
-        StringBuilder sb = new StringBuilder();
-        while (m.find()) {
-            String folderPath = m.group(1);
-            String content;
-            try {
-                Path path = Path.of(folderPath);
-                if (!Files.exists(path)) {
-                    content = "[Folder not found: " + folderPath + "]";
-                } else if (!Files.isDirectory(path)) {
-                    content = "[Path is a file, use @file: instead: " + folderPath + "]";
-                } else {
-                    StringBuilder listing = new StringBuilder();
-                    try (var stream = Files.list(path)) {
-                        stream.sorted()
-                            .forEachOrdered(p2 -> {
-                                String name = p2.getFileName().toString();
-                                String type = Files.isDirectory(p2) ? "[dir]" : "[file]";
-                                listing.append(String.format("  %s %s%n", type, name));
-                            });
-                    }
-                    content = listing.toString().trim();
-                }
-            } catch (IOException e) {
-                content = "[Error listing " + folderPath + ": " + e.getMessage() + "]";
-            }
-            m.appendReplacement(sb, Matcher.quoteReplacement(
-                "\n--- @folder:" + folderPath + " ---\n" + content + "\n--- end ---\n"));
-        }
-        m.appendTail(sb);
-        return sb.toString();
-    }
-
-    private String expandUrlRef(String input) {
-        Pattern p = Pattern.compile("@url:(\\S+)");
-        Matcher m = p.matcher(input);
-        StringBuilder sb = new StringBuilder();
-        while (m.find()) {
-            String url = m.group(1);
-            String content;
-            try {
-                content = fetchUrl(url);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                content = "[Error fetching " + url + ": interrupted]";
-            } catch (Exception e) {
-                content = "[Error fetching " + url + ": " + e.getMessage() + "]";
-            }
-            if (content == null || content.isBlank()) {
-                content = "[No content from " + url + "]";
-            }
-            m.appendReplacement(sb, Matcher.quoteReplacement(
-                "\n--- @url:" + url + " ---\n" + content + "\n--- end ---\n"));
-        }
-        m.appendTail(sb);
-        return sb.toString();
-    }
-
-    private String runCommand(String command) throws IOException, InterruptedException {
-        ProcessBuilder pb = new ProcessBuilder("sh", "-c", command);
-        pb.redirectErrorStream(true);
-        Process process = pb.start();
-        String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-        int exitCode = process.waitFor();
-        if (exitCode != 0 && output.isBlank()) {
-            return "[Command failed with exit code " + exitCode + "]";
-        }
-        return output.strip();
-    }
-
-    /**
-     * Safe wrapper for runCommand that catches checked exceptions and returns error messages.
-     */
-    private String safeRunCommand(String command) {
+    private String gitContext(String command) {
+        String[] args = switch (command) {
+            case "diff" -> new String[]{"git", "--no-pager", "diff", "--no-ext-diff"};
+            case "staged" -> new String[]{"git", "--no-pager", "diff", "--no-ext-diff", "--cached", "--stat"};
+            case "git" -> new String[]{"git", "--no-pager", "log", "--oneline", "-10"};
+            default -> throw new IllegalArgumentException(command);
+        };
+        Process process;
         try {
-            return runCommand(command);
-        } catch (IOException | InterruptedException e) {
-            return "[Error running '" + command + "': " + e.getMessage() + "]";
+            process = new ProcessBuilder(args).redirectErrorStream(true).start();
+        } catch (IOException e) {
+            return "[Error running @" + command + ": " + e.getMessage() + "]";
         }
+        var read = new FutureTask<>(() -> {
+            try (var input = process.getInputStream()) {
+                String output = limitedUtf8(input).strip();
+                if (output.endsWith("... [truncated]")) return output;
+                int status = process.waitFor();
+                if (!output.isBlank()) return output;
+                return status == 0 ? "[No content for @" + command + "]" : "[Command failed with exit code " + status + "]";
+            }
+        });
+        Thread.ofVirtual().name("cli-context-git").start(read);
+        try {
+            return read.get(10, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return "[Error running @" + command + ": interrupted]";
+        } catch (TimeoutException | ExecutionException e) {
+            return "[Error running @" + command + ": " + e.getClass().getSimpleName() + "]";
+        } finally {
+            if (process.isAlive()) {
+                process.descendants().forEach(ProcessHandle::destroyForcibly);
+                process.destroyForcibly();
+            }
+            read.cancel(true);
+        }
+    }
+
+    private static String limitedUtf8(java.io.InputStream input) throws IOException {
+        byte[] bytes = input.readNBytes(CONTENT_LIMIT + 1);
+        return decodePrefix(bytes, CONTENT_LIMIT, StandardCharsets.UTF_8)
+            + (bytes.length > CONTENT_LIMIT ? "\n... [truncated]" : "");
     }
 
     private String fetchUrl(String urlString) throws IOException, InterruptedException {
