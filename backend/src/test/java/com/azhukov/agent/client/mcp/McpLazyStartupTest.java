@@ -18,6 +18,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -95,6 +98,83 @@ class McpLazyStartupTest {
         verify(toolRegistry).registerDynamic(
             eq("mcp__cached_server__echo"), eq("mcp-cached-server"), any(), any());
         assertThat(spy.isConnected("cached-server")).isFalse();
+    }
+
+    @Test
+    void concurrentFirstCallsShareOneHandshakeAndReloadWithdrawsTools() throws Exception {
+        String toolsJson = objectMapper.writeValueAsString(List.of(
+            Map.of("name", "echo", "description", "Echo a value",
+                "inputSchema", Map.of("type", "object", "properties", Map.of()))));
+        when(configStore.cachedSchema(any(), eq(3L))).thenReturn(Optional.of(freshCache(toolsJson)));
+        when(configStore.isFresh(any())).thenReturn(true);
+
+        var client = mock(io.modelcontextprotocol.client.McpSyncClient.class);
+        var connected = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        when(client.initialize()).thenAnswer(call -> {
+            connected.countDown();
+            assertThat(release.await(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            return null;
+        });
+        var tool = McpSchema.Tool.builder("echo").description("Echo a value")
+            .inputSchema(Map.of("type", "object")).build();
+        when(client.listTools()).thenReturn(new McpSchema.ListToolsResult(List.of(tool), null));
+        var result = mock(McpSchema.CallToolResult.class);
+        when(client.callTool(any())).thenReturn(result);
+
+        var lifecycle = Mockito.spy(manager);
+        Mockito.doReturn(client).when(lifecycle).createClient(server);
+        lifecycle.connect(server);
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var first = executor.submit(() -> lifecycle.executeTool("cached-server", "echo", "{}"));
+            assertThat(connected.await(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            var second = executor.submit(() -> lifecycle.executeTool("cached-server", "echo", "{}"));
+            release.countDown();
+            assertThat(first.get(2, java.util.concurrent.TimeUnit.SECONDS)).isSameAs(result);
+            assertThat(second.get(2, java.util.concurrent.TimeUnit.SECONDS)).isSameAs(result);
+        } finally {
+            lifecycle.closeAll();
+        }
+
+        verify(lifecycle).createClient(server);
+        verify(client).close();
+        verify(toolRegistry, Mockito.atLeastOnce()).deregisterDynamic("mcp__cached_server__echo", "mcp-cached-server");
+        assertThat(lifecycle.isConnected("cached-server")).isFalse();
+    }
+
+    @Test
+    void slowSchemaStoreDoesNotLockOtherConnections() throws Exception {
+        properties.getMcp().setLazyStartup(false);
+        var neighbour = new AgentProperties.McpProperties.ServerProperties();
+        neighbour.setName("neighbour");
+        var lifecycle = Mockito.spy(manager);
+        var client = mock(io.modelcontextprotocol.client.McpSyncClient.class);
+        var otherClient = mock(io.modelcontextprotocol.client.McpSyncClient.class);
+        when(client.listTools()).thenReturn(new McpSchema.ListToolsResult(List.of(), null));
+        when(otherClient.listTools()).thenReturn(new McpSchema.ListToolsResult(List.of(), null));
+        Mockito.doReturn(client).when(lifecycle).createClient(server);
+        Mockito.doReturn(otherClient).when(lifecycle).createClient(neighbour);
+        var storing = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        Mockito.doAnswer(call -> {
+            storing.countDown();
+            release.await();
+            return null;
+        }).when(configStore).storeSchema(any(), eq(3L), any(), any(), any());
+
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var first = executor.submit(() -> lifecycle.connect(server));
+            try {
+                assertThat(storing.await(5, TimeUnit.SECONDS)).isTrue();
+                executor.submit(() -> lifecycle.connect(neighbour)).get(5, TimeUnit.SECONDS);
+                assertThat(lifecycle.isConnected("neighbour")).isTrue();
+            } finally {
+                release.countDown();
+            }
+            first.get(5, TimeUnit.SECONDS);
+        } finally {
+            lifecycle.closeAll();
+        }
     }
 
     @Test

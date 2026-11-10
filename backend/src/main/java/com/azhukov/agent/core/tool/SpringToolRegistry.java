@@ -1288,7 +1288,9 @@ public class SpringToolRegistry implements ToolRegistry {
     }
 
     @Override
-    public void deregisterDynamic(String toolName) {
-        entries.remove(toolName);
+    public boolean deregisterDynamic(String toolName, String toolset) {
+        ToolEntry current = entries.get(toolName);
+        return current != null && current.annotation() == null
+            && Objects.equals(current.dynamicToolset(), toolset) && entries.remove(toolName, current);
     }
 }
