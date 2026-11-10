@@ -377,16 +377,14 @@ public class AgentRuntimeService {
     public void restart() {
         log.info("Restarting agent — draining active turns and reloading runtime state (history preserved)");
         skillManager.reload();
-        mcpLifecycleManager.closeAll();
-        mcpLifecycleManager.connectConfiguredServers();
+        mcpLifecycleManager.reloadConfiguredServers();
         runtimeConfigService.clearModelOverride();
         log.info("Agent restart complete — history preserved");
     }
 
     public void reloadMcp() {
         log.info("Reloading MCP connections");
-        mcpLifecycleManager.closeAll();
-        mcpLifecycleManager.connectConfiguredServers();
+        mcpLifecycleManager.reloadConfiguredServers();
         log.info("MCP reload complete");
     }
 
