@@ -906,8 +906,9 @@ class OpenAiRunsControllerTest {
             assertThat(enteredRuntime.await(2, TimeUnit.SECONDS)).isTrue();
             var record = runService.get(runId);
             var stateMachine = mock(OpenAiRunStateMachine.class);
-            doThrow(new org.springframework.dao.DataAccessResourceFailureException("fixture storage failure"))
-                .doNothing().when(stateMachine).recordEvent(eq(runId), isNull(), anyMap());
+            when(stateMachine.recordEvent(eq(runId), isNull(), any()))
+                .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("fixture storage failure"))
+                .thenReturn(1L);
             org.springframework.test.util.ReflectionTestUtils.setField(record, "stateMachine", stateMachine);
 
             mockMvc.perform(post("/v1/runs/{runId}/stop", runId))
