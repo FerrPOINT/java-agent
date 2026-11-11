@@ -11,6 +11,61 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ApprovalQueueTest {
 
     @Test
+    void directDenialCannotReplaceConfirmedApproval() {
+        var queue = new ApprovalQueue();
+        var session = UUID.randomUUID();
+        queue.request(session, new ToolCall("fixture", "fixture", "{}"), "fixture");
+        var approved = queue.approve(session, "approve", "fixture approval");
+        assertThat(queue.deny(session, "late denial")).isSameAs(approved);
+        assertThat(queue.isApproved(session)).isTrue();
+    }
+
+    @Test
+    void concurrentDirectDecisionsHaveOneOutcome() throws Exception {
+        var queue = new ApprovalQueue();
+        var session = UUID.randomUUID();
+        queue.request(session, new ToolCall("fixture", "fixture", "{}"), "fixture");
+        var start = new java.util.concurrent.CountDownLatch(1);
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var approved = executor.submit(() -> {
+                start.await();
+                return queue.approve(session, "approve", "fixture approval");
+            });
+            var denied = executor.submit(() -> {
+                start.await();
+                return queue.deny(session, "fixture denial");
+            });
+            start.countDown();
+            var first = approved.get(2, java.util.concurrent.TimeUnit.SECONDS);
+            var second = denied.get(2, java.util.concurrent.TimeUnit.SECONDS);
+            assertThat(first).isSameAs(second);
+            assertThat(queue.getPending(session)).isSameAs(first);
+            assertThat(queue.awaitDecision(session, 0)).isTrue();
+        }
+    }
+
+    @Test
+    void directApprovalHonorsTheRequestDeadline() {
+        var queue = new ApprovalQueue();
+        var session = UUID.randomUUID();
+        queue.request(session, new ToolCall("fixture", "fixture", "{}"), "fixture",
+            Duration.ofSeconds(-1));
+        queue.approve(session, "approve", null);
+        assertThat(queue.isApproved(session)).isFalse();
+    }
+
+    @Test
+    void directApprovalCannotReplaceConfirmedDenial() {
+        var queue = new ApprovalQueue();
+        var session = UUID.randomUUID();
+        queue.request(session, new ToolCall("fixture", "fixture", "{}"), "fixture");
+        queue.deny(session, "fixture denial");
+        queue.approve(session, "approve", null);
+        assertThat(queue.isDenied(session)).isTrue();
+        assertThat(queue.isApproved(session)).isFalse();
+    }
+
+    @Test
     void independentSessionCanRequestApprovalWhileFirstDecisionPersists() throws Exception {
         var queue = new ApprovalQueue();
         var call = new ToolCall("fixture", "fixture", "{}");

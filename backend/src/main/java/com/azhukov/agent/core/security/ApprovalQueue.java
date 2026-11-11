@@ -109,7 +109,12 @@ public class ApprovalQueue {
         if (current == null) return null;
         synchronized (current) {
             if (pending.get(sessionId) != current) return null;
-            decide(current, approved, note);
+            PendingApproval approval = current.approval;
+            if (canDecide(approval)) {
+                decide(current, approved, note);
+            } else if (isUndecided(approval)) {
+                decide(current, false, "Auto-denied: timeout");
+            }
             return current.approval;
         }
     }
@@ -124,14 +129,14 @@ public class ApprovalQueue {
         if (current == null) return false;
         synchronized (current) {
             if (pending.get(sessionId) != current || current.approval != expected
-                    || !isUndecided(expected) || isExpired(expected)) {
+                    || !canDecide(expected)) {
                 return false;
             }
             persistDecision.run();
             // The wait can end while the response is being recorded. Publish only
             // if this request is still current and within its deadline.
             Request resolved = pending.computeIfPresent(sessionId, (id, request) -> {
-                if (request == current && !isExpired(expected)) {
+                if (request == current && canDecide(request.approval)) {
                     decide(request, approved, null);
                 }
                 return request;
@@ -145,6 +150,10 @@ public class ApprovalQueue {
         request.approval = new PendingApproval(p.requestId(), p.sessionId(), p.call(), p.reason(),
             p.requestedAt(), approved, !approved, note, p.expiresAt());
         request.decided.countDown();
+    }
+
+    private static boolean canDecide(PendingApproval approval) {
+        return isUndecided(approval) && !isExpired(approval);
     }
 
     private static boolean isUndecided(PendingApproval p) {
