@@ -370,11 +370,12 @@ public class TurnExecutor {
                 }
                 boolean approvalRequired = !skipApproval && approvalQueue != null
                     && (approvalQueue.isPending(session.id()) || flagRequiresApproval);
+                boolean decisionReceived = false;
                 if (approvalRequired) {
                     log.info("Tool {} requires approval for session {}, waiting...", call.name(), session.id());
                     long approvalTimeoutMs = java.time.Duration.ofMinutes(5).toMillis();
-                    boolean decided = approvalQueue.awaitDecision(session.id(), approvalTimeoutMs);
-                    if (!decided) {
+                    decisionReceived = approvalQueue.awaitDecision(session.id(), approvalTimeoutMs);
+                    if (!decisionReceived) {
                         log.warn("Approval wait timed out for session {} after {} ms", session.id(), approvalTimeoutMs);
                     }
                     if (Thread.currentThread().isInterrupted()) {
@@ -401,8 +402,8 @@ public class TurnExecutor {
                 // a user response still blocks the action ("no response" is not a
                 // denial, but it is not a consent either); the old gate (isDenied →
                 // else execute) let pending/timed-out approvals through (fail-open).
-                if (approvalRequired && !approvalQueue.isApproved(session.id())) {
-                    boolean denied = approvalQueue.isDenied(session.id());
+                if (approvalRequired && (!decisionReceived || !approvalQueue.isApproved(session.id()))) {
+                    boolean denied = decisionReceived && approvalQueue.isDenied(session.id());
                     String why = denied
                         ? "Tool execution denied by user approval"
                         : "Approval wait timed out without a user decision — tool blocked (fail-closed). "

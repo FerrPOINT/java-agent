@@ -46,7 +46,7 @@ public class OpenAiRunStateMachine {
     private static final Map<String, Set<String>> TRANSITIONS = Map.of(
         QUEUED, Set.of(IN_PROGRESS, CANCELLED, EXPIRED, FAILED),
         IN_PROGRESS, Set.of(REQUIRES_ACTION, COMPLETED, FAILED, CANCELLED),
-        REQUIRES_ACTION, Set.of(IN_PROGRESS, CANCELLED, EXPIRED, FAILED),
+        REQUIRES_ACTION, Set.of(IN_PROGRESS, COMPLETED, CANCELLED, EXPIRED, FAILED),
         COMPLETED, Set.of(),
         FAILED, Set.of(),
         CANCELLED, Set.of(),
@@ -66,8 +66,6 @@ public class OpenAiRunStateMachine {
         return allowed != null && allowed.contains(to);
     }
 
-    public record TransitionResult(boolean accepted, String from, String to, String reason) {}
-
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void createRun(String runId, UUID sessionId, String userId, String profile,
                           String model, String externalRunId) {
@@ -85,50 +83,32 @@ public class OpenAiRunStateMachine {
         entity.setState(QUEUED);
         entity.setCreatedAt(Instant.now());
         entity.setUpdatedAt(Instant.now());
-        repository.save(entity);
+        appendTo(repository.save(entity), Map.of("event", "run.created", "run_id", runId,
+            "timestamp", entity.getCreatedAt().toEpochMilli() / 1000.0));
     }
 
-    /** Race-safe guarded transition; the loser gets accepted=false. */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public TransitionResult transition(String runId, String to, String reason) {
-        OpenAiRunStateRepository repository = states();
-        Optional<OpenAiRunStateEntity> existing = repository.findById(runId);
-        if (existing.isEmpty()) {
-            return new TransitionResult(false, null, to, "run not found");
+    public long recordEvent(String runId, String nextState, Map<String, Object> event) {
+        OpenAiRunStateEntity row = states().lockRun(runId)
+            .orElseThrow(() -> new IllegalStateException("Run state is unavailable: " + runId));
+        if (isTerminal(row.getState())) {
+            throw new IllegalStateException("Run is already terminal: " + runId);
         }
-        String from = existing.get().getState();
-        if (from.equals(to)) {
-            return new TransitionResult(true, from, to, "already in state"); // idempotent
+        if (nextState != null && !nextState.equals(row.getState())) {
+            if (!transitionAllowed(row.getState(), nextState)) {
+                throw new IllegalStateException("Invalid run transition " + row.getState() + " -> " + nextState);
+            }
+            row.setState(nextState);
+            if (event.get("error") instanceof String reason) row.setStateReason(reason);
+            if (CANCELLED.equals(nextState)) {
+                row.setCancelledAt(Instant.now());
+                if (event.get("reason") instanceof String reason) row.setCancelReason(reason);
+            }
         }
-        if (isTerminal(from)) {
-            return new TransitionResult(false, from, to, "run is terminal: " + from);
-        }
-        if (!transitionAllowed(from, to)) {
-            return new TransitionResult(false, from, to, "invalid transition " + from + " -> " + to);
-        }
-        Instant now = Instant.now();
-        Instant cancelledAt = CANCELLED.equals(to) ? now : null;
-        String cancelReason = CANCELLED.equals(to) ? reason : null;
-        int updated = repository.transition(runId, from, to, reason, cancelReason, cancelledAt,
-            null, now);
-        if (updated == 0) {
-            // lost the race — re-read the actual state
-            String actual = repository.findById(runId).map(OpenAiRunStateEntity::getState)
-                .orElse(from);
-            return new TransitionResult(false, actual, to, "concurrent transition");
-        }
-        return new TransitionResult(true, from, to, reason);
+        return appendTo(row, event);
     }
 
-    /** Append an event with a per-run monotonic sequence; returns the seq. */
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public long appendEvent(String runId, Map<String, Object> event) {
-        OpenAiRunStateRepository states = states();
-        OpenAiRunEventRepository events = eventLog();
-        OpenAiRunStateEntity state = states.findById(runId).orElse(null);
-        if (state == null) {
-            return -1;
-        }
+    private long appendTo(OpenAiRunStateEntity state, Map<String, Object> event) {
         long seq = state.getLastSeq() + 1;
         String json;
         try {
@@ -137,17 +117,15 @@ public class OpenAiRunStateMachine {
             throw new IllegalStateException("run event serialization failed", e);
         }
         OpenAiRunEventEntity entity = new OpenAiRunEventEntity();
-        entity.setRunId(runId);
+        entity.setRunId(state.getRunId());
         entity.setSeq(seq);
         entity.setEventJson(json);
         entity.setCreatedAt(Instant.now());
-        events.save(entity);
+        eventLog().save(entity);
 
-        // persist the cursor atomically; retry on concurrent append is the
-        // caller's serialization responsibility (single writer per run)
         state.setLastSeq(seq);
         state.setUpdatedAt(Instant.now());
-        states.save(state);
+        states().save(state);
         return seq;
     }
 

@@ -62,8 +62,8 @@ class ParallelApprovalGateParityTest {
             false, false, null, java.time.Instant.now().plusSeconds(60)));
         when(queue.isPending(any())).thenReturn(true);
         when(queue.awaitDecision(any(), org.mockito.ArgumentMatchers.anyLong())).thenReturn(false);
-        when(queue.isApproved(any())).thenReturn(false);
-        when(queue.isDenied(any())).thenReturn(false);
+        // A decision observed after the deadline must not unblock execution.
+        when(queue.isApproved(any())).thenReturn(true);
         ToolGuardrails guardrails = new com.azhukov.agent.core.security.DefaultToolGuardrails(props, queue);
         AtomicInteger executions = new AtomicInteger();
         ToolExecutionService svc = mock(ToolExecutionService.class);

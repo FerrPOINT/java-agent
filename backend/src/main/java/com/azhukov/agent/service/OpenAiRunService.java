@@ -17,7 +17,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.TransientDataAccessException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
@@ -104,9 +107,12 @@ public class OpenAiRunService {
         UUID controlSessionId = UUID.randomUUID();
         String userId = sessionContext.session().userId();
         RunRecord record = new RunRecord(runId, sessionId, controlSessionId, userId, requestedModel);
+        var stateMachine = stateMachine();
+        if (stateMachine != null) {
+            stateMachine.createRun(runId, sessionId, userId, "default", requestedModel, null);
+            record.stateMachine = stateMachine;
+        }
         runs.put(runId, record);
-        record.attachPersistHook((status, reason) -> persistTransition(runId, status, reason));
-        persistRunCreated(runId, sessionId, userId, requestedModel);
 
         Session runSession = RunControlScope.withControlSessionId(sessionContext.session(), controlSessionId);
         if (instructions != null && !instructions.isBlank()) {
@@ -142,13 +148,23 @@ public class OpenAiRunService {
         if (record == null || record.isTerminal()) {
             return ControlResult.notFound();
         }
-        record.stopRequested.set(true);
-        interruptToken.cancel(record.controlSessionId());
-        if (processTool != null) {
-            processTool.killOwnedBy(record.controlSessionId());
+        boolean signalProcesses = false;
+        try {
+            synchronized (record) {
+                if (record.isTerminal()) return ControlResult.notFound();
+                if (record.stopRequested.compareAndSet(false, true)) {
+                    signalProcesses = true;
+                    interruptToken.cancel(record.controlSessionId());
+                }
+                if (!"stopping".equals(record.status())) {
+                    record.publish("stopping", "run.stopping", Map.of());
+                }
+            }
+        } finally {
+            if (signalProcesses && processTool != null) {
+                processTool.killOwnedBy(record.controlSessionId());
+            }
         }
-        record.setStatus("stopping", Map.of("last_event", "run.stopping"));
-        record.emit("run.stopping", Map.of());
         return ControlResult.ok(Map.of("run_id", runId, "status", "stopping"));
     }
 
@@ -157,23 +173,20 @@ public class OpenAiRunService {
         if (record == null) {
             return ControlResult.notFound();
         }
-        String status = record.status();
-        if (!"running".equals(status)) {
-            return ControlResult.conflict(
-                "Run is not currently accepting steer input: " + runId,
-                "run_not_accepting_steer");
+        synchronized (record) {
+            if (!"running".equals(record.status()) || record.stopRequested.get()) {
+                return ControlResult.conflict(
+                    "Run is not currently accepting steer input: " + runId,
+                    "run_not_accepting_steer");
+            }
+            if (text == null || text.isBlank()) {
+                return ControlResult.badRequest(
+                    "Missing non-empty steer text; expected 'input', 'message', or 'text'.",
+                    "invalid_steer_input");
+            }
+            record.publish(null, "run.steered", Map.of("accepted", true));
+            steerBuffer.steer(record.controlSessionId(), text);
         }
-        if (text == null || text.isBlank()) {
-            return ControlResult.badRequest(
-                "Missing non-empty steer text; expected 'input', 'message', or 'text'.",
-                "invalid_steer_input");
-        }
-        boolean accepted = steerBuffer.steer(record.controlSessionId(), text);
-        if (!accepted) {
-            return ControlResult.conflict("Run did not accept steer text: " + runId, "steer_not_accepted");
-        }
-        record.setStatus(status, Map.of("last_event", "run.steered"));
-        record.emit("run.steered", Map.of("accepted", true));
         return ControlResult.ok(Map.of("object", "hermes.run.steer", "run_id", runId, "accepted", true));
     }
 
@@ -186,9 +199,8 @@ public class OpenAiRunService {
      * approval. {@code requestId} optionally targets one exact pending request
      * (its UUID must match, else 409 approval_not_pending — never a silent
      * resolve of a different request); {@code resolveAll} resolves every
-     * pending request for the run's control session. The {@code session} and
-     * {@code always} scopes record a standing decision so later approvals of
-     * the same tool auto-resolve instead of blocking the run.
+     * pending request for the run's control session. The queue holds at most
+     * one request and the decision only resolves that request.
      */
     public ControlResult approval(String runId, String rawChoice, boolean resolveAll, String requestId) {
         RunRecord record = runs.get(runId);
@@ -204,43 +216,25 @@ public class OpenAiRunService {
         if (requestId != null && (requestId.isBlank() || requestId.length() > 256)) {
             return ControlResult.badRequest("Approval request_id is invalid.", "invalid_approval_request");
         }
-        if (record.isTerminal()) {
-            return ControlResult.conflict(
-                "Run has no active approval session: " + runId,
-                "approval_not_active");
+        synchronized (record) {
+            if (record.isTerminal() || record.stopRequested.get()) {
+                return ControlResult.conflict(
+                    "Run has no active approval session: " + runId, "approval_not_active");
+            }
+            ApprovalQueue.PendingApproval pending = approvalQueue.getPending(record.controlSessionId());
+            if (pending == null || (requestId != null && !requestId.equals(pending.requestId().toString()))) {
+                return ControlResult.conflict("Run has no matching pending approval: " + runId, "approval_not_pending");
+            }
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("choice", choice);
+            if (requestId != null) payload.put("request_id", requestId);
+            // Persist the response before releasing the waiter. The approval monitor
+            // publishes the status change once the request is no longer pending.
+            if (!approvalQueue.resolvePending(pending, !"deny".equals(choice),
+                    () -> record.publish(null, "approval.responded", payload))) {
+                return ControlResult.conflict("Run has no pending approval: " + runId, "approval_not_pending");
+            }
         }
-        ApprovalQueue.PendingApproval pending = approvalQueue.getPending(record.controlSessionId());
-        if (pending == null || pending.approved() || pending.denied() || pending.superseded()) {
-            return ControlResult.conflict("Run has no pending approval: " + runId, "approval_not_pending");
-        }
-        if (requestId != null && !requestId.equals(String.valueOf(pending.requestId()))) {
-            return ControlResult.conflict(
-                "Run has no pending approval matching request_id " + requestId + ": " + runId,
-                "approval_not_pending");
-        }
-
-        if ("deny".equals(choice)) {
-            approvalQueue.deny(record.controlSessionId(), null);
-        } else {
-            approvalQueue.approve(record.controlSessionId(),
-                "session".equals(choice) || "always".equals(choice) ? choice : "approve", null);
-        }
-        // Hermes resolve_gateway_approval parity: resolve_all clears every
-        // still-pending request for this control session, not just the head.
-        int resolved = 1;
-        if (resolveAll) {
-            int extra = approvalQueue.resolveAllPending(record.controlSessionId(),
-                !"deny".equals(choice));
-            resolved += extra;
-        }
-        record.setStatus("running", Map.of("last_event", "approval.responded"));
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("choice", choice);
-        if (requestId != null) {
-            payload.put("request_id", requestId);
-        }
-        payload.put("resolved", resolved);
-        record.emit("approval.responded", payload);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("object", "hermes.run.approval_response");
         body.put("run_id", runId);
@@ -248,7 +242,7 @@ public class OpenAiRunService {
         if (requestId != null) {
             body.put("request_id", requestId);
         }
-        body.put("resolved", resolved);
+        body.put("resolved", 1);
         return ControlResult.ok(body);
     }
 
@@ -271,14 +265,12 @@ public class OpenAiRunService {
         try {
             UserContext.requireCurrentAccess();
             if (record.stopRequested.get() || interruptToken.isCancelled(record.controlSessionId())) {
-                record.setStatus("cancelled", Map.of("last_event", "run.cancelled"));
-                record.emit("run.cancelled", Map.of());
+                record.publish("cancelled", "run.cancelled", Map.of());
                 return;
             }
             ChatResponseDto response = turnLocks.withHistoryTurn(session.id(), () -> {
                 if (record.stopRequested.get()) throw new IllegalStateException("Run stopped");
-                record.setStatus("running", Map.of("last_event", "run.started"));
-                record.emit("run.started", Map.of());
+                record.publish("running", "run.started", Map.of());
                 if (historyToPersist != null && !historyToPersist.isEmpty()) {
                     openAiSessionService.persistHistory(session.id(), historyToPersist);
                 }
@@ -289,46 +281,37 @@ public class OpenAiRunService {
                     : agentRuntimeService.runApiTurn(session, userMessage != null ? userMessage.content() : "", options);
             });
             if (record.stopRequested.get() || interruptToken.isCancelled(record.controlSessionId())) {
-                record.setStatus("cancelled", Map.of("last_event", "run.cancelled"));
-                record.emit("run.cancelled", Map.of());
+                record.publish("cancelled", "run.cancelled", Map.of());
                 return;
             }
             if (response.completed()) {
                 Map<String, Object> usage = usage(response);
-                Map<String, Object> fields = new LinkedHashMap<>();
-                String pendingSteer = steerBuffer.consume(record.controlSessionId());
                 String output = response.content() != null ? response.content() : "";
-                fields.put("output", output);
-                fields.put("usage", usage);
-                fields.put("last_event", "run.completed");
-                if (pendingSteer != null && !pendingSteer.isBlank()) {
-                    fields.put("pending_steer", pendingSteer);
-                }
-                record.setStatus("completed", fields);
-                if (!output.isEmpty()) {
-                    record.emit("message.delta", Map.of("delta", output));
-                }
                 Map<String, Object> event = new LinkedHashMap<>();
                 event.put("output", output);
                 event.put("usage", usage);
-                if (pendingSteer != null && !pendingSteer.isBlank()) {
-                    event.put("pending_steer", pendingSteer);
+                synchronized (record) {
+                    String pendingSteer = steerBuffer.consume(record.controlSessionId());
+                    if (pendingSteer != null && !pendingSteer.isBlank()) event.put("pending_steer", pendingSteer);
+                    if (record.stopRequested.get()) {
+                        record.publish("cancelled", "run.cancelled", Map.of());
+                    } else {
+                        if (!output.isEmpty()) record.publish(null, "message.delta", Map.of("delta", output));
+                        record.publish("completed", "run.completed", event);
+                    }
                 }
-                record.emit("run.completed", event);
             } else {
                 String output = response.content() != null ? response.content() : "agent run did not complete";
                 String safeOutput = apiErrorText(output);
-                record.setStatus("failed", Map.of("error", safeOutput, "last_event", "run.failed"));
-                record.emit("run.failed", Map.of("error", safeOutput));
+                record.finishFailed(safeOutput);
             }
         } catch (Exception e) {
-            if (record.stopRequested.get()) {
-                record.setStatus("cancelled", Map.of("last_event", "run.cancelled"));
-                record.emit("run.cancelled", Map.of());
-            } else {
-                String message = apiErrorText(e.getMessage() != null ? e.getMessage() : e.toString());
-                record.setStatus("failed", Map.of("error", message, "last_event", "run.failed"));
-                record.emit("run.failed", Map.of("error", message));
+            String message = apiErrorText(e.getMessage() != null ? e.getMessage() : e.toString());
+            try {
+                record.finishFailed(message);
+            } catch (RuntimeException storageFailure) {
+                log.error("Unable to record outcome for run {}", record.runId(), storageFailure);
+                record.executionAvailable = false;
             }
         } finally {
             approvalQueue.clear(record.controlSessionId());
@@ -347,17 +330,29 @@ public class OpenAiRunService {
 
     private void monitorApprovals(RunRecord record) {
         UUID lastApprovalId = null;
+        boolean writeFailed = false;
         try {
             while (!record.isTerminal()) {
-                ApprovalQueue.PendingApproval pending = approvalQueue.getPending(record.controlSessionId());
-                if (pending != null && !pending.approved() && !pending.denied() && !pending.superseded()) {
-                    if (!pending.requestId().equals(lastApprovalId)) {
-                        lastApprovalId = pending.requestId();
-                        record.setStatus("waiting_for_approval", Map.of("last_event", "approval.request"));
-                        record.emit("approval.request", approvalPayload(pending));
+                try {
+                    synchronized (record) {
+                        if (record.isTerminal() || record.stopRequested.get()) return;
+                        ApprovalQueue.PendingApproval pending = approvalQueue.getPending(record.controlSessionId());
+                        if (pending != null && !pending.approved() && !pending.denied() && !pending.superseded()) {
+                            if (!pending.requestId().equals(lastApprovalId)) {
+                                record.publish("waiting_for_approval", "approval.request", approvalPayload(pending));
+                                lastApprovalId = pending.requestId();
+                            }
+                        } else if ("waiting_for_approval".equals(record.status())) {
+                            record.publish("running", "approval.cleared", Map.of());
+                        }
                     }
-                } else if ("waiting_for_approval".equals(record.status())) {
-                    record.setStatus("running", Map.of("last_event", "approval.cleared"));
+                    writeFailed = false;
+                } catch (TransientDataAccessException | DataAccessResourceFailureException
+                        | CannotCreateTransactionException e) {
+                    if (!writeFailed) {
+                        log.warn("Run {} approval update failed; will retry on the next poll", record.runId(), e);
+                    }
+                    writeFailed = true;
                 }
                 TimeUnit.MILLISECONDS.sleep(250);
             }
@@ -391,6 +386,14 @@ public class OpenAiRunService {
                     continue;
                 }
                 if (event.terminal()) {
+                    if (record.streamOverflowed) {
+                        emitter.completeWithError(new IllegalStateException("Run event stream fell behind. Use event replay."));
+                        return;
+                    }
+                    if (!record.executionAvailable) {
+                        emitter.completeWithError(new IllegalStateException("Run outcome is unavailable"));
+                        return;
+                    }
                     emitter.send(SseEmitter.event().comment("stream closed"));
                     emitter.complete();
                     return;
@@ -454,51 +457,16 @@ public class OpenAiRunService {
         return runStateMachineProvider == null ? null : runStateMachineProvider.getIfAvailable();
     }
 
-    private void persistRunCreated(String runId, UUID sessionId, String userId, String model) {
-        OpenAiRunStateMachine stateMachine = stateMachine();
-        if (stateMachine == null) {
-            return;
-        }
-        try {
-            stateMachine.createRun(runId, sessionId, userId, "default", model, null);
-            stateMachine.appendEvent(runId, Map.of(
-                "event", "run.created",
-                "run_id", runId,
-                "timestamp", epochSeconds()));
-        } catch (Exception e) {
-            log.warn("Failed to persist run creation {}: {}", runId, e.getMessage());
-        }
-    }
-
-    /** Mirror a status change into the durable state machine (best-effort, non-blocking). */
-    void persistTransition(String runId, String openAiStatus, String reason) {
-        OpenAiRunStateMachine stateMachine = stateMachine();
-        if (stateMachine == null) {
-            return;
-        }
-        String mapped = switch (openAiStatus == null ? "" : openAiStatus) {
-            case "queued" -> OpenAiRunStateMachine.QUEUED;
-            case "running", "in_progress" -> OpenAiRunStateMachine.IN_PROGRESS;
-            case "requires_action", "awaiting_approval" -> OpenAiRunStateMachine.REQUIRES_ACTION;
-            case "completed" -> OpenAiRunStateMachine.COMPLETED;
-            case "failed" -> OpenAiRunStateMachine.FAILED;
-            case "cancelled", "stopping" -> OpenAiRunStateMachine.CANCELLED;
-            default -> null;
-        };
-        if (mapped == null) {
-            return;
-        }
-        try {
-            stateMachine.transition(runId, mapped, reason);
-        } catch (Exception e) {
-            log.warn("Failed to persist run transition {} -> {}: {}", runId, mapped, e.getMessage());
-        }
-    }
-
     public static RunRecord restoredRun(String runId, UUID sessionId, String userId, String model,
-                                        String status, java.time.Instant createdAt, java.time.Instant updatedAt) {
+                                        String status, java.time.Instant createdAt, java.time.Instant updatedAt,
+                                        Map<String, Object> lastEvent) {
         RunRecord run = new RunRecord(runId, sessionId, sessionId, userId, model);
         run.restoreStatus(status, createdAt, updatedAt);
+        run.executionAvailable = false;
+        for (String field : List.of("output", "usage", "error", "pending_steer")) {
+            if (lastEvent.containsKey(field)) run.extra.put(field, lastEvent.get(field));
+        }
+        if (lastEvent.containsKey("event")) run.extra.put("last_event", lastEvent.get("event"));
         return run;
     }
 
@@ -509,12 +477,13 @@ public class OpenAiRunService {
         private final String userId;
         private final String model;
         private double createdAt;
-        private final BlockingQueue<QueuedEvent> events = new LinkedBlockingQueue<>();
+        private final BlockingQueue<QueuedEvent> events = new LinkedBlockingQueue<>(256);
         private final AtomicBoolean eventStreamClaimed = new AtomicBoolean(false);
         private final AtomicBoolean stopRequested = new AtomicBoolean(false);
         private final Map<String, Object> extra = new LinkedHashMap<>();
-        /** WP-6: mirror hook into the durable state machine (outer service). */
-        private java.util.function.BiConsumer<String, String> persistHook;
+        private OpenAiRunStateMachine stateMachine;
+        private volatile boolean executionAvailable = true;
+        private volatile boolean streamOverflowed;
         private String status = "queued";
         private double updatedAt;
 
@@ -571,49 +540,51 @@ public class OpenAiRunService {
             payload.put("created_at", createdAt);
             payload.put("session_id", sessionId.toString());
             payload.put("model", model);
+            if (!executionAvailable) payload.put("execution_available", false);
             payload.putAll(extra);
             return payload;
         }
 
-        private synchronized void setStatus(String status, Map<String, Object> fields) {
-            String previous = this.status;
-            this.status = status;
-            this.updatedAt = epochSeconds();
-            if (fields != null) {
-                for (Map.Entry<String, Object> entry : fields.entrySet()) {
-                    if (entry.getValue() != null) {
-                        extra.put(entry.getKey(), entry.getValue());
-                    }
-                }
-            }
-            if (persistHook != null && !previous.equals(status)) {
-                String reason = fields == null ? null
-                    : (fields.get("error") != null ? String.valueOf(fields.get("error")) : null);
-                try {
-                    persistHook.accept(status, reason);
-                } catch (RuntimeException ignored) {
-                    // durable mirror is best-effort; in-memory run stays authoritative for the active process
-                }
-            }
+        private synchronized void finishFailed(String message) {
+            if (stopRequested.get()) publish("cancelled", "run.cancelled", Map.of());
+            else publish("failed", "run.failed", Map.of("error", message));
         }
 
-        private void attachPersistHook(java.util.function.BiConsumer<String, String> hook) {
-            this.persistHook = hook;
-        }
-
-        private void emit(String event, Map<String, Object> fields) {
-            Map<String, Object> payload = new LinkedHashMap<>();
+        private synchronized void publish(String nextStatus, String event, Map<String, Object> fields) {
+            if (isTerminal() || ("stopping".equals(status) && !"cancelled".equals(nextStatus))) return;
+            Map<String, Object> payload = new LinkedHashMap<>(fields);
             payload.put("event", event);
             payload.put("run_id", runId);
             payload.put("timestamp", epochSeconds());
-            if (fields != null) {
-                payload.putAll(fields);
+            if (stateMachine != null) {
+                String durableState = switch (nextStatus == null ? "" : nextStatus) {
+                    case "running" -> OpenAiRunStateMachine.IN_PROGRESS;
+                    case "waiting_for_approval" -> OpenAiRunStateMachine.REQUIRES_ACTION;
+                    case "completed", "failed", "cancelled" -> nextStatus;
+                    default -> null;
+                };
+                stateMachine.recordEvent(runId, durableState, payload);
             }
-            events.offer(new QueuedEvent(payload, false));
+            if (nextStatus != null) status = nextStatus;
+            updatedAt = epochSeconds();
+            extra.put("last_event", event);
+            for (String key : List.of("output", "usage", "pending_steer", "error")) {
+                if (fields.containsKey(key)) extra.put(key, fields.get(key));
+            }
+            if (!streamOverflowed && !events.offer(new QueuedEvent(payload, false))) {
+                streamOverflowed = true;
+                events.clear();
+                closeEvents();
+            }
         }
 
         private void closeEvents() {
-            events.offer(new QueuedEvent(Map.of(), true));
+            var end = new QueuedEvent(Map.<String, Object>of(), true);
+            if (!events.offer(end)) {
+                streamOverflowed = true;
+                events.clear();
+                events.offer(end);
+            }
         }
 
         private boolean claimEventStream() {
@@ -625,7 +596,7 @@ public class OpenAiRunService {
         }
 
         private synchronized boolean isTerminal() {
-            return "completed".equals(status) || "failed".equals(status) || "cancelled".equals(status);
+            return !executionAvailable || "completed".equals(status) || "failed".equals(status) || "cancelled".equals(status);
         }
     }
 

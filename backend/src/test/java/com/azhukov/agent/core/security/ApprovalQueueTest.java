@@ -11,6 +11,127 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ApprovalQueueTest {
 
     @Test
+    void directDenialCannotReplaceConfirmedApproval() {
+        var queue = new ApprovalQueue();
+        var session = UUID.randomUUID();
+        queue.request(session, new ToolCall("fixture", "fixture", "{}"), "fixture");
+        var approved = queue.approve(session, "approve", "fixture approval");
+        assertThat(queue.deny(session, "late denial")).isSameAs(approved);
+        assertThat(queue.isApproved(session)).isTrue();
+    }
+
+    @Test
+    void concurrentDirectDecisionsHaveOneOutcome() throws Exception {
+        var queue = new ApprovalQueue();
+        var session = UUID.randomUUID();
+        queue.request(session, new ToolCall("fixture", "fixture", "{}"), "fixture");
+        var start = new java.util.concurrent.CountDownLatch(1);
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var approved = executor.submit(() -> {
+                start.await();
+                return queue.approve(session, "approve", "fixture approval");
+            });
+            var denied = executor.submit(() -> {
+                start.await();
+                return queue.deny(session, "fixture denial");
+            });
+            start.countDown();
+            var first = approved.get(2, java.util.concurrent.TimeUnit.SECONDS);
+            var second = denied.get(2, java.util.concurrent.TimeUnit.SECONDS);
+            assertThat(first).isSameAs(second);
+            assertThat(queue.getPending(session)).isSameAs(first);
+            assertThat(queue.awaitDecision(session, 0)).isTrue();
+        }
+    }
+
+    @Test
+    void directApprovalHonorsTheRequestDeadline() {
+        var queue = new ApprovalQueue();
+        var session = UUID.randomUUID();
+        queue.request(session, new ToolCall("fixture", "fixture", "{}"), "fixture",
+            Duration.ofSeconds(-1));
+        queue.approve(session, "approve", null);
+        assertThat(queue.isApproved(session)).isFalse();
+    }
+
+    @Test
+    void directApprovalCannotReplaceConfirmedDenial() {
+        var queue = new ApprovalQueue();
+        var session = UUID.randomUUID();
+        queue.request(session, new ToolCall("fixture", "fixture", "{}"), "fixture");
+        queue.deny(session, "fixture denial");
+        queue.approve(session, "approve", null);
+        assertThat(queue.isDenied(session)).isTrue();
+        assertThat(queue.isApproved(session)).isFalse();
+    }
+
+    @Test
+    void independentSessionCanRequestApprovalWhileFirstDecisionPersists() throws Exception {
+        var queue = new ApprovalQueue();
+        var call = new ToolCall("fixture", "fixture", "{}");
+        UUID first = new UUID(0, 0);
+        UUID second = new UUID(1, 1);
+        assertThat(first).isNotEqualTo(second);
+        assertThat(first.hashCode()).isEqualTo(second.hashCode());
+        var pending = queue.request(first, call, "first");
+        var persisting = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var decision = executor.submit(() -> queue.resolvePending(pending, true, () -> {
+                persisting.countDown();
+                try {
+                    if (!release.await(5, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("fixture timeout");
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError(e);
+                }
+            }));
+            try {
+                assertThat(persisting.await(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                var independent = executor.submit(() -> queue.request(second, call, "second"));
+                assertThat(independent.get(1, java.util.concurrent.TimeUnit.SECONDS).sessionId()).isEqualTo(second);
+            } finally {
+                release.countDown();
+                assertThat(decision.get(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            }
+        }
+    }
+
+    @Test
+    void timedOutApprovalClearsWithoutWaitingForPersistence() throws Exception {
+        var queue = new ApprovalQueue();
+        var call = new ToolCall("fixture", "fixture", "{}");
+        UUID first = new UUID(0, 0);
+        var pending = queue.request(first, call, "first");
+        var persisting = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var decision = executor.submit(() -> queue.resolvePending(pending, true, () -> {
+                persisting.countDown();
+                try {
+                    if (!release.await(5, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("fixture timeout");
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new AssertionError(e);
+                }
+            }));
+            try {
+                assertThat(persisting.await(2, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+                var waiting = executor.submit(() -> {
+                    boolean decided = queue.awaitDecision(first, 50);
+                    queue.clear(first);
+                    return decided;
+                });
+                assertThat(waiting.get(1, java.util.concurrent.TimeUnit.SECONDS)).isFalse();
+                assertThat(queue.getPending(first)).isNull();
+            } finally {
+                release.countDown();
+                assertThat(decision.get(2, java.util.concurrent.TimeUnit.SECONDS)).isFalse();
+            }
+        }
+    }
+
+    @Test
     void requestApproveAndClear() {
         ApprovalQueue q = new ApprovalQueue();
         UUID session = UUID.randomUUID();
