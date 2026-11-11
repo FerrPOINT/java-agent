@@ -365,6 +365,15 @@ public class ProcessTool implements ToolHandler {
         );
     }
 
+    @org.springframework.scheduling.annotation.Scheduled(fixedDelay = 60_000)
+    void removeExpiredResults() {
+        Instant cutoff = Instant.now().minusSeconds(15 * 60);
+        processes.entrySet().removeIf(entry -> {
+            Instant exited = entry.getValue().exitedAt;
+            return exited != null && exited.isBefore(cutoff);
+        });
+    }
+
     @PreDestroy
     public void cleanup() {
         for (ManagedProcess p : processes.values()) {
@@ -408,6 +417,7 @@ public class ProcessTool implements ToolHandler {
         String terminationSource() { return terminationSource; }
         // Rolling buffer limit
         private static final int MAX_LINES = 2000;
+        private volatile Instant exitedAt;
 
         ManagedProcess(String id, String command, Process process, int timeoutSeconds) {
             this(id, command, process, timeoutSeconds, null, null);
@@ -444,6 +454,7 @@ public class ProcessTool implements ToolHandler {
             this.exitWatcherThread = new Thread(() -> {
                 try {
                     process.waitFor();
+                    exitedAt = Instant.now();
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     return;

@@ -221,6 +221,73 @@ class TerminalToolTest {
     }
 
     @Test
+    void largeForegroundOutputDoesNotDisplaceShellState(
+            @org.junit.jupiter.api.io.TempDir java.nio.file.Path directory) throws Exception {
+        TerminalTool tool = newTool(properties());
+        Session currentSession = session();
+        String command = "cd '" + directory + "'; "
+            + "printf -v chunk '%0110000d' 0; "
+            + "for i in {1..12}; do export \"FIXTURE_ITEM_${i}=$chunk\"; done; "
+            + "export FIXTURE_SMALL=kept; "
+            + "printf '%s\\n' \"$chunk\"{1..28}; printf 'visible-tail'";
+        ToolResult result = tool.execute(JSON.writeValueAsString(Map.of("command", command)), null, currentSession);
+
+        assertThat(result.success()).as(result.error()).isTrue();
+        assertThat(result.content()).contains("[earlier output truncated]", "visible-tail")
+            .doesNotContain("FIXTURE_SMALL", "FIXTURE_ITEM_");
+        assertThat(TerminalTool.trackedCwd(currentSession.id())).isEqualTo(directory.toString());
+        assertThat(TerminalTool.trackedEnv(currentSession.id())).containsEntry("FIXTURE_SMALL", "kept");
+    }
+
+    @Test
+    void noclobberPreservesShellState(@org.junit.jupiter.api.io.TempDir java.nio.file.Path dir)
+            throws Exception {
+        var tool = newTool(properties());
+        var current = session();
+        String command = "set -C; cd '" + dir + "'; export REVIEW_SETTING=retained; printf ready";
+        var result = tool.execute(JSON.writeValueAsString(Map.of("command", command)), null, current);
+
+        assertThat(result.success()).as(result.error()).isTrue();
+        assertThat(result.content()).contains("ready");
+        assertThat(TerminalTool.trackedCwd(current.id())).isEqualTo(dir.toString());
+        assertThat(TerminalTool.trackedEnv(current.id())).containsEntry("REVIEW_SETTING", "retained");
+    }
+
+    @Test
+    void xtraceDoesNotEchoInternalStateCapture() throws Exception {
+        var current = session();
+        String command = "export TRACE_SETTING=synthetic-capture-value; set -x; printf visible";
+        var result = newTool(properties()).execute(
+            JSON.writeValueAsString(Map.of("command", command)), null, current);
+        assertThat(result.success()).as(result.error()).isTrue();
+        assertThat(TerminalTool.trackedEnv(current.id())).containsEntry("TRACE_SETTING", "synthetic-capture-value");
+        assertThat(result.content()).contains("visible").doesNotContain("synthetic-capture-value");
+    }
+
+    @Test
+    void shellStateFileContainsOnlyAllowedExports() {
+        var captured = new java.util.concurrent.atomic.AtomicReference<String>();
+        when(redactor.redact(anyString())).thenAnswer(call -> {
+            try (var files = java.nio.file.Files.list(java.nio.file.Path.of(System.getProperty("java.io.tmpdir")))) {
+                for (var file : files.filter(path -> path.getFileName().toString().startsWith("java-agent-terminal-"))
+                        .toList()) {
+                    if (!java.nio.file.Files.isRegularFile(file)) continue;
+                    String state = java.nio.file.Files.readString(file);
+                    if (state.contains("REVIEW_SETTING=synthetic-state-marker=with-equals")) captured.set(state);
+                }
+            }
+            return call.getArgument(0);
+        });
+        var result = newTool(properties()).execute(
+            """
+            {"command":"export REVIEW_SETTING=synthetic-state-marker=with-equals review_token=excluded PATH=/none; printf ready"}
+            """, null, session());
+        assertThat(result.success()).as(result.error()).isTrue();
+        assertThat(captured.get()).contains("REVIEW_SETTING=synthetic-state-marker=with-equals\0")
+            .doesNotContain("review_token=", "PATH=");
+    }
+
+    @Test
     void sessionEnvironmentCannotPersistSecretsOrShellControlVariables() throws Exception {
         AgentProperties p = properties();
         TerminalTool tool = newTool(p);
