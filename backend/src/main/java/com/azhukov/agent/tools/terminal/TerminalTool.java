@@ -1,6 +1,7 @@
 package com.azhukov.agent.tools.terminal;
 
 import com.azhukov.agent.core.security.ChildProcessEnvironment;
+import com.azhukov.agent.core.security.SecureFileAccess;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.config.SharedObjectMapper;
@@ -26,6 +27,9 @@ import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.channels.Channels;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -52,6 +56,8 @@ public class TerminalTool implements ToolHandler {
     public static final String META_WORKDIR = "cron_workdir";
     /** Hermes parity: FOREGROUND_MAX_TIMEOUT = 600s. Foreground timeout above this is rejected. */
     private static final int FOREGROUND_MAX_TIMEOUT = 600;
+    private static final int MAX_CAPTURE_CHARS = 1024 * 1024;
+    private static final int MAX_SHELL_STATE_BYTES = 4 * 1024 * 1024;
     private static final ObjectMapper JSON = SharedObjectMapper.get();
     private static final Pattern SHELL_LEVEL_BACKGROUND_RE = Pattern.compile(
         "(?:^|[;&|]\\s*|&&\\s*|\\|\\|\\s*|\\$\\(\\s*)(?:nohup|disown|setsid)\\b",
@@ -356,27 +362,24 @@ public class TerminalTool implements ToolHandler {
         AtomicBoolean interrupted = new AtomicBoolean(false);
         // Read output concurrently with waitFor() to avoid losing buffered data
         // when the PTY closes the stream before all output is flushed (Finding 1.4).
-        StringBuilder outputBuffer = new StringBuilder();
+        StringBuffer outputBuffer = new StringBuffer();
+        var outputTruncated = new AtomicBoolean();
         Thread outputReader = null;
+        Path shellState = null;
         try {
             ProcessBuilder pb;
             String shellScript = null;
-            // Hermes parity (terminal_tool.py:3559): track session cwd by
-            // appending a marker + pwd after the command. The marker lets us
-            // extract the post-command cwd and persist it for the next call.
-            // Also capture exported env vars by printing them after the command.
-            // Only for foreground non-PTY commands (PTY output is messy).
-            String cwdMarker = null;
             if (usePty) {
                 pb = new ProcessBuilder("script", "-qec", command, "/dev/null");
             } else {
                 if (sessionId != null) {
-                    cwdMarker = "\n__CWD_MARKER__:";
-                    // Capture both cwd and exported env vars after the command runs.
-                    // env_marker uses a unique format unlikely to appear in command output.
-                    String envCapture = "\nJAVA_AGENT_EXIT_CODE=$?; printf '" + cwdMarker
-                        + "'; pwd; printf '\\n__ENV_MARKER__\\n'; env -0; exit $JAVA_AGENT_EXIT_CODE";
-                    shellScript = shellExportPrologue(SESSION_ENV.get(sessionId)) + command + envCapture;
+                    // Keep the shell's state out of the bounded user-visible output.
+                    Path tempDirectory = Path.of(System.getProperty("java.io.tmpdir")).toRealPath();
+                    shellState = Files.createTempFile(tempDirectory, "java-agent-terminal-", ".state");
+                    String captureState = "\nJAVA_AGENT_EXIT_CODE=$?; ( set +x; builtin printf '%s\\0' \"$(builtin pwd)\";\n"
+                        + ChildProcessEnvironment.bashSessionEnvironmentCapture()
+                        + ") >| " + shellQuote(shellState.toString()) + "; exit $JAVA_AGENT_EXIT_CODE";
+                    shellScript = shellExportPrologue(SESSION_ENV.get(sessionId)) + command + captureState;
                 } else {
                     shellScript = command;
                 }
@@ -436,9 +439,13 @@ public class TerminalTool implements ToolHandler {
             outputReader = new Thread(() -> {
                 try (BufferedReader reader = new BufferedReader(
                         new InputStreamReader(procForReader.getInputStream(), StandardCharsets.UTF_8))) {
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        outputBuffer.append(line).append('\n');
+                    char[] chunk = new char[8192];
+                    for (int read; (read = reader.read(chunk)) != -1;) {
+                        outputBuffer.append(chunk, 0, read);
+                        if (outputBuffer.length() > 2 * MAX_CAPTURE_CHARS) {
+                            outputBuffer.delete(0, MAX_CAPTURE_CHARS);
+                            outputTruncated.set(true);
+                        }
                     }
                 } catch (java.io.IOException e) {
                     // Stream closed — expected when process exits
@@ -483,7 +490,8 @@ public class TerminalTool implements ToolHandler {
                 if (outputReader != null) {
                     outputReader.join(2000);
                 }
-                String partialOutput = redact(AnsiStrip.strip(stripTrailingNewline(outputBuffer.toString(), usePty)));
+                String partialOutput = redact(AnsiStrip.strip(normalizeOutput(outputBuffer.toString())));
+                if (outputTruncated.get()) partialOutput = "[earlier output truncated]\n" + partialOutput;
                 String enhanced = TerminalOutputEnhancer.enhance(
                     partialOutput, -1, workdir, true, actualCwd);
                 return jsonFail("Command timed out after " + timeoutSeconds + " seconds" + enhanced);
@@ -495,48 +503,36 @@ public class TerminalTool implements ToolHandler {
             }
 
             String output = outputBuffer.toString();
-            output = stripTrailingNewline(output, usePty);
+            output = normalizeOutput(output);
             // Hermes parity (tools/terminal_tool.py:3466): strip ANSI escapes from ALL
             // terminal output — full ECMA-48 coverage (CSI private-mode, OSC, DCS, 8-bit C1).
             output = AnsiStrip.strip(output);
             int exitCode = process.exitValue();
 
-            // Hermes parity (terminal_tool.py:3559): extract post-command cwd
-            // and exported env vars from markers and persist for the next call.
-            if (cwdMarker != null) {
-                int markerIdx = output.indexOf("__CWD_MARKER__:");
-                if (markerIdx >= 0) {
-                    String afterMarker = output.substring(markerIdx + "__CWD_MARKER__:".length());
-                    // cwd is the first line after the marker
-                    int newlineIdx = afterMarker.indexOf('\n');
-                    String postCwd = newlineIdx >= 0
-                        ? afterMarker.substring(0, newlineIdx).trim()
-                        : afterMarker.trim();
-                    // Check for env marker
-                    int envMarkerIdx = output.indexOf("__ENV_MARKER__");
-                    if (envMarkerIdx >= 0) {
-                        // Everything after __ENV_MARKER__\n is env -0 output
-                        String envBlob = output.substring(envMarkerIdx + "__ENV_MARKER__\n".length());
-                        parseAndStoreEnv(sessionId, envBlob);
-                        // Remove env marker section from visible output
-                        output = output.substring(0, envMarkerIdx).trim();
+            if (shellState != null) {
+                try (var channel = SecureFileAccess.openRead(shellState)) {
+                    byte[] state = Channels.newInputStream(channel).readNBytes(MAX_SHELL_STATE_BYTES + 1);
+                    if (state.length > MAX_SHELL_STATE_BYTES) {
+                        output += "\n[Shell state exceeded the capture limit]";
                     } else {
-                        // Remove cwd marker from visible output
-                        output = output.substring(0, markerIdx).trim();
-                    }
-                    // Also remove the cwd marker line if env marker was found after it
-                    if (envMarkerIdx >= 0 && markerIdx < envMarkerIdx) {
-                        output = output.substring(0, markerIdx).trim();
-                    }
-                    if (!postCwd.isEmpty() && new java.io.File(postCwd).isDirectory()) {
-                        if (recordSessionCwd) {
-                            SESSION_CWD.put(sessionId, postCwd);
+                        String snapshot = new String(state, StandardCharsets.UTF_8);
+                        int separator = snapshot.indexOf('\0');
+                        if (separator >= 0) {
+                            String postCwd = snapshot.substring(0, separator);
+                            parseAndStoreEnv(sessionId, snapshot.substring(separator + 1));
+                            if (!postCwd.isEmpty() && new java.io.File(postCwd).isDirectory()) {
+                                if (recordSessionCwd) SESSION_CWD.put(sessionId, postCwd);
+                                actualCwd = postCwd;
+                            }
                         }
-                        actualCwd = postCwd;
                     }
+                } catch (java.io.IOException e) {
+                    log.warn("Unable to read terminal shell state for session {}", sessionId, e);
+                    output += "\n[Shell state could not be captured]";
                 }
             }
 
+            if (outputTruncated.get()) output = "[earlier output truncated]\n" + output;
             String redactedOutput = redact(output);
 
             // Finding 1.3: Call notifyPostExecution after process completes
@@ -570,6 +566,14 @@ public class TerminalTool implements ToolHandler {
                 interruptToken.unregister(sessionId);
             }
             return jsonFail("Failed to execute command: " + e.getMessage());
+        } finally {
+            if (shellState != null) {
+                try {
+                    Files.deleteIfExists(shellState);
+                } catch (java.io.IOException e) {
+                    log.warn("Unable to remove terminal shell state for session {}", sessionId, e);
+                }
+            }
         }
     }
 
@@ -639,13 +643,11 @@ public class TerminalTool implements ToolHandler {
      * Strips the trailing newline added by the reader loop and normalises
      * PTY {@code \r\n} line endings to {@code \n}.
      */
-    private static String stripTrailingNewline(String output, boolean usePty) {
+    private static String normalizeOutput(String output) {
         if (output == null || output.isEmpty()) {
             return output;
         }
-        if (usePty) {
-            output = output.replace("\r\n", "\n").replace("\r", "\n");
-        }
+        output = output.replace("\r\n", "\n").replace('\r', '\n');
         if (output.endsWith("\n")) {
             output = output.substring(0, output.length() - 1);
         }

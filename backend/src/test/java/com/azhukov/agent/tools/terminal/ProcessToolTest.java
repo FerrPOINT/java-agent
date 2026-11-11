@@ -20,6 +20,18 @@ import static org.mockito.Mockito.when;
 class ProcessToolTest {
 
     @Test
+    void watchPatternInputRetainsTailOfCompletedLine() throws Exception {
+        String marker = "WATCH_PATTERN_MATCH";
+        Process process = mock(Process.class);
+        when(process.pid()).thenReturn(12345L);
+        when(process.getInputStream()).thenReturn(new ByteArrayInputStream(
+            ("x".repeat(1400) + marker + "\n").getBytes(StandardCharsets.UTF_8)));
+        var managed = new ProcessTool.ManagedProcess("review", "fixture", process, 30);
+        waitForReaderThread(managed);
+        assertThat(managed.getRecentOutput(500)).contains(marker);
+    }
+
+    @Test
     void startsLongProcessAndCapturesOutput() throws Exception {
         String expectedOutput = "line1\nline2";
 
