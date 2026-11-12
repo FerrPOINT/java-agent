@@ -411,3 +411,10 @@ Full conventions doc: `backend/docs/conventions.md`
 - `python3 scripts/check_docs_standard.py` — ratchet против `docs/standards/coverage-baseline.json` (DOC001/DOC002/DOC003 + LINE coverage per модуль). Нарастание нарушений или падение coverage ниже baseline = красный CI.
 - Baseline повышается только осознанно: вместе с новыми тестами, `--update-baseline`, коммит "chore: raise docs baseline".
 - Текущий долг: backend 513×DOC001 / bot 58 / cli 6; LINE backend 79.15% / bot 82.16%. Гасить пакетами из bottom-списка, не разом.
+
+
+## Единое пространство PDLC
+
+[План интеграции](docs/plans/unified-spaces-20261019.md) отделяет личный owner scope
+от проектных полномочий Fleet/Tracker. Совместимость проверяется по всем serving
+API/stream/download путям; наличие central auth или private network её не доказывает.

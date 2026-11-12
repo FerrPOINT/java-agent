@@ -331,3 +331,10 @@ Proprietary source-available. Not open source.
 Viewing/evaluation only.
 
 Commercial, production, resale, redistribution, SaaS/hosting use require written license from FerrPOINT. См. [LICENSE](LICENSE), [NOTICE](NOTICE) и [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+
+## Единое пространство PDLC
+
+[План интеграции](docs/plans/unified-spaces-20261019.md) отделяет личный owner scope
+от проектных полномочий Fleet/Tracker. Совместимость проверяется по всем serving
+API/stream/download путям; наличие central auth или private network её не доказывает.

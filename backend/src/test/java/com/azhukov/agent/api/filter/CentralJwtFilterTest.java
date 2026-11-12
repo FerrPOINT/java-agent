@@ -61,7 +61,7 @@ class CentralJwtFilterTest {
             exchange.sendResponseHeaders(200, publicKeys.length);
             try (var output = exchange.getResponseBody()) { output.write(publicKeys); }
         });
-        sessionReply.set("{\"id\":\"" + SUBJECT + "\",\"status\":\"active\"}");
+        sessionReply.set("{\"id\":\"" + SUBJECT + "\",\"status\":\"active\",\"role\":\"member\"}");
         server.createContext("/me", exchange -> {
             byte[] reply = sessionReply.get().getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", "application/json");
@@ -87,7 +87,7 @@ class CentralJwtFilterTest {
         UserContext.clear();
         SecurityContextHolder.clearContext();
         sessionStatus.set(200);
-        sessionReply.set("{\"id\":\"" + SUBJECT + "\",\"status\":\"active\"}");
+        sessionReply.set("{\"id\":\"" + SUBJECT + "\",\"status\":\"active\",\"role\":\"member\"}");
         unexpectedRequests.set(0);
     }
 
@@ -141,6 +141,33 @@ class CentralJwtFilterTest {
             assertThat(authentication.getCredentials()).isNull();
         });
         assertThat(calls.get()).isEqualTo(1);
+        assertThat(UserContext.getUserId()).isNull();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"member", "user", "operator", "admin"})
+    void confirmedHumanRoleKeepsPersonalScopeWithoutPromotingFromJwtHint(String role) throws Exception {
+        sessionReply.set("{\"id\":\"" + SUBJECT + "\",\"status\":\"active\",\"role\":\"" + role + "\"}");
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v2/sessions");
+        request.addHeader("Authorization", "Bearer " + token(builder -> builder.claim("role", "admin"), key));
+        AtomicInteger calls = new AtomicInteger();
+        filter().doFilter(request, new MockHttpServletResponse(), (incoming, outgoing) -> {
+            calls.incrementAndGet();
+            assertThat(UserContext.scopeUserId()).isEqualTo(SUBJECT);
+            assertThat(UserContext.isAdmin()).isFalse();
+        });
+        assertThat(calls.get()).isEqualTo(1);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"service_account", "unknown", ""})
+    void nonHumanOrUnknownProfileCannotUseHumanSessionRoutes(String role) throws Exception {
+        sessionReply.set("{\"id\":\"" + SUBJECT + "\",\"status\":\"active\",\"role\":\"" + role + "\"}");
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v2/sessions");
+        request.addHeader("Authorization", "Bearer " + token(builder -> builder.claim("role", "admin"), key));
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        filter().doFilter(request, response, (incoming, outgoing) -> fail("Unexpected human admission"));
+        assertThat(response.getStatus()).isEqualTo(401);
         assertThat(UserContext.getUserId()).isNull();
     }
 
@@ -251,7 +278,7 @@ class CentralJwtFilterTest {
     @ValueSource(strings = {"foreign", "inactive", "malformed", "oversized"})
     void sessionReadbackMustConfirmExactActiveIdentityWithinResponseLimit(String failure) throws Exception {
         sessionReply.set(switch (failure) {
-            case "foreign" -> "{\"id\":\"" + UUID.randomUUID() + "\",\"status\":\"active\"}";
+            case "foreign" -> "{\"id\":\"" + UUID.randomUUID() + "\",\"status\":\"active\",\"role\":\"member\"}";
             case "inactive" -> "{\"id\":\"" + SUBJECT + "\",\"status\":\"disabled\"}";
             case "oversized" -> "x".repeat(65537);
             default -> "broken-json";

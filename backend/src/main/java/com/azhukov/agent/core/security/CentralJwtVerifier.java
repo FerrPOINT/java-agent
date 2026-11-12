@@ -120,8 +120,10 @@ public final class CentralJwtVerifier {
             }
             if (response.statusCode() != 200) throw new CentralAuthUnavailableException();
             var user = mapper.readTree(response.body());
+            String role = user == null ? "" : user.path("role").asText();
             if (user == null || !subject.equals(user.path("id").asText())
-                    || !"active".equals(user.path("status").asText())) {
+                    || !"active".equals(user.path("status").asText())
+                    || !java.util.Set.of("member", "user", "operator", "admin").contains(role)) {
                 throw new BadJwtException("Central identity binding is not active");
             }
         } catch (InterruptedException interrupted) {
