@@ -30,6 +30,17 @@ import static org.mockito.Mockito.*;
 @MockitoSettings(strictness = Strictness.LENIENT)
 class BackendClientTest {
 
+    @Test
+    void reviewPartialEofKeepsLastBufferedLine() {
+        var sse = "data:{\"type\":\"token\",\"token\":\"partial result\"}\n";
+        mockPostStream(new ByteArrayInputStream(sse.getBytes(StandardCharsets.UTF_8)));
+        var output = new StringBuilder();
+        var renderer = new MarkdownRenderer.StreamingRenderer(new MarkdownRenderer(false), output::append);
+        backendClient.chatStream("hi", "sid", renderer::accept, ignored -> {}, renderer::flush);
+        assertThat(output.toString()).contains("partial result");
+    }
+
+
     @Mock
     private RestClient restClient;
     @Mock
