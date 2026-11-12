@@ -16,7 +16,10 @@ Java-агент: Spring Boot 4.1 + Java 25 + Telegram bot + MCP. Gradle multi-pr
 
 ## Build & Test
 
-CI and Docker use Temurin **25.0.4.1+1-LTS**; all Docker stages pin image
+GitHub Actions workflows are not used in this fork. Run the existing Gradle
+gates locally; do not restore hosted workflows or Actions dependency updates.
+
+Local verification and Docker use Temurin **25.0.4.1+1-LTS**; all Docker stages pin image
 digests. Use committed wrappers: **9.6.1** at the repository root for
 bot/CLI and **9.8.2** from `backend/` for the standalone backend gates.
 
