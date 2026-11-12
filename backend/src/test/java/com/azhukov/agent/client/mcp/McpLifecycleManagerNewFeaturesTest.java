@@ -40,6 +40,43 @@ import static org.mockito.Mockito.*;
 class McpLifecycleManagerNewFeaturesTest {
 
     @Test
+    void reviewReconnectUsesCurrentConfigAfterRetiringOldClient() throws Exception {
+        var properties = new AgentProperties();
+        properties.getMcp().setEnabled(true);
+        var fresh = new AgentProperties.McpProperties.ServerProperties();
+        fresh.setName("fixture");
+        fresh.setBaseUrl("https://current.example.test");
+        properties.getMcp().getServers().add(fresh);
+        var stale = new AgentProperties.McpProperties.ServerProperties();
+        stale.setName("fixture");
+        stale.setBaseUrl("https://old.example.test");
+        var context = mock(ApplicationContext.class);
+        when(context.getBean(ToolRegistry.class)).thenReturn(mock(ToolRegistry.class));
+        var manager = spy(new McpLifecycleManager(properties, new ObjectMapper(),
+            context, null, null, null, null, null, null));
+        var oldClient = mock(McpSyncClient.class);
+        var newClient = mock(McpSyncClient.class);
+        when(newClient.listTools()).thenReturn(new McpSchema.ListToolsResult(List.of(), null));
+        manager.getClientsForTest().put("fixture", new McpLifecycleManager.McpServerState(stale, oldClient, List.of()));
+        var called = new CountDownLatch(1);
+        var used = new java.util.concurrent.atomic.AtomicReference<String>();
+        doAnswer(inv -> {
+            AgentProperties.McpProperties.ServerProperties config = inv.getArgument(0);
+            used.set(config.getBaseUrl());
+            called.countDown();
+            return newClient;
+        }).when(manager).createClient(any());
+        try {
+            manager.reconnect("fixture");
+            assertThat(called.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(used.get()).isEqualTo(fresh.getBaseUrl());
+        } finally {
+            manager.closeAll();
+        }
+    }
+
+
+    @Test
     void sanitizeError_stripsBearerTokens() {
         assertThat(McpLifecycleManager.sanitizeError("Bearer sk-abc123 error"))
             .contains("[REDACTED]")
