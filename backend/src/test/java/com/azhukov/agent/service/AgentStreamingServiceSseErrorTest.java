@@ -191,6 +191,51 @@ class AgentStreamingServiceSseErrorTest {
             "token".equals(event.name) && event.data.contains("Iteration budget exhausted"));
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints = {1, 10})
+    void reviewEmptyResponseReportsBudgetAtAnyTurnLimit(int maxTurns) throws Exception {
+        properties.getCore().setMaxTurns(maxTurns);
+        useRealBudget(1);
+        doAnswer(call -> {
+            StreamingResponseHandler handler = call.getArgument(3);
+            handler.onComplete();
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+
+        var emitter = new CollectingEmitter(10_000L);
+        streamingService.streamTurn(ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L), emitter);
+        emitter.awaitDone();
+
+        verify(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+        verify(modelClient, org.mockito.Mockito.never()).complete(any(List.class), any(List.class), any());
+        assertThat(emitter.events.stream().filter(event -> "token".equals(event.name)).map(event -> event.data).toList())
+            .anyMatch(data -> data.contains("Iteration budget exhausted"));
+    }
+
+    @Test
+    void reviewDroppedToolCallKeepsEmittedTextAtBudgetLimit() throws Exception {
+        useRealBudget(1);
+        when(sessionRepository.findMessageParentId(SESSION_ID)).thenReturn(Optional.of(SESSION_ID));
+        String visible = "The provider already showed this explanation. ".repeat(12).stripTrailing();
+        doAnswer(call -> {
+            StreamingResponseHandler handler = call.getArgument(3);
+            handler.onToken(visible);
+            handler.onComplete("tool_calls", 12L);
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+
+        var emitter = new CollectingEmitter(10_000L);
+        streamingService.streamTurn(ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L), emitter);
+        emitter.awaitDone();
+
+        assertThat(emitter.events).anyMatch(event -> "token".equals(event.name)
+            && event.data.contains("The provider already showed this explanation."));
+        verify(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+        verify(modelClient, org.mockito.Mockito.never()).complete(any(List.class), any(List.class), any());
+        verify(messageRepository, org.mockito.Mockito.timeout(2000)).save(
+            org.mockito.ArgumentMatchers.argThat(message -> visible.equals(message.getContent())));
+    }
+
     private void useRealBudget(int maxModelCalls) {
         properties.getBudget().setMaxModelCallsPerTurn(maxModelCalls);
         var actualBudget = new DefaultIterationBudget(properties);
