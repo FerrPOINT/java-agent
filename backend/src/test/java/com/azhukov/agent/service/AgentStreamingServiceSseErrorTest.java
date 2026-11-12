@@ -190,6 +190,25 @@ class AgentStreamingServiceSseErrorTest {
             "token".equals(event.name) && event.data.contains("Iteration budget exhausted"));
     }
 
+    @Test
+    void reviewToolFreeEmptyLastAttemptHonorsCallBudget() throws Exception {
+        useRealBudget(1);
+        doAnswer(call -> {
+            StreamingResponseHandler handler = call.getArgument(3);
+            handler.onComplete();
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+
+        var emitter = new CollectingEmitter(10_000L);
+        streamingService.streamTurn(ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L), emitter);
+        emitter.awaitDone();
+
+        verify(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+        verify(modelClient, org.mockito.Mockito.never()).complete(any(List.class), any(List.class), any());
+        assertThat(emitter.events).anyMatch(event ->
+            "token".equals(event.name) && event.data.contains("Iteration budget exhausted"));
+    }
+
     private void useRealBudget(int maxModelCalls) {
         properties.getBudget().setMaxModelCallsPerTurn(maxModelCalls);
         var actualBudget = new DefaultIterationBudget(properties);

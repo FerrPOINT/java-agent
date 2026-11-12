@@ -285,6 +285,55 @@ class McpLazyStartupTest {
     }
 
     @Test
+    void reviewOldSchemaWriteCannotReplaceNewGeneration() throws Exception {
+        properties.getMcp().setLazyStartup(false);
+        var lifecycle = Mockito.spy(manager);
+        var oldClient = mock(io.modelcontextprotocol.client.McpSyncClient.class);
+        var newClient = mock(io.modelcontextprotocol.client.McpSyncClient.class);
+        var oldTool = McpSchema.Tool.builder("old_manifest_tool").inputSchema(Map.of("type", "object")).build();
+        var newTool = McpSchema.Tool.builder("new_manifest_tool").inputSchema(Map.of("type", "object")).build();
+        when(oldClient.listTools()).thenReturn(new McpSchema.ListToolsResult(List.of(oldTool), null));
+        when(newClient.listTools()).thenReturn(new McpSchema.ListToolsResult(List.of(newTool), null));
+        when(oldClient.closeGracefully()).thenReturn(true);
+        when(newClient.closeGracefully()).thenReturn(true);
+        Mockito.doReturn(oldClient, newClient).when(lifecycle).createClient(any());
+
+        var oldWrite = new CountDownLatch(1);
+        var newWrite = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        var cache = new java.util.concurrent.atomic.AtomicReference<String>();
+        Mockito.doAnswer(call -> {
+            String json = call.getArgument(2);
+            if (json.contains("old_manifest_tool")) {
+                oldWrite.countDown();
+                assertThat(release.await(5, TimeUnit.SECONDS)).isTrue();
+                cache.set(json);
+            } else {
+                cache.set(json);
+                newWrite.countDown();
+            }
+            return null;
+        }).when(configStore).storeSchema(eq(configured.schemaConfig().getId()), eq(3L), any(), any(), any());
+
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var first = executor.submit(() -> lifecycle.connect(configured));
+            try {
+                assertThat(oldWrite.await(2, TimeUnit.SECONDS)).isTrue();
+                lifecycle.reconnect("cached-server");
+                assertThat(newWrite.await(4, TimeUnit.SECONDS)).isTrue();
+                assertThat(cache.get()).contains("new_manifest_tool");
+                assertThat(lifecycle.getClientsForTest().get("cached-server").client()).isSameAs(newClient);
+            } finally {
+                release.countDown();
+            }
+            first.get(5, TimeUnit.SECONDS);
+            assertThat(cache.get()).contains("new_manifest_tool");
+        } finally {
+            lifecycle.closeAll();
+        }
+    }
+
+    @Test
     void slowSchemaStoreDoesNotLockOtherConnections() throws Exception {
         properties.getMcp().setLazyStartup(false);
         var neighbour = new AgentProperties.McpProperties.ServerProperties();
