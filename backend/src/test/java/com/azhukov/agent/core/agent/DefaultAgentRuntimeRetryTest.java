@@ -148,6 +148,29 @@ class DefaultAgentRuntimeRetryTest {
         assertThat(result.completed()).isEqualTo(limit == 2);
     }
 
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints = {1, 2})
+    void reviewSyncLengthRespectsBudgetAndPreservesPartial(int limit) {
+        properties.getBudget().setMaxModelCallsPerTurn(limit);
+        var actualBudget = new com.azhukov.agent.core.budget.DefaultIterationBudget(properties);
+        when(iterationBudget.startTurn(any(UUID.class))).thenAnswer(inv ->
+            actualBudget.startTurn(inv.getArgument(0)));
+        when(iterationBudget.isExhausted(any())).thenAnswer(inv ->
+            actualBudget.isExhausted(inv.getArgument(0)));
+        when(iterationBudget.recordModelCall(any(), any(int.class), any(int.class))).thenAnswer(inv ->
+            actualBudget.recordModelCall(inv.getArgument(0), inv.getArgument(1), inv.getArgument(2)));
+        var calls = new java.util.concurrent.atomic.AtomicInteger();
+        when(modelClient.complete(any(List.class), any(List.class), any())).thenAnswer(inv -> {
+            if (calls.incrementAndGet() == 1) return ChatResponse.text("visible partial", "LENGTH");
+            return ChatResponse.text(limit == 1 ? "budget summary instead of partial" : " and the rest");
+        });
+        var result = runtime.runTurn(Session.create("user-1", "openai-compatible", "test-model"), "Hello");
+        assertThat(result.completed()).isTrue();
+        assertThat(List.of(calls.get(), result.finalText())).isEqualTo(limit == 1
+            ? List.of(1, "visible partial") : List.of(2, "visible partial and the rest"));
+    }
+
     // ─── Retry on transient errors ───
 
     @Test

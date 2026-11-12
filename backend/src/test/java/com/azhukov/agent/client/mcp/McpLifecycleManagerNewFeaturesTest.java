@@ -40,6 +40,56 @@ import static org.mockito.Mockito.*;
 class McpLifecycleManagerNewFeaturesTest {
 
     @Test
+    void reviewConcurrentReloadKeepsRefreshOfPublishedClient() throws Exception {
+        var properties = new AgentProperties();
+        properties.getMcp().setEnabled(true);
+        var config = new AgentProperties.McpProperties.ServerProperties();
+        config.setName("fixture");
+        properties.getMcp().getServers().add(config);
+        var manager = spy(McpTestFactory.create(properties, null));
+        var client = mock(McpSyncClient.class);
+        when(client.listTools()).thenReturn(new McpSchema.ListToolsResult(List.of(), null));
+        when(client.closeGracefully()).thenReturn(true);
+        doReturn(client).when(manager).createClient(any());
+        var scheduler = mock(java.util.concurrent.ScheduledExecutorService.class);
+        var entered = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        var shutdownCalls = new java.util.concurrent.atomic.AtomicInteger();
+        when(scheduler.shutdownNow()).thenAnswer(call -> {
+            if (shutdownCalls.incrementAndGet() == 1) {
+                entered.countDown();
+                assertThat(release.await(5, TimeUnit.SECONDS)).isTrue();
+            }
+            return List.of();
+        });
+        org.springframework.test.util.ReflectionTestUtils.setField(manager, "reconnectExecutor", scheduler);
+        try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
+            var first = executor.submit(() -> {
+                manager.closeAll();
+                manager.connectConfiguredServers();
+            });
+            try {
+                assertThat(entered.await(2, TimeUnit.SECONDS)).isTrue();
+                manager.closeAll();
+                manager.connectConfiguredServers();
+                assertThat(manager.isConnected("fixture")).isTrue();
+                var scheduled = (Map<?, ?>) org.springframework.test.util.ReflectionTestUtils
+                    .getField(manager, "toolRefreshFutures");
+                assertThat(scheduled.get("fixture")).isNotNull();
+                release.countDown();
+                first.get(25, TimeUnit.SECONDS);
+                assertThat(manager.isConnected("fixture")).isTrue();
+                assertThat(scheduled.get("fixture"))
+                    .as("the published client must retain periodic tool discovery").isNotNull();
+            } finally {
+                release.countDown();
+            }
+        } finally {
+            manager.closeAll();
+        }
+    }
+
+    @Test
     void reconnectUsesCurrentConfigAfterRetiringOldClient() throws Exception {
         var properties = new AgentProperties();
         properties.getMcp().setEnabled(true);
