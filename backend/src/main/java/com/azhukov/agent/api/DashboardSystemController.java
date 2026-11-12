@@ -45,7 +45,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 /**
@@ -1797,27 +1796,6 @@ public class DashboardSystemController {
                 "native redirect_uri host must be a loopback IP literal (127.0.0.1 / ::1)");
         }
         return null;
-    }
-
-    private static Map<String, Object> probeGhAuth() {
-        try {
-            Process process = new ProcessBuilder("gh", "auth", "status")
-                .redirectInput(ProcessBuilder.Redirect.PIPE)
-                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-                .redirectError(ProcessBuilder.Redirect.DISCARD)
-                .start();
-            boolean finished = process.waitFor(10, TimeUnit.SECONDS);
-            if (!finished) {
-                process.destroyForcibly();
-                return Map.of("available", true, "authenticated", false);
-            }
-            return Map.of("available", true, "authenticated", process.exitValue() == 0);
-        } catch (java.io.IOException e) {
-            return Map.of("available", false, "authenticated", false);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return Map.of("available", true, "authenticated", false);
-        }
     }
 
     private static String redact(String value) {
