@@ -281,6 +281,27 @@ class DefaultAgentRuntimeRetryTest {
         verify(modelClient, times(1)).complete(any(List.class), any(List.class), any());
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints = {1, 2})
+    void reviewContentPolicyOutcomeIsStableAtTheBudgetBoundary(int limit) {
+        properties.getBudget().setMaxModelCallsPerTurn(limit);
+        var actualBudget = new com.azhukov.agent.core.budget.DefaultIterationBudget(properties);
+        when(iterationBudget.startTurn(any(UUID.class))).thenAnswer(inv ->
+            actualBudget.startTurn(inv.getArgument(0)));
+        when(iterationBudget.isExhausted(any())).thenAnswer(inv ->
+            actualBudget.isExhausted(inv.getArgument(0)));
+        when(iterationBudget.recordModelCall(any(), any(int.class), any(int.class))).thenAnswer(inv ->
+            actualBudget.recordModelCall(inv.getArgument(0), inv.getArgument(1), inv.getArgument(2)));
+        when(modelClient.complete(any(List.class), any(List.class), any()))
+            .thenThrow(new RuntimeException("content policy violation"));
+        var result = runtime.runTurn(Session.create("user-1", "openai-compatible", "test-model"), "Hello");
+        verify(modelClient).complete(any(List.class), any(List.class), any());
+        assertThat(result.completed()).isTrue();
+        assertThat(result.error()).isNull();
+        verify(turnFinalizer).finalize(any(UUID.class), any(List.class), org.mockito.ArgumentMatchers.eq(false),
+            org.mockito.ArgumentMatchers.eq(TurnExitReason.CONTENT_POLICY));
+    }
+
     @Test
     @DisplayName("When modelClient.complete() throws content policy error, turn ends immediately with error")
     void contentPolicyErrorNotRetried() {
