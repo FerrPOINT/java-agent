@@ -160,6 +160,79 @@ class AgentStreamingServiceSseErrorTest {
     }
 
     @Test
+    void reviewFallbackContinuationFailureRetainsDeliveredText() throws Exception {
+        int maxModelCalls = 4;
+        useRealBudget(maxModelCalls);
+        var fallbackCalls = new AtomicInteger();
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            try (exchange) {
+                exchange.getRequestBody().readAllBytes();
+                int attempt = fallbackCalls.incrementAndGet();
+                if (attempt == 3) {
+                    byte[] error = "{\"error\":{\"message\":\"model not found\"}}".getBytes(StandardCharsets.UTF_8);
+                    exchange.getResponseHeaders().set("Content-Type", "application/json");
+                    exchange.sendResponseHeaders(404, error.length);
+                    exchange.getResponseBody().write(error);
+                    return;
+                }
+                String choice = switch (attempt) {
+                    case 1 -> """
+                        {"message":{"role":"assistant","content":"checking the weather","tool_calls":[
+                         {"id":"call-1","type":"function","function":{"name":"weather","arguments":"{}"}}]},
+                         "finish_reason":"tool_calls"}
+                        """;
+                    case 2 -> """
+                        {"message":{"role":"assistant","content":"fallback answer was truncated"},"finish_reason":"length"}
+                        """;
+                    default -> """
+                        {"message":{"role":"assistant","content":"fallback completed the turn"},"finish_reason":"stop"}
+                        """;
+                };
+                byte[] body = ("""
+                    {"id":"fixture","object":"chat.completion","created":1,"model":"reserve","choices":[%s],
+                     "usage":{"prompt_tokens":8,"completion_tokens":4,"total_tokens":12}}
+                    """.formatted(choice)).getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", "application/json");
+                exchange.sendResponseHeaders(200, body.length);
+                exchange.getResponseBody().write(body);
+            }
+        });
+        server.start();
+        try {
+            var fallback = new FallbackConfig();
+            fallback.setModel("reserve");
+            fallback.setApiKey("fixture");
+            fallback.setBaseUrl("http://127.0.0.1:" + server.getAddress().getPort() + "/v1");
+            properties.setFallbackChain(List.of(fallback));
+            when(toolRegistry.getDefinitions(any(Set.class))).thenReturn(List.of(
+                new ToolDefinition("weather", "Fixture tool", Map.of("type", "object"))));
+            when(toolExecutionService.execute(any(), any(), any(), any(), any(), any()))
+                .thenReturn(ToolResult.ok("sunny"));
+            when(toolExecutionService.enforceToolResultBudget(any())).thenAnswer(call -> call.getArgument(0));
+            doAnswer(call -> {
+                StreamingResponseHandler handler = call.getArgument(3);
+                handler.onError(new RuntimeException("404 model not found"));
+                return null;
+            }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+
+            when(sessionRepository.findMessageParentId(SESSION_ID)).thenReturn(Optional.of(SESSION_ID));
+            var emitter = new CollectingEmitter(10_000L);
+            streamingService.streamTurn(ChatRequest.simple(SESSION_ID, "Hello", null, 10_000L), emitter);
+            emitter.awaitDone();
+
+            assertThat(fallbackCalls).hasValue(3);
+            assertThat(emitter.events).anyMatch(event ->
+                "token".equals(event.name) && event.data.contains("fallback answer was truncated"));
+            assertThat(emitter.events).anyMatch(event -> "error".equals(event.name));
+            verify(messageRepository, org.mockito.Mockito.timeout(2000)).save(
+                org.mockito.ArgumentMatchers.argThat(message -> "fallback answer was truncated".equals(message.getContent())));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void emptyLastAttemptReportsBudgetExhaustionWithoutAnotherStream() throws Exception {
         useRealBudget(1);
         doAnswer(call -> {

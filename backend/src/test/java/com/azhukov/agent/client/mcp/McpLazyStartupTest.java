@@ -85,6 +85,31 @@ class McpLazyStartupTest {
         return cache;
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+    void reviewFirstLazyRpcClosesOnlyBrokenTransport(boolean brokenTransport) throws Exception {
+        when(configStore.cachedSchema(any(), eq(3L))).thenReturn(Optional.of(freshCache("[{\"name\":\"echo\"}]")));
+        when(configStore.isFresh(any())).thenReturn(true);
+        var lifecycle = Mockito.spy(manager);
+        var client = mock(io.modelcontextprotocol.client.McpSyncClient.class);
+        when(client.listTools()).thenReturn(new McpSchema.ListToolsResult(List.of(), null));
+        when(client.closeGracefully()).thenReturn(true);
+        when(client.callTool(any())).thenThrow(new IllegalStateException(
+            brokenTransport ? "connection reset by peer" : "invalid tool arguments"));
+        Mockito.doReturn(client).when(lifecycle).createClient(any());
+        try {
+            lifecycle.connect(configured);
+            assertThat(lifecycle.isConnected("cached-server")).isFalse();
+            var result = lifecycle.new McpToolHandler("cached-server", "echo").execute("{}", null, null);
+            assertThat(result.success()).isFalse();
+            verify(client).initialize();
+            verify(client).callTool(any());
+            assertThat(lifecycle.isConnected("cached-server")).isEqualTo(!brokenTransport);
+        } finally {
+            lifecycle.closeAll();
+        }
+    }
+
     @Test
     void freshCacheRegistersWithoutConnecting() throws Exception {
         String toolsJson = objectMapper.writeValueAsString(List.of(
