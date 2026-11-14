@@ -51,6 +51,7 @@ class CronJobServiceAttachedSessionMirrorTest {
     @Mock private PlatformTransactionManager transactions;
     @Mock private ObjectProvider<DeliveryWorkItemService> deliveryProvider;
     @Mock private ObjectProvider<com.azhukov.agent.persistence.repository.SessionRepository> sessionRepositoryProvider;
+    @Mock private com.azhukov.agent.persistence.repository.SessionRepository sessions;
     @Mock private DeliveryWorkItemService deliveryService;
     @Mock private AgentRuntimeService runtime;
 
@@ -70,6 +71,7 @@ class CronJobServiceAttachedSessionMirrorTest {
     private CronJobEntity job(UUID attachedSessionId) {
         CronJobEntity job = new CronJobEntity();
         job.setId(UUID.randomUUID());
+        job.setUserId("cron-owner");
         job.setName("daily-report");
         job.setSchedule("0 9 * * *");
         job.setPrompt("report");
@@ -95,6 +97,14 @@ class CronJobServiceAttachedSessionMirrorTest {
         when(deliveryProvider.getIfAvailable()).thenReturn(deliveryService);
         org.mockito.Mockito.lenient().when(transactions.getTransaction(any(TransactionDefinition.class)))
             .thenAnswer(invocation -> new SimpleTransactionStatus());
+        if (job.getAttachedSessionId() != null) {
+            var attached = new com.azhukov.agent.persistence.entity.SessionEntity();
+            attached.setId(job.getAttachedSessionId());
+            attached.setUserId(job.getUserId());
+            when(sessionRepositoryProvider.getIfAvailable()).thenReturn(sessions);
+            org.mockito.Mockito.lenient().when(sessions.findById(attached.getId())).thenReturn(Optional.of(attached));
+            org.mockito.Mockito.lenient().when(sessions.findMessageParentId(attached.getId())).thenReturn(Optional.of(attached.getId()));
+        }
         if (attachedSessionId != null) {
             // Session already has turns 0,2,5 — the mirror note must land at 6.
             when(messageRepository.findTurnIndicesBySessionIdDesc(attachedSessionId))
@@ -171,4 +181,23 @@ class CronJobServiceAttachedSessionMirrorTest {
         order.verify(messageRepository).save(any(MessageEntity.class));
         order.verify(transactions).rollback(any());
     }
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.NullSource
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"foreign-owner"})
+    void historicalForeignOrMissingAttachmentNeverReceivesMirroredOutput(String owner) {
+        UUID id = UUID.randomUUID();
+        CronJobEntity job = job(id);
+        prepareFailingRun(job, null);
+        var session = new com.azhukov.agent.persistence.entity.SessionEntity();
+        session.setId(id);
+        session.setUserId(owner);
+        when(sessions.findById(id)).thenReturn(owner == null ? Optional.empty() : Optional.of(session));
+
+        service().runNow(job.getId());
+
+        verify(deliveryService).enqueue(any());
+        verify(messageRepository, never()).findTurnIndicesBySessionIdDesc(any());
+        verify(messageRepository, never()).save(any());
+    }
+
 }
