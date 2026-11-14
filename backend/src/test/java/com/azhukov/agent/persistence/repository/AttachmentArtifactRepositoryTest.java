@@ -20,6 +20,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 @Tag("slow")
 class AttachmentArtifactRepositoryTest extends PostgresTestContainer {
+    @Autowired
+    private SessionRepository sessions;
+
 
     @Autowired
     private AttachmentArtifactRepository repository;
@@ -40,6 +43,39 @@ class AttachmentArtifactRepositoryTest extends PostgresTestContainer {
         entity.setDisposition(disposition);
         entity.setOrigin("telegram");
         return entity;
+    }
+
+    @Test
+    void registrationChecksPersistedSessionOwnerBeforeAnyBlobIsWritten(
+        @org.junit.jupiter.api.io.TempDir java.nio.file.Path cache
+    ) throws Exception {
+        var foreign = new com.azhukov.agent.persistence.entity.SessionEntity();
+        foreign.setUserId("system");
+        foreign.setModelProvider("noop");
+        foreign.setModelName("test");
+        var own = new com.azhukov.agent.persistence.entity.SessionEntity();
+        own.setUserId("user-1");
+        own.setModelProvider("noop");
+        own.setModelName("test");
+        sessions.saveAllAndFlush(List.of(foreign, own));
+        var service = new com.azhukov.agent.service.AttachmentArtifactService(
+            new org.springframework.beans.factory.ObjectProvider<>() {
+                @Override public AttachmentArtifactRepository getObject() { return repository; }
+                @Override public AttachmentArtifactRepository getIfAvailable() { return repository; }
+            }, new com.azhukov.agent.service.ArtifactProcessIsolation(), sessions);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "cacheRootConfig", cache.toString());
+
+        var rejected = service.register("user-1", "default", foreign.getId(), null, "cli", "document",
+            "text/plain", "note.txt", "bytes".getBytes());
+        assertThat(rejected.id()).isNull();
+        assertThat(rejected.rejection()).isEqualTo("session not found");
+        try (var files = java.nio.file.Files.list(cache)) {
+            assertThat(files).isEmpty();
+        }
+        var accepted = service.register("user-1", "default", own.getId(), null, "cli", "document",
+            "text/plain", "note.txt", "bytes".getBytes());
+        assertThat(accepted.rejection()).isNull();
+        assertThat(repository.findById(accepted.id()).orElseThrow().getSessionId()).isEqualTo(own.getId());
     }
 
     @Test
@@ -219,7 +255,7 @@ class AttachmentArtifactRepositoryTest extends PostgresTestContainer {
             new org.springframework.beans.factory.ObjectProvider<>() {
                 @Override public AttachmentArtifactRepository getObject() { return repository; }
                 @Override public AttachmentArtifactRepository getIfAvailable() { return repository; }
-            }, null);
+            }, null, sessions);
         org.springframework.test.util.ReflectionTestUtils.setField(service, "cacheRootConfig", cache.toString());
 
         assertThat(transactionTemplate.<Integer>execute(tx -> service.sweepExpired())).isEqualTo(2);

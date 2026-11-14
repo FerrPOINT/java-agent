@@ -42,6 +42,7 @@ public class AttachmentArtifactService {
 
     private final ObjectProvider<AttachmentArtifactRepository> repositoryProvider;
     private final ArtifactProcessIsolation artifactProcessIsolation;
+    private final com.azhukov.agent.persistence.repository.SessionRepository sessions;
 
     @Value("${agent.attachments.cache-root:}")
     private String cacheRootConfig;
@@ -94,6 +95,13 @@ public class AttachmentArtifactService {
     private ArtifactRegistration register(String ownerId, String profile, UUID sessionId,
                                           String messageId, String origin, String disposition,
                                           String mimeType, String fileName, byte[] data, boolean deduplicate) {
+        if (ownerId == null || ownerId.isBlank()) {
+            return new ArtifactRegistration(null, null, null, false, "attachment owner required");
+        }
+        if (sessionId != null && sessions.findById(sessionId)
+                .filter(session -> ownerId.equals(session.getUserId())).isEmpty()) {
+            return new ArtifactRegistration(null, null, null, false, "session not found");
+        }
         String rejection = validate(disposition, origin, fileName, data);
         if (rejection != null) {
             return new ArtifactRegistration(null, null, null, false, rejection);
@@ -144,7 +152,7 @@ public class AttachmentArtifactService {
             }
             AttachmentArtifactEntity entity = new AttachmentArtifactEntity();
             entity.setId(id);
-            entity.setOwnerId(ownerId == null || ownerId.isBlank() ? "system" : ownerId);
+            entity.setOwnerId(ownerId);
             entity.setProfile(profile == null || profile.isBlank() ? "default" : profile);
             entity.setSessionId(sessionId);
             entity.setMessageId(messageId);

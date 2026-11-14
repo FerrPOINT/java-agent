@@ -228,8 +228,7 @@ public class AttachmentController {
     }
 
     private static String authenticatedOwner(String requestedOwnerId) {
-        String scopedOwner = scopedOwner();
-        return scopedOwner != null ? scopedOwner : requestedOwnerId;
+        return UserContext.effectiveUserId(requestedOwnerId);
     }
 
     private static String sanitizeFileName(String name) {
