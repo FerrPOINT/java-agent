@@ -31,6 +31,9 @@ class IdentityDeletionOwnerPostgresTest {
     private static Request request(){return new Request(1,UUID.randomUUID(),new Identity(ISSUER,UUID.randomUUID().toString()),UUID.randomUUID());}
     private interface Work{void run(DataSource db)throws Exception;}
     private static void isolated(boolean predecessor,Work work)throws Exception {
+        isolated(predecessor ? "71" : null, work);
+    }
+    private static void isolated(String target,Work work)throws Exception {
         String url=System.getenv("JAVA_IDENTITY_TEST_JDBC_URL");
         assertThat(url).as("dedicated JAVA_IDENTITY_TEST_JDBC_URL required").isNotBlank();
         var base=new DriverManagerDataSource(url);
@@ -45,7 +48,7 @@ class IdentityDeletionOwnerPostgresTest {
         };
         try {
             var config=Flyway.configure().dataSource(db).locations("classpath:db/migration","classpath:db/postgresql").outOfOrder(true);
-            if(predecessor)config.target(MigrationVersion.fromVersion("71"));
+            if(target != null)config.target(MigrationVersion.fromVersion(target));
             config.load().migrate();work.run(db);
         } finally {
             NativeIdentityOrigin.clear();
@@ -89,6 +92,46 @@ class IdentityDeletionOwnerPostgresTest {
         assertThatThrownBy(()->sql(db,"INSERT INTO memory(user_id,fact) VALUES('"+r.identity().subject()+"::profile::qa','synthetic')")).isInstanceOf(SQLException.class).hasMessageContaining("identity_deletion_fenced");
         owner.release(r,window());sql(db,"DELETE FROM sessions WHERE id='"+session+"'");
         assertThat(owner.check(new Request(1,UUID.randomUUID(),r.identity(),r.inventoryRevision()),window()).referenceCount()).isPositive();
+    });}
+    @Test void background_owner_upgrade_preserves_payload_and_unknown_history()throws Exception{isolated("76",db->{
+        UUID parent=UUID.randomUUID(),owned=UUID.randomUUID(),unknown=UUID.randomUUID();
+        session(db,parent,"user-1");
+        sql(db,"INSERT INTO background_jobs(id,session_id,prompt,status,result) VALUES ('"+owned+"','"+parent+"','keep prompt','DONE','keep result'), ('"+unknown+"',NULL,'legacy work','RUNNING',NULL)");
+        Flyway.configure().dataSource(db).locations("classpath:db/migration","classpath:db/postgresql").outOfOrder(true).load().migrate();
+        assertThat(text(db,"SELECT user_id FROM background_jobs WHERE id='"+owned+"'")).isEqualTo("user-1");
+        assertThat(text(db,"SELECT prompt || ':' || status || ':' || result FROM background_jobs WHERE id='"+owned+"'")).isEqualTo("keep prompt:DONE:keep result");
+        sql(db,"UPDATE background_jobs SET status='DONE',result='legacy completion' WHERE id='"+unknown+"'");
+        assertThat(text(db,"SELECT user_id FROM background_jobs WHERE id='"+unknown+"'")).isNull();
+        assertThat(text(db,"SELECT result FROM background_jobs WHERE id='"+unknown+"'")).isEqualTo("legacy completion");
+        assertThat(text(db,"SELECT user_columns::text FROM java_identity_reference_sources WHERE source='background_jobs'")).isEqualTo("{user_id}");
+        assertThat(text(db,"SELECT session_columns::text FROM java_identity_reference_sources WHERE source='background_jobs'")).isEqualTo("{session_id}");
+        assertThatThrownBy(()->sql(db,"UPDATE java_identity_reference_sources SET user_columns=ARRAY[]::text[] WHERE source='background_jobs'"))
+            .isInstanceOf(SQLException.class).hasMessageContaining("identity_provenance_immutable");
+    });}
+    @Test void background_jobs_keep_both_direct_owner_and_parent_identity_fences()throws Exception{isolated(false,db->{
+        var owner=store(db);Request direct=request(),parentOwner=request();
+        owner.central(ISSUER,direct.identity().subject(),window());
+        owner.central(ISSUER,parentOwner.identity().subject(),window());
+        UUID parent=UUID.randomUUID();session(db,parent,parentOwner.identity().subject());
+        long directBefore=owner.check(direct,window()).referenceCount();
+        long parentBefore=owner.check(parentOwner,window()).referenceCount();
+        String insert="INSERT INTO background_jobs(id,user_id,session_id,prompt) VALUES ('"+UUID.randomUUID()+"','"+direct.identity().subject()+"','"+parent+"','work')";
+        sql(db,insert);
+        sql(db,"INSERT INTO background_jobs(id,user_id,prompt) VALUES ('"+UUID.randomUUID()+"','"+direct.identity().subject()+"','sessionless')");
+        assertThat(owner.check(direct,window()).referenceCount()).isEqualTo(directBefore+2);
+        assertThat(owner.check(parentOwner,window()).referenceCount()).isEqualTo(parentBefore+1);
+        owner.freeze(direct,window());
+        assertThatThrownBy(()->sql(db,"INSERT INTO background_jobs(id,user_id,prompt) VALUES ('"+UUID.randomUUID()+"','"+direct.identity().subject()+"','blocked')"))
+            .isInstanceOf(SQLException.class).hasMessageContaining("identity_deletion_fenced");
+        assertThatThrownBy(()->sql(db,"UPDATE background_jobs SET status='RUNNING' WHERE user_id='"+direct.identity().subject()+"'"))
+            .isInstanceOf(SQLException.class).hasMessageContaining("identity_deletion_fenced");
+        owner.release(direct,window());owner.freeze(parentOwner,window());
+        assertThatThrownBy(()->sql(db,insert.replaceFirst("'[0-9a-f-]{36}'","'"+UUID.randomUUID()+"'")))
+            .isInstanceOf(SQLException.class).hasMessageContaining("identity_deletion_fenced");
+        // Old binaries may still complete unattributed jobs during rollback.
+        UUID legacy=UUID.randomUUID();
+        sql(db,"INSERT INTO background_jobs(id,prompt) VALUES ('"+legacy+"','unattributed')");
+        sql(db,"UPDATE background_jobs SET status='DONE',result='preserved' WHERE id='"+legacy+"'");
     });}
     @Test void cron_suggestions_are_counted_and_fenced()throws Exception{isolated(false,db->{
         var owner=store(db);Request r=request();owner.central(ISSUER,r.identity().subject(),window());

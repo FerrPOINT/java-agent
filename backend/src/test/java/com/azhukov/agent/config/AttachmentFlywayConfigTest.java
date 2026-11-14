@@ -24,7 +24,7 @@ class AttachmentFlywayConfigTest {
 
             var migration = Flyway.configure().dataSource(source)
                 // This fixture models only the attachment table just before V75.
-                .locations("classpath:db/migration", "classpath:db/h2").baselineVersion("74.1").load();
+                .locations("classpath:db/migration", "classpath:db/h2").baselineVersion("74.1").target("76").load();
             migration.baseline();
             migration.migrate();
 

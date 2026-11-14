@@ -374,19 +374,22 @@ class CronJobServiceTest {
         verify(cronJobRepository).deleteById(id);
     }
 
-    @Test
-    void runNowExecutesJob() {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.NullSource
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"owner-a", "456"})
+    void runNowExecutesJobUnderItsPersistedOwner(String storedOwner) {
         UUID id = UUID.randomUUID();
         CronJobEntity job = new CronJobEntity();
         job.setId(id);
         job.setName("test-job");
         job.setPrompt("Do something");
+        job.setUserId(storedOwner);
         job.setEnabled(true);
         when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
         service.runNow(id);
         verify(agentRuntimeService).runBackground(org.mockito.AdditionalMatchers.and(
             org.mockito.ArgumentMatchers.startsWith("[IMPORTANT: You are running as a scheduled cron job."),
-            org.mockito.ArgumentMatchers.contains("Do something")), eq(null), eq(true));
+            org.mockito.ArgumentMatchers.contains("Do something")), eq(true), eq(storedOwner != null ? storedOwner : AgentProperties.DEFAULT_USER_ID), eq(java.util.Map.of()));
     }
 
     @Test
@@ -446,7 +449,7 @@ class CronJobServiceTest {
         verify(skillManager).getSkill("hermes-agent");
         verify(skillManager).getSkill("backend-dev");
         // Verify the enhanced prompt (with skills injected) was passed to runtime
-        verify(agentRuntimeService).runBackground(org.mockito.ArgumentMatchers.contains("Use this skill"), eq(null), eq(true));
+        verify(agentRuntimeService).runBackground(org.mockito.ArgumentMatchers.contains("Use this skill"), eq(true), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(java.util.Map.of()));
     }
 
     @Test
@@ -464,7 +467,7 @@ class CronJobServiceTest {
 
         verify(agentRuntimeService).runBackground(org.mockito.AdditionalMatchers.and(
             org.mockito.ArgumentMatchers.startsWith("[IMPORTANT: You are running as a scheduled cron job."),
-            org.mockito.ArgumentMatchers.contains("Do something plain")), eq(null), eq(true));
+            org.mockito.ArgumentMatchers.contains("Do something plain")), eq(true), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(java.util.Map.of()));
         verifyNoInteractions(skillManager);
     }
 
@@ -841,7 +844,7 @@ class CronJobServiceTest {
         service.runNow(id);
 
         // Verify LLM was NOT called
-        verify(agentRuntimeService, never()).runBackground(any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
+        verify(agentRuntimeService, never()).runBackground(any(), org.mockito.ArgumentMatchers.anyBoolean(), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(java.util.Map.of()));
     }
 
     // ── Fix 5/6/7: Override field tests ──
@@ -906,7 +909,6 @@ class CronJobServiceTest {
 
         verify(agentRuntimeService).runBackground(org.mockito.AdditionalMatchers.and(
             org.mockito.ArgumentMatchers.startsWith("[IMPORTANT: You are running as a scheduled cron job."),
-            org.mockito.ArgumentMatchers.contains("Do something")), eq(null), eq(true),
-            eq(java.util.Map.of("delegation_toolsets", "web,terminal", "cron_workdir", "/opt/dev")));
+            org.mockito.ArgumentMatchers.contains("Do something")), eq(true), org.mockito.ArgumentMatchers.anyString(), eq(java.util.Map.of("delegation_toolsets", "web,terminal", "cron_workdir", "/opt/dev")));
     }
 }

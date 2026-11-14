@@ -1681,41 +1681,42 @@ class AgentBackendClientTest {
     @Test
     void runBackground_success_returnsResult() {
         when(responseSpec.body(String.class)).thenReturn("Task completed");
-        assertThat(client.runBackground("do something", "s1"))
+        assertThat(client.runBackground("do something", "s1", "456"))
             .isEqualTo("Task completed");
     }
 
     @Test
     void runBackground_nullResult_returnsDefaultMessage() {
         when(responseSpec.body(String.class)).thenReturn(null);
-        assertThat(client.runBackground("do something", "s1"))
+        assertThat(client.runBackground("do something", "s1", "456"))
             .isEqualTo("Background task started.");
     }
 
     @Test
     void runBackground_nullSessionId_omitsSessionId() {
         when(responseSpec.body(String.class)).thenReturn("OK");
-        client.runBackground("do something", null);
+        client.runBackground("do something", null, "456");
         verify(postSpec).body(argThat((Object body) -> {
             if (!(body instanceof java.util.Map<?, ?> map)) return false;
-            return "do something".equals(map.get("prompt")) && !map.containsKey("sessionId");
+            return "do something".equals(map.get("prompt")) && "456".equals(map.get("userId"))
+                && !map.containsKey("sessionId");
         }));
     }
 
     @Test
     void runBackground_blankSessionId_omitsSessionId() {
         when(responseSpec.body(String.class)).thenReturn("OK");
-        client.runBackground("do something", "  ");
+        client.runBackground("do something", "  ", "456");
         verify(postSpec).body(argThat((Object body) -> {
             if (!(body instanceof java.util.Map<?, ?> map)) return false;
-            return !map.containsKey("sessionId");
+            return "456".equals(map.get("userId")) && !map.containsKey("sessionId");
         }));
     }
 
     @Test
     void runBackground_exception_returnsErrorMessage() {
         when(responseSpec.body(String.class)).thenThrow(new RuntimeException("fail"));
-        assertThat(client.runBackground("do something", "s1")).startsWith("Error:");
+        assertThat(client.runBackground("do something", "s1", "456")).startsWith("Error:");
     }
 
     // ═══════════════════════════════════════════════════════════════

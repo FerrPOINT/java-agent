@@ -328,10 +328,10 @@ class AgentChatControllerT1Test {
     @Test
     void background_success() throws Exception {
         UUID jobId = UUID.randomUUID();
-        when(agentRuntimeService.submitBackgroundJob(eq("do work"), any(), eq(false)))
+        when(agentRuntimeService.submitBackgroundJob(eq("do work"), any(), eq(false), org.mockito.ArgumentMatchers.<String>isNull()))
             .thenReturn(jobId);
 
-        String body = objectMapper.writeValueAsString(new BackgroundRequest("do work", null));
+        String body = objectMapper.writeValueAsString(new BackgroundRequest("do work", null, null));
         mockMvc.perform(post("/api/v1/agent/background")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body))
@@ -343,24 +343,14 @@ class AgentChatControllerT1Test {
     // ── backgroundStatus() ──
 
     @Test
-    void background_rejectsForeignSessionBeforeSubmittingJob() throws Exception {
-        UserContext.set("user-77", UserContext.ROLE_USER);
-        try {
-            when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(sessionOf("owner")));
-
-            String body = objectMapper.writeValueAsString(new BackgroundRequest("do work", SESSION_ID.toString()));
-            mockMvc.perform(post("/api/v1/agent/background")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .content(body))
-                .andExpect(status().isForbidden());
-
-            verify(agentRuntimeService, never()).submitBackgroundJob(
-                org.mockito.ArgumentMatchers.<String>any(),
-                org.mockito.ArgumentMatchers.<String>any(),
-                org.mockito.ArgumentMatchers.anyBoolean());
-        } finally {
-            UserContext.clear();
-        }
+    void backgroundReportsServiceOwnershipDenial() throws Exception {
+        when(agentRuntimeService.submitBackgroundJob(
+            eq("do work"), eq(SESSION_ID.toString()), eq(false), org.mockito.ArgumentMatchers.isNull()))
+            .thenThrow(new SecurityException("Session does not belong to the background job owner"));
+        mockMvc.perform(post("/api/v1/agent/background")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(new BackgroundRequest("do work", SESSION_ID.toString(), null))))
+            .andExpect(status().isForbidden());
     }
 
     @Test
@@ -380,6 +370,56 @@ class AgentChatControllerT1Test {
             .andExpect(jsonPath("$.status").value("DONE"))
             .andExpect(jsonPath("$.result").value("all good"))
             .andExpect(jsonPath("$.sessionId").value(SESSION_ID.toString()));
+    }
+
+    @Test
+    void sessionlessBackgroundResultStaysWithinItsPersistedOwner() throws Exception {
+        BackgroundJobEntity job = new BackgroundJobEntity();
+        job.setId(UUID.randomUUID());
+        job.setUserId("owner-a");
+        job.setStatus("DONE");
+        job.setResult("owner-a result");
+        when(backgroundJobRepository.findById(job.getId())).thenReturn(Optional.of(job));
+        try {
+            UserContext.set("owner-a", UserContext.ROLE_USER);
+            mockMvc.perform(get("/api/v1/agent/background/{id}", job.getId()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.result").value("owner-a result"));
+            UserContext.set("owner-b", UserContext.ROLE_USER);
+            mockMvc.perform(get("/api/v1/agent/background/{id}", job.getId()))
+                .andExpect(status().isForbidden());
+            UserContext.set("administrator", UserContext.ROLE_ADMIN);
+            mockMvc.perform(get("/api/v1/agent/background/{id}", job.getId()))
+                .andExpect(status().isOk());
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
+    void backgroundRequestPassesExplicitTelegramOwnerToItsService() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(agentRuntimeService.submitBackgroundJob("work", null, false, "456")).thenReturn(id);
+        mockMvc.perform(post("/api/v1/agent/background")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"prompt\":\"work\",\"userId\":\"456\"}"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.jobId").value(id.toString()));
+        verify(agentRuntimeService).submitBackgroundJob("work", null, false, "456");
+    }
+
+    @Test
+    void sessionlessHistoricalBackgroundResultIsNotPublicToOrdinaryUsers() throws Exception {
+        BackgroundJobEntity job = new BackgroundJobEntity();
+        job.setId(UUID.randomUUID());
+        job.setStatus("DONE");
+        job.setResult("unattributed private background result");
+        when(backgroundJobRepository.findById(job.getId())).thenReturn(Optional.of(job));
+        UserContext.set("caller-a", UserContext.ROLE_USER);
+        try {
+            mockMvc.perform(get("/api/v1/agent/background/{id}", job.getId()))
+                .andExpect(status().isForbidden());
+        } finally {
+            UserContext.clear();
+        }
     }
 
     @Test
@@ -746,8 +786,8 @@ class AgentChatControllerT1Test {
             job.setId(UUID.randomUUID());
             job.setStatus("DONE");
             job.setSessionId(SESSION_ID);
+            job.setUserId("owner");
             when(backgroundJobRepository.findById(job.getId())).thenReturn(Optional.of(job));
-            when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(sessionOf("owner")));
             mockMvc.perform(get("/api/v1/agent/background/" + job.getId()))
                 .andExpect(status().isForbidden());
         } finally {

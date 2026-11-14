@@ -650,8 +650,7 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
                 throw new IllegalStateException("test did not release the run");
             }
             return null;
-        }).when(runtime).runBackground(org.mockito.ArgumentMatchers.anyString(),
-            org.mockito.ArgumentMatchers.nullable(String.class), org.mockito.ArgumentMatchers.eq(true));
+        }).when(runtime).runBackground(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(true), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(java.util.Map.of()));
         var scheduler = org.mockito.Mockito.mock(java.util.concurrent.ScheduledExecutorService.class);
         var callbacks = new java.util.ArrayList<Runnable>();
         org.mockito.Mockito.doAnswer(call -> {
@@ -714,8 +713,7 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
             entered.countDown();
             if (!release.await(10, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("run not released");
             throw new IllegalStateException("provider failed");
-        }).when(runtime).runBackground(org.mockito.ArgumentMatchers.anyString(),
-            org.mockito.ArgumentMatchers.nullable(String.class), org.mockito.ArgumentMatchers.eq(true));
+        }).when(runtime).runBackground(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(true), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(java.util.Map.of()));
 
         var job = cronJobService.create("delivery-revision-" + java.util.UUID.randomUUID(), "every 1h", "work", "telegram:701938011");
         cronJobService.pause(job.getId());
