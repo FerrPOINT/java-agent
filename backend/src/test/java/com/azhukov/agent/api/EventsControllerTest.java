@@ -1,6 +1,7 @@
 package com.azhukov.agent.api;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.service.EventService;
 import com.azhukov.agent.service.ProfileService;
 import com.azhukov.agent.service.RuntimeConfigService;
@@ -29,6 +30,7 @@ class EventsControllerTest {
 
     @BeforeEach
     void setUp() throws Exception {
+        UserContext.set("event-admin", UserContext.ROLE_ADMIN);
         AgentProperties properties = new AgentProperties();
         properties.getProfile().setBaseDir(tempDir.resolve("profiles").toString());
         properties.getCore().setSoulMdPath(tempDir.resolve("soul.md").toString());
@@ -37,6 +39,25 @@ class EventsControllerTest {
             "work", null, false, false, true, null, null, null, null));
         eventService = new EventService(10);
         mockMvc = MockMvcBuilders.standaloneSetup(new EventsController(eventService, profileService)).build();
+    }
+
+    @org.junit.jupiter.api.AfterEach
+    void clearUserContext() { UserContext.clear(); }
+
+    @Test
+    void globalFeedRequiresCurrentAdministratorForBothHttpRoutes() throws Exception {
+        eventService.publish("private-event", "work", UUID.randomUUID(), UUID.randomUUID(),
+            Map.of("private", "another caller"));
+        for (String caller : java.util.List.of("user", "unset", "expired-admin")) {
+            if ("unset".equals(caller)) UserContext.clear();
+            else if ("expired-admin".equals(caller)) UserContext.setCentral(
+                new com.pdlc.auth.HumanApplicationAccess("expired", "admin", java.util.Set.of("java-agent"),
+                    1, true, java.time.Instant.now().minusSeconds(1), System.nanoTime() - 1));
+            else UserContext.set("ordinary-user", UserContext.ROLE_USER);
+            for (String route : java.util.List.of("/api/events", "/p/work/api/events")) {
+                mockMvc.perform(get(route)).andExpect(status().isForbidden());
+            }
+        }
     }
 
     @Test
