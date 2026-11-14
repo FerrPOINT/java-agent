@@ -62,6 +62,33 @@ class MemoryControllerT1Test {
             .build();
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"owner-a", "owner-b"})
+    void ordinaryUserCannotChangeSharedMemoryApproval(String owner) throws Exception {
+        UserContext.set(owner, UserContext.ROLE_USER);
+        try {
+            mockMvc.perform(post("/api/v1/agent/memory/approval")
+                    .contentType(MediaType.APPLICATION_JSON).content("{\"enabled\":false}"))
+                .andExpect(status().isForbidden());
+            verify(agentRuntimeService, never()).setMemoryApproval(org.mockito.ArgumentMatchers.anyBoolean());
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
+    void administratorCanChangeSharedMemoryApproval() throws Exception {
+        UserContext.set("administrator", UserContext.ROLE_ADMIN);
+        try {
+            mockMvc.perform(post("/api/v1/agent/memory/approval")
+                    .contentType(MediaType.APPLICATION_JSON).content("{\"enabled\":true}"))
+                .andExpect(status().isOk());
+            verify(agentRuntimeService).setMemoryApproval(true);
+        } finally {
+            UserContext.clear();
+        }
+    }
+
     // ── memory() ──
 
     @Test
