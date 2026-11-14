@@ -1,6 +1,7 @@
 package com.azhukov.agent.api;
 
 import com.azhukov.agent.service.EventService;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.service.ProfileService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -34,6 +35,10 @@ public class EventsController {
         @RequestParam(name = "cursor", required = false) String cursor,
         @RequestParam(name = "limit", required = false) String limit
     ) {
+        if (!UserContext.isAdmin()) {
+            String message = "Event feed is available to administrators only";
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", message, "detail", message));
+        }
         String profileScope;
         try {
             profileScope = EventSubscription.resolveProfileScope(profileService, pathProfile, queryProfile);
