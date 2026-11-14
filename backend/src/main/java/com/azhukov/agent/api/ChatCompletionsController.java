@@ -18,6 +18,7 @@ import com.azhukov.agent.core.client.ModelRequestOptions;
 import com.azhukov.agent.core.context.HistorySanitizer;
 import com.azhukov.agent.core.prompt.PromptBuilder;
 import com.azhukov.agent.core.tool.ToolRegistry;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.api.mapper.OpenAiMapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.validation.Valid;
@@ -36,10 +37,12 @@ import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/v1/chat/completions")
@@ -177,7 +180,7 @@ public class ChatCompletionsController {
             // continuity hint is best-effort; do not break the stream
         }
 
-        CompletableFuture.runAsync(() -> {
+        CompletableFuture.runAsync(UserContext.wrap(() -> {
             try {
                 Session session = sessionContext.session() != null
                     ? sessionContext.session()
@@ -230,7 +233,7 @@ public class ChatCompletionsController {
                 sendDone(emitter);
                 safeComplete(emitter);
             }
-        }, streamingExecutor);
+        }), streamingExecutor);
 
         return emitter;
     }
@@ -253,9 +256,20 @@ public class ChatCompletionsController {
     }
 
     private List<ToolDefinition> buildTools(OpenAiChatRequest request) {
-        if (request.tools() != null) {
-            return request.tools().stream().map(openAiMapper::toToolDefinition).toList();
-        }
+        List<ToolDefinition> allowed = serverToolDefinitions();
+        if (request.tools() == null) return allowed;
+        var requestedNames = request.tools().stream()
+            .filter(Objects::nonNull)
+            .map(OpenAiChatRequest.OpenAiTool::function)
+            .filter(Objects::nonNull)
+            .map(OpenAiChatRequest.OpenAiFunction::name)
+            .filter(Objects::nonNull)
+            .map(String::trim)
+            .collect(Collectors.toSet());
+        return allowed.stream().filter(tool -> requestedNames.contains(tool.name())).toList();
+    }
+
+    private List<ToolDefinition> serverToolDefinitions() {
         // WP-l: honor the live api_server toolset toggles (hot reload parity).
         // ToolsetsController.toggle mutates AgentProperties in-memory; without
         // this filter a dashboard/API enable/disable had no effect on this

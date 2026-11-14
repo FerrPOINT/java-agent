@@ -199,6 +199,12 @@ curl -s -X POST http://localhost:8090/v1/chat/completions \
   -d '{"model":"kimi-k2.6","messages":[{"role":"user","content":"hi"}]}'
 ```
 
+Для /v1/chat/completions и /v1/responses поле tools только сужает серверный
+список из agent.api.chat-completion-toolsets. Описания и схемы берутся из
+реестра сервера; клиент не может добавить инструмент или переопределить его.
+Явный пустой список отключает инструменты для запроса. SSE-работники сохраняют
+пользователя и исходное подтверждение доступа вызывающего.
+
 CLI — отдельный Spring Boot модуль, не зависит от backend-кода и общается с ним через REST: REPL со slash-командами (`/new`, `/status`, `/compress`, `/undo`, `/checkpoint`, `/rollback`, `/memory`, `/skills`, `/help` и др.), SSE streaming и JLine autocomplete.
 
 В CLI и Telegram-боте `/help` показывает короткий старт и основные доступные
