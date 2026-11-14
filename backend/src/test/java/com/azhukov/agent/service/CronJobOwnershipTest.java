@@ -94,8 +94,8 @@ class CronJobOwnershipTest {
     }
 
     @ParameterizedTest
-    @CsvSource({"user,owner,foreign", "user,owner,", "admin,owner,foreign", "admin,,owner"})
-    void attachedCreateRejectsForeignMissingOrUnattributedSessionBeforeSave(
+    @CsvSource({"user,owner,foreign", "user,owner,", "admin,owner,foreign", "admin,,"})
+    void attachedCreateRejectsForeignOrMissingSessionBeforeSave(
             String role, String owner, String sessionOwner) {
         UserContext.set("owner", role);
         UUID id = UUID.randomUUID();
@@ -132,6 +132,18 @@ class CronJobOwnershipTest {
         when(jobs.findByIdForUpdate(existing.getId())).thenReturn(Optional.of(existing));
         assertThat(update(existing, id).getAttachedSessionId()).isEqualTo(id);
         assertThat(existing.getName()).isEqualTo("changed");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"admin", "internal"})
+    void privilegedGlobalJobCanAttachAnExistingSession(String context) {
+        if ("admin".equals(context)) UserContext.set("administrator", UserContext.ROLE_ADMIN);
+        UUID id = UUID.randomUUID();
+        when(sessions.findById(id)).thenReturn(Optional.of(session(id, "session-owner")));
+        assertThat(create(null, id).getAttachedSessionId()).isEqualTo(id);
+        var existing = job(null);
+        when(jobs.findByIdForUpdate(existing.getId())).thenReturn(Optional.of(existing));
+        assertThat(update(existing, id).getAttachedSessionId()).isEqualTo(id);
     }
 
     @Test

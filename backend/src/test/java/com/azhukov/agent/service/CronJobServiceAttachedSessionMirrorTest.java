@@ -181,6 +181,19 @@ class CronJobServiceAttachedSessionMirrorTest {
         order.verify(messageRepository).save(any(MessageEntity.class));
         order.verify(transactions).rollback(any());
     }
+    @Test
+    void privilegedGlobalJobRetainsItsExistingTranscriptMirror() {
+        UUID id = UUID.randomUUID();
+        CronJobEntity job = job(id);
+        prepareFailingRun(job, id);
+        job.setUserId(null);
+
+        service().runNow(job.getId());
+
+        verify(deliveryService).enqueue(any());
+        verify(messageRepository).save(any());
+    }
+
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.NullSource
     @org.junit.jupiter.params.provider.ValueSource(strings = {"foreign-owner"})

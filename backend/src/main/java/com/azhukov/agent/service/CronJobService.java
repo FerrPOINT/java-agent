@@ -2333,16 +2333,15 @@ private static final String CRON_EXECUTION_HINT = """
 
     private void requireAttachedSessionOwnership(String ownerId, UUID sessionId) {
         if (sessionId == null) return;
-        if (ownerId == null || ownerId.isBlank()) {
-            throw new SecurityException("Attached session requires a cron job owner");
-        }
         var sessions = sessionRepositoryProvider == null ? null : sessionRepositoryProvider.getIfAvailable();
         if (sessions == null) {
             throw new IllegalStateException("Session ownership validation is unavailable");
         }
         var session = sessions.findById(sessionId)
             .orElseThrow(() -> new IllegalArgumentException("Attached session not found: " + sessionId));
-        if (!Objects.equals(ownerId, session.getUserId())) {
+        // Historical global jobs retain administrator/internal scope.
+        boolean globalJob = ownerId == null && UserContext.scopeUserId() == null;
+        if (!globalJob && (ownerId == null || ownerId.isBlank() || !Objects.equals(ownerId, session.getUserId()))) {
             throw new SecurityException("Attached session does not belong to the cron job owner");
         }
     }

@@ -72,6 +72,27 @@ class CronJobServiceCrudBranchTest {
         });
     }
 
+    @org.junit.jupiter.api.AfterEach
+    void clearIdentity() {
+        com.azhukov.agent.core.security.UserContext.clear();
+        service.shutdown();
+    }
+
+    @SuppressWarnings("unchecked")
+    private void ownedAttachment(UUID id) {
+        com.azhukov.agent.core.security.UserContext.set("cron-owner",
+            com.azhukov.agent.core.security.UserContext.ROLE_USER);
+        var sessions = org.mockito.Mockito.mock(com.azhukov.agent.persistence.repository.SessionRepository.class);
+        var session = new com.azhukov.agent.persistence.entity.SessionEntity();
+        session.setId(id);
+        session.setUserId("cron-owner");
+        when(sessions.findById(id)).thenReturn(Optional.of(session));
+        ObjectProvider<com.azhukov.agent.persistence.repository.SessionRepository> provider =
+            org.mockito.Mockito.mock(ObjectProvider.class);
+        when(provider.getIfAvailable()).thenReturn(sessions);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "sessionRepositoryProvider", provider);
+    }
+
     private CronJobEntity existing() {
         CronJobEntity entity = new CronJobEntity();
         entity.setId(UUID.randomUUID());
@@ -84,13 +105,15 @@ class CronJobServiceCrudBranchTest {
 
     @Test
     void fullCreatePersistsAllOptionalFields() {
+        UUID sessionId = UUID.randomUUID();
+        ownedAttachment(sessionId);
         CronJobEntity job = service.create(
             "full", "0 * * * *", "prompt", "telegram:123",
             "skill-a,skill-b", "output_text", 3,
             "script.sh", false,
             "terminal,file", "/tmp",
             "openai-compatible", "gpt-5", "https://api.test",
-            "monitor.sh", true, UUID.randomUUID());
+            "monitor.sh", true, sessionId);
 
         assertThat(job.getName()).isEqualTo("full");
         assertThat(job.getSkills()).isEqualTo("skill-a,skill-b");
@@ -125,6 +148,8 @@ class CronJobServiceCrudBranchTest {
         when(cronJobRepository.findById(existing.getId())).thenReturn(Optional.of(existing));
 
         UUID sessionId = UUID.randomUUID();
+        existing.setUserId("cron-owner");
+        ownedAttachment(sessionId);
         CronJobEntity updated = service.update(
             existing.getId(), "renamed", "30 5 * * *", "new prompt", "telegram:1", true,
             "skill-x", "output_text",
