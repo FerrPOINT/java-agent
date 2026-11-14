@@ -75,6 +75,7 @@ class OpenAiResponsesControllerTest {
     private AgentProperties properties;
     private OpenAiSessionContext sessionContext;
     private ApiRunAdmissionService runAdmissionService;
+    private OpenAiResponseStore responseStore;
 
     @Mock
     private AgentRuntime agentRuntime;
@@ -98,6 +99,7 @@ class OpenAiResponsesControllerTest {
         properties.getModel().setModelName(MODEL);
         runAdmissionService = new ApiRunAdmissionService(properties);
 
+        responseStore = new OpenAiResponseStore(objectMapper, null, null);
         OpenAiResponsesController controller = new OpenAiResponsesController(
             agentRuntime,
             toolRegistry,
@@ -106,7 +108,7 @@ class OpenAiResponsesControllerTest {
             objectMapper,
             properties,
             openAiSessionService,
-            new OpenAiResponseStore(objectMapper, null, null),
+            responseStore,
             new OpenAiIdempotencyCache(),
             new DefaultRedactor(properties),
             runAdmissionService
@@ -1253,6 +1255,29 @@ class OpenAiResponsesControllerTest {
         mockMvc.perform(get("/v1/responses/{responseId}", responseId))
             .andExpect(status().isNotFound())
             .andExpect(jsonPath("$.error.message").value("Response not found: " + responseId));
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"owner-a", "owner-b"})
+    void unattributedStoredResponseIsAdminOnly(String owner) throws Exception {
+        responseStore.put("resp_unattributed", new OpenAiResponseStore.StoredResponse(
+            Map.of("id", "resp_unattributed", "output_text", "private legacy response"),
+            List.of(Message.user("private legacy request")), "private instructions", null), null);
+        UserContext.set(owner, UserContext.ROLE_USER);
+
+        mockMvc.perform(get("/v1/responses/resp_unattributed")).andExpect(status().isNotFound());
+        mockMvc.perform(delete("/v1/responses/resp_unattributed")).andExpect(status().isNotFound());
+        mockMvc.perform(post("/v1/responses").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"previous_response_id\":\"resp_unattributed\",\"input\":\"continue\"}"))
+            .andExpect(status().isNotFound());
+        verifyNoInteractions(agentRuntime);
+        assertThat(responseStore.get("resp_unattributed")).isNotNull();
+
+        UserContext.set("administrator", UserContext.ROLE_ADMIN);
+        mockMvc.perform(get("/v1/responses/resp_unattributed"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.output_text").value("private legacy response"));
+        mockMvc.perform(delete("/v1/responses/resp_unattributed")).andExpect(status().isOk());
+        assertThat(responseStore.get("resp_unattributed")).isNull();
     }
 
     @Test

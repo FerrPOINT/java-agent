@@ -110,20 +110,11 @@ public class OpenAiResponsesController {
             }
             priorHistory = parsedHistory.messages();
         } else if (hasText(previousResponseId)) {
-            previous = responseStore.get(previousResponseId);
+            previous = accessibleStoredResponse(previousResponseId, sessionKeyHeader);
             if (previous == null) {
                 return openAiError(HttpStatus.NOT_FOUND,
                     "Previous response not found: " + previousResponseId,
                     "invalid_request_error");
-            }
-            if (previous.sessionId() != null) {
-                try {
-                    openAiSessionService.resolveStoredResponseSession(previous.sessionId(), sessionKeyHeader);
-                } catch (IllegalArgumentException e) {
-                    return openAiError(HttpStatus.NOT_FOUND,
-                        "Previous response not found: " + previousResponseId,
-                        "invalid_request_error");
-                }
             }
             priorHistory = previous.conversationHistory();
             if (!hasText(instructions)) {
@@ -400,8 +391,11 @@ public class OpenAiResponsesController {
 
     private StoredResponse accessibleStoredResponse(String responseId, String sessionKeyHeader) {
         StoredResponse stored = responseStore.get(responseId);
-        if (stored == null || stored.sessionId() == null) {
-            return stored;
+        if (stored == null) {
+            return null;
+        }
+        if (stored.sessionId() == null) {
+            return UserContext.scopeUserId() == null ? stored : null;
         }
         try {
             openAiSessionService.resolveStoredResponseSession(stored.sessionId(), sessionKeyHeader);
