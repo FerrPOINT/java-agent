@@ -201,12 +201,8 @@ public class AgentChatController {
 
     @PostMapping("/agent/background")
     public java.util.Map<String, Object> background(@Valid @RequestBody BackgroundRequest request) {
-        // A session-bound background job inherits that session's access scope.
-        if (request.sessionId() != null && !request.sessionId().isBlank()) {
-            requireSessionOwnership(UUID.fromString(request.sessionId()));
-        }
         java.util.UUID jobId = agentRuntimeService.submitBackgroundJob(
-            request.prompt(), request.sessionId(), false);
+            request.prompt(), request.sessionId(), false, request.userId());
         return java.util.Map.of("jobId", jobId.toString(), "status", "PENDING");
     }
 
@@ -214,11 +210,9 @@ public class AgentChatController {
     public java.util.Map<String, Object> backgroundStatus(@org.springframework.web.bind.annotation.PathVariable java.util.UUID id) {
         var job = backgroundJobRepository.findById(id)
             .orElseThrow(() -> new IllegalArgumentException("Unknown background job: " + id));
-        // Ownership: a job's result may only be read by the session owner.
-        // Jobs without a session (ephemeral prompts) stay readable to all
-        // authenticated users — they carry no other user's conversation.
-        if (job.getSessionId() != null) {
-            requireSessionOwnership(job.getSessionId());
+        String owner = UserContext.scopeUserId();
+        if (owner != null && !owner.equals(job.getUserId())) {
+            throw new SecurityException("Background job does not belong to the current user");
         }
         java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
         out.put("jobId", job.getId().toString());

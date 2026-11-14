@@ -85,7 +85,7 @@ class CronJobServiceAttachedSessionMirrorTest {
         when(cronJobRepository.recordRun(job)).thenReturn(1);
         when(cronJobRepository.findById(job.getId())).thenReturn(Optional.of(job));
         when(agentRuntimeServiceProvider.getIfAvailable()).thenReturn(runtime);
-        when(runtime.runBackground(any(), any(), anyBoolean()))
+        when(runtime.runBackground(any(), anyBoolean(), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(java.util.Map.of())))
             .thenThrow(new IllegalStateException("provider timed out"));
         when(cronExecutionLogRepository.save(any(CronExecutionLogEntity.class))).thenAnswer(inv -> {
             CronExecutionLogEntity entity = inv.getArgument(0);

@@ -38,6 +38,6 @@ public class BackgroundCommand implements CommandHandler {
         }
         String sessionId = session != null
             ? BackendSessionResolver.resolveString(session) : null;
-        return backendClient.runBackground(prompt, sessionId);
+        return backendClient.runBackground(prompt, sessionId, Long.toString(event.userId()));
     }
 }

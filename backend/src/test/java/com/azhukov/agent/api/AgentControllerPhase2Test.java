@@ -184,11 +184,11 @@ class AgentControllerPhase2Test {
     void backgroundReturns200WithJobId() throws Exception {
         mockMvc = chatMockMvc();
         java.util.UUID jobId = java.util.UUID.randomUUID();
-        when(agentRuntimeService.submitBackgroundJob(any(String.class), any(), any(Boolean.class)))
+        when(agentRuntimeService.submitBackgroundJob(any(String.class), any(), any(Boolean.class), org.mockito.ArgumentMatchers.<String>isNull()))
             .thenReturn(jobId);
 
         String requestBody = objectMapper.writeValueAsString(
-            new BackgroundRequest("do something", null));
+            new BackgroundRequest("do something", null, null));
 
         mockMvc.perform(post("/api/v1/agent/background")
                 .contentType(MediaType.APPLICATION_JSON)

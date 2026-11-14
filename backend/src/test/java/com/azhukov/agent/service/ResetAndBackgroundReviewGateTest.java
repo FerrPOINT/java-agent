@@ -112,7 +112,7 @@ class ResetAndBackgroundReviewGateTest {
                 return new TurnResult(List.of(), true, null);
             });
 
-        String sessionId = service.runBackground("cron prompt", null, true);
+        String sessionId = service.runBackground("cron prompt", true, com.azhukov.agent.config.AgentProperties.DEFAULT_USER_ID, java.util.Map.of());
         assertThat(sessionId).isNotBlank();
         verify(agentRuntime).runTurn(any(Session.class), any(String.class));
         verify(memoryNudgeManager, never()).clearSession(any());

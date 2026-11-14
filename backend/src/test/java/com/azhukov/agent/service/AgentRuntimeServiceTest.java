@@ -65,6 +65,7 @@ class AgentRuntimeServiceTest {
     private static final String TOOL_RESULT = "Paris";
 
     private AgentRuntime agentRuntime;
+    private com.azhukov.agent.persistence.repository.BackgroundJobRepository backgroundJobs;
     private com.azhukov.agent.persistence.repository.SessionRepository sessionRepository;
     private com.azhukov.agent.persistence.repository.MessageRepository messageRepository;
     private SessionTitleService sessionTitleService;
@@ -109,9 +110,10 @@ class AgentRuntimeServiceTest {
             return callback.doInTransaction(null);
         });
 
+        backgroundJobs = mock(com.azhukov.agent.persistence.repository.BackgroundJobRepository.class);
         agentRuntimeService = new AgentRuntimeService(
             agentRuntime,
-            org.mockito.Mockito.mock(com.azhukov.agent.persistence.repository.BackgroundJobRepository.class),
+            backgroundJobs,
             sessionRepository,
             messageRepository,
             sessionTitleService,
@@ -138,6 +140,93 @@ class AgentRuntimeServiceTest {
             mock(com.azhukov.agent.core.metadata.ModelMetadataService.class), null,
             null, null, new com.azhukov.agent.core.agent.SessionTurnLockManager()
         );
+    }
+
+    @org.junit.jupiter.api.AfterEach
+    void closeBackgroundFixture() {
+        UserContext.clear();
+        com.azhukov.agent.core.security.NativeIdentityOrigin.clear();
+        ((java.util.concurrent.ExecutorService) org.springframework.test.util.ReflectionTestUtils
+            .getField(agentRuntimeService, "backgroundExecutor")).shutdownNow();
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"personal", "gateway", "central"})
+    void backgroundSubmissionPersistsOwnerAndCarriesOriginalAuthority(String mode) throws Exception {
+        String owner = "gateway".equals(mode) ? "456" : "personal".equals(mode) ? "personal-caller" : "central-human";
+        String principal = "gateway".equals(mode) ? "technical-gateway" : owner;
+        var origin = "central".equals(mode) ? null :
+            new com.azhukov.agent.core.security.NativeIdentityOrigin.Origin(
+                "gateway".equals(mode) ? com.azhukov.agent.core.security.NativeIdentityOrigin.Kind.GATEWAY_KEY
+                    : com.azhukov.agent.core.security.NativeIdentityOrigin.Kind.USER_API_KEY,
+                principal, "gateway".equals(mode));
+        var proof = "central".equals(mode) ? new com.pdlc.auth.HumanApplicationAccess(owner, "user",
+            java.util.Set.of("java-agent"), 7, true, Instant.now().plusSeconds(60),
+            System.nanoTime() + TimeUnit.SECONDS.toNanos(60)) : null;
+        if (proof != null) UserContext.setCentral(proof);
+        else UserContext.set(principal, "gateway".equals(mode) ? UserContext.ROLE_ADMIN : UserContext.ROLE_USER);
+        com.azhukov.agent.core.security.NativeIdentityOrigin.bind(origin);
+
+        UUID jobId = UUID.randomUUID();
+        var savedJob = new java.util.concurrent.atomic.AtomicReference<com.azhukov.agent.persistence.entity.BackgroundJobEntity>();
+        var observedSessionOwner = new java.util.concurrent.atomic.AtomicReference<String>();
+        var observedPrincipal = new java.util.concurrent.atomic.AtomicReference<String>();
+        var observedProof = new java.util.concurrent.atomic.AtomicReference<com.pdlc.auth.HumanApplicationAccess>();
+        var observedOrigin = new java.util.concurrent.atomic.AtomicReference<com.azhukov.agent.core.security.NativeIdentityOrigin.Origin>();
+        var status = new java.util.concurrent.atomic.AtomicReference<String>();
+        var finished = new CountDownLatch(1);
+        when(backgroundJobs.save(any())).thenAnswer(call -> {
+            com.azhukov.agent.persistence.entity.BackgroundJobEntity job = call.getArgument(0);
+            job.setId(jobId);
+            savedJob.set(job);
+            return job;
+        });
+        when(sessionRepository.save(any(SessionEntity.class))).thenAnswer(call -> {
+            SessionEntity session = call.getArgument(0);
+            session.setId(SESSION_ID);
+            return session;
+        });
+        when(agentRuntime.runTurn(any(Session.class), eq("background work"))).thenAnswer(call -> {
+            observedSessionOwner.set(call.<Session>getArgument(0).userId());
+            observedPrincipal.set(UserContext.getUserId());
+            observedProof.set(UserContext.centralAccess());
+            observedOrigin.set(com.azhukov.agent.core.security.NativeIdentityOrigin.current());
+            return new TurnResult(List.of(Message.assistant("done", 1)), true, null);
+        });
+        org.mockito.Mockito.doAnswer(call -> {
+            status.set(call.getArgument(1));
+            finished.countDown();
+            return null;
+        }).when(backgroundJobs).finish(eq(jobId), anyString(), anyString(), any(Instant.class));
+
+        UUID submitted = agentRuntimeService.submitBackgroundJob(
+            "background work", null, false, "gateway".equals(mode) ? owner : null);
+        assertThat(submitted).isEqualTo(jobId);
+        assertThat(finished.await(3, TimeUnit.SECONDS)).isTrue();
+        assertThat(status.get()).isEqualTo("DONE");
+        assertThat(savedJob.get().getUserId()).isEqualTo(owner);
+        assertThat(observedSessionOwner.get()).isEqualTo(owner);
+        assertThat(observedPrincipal.get()).isEqualTo(principal);
+        if (proof != null) assertThat(observedProof.get()).isSameAs(proof);
+        else assertThat(observedProof.get()).isNull();
+        if (origin != null) assertThat(observedOrigin.get()).isSameAs(origin);
+        else assertThat(observedOrigin.get()).isNull();
+        assertThat(UserContext.getUserId()).isEqualTo(principal);
+    }
+
+    @Test
+    void backgroundSubmissionRejectsForeignOwnerAndParentBeforeSaving() {
+        UserContext.set("caller-a", UserContext.ROLE_USER);
+        assertThatThrownBy(() -> agentRuntimeService.submitBackgroundJob("work", null, false, "caller-b"))
+            .isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
+        when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(newSessionEntity(SESSION_ID, "caller-b", "foreign")));
+        assertThatThrownBy(() -> agentRuntimeService.submitBackgroundJob("work", SESSION_ID.toString(), false, null))
+            .isInstanceOf(SecurityException.class);
+        when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> agentRuntimeService.submitBackgroundJob("work", SESSION_ID.toString(), false, null))
+            .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+        org.mockito.Mockito.verifyNoInteractions(backgroundJobs);
+        org.mockito.Mockito.verifyNoInteractions(agentRuntime);
     }
 
     @Test

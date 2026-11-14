@@ -1047,15 +1047,15 @@ private static final String CRON_EXECUTION_HINT = """
             AgentRuntimeService runtimeService = agentRuntimeServiceProvider.getIfAvailable();
             String lastRunSessionId = null;
             if (runtimeService != null) {
-                String targetSessionId = backgroundTargetSessionId(job);
                 int maxRetries = 2;
                 int attempt = 0;
                 boolean success = false;
                 while (attempt <= maxRetries && !success) {
                     try {
-                        lastRunSessionId = runtimeMetadata.isEmpty()
-                            ? runtimeService.runBackground(enhancedPrompt, targetSessionId, true)
-                            : runtimeService.runBackground(enhancedPrompt, targetSessionId, true, runtimeMetadata);
+                        // Historical unowned system jobs keep their existing execution owner.
+                        String ownerId = job.getUserId() != null ? job.getUserId() : AgentProperties.DEFAULT_USER_ID;
+                        lastRunSessionId = runtimeService.runBackground(
+                            enhancedPrompt, true, ownerId, runtimeMetadata);
                         success = true;
                     } catch (Exception llmEx) {
                         attempt++;
@@ -1274,16 +1274,6 @@ private static final String CRON_EXECUTION_HINT = """
         boolean resetFailureStreak() {
             return !failed;
         }
-    }
-
-    private static String backgroundTargetSessionId(CronJobEntity job) {
-        if (job.getAttachedSessionId() != null) {
-            return job.getAttachedSessionId().toString();
-        }
-        if (job.isContinuityEnabled() && job.getLastRunSessionId() != null) {
-            return job.getLastRunSessionId().toString();
-        }
-        return null;
     }
 
     public static String jobProfile(CronJobEntity job) {

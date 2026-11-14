@@ -18,6 +18,9 @@ public class BackgroundJobEntity {
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
+    @Column(name = "user_id", columnDefinition = "text")
+    private String userId;
+
     @Column(name = "session_id")
     private UUID sessionId;
 
