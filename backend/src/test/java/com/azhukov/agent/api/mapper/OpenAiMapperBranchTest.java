@@ -206,14 +206,6 @@ class OpenAiMapperBranchTest {
         assertThat(result.role()).isEqualTo(Role.USER);
     }
 
-    // ── toToolDefinition: null function ──
-
-    @Test
-    void toToolDefinition_nullFunction_returnsNull() {
-        OpenAiChatRequest.OpenAiTool tool = new OpenAiChatRequest.OpenAiTool("function", null);
-        assertThat(mapper.toToolDefinition(tool)).isNull();
-    }
-
     // ── toOpenAiToolCall: blank id gets deterministic fallback ──
 
     @Test

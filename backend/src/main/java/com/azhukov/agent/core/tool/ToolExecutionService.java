@@ -8,6 +8,7 @@ import com.azhukov.agent.core.security.McpToolTrustService.ToolTrustMetadata;
 import com.azhukov.agent.metrics.AgentMetrics;
 import com.azhukov.agent.core.security.SecretRedactor;
 import com.azhukov.agent.core.security.ToolCallGuardrail;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.state.TurnState;
 import io.github.resilience4j.retry.Retry;
 import java.util.UUID;
@@ -101,8 +102,7 @@ public class ToolExecutionService {
 
     public ToolResult execute(String toolName, String toolCallId, String arguments, Message lastAssistant, Session session,
                               TurnState turnState, ToolTrustMetadata mcpAdmission) {
-        com.azhukov.agent.core.security.UserContext.requireCurrentAccess();
-        var requestAccess = com.azhukov.agent.core.security.UserContext.centralAccess();
+        UserContext.requireCurrentAccess();
         // PR-3 parity: guardrails must observe the executing session (scope
         // guardrail callbacks to the session so InterruptToken.currentSessionId()
         // resolves inside before/afterCall).
@@ -146,17 +146,13 @@ public class ToolExecutionService {
         log.info("tool_execution_started session={} callId={} tool={} argsBytes={}",
             session != null ? session.id() : null, toolCallId, toolName,
             arguments == null ? 0 : arguments.getBytes(java.nio.charset.StandardCharsets.UTF_8).length);
-        Callable<ToolResult> callable = () -> {
-            if (requestAccess != null) com.azhukov.agent.core.security.UserContext.setCentral(requestAccess);
-            try {
-                com.azhukov.agent.core.security.UserContext.requireCurrentAccess();
-                return mcpAdmission == null
-                    ? toolRegistry.execute(toolName, toolCallId, arguments, lastAssistant, session)
-                    : toolRegistry.execute(toolName, toolCallId, arguments, lastAssistant, session, mcpAdmission);
-            } finally {
-                if (requestAccess != null) com.azhukov.agent.core.security.UserContext.clear();
-            }
-        };
+        Supplier<ToolResult> executeTool = UserContext.wrapSupplier(() -> {
+            UserContext.requireCurrentAccess();
+            return mcpAdmission == null
+                ? toolRegistry.execute(toolName, toolCallId, arguments, lastAssistant, session)
+                : toolRegistry.execute(toolName, toolCallId, arguments, lastAssistant, session, mcpAdmission);
+        });
+        Callable<ToolResult> callable = executeTool::get;
         Supplier<ToolResult> decorated = Retry.decorateSupplier(
             NO_RETRY_TOOLS.contains(toolName) ? noRetry : retry, () -> {
             java.util.concurrent.Future<ToolResult> future = executor.submit(callable);

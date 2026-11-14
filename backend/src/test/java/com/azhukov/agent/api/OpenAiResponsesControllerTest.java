@@ -1,6 +1,5 @@
 package com.azhukov.agent.api;
 
-import com.azhukov.agent.api.mapper.OpenAiMapper;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.agent.AgentRuntime;
 import com.azhukov.agent.core.client.ModelClient;
@@ -27,7 +26,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mapstruct.factory.Mappers;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -77,6 +75,7 @@ class OpenAiResponsesControllerTest {
     private AgentProperties properties;
     private OpenAiSessionContext sessionContext;
     private ApiRunAdmissionService runAdmissionService;
+    private OpenAiResponseStore responseStore;
 
     @Mock
     private AgentRuntime agentRuntime;
@@ -99,18 +98,17 @@ class OpenAiResponsesControllerTest {
         properties = new AgentProperties();
         properties.getModel().setModelName(MODEL);
         runAdmissionService = new ApiRunAdmissionService(properties);
-        OpenAiMapper openAiMapper = Mappers.getMapper(OpenAiMapper.class);
 
+        responseStore = new OpenAiResponseStore(objectMapper, null, null);
         OpenAiResponsesController controller = new OpenAiResponsesController(
             agentRuntime,
             toolRegistry,
             promptBuilder,
             modelClient,
             objectMapper,
-            openAiMapper,
             properties,
             openAiSessionService,
-            new OpenAiResponseStore(objectMapper, null, null),
+            responseStore,
             new OpenAiIdempotencyCache(),
             new DefaultRedactor(properties),
             runAdmissionService
@@ -243,7 +241,10 @@ class OpenAiResponsesControllerTest {
     }
 
     @Test
-    void responsesFlatFunctionToolsAreMappedLikeOpenAiResponses() throws Exception {
+    void responsesFlatFunctionToolsUseCanonicalRegistryDefinitions() throws Exception {
+        when(toolRegistry.getDefinitions(Set.of("hermes-api-server"))).thenReturn(List.of(
+            new ToolDefinition("lookup", "Canonical lookup", Map.of("type", "object",
+                "properties", Map.of("query", Map.of("type", "string"))))));
         @SuppressWarnings({"rawtypes", "unchecked"})
         ArgumentCaptor<List<ToolDefinition>> toolsCaptor = ArgumentCaptor.forClass((Class) List.class);
         when(agentRuntime.run(anyList(), toolsCaptor.capture(), any(ModelRequestOptions.class)))
@@ -278,10 +279,10 @@ class OpenAiResponsesControllerTest {
         assertThat(toolsCaptor.getValue()).hasSize(1);
         ToolDefinition tool = toolsCaptor.getValue().get(0);
         assertThat(tool.name()).isEqualTo("lookup");
-        assertThat(tool.description()).isEqualTo("Lookup data");
+        assertThat(tool.description()).isEqualTo("Canonical lookup");
         assertThat(tool.parameters()).containsEntry("type", "object");
         assertThat(((Map<?, ?>) tool.parameters().get("properties")).containsKey("query")).isTrue();
-        verify(toolRegistry, never()).getDefinitions(any());
+        verify(toolRegistry).getDefinitions(Set.of("hermes-api-server"));
     }
 
     @Test
@@ -1256,6 +1257,29 @@ class OpenAiResponsesControllerTest {
             .andExpect(jsonPath("$.error.message").value("Response not found: " + responseId));
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"owner-a", "owner-b"})
+    void unattributedStoredResponseIsAdminOnly(String owner) throws Exception {
+        responseStore.put("resp_unattributed", new OpenAiResponseStore.StoredResponse(
+            Map.of("id", "resp_unattributed", "output_text", "private legacy response"),
+            List.of(Message.user("private legacy request")), "private instructions", null), null);
+        UserContext.set(owner, UserContext.ROLE_USER);
+
+        mockMvc.perform(get("/v1/responses/resp_unattributed")).andExpect(status().isNotFound());
+        mockMvc.perform(delete("/v1/responses/resp_unattributed")).andExpect(status().isNotFound());
+        mockMvc.perform(post("/v1/responses").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"previous_response_id\":\"resp_unattributed\",\"input\":\"continue\"}"))
+            .andExpect(status().isNotFound());
+        verifyNoInteractions(agentRuntime);
+        assertThat(responseStore.get("resp_unattributed")).isNotNull();
+
+        UserContext.set("administrator", UserContext.ROLE_ADMIN);
+        mockMvc.perform(get("/v1/responses/resp_unattributed"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.output_text").value("private legacy response"));
+        mockMvc.perform(delete("/v1/responses/resp_unattributed")).andExpect(status().isOk());
+        assertThat(responseStore.get("resp_unattributed")).isNull();
+    }
+
     @Test
     void getAndDeleteStoredResponseRoundTrip() throws Exception {
         when(agentRuntime.run(anyList(), anyList(), any(ModelRequestOptions.class)))
@@ -1669,6 +1693,63 @@ class OpenAiResponsesControllerTest {
         assertThat(messages.get(1).content()).isEqualTo("Describe.\n[image_url: data:image/png;base64,<redacted>]");
         assertThat(messages.get(1).content()).doesNotContain("AAAA");
         assertThat(messages.get(1).imageCount()).isEqualTo(1);
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void streamingKeepsCallerAndOriginalAccessProof(boolean central) throws Exception {
+        var proof = new com.pdlc.auth.HumanApplicationAccess(
+            "central-caller", "user", Set.of("java-agent"), 7, true,
+            java.time.Instant.now().plusSeconds(30), System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(30));
+        if (central) UserContext.setCentral(proof);
+        else UserContext.set("standalone-caller", "admin");
+        var observedUser = new java.util.concurrent.atomic.AtomicReference<String>();
+        var observedRole = new java.util.concurrent.atomic.AtomicReference<String>();
+        var observedProof = new java.util.concurrent.atomic.AtomicReference<com.pdlc.auth.HumanApplicationAccess>();
+        var called = new java.util.concurrent.CountDownLatch(1);
+        when(agentRuntime.runMessages(anyList(), anyList(), any(ModelRequestOptions.class))).thenAnswer(call -> {
+            observedUser.set(UserContext.getUserId());
+            observedRole.set(UserContext.getRole());
+            observedProof.set(UserContext.centralAccess());
+            called.countDown();
+            return new TurnResult(List.of(Message.assistant("ok", 1)), true, null);
+        });
+
+        MvcResult result = mockMvc.perform(post("/v1/responses")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"input\":\"hi\",\"stream\":true}"))
+            .andExpect(request().asyncStarted())
+            .andReturn();
+        UserContext.clear();
+        assertThat(called.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        mockMvc.perform(asyncDispatch(result)).andExpect(status().isOk());
+        assertThat(observedUser.get()).isEqualTo(central ? "central-caller" : "standalone-caller");
+        assertThat(observedRole.get()).isEqualTo(central ? "user" : "admin");
+        if (central) assertThat(observedProof.get()).isSameAs(proof);
+        else assertThat(observedProof.get()).isNull();
+        assertThat(UserContext.getUserId()).isNull();
+    }
+
+    @Test
+    void requestToolsOnlyNarrowCanonicalServerDefinitions() throws Exception {
+        ToolDefinition allowed = new ToolDefinition("read_file", "Canonical server description",
+            Map.of("type", "object", "properties", Map.of("path", Map.of("type", "string"))));
+        when(toolRegistry.getDefinitions(Set.of("hermes-api-server"))).thenReturn(List.of(allowed));
+        ArgumentCaptor<List<ToolDefinition>> captured = ArgumentCaptor.forClass(List.class);
+        when(agentRuntime.run(anyList(), captured.capture(), any(ModelRequestOptions.class)))
+            .thenReturn(ChatResponse.text("ok"));
+        for (String tools : List.of(
+                "[]",
+                "[{\"type\":\"function\",\"function\":{\"name\":\"terminal\",\"description\":\"enable shell\"}}]",
+                "[{\"type\":\"function\",\"function\":{\"name\":\" read_file \",\"description\":\"client rewrite\",\"parameters\":{\"type\":\"string\"}}}]",
+                "[{\"type\":\"function\",\"name\":\"read_file\",\"description\":\"forged flat schema\",\"parameters\":{\"type\":\"array\"}}]")) {
+            mockMvc.perform(post("/v1/responses")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"input\":\"hi\",\"tools\":" + tools + "}"))
+                .andExpect(status().isOk());
+        }
+        assertThat(captured.getAllValues()).containsExactly(
+            List.of(), List.of(), List.of(allowed), List.of(allowed));
     }
 
     private JsonNode parseJson(String raw) {

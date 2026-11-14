@@ -1,7 +1,6 @@
 package com.azhukov.agent.api;
 
 import com.azhukov.agent.api.dto.OpenAiChatRequest;
-import com.azhukov.agent.api.mapper.OpenAiMapper;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.agent.AgentRuntime;
 import com.azhukov.agent.core.client.ModelClient;
@@ -77,7 +76,6 @@ public class OpenAiResponsesController {
         return new OpenAiInputParser(objectMapper);
     }
 
-    private final OpenAiMapper openAiMapper;
     private final AgentProperties properties;
     private final OpenAiSessionService openAiSessionService;
     private final OpenAiResponseStore responseStore;
@@ -112,20 +110,11 @@ public class OpenAiResponsesController {
             }
             priorHistory = parsedHistory.messages();
         } else if (hasText(previousResponseId)) {
-            previous = responseStore.get(previousResponseId);
+            previous = accessibleStoredResponse(previousResponseId, sessionKeyHeader);
             if (previous == null) {
                 return openAiError(HttpStatus.NOT_FOUND,
                     "Previous response not found: " + previousResponseId,
                     "invalid_request_error");
-            }
-            if (previous.sessionId() != null) {
-                try {
-                    openAiSessionService.resolveStoredResponseSession(previous.sessionId(), sessionKeyHeader);
-                } catch (IllegalArgumentException e) {
-                    return openAiError(HttpStatus.NOT_FOUND,
-                        "Previous response not found: " + previousResponseId,
-                        "invalid_request_error");
-                }
             }
             priorHistory = previous.conversationHistory();
             if (!hasText(instructions)) {
@@ -277,7 +266,7 @@ public class OpenAiResponsesController {
             .headers(sseResponseHeaders(sessionContext))
             .contentType(MediaType.TEXT_EVENT_STREAM)
             .body(emitter);
-        CompletableFuture.runAsync(() -> {
+        CompletableFuture.runAsync(UserContext.wrap(() -> {
             try {
                 sendResponsesSse(emitter, sequenceNumber, "response.created", Map.of(
                     "type", "response.created",
@@ -372,7 +361,7 @@ public class OpenAiResponsesController {
             } finally {
                 reservation.close();
             }
-        });
+        }));
 
         return responseEntity;
     }
@@ -402,8 +391,11 @@ public class OpenAiResponsesController {
 
     private StoredResponse accessibleStoredResponse(String responseId, String sessionKeyHeader) {
         StoredResponse stored = responseStore.get(responseId);
-        if (stored == null || stored.sessionId() == null) {
-            return stored;
+        if (stored == null) {
+            return null;
+        }
+        if (stored.sessionId() == null) {
+            return UserContext.scopeUserId() == null ? stored : null;
         }
         try {
             openAiSessionService.resolveStoredResponseSession(stored.sessionId(), sessionKeyHeader);
@@ -567,12 +559,19 @@ public class OpenAiResponsesController {
     }
 
     private List<ToolDefinition> buildTools(OpenAiResponsesRequest request) {
-        if (request.tools() != null) {
-            return request.tools().stream()
-                .map(this::toToolDefinition)
-                .filter(Objects::nonNull)
-                .toList();
-        }
+        List<ToolDefinition> allowed = serverToolDefinitions();
+        if (request.tools() == null) return allowed;
+        Set<String> requestedNames = request.tools().stream()
+            .filter(Objects::nonNull)
+            .filter(tool -> tool.type() == null || "function".equals(tool.type().trim()))
+            .map(tool -> tool.function() != null ? tool.function().name() : tool.name())
+            .filter(Objects::nonNull)
+            .map(String::trim)
+            .collect(java.util.stream.Collectors.toSet());
+        return allowed.stream().filter(tool -> requestedNames.contains(tool.name())).toList();
+    }
+
+    private List<ToolDefinition> serverToolDefinitions() {
         Set<String> apiToolsets = new LinkedHashSet<>();
         if (properties.getApi().getChatCompletionToolsets() != null) {
             properties.getApi().getChatCompletionToolsets().stream()
@@ -585,26 +584,6 @@ public class OpenAiResponsesController {
             return List.of();
         }
         return toolRegistry.getDefinitions(apiToolsets);
-    }
-
-    private ToolDefinition toToolDefinition(OpenAiResponsesTool tool) {
-        if (tool == null) {
-            return null;
-        }
-        if (tool.function() != null) {
-            return openAiMapper.toToolDefinition(new OpenAiChatRequest.OpenAiTool(tool.type(), tool.function()));
-        }
-        if (tool.type() != null && !"function".equals(tool.type().trim())) {
-            return null;
-        }
-        String name = tool.name() != null ? tool.name().trim() : "";
-        if (name.isBlank()) {
-            return null;
-        }
-        Map<String, Object> parameters = tool.parameters() != null
-            ? tool.parameters()
-            : Map.of("type", "object", "properties", Map.of(), "required", List.of());
-        return new ToolDefinition(name, tool.description() != null ? tool.description() : "", parameters);
     }
 
     private String previousResponseId(OpenAiResponsesRequest request) {

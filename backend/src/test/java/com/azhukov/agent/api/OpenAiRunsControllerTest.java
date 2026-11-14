@@ -1433,6 +1433,28 @@ class OpenAiRunsControllerTest {
         assertThat(historyCaptor.getValue().get(0).imageCount()).isEqualTo(1);
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"owner-a", "owner-b"})
+    void unattributedStoredResponseRunIsAdminOnly(String owner) throws Exception {
+        responseStore.put("resp_unattributed", new StoredResponse(
+            Map.of("id", "resp_unattributed"), List.of(Message.user("private legacy request")),
+            "private instructions", null), null);
+        UserContext.set(owner, UserContext.ROLE_USER);
+        String input = "{\"model\":\"gpt-run\",\"previous_response_id\":\"resp_unattributed\",\"input\":\"continue\"}";
+        mockMvc.perform(post("/v1/runs").contentType(MediaType.APPLICATION_JSON).content(input))
+            .andExpect(status().isNotFound())
+            .andExpect(jsonPath("$.error.code").value("previous_response_not_found"));
+        verify(agentRuntimeService, never()).runApiTurn(any(Session.class), anyString(), any(ModelRequestOptions.class));
+        assertThat(responseStore.get("resp_unattributed")).isNotNull();
+
+        UserContext.set("administrator", UserContext.ROLE_ADMIN);
+        when(agentRuntimeService.runApiTurn(any(Session.class), anyString(), any(ModelRequestOptions.class)))
+            .thenReturn(new ChatResponseDto(SESSION_ID, "done", List.of(), true));
+        MvcResult created = mockMvc.perform(post("/v1/runs").contentType(MediaType.APPLICATION_JSON).content(input))
+            .andExpect(status().isAccepted()).andReturn();
+        waitForStatus(readRunId(created), "completed");
+    }
+
     @Test
     void foreignUserCannotContinueStoredResponseRun() throws Exception {
         responseStore.put("resp_private", new StoredResponse(

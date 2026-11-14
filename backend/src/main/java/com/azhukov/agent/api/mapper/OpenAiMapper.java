@@ -13,7 +13,6 @@ import org.mapstruct.Named;
 
 import java.util.Collections;
 import java.util.List;
-import java.util.Map;
 
 /**
  * Maps between domain models and OpenAI-compatible DTOs.
@@ -149,19 +148,6 @@ public interface OpenAiMapper {
             mapped.add(new ToolCall(id, name, args));
         }
         return mapped;
-    }
-
-    default ToolDefinition toToolDefinition(OpenAiChatRequest.OpenAiTool tool) {
-        if (tool == null || tool.function() == null) return null;
-        if (tool.function().name() == null || tool.function().name().isBlank()) return null;
-        Map<String, Object> parameters = tool.function().parameters() != null
-            ? tool.function().parameters()
-            : Map.of("type", "object", "properties", Map.of(), "required", List.of());
-        return new ToolDefinition(
-            tool.function().name().trim(),
-            tool.function().description() != null ? tool.function().description() : "",
-            parameters
-        );
     }
 
     default OpenAiChatResponse.ToolCall toOpenAiToolCall(ToolCall tc) {
