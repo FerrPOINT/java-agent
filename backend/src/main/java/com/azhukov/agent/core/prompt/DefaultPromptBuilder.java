@@ -292,7 +292,8 @@ public class DefaultPromptBuilder implements PromptBuilder {
         + "`inline code`, ```code blocks```, [links](url), and ## headers. "
         + "Prefer bullet lists and labeled key:value pairs for structured data. "
         + "You can send media files natively: to deliver a file to the user, "
-        + "include the exact MEDIA:artifact:<id> reference returned by the tool in your response. Images "
+        + "include the exact MEDIA:artifact:<id> reference returned by the tool in your response. "
+        + "For a document or archive you created, use publish_file with its path, then include the returned reference. Images "
         + "(.png, .jpg, .webp) appear as photos, audio (.ogg) sends as voice "
         + "bubbles, and videos (.mp4) play inline.";
 

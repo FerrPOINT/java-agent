@@ -85,6 +85,12 @@
 | CLI REPL | 92 slash-команды, SSE streaming, JLine autocomplete и markdown rendering. |
 | Deployment/test matrix | Production, local и E2E compose-профили, Flyway migrations и большой regression suite. |
 
+Файлы для Telegram публикуются явным инструментом `publish_file` из набора `file`.
+Он читает выбранный файл с действующими файловыми правами и лимитом 20 MiB,
+сохраняет его для текущего владельца и сессии и возвращает `MEDIA:artifact:<id>`.
+Эту ссылку нужно включить в финальный ответ; успешная публикация сама по себе
+не подтверждает доставку в Telegram. Обычные записи файлов не отправляются автоматически.
+
 <a name="stack"></a>
 
 ## 🔧 Core Stack

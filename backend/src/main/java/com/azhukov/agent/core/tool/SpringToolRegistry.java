@@ -57,12 +57,12 @@ public class SpringToolRegistry implements ToolRegistry {
         "web_search"
     );
     private static final List<String> BROWSER_CDP_TOOLS = List.of("browser_cdp", "browser_dialog");
-    private static final List<String> FILE_TOOLS = List.of("read_file", "write_file", "patch", "search_files");
+    private static final List<String> FILE_TOOLS = List.of("read_file", "write_file", "patch", "search_files", "publish_file");
     private static final List<String> SKILL_TOOLS = List.of("skills_list", "skill_view", "skill_manage");
     private static final List<String> HERMES_CORE_TOOLS = List.of(
         "web_search", "web_extract",
         "terminal", "process",
-        "read_file", "write_file", "patch", "search_files", "delete_file",
+        "read_file", "write_file", "patch", "search_files", "publish_file", "delete_file",
         "vision_analyze", "image_generate",
         "skills_list", "skill_view", "skill_manage",
         "mcp_tool",
@@ -81,7 +81,7 @@ public class SpringToolRegistry implements ToolRegistry {
     private static final List<String> CODING_TOOLS = List.of(
         "web_search", "web_extract",
         "terminal", "process",
-        "read_file", "write_file", "patch", "search_files",
+        "read_file", "write_file", "patch", "search_files", "publish_file",
         "vision_analyze",
         "skills_list", "skill_view", "skill_manage",
         "browser_navigate", "browser_snapshot", "browser_click",
@@ -95,7 +95,7 @@ public class SpringToolRegistry implements ToolRegistry {
     private static final List<String> HERMES_ACP_TOOLS = List.of(
         "web_search", "web_extract",
         "terminal", "process",
-        "read_file", "write_file", "patch", "search_files",
+        "read_file", "write_file", "patch", "search_files", "publish_file",
         "vision_analyze",
         "skills_list", "skill_view", "skill_manage",
         "browser_navigate", "browser_snapshot", "browser_click",
@@ -109,7 +109,7 @@ public class SpringToolRegistry implements ToolRegistry {
     private static final List<String> HERMES_API_SERVER_TOOLS = List.of(
         "web_search", "web_extract",
         "terminal", "process",
-        "read_file", "write_file", "patch", "search_files", "delete_file",
+        "read_file", "write_file", "patch", "search_files", "publish_file", "delete_file",
         "vision_analyze", "image_generate",
         "skills_list", "skill_view", "skill_manage",
         "mcp_tool",

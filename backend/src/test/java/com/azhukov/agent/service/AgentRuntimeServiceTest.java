@@ -637,6 +637,56 @@ class AgentRuntimeServiceTest {
         }
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({
+        "cli,private,telegram", "api_server,group,telegram",
+        "telegram,,cli", "api_server,,cli", "telegram,private,telegram", "cli,,cli"
+    })
+    void foregroundTurnUsesCurrentTransportWithoutRewritingStoredOrigin(
+            String storedSource, String chatType, String expectedPlatform) {
+        var stored = newSessionEntity(EXISTING_SESSION_ID, USER_ID, "Existing");
+        stored.setSource(storedSource);
+        when(sessionRepository.findById(EXISTING_SESSION_ID)).thenReturn(Optional.of(stored));
+        var body = new java.util.HashMap<String, Object>();
+        body.put("sessionId", EXISTING_SESSION_ID);
+        body.put("userId", USER_ID);
+        body.put("message", "deliver");
+        if (chatType != null) body.put("chatType", chatType);
+        var request = new com.fasterxml.jackson.databind.ObjectMapper().convertValue(body, ChatRequest.class);
+        when(agentRuntime.runTurn(any(Session.class), eq("deliver"), eq(List.of()), any()))
+            .thenReturn(new TurnResult(List.of(Message.assistant("done", 1)), true, null));
+
+        agentRuntimeService.runTurn(request);
+
+        var captured = ArgumentCaptor.forClass(Session.class);
+        verify(agentRuntime).runTurn(captured.capture(), eq("deliver"), eq(List.of()), any());
+        assertThat(captured.getValue().getMetadata("platform")).isEqualTo(expectedPlatform);
+        assertThat(captured.getValue().userId()).isEqualTo(USER_ID);
+        assertThat(stored.getSource()).isEqualTo(storedSource);
+    }
+
+    @Test
+    void newTelegramForegroundTurnStoresItsActualCreationSource() {
+        var created = new java.util.concurrent.atomic.AtomicReference<SessionEntity>();
+        when(sessionRepository.save(any(SessionEntity.class))).thenAnswer(call -> {
+            SessionEntity entity = call.getArgument(0);
+            entity.setId(SESSION_ID);
+            created.set(entity);
+            return entity;
+        });
+        var request = new com.fasterxml.jackson.databind.ObjectMapper().convertValue(
+            java.util.Map.of("message", "deliver", "userId", USER_ID, "chatType", "private"), ChatRequest.class);
+        when(agentRuntime.runTurn(any(Session.class), eq("deliver"), eq(List.of()), any()))
+            .thenReturn(new TurnResult(List.of(Message.assistant("done", 1)), true, null));
+
+        agentRuntimeService.runTurn(request);
+
+        assertThat(created.get().getSource()).isEqualTo("telegram");
+        var captured = ArgumentCaptor.forClass(Session.class);
+        verify(agentRuntime).runTurn(captured.capture(), eq("deliver"), eq(List.of()), any());
+        assertThat(captured.getValue().getMetadata("platform")).isEqualTo("telegram");
+    }
+
     private com.azhukov.agent.core.ports.SessionStorePort sessionStorePort() {
         com.azhukov.agent.core.ports.SessionStorePort port = mock(com.azhukov.agent.core.ports.SessionStorePort.class);
         org.mockito.Mockito.lenient().when(port.findById(org.mockito.ArgumentMatchers.any()))

@@ -45,6 +45,78 @@ class AttachmentArtifactRepositoryTest extends PostgresTestContainer {
         return entity;
     }
 
+    @Autowired
+    private com.azhukov.agent.core.tool.ToolRegistry toolRegistry;
+    @Autowired
+    private com.azhukov.agent.config.AgentProperties agentProperties;
+    @Autowired
+    private com.azhukov.agent.service.AttachmentArtifactService applicationArtifacts;
+
+    @Test
+    void configuredFilePublicationPreservesScopedBytesAndMetadata(
+        @org.junit.jupiter.api.io.TempDir java.nio.file.Path workspace
+    ) throws Exception {
+        for (String group : List.of("file", "coding", "hermes-cli", "hermes-telegram", "hermes-acp", "hermes-api-server")) {
+            assertThat(toolRegistry.getDefinitions(java.util.Set.of(group)))
+                .as("real configured toolset: %s", group)
+                .extracting(com.azhukov.agent.core.model.ToolDefinition::name).contains("publish_file");
+        }
+        for (String group : List.of("safe", "hermes-webhook")) {
+            assertThat(toolRegistry.getDefinitions(java.util.Set.of(group)))
+                .extracting(com.azhukov.agent.core.model.ToolDefinition::name).doesNotContain("publish_file");
+        }
+        var entity = new com.azhukov.agent.persistence.entity.SessionEntity();
+        entity.setUserId("user-1");
+        entity.setModelProvider("noop");
+        entity.setModelName("test");
+        sessions.saveAndFlush(entity);
+        var session = new com.azhukov.agent.core.model.Session(entity.getId(), "user-1", "publication",
+            "noop", "test", null, java.util.Map.of(
+                com.azhukov.agent.tools.terminal.TerminalTool.META_WORKDIR, workspace.toString()), null);
+        agentProperties.getSecurity().setFileSafetyEnabled(true);
+        agentProperties.getSecurity().setAllowedPaths(List.of(workspace.toString()));
+        var cache = java.nio.file.Files.createDirectory(workspace.resolve("published-cache"));
+        org.springframework.test.util.ReflectionTestUtils.setField(applicationArtifacts, "cacheRootConfig", cache.toString());
+        org.springframework.test.util.ReflectionTestUtils.setField(applicationArtifacts, "cacheRoot", null);
+        var archive = new java.io.ByteArrayOutputStream();
+        try (var zip = new java.util.zip.ZipOutputStream(archive)) {
+            zip.putNextEntry(new java.util.zip.ZipEntry("report.txt"));
+            zip.write("requested document bytes".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            zip.closeEntry();
+        }
+        byte[] bytes = archive.toByteArray();
+        var original = java.nio.file.Files.write(workspace.resolve("report.zip"), bytes);
+        com.azhukov.agent.core.security.UserContext.set("user-1", com.azhukov.agent.core.security.UserContext.ROLE_USER);
+        try {
+            var result = toolRegistry.execute("publish_file", "publish-request",
+                "{\"path\":\"report.zip\"}", null, session);
+            assertThat(result.success()).as(result.error()).isTrue();
+            var body = new com.fasterxml.jackson.databind.ObjectMapper().readTree(result.content());
+            String reference = body.path("media_tag").asText();
+            assertThat(reference).matches("MEDIA:artifact:att_[a-f0-9]{32}");
+            String id = reference.substring("MEDIA:artifact:".length());
+            var saved = repository.findById(id).orElseThrow();
+            assertThat(saved.getOwnerId()).isEqualTo("user-1");
+            assertThat(saved.getSessionId()).isEqualTo(entity.getId());
+            assertThat(saved.getDisposition()).isEqualTo("document");
+            assertThat(saved.getFileName()).isEqualTo("report.zip");
+            java.nio.file.Files.writeString(original, "changed after publication");
+            var published = applicationArtifacts.verifiedContent(id, "user-1").orElseThrow();
+            assertThat(published.bytes()).isEqualTo(bytes);
+            try (var zip = new java.util.zip.ZipInputStream(new java.io.ByteArrayInputStream(published.bytes()))) {
+                assertThat(zip.getNextEntry().getName()).isEqualTo("report.txt");
+                assertThat(new String(zip.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8))
+                    .isEqualTo("requested document bytes");
+                assertThat(zip.getNextEntry()).isNull();
+            }
+            assertThat(applicationArtifacts.find(id, "system")).isEmpty();
+            assertThat(applicationArtifacts.outboundStatus(id, "system", entity.getId()))
+                .isEqualTo(com.azhukov.agent.service.AttachmentArtifactService.OutboundStatus.UNAVAILABLE);
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+        }
+    }
+
     @Test
     void registrationChecksPersistedSessionOwnerBeforeAnyBlobIsWritten(
         @org.junit.jupiter.api.io.TempDir java.nio.file.Path cache

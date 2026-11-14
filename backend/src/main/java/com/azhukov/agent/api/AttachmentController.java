@@ -94,7 +94,7 @@ public class AttachmentController {
             // V62 chk_attachment_origin allows telegram/cli/internal only —
             // a blank origin from the REST upload is an internal one.
             origin == null || origin.isBlank() ? "internal" : origin,
-            disposition, file.getContentType(), sanitizeFileName(file.getOriginalFilename()), data);
+            disposition, file.getContentType(), AttachmentArtifactService.sanitizeFileName(file.getOriginalFilename()), data);
         if (registration.rejection() != null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, registration.rejection());
         }
@@ -231,10 +231,5 @@ public class AttachmentController {
         return UserContext.effectiveUserId(requestedOwnerId);
     }
 
-    private static String sanitizeFileName(String name) {
-        if (name == null || name.isBlank()) return "file.bin";
-        String cleaned = name.replaceAll("[^a-zA-Z0-9._-]", "_")
-            .replaceAll("\\.{2,}", "_");
-        return cleaned.length() > 128 ? cleaned.substring(0, 128) : cleaned;
-    }
+
 }

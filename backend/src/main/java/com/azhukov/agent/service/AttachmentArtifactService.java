@@ -85,6 +85,14 @@ public class AttachmentArtifactService {
         }
     }
 
+    /** Display-name normalization shared by upload and generated-file publication. */
+    public static String sanitizeFileName(String name) {
+        if (name == null || name.isBlank()) return "file.bin";
+        String cleaned = name.replaceAll("[^a-zA-Z0-9._-]", "_")
+            .replaceAll("\\.{2,}", "_");
+        return cleaned.length() > 128 ? cleaned.substring(0, 128) : cleaned;
+    }
+
     /** Register an inbound artifact (dedupe by owner+hash+disposition). */
     public ArtifactRegistration register(String ownerId, String profile, UUID sessionId,
                                          String messageId, String origin, String disposition,
