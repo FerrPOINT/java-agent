@@ -406,4 +406,21 @@ class AttachmentArtifactServiceTest {
         assertThat(Files.readString(blocked)).isEqualTo("occupied");
     }
 
+    @Test
+    void registrationAboveFormerCapPreservesExactContentAndOwner() throws Exception {
+        byte[] data = new byte[21 * 1024 * 1024];
+        data[data.length - 1] = 91;
+        var service = service();
+        var result = service.register("owner-a", "default", null, null, "internal", "document",
+            "application/octet-stream", "large.bin", data);
+        assertThat(result.rejection()).isNull();
+        var saved = org.mockito.ArgumentCaptor.forClass(AttachmentArtifactEntity.class);
+        verify(repository).save(saved.capture());
+        assertThat(saved.getValue().getOwnerId()).isEqualTo("owner-a");
+        assertThat(saved.getValue().getSizeBytes()).isEqualTo(data.length);
+        assertThat(saved.getValue().getContentHash()).isEqualTo(java.util.HexFormat.of().formatHex(
+            java.security.MessageDigest.getInstance("SHA-256").digest(data)));
+        assertThat(Files.readAllBytes(tempDir.resolve(result.cachePath()))).isEqualTo(data);
+    }
+
 }
