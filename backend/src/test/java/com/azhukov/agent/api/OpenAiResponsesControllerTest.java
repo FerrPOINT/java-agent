@@ -1782,7 +1782,7 @@ class OpenAiResponsesControllerTest {
     @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
     void unknownRequestToolFailsBeforeSessionOrModelWork(boolean streaming) throws Exception {
         when(toolRegistry.getDefinitions(Set.of("hermes-api-server"))).thenReturn(List.of(
-            new ToolDefinition("read_file", "Read", objectSchema())));
+            new ToolDefinition("read_file", "Read", Map.of("type", "object"))));
         mockMvc.perform(post("/v1/responses").contentType(MediaType.APPLICATION_JSON)
                 .content("{\"input\":\"hi\",\"stream\":" + streaming
                     + ",\"tools\":[{\"type\":\"function\",\"name\":\"terminal\"}]}"))
@@ -1795,7 +1795,7 @@ class OpenAiResponsesControllerTest {
         UserContext.set("user-1", UserContext.ROLE_USER);
         try {
             when(toolRegistry.getDefinitions(Set.of("hermes-api-server"))).thenReturn(List.of(
-                new ToolDefinition("read_file", "Read", objectSchema())));
+                new ToolDefinition("read_file", "Read", Map.of("type", "object"))));
             when(agentRuntime.runMessages(anyList(), anyList(), any(ModelRequestOptions.class)))
                 .thenReturn(new TurnResult(List.of(Message.assistant("accepted result", 1)), true, null));
             String body = "{\"input\":\"hi\",\"tools\":[{\"type\":\"function\",\"name\":\"read_file\"}]}";
