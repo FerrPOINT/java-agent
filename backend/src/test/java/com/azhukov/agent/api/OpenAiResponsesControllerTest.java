@@ -257,7 +257,6 @@ class OpenAiResponsesControllerTest {
                       "model": "gpt-resp",
                       "input": "use lookup",
                       "tools": [
-                        {"type": "web_search"},
                         {
                           "type": "function",
                           "name": "lookup",
