@@ -1,6 +1,7 @@
 package com.azhukov.agent.service;
 
 import com.azhukov.agent.persistence.repository.AttachmentArtifactRepository;
+import com.azhukov.agent.persistence.repository.SessionRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.boot.env.YamlPropertySourceLoader;
@@ -46,6 +47,7 @@ class AttachmentStorageConfigurationTest {
             var repository = mock(AttachmentArtifactRepository.class);
             when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
             context.registerBean(AttachmentArtifactRepository.class, () -> repository);
+            context.registerBean(SessionRepository.class, () -> mock(SessionRepository.class));
             context.register(AttachmentArtifactService.class, ArtifactProcessIsolation.class);
             context.refresh();
             var result = context.getBean(AttachmentArtifactService.class).register("u1", "default",
