@@ -163,6 +163,7 @@ public class OpenAiResponsesController {
                 }
             ).response();
         }
+        List<ToolDefinition> tools = buildTools(request);
         var reservation = runAdmissionService.tryAcquire();
         if (reservation.isEmpty()) {
             return concurrencyLimitedResponse();
@@ -171,7 +172,7 @@ public class OpenAiResponsesController {
         try {
             OpenAiSessionContext sessionContext = resolveSession(sessionIdHeader, sessionKeyHeader, requestedModel, previous);
             List<Message> messages = buildMessages(sessionContext, instructions, priorHistory, inputMessages, request.truncation());
-            return streamResponse(request, sessionContext, inputMessages, messages, buildTools(request),
+            return streamResponse(request, sessionContext, inputMessages, messages, tools,
                 requestOptions(request, requestedModel), priorHistory, instructions, requestedModel, permit);
         } catch (RuntimeException | Error failure) {
             permit.close();
@@ -559,16 +560,10 @@ public class OpenAiResponsesController {
     }
 
     private List<ToolDefinition> buildTools(OpenAiResponsesRequest request) {
-        List<ToolDefinition> allowed = serverToolDefinitions();
-        if (request.tools() == null) return allowed;
-        Set<String> requestedNames = request.tools().stream()
-            .filter(Objects::nonNull)
-            .filter(tool -> tool.type() == null || "function".equals(tool.type().trim()))
-            .map(tool -> tool.function() != null ? tool.function().name() : tool.name())
-            .filter(Objects::nonNull)
-            .map(String::trim)
-            .collect(java.util.stream.Collectors.toSet());
-        return allowed.stream().filter(tool -> requestedNames.contains(tool.name())).toList();
+        return OpenAiToolSelection.select(serverToolDefinitions(), request.tools() == null ? null
+            : request.tools().stream().map(tool -> tool != null
+                && (tool.type() == null || "function".equals(tool.type().trim()))
+                ? tool.function() != null ? tool.function().name() : tool.name() : null).toList());
     }
 
     private List<ToolDefinition> serverToolDefinitions() {

@@ -1740,7 +1740,6 @@ class OpenAiResponsesControllerTest {
             .thenReturn(ChatResponse.text("ok"));
         for (String tools : List.of(
                 "[]",
-                "[{\"type\":\"function\",\"function\":{\"name\":\"terminal\",\"description\":\"enable shell\"}}]",
                 "[{\"type\":\"function\",\"function\":{\"name\":\" read_file \",\"description\":\"client rewrite\",\"parameters\":{\"type\":\"string\"}}}]",
                 "[{\"type\":\"function\",\"name\":\"read_file\",\"description\":\"forged flat schema\",\"parameters\":{\"type\":\"array\"}}]")) {
             mockMvc.perform(post("/v1/responses")
@@ -1749,7 +1748,7 @@ class OpenAiResponsesControllerTest {
                 .andExpect(status().isOk());
         }
         assertThat(captured.getAllValues()).containsExactly(
-            List.of(), List.of(), List.of(allowed), List.of(allowed));
+            List.of(), List.of(allowed), List.of(allowed));
     }
 
     private JsonNode parseJson(String raw) {
@@ -1779,4 +1778,42 @@ class OpenAiResponsesControllerTest {
             .map(line -> line.substring(5).trim())
             .toList();
     }
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void unknownRequestToolFailsBeforeSessionOrModelWork(boolean streaming) throws Exception {
+        when(toolRegistry.getDefinitions(Set.of("hermes-api-server"))).thenReturn(List.of(
+            new ToolDefinition("read_file", "Read", objectSchema())));
+        mockMvc.perform(post("/v1/responses").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"input\":\"hi\",\"stream\":" + streaming
+                    + ",\"tools\":[{\"type\":\"function\",\"name\":\"terminal\"}]}"))
+            .andExpect(status().isBadRequest());
+        org.mockito.Mockito.verifyNoInteractions(agentRuntime, modelClient);
+    }
+
+    @Test
+    void acceptedResponseReplayDoesNotRevalidateAChangedToolCatalog() throws Exception {
+        UserContext.set("user-1", UserContext.ROLE_USER);
+        try {
+            when(toolRegistry.getDefinitions(Set.of("hermes-api-server"))).thenReturn(List.of(
+                new ToolDefinition("read_file", "Read", objectSchema())));
+            when(agentRuntime.runMessages(anyList(), anyList(), any(ModelRequestOptions.class)))
+                .thenReturn(new TurnResult(List.of(Message.assistant("accepted result", 1)), true, null));
+            String body = "{\"input\":\"hi\",\"tools\":[{\"type\":\"function\",\"name\":\"read_file\"}]}";
+            var first = mockMvc.perform(post("/v1/responses").header("Idempotency-Key", "tool-catalog-replay")
+                    .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk()).andReturn();
+            when(toolRegistry.getDefinitions(Set.of("hermes-api-server"))).thenReturn(List.of());
+            var replay = mockMvc.perform(post("/v1/responses").header("Idempotency-Key", "tool-catalog-replay")
+                    .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk()).andReturn();
+            assertThat(replay.getResponse().getContentAsString()).isEqualTo(first.getResponse().getContentAsString());
+            mockMvc.perform(post("/v1/responses").header("Idempotency-Key", "fresh-tool-catalog-request")
+                    .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest());
+            verify(agentRuntime, times(1)).runMessages(anyList(), anyList(), any(ModelRequestOptions.class));
+        } finally {
+            UserContext.clear();
+        }
+    }
+
 }

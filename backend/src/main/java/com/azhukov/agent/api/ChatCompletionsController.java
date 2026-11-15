@@ -37,12 +37,10 @@ import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/v1/chat/completions")
@@ -96,15 +94,16 @@ public class ChatCompletionsController {
             @org.springframework.web.bind.annotation.RequestHeader(
                 value = com.azhukov.agent.service.OpenAiSessionService.SESSION_KEY_HEADER,
                 required = false) String sessionKeyHeader) {
+        List<ToolDefinition> tools = buildTools(request);
         if (Boolean.TRUE.equals(request.stream())) {
-            return ResponseEntity.ok(streamCompletions(request, sessionIdHeader, sessionKeyHeader));
+            return ResponseEntity.ok(streamCompletions(request, sessionIdHeader, sessionKeyHeader, tools));
         }
-        return syncCompletion(request, sessionIdHeader, sessionKeyHeader);
+        return syncCompletion(request, sessionIdHeader, sessionKeyHeader, tools);
     }
 
     private ResponseEntity<Object> syncCompletion(OpenAiChatRequest request,
                                                     String sessionIdHeader,
-                                                    String sessionKeyHeader) {
+                                                    String sessionKeyHeader, List<ToolDefinition> tools) {
         String model = effectiveModel(request);
         var sessionContext = openAiSessionService.resolveChatCompletions(
             sessionIdHeader, sessionKeyHeader, model, null);
@@ -116,7 +115,6 @@ public class ChatCompletionsController {
         // continued session are replayed before this request's messages.
         messages.addAll(messages.size() - countRequestMessages(request),
             openAiSessionService.historyFor(sessionContext));
-        List<ToolDefinition> tools = buildTools(request);
         ChatResponse response = runWithToolLoop(session, messages, tools, requestOptions(request));
         openAiSessionService.persistTurn(sessionContext,
             request.messages().stream().map(openAiMapper::toMessage).toList(), response);
@@ -146,6 +144,11 @@ public class ChatCompletionsController {
                 .assistantWithToolCalls(response.content(), response.toolCalls(), 1);
             messages.add(assistantWithCalls);
             for (com.azhukov.agent.core.model.ToolCall call : response.toolCalls()) {
+                if (tools.stream().noneMatch(tool -> tool.name().equals(call.name()))) {
+                    throw new org.springframework.web.server.ResponseStatusException(
+                        org.springframework.http.HttpStatus.BAD_GATEWAY,
+                        "Model requested a tool outside the request selection");
+                }
                 com.azhukov.agent.core.model.ToolResult result = toolExecutionService.execute(
                     call.name(), call.pairingId(), call.arguments(), assistantWithCalls, session);
                 messages.add(com.azhukov.agent.core.model.Message.toolResult(
@@ -162,7 +165,7 @@ public class ChatCompletionsController {
 
     private SseEmitter streamCompletions(OpenAiChatRequest request,
                                          String sessionIdHeader,
-                                         String sessionKeyHeader) {
+                                         String sessionKeyHeader, List<ToolDefinition> tools) {
         SseEmitter emitter = new SseEmitter(600_000L);
         String id = "chatcmpl-" + UUID.randomUUID().toString().replace("-", "");
         String model = effectiveModel(request);
@@ -188,7 +191,6 @@ public class ChatCompletionsController {
                 List<Message> messages = buildMessages(session, request);
                 messages.addAll(messages.size() - countRequestMessages(request),
                     openAiSessionService.historyFor(sessionContext));
-                List<ToolDefinition> tools = buildTools(request);
 
                 modelClient.stream(HistorySanitizer.sanitizeForModelRequest(messages), tools,
                     requestOptions(request), new StreamingResponseHandler() {
@@ -256,17 +258,10 @@ public class ChatCompletionsController {
     }
 
     private List<ToolDefinition> buildTools(OpenAiChatRequest request) {
-        List<ToolDefinition> allowed = serverToolDefinitions();
-        if (request.tools() == null) return allowed;
-        var requestedNames = request.tools().stream()
-            .filter(Objects::nonNull)
-            .map(OpenAiChatRequest.OpenAiTool::function)
-            .filter(Objects::nonNull)
-            .map(OpenAiChatRequest.OpenAiFunction::name)
-            .filter(Objects::nonNull)
-            .map(String::trim)
-            .collect(Collectors.toSet());
-        return allowed.stream().filter(tool -> requestedNames.contains(tool.name())).toList();
+        return OpenAiToolSelection.select(serverToolDefinitions(), request.tools() == null ? null
+            : request.tools().stream().map(tool -> tool != null && tool.function() != null
+                && (tool.type() == null || "function".equals(tool.type().trim()))
+                ? tool.function().name() : null).toList());
     }
 
     private List<ToolDefinition> serverToolDefinitions() {
