@@ -79,7 +79,7 @@ class CheckpointManagerBranchCoverage2Test {
             e.setId(UUID.randomUUID());
             return e;
         });
-        when(checkpointRepository.findAll(org.mockito.ArgumentMatchers.any(org.springframework.data.domain.Sort.class))).thenReturn(List.of());
+        when(checkpointRepository.findByUserId(org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.any(org.springframework.data.domain.Sort.class))).thenReturn(List.of());
 
         CheckpointEntity entity = manager.snapshot("large file test");
 
@@ -101,7 +101,7 @@ class CheckpointManagerBranchCoverage2Test {
         Files.writeString(subdir.resolve("nested.txt"), "nested content");
 
         when(checkpointRepository.save(any(CheckpointEntity.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(checkpointRepository.findAll(org.mockito.ArgumentMatchers.any(org.springframework.data.domain.Sort.class))).thenReturn(List.of());
+        when(checkpointRepository.findByUserId(org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.any(org.springframework.data.domain.Sort.class))).thenReturn(List.of());
 
         CheckpointEntity entity = manager.snapshot("nested test");
 
@@ -119,7 +119,7 @@ class CheckpointManagerBranchCoverage2Test {
         Files.writeString(tempDir.resolve("visible.txt"), "content");
 
         when(checkpointRepository.save(any(CheckpointEntity.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(checkpointRepository.findAll(org.mockito.ArgumentMatchers.any(org.springframework.data.domain.Sort.class))).thenReturn(List.of());
+        when(checkpointRepository.findByUserId(org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.any(org.springframework.data.domain.Sort.class))).thenReturn(List.of());
 
         CheckpointEntity entity = manager.snapshot("git test");
 
@@ -138,7 +138,7 @@ class CheckpointManagerBranchCoverage2Test {
         Files.writeString(tempDir.resolve("source.txt"), "source");
 
         when(checkpointRepository.save(any(CheckpointEntity.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(checkpointRepository.findAll(org.mockito.ArgumentMatchers.any(org.springframework.data.domain.Sort.class))).thenReturn(List.of());
+        when(checkpointRepository.findByUserId(org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.any(org.springframework.data.domain.Sort.class))).thenReturn(List.of());
 
         CheckpointEntity entity = manager.snapshot("build test");
 
@@ -156,7 +156,7 @@ class CheckpointManagerBranchCoverage2Test {
         Files.writeString(tempDir.resolve("main.txt"), "main source");
 
         when(checkpointRepository.save(any(CheckpointEntity.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(checkpointRepository.findAll(org.mockito.ArgumentMatchers.any(org.springframework.data.domain.Sort.class))).thenReturn(List.of());
+        when(checkpointRepository.findByUserId(org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.any(org.springframework.data.domain.Sort.class))).thenReturn(List.of());
 
         CheckpointEntity entity = manager.snapshot("target test");
 
@@ -174,7 +174,7 @@ class CheckpointManagerBranchCoverage2Test {
         Files.writeString(tempDir.resolve("app.js"), "app");
 
         when(checkpointRepository.save(any(CheckpointEntity.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(checkpointRepository.findAll(org.mockito.ArgumentMatchers.any(org.springframework.data.domain.Sort.class))).thenReturn(List.of());
+        when(checkpointRepository.findByUserId(org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.any(org.springframework.data.domain.Sort.class))).thenReturn(List.of());
 
         CheckpointEntity entity = manager.snapshot("nm test");
 
@@ -190,7 +190,7 @@ class CheckpointManagerBranchCoverage2Test {
         Files.writeString(tempDir.resolve("visible.txt"), "content");
 
         when(checkpointRepository.save(any(CheckpointEntity.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(checkpointRepository.findAll(org.mockito.ArgumentMatchers.any(org.springframework.data.domain.Sort.class))).thenReturn(List.of());
+        when(checkpointRepository.findByUserId(org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.any(org.springframework.data.domain.Sort.class))).thenReturn(List.of());
 
         CheckpointEntity entity = manager.snapshot("dunder test");
 
@@ -207,7 +207,7 @@ class CheckpointManagerBranchCoverage2Test {
         Files.writeString(tempDir.resolve("build.gradle"), "gradle build");
 
         when(checkpointRepository.save(any(CheckpointEntity.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(checkpointRepository.findAll(org.mockito.ArgumentMatchers.any(org.springframework.data.domain.Sort.class))).thenReturn(List.of());
+        when(checkpointRepository.findByUserId(org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.any(org.springframework.data.domain.Sort.class))).thenReturn(List.of());
 
         CheckpointEntity entity = manager.snapshot("gradle test");
 
@@ -237,8 +237,8 @@ class CheckpointManagerBranchCoverage2Test {
             e.setId(UUID.randomUUID());
             return e;
         });
-        // findAll returns 3 checkpoints → should prune 1
-        when(checkpointRepository.findAll(org.mockito.ArgumentMatchers.any(org.springframework.data.domain.Sort.class))).thenReturn(List.of(newest, newer, old));
+        // The selected system owner has 3 checkpoints → should prune 1
+        when(checkpointRepository.findByUserId(org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.any(org.springframework.data.domain.Sort.class))).thenReturn(List.of(newest, newer, old));
 
         manager.snapshot("prune test");
 
@@ -266,7 +266,7 @@ class CheckpointManagerBranchCoverage2Test {
             });
 
         when(checkpointRepository.save(any(CheckpointEntity.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(checkpointRepository.findAll(org.mockito.ArgumentMatchers.any(org.springframework.data.domain.Sort.class))).thenReturn(List.of());
+        when(checkpointRepository.findByUserId(org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.any(org.springframework.data.domain.Sort.class))).thenReturn(List.of());
 
         CheckpointEntity entity = manager.snapshot("broken json");
 
@@ -427,9 +427,9 @@ class CheckpointManagerBranchCoverage2Test {
         e3.setId(UUID.randomUUID());
         e3.setCreatedAt(java.time.Instant.now());
 
-        when(checkpointRepository.findAll(org.mockito.ArgumentMatchers.any(org.springframework.data.domain.Sort.class))).thenReturn(List.of(e3, e2, e1));
+        when(checkpointRepository.findByUserId(org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.any(org.springframework.data.domain.Sort.class))).thenReturn(List.of(e3, e2, e1));
 
-        int removed = manager.prune(1);
+        int removed = manager.prune(null, 1);
 
         assertThat(removed).isEqualTo(2);
         verify(checkpointFileRepository).deleteByCheckpointId(e1.getId());
