@@ -276,6 +276,8 @@ class ChatCompletionsControllerTest {
 
     @org.junit.jupiter.api.Test
     void toolResponseExecutesToolsServerSideThenReturnsTerminalFormat() throws Exception {
+        when(toolRegistry.getDefinitions(Set.of("hermes-api-server"))).thenReturn(List.of(
+            new ToolDefinition("web_search", "Search", objectSchema())));
         ToolCall toolCall = new ToolCall("call-abc", "web_search", "{\"query\":\"Java 25\"}");
         // The stubbed runtime ALWAYS answers with the tool call → the server
         // loop executes the tool on every iteration and stops at the bound,
@@ -470,7 +472,6 @@ class ChatCompletionsControllerTest {
             .thenReturn(ChatResponse.text("ok"));
         for (String tools : List.of(
                 "[]",
-                "[{\"type\":\"function\",\"function\":{\"name\":\"terminal\",\"description\":\"enable shell\"}}]",
                 "[{\"type\":\"function\",\"function\":{\"name\":\" read_file \",\"description\":\"client rewrite\",\"parameters\":{\"type\":\"string\"}}}]",
                 "[{\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"parameters\":{\"type\":\"array\"}}}]")) {
             mockMvc.perform(post("/v1/chat/completions")
@@ -479,7 +480,7 @@ class ChatCompletionsControllerTest {
                 .andExpect(status().isOk());
         }
         assertThat(captured.getAllValues()).containsExactly(
-            List.of(), List.of(), List.of(allowed), List.of(allowed));
+            List.of(), List.of(allowed), List.of(allowed));
     }
 
     private JsonNode parseJson(String raw) {
@@ -495,4 +496,32 @@ class ChatCompletionsControllerTest {
         props.getApi().setDirectModelRequests(true); // test: external model names pass through
         return props;
     }
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"[]",
+        "[{\"type\":\"function\",\"function\":{\"name\":\"read_file\"}}]"})
+    void modelCannotExecuteOutsideTheRequestToolSelection(String tools) throws Exception {
+        when(toolRegistry.getDefinitions(Set.of("hermes-api-server"))).thenReturn(List.of(
+            new ToolDefinition("read_file", "Read", objectSchema()),
+            new ToolDefinition("terminal", "Terminal", objectSchema())));
+        when(agentRuntime.run(anyList(), anyList(), any(ModelRequestOptions.class)))
+            .thenReturn(ChatResponse.toolCalls(List.of(new ToolCall("call-foreign", "terminal", "{}"))),
+                ChatResponse.text("must not execute"));
+        mockMvc.perform(post("/v1/chat/completions").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"tools\":" + tools + "}"))
+            .andExpect(status().isBadGateway());
+        org.mockito.Mockito.verifyNoInteractions(toolExecutionService);
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void unknownRequestToolFailsBeforeSessionOrModelWork(boolean streaming) throws Exception {
+        when(toolRegistry.getDefinitions(Set.of("hermes-api-server"))).thenReturn(List.of(
+            new ToolDefinition("read_file", "Read", objectSchema())));
+        mockMvc.perform(post("/v1/chat/completions").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"stream\":" + streaming
+                    + ",\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"terminal\"}}]}"))
+            .andExpect(status().isBadRequest());
+        org.mockito.Mockito.verifyNoInteractions(agentRuntime, modelClient, sessionService);
+    }
+
 }

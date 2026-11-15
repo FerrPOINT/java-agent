@@ -75,6 +75,7 @@ class OpenAiResponsesControllerTest {
     private AgentProperties properties;
     private OpenAiSessionContext sessionContext;
     private ApiRunAdmissionService runAdmissionService;
+    private OpenAiResponseStore responseStore;
 
     @Mock
     private AgentRuntime agentRuntime;
@@ -98,6 +99,7 @@ class OpenAiResponsesControllerTest {
         properties.getModel().setModelName(MODEL);
         runAdmissionService = new ApiRunAdmissionService(properties);
 
+        responseStore = new OpenAiResponseStore(objectMapper, null, null);
         OpenAiResponsesController controller = new OpenAiResponsesController(
             agentRuntime,
             toolRegistry,
@@ -106,7 +108,7 @@ class OpenAiResponsesControllerTest {
             objectMapper,
             properties,
             openAiSessionService,
-            new OpenAiResponseStore(objectMapper, null, null),
+            responseStore,
             new OpenAiIdempotencyCache(),
             new DefaultRedactor(properties),
             runAdmissionService
@@ -255,7 +257,6 @@ class OpenAiResponsesControllerTest {
                       "model": "gpt-resp",
                       "input": "use lookup",
                       "tools": [
-                        {"type": "web_search"},
                         {
                           "type": "function",
                           "name": "lookup",
@@ -1255,6 +1256,29 @@ class OpenAiResponsesControllerTest {
             .andExpect(jsonPath("$.error.message").value("Response not found: " + responseId));
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"owner-a", "owner-b"})
+    void unattributedStoredResponseIsAdminOnly(String owner) throws Exception {
+        responseStore.put("resp_unattributed", new OpenAiResponseStore.StoredResponse(
+            Map.of("id", "resp_unattributed", "output_text", "private legacy response"),
+            List.of(Message.user("private legacy request")), "private instructions", null), null);
+        UserContext.set(owner, UserContext.ROLE_USER);
+
+        mockMvc.perform(get("/v1/responses/resp_unattributed")).andExpect(status().isNotFound());
+        mockMvc.perform(delete("/v1/responses/resp_unattributed")).andExpect(status().isNotFound());
+        mockMvc.perform(post("/v1/responses").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"previous_response_id\":\"resp_unattributed\",\"input\":\"continue\"}"))
+            .andExpect(status().isNotFound());
+        verifyNoInteractions(agentRuntime);
+        assertThat(responseStore.get("resp_unattributed")).isNotNull();
+
+        UserContext.set("administrator", UserContext.ROLE_ADMIN);
+        mockMvc.perform(get("/v1/responses/resp_unattributed"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.output_text").value("private legacy response"));
+        mockMvc.perform(delete("/v1/responses/resp_unattributed")).andExpect(status().isOk());
+        assertThat(responseStore.get("resp_unattributed")).isNull();
+    }
+
     @Test
     void getAndDeleteStoredResponseRoundTrip() throws Exception {
         when(agentRuntime.run(anyList(), anyList(), any(ModelRequestOptions.class)))
@@ -1715,7 +1739,6 @@ class OpenAiResponsesControllerTest {
             .thenReturn(ChatResponse.text("ok"));
         for (String tools : List.of(
                 "[]",
-                "[{\"type\":\"function\",\"function\":{\"name\":\"terminal\",\"description\":\"enable shell\"}}]",
                 "[{\"type\":\"function\",\"function\":{\"name\":\" read_file \",\"description\":\"client rewrite\",\"parameters\":{\"type\":\"string\"}}}]",
                 "[{\"type\":\"function\",\"name\":\"read_file\",\"description\":\"forged flat schema\",\"parameters\":{\"type\":\"array\"}}]")) {
             mockMvc.perform(post("/v1/responses")
@@ -1724,7 +1747,7 @@ class OpenAiResponsesControllerTest {
                 .andExpect(status().isOk());
         }
         assertThat(captured.getAllValues()).containsExactly(
-            List.of(), List.of(), List.of(allowed), List.of(allowed));
+            List.of(), List.of(allowed), List.of(allowed));
     }
 
     private JsonNode parseJson(String raw) {
@@ -1754,4 +1777,52 @@ class OpenAiResponsesControllerTest {
             .map(line -> line.substring(5).trim())
             .toList();
     }
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void unknownRequestToolFailsBeforeSessionOrModelWork(boolean streaming) throws Exception {
+        when(toolRegistry.getDefinitions(Set.of("hermes-api-server"))).thenReturn(List.of(
+            new ToolDefinition("read_file", "Read", Map.of("type", "object"))));
+        mockMvc.perform(post("/v1/responses").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"input\":\"hi\",\"stream\":" + streaming
+                    + ",\"tools\":[{\"type\":\"function\",\"name\":\"terminal\"}]}"))
+            .andExpect(status().isBadRequest());
+        org.mockito.Mockito.verifyNoInteractions(agentRuntime, modelClient);
+    }
+
+    @Test
+    void acceptedResponseReplayDoesNotRevalidateAChangedToolCatalog() throws Exception {
+        UserContext.set("user-1", UserContext.ROLE_USER);
+        try {
+            when(toolRegistry.getDefinitions(Set.of("hermes-api-server"))).thenReturn(List.of(
+                new ToolDefinition("read_file", "Read", Map.of("type", "object"))));
+            when(agentRuntime.runMessages(anyList(), anyList(), any(ModelRequestOptions.class)))
+                .thenReturn(new TurnResult(List.of(Message.assistant("accepted result", 1)), true, null));
+            String body = "{\"input\":\"hi\",\"tools\":[{\"type\":\"function\",\"name\":\"read_file\"}]}";
+            var first = mockMvc.perform(post("/v1/responses").header("Idempotency-Key", "tool-catalog-replay")
+                    .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk()).andReturn();
+            when(toolRegistry.getDefinitions(Set.of("hermes-api-server"))).thenReturn(List.of());
+            var replay = mockMvc.perform(post("/v1/responses").header("Idempotency-Key", "tool-catalog-replay")
+                    .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk()).andReturn();
+            assertThat(replay.getResponse().getContentAsString()).isEqualTo(first.getResponse().getContentAsString());
+            mockMvc.perform(post("/v1/responses").header("Idempotency-Key", "fresh-tool-catalog-request")
+                    .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest());
+            verify(agentRuntime, times(1)).runMessages(anyList(), anyList(), any(ModelRequestOptions.class));
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {
+        "[{\"type\":\"web_search\"}]", "[null]", "[{\"type\":\"function\"}]"})
+    void unsupportedToolDeclarationsFailExplicitly(String tools) throws Exception {
+        mockMvc.perform(post("/v1/responses").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"input\":\"hi\",\"tools\":" + tools + "}"))
+            .andExpect(status().isBadRequest());
+        verifyNoInteractions(agentRuntime, modelClient);
+    }
+
 }

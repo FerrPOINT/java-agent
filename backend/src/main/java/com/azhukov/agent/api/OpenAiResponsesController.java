@@ -110,20 +110,11 @@ public class OpenAiResponsesController {
             }
             priorHistory = parsedHistory.messages();
         } else if (hasText(previousResponseId)) {
-            previous = responseStore.get(previousResponseId);
+            previous = accessibleStoredResponse(previousResponseId, sessionKeyHeader);
             if (previous == null) {
                 return openAiError(HttpStatus.NOT_FOUND,
                     "Previous response not found: " + previousResponseId,
                     "invalid_request_error");
-            }
-            if (previous.sessionId() != null) {
-                try {
-                    openAiSessionService.resolveStoredResponseSession(previous.sessionId(), sessionKeyHeader);
-                } catch (IllegalArgumentException e) {
-                    return openAiError(HttpStatus.NOT_FOUND,
-                        "Previous response not found: " + previousResponseId,
-                        "invalid_request_error");
-                }
             }
             priorHistory = previous.conversationHistory();
             if (!hasText(instructions)) {
@@ -172,6 +163,7 @@ public class OpenAiResponsesController {
                 }
             ).response();
         }
+        List<ToolDefinition> tools = buildTools(request);
         var reservation = runAdmissionService.tryAcquire();
         if (reservation.isEmpty()) {
             return concurrencyLimitedResponse();
@@ -180,7 +172,7 @@ public class OpenAiResponsesController {
         try {
             OpenAiSessionContext sessionContext = resolveSession(sessionIdHeader, sessionKeyHeader, requestedModel, previous);
             List<Message> messages = buildMessages(sessionContext, instructions, priorHistory, inputMessages, request.truncation());
-            return streamResponse(request, sessionContext, inputMessages, messages, buildTools(request),
+            return streamResponse(request, sessionContext, inputMessages, messages, tools,
                 requestOptions(request, requestedModel), priorHistory, instructions, requestedModel, permit);
         } catch (RuntimeException | Error failure) {
             permit.close();
@@ -400,8 +392,11 @@ public class OpenAiResponsesController {
 
     private StoredResponse accessibleStoredResponse(String responseId, String sessionKeyHeader) {
         StoredResponse stored = responseStore.get(responseId);
-        if (stored == null || stored.sessionId() == null) {
-            return stored;
+        if (stored == null) {
+            return null;
+        }
+        if (stored.sessionId() == null) {
+            return UserContext.scopeUserId() == null ? stored : null;
         }
         try {
             openAiSessionService.resolveStoredResponseSession(stored.sessionId(), sessionKeyHeader);
@@ -565,16 +560,10 @@ public class OpenAiResponsesController {
     }
 
     private List<ToolDefinition> buildTools(OpenAiResponsesRequest request) {
-        List<ToolDefinition> allowed = serverToolDefinitions();
-        if (request.tools() == null) return allowed;
-        Set<String> requestedNames = request.tools().stream()
-            .filter(Objects::nonNull)
-            .filter(tool -> tool.type() == null || "function".equals(tool.type().trim()))
-            .map(tool -> tool.function() != null ? tool.function().name() : tool.name())
-            .filter(Objects::nonNull)
-            .map(String::trim)
-            .collect(java.util.stream.Collectors.toSet());
-        return allowed.stream().filter(tool -> requestedNames.contains(tool.name())).toList();
+        return OpenAiToolSelection.select(serverToolDefinitions(), request.tools() == null ? null
+            : request.tools().stream().map(tool -> tool != null
+                && (tool.type() == null || "function".equals(tool.type().trim()))
+                ? tool.function() != null ? tool.function().name() : tool.name() : null).toList());
     }
 
     private List<ToolDefinition> serverToolDefinitions() {
