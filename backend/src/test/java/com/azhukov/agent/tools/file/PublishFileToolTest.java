@@ -68,8 +68,12 @@ class PublishFileToolTest {
         byte[] bytes = ("selected bytes for " + name).getBytes(java.nio.charset.StandardCharsets.UTF_8);
         Files.write(workspace.resolve(name), bytes);
         String safeName = AttachmentArtifactService.sanitizeFileName(name);
-        when(artifacts.publishGenerated(eq(session), eq("document"), any(String.class), eq(safeName), any(byte[].class)))
-            .thenReturn(REFERENCE);
+        var publishedBytes = new java.util.concurrent.atomic.AtomicReference<byte[]>();
+        when(artifacts.publishGenerated(eq(session), eq("document"), any(String.class), eq(safeName),
+                any(java.io.InputStream.class))).thenAnswer(call -> {
+                    publishedBytes.set(call.<java.io.InputStream>getArgument(4).readAllBytes());
+                    return REFERENCE;
+                });
 
         var result = publish(name);
 
@@ -78,9 +82,9 @@ class PublishFileToolTest {
         assertThat(body.path("media_tag").asText()).isEqualTo(REFERENCE);
         assertThat(body.path("file_name").asText()).isEqualTo(safeName);
         assertThat(body.path("size_bytes").asInt()).isEqualTo(bytes.length);
-        var captured = org.mockito.ArgumentCaptor.forClass(byte[].class);
-        verify(artifacts).publishGenerated(eq(session), eq("document"), any(String.class), eq(safeName), captured.capture());
-        assertThat(captured.getValue()).isEqualTo(bytes);
+        verify(artifacts).publishGenerated(eq(session), eq("document"), any(String.class), eq(safeName),
+            any(java.io.InputStream.class));
+        assertThat(publishedBytes.get()).isEqualTo(bytes);
         assertThat(Files.readAllBytes(workspace.resolve(name))).isEqualTo(bytes);
     }
 
@@ -104,7 +108,10 @@ class PublishFileToolTest {
         Path owned = Files.writeString(workspace.resolve("owned.zip"), "owned bytes");
         Files.createSymbolicLink(workspace.resolve("owned-alias.zip"), owned);
         when(artifacts.publishGenerated(eq(session), eq("document"), any(String.class),
-                eq("owned-alias.zip"), any(byte[].class))).thenReturn(REFERENCE);
+                eq("owned-alias.zip"), any(java.io.InputStream.class))).thenAnswer(call -> {
+                    call.<java.io.InputStream>getArgument(4).transferTo(java.io.OutputStream.nullOutputStream());
+                    return REFERENCE;
+                });
         assertThat(publish("owned-alias.zip").success()).isTrue();
     }
 
@@ -118,17 +125,26 @@ class PublishFileToolTest {
     }
 
     @Test
-    void oversizedSparseFileIsRejectedBeforePublication() throws Exception {
+    void largeSparseFileStreamsWithoutAnArtificialPublicationLimit() throws Exception {
         Path file = workspace.resolve("large.zip");
+        long size = 21L * 1024 * 1024 + 1;
         try (var channel = java.nio.channels.FileChannel.open(file,
                 java.nio.file.StandardOpenOption.CREATE_NEW, java.nio.file.StandardOpenOption.WRITE)) {
-            channel.position(AttachmentArtifactService.MAX_ATTACHMENT_BYTES);
+            channel.position(size - 1);
             channel.write(java.nio.ByteBuffer.wrap(new byte[]{1}));
         }
+        var streamed = new java.util.concurrent.atomic.AtomicLong();
+        when(artifacts.publishGenerated(eq(session), eq("document"), any(String.class), eq("large.zip"),
+                any(java.io.InputStream.class))).thenAnswer(call -> {
+                    streamed.set(call.<java.io.InputStream>getArgument(4)
+                        .transferTo(java.io.OutputStream.nullOutputStream()));
+                    return REFERENCE;
+                });
         var result = publish("large.zip");
-        assertThat(result.success()).isFalse();
-        assertThat(result.error()).contains("20 MiB");
-        verifyNoInteractions(artifacts);
+        assertThat(result.success()).as(result.error()).isTrue();
+        assertThat(streamed.get()).isEqualTo(size);
+        assertThat(JSON.readTree(result.content()).path("size_bytes").asLong()).isEqualTo(size);
+        assertThat(Files.size(file)).isEqualTo(size);
     }
 
     @org.junit.jupiter.api.condition.EnabledOnOs(org.junit.jupiter.api.condition.OS.LINUX)

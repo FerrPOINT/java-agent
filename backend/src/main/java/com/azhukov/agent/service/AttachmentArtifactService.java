@@ -36,7 +36,6 @@ import java.util.UUID;
 @Slf4j
 public class AttachmentArtifactService {
 
-    public static final long MAX_ATTACHMENT_BYTES = 20L * 1024 * 1024;
     private static final java.util.regex.Pattern SAFE_NAME =
         java.util.regex.Pattern.compile("[a-zA-Z0-9._-]{1,128}");
 
@@ -93,16 +92,21 @@ public class AttachmentArtifactService {
         return cleaned.length() > 128 ? cleaned.substring(0, 128) : cleaned;
     }
 
-    /** Register an inbound artifact (dedupe by owner+hash+disposition). */
+    /** Register inbound content; owner and session validation precede filesystem writes. */
     public ArtifactRegistration register(String ownerId, String profile, UUID sessionId,
                                          String messageId, String origin, String disposition,
                                          String mimeType, String fileName, byte[] data) {
-        return register(ownerId, profile, sessionId, messageId, origin, disposition, mimeType, fileName, data, true);
+        if (data == null || data.length == 0) {
+            return new ArtifactRegistration(null, null, null, false, "attachment content is empty");
+        }
+        return registerStream(ownerId, profile, sessionId, messageId, origin, disposition,
+            mimeType, fileName, new java.io.ByteArrayInputStream(data), true);
     }
 
-    private ArtifactRegistration register(String ownerId, String profile, UUID sessionId,
-                                          String messageId, String origin, String disposition,
-                                          String mimeType, String fileName, byte[] data, boolean deduplicate) {
+    private ArtifactRegistration registerStream(String ownerId, String profile, UUID sessionId,
+                                                String messageId, String origin, String disposition,
+                                                String mimeType, String fileName,
+                                                java.io.InputStream data, boolean deduplicate) {
         if (ownerId == null || ownerId.isBlank()) {
             return new ArtifactRegistration(null, null, null, false, "attachment owner required");
         }
@@ -110,53 +114,57 @@ public class AttachmentArtifactService {
                 .filter(session -> ownerId.equals(session.getUserId())).isEmpty()) {
             return new ArtifactRegistration(null, null, null, false, "session not found");
         }
-        String rejection = validate(disposition, origin, fileName, data);
+        String rejection = validate(disposition, origin, fileName);
         if (rejection != null) {
             return new ArtifactRegistration(null, null, null, false, rejection);
         }
-        String hash = sha256(data);
-        AttachmentArtifactRepository repository = repository();
-        Optional<AttachmentArtifactEntity> existing = deduplicate
-            ? repository.findFirstByOwnerIdAndContentHashAndDispositionAndSessionIdAndDedupScope(
-                ownerId, hash, disposition, sessionId, "")
-            : Optional.empty();
-        if (existing.isPresent()) {
-            AttachmentArtifactEntity artifact = existing.get();
-            if (!artifact.getExpiresAt().isAfter(Instant.now())) {
-                return new ArtifactRegistration(null, hash, null, false,
-                    "Matching attachment has expired; retry after attachment cleanup");
-            }
-            try {
-                Path cached = safeCachePath(artifact.getCachePath());
-                if (!Files.isRegularFile(cached, java.nio.file.LinkOption.NOFOLLOW_LINKS)
-                    || Files.size(cached) != data.length
-                    || !sha256(Files.readAllBytes(cached)).equals(hash)) {
-                    return new ArtifactRegistration(null, hash, null, false,
-                        "cached attachment content is missing or inconsistent");
-                }
-                return new ArtifactRegistration(artifact.getId(), hash, artifact.getCachePath(), true, null);
-            } catch (IOException | IllegalArgumentException e) {
-                return new ArtifactRegistration(null, hash, null, false,
-                    "cached attachment content is unavailable");
-            }
-        }
         String id = "att_" + UUID.randomUUID().toString().replace("-", "");
         String relative = ownerId + "/" + id + extensionOf(fileName, mimeType);
+        Path target = null;
+        boolean retained = false;
+        boolean created = false;
+        String hash = null;
         try {
-            Path target = safeCachePath(relative);
-            Files.createDirectories(target.getParent(), privateAttributes(target.getParent(), true));
-            // Recheck newly created parents before creating a unique artifact file.
             target = safeCachePath(relative);
+            Files.createDirectories(target.getParent(), privateAttributes(target.getParent(), true));
+            target = safeCachePath(relative);
+            ContentDigest content;
             try (var channel = Files.newByteChannel(target, java.util.Set.of(
                 java.nio.file.StandardOpenOption.CREATE_NEW, java.nio.file.StandardOpenOption.WRITE,
                 java.nio.file.LinkOption.NOFOLLOW_LINKS), privateAttributes(target, false))) {
-                var buffer = java.nio.ByteBuffer.wrap(data);
-                while (buffer.hasRemaining()) {
-                    channel.write(buffer);
+                created = true;
+                content = copyContent(data, java.nio.channels.Channels.newOutputStream(channel));
+                if (channel instanceof java.nio.channels.FileChannel file) file.force(true);
+            }
+            hash = content.hash();
+            if (content.length() == 0) {
+                return new ArtifactRegistration(null, hash, null, false, "attachment content is empty");
+            }
+            com.azhukov.agent.core.security.UserContext.requireCurrentAccess();
+            AttachmentArtifactRepository repository = repository();
+            Optional<AttachmentArtifactEntity> existing = deduplicate
+                ? repository.findFirstByOwnerIdAndContentHashAndDispositionAndSessionIdAndDedupScope(
+                    ownerId, hash, disposition, sessionId, "")
+                : Optional.empty();
+            if (existing.isPresent()) {
+                AttachmentArtifactEntity artifact = existing.get();
+                if (!artifact.getExpiresAt().isAfter(Instant.now())) {
+                    return new ArtifactRegistration(null, hash, null, false,
+                        "Matching attachment has expired; retry after attachment cleanup");
                 }
-                if (channel instanceof java.nio.channels.FileChannel file) {
-                    file.force(true);
+                Path cached = safeCachePath(artifact.getCachePath());
+                if (!Files.isRegularFile(cached, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                    return new ArtifactRegistration(null, hash, null, false,
+                        "cached attachment content is missing or inconsistent");
                 }
+                try (var input = Files.newInputStream(cached, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                    ContentDigest original = copyContent(input, java.io.OutputStream.nullOutputStream());
+                    if (original.length() != content.length() || !original.hash().equals(hash)) {
+                        return new ArtifactRegistration(null, hash, null, false,
+                            "cached attachment content is missing or inconsistent");
+                    }
+                }
+                return new ArtifactRegistration(artifact.getId(), hash, artifact.getCachePath(), true, null);
             }
             AttachmentArtifactEntity entity = new AttachmentArtifactEntity();
             entity.setId(id);
@@ -170,29 +178,43 @@ public class AttachmentArtifactService {
             entity.setDisposition(disposition);
             entity.setMimeType(mimeType);
             entity.setFileName(fileName);
-            entity.setSizeBytes((long) data.length);
+            entity.setSizeBytes(content.length());
             entity.setCachePath(relative);
             entity.setState("received");
             repository.save(entity);
+            retained = true;
             return new ArtifactRegistration(id, hash, relative, false, null);
         } catch (IOException | IllegalArgumentException e) {
             log.warn("Attachment cache write failed: {}", e.getMessage());
-            return new ArtifactRegistration(null, hash, null, false,
-                "cache write failed: " + e.getMessage());
+            return new ArtifactRegistration(null, hash, null, false, "cache write failed: " + e.getMessage());
+        } finally {
+            if (created && !retained) {
+                try {
+                    Files.deleteIfExists(target);
+                } catch (IOException e) {
+                    log.warn("Could not remove unpublished attachment {}", id);
+                }
+            }
         }
     }
 
-    /** Publish generated bytes in the current turn. The caller never supplies a path to read. */
+    /** Existing generated-media callers and file publication share one streaming storage path. */
     public String publishGenerated(com.azhukov.agent.core.model.Session session, String disposition,
                                    String mimeType, String fileName, byte[] bytes) {
+        if (bytes == null) throw new IllegalStateException("attachment content is empty");
+        return publishGenerated(session, disposition, mimeType, fileName, new java.io.ByteArrayInputStream(bytes));
+    }
+
+    /** Consumes the caller-owned stream without imposing a product file-size limit. */
+    public String publishGenerated(com.azhukov.agent.core.model.Session session, String disposition,
+                                   String mimeType, String fileName, java.io.InputStream content) {
         if (session == null || session.id() == null) {
             throw new IllegalArgumentException("An active session is required to publish media");
         }
-        var result = register(session.userId(), session.getMetadata("profile"), session.id(), null,
-            "internal", disposition, mimeType, fileName, bytes, false);
-        if (result.rejection() != null) {
-            throw new IllegalStateException(result.rejection());
-        }
+        com.azhukov.agent.core.security.UserContext.requireCurrentAccess();
+        var result = registerStream(session.userId(), session.getMetadata("profile"), session.id(), null,
+            "internal", disposition, mimeType, fileName, content, false);
+        if (result.rejection() != null) throw new IllegalStateException(result.rejection());
         return "MEDIA:artifact:" + result.id();
     }
 
@@ -229,22 +251,38 @@ public class AttachmentArtifactService {
         return repository().releaseOutbound(id, owner, sessionId, claimedAt) == 1;
     }
 
-    public record VerifiedContent(AttachmentArtifact artifact, byte[] bytes) {}
+    /** The verified descriptor is closed by the HTTP resource consumer or by the rejecting caller. */
+    public record VerifiedContent(AttachmentArtifact artifact, java.io.InputStream stream)
+            implements java.io.Closeable {
+        @Override public void close() throws IOException { stream.close(); }
+    }
 
-    /** Read the exact registered payload before serving it to an outbound consumer. */
+    /** Verify immutable registered bytes with bounded memory and retain the same open descriptor. */
     public Optional<VerifiedContent> verifiedContent(String artifactId, String ownerId) {
         return findEntity(artifactId, ownerId).flatMap(artifact -> {
+            java.nio.channels.FileChannel channel = null;
+            boolean transferred = false;
             try {
                 Path path = safeCachePath(artifact.getCachePath());
                 if (!Files.isRegularFile(path, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return Optional.empty();
-                try (var input = Files.newInputStream(path, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
-                    byte[] bytes = input.readNBytes((int) MAX_ATTACHMENT_BYTES + 1);
-                    if (bytes.length > MAX_ATTACHMENT_BYTES || !java.util.Objects.equals((long) bytes.length, artifact.getSizeBytes())
-                            || !sha256(bytes).equals(artifact.getContentHash())) return Optional.empty();
-                    return Optional.of(new VerifiedContent(AttachmentArtifact.from(artifact), bytes));
-                }
+                channel = java.nio.channels.FileChannel.open(path,
+                    java.nio.file.StandardOpenOption.READ, java.nio.file.LinkOption.NOFOLLOW_LINKS);
+                ContentDigest content = copyContent(java.nio.channels.Channels.newInputStream(channel),
+                    java.io.OutputStream.nullOutputStream());
+                if (!java.util.Objects.equals(content.length(), artifact.getSizeBytes())
+                        || !content.hash().equals(artifact.getContentHash())) return Optional.empty();
+                channel.position(0);
+                var result = new VerifiedContent(AttachmentArtifact.from(artifact),
+                    java.nio.channels.Channels.newInputStream(channel));
+                transferred = true;
+                return Optional.of(result);
             } catch (IOException | IllegalArgumentException e) {
                 return Optional.empty();
+            } finally {
+                if (!transferred && channel != null) {
+                    try { channel.close(); }
+                    catch (IOException e) { log.warn("Could not close rejected attachment content"); }
+                }
             }
         });
     }
@@ -350,13 +388,7 @@ public class AttachmentArtifactService {
 
     // ── internals ────────────────────────────────────────────────────────
 
-    private String validate(String disposition, String origin, String fileName, byte[] data) {
-        if (data == null || data.length == 0) {
-            return "attachment content is empty";
-        }
-        if (data.length > MAX_ATTACHMENT_BYTES) {
-            return "attachment exceeds " + MAX_ATTACHMENT_BYTES + " bytes";
-        }
+    private String validate(String disposition, String origin, String fileName) {
         if (disposition == null || disposition.isBlank()) {
             return "disposition is required";
         }
@@ -435,10 +467,14 @@ public class AttachmentArtifactService {
         };
     }
 
-    private static String sha256(byte[] data) {
+    private record ContentDigest(long length, String hash) {}
+
+    private static ContentDigest copyContent(java.io.InputStream input, java.io.OutputStream output)
+            throws IOException {
         try {
-            return HexFormat.of().formatHex(
-                MessageDigest.getInstance("SHA-256").digest(data));
+            var digest = MessageDigest.getInstance("SHA-256");
+            long length = new java.security.DigestInputStream(input, digest).transferTo(output);
+            return new ContentDigest(length, HexFormat.of().formatHex(digest.digest()));
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 unavailable", e);
         }

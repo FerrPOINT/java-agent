@@ -319,4 +319,34 @@ class AttachmentControllerTest {
         String captured = nameCaptor.getValue();
         assertThat(captured).doesNotContain("..").doesNotContain("/");
     }
+    @Test
+    void lostOutboundClaimClosesTheVerifiedDescriptor() throws Exception {
+        UUID sessionId = UUID.randomUUID();
+        UserContext.set("gateway", UserContext.ROLE_ADMIN);
+        com.azhukov.agent.core.security.NativeIdentityOrigin.bind(new com.azhukov.agent.core.security.NativeIdentityOrigin.Origin(
+            com.azhukov.agent.core.security.NativeIdentityOrigin.Kind.GATEWAY_KEY, "gateway", true));
+        var closed = new java.util.concurrent.atomic.AtomicBoolean();
+        var input = new java.io.ByteArrayInputStream(new byte[]{1, 2, 3}) {
+            @Override public void close() throws java.io.IOException { closed.set(true); super.close(); }
+        };
+        try {
+            var artifact = new AttachmentArtifact("att_1", "701938011", "default", sessionId, null, "hash",
+                "internal", "document", "application/octet-stream", "report.bin", 3, "received", null, null);
+            when(service.outboundStatus("att_1", "701938011", sessionId))
+                .thenReturn(OutboundStatus.UNCLAIMED, OutboundStatus.CLAIMED);
+            when(service.hasProtectedOutbound()).thenReturn(true);
+            when(service.verifiedContent("att_1", "701938011")).thenReturn(Optional.of(
+                new AttachmentArtifactService.VerifiedContent(artifact, input)));
+            when(service.claimOutbound("att_1", "701938011", sessionId)).thenReturn(Optional.empty());
+            mockMvc.perform(post("/api/v1/attachments/att_1/outbound")
+                    .param("ownerId", "701938011").param("sessionId", sessionId.toString()))
+                .andExpect(status().isConflict());
+            assertThat(closed).isTrue();
+        } finally {
+            input.close();
+            UserContext.clear();
+            com.azhukov.agent.core.security.NativeIdentityOrigin.clear();
+        }
+    }
+
 }

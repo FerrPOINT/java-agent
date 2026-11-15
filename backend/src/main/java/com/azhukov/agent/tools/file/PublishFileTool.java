@@ -25,7 +25,7 @@ import java.util.Map;
 @AgentTool(
     name = "publish_file",
     description = "Publish an existing file the user asked to receive, such as a document or archive. "
-        + "Uses the current file-read permissions and session owner; maximum 20 MiB. "
+        + "Uses the current file-read permissions and session owner. "
         + "Return the exact MEDIA:artifact reference in the final response for Telegram delivery. "
         + "Publication is not a platform delivery receipt.",
     toolset = "file"
@@ -49,24 +49,18 @@ public class PublishFileTool implements ToolHandler {
                 return ToolResult.fail("An active session is required to publish a file");
             }
             var path = FileToolSafety.resolvePath(args.path(), session);
-            byte[] bytes;
-            try (var channel = FileToolSafety.openReadable(properties, fileSafety, path, args.path())) {
-                if (channel.size() > AttachmentArtifactService.MAX_ATTACHMENT_BYTES) {
-                    return ToolResult.fail("File exceeds the 20 MiB attachment limit");
-                }
-                bytes = Channels.newInputStream(channel).readNBytes(
-                    Math.toIntExact(AttachmentArtifactService.MAX_ATTACHMENT_BYTES + 1));
-                if (bytes.length > AttachmentArtifactService.MAX_ATTACHMENT_BYTES) {
-                    return ToolResult.fail("File exceeds the 20 MiB attachment limit");
-                }
-            }
-            UserContext.requireCurrentAccess();
             String name = AttachmentArtifactService.sanitizeFileName(path.getFileName().toString());
             String mime = MediaTypeFactory.getMediaType(name)
                 .orElse(MediaType.APPLICATION_OCTET_STREAM).toString();
-            String reference = artifacts.publishGenerated(session, "document", mime, name, bytes);
+            String reference;
+            long size;
+            try (var channel = FileToolSafety.openReadable(properties, fileSafety, path, args.path())) {
+                reference = artifacts.publishGenerated(session, "document", mime, name,
+                    Channels.newInputStream(channel));
+                size = channel.position();
+            }
             return ToolResult.ok(SharedObjectMapper.get().writeValueAsString(
-                Map.of("media_tag", reference, "file_name", name, "size_bytes", bytes.length)));
+                Map.of("media_tag", reference, "file_name", name, "size_bytes", size)));
         } catch (Exception e) {
             return ToolResult.fail("File publication failed: " + e.getMessage());
         }

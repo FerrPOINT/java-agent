@@ -169,8 +169,9 @@ class AttachmentArtifactServiceTest {
         stored.getValue().setOutboundClaimedAt(java.time.Instant.now());
         assertThat(service.outboundStatus(registration.id(), "u1", session))
             .isEqualTo(AttachmentArtifactService.OutboundStatus.CLAIMED);
-        assertThat(service.verifiedContent(registration.id(), "u1")).hasValueSatisfying(
-            content -> assertThat(content.bytes()).isEqualTo(bytes));
+        try (var content = service.verifiedContent(registration.id(), "u1").orElseThrow()) {
+            assertThat(content.stream().readAllBytes()).isEqualTo(bytes);
+        }
         Files.write(tempDir.resolve(registration.cachePath()), new byte[]{3, 2, 1});
         assertThat(service.verifiedContent(registration.id(), "u1")).isEmpty();
     }
@@ -222,7 +223,7 @@ class AttachmentArtifactServiceTest {
     }
 
     @Test
-    void unsafeNamesAndOversizeRejected() {
+    void unsafeNamesAndEmptyContentAreRejected() {
         var service = service();
         byte[] data = "x".getBytes();
 
@@ -232,9 +233,6 @@ class AttachmentArtifactServiceTest {
             "text/plain", "weird name!", data).rejection()).contains("not safe");
         assertThat(service.register("u1", "default", null, null, "cli", "document",
             "text/plain", "a.txt", new byte[0]).rejection()).contains("empty");
-        byte[] huge = new byte[(int) (AttachmentArtifactService.MAX_ATTACHMENT_BYTES + 1)];
-        assertThat(service.register("u1", "default", null, null, "cli", "document",
-            "text/plain", "big.bin", huge).rejection()).contains("exceeds");
         verify(repository, never()).save(any());
     }
 
@@ -421,6 +419,52 @@ class AttachmentArtifactServiceTest {
         assertThat(saved.getValue().getContentHash()).isEqualTo(java.util.HexFormat.of().formatHex(
             java.security.MessageDigest.getInstance("SHA-256").digest(data)));
         assertThat(Files.readAllBytes(tempDir.resolve(result.cachePath()))).isEqualTo(data);
+    }
+
+    @Test
+    void verifiedContentPinsTheOriginalDescriptorAndClosesAfterReading() throws Exception {
+        var service = service();
+        byte[] original = "accepted immutable artifact".getBytes();
+        var registration = service.register("u1", "default", null, null, "internal", "document",
+            "text/plain", "note.txt", original);
+        var saved = org.mockito.ArgumentCaptor.forClass(AttachmentArtifactEntity.class);
+        verify(repository).save(saved.capture());
+        saved.getValue().setExpiresAt(Instant.now().plusSeconds(600));
+        when(repository.findById(registration.id())).thenReturn(Optional.of(saved.getValue()));
+        Path cached = tempDir.resolve(registration.cachePath());
+        try (var verified = service.verifiedContent(registration.id(), "u1").orElseThrow()) {
+            Path replacement = Files.writeString(tempDir.resolve("replacement"), "different bytes");
+            Files.move(replacement, cached, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            assertThat(verified.stream().readAllBytes()).isEqualTo(original);
+        }
+        assertThat(service.verifiedContent(registration.id(), "u1")).isEmpty();
+        assertThat(service.verifiedContent(registration.id(), "another-owner")).isEmpty();
+    }
+
+    @Test
+    void failedStreamAndMetadataPublicationLeaveNoNewBlob() throws Exception {
+        var service = service();
+        var session = com.azhukov.agent.core.model.Session.create("u1", "noop", "test");
+        var entity = new com.azhukov.agent.persistence.entity.SessionEntity();
+        entity.setId(session.id());
+        entity.setUserId("u1");
+        when(sessions.findById(session.id())).thenReturn(Optional.of(entity));
+        var failing = new java.io.InputStream() {
+            int calls;
+            @Override public int read() throws java.io.IOException {
+                if (calls++ == 0) return 1;
+                throw new java.io.IOException("source read failed");
+            }
+        };
+        assertThatThrownBy(() -> service.publishGenerated(session, "document", "application/octet-stream",
+            "report.bin", failing)).isInstanceOf(IllegalStateException.class).hasMessageContaining("source read failed");
+        verify(repository, never()).save(any());
+        when(repository.save(any())).thenThrow(new IllegalStateException("metadata write failed"));
+        assertThatThrownBy(() -> service.register("u1", "default", null, null, "internal", "document",
+            "text/plain", "note.txt", "bytes".getBytes())).hasMessage("metadata write failed");
+        try (var files = Files.walk(tempDir)) {
+            assertThat(files.filter(Files::isRegularFile)).isEmpty();
+        }
     }
 
 }

@@ -332,8 +332,9 @@ class AttachmentFlowE2ETest extends PostgresTestContainer {
         assertThat(artifactService.claimOutbound(first, session.userId(), session.id())).isPresent();
         assertThat(artifactService.claimOutbound(first, session.userId(), session.id())).isEmpty();
         assertThat(artifactService.claimOutbound(second, session.userId(), session.id())).isPresent();
-        assertThat(artifactService.verifiedContent(second, session.userId())).hasValueSatisfying(
-            content -> assertThat(content.bytes()).isEqualTo(bytes));
+        try (var content = artifactService.verifiedContent(second, session.userId()).orElseThrow()) {
+            assertThat(content.stream().readAllBytes()).isEqualTo(bytes);
+        }
     }
 
     @Test
@@ -351,13 +352,14 @@ class AttachmentFlowE2ETest extends PostgresTestContainer {
     }
 
     @Test
-    void oversizeUploadRejectedWith400() throws Exception {
+    void uploadAboveFormerArtifactLimitIsAccepted() throws Exception {
         byte[] big = new byte[20 * 1024 * 1024 + 1];
         mockMvc.perform(multipart("/api/v1/attachments")
                 .file(new MockMultipartFile("file", "big.bin",
                     "application/octet-stream", big))
-                .param("origin", "cli"))
-            .andExpect(status().isBadRequest());
+                .param("origin", "cli").param("ownerId", "large-file-owner"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.artifactId").isNotEmpty());
     }
 
     @Test

@@ -101,9 +101,12 @@ class AttachmentArtifactRepositoryTest extends PostgresTestContainer {
             assertThat(saved.getDisposition()).isEqualTo("document");
             assertThat(saved.getFileName()).isEqualTo("report.zip");
             java.nio.file.Files.writeString(original, "changed after publication");
-            var published = applicationArtifacts.verifiedContent(id, "user-1").orElseThrow();
-            assertThat(published.bytes()).isEqualTo(bytes);
-            try (var zip = new java.util.zip.ZipInputStream(new java.io.ByteArrayInputStream(published.bytes()))) {
+            byte[] publishedBytes;
+            try (var published = applicationArtifacts.verifiedContent(id, "user-1").orElseThrow()) {
+                publishedBytes = published.stream().readAllBytes();
+            }
+            assertThat(publishedBytes).isEqualTo(bytes);
+            try (var zip = new java.util.zip.ZipInputStream(new java.io.ByteArrayInputStream(publishedBytes))) {
                 assertThat(zip.getNextEntry().getName()).isEqualTo("report.txt");
                 assertThat(new String(zip.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8))
                     .isEqualTo("requested document bytes");
