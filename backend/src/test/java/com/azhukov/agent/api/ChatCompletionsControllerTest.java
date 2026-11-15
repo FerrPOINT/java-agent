@@ -495,4 +495,20 @@ class ChatCompletionsControllerTest {
         props.getApi().setDirectModelRequests(true); // test: external model names pass through
         return props;
     }
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"[]",
+        "[{\"type\":\"function\",\"function\":{\"name\":\"read_file\"}}]"})
+    void modelCannotExecuteOutsideTheRequestToolSelection(String tools) throws Exception {
+        when(toolRegistry.getDefinitions(Set.of("hermes-api-server"))).thenReturn(List.of(
+            new ToolDefinition("read_file", "Read", objectSchema()),
+            new ToolDefinition("terminal", "Terminal", objectSchema())));
+        when(agentRuntime.run(anyList(), anyList(), any(ModelRequestOptions.class)))
+            .thenReturn(ChatResponse.toolCalls(List.of(new ToolCall("call-foreign", "terminal", "{}"))),
+                ChatResponse.text("must not execute"));
+        mockMvc.perform(post("/v1/chat/completions").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"tools\":" + tools + "}"))
+            .andExpect(status().isBadGateway());
+        org.mockito.Mockito.verifyNoInteractions(toolExecutionService);
+    }
+
 }
