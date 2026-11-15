@@ -1815,4 +1815,14 @@ class OpenAiResponsesControllerTest {
         }
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {
+        "[{\"type\":\"web_search\"}]", "[null]", "[{\"type\":\"function\"}]"})
+    void unsupportedToolDeclarationsFailExplicitly(String tools) throws Exception {
+        mockMvc.perform(post("/v1/responses").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"input\":\"hi\",\"tools\":" + tools + "}"))
+            .andExpect(status().isBadRequest());
+        verifyNoInteractions(agentRuntime, modelClient);
+    }
+
 }
