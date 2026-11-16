@@ -1,20 +1,21 @@
 package com.azhukov.agent.service;
 
 import lombok.extern.slf4j.Slf4j;
+import com.azhukov.agent.core.security.UserContext;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
-import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * WP-9 (ADR-015): pub channel registry.
  *
- * <p>Named in-memory channels with a per-channel ACL (profile scope),
+ * <p>Named in-memory channels with a per-channel ACL (authenticated owner and profile),
  * bounded retained-event rings and cursor replay. Slow consumers drop the
  * OLDEST retained frames (documented backpressure) — memory is bounded per
  * channel, never an unbounded queue. Pub is best-effort live transport by
@@ -31,36 +32,36 @@ public class PubChannelRegistry {
     public record SubscribeResult(boolean allowed, String reason) {}
 
     private static final class Channel {
-        final String name;
         final String ownerProfile;
+        final String ownerId;
         final ArrayDeque<PubEvent> retained = new ArrayDeque<>();
         long seq = 0;
 
-        Channel(String name, String ownerProfile) {
-            this.name = name;
+        Channel(String ownerProfile, String ownerId) {
             this.ownerProfile = ownerProfile;
+            this.ownerId = ownerId;
         }
     }
 
     private final ConcurrentHashMap<String, Channel> channels = new ConcurrentHashMap<>();
 
-    /** Create (or verify) a channel bound to a profile scope. */
+    /** Create (or verify) a channel bound to its authenticated owner and profile. */
     public SubscribeResult create(String profile, String name) {
         String canonProfile = canon(profile);
         if (name == null || name.isBlank() || !name.matches("[a-zA-Z0-9._-]{1,64}")) {
             return new SubscribeResult(false, "invalid channel name");
         }
-        Channel existing = channels.get(name);
+        String ownerId = UserContext.getUserId();
+        Channel existing = channels.putIfAbsent(name, new Channel(canonProfile, ownerId));
         if (existing != null) {
-            return existing.ownerProfile.equals(canonProfile)
+            return existing.ownerProfile.equals(canonProfile) && Objects.equals(existing.ownerId, ownerId)
                 ? new SubscribeResult(true, null)
-                : new SubscribeResult(false, "channel owned by another profile");
+                : new SubscribeResult(false, "channel owned by another scope");
         }
-        channels.put(name, new Channel(name, canonProfile));
         return new SubscribeResult(true, null);
     }
 
-    /** Publish an event; profile must own the channel. */
+    /** Publish an event only within the channel owner/profile scope. */
     public long publish(String profile, String name, String type, Map<String, Object> payload) {
         Channel channel = owned(profile, name);
         if (channel == null) {
@@ -103,21 +104,23 @@ public class PubChannelRegistry {
         if (channel == null) {
             return false;
         }
-        channels.remove(name);
-        return true;
+        return channels.remove(name, channel);
     }
 
     public Set<String> list(String profile) {
         String canonProfile = canon(profile);
+        String ownerId = UserContext.getUserId();
         return channels.entrySet().stream()
-            .filter(entry -> entry.getValue().ownerProfile.equals(canonProfile))
+            .filter(entry -> entry.getValue().ownerProfile.equals(canonProfile)
+                && Objects.equals(entry.getValue().ownerId, ownerId))
             .map(Map.Entry::getKey)
             .collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new));
     }
 
     private Channel owned(String profile, String name) {
         Channel channel = channels.get(name);
-        if (channel == null || !channel.ownerProfile.equals(canon(profile))) {
+        if (channel == null || !channel.ownerProfile.equals(canon(profile))
+                || !Objects.equals(channel.ownerId, UserContext.getUserId())) {
             return null;
         }
         return channel;

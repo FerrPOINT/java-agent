@@ -131,6 +131,32 @@ class ConsoleControllerTest {
         verify(ptySessionService).close(null, "user-a", "pty_abc");
     }
 
+    @Test
+    void pubChannelKeepsItsAuthenticatedOwnerWithinTheSameProfile() {
+        var pub = new com.azhukov.agent.service.PubChannelRegistry();
+        var scoped = new ConsoleController(processTool, new AgentProperties(), redactor,
+            provider(consoleTaskService), provider(ptySessionService), provider(pub));
+        UserContext.set("owner-a", UserContext.ROLE_USER);
+        assertThat(scoped.pubCreate("work", "events").getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(scoped.pubPublish("work", "events", Map.of("payload", Map.of("secret", "a")))
+            .getStatusCode()).isEqualTo(HttpStatus.OK);
+
+        UserContext.set("owner-b", UserContext.ROLE_USER);
+        assertThat((java.util.List<?>) scoped.pubRead("work", "events", 0, 10).getBody().get("events")).isEmpty();
+        assertThat(pub.list("work")).isEmpty();
+        assertThat(scoped.pubCreate("work", "events").getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(scoped.pubPublish("work", "events", Map.of()).getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(scoped.pubDelete("work", "events").getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(scoped.pubCreate("work", "other").getStatusCode()).isEqualTo(HttpStatus.OK);
+
+        UserContext.set("owner-a", UserContext.ROLE_USER);
+        assertThat(pub.list("work")).containsExactly("events");
+        assertThat((java.util.List<?>) scoped.pubRead("work", "events", 0, 10).getBody().get("events")).hasSize(1);
+        assertThat(scoped.pubDelete("work", "events").getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(scoped.pubCreate("work", "events").getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat((java.util.List<?>) scoped.pubRead("work", "events", 0, 10).getBody().get("events")).isEmpty();
+    }
+
     private static <T> ObjectProvider<T> provider(T value) {
         return new ObjectProvider<>() {
             @Override public T getObject() { return value; }
