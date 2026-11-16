@@ -121,9 +121,9 @@ class CronJobServiceOwnershipTest {
     }
 
     @Test
-    void legacyJobWithNullUserIdIsAccessible() {
+    void administratorCanManageLegacyJobWithNullUserId() {
         foreignJob.setUserId(null);
-        loginAs("user-a");
+        UserContext.set("administrator", UserContext.ROLE_ADMIN);
         assertThatCode(() -> service.pause(foreignJob.getId()))
             .doesNotThrowAnyException();
     }
