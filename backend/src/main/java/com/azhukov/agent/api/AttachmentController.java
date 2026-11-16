@@ -94,7 +94,7 @@ public class AttachmentController {
             // V62 chk_attachment_origin allows telegram/cli/internal only —
             // a blank origin from the REST upload is an internal one.
             origin == null || origin.isBlank() ? "internal" : origin,
-            disposition, file.getContentType(), sanitizeFileName(file.getOriginalFilename()), data);
+            disposition, file.getContentType(), AttachmentArtifactService.sanitizeFileName(file.getOriginalFilename()), data);
         if (registration.rejection() != null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, registration.rejection());
         }
@@ -123,7 +123,7 @@ public class AttachmentController {
     @PostMapping("/{id}/outbound")
     public ResponseEntity<Resource> claimOutbound(@PathVariable("id") String id,
             @RequestParam(name = "ownerId", required = false) String ownerId,
-            @RequestParam("sessionId") UUID sessionId) {
+            @RequestParam("sessionId") UUID sessionId) throws java.io.IOException {
         String owner = requireGatewayOwner(ownerId);
         OutboundStatus status = requireOutboundArtifact(id, owner, sessionId);
         if (status == OutboundStatus.DELIVERED) return ResponseEntity.noContent().build();
@@ -133,16 +133,25 @@ public class AttachmentController {
         }
         var content = service().verifiedContent(id, owner)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Artifact content is unavailable"));
-        var response = contentResponse(content.artifact(), new org.springframework.core.io.ByteArrayResource(content.bytes()));
-        var claim = service().claimOutbound(id, owner, sessionId);
-        if (claim.isEmpty()) {
-            if (requireOutboundArtifact(id, owner, sessionId) == OutboundStatus.DELIVERED) {
-                return ResponseEntity.noContent().build();
+        try {
+            var response = contentResponse(content.artifact(),
+                new org.springframework.core.io.InputStreamResource(content.stream()));
+            UserContext.requireCurrentAccess();
+            var claim = service().claimOutbound(id, owner, sessionId);
+            if (claim.isEmpty()) {
+                content.close();
+                if (requireOutboundArtifact(id, owner, sessionId) == OutboundStatus.DELIVERED) {
+                    return ResponseEntity.noContent().build();
+                }
+                throw alreadyClaimed();
             }
-            throw alreadyClaimed();
+            return ResponseEntity.ok().headers(response.getHeaders())
+                .header("X-Outbound-Claim", claim.get().toString()).body(response.getBody());
+        } catch (RuntimeException | Error failure) {
+            try { content.close(); }
+            catch (java.io.IOException closeFailure) { failure.addSuppressed(closeFailure); }
+            throw failure;
         }
-        return ResponseEntity.ok().headers(response.getHeaders())
-            .header("X-Outbound-Claim", claim.get().toString()).body(response.getBody());
     }
 
     @DeleteMapping("/{id}/outbound")
@@ -177,6 +186,7 @@ public class AttachmentController {
             .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + fileName + "\"")
             .header("X-Artifact-Id", artifact.id())
             .header("X-Content-Hash", artifact.contentHash() != null ? artifact.contentHash() : "")
+            .contentLength(artifact.sizeBytes())
             .contentType(contentType != null ? MediaType.parseMediaType(contentType)
                 : MediaType.APPLICATION_OCTET_STREAM)
             .body(resource);
@@ -231,10 +241,5 @@ public class AttachmentController {
         return UserContext.effectiveUserId(requestedOwnerId);
     }
 
-    private static String sanitizeFileName(String name) {
-        if (name == null || name.isBlank()) return "file.bin";
-        String cleaned = name.replaceAll("[^a-zA-Z0-9._-]", "_")
-            .replaceAll("\\.{2,}", "_");
-        return cleaned.length() > 128 ? cleaned.substring(0, 128) : cleaned;
-    }
+
 }

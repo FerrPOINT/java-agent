@@ -139,10 +139,12 @@ public class AgentRuntimeService {
         String sessionUserId = UserContext.effectiveUserId(
             applied.userId() != null && !applied.userId().isBlank()
                 ? applied.userId() : AgentProperties.DEFAULT_USER_ID);
+        String sessionSource = applied.chatType() != null && !applied.chatType().isBlank() ? "telegram" : "cli";
         var resolved = sessionResolver.resolveOrCreate(
-            applied.sessionId(), sessionUserId, properties.getModel().getModelName());
+            applied.sessionId(), sessionUserId, properties.getModel().getModelName(), sessionSource);
         boolean isNew = resolved.isNew();
-        Session session = resolved.session();
+        // Delivery formatting follows this request; persisted session provenance stays unchanged.
+        Session session = resolved.session().withMetadata("platform", sessionSource);
         return sessionTurnLockManager.withTurn(session.id(), () -> runResolvedTurn(applied, session, isNew));
     }
 
