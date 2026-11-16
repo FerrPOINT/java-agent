@@ -72,6 +72,9 @@ public class MemoryController {
 
     @PostMapping("/agent/memory/approval")
     public void setApproval(@RequestBody ApprovalRequest request) {
+        if (UserContext.getUserId() != null && !UserContext.isAdmin()) {
+            throw new SecurityException("Shared memory approval settings require administrator access");
+        }
         agentRuntimeService.setMemoryApproval(request.enabled());
     }
 

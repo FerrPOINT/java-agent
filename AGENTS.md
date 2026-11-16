@@ -32,8 +32,8 @@ GitHub Actions workflows are not used in this fork. Run the existing Gradle
 gates locally; do not restore hosted workflows or Actions dependency updates.
 
 Local verification and Docker use Temurin **25.0.4.1+1-LTS**; all Docker stages pin image
-digests. Use committed wrappers: **9.6.1** at the repository root for
-bot/CLI and **9.8.2** from `backend/` for the standalone backend gates.
+digests. Both committed wrappers use **9.9.1**: the repository root for bot/CLI and
+`backend/` for standalone backend gates. Both distributions are SHA-256 pinned.
 
 ```bash
 cd /opt/dev/java-agent
@@ -120,7 +120,7 @@ SSE streaming для real-time token output. JLine autocomplete.
 |-----------|---------|
 | Java | Temurin 25.0.4.1+1 LTS |
 | Spring Boot | 4.1.0 |
-| Gradle | workspace 9.6.1; standalone backend 9.8.2 (Groovy DSL) |
+| Gradle | 9.9.1 (workspace и standalone backend, Groovy DSL) |
 | Lombok | 1.18.38 |
 | MapStruct | 1.6.3 |
 | LangChain4j | 1.21.0 |

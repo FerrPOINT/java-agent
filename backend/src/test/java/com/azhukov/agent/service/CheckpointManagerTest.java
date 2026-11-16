@@ -47,6 +47,34 @@ class CheckpointManagerTest {
             });
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.NullSource
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"owner-a", "owner-b"})
+    void automaticPruneNeverDeletesAnotherOwnersCheckpoint(String owner) {
+        properties.getCheckpoints().setMaxSnapshots(1);
+        var foreign = new CheckpointEntity();
+        foreign.setId(UUID.randomUUID());
+        foreign.setUserId("other-owner");
+        var created = new java.util.concurrent.atomic.AtomicReference<CheckpointEntity>();
+        when(checkpointRepository.save(any(CheckpointEntity.class))).thenAnswer(call -> {
+            CheckpointEntity entity = call.getArgument(0);
+            entity.setId(UUID.randomUUID());
+            created.set(entity);
+            return entity;
+        });
+        // Both released and corrected contracts use this same mixed-owner history.
+        lenient().when(checkpointRepository.findAll(any(org.springframework.data.domain.Sort.class)))
+            .thenAnswer(call -> List.of(created.get(), foreign));
+        lenient().when(checkpointRepository.findByUserId(any(), any(org.springframework.data.domain.Sort.class)))
+            .thenAnswer(call -> java.util.stream.Stream.of(created.get(), foreign)
+                .filter(row -> java.util.Objects.equals(row.getUserId(), call.getArgument(0))).toList());
+
+        assertThat(manager.snapshot(owner, "new checkpoint").getUserId()).isEqualTo(owner);
+
+        verify(checkpointRepository, never()).delete(foreign);
+        verify(checkpointFileRepository, never()).deleteByCheckpointId(foreign.getId());
+    }
+
     @Test
     void snapshotDoesNotReadOutsideViaLinksOrBlockOnFifo() throws Exception {
         Path workspace = Files.createDirectory(tempDir.resolve("workspace"));
@@ -58,7 +86,7 @@ class CheckpointManagerTest {
         Files.createSymbolicLink(workspace.resolve("linked-file"), outside.resolve("private.txt"));
         assertThat(new ProcessBuilder("mkfifo", workspace.resolve("named-pipe").toString()).start().waitFor()).isZero();
         when(checkpointRepository.save(any(CheckpointEntity.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(checkpointRepository.findAll(any(org.springframework.data.domain.Sort.class))).thenReturn(List.of());
+        when(checkpointRepository.findByUserId(org.mockito.ArgumentMatchers.isNull(), any(org.springframework.data.domain.Sort.class))).thenReturn(List.of());
 
         CheckpointEntity saved = org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(
             java.time.Duration.ofSeconds(3), () -> manager.snapshot("workspace"));
@@ -75,7 +103,7 @@ class CheckpointManagerTest {
         var sentinel = Files.writeString(outside.resolve("document"), "untouched");
         properties.getCore().setWorkingDirectory(root.toString());
         when(checkpointRepository.save(any(CheckpointEntity.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(checkpointRepository.findAll(any(org.springframework.data.domain.Sort.class))).thenReturn(List.of());
+        when(checkpointRepository.findByUserId(org.mockito.ArgumentMatchers.isNull(), any(org.springframework.data.domain.Sort.class))).thenReturn(List.of());
         CheckpointEntity checkpoint = manager.snapshot("checkpoint");
         UUID id = UUID.randomUUID();
         when(checkpointRepository.findById(id)).thenReturn(java.util.Optional.of(checkpoint));
@@ -130,7 +158,7 @@ class CheckpointManagerTest {
     @Test
     void snapshotCreatesEntity() {
         when(checkpointRepository.save(any(CheckpointEntity.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(checkpointRepository.findAll(org.mockito.ArgumentMatchers.any(org.springframework.data.domain.Sort.class))).thenReturn(List.of());
+        when(checkpointRepository.findByUserId(org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.any(org.springframework.data.domain.Sort.class))).thenReturn(List.of());
         CheckpointEntity entity = manager.snapshot("test snapshot");
         assertThat(entity.getDescription()).isEqualTo("test snapshot");
         assertThat(entity.getFileCount()).isGreaterThanOrEqualTo(0);
@@ -204,9 +232,9 @@ class CheckpointManagerTest {
         e2.setId(UUID.randomUUID());
         e2.setCreatedAt(java.time.Instant.now());
 
-        when(checkpointRepository.findAll(org.mockito.ArgumentMatchers.any(org.springframework.data.domain.Sort.class))).thenReturn(List.of(e2, e1));
+        when(checkpointRepository.findByUserId(org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.any(org.springframework.data.domain.Sort.class))).thenReturn(List.of(e2, e1));
 
-        int removed = manager.prune(1);
+        int removed = manager.prune(null, 1);
         assertThat(removed).isEqualTo(1);
         verify(checkpointFileRepository).deleteByCheckpointId(e1.getId());
         verify(checkpointRepository).delete(e1);
@@ -214,8 +242,8 @@ class CheckpointManagerTest {
 
     @Test
     void pruneReturnsZeroWhenUnderLimit() {
-        when(checkpointRepository.findAll(org.mockito.ArgumentMatchers.any(org.springframework.data.domain.Sort.class))).thenReturn(List.of());
-        int removed = manager.prune(10);
+        when(checkpointRepository.findByUserId(org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.any(org.springframework.data.domain.Sort.class))).thenReturn(List.of());
+        int removed = manager.prune(null, 10);
         assertThat(removed).isZero();
     }
 
@@ -291,7 +319,7 @@ class CheckpointManagerTest {
         Files.writeString(tempDir.resolve("b.txt"), "content-b");
 
         when(checkpointRepository.save(any(CheckpointEntity.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(checkpointRepository.findAll(org.mockito.ArgumentMatchers.any(org.springframework.data.domain.Sort.class))).thenReturn(List.of());
+        when(checkpointRepository.findByUserId(org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.any(org.springframework.data.domain.Sort.class))).thenReturn(List.of());
 
         CheckpointEntity entity = manager.snapshot("with files");
         assertThat(entity.getFileCount()).isEqualTo(2);
@@ -491,7 +519,7 @@ class CheckpointManagerTest {
             e.setId(UUID.randomUUID());
             return e;
         });
-        when(checkpointRepository.findAll(org.mockito.ArgumentMatchers.any(org.springframework.data.domain.Sort.class))).thenReturn(List.of());
+        when(checkpointRepository.findByUserId(org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.any(org.springframework.data.domain.Sort.class))).thenReturn(List.of());
 
         CheckpointEntity entity = manager.snapshot("store content");
 

@@ -197,8 +197,8 @@ public class CheckpointManager {
         // Phase 2: persistence — short @Transactional via Spring proxy
         CheckpointEntity saved = self.getObject().persistCheckpoint(userId, description, collectedFiles);
 
-        // Auto-prune (already @Transactional via proxy)
-        self.getObject().prune(properties.getCheckpoints().getMaxSnapshots());
+        // Retention belongs to the snapshot owner, including unowned system snapshots.
+        self.getObject().prune(userId, properties.getCheckpoints().getMaxSnapshots());
 
         return saved;
     }
@@ -381,8 +381,8 @@ public class CheckpointManager {
     }
 
     @Transactional
-    public int prune(int maxSnapshots) {
-        List<CheckpointEntity> all = checkpointRepository.findAll(org.springframework.data.domain.Sort.by(
+    public int prune(String userId, int maxSnapshots) {
+        List<CheckpointEntity> all = checkpointRepository.findByUserId(userId,org.springframework.data.domain.Sort.by(
             org.springframework.data.domain.Sort.Direction.DESC, "createdAt"));
 
         if (all.size() <= maxSnapshots) return 0;

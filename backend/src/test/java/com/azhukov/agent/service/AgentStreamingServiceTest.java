@@ -192,6 +192,40 @@ class AgentStreamingServiceTest {
     }
 
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({
+        "cli,private,telegram", "api_server,group,telegram",
+        "telegram,,api_server", "cli,,api_server", "telegram,private,telegram", "api_server,,api_server"
+    })
+    void streamingTurnUsesCurrentTransportWithoutRewritingStoredOrigin(
+            String storedSource, String chatType, String expectedPlatform) throws Exception {
+        var stored = sessionRepository.findById(SESSION_ID).orElseThrow();
+        stored.setSource(storedSource);
+        var body = new java.util.HashMap<String, Object>();
+        body.put("sessionId", SESSION_ID);
+        body.put("userId", "user-1");
+        body.put("message", "deliver");
+        if (chatType != null) body.put("chatType", chatType);
+        var request = objectMapper.convertValue(body, ChatRequest.class);
+        doAnswer(call -> {
+            StreamingResponseHandler handler = call.getArgument(3);
+            handler.onToken("done");
+            handler.onComplete();
+            return null;
+        }).when(modelClient).stream(any(List.class), any(List.class), any(), any(StreamingResponseHandler.class));
+        var emitter = new CollectingEmitter(30_000L);
+
+        streamingService.streamTurn(request, emitter);
+        emitter.awaitDone();
+
+        assertThat(emitter.error.get()).isNull();
+        var captured = org.mockito.ArgumentCaptor.forClass(Session.class);
+        verify(promptBuilder).buildSystemMessage(captured.capture());
+        assertThat(captured.getValue().getMetadata("platform")).isEqualTo(expectedPlatform);
+        assertThat(captured.getValue().userId()).isEqualTo("user-1");
+        assertThat(stored.getSource()).isEqualTo(storedSource);
+    }
+
     @Test
     void streamingTurnWithMemoryToolArmsBackgroundReviewCounter() throws Exception {
         properties.getMemory().setNudgeInterval(1);

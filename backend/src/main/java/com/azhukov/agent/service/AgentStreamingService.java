@@ -448,7 +448,8 @@ public class AgentStreamingService {
         String sessionSource = request.chatType() != null && !request.chatType().isBlank()
             ? "telegram" : "api_server";
         boolean isNew = resolved.isNew();
-        Session session = resolved.session();
+        // Delivery formatting follows this request; persisted session provenance stays unchanged.
+        Session session = resolved.session().withMetadata("platform", sessionSource);
         // A foreground streaming turn has the same priority as the sync path:
         // cancel its session's stale review before the first model/tool call.
         if (backgroundReviewService != null) {

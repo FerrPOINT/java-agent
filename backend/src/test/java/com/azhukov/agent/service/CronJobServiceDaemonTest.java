@@ -75,12 +75,12 @@ class CronJobServiceDaemonTest {
         job.setCreatedAt(Instant.now());
 
         when(cronJobRepository.findById(jobId)).thenReturn(java.util.Optional.of(job));
-        when(agentRuntimeService.runBackground(any(), any(), org.mockito.ArgumentMatchers.anyBoolean())).thenReturn("session-id");
+        when(agentRuntimeService.runBackground(any(), org.mockito.ArgumentMatchers.anyBoolean(), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(java.util.Map.of()))).thenReturn("session-id");
 
         // Execute job — should work without error
         service.runNow(jobId);
 
-        verify(agentRuntimeService).runBackground(any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
+        verify(agentRuntimeService).runBackground(any(), org.mockito.ArgumentMatchers.anyBoolean(), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(java.util.Map.of()));
     }
 
     @Test

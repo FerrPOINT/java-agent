@@ -72,6 +72,26 @@ class CheckpointRepositoryTest extends PostgresTestContainer {
     }
 
     @Test
+    void sortedOwnerQueryIncludesOnlyThatOwnerAndKeepsUnownedRowsSeparate() {
+        var owners = java.util.Arrays.asList("default", "system", null);
+        for (String owner : owners) {
+            var first = newCheckpoint("old", 1, 100);
+            first.setUserId(owner);
+            var latest = newCheckpoint("latest", 2, 200);
+            latest.setUserId(owner);
+            latest.setCreatedAt(T1.plusSeconds(60));
+            checkpointRepository.saveAll(List.of(first, latest));
+        }
+        checkpointRepository.flush();
+        for (String owner : owners) {
+            var rows = checkpointRepository.findByUserId(owner,
+                org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC, "createdAt"));
+            assertThat(rows).extracting(CheckpointEntity::getUserId).containsExactly(owner, owner);
+            assertThat(rows).extracting(CheckpointEntity::getDescription).containsExactly("latest", "old");
+        }
+    }
+
+    @Test
     void deleteByIdRemovesEntity() {
         CheckpointEntity saved = checkpointRepository.save(newCheckpoint(DESCRIPTION_1, 2, 2048L));
         UUID id = saved.getId();

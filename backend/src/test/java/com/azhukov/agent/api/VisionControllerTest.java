@@ -33,6 +33,11 @@ class VisionControllerTest {
     @Mock
     private ModelClient modelClient;
 
+    @org.junit.jupiter.api.AfterEach
+    void clearCaller() {
+        com.azhukov.agent.core.security.UserContext.clear();
+    }
+
     @BeforeEach
     void setUp() {
         objectMapper = new ObjectMapper();
@@ -43,8 +48,26 @@ class VisionControllerTest {
             .build();
     }
 
-    @Test
-    void visionReturnsAnalysisText() throws Exception {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"owner-a", "owner-b"})
+    void ordinaryUserCannotOperateSharedVisionBrowser(String owner) throws Exception {
+        com.azhukov.agent.core.security.UserContext.set(owner, com.azhukov.agent.core.security.UserContext.ROLE_USER);
+        try {
+            mockMvc.perform(post("/api/v1/agent/vision").contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"url\":\"https://example.com\",\"prompt\":\"describe\"}"))
+                .andExpect(status().isForbidden());
+            org.mockito.Mockito.verifyNoInteractions(browserService, modelClient);
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"administrator", "no-auth-test"})
+    void visionReturnsAnalysisText(String mode) throws Exception {
+        if ("administrator".equals(mode)) {
+            com.azhukov.agent.core.security.UserContext.set(mode, com.azhukov.agent.core.security.UserContext.ROLE_ADMIN);
+        }
         when(browserService.navigate("https://example.com")).thenReturn("Navigated to https://example.com");
         when(browserService.screenshot()).thenReturn("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=");
         when(modelClient.analyzeImage(eq("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII="), eq("Describe the page")))

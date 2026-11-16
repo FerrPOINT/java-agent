@@ -58,7 +58,7 @@
 | Поле | Значение |
 |---|---|
 | Модули | `backend`, `telegram-bot`, `cli` (+ `shared` DTO) |
-| Runtime | Temurin 25.0.4.1+1 LTS, Spring Boot 4.1; workspace Gradle 9.6.1, standalone backend 9.8.2 |
+| Runtime | Temurin 25.0.4.1+1 LTS, Spring Boot 4.1; Gradle 9.9.1 (workspace и standalone backend) |
 | Data | PostgreSQL 16, JPA/Hibernate, Flyway |
 | AI/tooling | LangChain4j 1.18, MCP Java SDK 2.0, Repomix MCP, built-in tool registry |
 | Interfaces | REST/SSE, OpenAI-compatible `/v1/*`, Telegram bot, CLI REPL |
@@ -84,6 +84,13 @@
 | Telegram gateway | Streaming, media handling, model override, steer mode, busy-ack, group filters и inline keyboards. |
 | CLI REPL | 92 slash-команды, SSE streaming, JLine autocomplete и markdown rendering. |
 | Deployment/test matrix | Production, local и E2E compose-профили, Flyway migrations и большой regression suite. |
+
+Файлы для Telegram публикуются явным инструментом `publish_file` из набора `file`.
+Он потоково публикует выбранный файл с действующими файловыми правами,
+без отдельного ограничения размера публикации,
+сохраняет его для текущего владельца и сессии и возвращает `MEDIA:artifact:<id>`.
+Эту ссылку нужно включить в финальный ответ; успешная публикация сама по себе
+не подтверждает доставку в Telegram. Обычные записи файлов не отправляются автоматически.
 
 <a name="stack"></a>
 
@@ -124,6 +131,10 @@
 используется bearer собственного Auth, действующая сессия и owner scope без
 fallback на global key. Настройки и ограничения — [общая авторизация](docs/central-auth.md).
 Ниже описан standalone-режим при выключенном общем входе.
+
+Общая лента событий через HTTP и WebSocket доступна только администраторам.
+Pub-канал привязан к создавшему его пользователю и профилю: другой пользователь
+не может читать, публиковать, удалить или заново занять этот канал.
 
 - **Global key** (`agent.security.api-key`, env `API_SERVER_KEY`) — админ-доступ; когда пуст — auth выключен (dev-режим).
 - **Per-user ключи** (`agk_…`) выдаются админом через `/api/v1/admin/users/{id}/keys`, хранится только SHA-256 fingerprint. Держатель ключа получает свою userId-область: сессии, память, cron, чекпойнты, usage; приватные скиллы других юзеров недоступны.
@@ -198,6 +209,15 @@ curl -s -X POST http://localhost:8090/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model":"kimi-k2.6","messages":[{"role":"user","content":"hi"}]}'
 ```
+
+Для /v1/chat/completions и /v1/responses поле tools только сужает серверный
+список из agent.api.chat-completion-toolsets. Описания и схемы берутся из
+реестра сервера; клиент не может добавить инструмент или переопределить его.
+Явный пустой список отключает инструменты для запроса. Неизвестные имена и
+неподдерживаемые типы инструментов дают HTTP 400 до обращения к модели. Если модель
+запросит инструмент вне выбранного списка, Chat API завершит запрос с HTTP 502,
+не выполняя этот инструмент. SSE-работники и executor инструментов сохраняют
+пользователя и исходное подтверждение доступа вызывающего.
 
 CLI — отдельный Spring Boot модуль, не зависит от backend-кода и общается с ним через REST: REPL со slash-командами (`/new`, `/status`, `/compress`, `/undo`, `/checkpoint`, `/rollback`, `/memory`, `/skills`, `/help` и др.), SSE streaming и JLine autocomplete.
 

@@ -20,6 +20,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 @Tag("slow")
 class AttachmentArtifactRepositoryTest extends PostgresTestContainer {
+    @Autowired
+    private SessionRepository sessions;
+
 
     @Autowired
     private AttachmentArtifactRepository repository;
@@ -40,6 +43,114 @@ class AttachmentArtifactRepositoryTest extends PostgresTestContainer {
         entity.setDisposition(disposition);
         entity.setOrigin("telegram");
         return entity;
+    }
+
+    @Autowired
+    private com.azhukov.agent.core.tool.ToolRegistry toolRegistry;
+    @Autowired
+    private com.azhukov.agent.config.AgentProperties agentProperties;
+    @Autowired
+    private com.azhukov.agent.service.AttachmentArtifactService applicationArtifacts;
+
+    @Test
+    void configuredFilePublicationPreservesScopedBytesAndMetadata(
+        @org.junit.jupiter.api.io.TempDir java.nio.file.Path workspace
+    ) throws Exception {
+        for (String group : List.of("file", "coding", "hermes-cli", "hermes-telegram", "hermes-acp", "hermes-api-server")) {
+            assertThat(toolRegistry.getDefinitions(java.util.Set.of(group)))
+                .as("real configured toolset: %s", group)
+                .extracting(com.azhukov.agent.core.model.ToolDefinition::name).contains("publish_file");
+        }
+        for (String group : List.of("safe", "hermes-webhook")) {
+            assertThat(toolRegistry.getDefinitions(java.util.Set.of(group)))
+                .extracting(com.azhukov.agent.core.model.ToolDefinition::name).doesNotContain("publish_file");
+        }
+        var entity = new com.azhukov.agent.persistence.entity.SessionEntity();
+        entity.setUserId("user-1");
+        entity.setModelProvider("noop");
+        entity.setModelName("test");
+        sessions.saveAndFlush(entity);
+        var session = new com.azhukov.agent.core.model.Session(entity.getId(), "user-1", "publication",
+            "noop", "test", null, java.util.Map.of(
+                com.azhukov.agent.tools.terminal.TerminalTool.META_WORKDIR, workspace.toString()), null);
+        agentProperties.getSecurity().setFileSafetyEnabled(true);
+        agentProperties.getSecurity().setAllowedPaths(List.of(workspace.toString()));
+        var cache = java.nio.file.Files.createDirectory(workspace.resolve("published-cache"));
+        org.springframework.test.util.ReflectionTestUtils.setField(applicationArtifacts, "cacheRootConfig", cache.toString());
+        org.springframework.test.util.ReflectionTestUtils.setField(applicationArtifacts, "cacheRoot", null);
+        var archive = new java.io.ByteArrayOutputStream();
+        try (var zip = new java.util.zip.ZipOutputStream(archive)) {
+            zip.putNextEntry(new java.util.zip.ZipEntry("report.txt"));
+            zip.write("requested document bytes".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            zip.closeEntry();
+        }
+        byte[] bytes = archive.toByteArray();
+        var original = java.nio.file.Files.write(workspace.resolve("report.zip"), bytes);
+        com.azhukov.agent.core.security.UserContext.set("user-1", com.azhukov.agent.core.security.UserContext.ROLE_USER);
+        try {
+            var result = toolRegistry.execute("publish_file", "publish-request",
+                "{\"path\":\"report.zip\"}", null, session);
+            assertThat(result.success()).as(result.error()).isTrue();
+            var body = new com.fasterxml.jackson.databind.ObjectMapper().readTree(result.content());
+            String reference = body.path("media_tag").asText();
+            assertThat(reference).matches("MEDIA:artifact:att_[a-f0-9]{32}");
+            String id = reference.substring("MEDIA:artifact:".length());
+            var saved = repository.findById(id).orElseThrow();
+            assertThat(saved.getOwnerId()).isEqualTo("user-1");
+            assertThat(saved.getSessionId()).isEqualTo(entity.getId());
+            assertThat(saved.getDisposition()).isEqualTo("document");
+            assertThat(saved.getFileName()).isEqualTo("report.zip");
+            java.nio.file.Files.writeString(original, "changed after publication");
+            byte[] publishedBytes;
+            try (var published = applicationArtifacts.verifiedContent(id, "user-1").orElseThrow()) {
+                publishedBytes = published.stream().readAllBytes();
+            }
+            assertThat(publishedBytes).isEqualTo(bytes);
+            try (var zip = new java.util.zip.ZipInputStream(new java.io.ByteArrayInputStream(publishedBytes))) {
+                assertThat(zip.getNextEntry().getName()).isEqualTo("report.txt");
+                assertThat(new String(zip.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8))
+                    .isEqualTo("requested document bytes");
+                assertThat(zip.getNextEntry()).isNull();
+            }
+            assertThat(applicationArtifacts.find(id, "system")).isEmpty();
+            assertThat(applicationArtifacts.outboundStatus(id, "system", entity.getId()))
+                .isEqualTo(com.azhukov.agent.service.AttachmentArtifactService.OutboundStatus.UNAVAILABLE);
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+        }
+    }
+
+    @Test
+    void registrationChecksPersistedSessionOwnerBeforeAnyBlobIsWritten(
+        @org.junit.jupiter.api.io.TempDir java.nio.file.Path cache
+    ) throws Exception {
+        var foreign = new com.azhukov.agent.persistence.entity.SessionEntity();
+        foreign.setUserId("system");
+        foreign.setModelProvider("noop");
+        foreign.setModelName("test");
+        var own = new com.azhukov.agent.persistence.entity.SessionEntity();
+        own.setUserId("user-1");
+        own.setModelProvider("noop");
+        own.setModelName("test");
+        sessions.saveAllAndFlush(List.of(foreign, own));
+        var service = new com.azhukov.agent.service.AttachmentArtifactService(
+            new org.springframework.beans.factory.ObjectProvider<>() {
+                @Override public AttachmentArtifactRepository getObject() { return repository; }
+                @Override public AttachmentArtifactRepository getIfAvailable() { return repository; }
+            }, new com.azhukov.agent.service.ArtifactProcessIsolation(), sessions);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "cacheRootConfig", cache.toString());
+
+        var rejected = service.register("user-1", "default", foreign.getId(), null, "cli", "document",
+            "text/plain", "note.txt", "bytes".getBytes());
+        assertThat(rejected.id()).isNull();
+        assertThat(rejected.rejection()).isEqualTo("session not found");
+        try (var files = java.nio.file.Files.list(cache)) {
+            assertThat(files).isEmpty();
+        }
+        var accepted = service.register("user-1", "default", own.getId(), null, "cli", "document",
+            "text/plain", "note.txt", "bytes".getBytes());
+        assertThat(accepted.rejection()).isNull();
+        assertThat(repository.findById(accepted.id()).orElseThrow().getSessionId()).isEqualTo(own.getId());
     }
 
     @Test
@@ -219,7 +330,7 @@ class AttachmentArtifactRepositoryTest extends PostgresTestContainer {
             new org.springframework.beans.factory.ObjectProvider<>() {
                 @Override public AttachmentArtifactRepository getObject() { return repository; }
                 @Override public AttachmentArtifactRepository getIfAvailable() { return repository; }
-            }, null);
+            }, null, sessions);
         org.springframework.test.util.ReflectionTestUtils.setField(service, "cacheRootConfig", cache.toString());
 
         assertThat(transactionTemplate.<Integer>execute(tx -> service.sweepExpired())).isEqualTo(2);

@@ -366,10 +366,12 @@ private static final String CRON_EXECUTION_HINT = """
         if (!noAgent && isBlank(prompt) && normalizedScript == null && isBlank(skills)) {
             throw new IllegalArgumentException(EMPTY_PAYLOAD_ERROR);
         }
+        String ownerId = userId != null ? userId : UserContext.scopeUserId();
+        requireAttachedSessionOwnership(ownerId, attachedSessionId);
         String effectiveContextFrom = continuityEnabled ? applyContinuity(contextFrom, true) : contextFrom;
 
         CronJobEntity entity = new CronJobEntity();
-        entity.setUserId(userId != null ? userId : UserContext.scopeUserId());
+        entity.setUserId(ownerId);
         entity.setProfile(normalizedProfile);
         entity.setName(name);
         entity.setSchedule(schedule);
@@ -512,6 +514,12 @@ private static final String CRON_EXECUTION_HINT = """
         CronJobEntity entity = lockedSchedule(id)
             .orElseThrow(() -> new IllegalArgumentException("Cron job not found: " + id));
         requireOwnership(entity);
+        if (Boolean.TRUE.equals(attachToSession)) {
+            if (currentSessionId == null) {
+                throw new IllegalArgumentException("attach_to_session=true requires a current session");
+            }
+            requireAttachedSessionOwnership(entity.getUserId(), currentSessionId);
+        }
 
         boolean scriptUpdated = script != null;
         String normalizedScript = scriptUpdated ? normalizeCronScriptPath(script) : null;
@@ -569,9 +577,6 @@ private static final String CRON_EXECUTION_HINT = """
         }
         if (attachToSession != null) {
             if (attachToSession) {
-                if (currentSessionId == null) {
-                    throw new IllegalArgumentException("attach_to_session=true requires a current session");
-                }
                 entity.setAttachedSessionId(currentSessionId);
             } else {
                 entity.setAttachedSessionId(null);
@@ -1047,15 +1052,15 @@ private static final String CRON_EXECUTION_HINT = """
             AgentRuntimeService runtimeService = agentRuntimeServiceProvider.getIfAvailable();
             String lastRunSessionId = null;
             if (runtimeService != null) {
-                String targetSessionId = backgroundTargetSessionId(job);
                 int maxRetries = 2;
                 int attempt = 0;
                 boolean success = false;
                 while (attempt <= maxRetries && !success) {
                     try {
-                        lastRunSessionId = runtimeMetadata.isEmpty()
-                            ? runtimeService.runBackground(enhancedPrompt, targetSessionId, true)
-                            : runtimeService.runBackground(enhancedPrompt, targetSessionId, true, runtimeMetadata);
+                        // Historical unowned system jobs keep their existing execution owner.
+                        String ownerId = job.getUserId() != null ? job.getUserId() : AgentProperties.DEFAULT_USER_ID;
+                        lastRunSessionId = runtimeService.runBackground(
+                            enhancedPrompt, true, ownerId, runtimeMetadata);
                         success = true;
                     } catch (Exception llmEx) {
                         attempt++;
@@ -1274,16 +1279,6 @@ private static final String CRON_EXECUTION_HINT = """
         boolean resetFailureStreak() {
             return !failed;
         }
-    }
-
-    private static String backgroundTargetSessionId(CronJobEntity job) {
-        if (job.getAttachedSessionId() != null) {
-            return job.getAttachedSessionId().toString();
-        }
-        if (job.isContinuityEnabled() && job.getLastRunSessionId() != null) {
-            return job.getLastRunSessionId().toString();
-        }
-        return null;
     }
 
     public static String jobProfile(CronJobEntity job) {
@@ -1566,8 +1561,9 @@ private static final String CRON_EXECUTION_HINT = """
             UUID sessionId = job.getAttachedSessionId();
             SessionMutationLock.withLock(sessionId, () -> {
                 transactionTemplate.executeWithoutResult(status -> {
-                    var sessions = sessionRepositoryProvider == null ? null : sessionRepositoryProvider.getIfAvailable();
-                    if (sessions != null && sessions.findMessageParentId(sessionId).isEmpty()) {
+                    requireAttachedSessionOwnership(job.getUserId(), sessionId);
+                    var sessions = sessionRepositoryProvider.getIfAvailable();
+                    if (sessions.findMessageParentId(sessionId).isEmpty()) {
                         return;
                     }
                     List<Integer> indices =
@@ -2325,9 +2321,23 @@ private static final String CRON_EXECUTION_HINT = """
         return entity != null && (scoped == null || Objects.equals(scoped, entity.getUserId()));
     }
 
+    private void requireAttachedSessionOwnership(String ownerId, UUID sessionId) {
+        if (sessionId == null) return;
+        var sessions = sessionRepositoryProvider == null ? null : sessionRepositoryProvider.getIfAvailable();
+        if (sessions == null) {
+            throw new IllegalStateException("Session ownership validation is unavailable");
+        }
+        var session = sessions.findById(sessionId)
+            .orElseThrow(() -> new IllegalArgumentException("Attached session not found: " + sessionId));
+        // Historical global jobs retain administrator/internal scope.
+        boolean globalJob = ownerId == null && UserContext.scopeUserId() == null;
+        if (!globalJob && (ownerId == null || ownerId.isBlank() || !Objects.equals(ownerId, session.getUserId()))) {
+            throw new SecurityException("Attached session does not belong to the cron job owner");
+        }
+    }
+
     private void requireOwnership(CronJobEntity entity) {
-        String scoped = UserContext.scopeUserId();
-        if (scoped != null && entity.getUserId() != null && !scoped.equals(entity.getUserId())) {
+        if (!isVisibleToCurrentUser(entity)) {
             throw new SecurityException("Cron job does not belong to the current user");
         }
     }

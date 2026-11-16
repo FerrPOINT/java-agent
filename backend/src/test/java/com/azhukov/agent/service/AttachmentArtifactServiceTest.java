@@ -37,6 +37,17 @@ class AttachmentArtifactServiceTest {
     @Mock
     private AttachmentArtifactRepository repository;
 
+    @Mock
+    private com.azhukov.agent.persistence.repository.SessionRepository sessions;
+
+    private UUID sessionOwnedBy(String owner) {
+        var entity = new com.azhukov.agent.persistence.entity.SessionEntity();
+        entity.setId(UUID.randomUUID());
+        entity.setUserId(owner);
+        lenient().when(sessions.findById(entity.getId())).thenReturn(Optional.of(entity));
+        return entity.getId();
+    }
+
     @TempDir
     Path tempDir;
 
@@ -52,17 +63,97 @@ class AttachmentArtifactServiceTest {
     }
 
     private AttachmentArtifactService service() {
-        AttachmentArtifactService service = new AttachmentArtifactService(prov(repository), new ArtifactProcessIsolation());
+        AttachmentArtifactService service = new AttachmentArtifactService(prov(repository), new ArtifactProcessIsolation(), sessions);
         ReflectionTestUtils.setField(service, "cacheRootConfig", tempDir.toString());
         lenient().when(repository.save(any(AttachmentArtifactEntity.class)))
             .thenAnswer(inv -> inv.getArgument(0));
         return service;
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"owner-a", "owner-b"})
+    void registrationRejectsForeignOrUnknownSessionBeforeWritingAnything(String owner) throws Exception {
+        var service = service();
+        UUID foreign = sessionOwnedBy("other-owner");
+        for (UUID id : List.of(foreign, UUID.randomUUID())) {
+            var result = service.register(owner, "default", id, null, "cli", "document",
+                "text/plain", "note.txt", "private bytes".getBytes());
+            assertThat(result.id()).isNull();
+            assertThat(result.rejection()).isEqualTo("session not found");
+        }
+        org.mockito.Mockito.verifyNoInteractions(repository);
+        try (var files = Files.list(tempDir)) {
+            assertThat(files).isEmpty();
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.NullAndEmptySource
+    @org.junit.jupiter.params.provider.ValueSource(strings = {" "})
+    void registrationRequiresAnExplicitOwner(String owner) throws Exception {
+        var result = service().register(owner, "default", null, null, "cli", "document",
+            "text/plain", "note.txt", "bytes".getBytes());
+        assertThat(result.id()).isNull();
+        assertThat(result.rejection()).isEqualTo("attachment owner required");
+        org.mockito.Mockito.verifyNoInteractions(repository);
+        try (var files = Files.list(tempDir)) {
+            assertThat(files).isEmpty();
+        }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"owner-a", "owner-b"})
+    void uploadUsesAuthenticatedOwnerAndRejectsForeignSession(String owner) throws Exception {
+        var service = service();
+        var mvc = org.springframework.test.web.servlet.setup.MockMvcBuilders
+            .standaloneSetup(new com.azhukov.agent.api.AttachmentController(prov(service))).build();
+        var file = new org.springframework.mock.web.MockMultipartFile("file", "note.txt", "text/plain", "bytes".getBytes());
+        com.azhukov.agent.core.security.UserContext.set(owner, com.azhukov.agent.core.security.UserContext.ROLE_USER);
+        try {
+            mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                    .multipart("/api/v1/attachments").file(file).param("ownerId", "other-owner")
+                    .param("sessionId", sessionOwnedBy("other-owner").toString()))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isBadRequest());
+            org.mockito.Mockito.verifyNoInteractions(repository);
+            UUID ownSession = sessionOwnedBy(owner);
+            mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                    .multipart("/api/v1/attachments").file(file).param("ownerId", "other-owner")
+                    .param("sessionId", ownSession.toString()))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk());
+            var saved = org.mockito.ArgumentCaptor.forClass(AttachmentArtifactEntity.class);
+            verify(repository).save(saved.capture());
+            assertThat(saved.getValue().getOwnerId()).isEqualTo(owner);
+            assertThat(saved.getValue().getSessionId()).isEqualTo(ownSession);
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+        }
+    }
+
+    @Test
+    void uploadWithoutExplicitOwnerUsesAuthenticatedAdministrator() throws Exception {
+        var service = service();
+        var mvc = org.springframework.test.web.servlet.setup.MockMvcBuilders
+            .standaloneSetup(new com.azhukov.agent.api.AttachmentController(prov(service))).build();
+        var file = new org.springframework.mock.web.MockMultipartFile("file", "note.txt", "text/plain", "bytes".getBytes());
+        com.azhukov.agent.core.security.UserContext.set("admin-owner", com.azhukov.agent.core.security.UserContext.ROLE_ADMIN);
+        try {
+            UUID ownSession = sessionOwnedBy("admin-owner");
+            mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                    .multipart("/api/v1/attachments").file(file).param("sessionId", ownSession.toString()))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk());
+            var saved = org.mockito.ArgumentCaptor.forClass(AttachmentArtifactEntity.class);
+            verify(repository).save(saved.capture());
+            assertThat(saved.getValue().getOwnerId()).isEqualTo("admin-owner");
+            assertThat(saved.getValue().getCachePath()).startsWith("admin-owner/");
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+        }
+    }
+
     @Test
     void scopedOutboundContentDoesNotServeModifiedBytes() throws Exception {
         var service = service();
-        var session = UUID.randomUUID();
+        var session = sessionOwnedBy("u1");
         byte[] bytes = {1, 2, 3};
         var registration = service.register("u1", "default", session, null,
             "internal", "document", "application/octet-stream", "example.bin", bytes);
@@ -78,8 +169,9 @@ class AttachmentArtifactServiceTest {
         stored.getValue().setOutboundClaimedAt(java.time.Instant.now());
         assertThat(service.outboundStatus(registration.id(), "u1", session))
             .isEqualTo(AttachmentArtifactService.OutboundStatus.CLAIMED);
-        assertThat(service.verifiedContent(registration.id(), "u1")).hasValueSatisfying(
-            content -> assertThat(content.bytes()).isEqualTo(bytes));
+        try (var content = service.verifiedContent(registration.id(), "u1").orElseThrow()) {
+            assertThat(content.stream().readAllBytes()).isEqualTo(bytes);
+        }
         Files.write(tempDir.resolve(registration.cachePath()), new byte[]{3, 2, 1});
         assertThat(service.verifiedContent(registration.id(), "u1")).isEmpty();
     }
@@ -87,7 +179,7 @@ class AttachmentArtifactServiceTest {
     @Test
     void registerWritesBlobAndMetadata() {
         byte[] data = "hello attachment".getBytes();
-        var result = service().register("u1", "default", UUID.randomUUID(), "m1",
+        var result = service().register("u1", "default", sessionOwnedBy("u1"), "m1",
             "telegram", "document", "text/plain", "note.txt", data);
 
         assertThat(result.rejection()).isNull();
@@ -131,7 +223,7 @@ class AttachmentArtifactServiceTest {
     }
 
     @Test
-    void unsafeNamesAndOversizeRejected() {
+    void unsafeNamesAndEmptyContentAreRejected() {
         var service = service();
         byte[] data = "x".getBytes();
 
@@ -141,9 +233,6 @@ class AttachmentArtifactServiceTest {
             "text/plain", "weird name!", data).rejection()).contains("not safe");
         assertThat(service.register("u1", "default", null, null, "cli", "document",
             "text/plain", "a.txt", new byte[0]).rejection()).contains("empty");
-        byte[] huge = new byte[(int) (AttachmentArtifactService.MAX_ATTACHMENT_BYTES + 1)];
-        assertThat(service.register("u1", "default", null, null, "cli", "document",
-            "text/plain", "big.bin", huge).rejection()).contains("exceeds");
         verify(repository, never()).save(any());
     }
 
@@ -313,6 +402,69 @@ class AttachmentArtifactServiceTest {
         assertThat(result.rejection()).contains("cache write failed");
         verify(repository, never()).save(any());
         assertThat(Files.readString(blocked)).isEqualTo("occupied");
+    }
+
+    @Test
+    void registrationAboveFormerCapPreservesExactContentAndOwner() throws Exception {
+        byte[] data = new byte[21 * 1024 * 1024];
+        data[data.length - 1] = 91;
+        var service = service();
+        var result = service.register("owner-a", "default", null, null, "internal", "document",
+            "application/octet-stream", "large.bin", data);
+        assertThat(result.rejection()).isNull();
+        var saved = org.mockito.ArgumentCaptor.forClass(AttachmentArtifactEntity.class);
+        verify(repository).save(saved.capture());
+        assertThat(saved.getValue().getOwnerId()).isEqualTo("owner-a");
+        assertThat(saved.getValue().getSizeBytes()).isEqualTo(data.length);
+        assertThat(saved.getValue().getContentHash()).isEqualTo(java.util.HexFormat.of().formatHex(
+            java.security.MessageDigest.getInstance("SHA-256").digest(data)));
+        assertThat(Files.readAllBytes(tempDir.resolve(result.cachePath()))).isEqualTo(data);
+    }
+
+    @Test
+    void verifiedContentPinsTheOriginalDescriptorAndClosesAfterReading() throws Exception {
+        var service = service();
+        byte[] original = "accepted immutable artifact".getBytes();
+        var registration = service.register("u1", "default", null, null, "internal", "document",
+            "text/plain", "note.txt", original);
+        var saved = org.mockito.ArgumentCaptor.forClass(AttachmentArtifactEntity.class);
+        verify(repository).save(saved.capture());
+        saved.getValue().setExpiresAt(Instant.now().plusSeconds(600));
+        when(repository.findById(registration.id())).thenReturn(Optional.of(saved.getValue()));
+        Path cached = tempDir.resolve(registration.cachePath());
+        try (var verified = service.verifiedContent(registration.id(), "u1").orElseThrow()) {
+            Path replacement = Files.writeString(tempDir.resolve("replacement"), "different bytes");
+            Files.move(replacement, cached, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            assertThat(verified.stream().readAllBytes()).isEqualTo(original);
+        }
+        assertThat(service.verifiedContent(registration.id(), "u1")).isEmpty();
+        assertThat(service.verifiedContent(registration.id(), "another-owner")).isEmpty();
+    }
+
+    @Test
+    void failedStreamAndMetadataPublicationLeaveNoNewBlob() throws Exception {
+        var service = service();
+        var session = com.azhukov.agent.core.model.Session.create("u1", "noop", "test");
+        var entity = new com.azhukov.agent.persistence.entity.SessionEntity();
+        entity.setId(session.id());
+        entity.setUserId("u1");
+        when(sessions.findById(session.id())).thenReturn(Optional.of(entity));
+        var failing = new java.io.InputStream() {
+            int calls;
+            @Override public int read() throws java.io.IOException {
+                if (calls++ == 0) return 1;
+                throw new java.io.IOException("source read failed");
+            }
+        };
+        assertThatThrownBy(() -> service.publishGenerated(session, "document", "application/octet-stream",
+            "report.bin", failing)).isInstanceOf(IllegalStateException.class).hasMessageContaining("source read failed");
+        verify(repository, never()).save(any());
+        when(repository.save(any())).thenThrow(new IllegalStateException("metadata write failed"));
+        assertThatThrownBy(() -> service.register("u1", "default", null, null, "internal", "document",
+            "text/plain", "note.txt", "bytes".getBytes())).hasMessage("metadata write failed");
+        try (var files = Files.walk(tempDir)) {
+            assertThat(files.filter(Files::isRegularFile)).isEmpty();
+        }
     }
 
 }

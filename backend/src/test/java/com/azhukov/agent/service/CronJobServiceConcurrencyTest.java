@@ -85,9 +85,8 @@ class CronJobServiceConcurrencyTest {
         AtomicInteger maxConcurrent = new AtomicInteger(0);
 
         when(cronJobRepository.findById(jobId)).thenReturn(Optional.of(job));
-        when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        when(agentRuntimeService.runBackground(anyString(), any()))
+        when(agentRuntimeService.runBackground(anyString(), org.mockito.ArgumentMatchers.anyBoolean(), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(java.util.Map.of())))
             .thenAnswer(inv -> {
                 int current = concurrentExecutions.incrementAndGet();
                 maxConcurrent.updateAndGet(m -> Math.max(m, current));

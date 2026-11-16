@@ -12,6 +12,7 @@ import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.core.prompt.PromptBuilder;
 import com.azhukov.agent.core.tool.ToolRegistry;
+import com.azhukov.agent.core.security.UserContext;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -225,7 +226,9 @@ class ChatCompletionsControllerTest {
     }
 
     @Test
-    void requestWithToolsIncludesToolDefinitions() throws Exception {
+    void requestWithToolsUsesCanonicalRegistryDefinitions() throws Exception {
+        when(toolRegistry.getDefinitions(Set.of("hermes-api-server")))
+            .thenReturn(List.of(new ToolDefinition("web_search", "Canonical web search", objectSchema())));
         ArgumentCaptor<List<ToolDefinition>> toolsCaptor = ArgumentCaptor.forClass(List.class);
         when(agentRuntime.run(anyList(), toolsCaptor.capture(), any(ModelRequestOptions.class)))
             .thenReturn(ChatResponse.text("ok"));
@@ -262,7 +265,7 @@ class ChatCompletionsControllerTest {
         assertThat(tools).hasSize(1);
         ToolDefinition tool = tools.get(0);
         assertThat(tool.name()).isEqualTo("web_search");
-        assertThat(tool.description()).isEqualTo("Searches the web");
+        assertThat(tool.description()).isEqualTo("Canonical web search");
         assertThat(tool.parameters()).containsEntry("type", "object");
 
         @SuppressWarnings("unchecked")
@@ -273,6 +276,8 @@ class ChatCompletionsControllerTest {
 
     @org.junit.jupiter.api.Test
     void toolResponseExecutesToolsServerSideThenReturnsTerminalFormat() throws Exception {
+        when(toolRegistry.getDefinitions(Set.of("hermes-api-server"))).thenReturn(List.of(
+            new ToolDefinition("web_search", "Search", objectSchema())));
         ToolCall toolCall = new ToolCall("call-abc", "web_search", "{\"query\":\"Java 25\"}");
         // The stubbed runtime ALWAYS answers with the tool call → the server
         // loop executes the tool on every iteration and stops at the bound,
@@ -418,6 +423,66 @@ class ChatCompletionsControllerTest {
             .andExpect(jsonPath("$.errors.messages").exists());
     }
 
+    @org.junit.jupiter.api.AfterEach
+    void clearUserContext() { UserContext.clear(); }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void streamingKeepsCallerAndOriginalAccessProof(boolean central) throws Exception {
+        var proof = new com.pdlc.auth.HumanApplicationAccess(
+            "central-caller", "user", Set.of("java-agent"), 7, true,
+            java.time.Instant.now().plusSeconds(30), System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(30));
+        if (central) UserContext.setCentral(proof);
+        else UserContext.set("standalone-caller", "admin");
+        var observedUser = new java.util.concurrent.atomic.AtomicReference<String>();
+        var observedRole = new java.util.concurrent.atomic.AtomicReference<String>();
+        var observedProof = new java.util.concurrent.atomic.AtomicReference<com.pdlc.auth.HumanApplicationAccess>();
+        var called = new java.util.concurrent.CountDownLatch(1);
+        doAnswer(call -> {
+            observedUser.set(UserContext.getUserId());
+            observedRole.set(UserContext.getRole());
+            observedProof.set(UserContext.centralAccess());
+            called.countDown();
+            call.<StreamingResponseHandler>getArgument(3).onComplete();
+            return null;
+        }).when(modelClient).stream(anyList(), anyList(), any(ModelRequestOptions.class), any(StreamingResponseHandler.class));
+
+        MvcResult result = mockMvc.perform(post("/v1/chat/completions")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"stream\":true}"))
+            .andExpect(request().asyncStarted())
+            .andReturn();
+        UserContext.clear();
+        assertThat(called.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        mockMvc.perform(asyncDispatch(result)).andExpect(status().isOk());
+        assertThat(observedUser.get()).isEqualTo(central ? "central-caller" : "standalone-caller");
+        assertThat(observedRole.get()).isEqualTo(central ? "user" : "admin");
+        if (central) assertThat(observedProof.get()).isSameAs(proof);
+        else assertThat(observedProof.get()).isNull();
+        assertThat(UserContext.getUserId()).isNull();
+    }
+
+    @Test
+    void requestToolsOnlyNarrowCanonicalServerDefinitions() throws Exception {
+        ToolDefinition allowed = new ToolDefinition("read_file", "Canonical server description",
+            Map.of("type", "object", "properties", Map.of("path", Map.of("type", "string"))));
+        when(toolRegistry.getDefinitions(Set.of("hermes-api-server"))).thenReturn(List.of(allowed));
+        ArgumentCaptor<List<ToolDefinition>> captured = ArgumentCaptor.forClass(List.class);
+        when(agentRuntime.run(anyList(), captured.capture(), any(ModelRequestOptions.class)))
+            .thenReturn(ChatResponse.text("ok"));
+        for (String tools : List.of(
+                "[]",
+                "[{\"type\":\"function\",\"function\":{\"name\":\" read_file \",\"description\":\"client rewrite\",\"parameters\":{\"type\":\"string\"}}}]",
+                "[{\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"parameters\":{\"type\":\"array\"}}}]")) {
+            mockMvc.perform(post("/v1/chat/completions")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"tools\":" + tools + "}"))
+                .andExpect(status().isOk());
+        }
+        assertThat(captured.getAllValues()).containsExactly(
+            List.of(), List.of(allowed), List.of(allowed));
+    }
+
     private JsonNode parseJson(String raw) {
         try {
             return objectMapper.readTree(raw);
@@ -431,4 +496,32 @@ class ChatCompletionsControllerTest {
         props.getApi().setDirectModelRequests(true); // test: external model names pass through
         return props;
     }
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"[]",
+        "[{\"type\":\"function\",\"function\":{\"name\":\"read_file\"}}]"})
+    void modelCannotExecuteOutsideTheRequestToolSelection(String tools) throws Exception {
+        when(toolRegistry.getDefinitions(Set.of("hermes-api-server"))).thenReturn(List.of(
+            new ToolDefinition("read_file", "Read", objectSchema()),
+            new ToolDefinition("terminal", "Terminal", objectSchema())));
+        when(agentRuntime.run(anyList(), anyList(), any(ModelRequestOptions.class)))
+            .thenReturn(ChatResponse.toolCalls(List.of(new ToolCall("call-foreign", "terminal", "{}"))),
+                ChatResponse.text("must not execute"));
+        mockMvc.perform(post("/v1/chat/completions").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"tools\":" + tools + "}"))
+            .andExpect(status().isBadGateway());
+        org.mockito.Mockito.verifyNoInteractions(toolExecutionService);
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void unknownRequestToolFailsBeforeSessionOrModelWork(boolean streaming) throws Exception {
+        when(toolRegistry.getDefinitions(Set.of("hermes-api-server"))).thenReturn(List.of(
+            new ToolDefinition("read_file", "Read", objectSchema())));
+        mockMvc.perform(post("/v1/chat/completions").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"stream\":" + streaming
+                    + ",\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"terminal\"}}]}"))
+            .andExpect(status().isBadRequest());
+        org.mockito.Mockito.verifyNoInteractions(agentRuntime, modelClient, sessionService);
+    }
+
 }

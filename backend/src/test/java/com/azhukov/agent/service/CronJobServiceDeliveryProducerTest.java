@@ -72,7 +72,7 @@ class CronJobServiceDeliveryProducerTest {
 
     private void prepareFailingRun(CronJobEntity job) {
         prepareRun(job);
-        when(runtime.runBackground(any(), any(), anyBoolean()))
+        when(runtime.runBackground(any(), anyBoolean(), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(java.util.Map.of())))
             .thenThrow(new IllegalStateException("provider timed out"));
     }
 
@@ -140,7 +140,7 @@ class CronJobServiceDeliveryProducerTest {
         properties.getCron().setEnabled(true);
         prepareRun(job);
         var session = UUID.randomUUID();
-        when(runtime.runBackground(any(), any(), anyBoolean())).thenAnswer(invocation -> {
+        when(runtime.runBackground(any(), anyBoolean(), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(java.util.Map.of()))).thenAnswer(invocation -> {
             assertThat(job.isEnabled()).isFalse();
             assertThat(job.getNextRunAt()).isNull();
             return session.toString();
@@ -178,7 +178,7 @@ class CronJobServiceDeliveryProducerTest {
         assertThat(locks.containsKey(job.getId())).isEqualTo(!"success".equals(scenario));
         verify(timer).cancel(false);
         verify(scheduler).schedule(any(Runnable.class), org.mockito.ArgumentMatchers.anyLong(), any());
-        verify(runtime).runBackground(any(), any(), anyBoolean());
+        verify(runtime).runBackground(any(), anyBoolean(), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(java.util.Map.of()));
 
         when(cronJobRepository.findByEnabledTrue()).thenReturn(List.of());
         service.init();
