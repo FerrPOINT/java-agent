@@ -1008,7 +1008,7 @@ class AgentControllerBranchCoverageTest {
     @Test
     void backgroundReturnsSessionId() throws Exception {
         mockMvc = chatMockMvc();
-        when(agentRuntimeService.submitBackgroundJob(any(), any(), org.mockito.ArgumentMatchers.anyBoolean()))
+        when(agentRuntimeService.submitBackgroundJob(any(), any(), org.mockito.ArgumentMatchers.anyBoolean(), org.mockito.ArgumentMatchers.<String>isNull()))
             .thenReturn(java.util.UUID.randomUUID());
 
         mockMvc.perform(post("/api/v1/agent/background")

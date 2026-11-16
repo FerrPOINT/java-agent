@@ -478,8 +478,8 @@ public class AgentBackendClient {
         return model.getInsights();
     }
 
-    public String runBackground(String prompt, String sessionId) {
-        return model.runBackground(prompt, sessionId);
+    public String runBackground(String prompt, String sessionId, String userId) {
+        return model.runBackground(prompt, sessionId, userId);
     }
 
     public String getBaseUrl() {

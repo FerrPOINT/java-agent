@@ -458,10 +458,6 @@ public class AgentRuntimeService {
         return domainDtoMapper.toSessionSummaryDto(sessionMapper.toDomain(saved));
     }
 
-    public String runBackground(String prompt, String sessionId) {
-        return runBackground(prompt, sessionId, false);
-    }
-
     /**
      * Heartbeat turn (Hermes hermes_cli/heartbeat.py): fires the recurring
      * instruction as a NORMAL USER TURN in the SAME session — session-scoped,
@@ -502,39 +498,56 @@ public class AgentRuntimeService {
      * run_in_background exposes job status/result for polling).
      */
     @org.springframework.transaction.annotation.Transactional
-    public java.util.UUID submitBackgroundJob(String prompt, String sessionId, boolean skipBackgroundReview) {
+    public java.util.UUID submitBackgroundJob(String prompt, String sessionId, boolean skipBackgroundReview,
+                                               String requestedOwnerId) {
+        String ownerId = UserContext.requireRequestOwner(requestedOwnerId);
+        UUID parentId = sessionId != null && !sessionId.isBlank() ? UUID.fromString(sessionId) : null;
+        if (parentId != null) {
+            var parent = sessionRepository.findById(parentId)
+                .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.NOT_FOUND, "Session not found"));
+            if (!ownerId.equals(parent.getUserId())) {
+                throw new SecurityException("Session does not belong to the background job owner");
+            }
+        }
         com.azhukov.agent.persistence.entity.BackgroundJobEntity job =
             new com.azhukov.agent.persistence.entity.BackgroundJobEntity();
         job.setPrompt(prompt);
         job.setStatus("PENDING");
-        job.setSessionId(sessionId != null && !sessionId.isBlank() ? java.util.UUID.fromString(sessionId) : null);
+        job.setUserId(ownerId);
+        job.setSessionId(parentId);
         job = backgroundJobRepository.save(job);
         java.util.UUID jobId = job.getId();
-        backgroundExecutor.submit(() -> {
+        var origin = com.azhukov.agent.core.security.NativeIdentityOrigin.current();
+        backgroundExecutor.submit(UserContext.wrap(() -> {
+            var previousOrigin = com.azhukov.agent.core.security.NativeIdentityOrigin.current();
+            com.azhukov.agent.core.security.NativeIdentityOrigin.bind(origin);
             try {
+                UserContext.requireCurrentAccess();
                 backgroundJobRepository.updateStatus(jobId, "RUNNING");
-                String result = runBackground(prompt, sessionId, skipBackgroundReview);
+                String result = runBackground(prompt, skipBackgroundReview, ownerId, java.util.Map.of());
                 backgroundJobRepository.finish(jobId, "DONE", result, java.time.Instant.now());
             } catch (Exception e) {
                 log.error("Background job {} failed", jobId, e);
                 backgroundJobRepository.finish(jobId, "FAILED", e.getMessage() == null ? e.toString() : e.getMessage(), java.time.Instant.now());
+            } finally {
+                com.azhukov.agent.core.security.NativeIdentityOrigin.bind(previousOrigin);
             }
-        });
+        }));
         return jobId;
-    }
-
-    public String runBackground(String prompt, String sessionId, boolean skipBackgroundReview) {
-        return runBackground(prompt, sessionId, skipBackgroundReview, java.util.Map.of());
     }
 
     /**
      * Background task with isolated-session runtime metadata.
      * Metadata is consumed by the runtime/tool layer, not rendered into the model prompt.
      */
-    public String runBackground(String prompt, String sessionId, boolean skipBackgroundReview,
+    public String runBackground(String prompt, boolean skipBackgroundReview, String ownerId,
                                 java.util.Map<String, String> runtimeMetadata) {
-        // Background task — just run a turn in a new session
-        Session baseSession = createSession(AgentProperties.DEFAULT_USER_ID, "openai-compatible", "");
+        UserContext.requireCurrentAccess();
+        if (ownerId == null || ownerId.isBlank()) {
+            throw new IllegalArgumentException("Background job owner is required");
+        }
+        Session baseSession = createSession(ownerId, "openai-compatible", "");
         java.util.Map<String, String> metadata = new java.util.HashMap<>();
         if (runtimeMetadata != null) {
             runtimeMetadata.forEach((key, value) -> {

@@ -100,9 +100,10 @@ public class ModelApiClient extends BaseBackendClient {
         }
     }
 
-    public String runBackground(String prompt, String sessionId) {
+    public String runBackground(String prompt, String sessionId, String userId) {
         Map<String, Object> body = body();
         body.put("prompt", prompt);
+        body.put("userId", userId);
         if (sessionId != null && !sessionId.isBlank()) {
             body.put("sessionId", sessionId);
         }
