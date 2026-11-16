@@ -10,6 +10,7 @@ COPY cli/build.gradle ./cli/build.gradle
 COPY shared/build.gradle ./shared/build.gradle
 COPY shared/src ./shared/src
 COPY backend/build.gradle ./backend/build.gradle
+COPY docs/standards/coverage-baseline.json ./docs/standards/coverage-baseline.json
 COPY telegram-bot/build.gradle ./telegram-bot/build.gradle
 COPY telegram-bot/src ./telegram-bot/src
 RUN chmod +x gradlew && ./gradlew :telegram-bot:bootJar -x test
