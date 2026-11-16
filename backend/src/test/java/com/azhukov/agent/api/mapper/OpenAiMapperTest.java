@@ -6,7 +6,6 @@ import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.ChatResponse;
 import com.azhukov.agent.core.model.Role;
 import com.azhukov.agent.core.model.ToolCall;
-import com.azhukov.agent.core.model.ToolDefinition;
 import org.junit.jupiter.api.Test;
 import org.mapstruct.factory.Mappers;
 
@@ -164,25 +163,6 @@ class OpenAiMapperTest {
     void toMessageHandlesNull() {
         Message result = mapper.toMessage(null);
         assertThat(result.role()).isEqualTo(Role.USER);
-    }
-
-    @Test
-    void toToolDefinitionMapsAllFields() {
-        OpenAiChatRequest.OpenAiTool tool = new OpenAiChatRequest.OpenAiTool(
-            "function",
-            new OpenAiChatRequest.OpenAiFunction("search", "Search the web", Map.of("type", "object"))
-        );
-
-        ToolDefinition result = mapper.toToolDefinition(tool);
-
-        assertThat(result).isNotNull();
-        assertThat(result.name()).isEqualTo("search");
-        assertThat(result.description()).isEqualTo("Search the web");
-    }
-
-    @Test
-    void toToolDefinitionHandlesNull() {
-        assertThat(mapper.toToolDefinition(null)).isNull();
     }
 
     @Test

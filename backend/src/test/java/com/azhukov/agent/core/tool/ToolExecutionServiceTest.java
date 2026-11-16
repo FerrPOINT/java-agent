@@ -69,6 +69,38 @@ class ToolExecutionServiceTest {
             toolResultClassifier, toolOutputLimiter, agentMetrics);
     }
 
+    @org.junit.jupiter.api.AfterEach
+    void closeToolWorkers() {
+        com.azhukov.agent.core.security.UserContext.clear();
+        service.shutdown();
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"user", "admin"})
+    void standaloneToolWorkerKeepsCallerIdentityAndRole(String role) {
+        String caller = "caller-" + role;
+        var observedUser = new java.util.concurrent.atomic.AtomicReference<String>();
+        var observedRole = new java.util.concurrent.atomic.AtomicReference<String>();
+        when(guardrail.beforeCall("read_file", "{}")).thenReturn(GuardrailDecision.allow("read_file"));
+        when(toolRegistry.execute("read_file", "identity", "{}", LAST_MSG, SESSION)).thenAnswer(inv -> {
+            observedUser.set(com.azhukov.agent.core.security.UserContext.getUserId());
+            observedRole.set(com.azhukov.agent.core.security.UserContext.getRole());
+            return ToolResult.ok("verified");
+        });
+        when(redactor.redact("verified")).thenReturn("verified");
+        when(guardrail.afterCall(eq("read_file"), eq("{}"), any(ToolResult.class), anyBoolean()))
+            .thenReturn(GuardrailDecision.allow("read_file"));
+        when(toolResultClassifier.classify(any(ToolResult.class))).thenReturn(ToolResultClassifier.ResultType.SUCCESS);
+        when(toolOutputLimiter.truncate(any(ToolResult.class), anyString())).thenAnswer(inv -> inv.getArgument(0));
+        com.azhukov.agent.core.security.UserContext.set(caller, role);
+
+        assertThat(service.execute("read_file", "identity", "{}", LAST_MSG, SESSION).success()).isTrue();
+        assertThat(observedUser.get()).isEqualTo(caller);
+        assertThat(observedRole.get()).isEqualTo(role);
+        assertThat(com.azhukov.agent.core.security.UserContext.getUserId()).isEqualTo(caller);
+        assertThat(com.azhukov.agent.core.security.UserContext.getRole()).isEqualTo(role);
+    }
+
     @Test
     void sessionCancellationInterruptsSequentialToolWorker() throws Exception {
         var token = new InterruptToken();
