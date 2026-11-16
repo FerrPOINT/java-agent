@@ -24,6 +24,10 @@ public class VisionController {
 
     @PostMapping(value = "/agent/vision", produces = MediaType.TEXT_PLAIN_VALUE)
     public String vision(@Valid @RequestBody VisionRequest request) throws Exception {
+        if (com.azhukov.agent.core.security.UserContext.getUserId() != null
+                && !com.azhukov.agent.core.security.UserContext.isAdmin()) {
+            throw new SecurityException("Shared vision browser requires administrator access");
+        }
         browserService.navigate(request.url());
         String dataUrl = browserService.screenshot();
         String base64 = dataUrl.substring(dataUrl.indexOf(",") + 1);
