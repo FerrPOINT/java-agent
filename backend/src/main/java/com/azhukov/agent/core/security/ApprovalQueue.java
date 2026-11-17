@@ -8,7 +8,6 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -20,8 +19,8 @@ import java.util.stream.Collectors;
  *
  * <p>Each session can have at most one pending approval at a time.  When a
  * new request is made for a session that already has a pending (undecided)
- * approval, the old one is superseded — explicitly marked as superseded
- * rather than silently dropped (HERMES-SYNC Bug 2: approval coalesce).
+ * approval, the old waiter is released. Only the current request ID can be
+ * decided or consumed; the old waiter cannot authorize its replacement.
  */
 @Component
 public class ApprovalQueue {
@@ -96,19 +95,27 @@ public class ApprovalQueue {
         }
     }
 
-    public PendingApproval approve(UUID sessionId, String decision, String note) {
-        return resolve(sessionId, "approve".equalsIgnoreCase(decision) || "once".equalsIgnoreCase(decision), note);
+    public PendingApproval approve(UUID requestId, String note) {
+        return resolve(requestId, true, note);
     }
 
-    public PendingApproval deny(UUID sessionId, String note) {
-        return resolve(sessionId, false, note);
+    public PendingApproval deny(UUID requestId, String note) {
+        return resolve(requestId, false, note);
     }
 
-    private PendingApproval resolve(UUID sessionId, boolean approved, String note) {
-        Request current = pending.get(sessionId);
+    public PendingApproval findRequest(UUID requestId) {
+        return pending.values().stream().map(request -> request.approval)
+            .filter(approval -> approval.requestId().equals(requestId)).findFirst().orElse(null);
+    }
+
+    private PendingApproval resolve(UUID requestId, boolean approved, String note) {
+        PendingApproval expected = findRequest(requestId);
+        if (expected == null) return null;
+        Request current = pending.get(expected.sessionId());
         if (current == null) return null;
         synchronized (current) {
-            if (pending.get(sessionId) != current) return null;
+            if (pending.get(expected.sessionId()) != current
+                    || !current.approval.requestId().equals(requestId)) return null;
             PendingApproval approval = current.approval;
             if (canDecide(approval)) {
                 decide(current, approved, note);
@@ -157,7 +164,7 @@ public class ApprovalQueue {
     }
 
     private static boolean isUndecided(PendingApproval p) {
-        return !p.approved() && !p.denied() && !p.superseded();
+        return !p.approved() && !p.denied();
     }
 
     private static boolean isExpired(PendingApproval p) {
@@ -174,11 +181,11 @@ public class ApprovalQueue {
 
     /**
      * Returns {@code true} if the approval for the given session is still pending
-     * (neither approved nor denied nor superseded).
+     * (neither approved nor denied).
      */
     public boolean isPending(UUID sessionId) {
         PendingApproval p = getPending(sessionId);
-        return p != null && !p.approved() && !p.denied() && !p.superseded();
+        return p != null && !p.approved() && !p.denied();
     }
 
     /**
@@ -190,16 +197,7 @@ public class ApprovalQueue {
     }
 
     /**
-     * HERMES-SYNC Bug 2: Returns {@code true} if the approval for the given session
-     * has been superseded by a newer approval request.
-     */
-    public boolean isSuperseded(UUID sessionId) {
-        Request request = pending.get(sessionId);
-        return request != null && request.approval.superseded();
-    }
-
-    /**
-     * Returns a list of all pending (undecided, non-superseded) approvals across all sessions.
+     * Returns a list of undecided approvals across all sessions.
      */
     public List<PendingApproval> getPendingApprovals() {
         return pending.values().stream().map(request -> request.approval)
@@ -207,21 +205,14 @@ public class ApprovalQueue {
             .collect(Collectors.toList());
     }
 
-    /** Auto-deny expired pending approvals. Each request carries its own deadline. */
-    public void timeout(Duration timeout) {
-        pending.forEach((sessionId, request) -> {
-            if (isExpired(request.approval)) getPending(sessionId);
-        });
-    }
-
     public void clear(UUID sessionId) {
         Request current = pending.remove(sessionId);
         if (current != null) current.decided.countDown();
     }
 
-    public boolean awaitDecision(UUID sessionId, long timeoutMs) {
-        Request current = pending.get(sessionId);
-        if (current == null) return true;
+    public boolean awaitDecision(PendingApproval expected, long timeoutMs) {
+        Request current = pending.get(expected.sessionId());
+        if (current == null || !current.approval.requestId().equals(expected.requestId())) return false;
         Instant expiresAt = current.approval.expiresAt();
         long waitMs = expiresAt == null ? timeoutMs
             : Math.min(timeoutMs, Math.max(0, Duration.between(Instant.now(), expiresAt).toMillis()));
@@ -231,6 +222,18 @@ public class ApprovalQueue {
             Thread.currentThread().interrupt();
             return false;
         }
+    }
+
+    /** Consume only the decision for this exact tool request. A replacement stays pending. */
+    public PendingApproval consumeDecision(PendingApproval expected) {
+        Request current = pending.get(expected.sessionId());
+        if (current == null || !current.approval.requestId().equals(expected.requestId())
+                || !pending.remove(expected.sessionId(), current)) return null;
+        // Do not wait on a persistence callback after the tool's wait has ended.
+        // resolvePending rechecks membership before publishing its decision.
+        PendingApproval decision = current.approval;
+        current.decided.countDown();
+        return !isUndecided(decision) && !isExpired(decision) ? decision : null;
     }
 
     /**
@@ -245,7 +248,6 @@ public class ApprovalQueue {
      * @param denied      whether the request was denied
      * @param note        optional note from the approver/denier
      * @param expiresAt   when this request auto-denies (null = no timeout)
-     * @param superseded  whether this request was superseded by a newer one (HERMES-SYNC Bug 2)
      */
     public record PendingApproval(
         UUID requestId,
@@ -256,15 +258,6 @@ public class ApprovalQueue {
         boolean approved,
         boolean denied,
         String note,
-        Instant expiresAt,
-        boolean superseded
-    ) {
-        /** Backward-compatible constructor — superseded defaults to false. */
-        public PendingApproval(
-            UUID requestId, UUID sessionId, ToolCall call, String reason,
-            Instant requestedAt, boolean approved, boolean denied, String note, Instant expiresAt
-        ) {
-            this(requestId, sessionId, call, reason, requestedAt, approved, denied, note, expiresAt, false);
-        }
-    }
+        Instant expiresAt
+    ) {}
 }

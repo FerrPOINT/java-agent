@@ -1,13 +1,22 @@
 package com.azhukov.agent.core.tool;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.AfterEach;
+import com.azhukov.agent.core.agent.InterruptToken;
+import com.azhukov.agent.core.security.DefaultToolCallGuardrail;
+import com.azhukov.agent.core.security.GuardrailConfig;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /** P-07: byte-identical large results become reference stubs from the 2nd repeat. */
 class IdenticalResultStubTest {
 
-    private final ToolLoopGuardrail guardrail = new ToolLoopGuardrail();
+    private final DefaultToolCallGuardrail guardrail = new DefaultToolCallGuardrail(new GuardrailConfig());
+    private final UUID session = UUID.randomUUID();
+    @BeforeEach void bindSession() { InterruptToken.setCurrentSessionId(session); }
+    @AfterEach void clearSession() { InterruptToken.clearCurrentSessionId(); }
     private final String bigResult = "x".repeat(600);
     private final String args = "{\"path\":\"/tmp/same\"}";
 
@@ -67,7 +76,7 @@ class IdenticalResultStubTest {
     @Test
     void resetForTurnClearsStreaks() {
         guardrail.resultReferenceStub("read_file", args, bigResult, false);
-        guardrail.resetForTurn();
+        guardrail.reset(session);
         assertThat(guardrail.resultReferenceStub("read_file", args, bigResult, false)).isNull();
     }
 

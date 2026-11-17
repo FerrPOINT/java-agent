@@ -519,7 +519,7 @@ public class BackendClient {
     public String compressSession(String sessionId, String focus) {
         Map<String, Object> body = new LinkedHashMap<>();
         if (focus != null && !focus.isBlank()) {
-            body.put("focus", focus);
+            body.put("focusTopic", focus);
         }
         try {
             String result = restClient.post()
@@ -795,18 +795,18 @@ public class BackendClient {
         return node != null ? node : objectMapper.createArrayNode();
     }
 
-    public String approveTool(String sessionId) {
-        if (!executePostBodilessNoBody("/api/v1/agent/approvals/{sessionId}/approve", sessionId)) {
-            return "Error: failed to approve tool for session " + sessionId;
+    public String approveTool(String requestId) {
+        if (!executePostBodilessNoBody("/api/v1/agent/approvals/{requestId}/approve", requestId)) {
+            return "Error: failed to approve tool request " + requestId;
         }
-        return "Tool approved for session: " + sessionId;
+        return "Tool request approved: " + requestId;
     }
 
-    public String denyTool(String sessionId) {
-        if (!executePostBodilessNoBody("/api/v1/agent/approvals/{sessionId}/deny", sessionId)) {
-            return "Error: failed to deny tool for session " + sessionId;
+    public String denyTool(String requestId) {
+        if (!executePostBodilessNoBody("/api/v1/agent/approvals/{requestId}/deny", requestId)) {
+            return "Error: failed to deny tool request " + requestId;
         }
-        return "Tool denied for session: " + sessionId;
+        return "Tool request denied: " + requestId;
     }
 
     // ------------------------------------------------------------------
@@ -984,11 +984,11 @@ public class BackendClient {
     // Approve / deny
     // ------------------------------------------------------------------
 
-    public String approve(boolean all, String scope) {
+    public String approve(boolean all, String requestId) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("all", all);
-        if (scope != null && !scope.isBlank()) {
-            body.put("scope", scope);
+        if (requestId != null && !requestId.isBlank()) {
+            body.put("requestId", requestId);
         }
         try {
             String result = restClient.post()
@@ -997,7 +997,7 @@ public class BackendClient {
                 .body(body)
                 .retrieve()
                 .body(String.class);
-            return result != null ? result : "Approved.";
+            return result != null && !result.isBlank() ? result : "Error: approval response is empty";
         } catch (Exception e) {
             return handleErr("approve", e);
         }
@@ -1013,7 +1013,7 @@ public class BackendClient {
                 .body(body)
                 .retrieve()
                 .body(String.class);
-            return result != null ? result : "Denied.";
+            return result != null && !result.isBlank() ? result : "Error: denial response is empty";
         } catch (Exception e) {
             return handleErr("deny", e);
         }

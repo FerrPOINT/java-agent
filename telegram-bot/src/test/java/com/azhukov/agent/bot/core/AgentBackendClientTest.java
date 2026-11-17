@@ -1237,6 +1237,8 @@ class AgentBackendClientTest {
     void compressSession_success_returnsOkMessage() {
         assertThat(client.compressSession("s1", "focus area"))
             .isEqualTo("Context compressed.");
+        verify(postSpec).body(argThat((Object body) -> body instanceof java.util.Map<?, ?> map
+                && "focus area".equals(map.get("focusTopic")) && !map.containsKey("focus")));
     }
 
     @Test

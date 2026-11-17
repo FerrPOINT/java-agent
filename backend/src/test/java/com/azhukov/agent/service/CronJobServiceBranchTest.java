@@ -52,9 +52,10 @@ class CronJobServiceBranchTest {
         properties.getCron().setEnabled(false);
         lenient().when(agentRuntimeServiceProvider.getIfAvailable()).thenReturn(agentRuntimeService);
         lenient().when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(inv -> inv.getArgument(0));
-        service = new CronJobService(cronJobRepository, agentRuntimeServiceProvider, properties,
-            skillManager, cronExecutionLogRepository, messageRepository,
-            CronJobServiceTest.unitTransaction(), new CronScheduleParser());
+        service = new CronJobService(
+            cronJobRepository, agentRuntimeServiceProvider, properties, skillManager,
+            cronExecutionLogRepository, messageRepository, CronJobServiceTest.unitTransaction(), new CronScheduleParser(),
+            org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class));
     }
 
     @Test
@@ -86,29 +87,57 @@ class CronJobServiceBranchTest {
 
     @Test
     void createOverloadsDelegateToFullCreate() {
-        CronJobEntity e1 = service.create("j1", "*/5 * * * *", "p", "local");
+        CronJobEntity e1 = service.create(
+            com.azhukov.agent.core.security.UserContext.scopeUserId(), "default", "j1", "*/5 * * * *",
+            "p", "local", null, null,
+            null, null, false, null,
+            null, null, null, null,
+            null, false, null);
         assertThat(e1.getName()).isEqualTo("j1");
         assertThat(e1.getSchedule()).isEqualTo("*/5 * * * *");
         assertThat(e1.getPrompt()).isEqualTo("p");
 
-        CronJobEntity e2 = service.create("j2", "*/5 * * * *", "p", "local", "sk");
+        CronJobEntity e2 = service.create(
+            com.azhukov.agent.core.security.UserContext.scopeUserId(), "default", "j2", "*/5 * * * *",
+            "p", "local", "sk", null,
+            null, null, false, null,
+            null, null, null, null,
+            null, false, null);
         assertThat(e2.getSkills()).isEqualTo("sk");
 
-        CronJobEntity e3 = service.create("j3", "*/5 * * * *", "p", "local", "sk", null);
+        CronJobEntity e3 = service.create(
+            com.azhukov.agent.core.security.UserContext.scopeUserId(), "default", "j3", "*/5 * * * *",
+            "p", "local", "sk", null,
+            null, null, false, null,
+            null, null, null, null,
+            null, false, null);
         assertThat(e3.getName()).isEqualTo("j3");
 
-        CronJobEntity e4 = service.createInProfile("dev", "j4", "*/5 * * * *", "p", "local", "sk");
+        CronJobEntity e4 = service.create(
+            com.azhukov.agent.core.security.UserContext.scopeUserId(), "dev", "j4", "*/5 * * * *",
+            "p", "local", "sk", null,
+            null, null, false, null,
+            null, null, null, null,
+            null, false, null);
         assertThat(e4.getName()).isEqualTo("j4");
 
-        CronJobEntity e5 = service.createInProfile("dev", "j5", "*/5 * * * *", "p", "local", "sk", null);
+        CronJobEntity e5 = service.create(
+            com.azhukov.agent.core.security.UserContext.scopeUserId(), "dev", "j5", "*/5 * * * *",
+            "p", "local", "sk", null,
+            null, null, false, null,
+            null, null, null, null,
+            null, false, null);
         assertThat(e5.getName()).isEqualTo("j5");
     }
 
     @Test
     void fullCreatePersistsAllHermesParityFields() {
-        CronJobEntity e = service.create("full", "0 9 * * *", "prompt", "local",
-            "sk1,sk2", "upstream-1", 5, "echo hi", true, "web,terminal", "/tmp",
-            "openai", "gpt-4o", "https://x.example");
+        CronJobEntity e = service.create(
+            com.azhukov.agent.core.security.UserContext.scopeUserId(), "default", "full", "0 9 * * *",
+            "prompt", "local", "sk1,sk2", "upstream-1",
+            5, "echo hi", true, "web,terminal",
+            "/tmp", "openai", "gpt-4o", "https://x.example",
+            null, false, null);
 
         assertThat(e.getSkills()).isEqualTo("sk1,sk2");
         assertThat(e.getContextFrom()).isEqualTo("upstream-1");
@@ -125,16 +154,24 @@ class CronJobServiceBranchTest {
 
     @Test
     void fullCreateRejectsInvalidSchedule() {
-        assertThatThrownBy(() -> service.create("bad", "not a schedule", "p", "local",
-            null, null, null, null, false, null, null, null, null, null))
+        assertThatThrownBy(() -> service.create(
+            com.azhukov.agent.core.security.UserContext.scopeUserId(), "default", "bad", "not a schedule",
+            "p", "local", null, null,
+            null, null, false, null,
+            null, null, null, null,
+            null, false, null))
             .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void createRejectsNoAgentWithoutScript() {
         // no_agent=true requires a script — enforced at create time
-        assertThatThrownBy(() -> service.create("na", "*/5 * * * *", null, "local",
-            null, null, null, null, true, null, null, null, null, null))
+        assertThatThrownBy(() -> service.create(
+            com.azhukov.agent.core.security.UserContext.scopeUserId(), "default", "na", "*/5 * * * *",
+            null, "local", null, null,
+            null, null, true, null,
+            null, null, null, null,
+            null, false, null))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessageContaining("no_agent=true requires a script");
     }
@@ -142,8 +179,12 @@ class CronJobServiceBranchTest {
     @Test
     void createRejectsBlankPayload() {
         // agent job with no prompt, no script, no skills
-        assertThatThrownBy(() -> service.create("blank", "*/5 * * * *", "  ", "local",
-            null, null, null, null, false, null, null, null, null, null))
+        assertThatThrownBy(() -> service.create(
+            com.azhukov.agent.core.security.UserContext.scopeUserId(), "default", "blank", "*/5 * * * *",
+            "  ", "local", null, null,
+            null, null, false, null,
+            null, null, null, null,
+            null, false, null))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessageContaining("nothing to run");
     }

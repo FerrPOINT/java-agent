@@ -112,10 +112,6 @@ public class SessionController {
     public String compressSession(@PathVariable UUID sessionId, @RequestBody(required = false) CompressRequest request) {
         String focusTopic = request != null ? request.focusTopic() : null;
         Integer keepLastN = request != null ? request.keepLastN() : null;
-        // If focusTopic is null, fall back to focus() for backward compatibility
-        if (focusTopic == null && request != null) {
-            focusTopic = request.focus();
-        }
         agentRuntimeService.requireSessionOwnership(sessionId);
         agentRuntimeService.compressSession(sessionId, focusTopic, keepLastN);
         return "Context compressed." + (focusTopic != null ? " Focus: " + focusTopic : "")
@@ -138,9 +134,6 @@ public class SessionController {
             throw new IllegalArgumentException("sessionId is required");
         }
         String focusTopic = request.focusTopic();
-        if (focusTopic == null) {
-            focusTopic = request.focus();
-        }
         Integer keepLastN = request.keepLastN();
         agentRuntimeService.compressSession(sessionId, focusTopic, keepLastN);
         return "Context compressed." + (focusTopic != null ? " Focus: " + focusTopic : "")

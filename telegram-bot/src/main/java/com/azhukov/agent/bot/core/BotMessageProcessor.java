@@ -322,7 +322,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
                 return;
             }
             if (!streamEditor.isFinishingDelivery(chatId)) {
-                handleBusyMessage(chatId, event, busyHandler.getEffectiveBusyInputMode(), resolveSession(event));
+                handleBusyMessage(chatId, event, busyHandler.getEffectiveBusyInputMode(), resolveSession(event), extractMessageText(event));
                 return;
             }
         }
@@ -362,7 +362,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
     }
 
     private boolean tryResolveTypedClarify(long chatId, UpdateEvent event) {
-        if (clarifyTextInterceptor == null) {
+        if (clarifyTextInterceptor == null || event.fileId() != null) {
             return false;
         }
         String messageText = extractMessageText(event);
@@ -437,7 +437,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         // Check busy state
         if (busyHandler.isBusy(chatId)) {
             String effectiveMode = busyHandler.getEffectiveBusyInputMode();
-            handleBusyMessage(chatId, event, effectiveMode, session);
+            handleBusyMessage(chatId, event, effectiveMode, session, messageText);
             return;
         }
 
@@ -622,8 +622,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
      * @param session the bot session (for session ID lookup)
      */
     private void handleBusyMessage(long chatId, UpdateEvent event, String effectiveMode,
-                                    BotSessionEntity session) {
-        String messageText = extractMessageText(event);
+                                    BotSessionEntity session, String messageText) {
         if (messageText == null || messageText.isBlank()) {
             log.debug("No text in busy message for chat {}, skipping", chatId);
             return;
@@ -979,35 +978,42 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
     }
 
     private String extractMessageText(UpdateEvent event) {
-        if (event.text() != null && !event.text().isBlank()) {
-            // If there's text along with media (caption is handled below), use text
+        try {
+            if (event.text() != null && !event.text().isBlank()) {
+                // If there's text along with media (caption is handled below), use text
+                if (event.fileId() != null) {
+                    // Text + media: enrich with media description
+                    Optional<String> mediaDesc = inboundMediaHandler.handle(event);
+                    return event.text() + "\n" + mediaDesc.orElseThrow(() ->
+                            new AttachmentApiClient.AdmissionFailure(false, "Unsupported attachment"));
+                }
+                return event.text();
+            }
+            if (event.caption() != null && !event.caption().isBlank()) {
+                // Caption with media: enrich with media description from InboundMediaHandler
+                Optional<String> mediaDesc = inboundMediaHandler.handle(event);
+                if (event.fileId() != null) {
+                    return event.caption() + "\n" + mediaDesc.orElseThrow(() ->
+                            new AttachmentApiClient.AdmissionFailure(false, "Unsupported attachment"));
+                }
+                return event.caption();
+            }
+            // For media without caption/text, use InboundMediaHandler to get a description
             if (event.fileId() != null) {
-                // Text + media: enrich with media description
                 Optional<String> mediaDesc = inboundMediaHandler.handle(event);
                 if (mediaDesc.isPresent()) {
-                    return event.text() + "\n" + mediaDesc.get();
+                    return mediaDesc.get();
                 }
+                throw new AttachmentApiClient.AdmissionFailure(false, "Unsupported attachment");
             }
-            return event.text();
+            return null;
+        } catch (AttachmentApiClient.AdmissionFailure failure) {
+            String message = failure.outcomeUnknown()
+                    ? "Результат загрузки вложения не подтверждён. Сообщение не отправлено агенту; автоматического повтора нет."
+                    : "Вложение не принято. Сообщение не отправлено агенту.";
+            sendError(event.chatId(), message);
+            return null;
         }
-        if (event.caption() != null && !event.caption().isBlank()) {
-            // Caption with media: enrich with media description from InboundMediaHandler
-            Optional<String> mediaDesc = inboundMediaHandler.handle(event);
-            if (mediaDesc.isPresent()) {
-                return event.caption() + "\n" + mediaDesc.get();
-            }
-            return event.caption();
-        }
-        // For media without caption/text, use InboundMediaHandler to get a description
-        if (event.fileId() != null) {
-            Optional<String> mediaDesc = inboundMediaHandler.handle(event);
-            if (mediaDesc.isPresent()) {
-                return mediaDesc.get();
-            }
-            // Fallback to placeholder if handler returns empty
-            return "[Media attachment: " + (event.fileType() != null ? event.fileType() : "unknown") + "]";
-        }
-        return null;
     }
 
     private void sendFormatted(long chatId, String text) {

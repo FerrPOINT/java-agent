@@ -15,8 +15,8 @@ public class ApprovalCommands implements CommandGroup {
     public void registerAll(SlashCommandRegistry registry) {
         registry.register("approve", "Approve pending action (use 'all' to approve all)", (args, client, sessionId) -> {
             boolean all = "all".equalsIgnoreCase(args.strip());
-            String scope = all ? null : (args.isBlank() ? null : args.strip());
-            return client.approve(all, scope);
+            String requestId = all ? null : (args.isBlank() ? null : args.strip());
+            return client.approve(all, requestId);
         });
 
         registry.register("deny", "Deny pending action (use 'all' to deny all)", (args, client, sessionId) ->
@@ -27,13 +27,13 @@ public class ApprovalCommands implements CommandGroup {
             return client.prettyPrint(approvals);
         });
 
-        registry.register("approve-tool", "Approve a pending tool for a session", (args, client, sessionId) -> {
-            if (args.isBlank()) return "Usage: /approve-tool <sessionId>";
+        registry.register("approve-tool", "Approve an exact pending tool request", (args, client, sessionId) -> {
+            if (args.isBlank()) return "Usage: /approve-tool <requestId>";
             return client.approveTool(args.strip());
         });
 
-        registry.register("deny-tool", "Deny a pending tool for a session", (args, client, sessionId) -> {
-            if (args.isBlank()) return "Usage: /deny-tool <sessionId>";
+        registry.register("deny-tool", "Deny an exact pending tool request", (args, client, sessionId) -> {
+            if (args.isBlank()) return "Usage: /deny-tool <requestId>";
             return client.denyTool(args.strip());
         });
 

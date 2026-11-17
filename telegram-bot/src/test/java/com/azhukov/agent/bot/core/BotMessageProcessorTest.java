@@ -1337,6 +1337,16 @@ class BotMessageProcessorTest {
         verifyNoInteractions(backendClient);
     }
 
+    @Test
+    void unknownOrRejectedArtifactDoesNotStartChatOrRetryUpload() {
+        when(inboundMediaHandler.handle(any())).thenThrow(
+                new AttachmentApiClient.AdmissionFailure(true, "Unknown"));
+        processor.accept(photoEvent(1, 100L, "file123", "caption", null));
+        verify(backendClient, never()).chatStream(any(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(inboundMediaHandler).handle(any());
+        assertThat(busyHandler.isBusy(100L)).isFalse();
+    }
+
     // ─── Media extraction ────────────────────────────────────────
 
     @Test
@@ -1345,68 +1355,62 @@ class BotMessageProcessorTest {
         UpdateEvent event = new UpdateEvent(1, UpdateEvent.Type.TEXT, 100L, 200L,
             "testuser", "What is this?", null, "file123", "photo",
             null, null, null, false, null, null, 101L, null, 0);
-        when(inboundMediaHandler.handle(any())).thenReturn(Optional.of("[Photo: /tmp/test.jpg]"));
+        when(inboundMediaHandler.handle(any())).thenReturn(Optional.of("[Photo: test.jpg]"));
         processor.accept(event);
         ArgumentCaptor<String> msgCaptor = ArgumentCaptor.forClass(String.class);
         verify(backendClient).chatStream(msgCaptor.capture(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
         assertThat(msgCaptor.getValue()).contains("What is this?");
-        assertThat(msgCaptor.getValue()).contains("[Photo: /tmp/test.jpg]");
+        assertThat(msgCaptor.getValue()).contains("[Photo: test.jpg]");
     }
 
     @Test
     void captionWithMediaDescriptionUsesEnrichedText() {
         stubStreamingResult("response", true);
-        when(inboundMediaHandler.handle(any())).thenReturn(Optional.of("[Photo: /tmp/test.jpg]"));
+        when(inboundMediaHandler.handle(any())).thenReturn(Optional.of("[Photo: test.jpg]"));
         processor.accept(photoEvent(1, 100L, "file123", "Look at this", null));
         ArgumentCaptor<String> msgCaptor = ArgumentCaptor.forClass(String.class);
         verify(backendClient).chatStream(msgCaptor.capture(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
         assertThat(msgCaptor.getValue()).contains("Look at this");
-        assertThat(msgCaptor.getValue()).contains("[Photo: /tmp/test.jpg]");
+        assertThat(msgCaptor.getValue()).contains("[Photo: test.jpg]");
     }
 
     @Test
-    void captionOnlyWithoutMediaDescriptionUsesCaption() {
-        stubStreamingResult("response", true);
+    void unconfirmedMediaDoesNotDispatchCaption() {
         when(inboundMediaHandler.handle(any())).thenReturn(Optional.empty());
         processor.accept(photoEvent(1, 100L, "file123", "Just caption", null));
-        ArgumentCaptor<String> msgCaptor = ArgumentCaptor.forClass(String.class);
-        verify(backendClient).chatStream(msgCaptor.capture(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
-        assertThat(msgCaptor.getValue()).contains("Just caption");
+        verify(backendClient, never()).chatStream(any(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(inboundMediaHandler).handle(any());
     }
 
     @Test
     void mediaOnlyWithDescriptionUsesDescription() {
         stubStreamingResult("response", true);
-        when(inboundMediaHandler.handle(any())).thenReturn(Optional.of("[Photo: /tmp/test.jpg]"));
+        when(inboundMediaHandler.handle(any())).thenReturn(Optional.of("[Photo: test.jpg]"));
         UpdateEvent event = photoEvent(1, 100L, "file123", null, null);
         processor.accept(event);
         ArgumentCaptor<String> msgCaptor = ArgumentCaptor.forClass(String.class);
         verify(backendClient).chatStream(msgCaptor.capture(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
-        assertThat(msgCaptor.getValue()).contains("[Photo: /tmp/test.jpg]");
+        assertThat(msgCaptor.getValue()).contains("[Photo: test.jpg]");
     }
 
     @Test
-    void mediaOnlyWithoutDescriptionUsesPlaceholder() {
-        stubStreamingResult("response", true);
+    void unconfirmedMediaDoesNotDispatchPlaceholder() {
         when(inboundMediaHandler.handle(any())).thenReturn(Optional.empty());
         UpdateEvent event = photoEvent(1, 100L, "file123", null, null);
         processor.accept(event);
-        ArgumentCaptor<String> msgCaptor = ArgumentCaptor.forClass(String.class);
-        verify(backendClient).chatStream(msgCaptor.capture(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
-        assertThat(msgCaptor.getValue()).contains("[Media attachment: photo]");
+        verify(backendClient, never()).chatStream(any(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(inboundMediaHandler).handle(any());
     }
 
     @Test
-    void mediaOnlyWithoutDescriptionAndNullFileTypeUsesUnknown() {
-        stubStreamingResult("response", true);
+    void unsupportedMediaDoesNotDispatchPlaceholder() {
         when(inboundMediaHandler.handle(any())).thenReturn(Optional.empty());
         UpdateEvent event = new UpdateEvent(1, UpdateEvent.Type.DOCUMENT, 100L, 200L,
             "testuser", null, null, "file123", null,
             null, null, null, false, null, null, 101L, null, 0);
         processor.accept(event);
-        ArgumentCaptor<String> msgCaptor = ArgumentCaptor.forClass(String.class);
-        verify(backendClient).chatStream(msgCaptor.capture(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
-        assertThat(msgCaptor.getValue()).contains("[Media attachment: unknown]");
+        verify(backendClient, never()).chatStream(any(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(inboundMediaHandler).handle(any());
     }
 
     // ─── Busy session — queue mode ─────────────────────────────

@@ -43,7 +43,7 @@ class ToolExecutionServiceRetryTest {
         properties = new AgentProperties();
         service = new ToolExecutionService(
             toolRegistry, properties,
-            new DefaultToolCallGuardrail(properties),
+            new DefaultToolCallGuardrail(new com.azhukov.agent.core.security.GuardrailConfig()),
             new SecretRedactor(properties),
             new ToolResultClassifier(),
             new ToolOutputLimiter(properties),

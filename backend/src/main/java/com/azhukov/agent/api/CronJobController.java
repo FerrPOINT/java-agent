@@ -34,26 +34,35 @@ public class CronJobController {
     @PostMapping
     public CronJobDto create(@Valid @RequestBody CreateCronRequest request) {
         return cronJobDtoMapper.toDto(cronJobService.create(
-            UserContext.getUserId(),
-            request.name(), request.schedule(), request.prompt(), request.deliverTo(),
-            request.skills(), request.contextFrom(),
-            null, null, false, request.enabledToolsets(), request.workdir(),
-            null, null, null));
+            UserContext.getUserId(), request.profile(), request.name(), request.schedule(),
+            request.prompt(), request.deliverTo(), request.skills(), request.contextFrom(),
+            request.repeatCount(), request.script(), Boolean.TRUE.equals(request.noAgent()), request.enabledToolsets(),
+            request.workdir(), request.modelProvider(), request.modelName(), request.baseUrl(),
+            request.monitor(), Boolean.TRUE.equals(request.continuityEnabled()), request.attachedSessionId()));
     }
 
     @GetMapping
-    public List<CronJobDto> list() {
-        return cronJobDtoMapper.toDtoList(cronJobService.list(UserContext.scopeUserId()));
+    public List<CronJobDto> list(@RequestParam(required = false) String profile,
+                                 @RequestParam(defaultValue = "true") boolean includeDisabled) {
+        return cronJobDtoMapper.toDtoList(profile == null
+                ? cronJobService.list(includeDisabled)
+                : cronJobService.listForProfile(profile, includeDisabled));
+    }
+
+    @GetMapping("/{id}")
+    public CronJobDto get(@PathVariable UUID id) {
+        return cronJobDtoMapper.toDto(cronJobService.findById(id).orElseThrow(() ->
+                new org.springframework.web.server.ResponseStatusException(
+                        org.springframework.http.HttpStatus.NOT_FOUND, "Cron job not found")));
     }
 
     @PutMapping("/{id}")
     public CronJobDto update(@PathVariable UUID id, @Valid @RequestBody UpdateCronRequest request) {
         return cronJobDtoMapper.toDto(cronJobService.update(id, request.name(), request.schedule(),
             request.prompt(), request.deliverTo(), request.enabled(),
-            null, request.contextFrom(),
-            null, null, null,
-            request.enabledToolsets(), request.workdir(),
-            null, null, null));
+            request.skills(), request.contextFrom(), request.repeatCount(), request.script(), request.noAgent(),
+            request.enabledToolsets(), request.workdir(), request.modelProvider(), request.modelName(), request.baseUrl(),
+            request.monitor(), request.continuityEnabled(), request.attachToSession(), request.attachedSessionId()));
     }
 
     // ── Suggestions (Hermes /suggestions parity) ──
@@ -234,13 +243,28 @@ public class CronJobController {
     public record CreateCronRequest(
         @jakarta.validation.constraints.NotBlank String name,
         @jakarta.validation.constraints.NotBlank String schedule,
-        @jakarta.validation.constraints.NotBlank String prompt,
+        String prompt,
         String deliverTo,
         String skills,
         String contextFrom,
         String enabledToolsets,
-        String workdir
-    ) {}
+        String workdir,
+        String profile,
+        Integer repeatCount,
+        String script,
+        Boolean noAgent,
+        String modelProvider,
+        String modelName,
+        String baseUrl,
+        String monitor,
+        Boolean continuityEnabled,
+        UUID attachedSessionId
+    ) {
+        @com.fasterxml.jackson.annotation.JsonAnySetter
+        public void rejectUnknownField(String name, Object value) {
+            throw new IllegalArgumentException("Unknown cron creation field: " + name);
+        }
+    }
     public record UpdateCronRequest(
         @jakarta.validation.constraints.NotBlank String name,
         @jakarta.validation.constraints.NotBlank String schedule,
@@ -249,8 +273,24 @@ public class CronJobController {
         Boolean enabled,
         String contextFrom,
         String enabledToolsets,
-        String workdir
-    ) {}
+        String workdir,
+        String skills,
+        Integer repeatCount,
+        String script,
+        Boolean noAgent,
+        String modelProvider,
+        String modelName,
+        String baseUrl,
+        String monitor,
+        Boolean continuityEnabled,
+        Boolean attachToSession,
+        UUID attachedSessionId
+    ) {
+        @com.fasterxml.jackson.annotation.JsonAnySetter
+        public void rejectUnknownField(String name, Object value) {
+            throw new IllegalArgumentException("Unknown cron update field: " + name);
+        }
+    }
 
     // ------------------------------------------------------------------
     // Blueprints (Hermes hermes_cli/blueprint_cmd.py parity): /blueprint
@@ -295,6 +335,10 @@ public class CronJobController {
         // resulting cron fails validation.
         var spec = cronBlueprintService.fillBlueprintWithTime(bp, body == null ? java.util.Map.of() : body.values());
         return cronJobDtoMapper.toDto(cronJobService.create(
-            spec.name(), spec.schedule(), spec.prompt(), spec.deliverTo(), spec.skills()));
+            UserContext.getUserId(), "default", spec.name(), spec.schedule(),
+            spec.prompt(), spec.deliverTo(), spec.skills(), null,
+            null, null, false, null,
+            null, null, null, null,
+            null, false, null));
     }
 }

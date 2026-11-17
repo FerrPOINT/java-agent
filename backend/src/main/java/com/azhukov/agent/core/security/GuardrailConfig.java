@@ -10,8 +10,8 @@ public class GuardrailConfig {
     private boolean hardStopEnabled = true;
     private int warnAfterExactFailure = 3;
     private int warnAfterSameToolFailure = 3;
-    private int warnAfterIdempotentNoProgress = 3;
+    private int warnAfterIdempotentNoProgress = 2;
     private int hardStopAfterExactFailure = 6;
-    private int hardStopAfterSameToolFailure = 5;
-    private int hardStopAfterIdempotentNoProgress = 5;
+    private int maxWebSearches = 50;
+    private int maxSubagents = 50;
 }

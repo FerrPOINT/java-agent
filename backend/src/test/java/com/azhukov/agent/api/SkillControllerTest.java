@@ -448,12 +448,16 @@ class SkillControllerTest {
     }
 
     @Test
-    void bundlesAliasReturnsSameList() throws Exception {
-        when(agentRuntimeService.listBundles()).thenReturn(List.of("bundle-a"));
+    void bundlesSlugUsesTheOrdinarySkillReader() throws Exception {
+        when(skillManager.getSkill(eq("bundles"), org.mockito.ArgumentMatchers.nullable(String.class)))
+            .thenReturn("A skill named bundles");
 
         mockMvc.perform(get("/api/v1/agent/skills/bundles"))
+            .andExpect(handler().methodName("getSkillContent"))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$[0]").value("bundle-a"));
+            .andExpect(jsonPath("$.name").value("bundles"))
+            .andExpect(jsonPath("$.content").value("A skill named bundles"));
+        verify(agentRuntimeService, never()).listBundles();
     }
 
     @Test
