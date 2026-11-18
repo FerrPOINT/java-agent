@@ -67,6 +67,7 @@ class SessionCompressionHelperTest {
             Message.toolResult("call-1", "search result", 1)
         ));
 
+        when(messageRepository.countBySessionId(sessionId)).thenReturn(7L);
         helper.compressSessionInternal(sessionId, null, 2);
 
         verify(messageRepository).saveAll(existing);
@@ -84,7 +85,7 @@ class SessionCompressionHelperTest {
         assertThat(saved.get(1).getToolCallId()).isEqualTo("call-1");
         assertThat(saved.get(1).getToolCallName()).isEqualTo("web_search");
         assertThat(saved.get(0).getCreatedAt()).isBefore(saved.get(1).getCreatedAt());
-        verify(sessionRepository).updateLastActiveAndMessageCount(eq(sessionId), org.mockito.Mockito.any(), eq(2));
+        verify(sessionRepository).updateLastActiveAndMessageCount(eq(sessionId), org.mockito.Mockito.any(), eq(7));
     }
 
     @Test
@@ -116,6 +117,7 @@ class SessionCompressionHelperTest {
             Message.user("live ask")
         ));
 
+        when(messageRepository.countBySessionId(sessionId)).thenReturn(9L);
         helper.compressSessionInternal(sessionId, "focus", null);
 
         verify(messageRepository).saveAll(currentActive);
@@ -135,7 +137,7 @@ class SessionCompressionHelperTest {
         assertThat(saved.get(2).getCompacted()).isFalse();
         assertThat(saved.get(0).getCreatedAt()).isBefore(saved.get(1).getCreatedAt());
         assertThat(saved.get(1).getCreatedAt()).isBefore(saved.get(2).getCreatedAt());
-        verify(sessionRepository).updateLastActiveAndMessageCount(eq(sessionId), org.mockito.Mockito.any(), eq(3));
+        verify(sessionRepository).updateLastActiveAndMessageCount(eq(sessionId), org.mockito.Mockito.any(), eq(9));
     }
 
     @Test

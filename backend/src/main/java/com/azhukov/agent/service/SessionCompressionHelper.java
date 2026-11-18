@@ -252,7 +252,9 @@ public class SessionCompressionHelper {
             messageRepository.save(clone);
         }
         if (sessionRepository != null) {
-            sessionRepository.updateLastActiveAndMessageCount(sessionId, now, compressed.size() + concurrentTail.size());
+            long persistedCount = messageRepository.countBySessionId(sessionId);
+            sessionRepository.updateLastActiveAndMessageCount(sessionId, now,
+                (int) Math.min(persistedCount, Integer.MAX_VALUE));
         }
     }
 
