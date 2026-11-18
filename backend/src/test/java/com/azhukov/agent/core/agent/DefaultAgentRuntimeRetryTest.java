@@ -82,6 +82,7 @@ class DefaultAgentRuntimeRetryTest {
         properties.getCore().setMaxTurns(10);
         // Set retry attempts to 3 (default) for predictable test behaviour
         properties.getError().setRetryAttempts(3);
+        properties.getError().setAvailabilityRetryAttempts(3);
         UserInputSanitizer inputSanitizer = mock(UserInputSanitizer.class);
         guardrail = mock(ToolCallGuardrail.class);
         turnStateManager = mock(TurnStateManager.class);
