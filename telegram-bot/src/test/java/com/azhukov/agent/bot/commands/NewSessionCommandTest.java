@@ -18,6 +18,63 @@ import static org.mockito.Mockito.when;
 class NewSessionCommandTest {
 
     @Test
+    void newSessionNeverDeletesPreviousBackendHistory() {
+        var store = mock(BotSessionStore.class);
+        var backend = mock(AgentBackendClient.class);
+        var session = new BotSessionEntity();
+        session.setId(UUID.randomUUID());
+        session.setBackendSessionId(UUID.randomUUID());
+        session.setUserId("owner");
+        new NewSessionCommand(store, backend).handle(null, session);
+        org.mockito.Mockito.verify(backend, org.mockito.Mockito.never()).resetSession(anyString());
+        org.mockito.Mockito.verify(store).deactivateAll("owner");
+    }
+
+    @Test
+    void successCleanupStartsFreshAndNeverCallsReset() {
+        var store = mock(BotSessionStore.class);
+        var backend = mock(AgentBackendClient.class);
+        var session = new BotSessionEntity();
+        session.setId(UUID.randomUUID());
+        session.setBackendSessionId(UUID.randomUUID());
+        session.setUserId("owner");
+        when(backend.cleanupSession(session.getBackendSessionId().toString())).thenReturn(true);
+        assertThat(new NewSessionCommand(store, backend).handle(null, session)).contains("cleared");
+        org.mockito.Mockito.verify(backend).cleanupSession(session.getBackendSessionId().toString());
+        org.mockito.Mockito.verify(backend, org.mockito.Mockito.never()).resetSession(anyString());
+        org.mockito.Mockito.verify(store).deactivateAll("owner");
+    }
+
+    @Test
+    void failedNewCleanupMustNotSilentlyDiscardRetry() {
+        var store = mock(BotSessionStore.class);
+        var backend = mock(AgentBackendClient.class);
+        var session = new BotSessionEntity();
+        session.setId(UUID.randomUUID());
+        session.setBackendSessionId(UUID.randomUUID());
+        session.setUserId("owner");
+        when(backend.cleanupSession(anyString())).thenReturn(false);
+        String result = new NewSessionCommand(store, backend).handle(null, session);
+        assertThat(result).contains("cleanup failed");
+        org.mockito.Mockito.verify(store).deactivateAll("owner");
+        org.mockito.Mockito.verify(backend, org.mockito.Mockito.never()).resetSession(anyString());
+    }
+
+    @Test
+    void thrownCleanupFailureStillDeactivatesAndReportsFailure() {
+        var store = mock(BotSessionStore.class);
+        var backend = mock(AgentBackendClient.class);
+        var session = new BotSessionEntity();
+        session.setId(UUID.randomUUID());
+        session.setBackendSessionId(UUID.randomUUID());
+        session.setUserId("owner");
+        when(backend.cleanupSession(anyString())).thenThrow(new IllegalStateException("offline"));
+        assertThat(new NewSessionCommand(store, backend).handle(null, session)).contains("cleanup failed");
+        org.mockito.Mockito.verify(store).deactivateAll("owner");
+        org.mockito.Mockito.verify(backend, org.mockito.Mockito.never()).resetSession(anyString());
+    }
+
+    @Test
     void name_isNew() {
         var cmd = new NewSessionCommand(mock(BotSessionStore.class), mock(AgentBackendClient.class));
         assertThat(cmd.name()).isEqualTo("new");

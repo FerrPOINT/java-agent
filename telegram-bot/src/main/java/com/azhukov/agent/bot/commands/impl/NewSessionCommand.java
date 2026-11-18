@@ -31,21 +31,22 @@ public class NewSessionCommand implements CommandHandler {
         if (session == null || session.getId() == null) {
             return "No active session.";
         }
-        // Reset the BACKEND conversation when one exists, then deactivate this
-        // bot session so the next message binds to a brand-new backend session.
-        // Previously this reset the local bot row id (a nonexistent backend id),
-        // so the old backendSessionId stayed bound and history leaked across /new.
+        // Release runtime state without deleting the transcript; deactivation
+        // binds the next message to a new backend session.
         String backendId = session.getBackendSessionId() != null
             ? session.getBackendSessionId().toString() : null;
+        boolean cleanupFailed = false;
         if (backendId != null) {
             try {
-                backendClient.resetSession(backendId);
+                cleanupFailed = !backendClient.cleanupSession(backendId);
             } catch (Exception e) {
-                // Backend cleanup is best-effort; the local rotation below still
-                // guarantees a fresh session on the next turn.
+                cleanupFailed = true;
             }
         }
         store.deactivateAll(session.getUserId());
+        if (cleanupFailed) {
+            return "Started a new session. Previous history is preserved, but runtime cleanup failed.";
+        }
         return "Session context cleared. Send a message to continue.";
     }
 }
