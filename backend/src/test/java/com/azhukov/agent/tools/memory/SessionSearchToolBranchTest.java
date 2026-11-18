@@ -144,7 +144,7 @@ class SessionSearchToolBranchTest {
     @Test
     void browseFiltersHiddenSources() {
         UUID sId = UUID.randomUUID();
-        when(sessionRepository.listRecentExcludingSources(any(), any()))
+        when(sessionRepository.listRecentForUserExcludingSources(org.mockito.ArgumentMatchers.eq("user-1"), any(), any()))
             .thenReturn(List.of(sessionEntity(sId, "Visible Session", Instant.now())));
 
         ToolResult result = tool.execute("{}", assistant(), session());
@@ -163,6 +163,8 @@ class SessionSearchToolBranchTest {
             .thenReturn(List.of(msgEntity(mId, sId, "test content", "user", t)));
         when(sessionRepository.findById(sId))
             .thenReturn(Optional.of(sessionEntity(sId, "Profile Test", t)));
+        when(sessionRepository.findAllById(any()))
+            .thenReturn(List.of(sessionEntity(sId, "Profile Test", t)));
         when(messageRepository.findById(mId))
             .thenReturn(Optional.of(msgEntity(mId, sId, "test content", "user", t)));
         when(sessionLineageService.findAncestorSessionIds(sId))

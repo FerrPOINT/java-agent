@@ -37,6 +37,27 @@ public class SessionSearchService {
     private static final com.fasterxml.jackson.databind.ObjectMapper TOOL_CALLS_JSON = new com.fasterxml.jackson.databind.ObjectMapper();
     private static final com.fasterxml.jackson.core.type.TypeReference<List<Map<String, Object>>> TOOL_CALLS_TYPE = new com.fasterxml.jackson.core.type.TypeReference<>() {};
 
+    private static final ThreadLocal<String> TOOL_OWNER = new ThreadLocal<>();
+
+    public <T> T withToolOwner(String owner, java.util.function.Supplier<T> action) {
+        UserContext.requireCurrentAccess();
+        String authenticated = UserContext.getUserId();
+        if (authenticated != null && !authenticated.equals(owner)
+            && (UserContext.centralAccess() != null || !UserContext.isAdmin())) {
+            throw new org.springframework.security.access.AccessDeniedException("Session owner mismatch");
+        }
+        String previous = TOOL_OWNER.get();
+        TOOL_OWNER.set(Objects.requireNonNull(owner));
+        try { return action.get(); }
+        finally { if (previous == null) TOOL_OWNER.remove(); else TOOL_OWNER.set(previous); }
+    }
+
+    private static String searchOwner() {
+        UserContext.requireCurrentAccess();
+        String owner = TOOL_OWNER.get();
+        return owner != null ? owner : UserContext.scopeUserId();
+    }
+
     private final SessionRepository sessionRepository;
     private final MessageRepository messageRepository;
     private final SessionLineageService sessionLineageService;
@@ -92,6 +113,10 @@ public class SessionSearchService {
             } catch (IllegalArgumentException e) {
                 return SearchResult.error("Invalid session_id format: " + resolvedSessionId);
             }
+        }
+
+        if (sessionUuid == null && aroundMessageId != null && !aroundMessageId.isBlank()) {
+            return SearchResult.error("session_id is required with around_message_id");
         }
 
         // Scroll: session_id + around_message_id
@@ -214,7 +239,7 @@ public class SessionSearchService {
             SessionEntity rawSession = rawSid != null ? sessionById.get(rawSid) : null;
             // Legacy/no-auth callers may search all sessions; authenticated users
             // must have loaded owner metadata before a message result is exposed.
-            if (UserContext.scopeUserId() != null && !isVisibleToCurrentUser(rawSession)) continue;
+            if (searchOwner() != null && !isVisibleToCurrentUser(rawSession)) continue;
             UUID resolvedSid = resolveLineageRoot(rawSid);
 
             if (currentLineageRoot != null && resolvedSid.equals(currentLineageRoot)) {
@@ -374,9 +399,10 @@ public class SessionSearchService {
     // ── BROWSE ──
 
     private SearchResult browse(int limit, UUID currentSessionId, String linkProfile) {
-        List<SessionEntity> sessions = sessionRepository.listRecentExcludingSources(
-            HIDDEN_SESSION_SOURCES, PageRequest.of(0, limit + 15)
-        );
+        String owner = searchOwner();
+        List<SessionEntity> sessions = owner == null
+            ? sessionRepository.listRecentExcludingSources(HIDDEN_SESSION_SOURCES, PageRequest.of(0, limit + 15))
+            : sessionRepository.listRecentForUserExcludingSources(owner, HIDDEN_SESSION_SOURCES, PageRequest.of(0, limit + 15));
         UUID currentRoot = currentSessionId != null ? resolveLineageRoot(currentSessionId) : null;
 
         List<BrowseResult> results = new ArrayList<>();
@@ -441,7 +467,7 @@ public class SessionSearchService {
     // ── Helpers ──
 
     private boolean isVisibleToCurrentUser(SessionEntity session) {
-        String scopedUserId = UserContext.scopeUserId();
+        String scopedUserId = searchOwner();
         return session != null && (scopedUserId == null
             || Objects.equals(scopedUserId, session.getUserId()));
     }
@@ -449,7 +475,17 @@ public class SessionSearchService {
     private UUID resolveLineageRoot(UUID sessionId) {
         if (sessionId == null) return null;
         List<UUID> lineage = sessionLineageService.findAncestorSessionIds(sessionId);
-        return lineage.isEmpty() ? sessionId : lineage.get(0);
+        if (lineage.isEmpty()) return sessionId;
+        if (searchOwner() == null) return lineage.get(0);
+        // A lineage may contain stale or foreign parent links. Never use their
+        // metadata or identifiers as part of a scoped result.
+        UUID root = sessionId;
+        for (int i = lineage.size() - 1; i >= 0; i--) {
+            UUID candidate = lineage.get(i);
+            if (!isVisibleToCurrentUser(sessionRepository.findById(candidate).orElse(null))) break;
+            root = candidate;
+        }
+        return root;
     }
 
     private boolean isSessionLeftLiveContext(UUID sessionId) {

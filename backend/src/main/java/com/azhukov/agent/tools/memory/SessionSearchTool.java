@@ -64,7 +64,7 @@ import java.util.*;
         "resolution immediately. Scroll a compact result when another session looks " +
         "more promising.\n\n" +
         "  2) SCROLL — pass `session_id` + `around_message_id`:\n" +
-        "     session_search(session_id=\"...\", around_message_id=12345, window=10)\n" +
+        "     session_search(session_id=\"...\", around_message_id=\"<message-uuid>\", window=10)\n" +
         "     Returns a window of +/-`window` messages centered on the anchor. No search, " +
         "no bookends — just the slice. Use after a discovery call when you need more " +
         "context than the ±5 default window.\n" +
@@ -82,7 +82,11 @@ import java.util.*;
         "  4) BROWSE — no args:\n" +
         "     session_search()\n" +
         "     Returns recent sessions chronologically: titles, previews, timestamps. " +
-        "Use when the user asks \"what was I working on\" without naming a topic.\n\n" +
+        "Use when the user asks \"what was I working on\" without naming a topic. " +
+        "To resume an earlier conversation, browse recent sessions first, select the " +
+        "appropriate one, read it and inspect its last messages before responding. " +
+        "Search by query if recent sessions do not identify it. An empty transcript " +
+        "does not prove why its history is missing.\n\n" +
         "LINKING THE USER TO A SESSION\n\n" +
         "  When you refer the user to a session, write its `link` value inline in " +
         "your reply — every result carries one, e.g. " +
@@ -121,12 +125,12 @@ public class SessionSearchTool implements ToolHandler {
             SearchArgs args = ToolHandler.parseJson(arguments, SearchArgs.class);
             UUID currentSessionId = session != null ? session.id() : null;
 
-            SessionSearchService.SearchResult result = sessionSearchService.search(
+            java.util.function.Supplier<SessionSearchService.SearchResult> search = () -> sessionSearchService.search(
                 args.query(), args.roleFilter(), args.limit(),
                 args.sessionId(), args.aroundMessageId(), args.window(),
-                args.sort(), args.detail(), args.profile(),
-                currentSessionId
-            );
+                args.sort(), args.detail(), args.profile(), currentSessionId);
+            SessionSearchService.SearchResult result = session == null ? search.get()
+                : sessionSearchService.withToolOwner(session.userId(), search);
 
             if (!result.success) {
                 return failJson(result.error != null ? result.error : "Session search failed");
@@ -213,11 +217,11 @@ public class SessionSearchTool implements ToolHandler {
         String sort,
         @ToolParam(description = "Discovery shape only. 'adaptive' (default) fully hydrates the top-ranked result and returns only the anchor message for lower-ranked results. 'full' returns bookends and the complete anchored window for every result.", required = false)
         String detail,
-        @ToolParam(description = "Scroll shape. Session to read inside. Use the session_id returned from a prior discovery call. Must be paired with around_message_id. Can also be an @session:<profile>/<id> link.", required = false)
+        @ToolParam(description = "Read or scroll shape. Session UUID or @session:<profile>/<id> link. Pass alone to read the session, including its last messages; add around_message_id to scroll.", required = false)
         @JsonProperty("session_id")
         @JsonAlias("sessionId")
         String sessionId,
-        @ToolParam(description = "Scroll shape. Message id to center the window on. From a discovery result use match_message_id, or any id seen in a prior window. To scroll forward pass the last window message's id; to scroll backward pass the first.", required = false)
+        @ToolParam(description = "Scroll shape. UUID of an actual message returned by this tool, not its position or number. Use match_message_id or an id from a prior window; pass the last or first message id to scroll forward or backward.", required = false)
         @JsonProperty("around_message_id")
         @JsonAlias("aroundMessageId")
         String aroundMessageId,

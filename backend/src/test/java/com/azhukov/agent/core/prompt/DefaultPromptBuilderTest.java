@@ -1029,6 +1029,8 @@ class DefaultPromptBuilderTest {
 
         assertThat(msg.content()).contains("Session Search Guidance");
         assertThat(msg.content()).contains("session_search");
+        assertThat(msg.content()).contains("browse recent", "read its last messages", "actual message UUID");
+        assertThat(msg.content()).doesNotContain("around_message_id=12345");
     }
 
     @Test
