@@ -245,24 +245,16 @@ flowchart TD
 
 ## 🚀 Deployment
 
+Запускайте принятый образ Java Agent из явно выбранного инициализированного
+workspace штатной [командой Base](https://github.com/FerrPOINT/services-base/blob/main/deploy/WORKSPACE_MANAGEMENT.md#команды).
+
 ```bash
-# Bash launcher for the existing initialized SDLC workspace.
-SDLC_WORKSPACE_DIR=/path/to/sdlc2 SDLC_PROJECT=sdlc2 ./scripts/deploy-dev-docker.sh
+pwsh -NoProfile -File /path/to/workspace/workspace.ps1 Start -Service java-agent-backend -Python python3
 ```
 
-Launcher вызывает PowerShell7 `workspace.ps1 Start -Service java-agent-backend`
-в явно выбранном workspace. Он запускает уже принятый образ; Build/Apply нового
-кандидата выполняются отдельно штатным helper. Профиль должен совпадать с
-`SDLC_PROJECT` (`sdlc1`, `sdlc2`, `sdlc3`), иметь `initialized=true` и существующий
-runtime внутри своего workspace. При необходимости путь к Python3 задаётся
-через `SDLC_PYTHON`; тот же interpreter передаётся workspace helper. Docker/systemd команды, chown, создание volumes и fresh init
-этим launcher не выполняются. Launcher и квалифицированный Base helper должны
-быть установлены в выбранном workspace.
-
-Standalone Compose-файлы ниже остаются отдельными шаблонами, не маршрутом запуска
-инициализированного SDLC. Временные локальные QA/build из этих шаблонов оформляются
-через Base ComposeHelper v2 с собственным project и cleanup; постоянный SDLC
-управляется workspace helper.
+Base проверяет профиль, runtime и ресурсы выбранного workspace. Для нового образа
+используйте `Build` и `Apply` того же workspace. Compose-файлы Java Agent
+предназначены для standalone-окружений и изолированных проверок.
 
 Пути состояния, права, перенос старого writable layer, rollback и TTL описаны
 в [контракте хранения](docs/architecture/storage.md).
@@ -277,8 +269,7 @@ tests finish; a missing required LINE report fails the gate.
 
 | Compose file | Назначение |
 |---|---|
-| `scripts/deploy-dev-docker.sh` | Адресный Start существующего Java backend через helper выбранного workspace |
-| `docker-compose.dev.yml` | Отдельный standalone-шаблон backend/bot; workspace launcher его не использует |
+| `docker-compose.dev.yml` | Standalone-шаблон backend и Telegram-бота |
 | `docker-compose.prod.yml` | Production-like stack на порту `8080` с PostgreSQL `5432` |
 | `docker-compose.local.yml` | Local dev fixture на `18090`/`18091` |
 | `docker-compose.e2e.yml` | E2E testing stack |
