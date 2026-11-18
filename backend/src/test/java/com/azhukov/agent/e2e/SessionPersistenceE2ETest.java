@@ -42,6 +42,28 @@ class SessionPersistenceE2ETest extends PostgresActiveServicesTestContainer {
     @Autowired
     private SessionRepository sessionRepository;
 
+    @Autowired
+    private com.azhukov.agent.tools.memory.SessionSearchTool sessionSearchTool;
+
+    @Test
+    void cleanupKeepsPriorTurnsReadableFromNewSession() throws Exception {
+        UUID previous = chatAndReturnSessionId("history fixture first turn");
+        chat(previous, "history fixture final turn");
+        long before = messageRepository.countBySessionId(previous);
+        assertThat(before).isGreaterThanOrEqualTo(4);
+        mockMvc.perform(post("/api/v1/agent/session/{sessionId}/cleanup", previous))
+            .andExpect(status().isOk());
+        assertThat(messageRepository.countBySessionId(previous)).isEqualTo(before);
+        UUID current = chatAndReturnSessionId("start separate conversation");
+        assertThat(current).isNotEqualTo(previous);
+        var browse = sessionSearchTool.execute("{}", null, null);
+        assertThat(browse.success()).isTrue();
+        assertThat(browse.content()).contains(previous.toString());
+        var read = sessionSearchTool.execute("{\"session_id\":\"" + previous + "\"}", null, null);
+        assertThat(read.success()).isTrue();
+        assertThat(read.content()).contains("history fixture final turn");
+    }
+
     @Test
     void sessionMessagesAreReset() throws Exception {
         UUID sessionId = chatAndReturnSessionId("hello reset");

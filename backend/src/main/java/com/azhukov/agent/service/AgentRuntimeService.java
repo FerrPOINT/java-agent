@@ -264,9 +264,43 @@ public class AgentRuntimeService {
     @Transactional
     public void resetSession(UUID sessionId) {
         requireSessionOwnership(sessionId);
-        // Bulk delete (single DELETE statement) instead of load-then-deleteAll —
-        // avoids materializing the whole transcript and the N+1 flush.
-        messageRepository.deleteBySessionId(sessionId);
+        if (!sessionTurnLockManager.tryAcquire(sessionId, 0)) {
+            throw new IllegalStateException("Session is busy; reset must be retried");
+        }
+        boolean releaseAfterTransaction = false;
+        try {
+            if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+                org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                    new org.springframework.transaction.support.TransactionSynchronization() {
+                        @Override public void afterCompletion(int status) { sessionTurnLockManager.release(sessionId); }
+                    });
+                releaseAfterTransaction = true;
+            }
+            messageRepository.deleteBySessionId(sessionId);
+            sessionRepository.findById(sessionId).ifPresent(session -> {
+                session.setMessageCount(0);
+                session.setPreview(null);
+                sessionRepository.save(session);
+            });
+            cleanupRuntimeState(sessionId);
+        } finally {
+            if (!releaseAfterTransaction) sessionTurnLockManager.release(sessionId);
+        }
+    }
+
+    public void cleanupSessionState(UUID sessionId) {
+        requireSessionOwnership(sessionId);
+        if (!sessionTurnLockManager.tryAcquire(sessionId, 0)) {
+            throw new IllegalStateException("Session is busy; runtime cleanup must be retried");
+        }
+        try {
+            cleanupRuntimeState(sessionId);
+        } finally {
+            sessionTurnLockManager.release(sessionId);
+        }
+    }
+
+    private void cleanupRuntimeState(UUID sessionId) {
         // Hermes parity / leak fix (seam audit 2026-08-21): /reset must also drop
         // runtime per-session state, or stale counters leak into the "fresh" session:
         // - MemoryNudgeManager.clearSession (turnsSinceMemory, itersSinceSkill) and
@@ -339,6 +373,13 @@ public class AgentRuntimeService {
         if (turnsToDelete == 0) return 0;
         int cutoffTurnIndex = turnIndices.get(turnsToDelete - 1);
         int deleted = messageRepository.deleteBySessionIdAndTurnIndexGreaterThanEqual(sessionId, cutoffTurnIndex);
+        if (deleted > 0) {
+            long remaining = messageRepository.countBySessionId(sessionId);
+            sessionRepository.findById(sessionId).ifPresent(session -> {
+                session.setMessageCount((int) Math.min(remaining, Integer.MAX_VALUE));
+                sessionRepository.save(session);
+            });
+        }
         return deleted;
     }
 

@@ -108,7 +108,7 @@ public class SessionExpiryWatcher {
                     // its own row but the backend never knows.
                     try {
                         if (session.getBackendSessionId() != null) {
-                            backendClient.resetSession(session.getBackendSessionId().toString());
+                            backendClient.cleanupSession(session.getBackendSessionId().toString());
                         }
                     } catch (Exception e) {
                         log.debug("Backend cleanup for expired session {} failed: {}",
