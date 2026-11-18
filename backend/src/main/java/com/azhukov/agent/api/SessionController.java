@@ -96,6 +96,11 @@ public class SessionController {
         agentRuntimeService.resetSession(sessionId);
     }
 
+    @PostMapping("/agent/session/{sessionId}/cleanup")
+    public void cleanupSession(@PathVariable UUID sessionId) {
+        agentRuntimeService.cleanupSessionState(sessionId);
+    }
+
     @GetMapping("/agent/session/{sessionId}/usage")
     public UsageDto getUsage(@PathVariable UUID sessionId) {
         agentRuntimeService.requireSessionOwnership(sessionId);
