@@ -632,6 +632,10 @@ public interface SessionRepository extends JpaRepository<SessionEntity, UUID> {
     @Query("SELECT s FROM SessionEntity s WHERE (s.source IS NULL OR s.source NOT IN :excludedSources) ORDER BY s.lastActive DESC NULLS LAST, s.updatedAt DESC")
     List<SessionEntity> listRecentExcludingSources(@Param("excludedSources") List<String> excludedSources, Pageable pageable);
 
+    @Query("SELECT s FROM SessionEntity s WHERE s.userId = :userId AND (s.source IS NULL OR s.source NOT IN :excludedSources) ORDER BY s.lastActive DESC NULLS LAST, s.updatedAt DESC")
+    List<SessionEntity> listRecentForUserExcludingSources(@Param("userId") String userId,
+            @Param("excludedSources") List<String> excludedSources, Pageable pageable);
+
     /**
      * Full-text search on session titles using PostgreSQL tsvector.
      * Falls back to LIKE if FTS is not available (H2).

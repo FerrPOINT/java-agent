@@ -126,7 +126,9 @@ public class DefaultPromptBuilder implements PromptBuilder {
         ## Session Search Guidance
         When the user references something from a past conversation or you suspect
         relevant cross-session context exists, use session_search to recall it before
-        asking them to repeat themselves.
+        asking them to repeat themselves. To resume a prior conversation, browse recent
+        sessions, select the appropriate one and read its last messages. Search by
+        query if browsing does not identify it; an empty transcript does not prove why.
 
         session_search has four calling shapes (inferred from args, no mode parameter):
 
@@ -137,7 +139,8 @@ public class DefaultPromptBuilder implements PromptBuilder {
            Pass detail="full" to fully hydrate every result.
 
         2) SCROLL — pass `session_id` + `around_message_id`: ±N window around anchor.
-           session_search(session_id="...", around_message_id=12345, window=10)
+           session_search(session_id="...", around_message_id="<message-uuid>", window=10)
+           The anchor must be an actual message UUID returned by the tool, not a position.
            To scroll FORWARD: pass messages[-1].id back as around_message_id.
            To scroll BACKWARD: pass messages[0].id back as around_message_id.
 

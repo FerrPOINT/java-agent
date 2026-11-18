@@ -144,6 +144,34 @@ class SessionSearchServiceTest {
         }
     }
 
+    @Test
+    void discoverDoesNotExposeForeignLineageMetadata() {
+        UUID rootId = UUID.randomUUID();
+        UUID childId = UUID.randomUUID();
+        SessionEntity foreignRoot = newSessionEntity(rootId, "Foreign private title", "cli");
+        foreignRoot.setUserId("user-b");
+        SessionEntity child = newSessionEntity(childId, "Own title", "cli");
+        child.setUserId("user-a");
+        child.setParentSessionId(rootId);
+        MessageEntity hit = newMessageEntity(childId, "user", "matching text", 0);
+        when(messageRepository.searchByContentFtsExcludingSources(any(), any())).thenReturn(List.of(hit));
+        when(sessionRepository.findAllById(any())).thenReturn(List.of(child));
+        when(sessionRepository.findById(rootId)).thenReturn(Optional.of(foreignRoot));
+        when(sessionRepository.findById(childId)).thenReturn(Optional.of(child));
+        when(sessionLineageService.findAncestorSessionIds(childId)).thenReturn(List.of(rootId, childId));
+        when(messageRepository.findById(hit.getId())).thenReturn(Optional.of(hit));
+        when(messageRepository.findBySessionIdOrderByCreatedAtAsc(childId)).thenReturn(List.of(hit));
+        com.azhukov.agent.core.security.UserContext.set("user-a", com.azhukov.agent.core.security.UserContext.ROLE_USER);
+        try {
+            var result = service.search("matching", null, null, null, null, null, null, null, null, null);
+            assertThat(result.discoverResults).hasSize(1);
+            assertThat(result.discoverResults.get(0).title()).isNotEqualTo("Foreign private title");
+            assertThat(result.discoverResults.get(0).parentSessionId()).isNotEqualTo(rootId);
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+        }
+    }
+
     // ── READ mode (session_id only) ──
 
     @Test

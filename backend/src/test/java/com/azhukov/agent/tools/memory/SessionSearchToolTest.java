@@ -23,6 +23,7 @@ import java.util.*;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
@@ -85,13 +86,65 @@ class SessionSearchToolTest {
     // ── BROWSE mode ──
 
     @Test
+    void toolScopePreservesCentralProofAndRejectsExpiredOrForeignIdentity() {
+        var proof = new com.pdlc.auth.HumanApplicationAccess("user-1", "user", Set.of("java-agent"), 1, true,
+            Instant.now().plusSeconds(60), System.nanoTime() + 60_000_000_000L);
+        com.azhukov.agent.core.security.UserContext.setCentral(proof);
+        try {
+            ToolResult own = tool.execute("{}", assistant(), session());
+            assertThat(own.success()).isTrue();
+            assertThat(com.azhukov.agent.core.security.UserContext.centralAccess()).isSameAs(proof);
+            var foreign = new Session(UUID.randomUUID(), "other", null, "noop", "noop", null, Map.of(), null);
+            assertThat(tool.execute("{}", assistant(), foreign).success()).isFalse();
+            assertThat(com.azhukov.agent.core.security.UserContext.centralAccess()).isSameAs(proof);
+            var admin = new com.pdlc.auth.HumanApplicationAccess("user-1", "admin", Set.of("java-agent"), 1, true,
+                Instant.now().plusSeconds(60), System.nanoTime() + 60_000_000_000L);
+            com.azhukov.agent.core.security.UserContext.setCentral(admin);
+            assertThat(tool.execute("{}", assistant(), foreign).success()).isFalse();
+            assertThat(com.azhukov.agent.core.security.UserContext.centralAccess()).isSameAs(admin);
+            var expired = new com.pdlc.auth.HumanApplicationAccess("user-1", "user", Set.of("java-agent"), 1, true,
+                Instant.now().plusSeconds(60), System.nanoTime() - 1);
+            com.azhukov.agent.core.security.UserContext.setCentral(expired);
+            assertThat(tool.execute("{}", assistant(), session()).success()).isFalse();
+            assertThat(com.azhukov.agent.core.security.UserContext.centralAccess()).isSameAs(expired);
+        } finally { com.azhukov.agent.core.security.UserContext.clear(); }
+    }
+
+    @Test
+    void toolScopeDoesNotLeakAcrossCallsAfterFailure() {
+        var foreign = new Session(UUID.randomUUID(), "other", null, "noop", "noop", null, Map.of(), null);
+        when(sessionRepository.listRecentForUserExcludingSources(eq("user-1"), any(), any()))
+            .thenThrow(new IllegalStateException("test failure"));
+        var ownedByOther = sessionEntity(UUID.randomUUID(), "other-owned", Instant.now());
+        ownedByOther.setUserId("other");
+        when(sessionRepository.listRecentForUserExcludingSources(eq("other"), any(), any()))
+            .thenReturn(List.of(ownedByOther));
+        assertThat(tool.execute("{}", assistant(), session()).success()).isFalse();
+        assertThat(tool.execute("{}", assistant(), foreign).content()).contains("other-owned");
+    }
+
+    @Test
+    void anchorWithoutSessionIsRejectedRatherThanBrowsing() {
+        var result = tool.execute("{\"around_message_id\":\"" + UUID.randomUUID() + "\"}", assistant(), session());
+        assertThat(result.success()).isFalse();
+        assertThat(result.content()).contains("session_id");
+    }
+
+    @Test
+    void browseGuidanceExplainsReadingSessionDirectly() {
+        var result = tool.execute("{}", assistant(), session());
+        assertThat(result.success()).isTrue();
+        assertThat(result.content()).contains("session_id alone");
+    }
+
+    @Test
     void browseNoArgs_returnsRecentSessions() {
         UUID s1 = UUID.randomUUID();
         UUID s2 = UUID.randomUUID();
         Instant t1 = Instant.parse("2025-01-10T10:00:00Z");
         Instant t2 = Instant.parse("2025-01-15T10:00:00Z");
 
-        when(sessionRepository.listRecentExcludingSources(any(), any()))
+        when(sessionRepository.listRecentForUserExcludingSources(eq("user-1"), any(), any()))
             .thenReturn(List.of(
                 sessionEntity(s2, "Recent Chat", t2),
                 sessionEntity(s1, "Older Chat", t1)
@@ -111,7 +164,7 @@ class SessionSearchToolTest {
         Session currentSession = new Session(currentId, "user-1", "test", "openai-compatible", "gpt-4", null, Map.of(), null);
         UUID otherId = UUID.randomUUID();
 
-        when(sessionRepository.listRecentExcludingSources(any(), any()))
+        when(sessionRepository.listRecentForUserExcludingSources(eq("user-1"), any(), any()))
             .thenReturn(List.of(sessionEntity(otherId, "Other", Instant.now())));
         when(sessionLineageService.findAncestorSessionIds(currentId))
             .thenReturn(List.of(currentId));
@@ -224,6 +277,8 @@ class SessionSearchToolTest {
             .thenReturn(List.of(msgEntity(mId, sId, "Let's set up kubernetes", "user", t)));
         when(sessionRepository.findById(sId))
             .thenReturn(Optional.of(sessionEntity(sId, "K8s Discussion", t)));
+        when(sessionRepository.findAllById(any()))
+            .thenReturn(List.of(sessionEntity(sId, "K8s Discussion", t)));
         when(messageRepository.findById(mId))
             .thenReturn(Optional.of(msgEntity(mId, sId, "Let's set up kubernetes", "user", t)));
         when(sessionLineageService.findAncestorSessionIds(sId))
