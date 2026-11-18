@@ -64,6 +64,22 @@ class SessionExpiryWatcherTest {
     }
 
     @Test
+    void expiryFinalizesLocalSessionWithoutDeletingBackendHistory() {
+        BotSessionEntity expired = new BotSessionEntity();
+        expired.setId(UUID.randomUUID());
+        expired.setBackendSessionId(UUID.randomUUID());
+        expired.setCreatedAt(Instant.now().minusSeconds(3600));
+        expired.setUpdatedAt(Instant.now().minusSeconds(3600));
+        when(sessionStore.listActiveSessions()).thenReturn(List.of(expired));
+
+        watcher.checkExpiredSessions();
+
+        verify(sessionStore).finalizeSession(expired.getId());
+        verify(backendClientRef, never()).resetSession(any());
+        verify(backendClientRef).cleanupSession(expired.getBackendSessionId().toString());
+    }
+
+    @Test
     void busySessionIsNeverFinalizedEvenWhenExpired() {
         // rev-123 Hermes parity: active work blocks expiry (_has_active_processes_safe).
         // The expired session's chat is mid-turn → must stay alive.

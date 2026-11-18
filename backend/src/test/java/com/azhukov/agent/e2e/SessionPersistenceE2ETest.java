@@ -42,6 +42,34 @@ class SessionPersistenceE2ETest extends PostgresActiveServicesTestContainer {
     @Autowired
     private SessionRepository sessionRepository;
 
+    @Autowired
+    private com.azhukov.agent.tools.memory.SessionSearchTool sessionSearchTool;
+
+    @Test
+    void cleanupKeepsPriorTurnsReadableFromNewSession() throws Exception {
+        String owner = "fixture-" + UUID.randomUUID();
+        UUID previous = chatAndReturnSessionId("history fixture first turn", owner);
+        chat(previous, "history fixture final turn");
+        long before = messageRepository.countBySessionId(previous);
+        assertThat(before).isGreaterThanOrEqualTo(4);
+        mockMvc.perform(post("/api/v1/agent/session/{sessionId}/cleanup", previous))
+            .andExpect(status().isOk());
+        assertThat(messageRepository.countBySessionId(previous)).isEqualTo(before);
+        UUID current = chatAndReturnSessionId("start separate conversation", owner);
+        assertThat(current).isNotEqualTo(previous);
+        com.azhukov.agent.core.security.UserContext.set(owner, "user");
+        try {
+            var browse = sessionSearchTool.execute("{}", null, null);
+            assertThat(browse.success()).isTrue();
+            assertThat(browse.content()).contains(previous.toString());
+            var read = sessionSearchTool.execute("{\"session_id\":\"" + previous + "\"}", null, null);
+            assertThat(read.success()).isTrue();
+            assertThat(read.content()).contains("history fixture final turn");
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+        }
+    }
+
     @Test
     void sessionMessagesAreReset() throws Exception {
         UUID sessionId = chatAndReturnSessionId("hello reset");
@@ -134,7 +162,11 @@ class SessionPersistenceE2ETest extends PostgresActiveServicesTestContainer {
     }
 
     private UUID chatAndReturnSessionId(String message) throws Exception {
-        ChatRequest request = ChatRequest.simple(null, message, null, null);
+        return chatAndReturnSessionId(message, null);
+    }
+
+    private UUID chatAndReturnSessionId(String message, String owner) throws Exception {
+        ChatRequest request = ChatRequest.simple(null, message, null, null).withUserId(owner);
         String response = mockMvc.perform(post("/api/v1/agent/chat")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(request)))
