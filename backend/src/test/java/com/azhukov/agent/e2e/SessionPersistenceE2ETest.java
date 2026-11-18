@@ -47,21 +47,27 @@ class SessionPersistenceE2ETest extends PostgresActiveServicesTestContainer {
 
     @Test
     void cleanupKeepsPriorTurnsReadableFromNewSession() throws Exception {
-        UUID previous = chatAndReturnSessionId("history fixture first turn");
+        String owner = "fixture-" + UUID.randomUUID();
+        UUID previous = chatAndReturnSessionId("history fixture first turn", owner);
         chat(previous, "history fixture final turn");
         long before = messageRepository.countBySessionId(previous);
         assertThat(before).isGreaterThanOrEqualTo(4);
         mockMvc.perform(post("/api/v1/agent/session/{sessionId}/cleanup", previous))
             .andExpect(status().isOk());
         assertThat(messageRepository.countBySessionId(previous)).isEqualTo(before);
-        UUID current = chatAndReturnSessionId("start separate conversation");
+        UUID current = chatAndReturnSessionId("start separate conversation", owner);
         assertThat(current).isNotEqualTo(previous);
-        var browse = sessionSearchTool.execute("{}", null, null);
-        assertThat(browse.success()).isTrue();
-        assertThat(browse.content()).contains(previous.toString());
-        var read = sessionSearchTool.execute("{\"session_id\":\"" + previous + "\"}", null, null);
-        assertThat(read.success()).isTrue();
-        assertThat(read.content()).contains("history fixture final turn");
+        com.azhukov.agent.core.security.UserContext.set(owner, "user");
+        try {
+            var browse = sessionSearchTool.execute("{}", null, null);
+            assertThat(browse.success()).isTrue();
+            assertThat(browse.content()).contains(previous.toString());
+            var read = sessionSearchTool.execute("{\"session_id\":\"" + previous + "\"}", null, null);
+            assertThat(read.success()).isTrue();
+            assertThat(read.content()).contains("history fixture final turn");
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+        }
     }
 
     @Test
@@ -156,7 +162,11 @@ class SessionPersistenceE2ETest extends PostgresActiveServicesTestContainer {
     }
 
     private UUID chatAndReturnSessionId(String message) throws Exception {
-        ChatRequest request = ChatRequest.simple(null, message, null, null);
+        return chatAndReturnSessionId(message, null);
+    }
+
+    private UUID chatAndReturnSessionId(String message, String owner) throws Exception {
+        ChatRequest request = ChatRequest.simple(null, message, null, null).withUserId(owner);
         String response = mockMvc.perform(post("/api/v1/agent/chat")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(request)))
