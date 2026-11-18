@@ -200,7 +200,8 @@ public class SessionSearchTool implements ToolHandler {
                 response.put("results", r.browseResults != null ? r.browseResults : List.of());
                 response.put("count", r.browseResults != null ? r.browseResults.size() : 0);
                 response.put("message", String.format("Showing %d most recent sessions. " +
-                    "Pass a query= to search, or session_id+around_message_id to scroll.",
+                    "Pass session_id alone to read a session, session_id with around_message_id to scroll, " +
+                    "or a query to search.",
                     r.browseResults != null ? r.browseResults.size() : 0));
             }
         }

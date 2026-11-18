@@ -131,6 +131,13 @@ class SessionSearchToolTest {
     }
 
     @Test
+    void browseGuidanceExplainsReadingSessionDirectly() {
+        var result = tool.execute("{}", assistant(), session());
+        assertThat(result.success()).isTrue();
+        assertThat(result.content()).contains("session_id alone");
+    }
+
+    @Test
     void browseNoArgs_returnsRecentSessions() {
         UUID s1 = UUID.randomUUID();
         UUID s2 = UUID.randomUUID();
