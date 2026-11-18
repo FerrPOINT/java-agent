@@ -27,13 +27,11 @@ class McpOAuthManagerBranchTest {
     @Mock
     private McpOAuthRepository mcpOAuthRepository;
 
-    private AgentProperties properties;
     private McpOAuthManager manager;
 
     @BeforeEach
     void setUp() {
-        properties = new AgentProperties();
-        manager = new McpOAuthManager(mcpOAuthRepository, properties);
+        manager = new McpOAuthManager(mcpOAuthRepository);
     }
 
     // ── getToken ──
@@ -41,7 +39,7 @@ class McpOAuthManagerBranchTest {
     @Test
     void getToken_emptyEntity_returnsEmpty() {
         when(mcpOAuthRepository.findByProfileAndServerName("default", "srv")).thenReturn(Optional.empty());
-        assertThat(manager.getToken("srv")).isEmpty();
+        assertThat(manager.getToken("default", server("srv"))).isEmpty();
     }
 
     @Test
@@ -50,7 +48,7 @@ class McpOAuthManagerBranchTest {
         entity.setAccessToken("access-123");
         entity.setExpiresAt(Instant.now().plusSeconds(3600));
         when(mcpOAuthRepository.findByProfileAndServerName("default", "srv")).thenReturn(Optional.of(entity));
-        Optional<String> token = manager.getToken("srv");
+        Optional<String> token = manager.getToken("default", server("srv"));
         assertThat(token).isPresent();
         assertThat(token.get()).isEqualTo("access-123");
     }
@@ -61,7 +59,7 @@ class McpOAuthManagerBranchTest {
         entity.setAccessToken("access-no-expiry");
         entity.setExpiresAt(null);
         when(mcpOAuthRepository.findByProfileAndServerName("default", "srv")).thenReturn(Optional.of(entity));
-        Optional<String> token = manager.getToken("srv");
+        Optional<String> token = manager.getToken("default", server("srv"));
         assertThat(token).isPresent();
         assertThat(token.get()).isEqualTo("access-no-expiry");
     }
@@ -73,7 +71,7 @@ class McpOAuthManagerBranchTest {
         entity.setExpiresAt(Instant.now().minusSeconds(3600));
         when(mcpOAuthRepository.findByProfileAndServerName("default", "srv")).thenReturn(Optional.of(entity));
         // No server config → refresh throws → returns empty
-        assertThat(manager.getToken("srv")).isEmpty();
+        assertThat(manager.getToken("default", server("srv"))).isEmpty();
     }
 
     @Test
@@ -95,7 +93,7 @@ class McpOAuthManagerBranchTest {
         // Without a server config, refresh throws IllegalStateException (caught),
         // but the re-read returns the "refreshed" entity (mocked) with a future expiry
         // → getToken returns the new token
-        Optional<String> token = manager.getToken("srv");
+        Optional<String> token = manager.getToken("default", server("srv"));
         assertThat(token).isPresent();
         assertThat(token.get()).isEqualTo("new-token");
     }
@@ -141,19 +139,11 @@ class McpOAuthManagerBranchTest {
     // ── refreshToken ──
 
     @Test
-    void refreshToken_noServerConfig_throwsIllegalStateException() {
-        assertThatThrownBy(() -> manager.refreshToken("unknown"))
-            .isInstanceOf(IllegalStateException.class)
-            .hasMessageContaining("No MCP server config found");
-    }
-
-    @Test
     void refreshToken_noTokenUrl_throwsIllegalStateException() {
         AgentProperties.McpProperties.ServerProperties server = new AgentProperties.McpProperties.ServerProperties();
         server.setName("srv");
-        properties.getMcp().getServers().add(server);
 
-        assertThatThrownBy(() -> manager.refreshToken("srv"))
+        assertThatThrownBy(() -> manager.refreshToken("default", server))
             .isInstanceOf(IllegalStateException.class)
             .hasMessageContaining("No OAuth token URL configured");
     }
@@ -163,11 +153,10 @@ class McpOAuthManagerBranchTest {
         AgentProperties.McpProperties.ServerProperties server = new AgentProperties.McpProperties.ServerProperties();
         server.setName("srv");
         server.setOauthTokenUrl("https://example.com/token");
-        properties.getMcp().getServers().add(server);
 
         when(mcpOAuthRepository.findByProfileAndServerName("default", "srv")).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> manager.refreshToken("srv"))
+        assertThatThrownBy(() -> manager.refreshToken("default", server))
             .isInstanceOf(IllegalStateException.class)
             .hasMessageContaining("No stored OAuth token");
     }
@@ -177,13 +166,12 @@ class McpOAuthManagerBranchTest {
         AgentProperties.McpProperties.ServerProperties server = new AgentProperties.McpProperties.ServerProperties();
         server.setName("srv");
         server.setOauthTokenUrl("https://example.com/token");
-        properties.getMcp().getServers().add(server);
 
         McpOAuthEntity entity = new McpOAuthEntity();
         entity.setRefreshToken(null);
         when(mcpOAuthRepository.findByProfileAndServerName("default", "srv")).thenReturn(Optional.of(entity));
 
-        assertThatThrownBy(() -> manager.refreshToken("srv"))
+        assertThatThrownBy(() -> manager.refreshToken("default", server))
             .isInstanceOf(IllegalStateException.class)
             .hasMessageContaining("No refresh token stored");
     }
@@ -193,13 +181,12 @@ class McpOAuthManagerBranchTest {
         AgentProperties.McpProperties.ServerProperties server = new AgentProperties.McpProperties.ServerProperties();
         server.setName("srv");
         server.setOauthTokenUrl("https://example.com/token");
-        properties.getMcp().getServers().add(server);
 
         McpOAuthEntity entity = new McpOAuthEntity();
         entity.setRefreshToken("  ");
         when(mcpOAuthRepository.findByProfileAndServerName("default", "srv")).thenReturn(Optional.of(entity));
 
-        assertThatThrownBy(() -> manager.refreshToken("srv"))
+        assertThatThrownBy(() -> manager.refreshToken("default", server))
             .isInstanceOf(IllegalStateException.class)
             .hasMessageContaining("No refresh token stored");
     }
@@ -212,14 +199,13 @@ class McpOAuthManagerBranchTest {
         server.setOauthClientId("client-123");
         server.setOauthClientSecret("secret-456");
         server.setOauthScopes("read write");
-        properties.getMcp().getServers().add(server);
 
         McpOAuthEntity entity = new McpOAuthEntity();
         entity.setRefreshToken("refresh-token");
         when(mcpOAuthRepository.findByProfileAndServerName("default", "srv")).thenReturn(Optional.of(entity));
 
         // The HTTP call will fail (no server) but we verify it doesn't throw before that
-        assertThatThrownBy(() -> manager.refreshToken("srv"))
+        assertThatThrownBy(() -> manager.refreshToken("default", server))
             .isInstanceOf(Exception.class);
     }
 
@@ -229,14 +215,13 @@ class McpOAuthManagerBranchTest {
         server.setName("srv");
         server.setOauthTokenUrl("https://example.com/token");
         // No client ID or secret set
-        properties.getMcp().getServers().add(server);
 
         McpOAuthEntity entity = new McpOAuthEntity();
         entity.setRefreshToken("refresh-token");
         when(mcpOAuthRepository.findByProfileAndServerName("default", "srv")).thenReturn(Optional.of(entity));
 
         // The HTTP call will fail
-        assertThatThrownBy(() -> manager.refreshToken("srv"))
+        assertThatThrownBy(() -> manager.refreshToken("default", server))
             .isInstanceOf(Exception.class);
     }
 
@@ -397,5 +382,10 @@ class McpOAuthManagerBranchTest {
         assertThat(result).doesNotContain("secret1");
         assertThat(result).doesNotContain("secret2");
         assertThat(result).doesNotContain("token123");
+    }
+    private static AgentProperties.McpProperties.ServerProperties server(String name) {
+        var server = new AgentProperties.McpProperties.ServerProperties();
+        server.setName(name);
+        return server;
     }
 }

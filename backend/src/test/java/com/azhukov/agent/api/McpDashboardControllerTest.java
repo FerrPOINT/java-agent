@@ -63,6 +63,17 @@ class McpDashboardControllerTest {
     }
 
     @Test
+    void liveOperationsUseTheRunningProfile() throws Exception {
+        when(mcpLifecycleManager.runtimeProfile()).thenReturn("research");
+        mockMvc.perform(get("/api/mcp/servers").param("profile", " Research "))
+            .andExpect(status().isOk());
+        mockMvc.perform(get("/api/mcp/servers").param("profile", "default"))
+            .andExpect(status().isBadRequest());
+        mockMvc.perform(post("/api/mcp/servers/demo/test").param("profile", "default"))
+            .andExpect(status().isBadRequest());
+    }
+
+    @Test
     void listServersMergesConfiguredServerWithLiveToolsAndRedactsEnv() throws Exception {
         AgentProperties.McpProperties.ServerProperties server = new AgentProperties.McpProperties.ServerProperties();
         server.setName("filesystem");

@@ -1,6 +1,7 @@
 package com.azhukov.agent.client.mcp;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.service.McpConfigStore;
 import com.azhukov.agent.persistence.entity.McpServerConfigEntity;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
@@ -242,6 +243,10 @@ public class McpLifecycleManager {
     record ConfiguredServer(AgentProperties.McpProperties.ServerProperties properties,
                             McpServerConfigEntity schemaConfig) {}
 
+    public String runtimeProfile() {
+        return McpConfigStore.profileKey(properties.getProfile().getName());
+    }
+
     /** YAML owns duplicate names. Dashboard-only servers retain their source revision. */
     List<ConfiguredServer> effectiveServers() {
         List<ConfiguredServer> merged = new ArrayList<>();
@@ -253,7 +258,7 @@ public class McpLifecycleManager {
         var store = configStoreProvider == null ? null : configStoreProvider.getIfAvailable();
         if (store != null) {
             try {
-                for (var entity : store.list("default")) {
+                for (var entity : store.list(runtimeProfile())) {
                     if (entity.getName() != null && names.add(entity.getName())) {
                         merged.add(new ConfiguredServer(toServerProperties(entity), entity));
                     }
@@ -793,7 +798,7 @@ public class McpLifecycleManager {
     Map<String, String> resolveRemoteHeaders(AgentProperties.McpProperties.ServerProperties server) {
         Map<String, String> headers = new LinkedHashMap<>(server.getHeaders());
         if (mcpOAuthManager != null && !containsHeader(headers, "Authorization")) {
-            mcpOAuthManager.getToken(server.getName())
+            mcpOAuthManager.getToken(runtimeProfile(), server)
                 .filter(token -> token != null && !token.isBlank())
                 .ifPresent(token -> headers.put("Authorization", "Bearer " + token));
         }
@@ -1043,7 +1048,7 @@ public class McpLifecycleManager {
         if (store == null) {
             return null;
         }
-        return store.find("default", name).filter(McpServerConfigEntity::isEnabled)
+        return store.find(runtimeProfile(), name).filter(McpServerConfigEntity::isEnabled)
             .map(config -> new ConfiguredServer(toServerProperties(config), config))
             .orElse(null);
     }
@@ -1666,7 +1671,7 @@ public class McpLifecycleManager {
                 if (!isAuthError(callError)) {
                     throw callError;
                 }
-                recoverOAuthOrThrow(serverName, callError);
+                recoverOAuthOrThrow(state.properties(), callError);
                 try {
                     var retryState = clients.getOrDefault(serverName, state);
                     return callToolWithTimeout(retryState, serverName, toolName, args, startedAt, modelCall, admission);
@@ -1797,12 +1802,13 @@ public class McpLifecycleManager {
         return String.format(Locale.ROOT, "%.1fs", seconds);
     }
 
-    private void recoverOAuthOrThrow(String serverName, Exception cause) {
+    private void recoverOAuthOrThrow(AgentProperties.McpProperties.ServerProperties server, Exception cause) {
+        String serverName = server.getName();
         if (mcpOAuthManager == null) {
             throw reauthRequired(serverName, cause);
         }
         try {
-            mcpOAuthManager.refreshToken(serverName);
+            mcpOAuthManager.refreshToken(runtimeProfile(), server);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw reauthRequired(serverName, e);

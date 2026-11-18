@@ -1099,13 +1099,14 @@ class McpLifecycleManagerNewFeaturesTest {
     @Test
     void resolveRemoteHeadersAddsOauthBearerWhenAuthorizationIsMissing() throws Exception {
         AgentProperties properties = new AgentProperties();
+        properties.getProfile().setName(" Research ");
         McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null, null, null, null, null, null, null);
         McpOAuthManager oauthManager = mock(McpOAuthManager.class);
-        when(oauthManager.getToken("srv")).thenReturn(Optional.of("tok-123"));
         injectOAuthManager(manager, oauthManager);
         AgentProperties.McpProperties.ServerProperties server = new AgentProperties.McpProperties.ServerProperties();
         server.setName("srv");
         server.getHeaders().put("X-Tenant", "acme");
+        when(oauthManager.getToken("research", server)).thenReturn(Optional.of("tok-123"));
 
         Map<String, String> headers = manager.resolveRemoteHeaders(server);
 
@@ -1127,7 +1128,7 @@ class McpLifecycleManagerNewFeaturesTest {
 
         assertThat(headers).containsEntry("authorization", "Bearer explicit");
         assertThat(headers).doesNotContainEntry("Authorization", "Bearer tok-123");
-        verify(oauthManager, never()).getToken("srv");
+        verify(oauthManager, never()).getToken("default", server);
     }
 
     @Test
@@ -1303,6 +1304,7 @@ class McpLifecycleManagerNewFeaturesTest {
     @Test
     void executeToolRefreshesOauthTokenAndRetriesOnceOnAuthError() throws Exception {
         AgentProperties properties = new AgentProperties();
+        properties.getProfile().setName("research");
         McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null, null, null, null, null, null, null);
         McpOAuthManager oauthManager = mock(McpOAuthManager.class);
         injectOAuthManager(manager, oauthManager);
@@ -1318,7 +1320,8 @@ class McpLifecycleManagerNewFeaturesTest {
         McpSchema.CallToolResult result = manager.executeTool("srv", "tool", "{}");
 
         assertThat(result.content()).hasSize(1);
-        verify(oauthManager).refreshToken("srv");
+        var server = manager.getClientsForTest().get("srv").properties();
+        verify(oauthManager).refreshToken("research", server);
         verify(client, times(2)).callTool(any());
     }
 
@@ -1337,7 +1340,8 @@ class McpLifecycleManagerNewFeaturesTest {
         org.mockito.Mockito.doAnswer(invocation -> {
             injectClient(manager, "srv", replacementClient, List.of(replacement));
             return null;
-        }).when(oauth).refreshToken("srv");
+        }).when(oauth).refreshToken(org.mockito.ArgumentMatchers.eq("default"),
+            any(AgentProperties.McpProperties.ServerProperties.class));
 
         var admission = com.azhukov.agent.core.security.McpToolTrustService.ToolTrustMetadata
             .nativeTool("srv", "full", original);
@@ -1354,7 +1358,8 @@ class McpLifecycleManagerNewFeaturesTest {
         McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null, null, null, null, null, null, null);
         McpOAuthManager oauthManager = mock(McpOAuthManager.class);
         doThrow(new java.io.IOException("refresh failed token=supersecret"))
-            .when(oauthManager).refreshToken("srv");
+            .when(oauthManager).refreshToken(org.mockito.ArgumentMatchers.eq("default"),
+                any(AgentProperties.McpProperties.ServerProperties.class));
         injectOAuthManager(manager, oauthManager);
 
         McpSyncClient client = mock(McpSyncClient.class);

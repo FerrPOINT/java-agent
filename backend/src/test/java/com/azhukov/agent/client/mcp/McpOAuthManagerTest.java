@@ -24,20 +24,18 @@ class McpOAuthManagerTest {
     @Mock
     private McpOAuthRepository mcpOAuthRepository;
 
-    private AgentProperties properties;
     private McpOAuthManager manager;
 
     @BeforeEach
     void setUp() {
-        properties = new AgentProperties();
-        manager = new McpOAuthManager(mcpOAuthRepository, properties);
+        manager = new McpOAuthManager(mcpOAuthRepository);
     }
 
     @Test
     void getToken_returnsEmpty_whenNoEntity() {
         when(mcpOAuthRepository.findByProfileAndServerName("default", "test-server")).thenReturn(Optional.empty());
 
-        Optional<String> token = manager.getToken("test-server");
+        Optional<String> token = manager.getToken("default", server("test-server"));
 
         assertThat(token).isEmpty();
     }
@@ -49,7 +47,7 @@ class McpOAuthManagerTest {
         entity.setExpiresAt(Instant.now().plusSeconds(3600));
         when(mcpOAuthRepository.findByProfileAndServerName("default", "test-server")).thenReturn(Optional.of(entity));
 
-        Optional<String> token = manager.getToken("test-server");
+        Optional<String> token = manager.getToken("default", server("test-server"));
 
         assertThat(token).isPresent();
         assertThat(token.get()).isEqualTo("access-123");
@@ -63,7 +61,7 @@ class McpOAuthManagerTest {
         // No refresh token URL configured → refresh throws, returns empty
         when(mcpOAuthRepository.findByProfileAndServerName("default", "test-server")).thenReturn(Optional.of(entity));
 
-        Optional<String> token = manager.getToken("test-server");
+        Optional<String> token = manager.getToken("default", server("test-server"));
 
         assertThat(token).isEmpty();
     }
@@ -142,11 +140,11 @@ class McpOAuthManagerTest {
         // Simulate interrupt by pre-interrupting the thread
         Thread.currentThread().interrupt();
         try {
-            Optional<String> token = manager.getToken("test-server");
+            Optional<String> token = manager.getToken("default", server("test-server"));
             // Should return empty (no valid token after failed refresh)
             assertThat(token).isEmpty();
             // Interrupt flag should be restored
-            // Note: the refreshToken method will throw because there's no server config,
+            // Note: the refreshToken method will throw because the server fixture has no OAuth endpoint,
             // but the InterruptedException catch won't trigger here since the failure is
             // IllegalStateException, not InterruptedException. This test verifies the
             // getToken path doesn't crash when token is expired.
@@ -157,25 +155,16 @@ class McpOAuthManagerTest {
     }
 
     @Test
-    void refreshToken_noServerConfig_throwsIllegalStateException() {
-        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
-                manager.refreshToken("unknown-server"))
-            .isInstanceOf(IllegalStateException.class)
-            .hasMessageContaining("No MCP server config found");
-    }
-
-    @Test
     void refreshToken_noStoredToken_throwsIllegalStateException() {
         // Configure a server with OAuth URL but no stored token
         AgentProperties.McpProperties.ServerProperties serverConfig = new AgentProperties.McpProperties.ServerProperties();
         serverConfig.setName("empty-server");
         serverConfig.setOauthTokenUrl("https://example.com/token");
-        properties.getMcp().getServers().add(serverConfig);
 
         when(mcpOAuthRepository.findByProfileAndServerName("default", "empty-server")).thenReturn(Optional.empty());
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() ->
-                manager.refreshToken("empty-server"))
+                manager.refreshToken("default", serverConfig))
             .isInstanceOf(IllegalStateException.class)
             .hasMessageContaining("No stored OAuth token");
     }
@@ -185,14 +174,13 @@ class McpOAuthManagerTest {
         AgentProperties.McpProperties.ServerProperties serverConfig = new AgentProperties.McpProperties.ServerProperties();
         serverConfig.setName("no-refresh-server");
         serverConfig.setOauthTokenUrl("https://example.com/token");
-        properties.getMcp().getServers().add(serverConfig);
 
         McpOAuthEntity entity = new McpOAuthEntity();
         entity.setRefreshToken(null);
         when(mcpOAuthRepository.findByProfileAndServerName("default", "no-refresh-server")).thenReturn(Optional.of(entity));
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() ->
-                manager.refreshToken("no-refresh-server"))
+                manager.refreshToken("default", serverConfig))
             .isInstanceOf(IllegalStateException.class)
             .hasMessageContaining("No refresh token stored");
     }
@@ -202,10 +190,9 @@ class McpOAuthManagerTest {
         AgentProperties.McpProperties.ServerProperties serverConfig = new AgentProperties.McpProperties.ServerProperties();
         serverConfig.setName("no-url-server");
         // No oauthTokenUrl set
-        properties.getMcp().getServers().add(serverConfig);
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() ->
-                manager.refreshToken("no-url-server"))
+                manager.refreshToken("default", serverConfig))
             .isInstanceOf(IllegalStateException.class)
             .hasMessageContaining("No OAuth token URL configured");
     }
@@ -217,7 +204,6 @@ class McpOAuthManagerTest {
         AgentProperties.McpProperties.ServerProperties serverConfig = new AgentProperties.McpProperties.ServerProperties();
         serverConfig.setName("migrated-server");
         serverConfig.setOauthTokenUrl("https://new-auth.example.com/token");
-        properties.getMcp().getServers().add(serverConfig);
 
         McpOAuthEntity entity = new McpOAuthEntity();
         entity.setProfile("default");
@@ -228,7 +214,7 @@ class McpOAuthManagerTest {
             .thenReturn(Optional.of(entity));
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() ->
-                manager.refreshToken("migrated-server"))
+                manager.refreshToken("default", serverConfig))
             .isInstanceOf(IllegalStateException.class)
             .hasMessageContaining("was issued by https://old-auth.example.com")
             .hasMessageContaining("re-authorization required");
@@ -241,7 +227,6 @@ class McpOAuthManagerTest {
         AgentProperties.McpProperties.ServerProperties serverConfig = new AgentProperties.McpProperties.ServerProperties();
         serverConfig.setName("stable-server");
         serverConfig.setOauthTokenUrl("https://auth.example.com/token");
-        properties.getMcp().getServers().add(serverConfig);
 
         McpOAuthEntity entity = new McpOAuthEntity();
         entity.setProfile("default");
@@ -254,7 +239,7 @@ class McpOAuthManagerTest {
         // The issuer check passes; the refresh itself fails on the HTTP call
         // (no server behind example.com in tests) — but NOT with the issuer error.
         org.assertj.core.api.Assertions.assertThatThrownBy(() ->
-                manager.refreshToken("stable-server"))
+                manager.refreshToken("default", serverConfig))
             .isNotInstanceOf(IllegalStateException.class);
         org.mockito.Mockito.verify(mcpOAuthRepository, org.mockito.Mockito.never())
             .delete(entity);
@@ -267,7 +252,6 @@ class McpOAuthManagerTest {
         AgentProperties.McpProperties.ServerProperties serverConfig = new AgentProperties.McpProperties.ServerProperties();
         serverConfig.setName("legacy-server");
         serverConfig.setOauthTokenUrl("https://auth.example.com/token");
-        properties.getMcp().getServers().add(serverConfig);
 
         McpOAuthEntity entity = new McpOAuthEntity();
         entity.setProfile("default");
@@ -278,9 +262,14 @@ class McpOAuthManagerTest {
             .thenReturn(Optional.of(entity));
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() ->
-                manager.refreshToken("legacy-server"))
+                manager.refreshToken("default", serverConfig))
             .isNotInstanceOf(IllegalStateException.class);
         org.mockito.Mockito.verify(mcpOAuthRepository, org.mockito.Mockito.never())
             .delete(entity);
+    }
+    private static AgentProperties.McpProperties.ServerProperties server(String name) {
+        var server = new AgentProperties.McpProperties.ServerProperties();
+        server.setName(name);
+        return server;
     }
 }
