@@ -24,6 +24,44 @@ class BotSessionStoreTest {
     }
 
     @Test
+    void resumeMustNotActivateAnotherOwnersSessionOrDeactivateCaller() {
+        UUID id = UUID.randomUUID();
+        BotSessionEntity foreign = new BotSessionEntity();
+        foreign.setId(id);
+        foreign.setUserId("other");
+        foreign.setActive(false);
+        when(repository.findById(id)).thenReturn(Optional.of(foreign));
+        assertThat(store.resumeSession(id, "owner")).isNull();
+        verify(repository, never()).findByUserIdAndActiveTrue(any());
+        verify(repository, never()).save(any());
+        assertThat(foreign.isActive()).isFalse();
+    }
+
+    @Test
+    void resumeOwnSessionDeactivatesPreviousAndActivatesTarget() {
+        UUID id = UUID.randomUUID();
+        BotSessionEntity target = new BotSessionEntity();
+        target.setId(id); target.setUserId("owner"); target.setActive(false);
+        BotSessionEntity current = new BotSessionEntity();
+        current.setUserId("owner"); current.setActive(true);
+        when(repository.findById(id)).thenReturn(Optional.of(target));
+        when(repository.findByUserIdAndActiveTrue("owner")).thenReturn(Optional.of(current));
+        when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        assertThat(store.resumeSession(id, "owner")).isSameAs(target);
+        assertThat(current.isActive()).isFalse();
+        assertThat(target.isActive()).isTrue();
+    }
+
+    @Test
+    void resumeMissingSessionLeavesCurrentUnchanged() {
+        UUID id = UUID.randomUUID();
+        when(repository.findById(id)).thenReturn(Optional.empty());
+        assertThat(store.resumeSession(id, "owner")).isNull();
+        verify(repository, never()).findByUserIdAndActiveTrue(any());
+        verify(repository, never()).save(any());
+    }
+
+    @Test
     void resolveOrCreate_existingSession_returnsExisting() {
         BotSessionEntity existing = new BotSessionEntity();
         existing.setUserId("123");

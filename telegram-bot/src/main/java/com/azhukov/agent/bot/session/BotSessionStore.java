@@ -165,7 +165,9 @@ public class BotSessionStore {
 
     @Transactional
     public BotSessionEntity resumeSession(UUID sessionId, String userId) {
-        // Deactivate current active session
+        BotSessionEntity target = repository.findById(sessionId).orElse(null);
+        if (target == null || !java.util.Objects.equals(target.getUserId(), userId)) return null;
+        // Deactivate current active session only after validating the target owner.
         BotSessionEntity current = repository.findByUserIdAndActiveTrue(userId).orElse(null);
         if (current != null) {
             current.setActive(false);
@@ -173,8 +175,6 @@ public class BotSessionStore {
             repository.save(current);
         }
         // Activate requested session
-        BotSessionEntity target = repository.findById(sessionId).orElse(null);
-        if (target == null) return null;
         target.setActive(true);
         target.setUpdatedAt(Instant.now());
         return repository.save(target);
