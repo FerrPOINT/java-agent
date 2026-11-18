@@ -108,7 +108,7 @@ class McpOAuthManagerBranchTest {
         when(mcpOAuthRepository.save(any(McpOAuthEntity.class))).thenAnswer(inv -> inv.getArgument(0));
 
         Instant expiresAt = Instant.now().plusSeconds(3600);
-        manager.storeToken("srv", "access", "refresh", expiresAt);
+        manager.storeToken("default", "srv", "access", "refresh", expiresAt, "https://mcp.example.com/oauth/token");
 
         verify(mcpOAuthRepository).save(any(McpOAuthEntity.class));
     }
@@ -121,7 +121,7 @@ class McpOAuthManagerBranchTest {
         when(mcpOAuthRepository.save(any(McpOAuthEntity.class))).thenAnswer(inv -> inv.getArgument(0));
 
         Instant expiresAt = Instant.now().plusSeconds(3600);
-        manager.storeToken("srv", "new-access", "new-refresh", expiresAt);
+        manager.storeToken("default", "srv", "new-access", "new-refresh", expiresAt, "https://mcp.example.com/oauth/token");
 
         verify(mcpOAuthRepository).save(any(McpOAuthEntity.class));
     }
@@ -133,7 +133,7 @@ class McpOAuthManagerBranchTest {
         when(mcpOAuthRepository.findByProfileAndServerName("default", "srv")).thenReturn(Optional.of(existing));
         when(mcpOAuthRepository.save(any(McpOAuthEntity.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        manager.storeToken("srv", "access", "refresh", Instant.now().plusSeconds(3600));
+        manager.storeToken("default", "srv", "access", "refresh", Instant.now().plusSeconds(3600), "https://mcp.example.com/oauth/token");
 
         verify(mcpOAuthRepository).save(any(McpOAuthEntity.class));
     }

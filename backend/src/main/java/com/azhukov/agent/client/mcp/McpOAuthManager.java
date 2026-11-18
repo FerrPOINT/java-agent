@@ -192,7 +192,7 @@ public class McpOAuthManager {
             }
         }
 
-        storeToken(scope, serverName, newAccessToken, newRefreshToken, expiresAt, currentIssuer);
+        storeToken(scope, serverName, newAccessToken, newRefreshToken, expiresAt, tokenUrl);
         log.info("Successfully refreshed OAuth token for MCP server {}", serverName);
     }
 
@@ -207,38 +207,22 @@ public class McpOAuthManager {
         }
     }
 
-    public void storeToken(String serverName, String accessToken, String refreshToken, Instant expiresAt) {
-        storeToken("default", serverName, accessToken, refreshToken, expiresAt);
-    }
-
-    /** V67: profile-scoped storage that binds the token to its issuer. */
+    /** Store the token and its issuer under the same profile-scoped connection. */
     public void storeToken(String profile, String serverName, String accessToken,
-                           String refreshToken, Instant expiresAt, String issuer) {
-        storeToken(profile, serverName, accessToken, refreshToken, expiresAt);
-        McpOAuthEntity entity = mcpOAuthRepository
-            .findByProfileAndServerName(profile == null || profile.isBlank() ? "default" : profile, serverName)
-            .orElse(null);
-        if (entity != null) {
-            entity.setTokenIssuer(issuer);
-            mcpOAuthRepository.save(entity);
-        }
-    }
-
-    /** Profile-scoped token storage (upstream 399238f2c2 parity, V63 unique (profile, server_name)). */
-    public void storeToken(String profile, String serverName, String accessToken,
-                           String refreshToken, Instant expiresAt) {
-        String scope = profile == null || profile.isBlank() ? "default" : profile;
-        McpOAuthEntity entity = mcpOAuthRepository.findByProfileAndServerName(scope, serverName)
+                           String refreshToken, Instant expiresAt, String tokenUrl) {
+        McpOAuthEntity entity = mcpOAuthRepository.findByProfileAndServerName(profile, serverName)
             .orElseGet(McpOAuthEntity::new);
-        entity.setProfile(scope);
+        entity.setProfile(profile);
         entity.setServerName(serverName);
         entity.setAccessToken(accessToken);
         entity.setRefreshToken(refreshToken);
         entity.setExpiresAt(expiresAt);
+        entity.setTokenIssuer(issuerOf(tokenUrl));
+        Instant now = Instant.now();
         if (entity.getCreatedAt() == null) {
-            entity.setCreatedAt(Instant.now());
+            entity.setCreatedAt(now);
         }
-        entity.setUpdatedAt(Instant.now());
+        entity.setUpdatedAt(now);
         mcpOAuthRepository.save(entity);
     }
 

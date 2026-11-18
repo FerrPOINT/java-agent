@@ -69,16 +69,19 @@ class McpOAuthManagerTest {
     }
 
     @Test
-    void storeToken_savesEntity() {
+    void storeToken_savesProfileAndIssuerTogether() {
         Instant expiresAt = Instant.now().plusSeconds(3600);
-        when(mcpOAuthRepository.findByProfileAndServerName("default", "test-server")).thenReturn(Optional.empty());
+        when(mcpOAuthRepository.findByProfileAndServerName("research", "test-server")).thenReturn(Optional.empty());
         when(mcpOAuthRepository.save(any(McpOAuthEntity.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        manager.storeToken("test-server", "access-123", "refresh-456", expiresAt);
+        manager.storeToken("research", "test-server", "access-123", "refresh-456", expiresAt, "https://mcp.example.com/oauth/token");
 
         ArgumentCaptor<McpOAuthEntity> captor = ArgumentCaptor.forClass(McpOAuthEntity.class);
         verify(mcpOAuthRepository).save(captor.capture());
         McpOAuthEntity saved = captor.getValue();
+        verify(mcpOAuthRepository).findByProfileAndServerName("research", "test-server");
+        assertThat(saved.getProfile()).isEqualTo("research");
+        assertThat(saved.getTokenIssuer()).isEqualTo("https://mcp.example.com");
         assertThat(saved.getServerName()).isEqualTo("test-server");
         assertThat(saved.getAccessToken()).isEqualTo("access-123");
         assertThat(saved.getRefreshToken()).isEqualTo("refresh-456");

@@ -144,7 +144,8 @@ public class McpOAuthFlowService {
         }
 
         McpOAuthManager oauth = oauth();
-        oauth.storeToken(flow.getServerName(), accessToken, refreshToken, Instant.now().plusSeconds(ttl));
+        oauth.storeToken(flow.getProfile(), flow.getServerName(), accessToken, refreshToken,
+            Instant.now().plusSeconds(ttl), config.getOauthTokenUrl());
 
         flow.setStatus("completed");
         flows().save(flow);
