@@ -856,7 +856,10 @@ public class DefaultContextCompressor implements ContextCompressor {
          childSession.setSessionStatus("active");
          childSession.setSource(oldSession.getSource());
          childSession.setLastActive(Instant.now());
-         childSession.setMessageCount(0);
+         childSession.setMessageCount((int) compacted.stream()
+             .filter(message -> (message.role() != Role.SYSTEM && message.role() != Role.DEVELOPER)
+                 || isCompactionCarrier(message))
+             .count());
          sessionRepository.save(childSession);
 
          persistCompactedTranscript(childSession.getId(), compacted);
