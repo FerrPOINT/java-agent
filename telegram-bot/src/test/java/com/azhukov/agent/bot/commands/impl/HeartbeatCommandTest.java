@@ -66,6 +66,12 @@ class HeartbeatCommandTest {
         assertThat(HeartbeatCommand.parseIntervalToken(token)).isNull();
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"2147483648s", "2147483648h", "1193047h", "999999999999999999999999m"})
+    void oversizedIntervalIsRejectedWithoutOverflow(String interval) {
+        assertThat(HeartbeatCommand.parseIntervalToken(interval)).isNull();
+    }
+
     @Test
     void set_withEveryForm_postsHeartbeatAndWatchesPoller() throws Exception {
         UUID sid = UUID.randomUUID();
