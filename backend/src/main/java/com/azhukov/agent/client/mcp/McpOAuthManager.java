@@ -137,7 +137,6 @@ public class McpOAuthManager {
                 + " with status " + response.statusCode() + ": " + sanitized);
         }
 
-        // Parse JSON response manually (avoid pulling in Jackson dependency here for a simple parse)
         String responseBody = response.body();
         String newAccessToken = extractJsonField(responseBody, "access_token");
         String newRefreshToken = extractJsonField(responseBody, "refresh_token");
@@ -195,7 +194,9 @@ public class McpOAuthManager {
         mcpOAuthRepository.save(entity);
     }
 
-    private static final com.fasterxml.jackson.databind.ObjectMapper JSON = new com.fasterxml.jackson.databind.ObjectMapper();
+    private static final com.fasterxml.jackson.databind.ObjectMapper JSON = new com.fasterxml.jackson.databind.ObjectMapper()
+        .enable(com.fasterxml.jackson.core.JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
+        .enable(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
 
     /** Read a top-level OAuth response scalar; malformed or structured values are rejected. */
     public static String extractJsonField(String json, String fieldName) {
@@ -203,7 +204,8 @@ public class McpOAuthManager {
         try {
             var root = JSON.readTree(json);
             var value = root != null && root.isObject() ? root.get(fieldName) : null;
-            return value != null && (value.isTextual() || value.isNumber()) ? value.asText() : null;
+            boolean tokenField = "access_token".equals(fieldName) || "refresh_token".equals(fieldName);
+            return value != null && (value.isTextual() || (!tokenField && value.isNumber())) ? value.asText() : null;
         } catch (java.io.IOException e) {
             return null;
         }

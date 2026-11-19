@@ -92,6 +92,9 @@ class McpOAuthManagerTest {
         assertThat(McpOAuthManager.extractJsonField("{\"extra\":{\"access_token\":\"nested\"}}", "access_token")).isNull();
         assertThat(McpOAuthManager.extractJsonField("{\"access_token\":\"unterminated", "access_token")).isNull();
         assertThat(McpOAuthManager.extractJsonField("{\"expires_in\":[3600]}", "expires_in")).isNull();
+        assertThat(McpOAuthManager.extractJsonField("{\"access_token\":123}", "access_token")).isNull();
+        assertThat(McpOAuthManager.extractJsonField("{\"access_token\":\"first\",\"access_token\":\"second\"}", "access_token")).isNull();
+        assertThat(McpOAuthManager.extractJsonField("{\"access_token\":\"first\"} trailing", "access_token")).isNull();
     }
 
     @Test
