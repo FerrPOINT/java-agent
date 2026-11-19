@@ -243,7 +243,8 @@ public final class HistorySanitizer {
                 String joined = prevContent.isEmpty() ? newContent
                     : newContent.isEmpty() ? prevContent
                     : prevContent + "\n\n" + newContent;
-                merged.add(Message.withContent(prev, joined));
+                merged.add(Message.withImageCount(Message.withContent(prev, joined),
+                    Math.addExact(prev.imageCount(), msg.imageCount())));
                 repairs++;
             } else {
                 merged.add(msg);
