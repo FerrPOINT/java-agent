@@ -375,6 +375,36 @@ class McpOAuthManagerTest {
         }
     }
 
+    @Test
+    void refreshNeverLogsProviderControlledInvalidExpiry() throws Exception {
+        var events = new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+        var logger = (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(McpOAuthManager.class);
+        events.start();
+        logger.addAppender(events);
+        var http = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        http.createContext("/token", exchange -> {
+            byte[] body = "{\"access_token\":\"new\",\"expires_in\":\"fixture-private-value\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, body.length);
+            try (var output = exchange.getResponseBody()) { output.write(body); }
+        });
+        http.start();
+        try {
+            var config = server("fixture");
+            config.setOauthTokenUrl("http://127.0.0.1:" + http.getAddress().getPort() + "/token");
+            var entity = new McpOAuthEntity();
+            entity.setRefreshToken("refresh");
+            entity.setTokenIssuer(McpOAuthManager.issuerOf(config.getOauthTokenUrl()));
+            when(mcpOAuthRepository.findByProfileAndServerName("default", "fixture")).thenReturn(Optional.of(entity));
+            manager.refreshToken("default", config);
+            assertThat(events.list).extracting(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+                .noneMatch(message -> message.contains("fixture-private-value"));
+        } finally {
+            http.stop(0);
+            logger.detachAppender(events);
+            events.stop();
+        }
+    }
+
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
     void matchingIssuerRefreshUsesSelectedProfileAndFormCredentials(boolean withClientCredentials) throws Exception {

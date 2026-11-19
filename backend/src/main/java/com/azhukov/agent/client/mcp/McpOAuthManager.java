@@ -153,7 +153,7 @@ public class McpOAuthManager {
             try {
                 expiresAt = Instant.now().plusSeconds(Long.parseLong(expiresInStr.trim()));
             } catch (NumberFormatException e) {
-                log.warn("Invalid expires_in value '{}' for MCP server {}, using default", expiresInStr, serverName);
+                log.warn("Invalid expires_in for MCP server {}, using default", serverName);
             }
         }
 
