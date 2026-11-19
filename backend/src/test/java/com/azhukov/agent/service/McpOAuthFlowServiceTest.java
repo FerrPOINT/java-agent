@@ -216,7 +216,7 @@ class McpOAuthFlowServiceTest {
     }
 
     @ParameterizedTest
-    @CsvSource(value = {"1200,1200", "invalid,3600", "NULL,3600"}, nullValues = "NULL")
+    @CsvSource(value = {"1200,1200", "invalid,3600", "NULL,3600", "9223372036854775807,3600"}, nullValues = "NULL")
     void completeExchangesBoundPkceCodeAndConsumesState(String expiresIn, long expectedTtl) throws Exception {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         AtomicReference<String> requestBody = new AtomicReference<>();

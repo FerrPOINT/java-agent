@@ -135,17 +135,21 @@ public class McpOAuthFlowService {
             return failure("authorization server returned no access_token");
         }
         long ttl = 3600;
+        Instant now = Instant.now();
+        Instant expiresAt = now.plusSeconds(ttl);
         try {
             if (expiresIn != null && !expiresIn.isBlank()) {
-                ttl = Long.parseLong(expiresIn.trim());
+                long requestedTtl = Long.parseLong(expiresIn.trim());
+                expiresAt = now.plusSeconds(requestedTtl);
+                ttl = requestedTtl;
             }
-        } catch (NumberFormatException ignored) {
+        } catch (NumberFormatException | ArithmeticException | java.time.DateTimeException ignored) {
             // default 1h
         }
 
         McpOAuthManager oauth = oauth();
         oauth.storeToken(flow.getProfile(), flow.getServerName(), accessToken, refreshToken,
-            Instant.now().plusSeconds(ttl), config.getOauthTokenUrl());
+            expiresAt, config.getOauthTokenUrl());
 
         flow.setStatus("completed");
         flows().save(flow);
