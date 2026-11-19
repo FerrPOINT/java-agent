@@ -29,8 +29,9 @@ public class TextBatchDebouncer {
         t.setDaemon(true);
         return t;
     });
-    private final Map<Long, BatchEntry> buffers = new ConcurrentHashMap<>();
-    private final Map<Long, ScheduledFuture<?>> timers = new ConcurrentHashMap<>();
+    private record BatchKey(long chatId, long userId, long threadId) {}
+    private final Map<BatchKey, BatchEntry> buffers = new ConcurrentHashMap<>();
+    private final Map<BatchKey, ScheduledFuture<?>> timers = new ConcurrentHashMap<>();
     private final List<java.util.function.Consumer<UpdateEvent>> dispatchers = new CopyOnWriteArrayList<>();
 
     /**
@@ -53,9 +54,9 @@ public class TextBatchDebouncer {
         if (event.type() != UpdateEvent.Type.TEXT) {
             return false;
         }
-        long chatId = event.chatId();
+        var key = new BatchKey(event.chatId(), event.userId(), event.messageThreadId());
 
-        BatchEntry entry = buffers.computeIfAbsent(chatId, k -> {
+        BatchEntry entry = buffers.computeIfAbsent(key, k -> {
             BatchEntry e = new BatchEntry();
             e.setFirstEvent(event);
             return e;
@@ -70,14 +71,14 @@ public class TextBatchDebouncer {
             long delay = computeDelay(totalLen);
 
             // Cancel existing timer
-            ScheduledFuture<?> existing = timers.remove(chatId);
+            ScheduledFuture<?> existing = timers.remove(key);
             if (existing != null) {
                 existing.cancel(false);
             }
 
             // Schedule dispatch
-            ScheduledFuture<?> future = scheduler.schedule(() -> dispatch(chatId), delay, TimeUnit.MILLISECONDS);
-            timers.put(chatId, future);
+            ScheduledFuture<?> future = scheduler.schedule(() -> dispatch(key), delay, TimeUnit.MILLISECONDS);
+            timers.put(key, future);
         }
         return true;
     }
@@ -113,9 +114,10 @@ public class TextBatchDebouncer {
         }
     }
 
-    private void dispatch(long chatId) {
-        BatchEntry entry = buffers.remove(chatId);
-        timers.remove(chatId);
+    private void dispatch(BatchKey key) {
+        long chatId = key.chatId();
+        BatchEntry entry = buffers.remove(key);
+        timers.remove(key);
         if (entry == null) return;
 
         // P34: Post-debounce re-validation — check if chat is still active/paused
@@ -151,22 +153,22 @@ public class TextBatchDebouncer {
      * Flush all pending buffers immediately (for shutdown or testing).
      */
     public void flushAll() {
-        for (Long chatId : new java.util.ArrayList<>(buffers.keySet())) {
-            ScheduledFuture<?> f = timers.remove(chatId);
+        for (BatchKey key : new java.util.ArrayList<>(buffers.keySet())) {
+            ScheduledFuture<?> f = timers.remove(key);
             if (f != null) f.cancel(false);
-            dispatch(chatId);
+            dispatch(key);
         }
     }
 
     /** Test helper: check if a chat has a pending buffer. */
     boolean hasPending(long chatId) {
-        return buffers.containsKey(chatId);
+        return buffers.keySet().stream().anyMatch(key -> key.chatId() == chatId);
     }
 
     /** Test helper: get pending text for a chat. */
     String getPendingText(long chatId) {
-        BatchEntry entry = buffers.get(chatId);
-        return entry != null ? entry.mergedText() : null;
+        return buffers.entrySet().stream().filter(entry -> entry.getKey().chatId() == chatId)
+            .map(entry -> entry.getValue().mergedText()).findFirst().orElse(null);
     }
 
     // ─── Internal ──────────────────────────────────────────────────
