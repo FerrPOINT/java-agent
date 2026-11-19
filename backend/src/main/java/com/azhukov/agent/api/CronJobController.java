@@ -145,9 +145,11 @@ public class CronJobController {
     public java.util.Map<String, Object> heartbeatSet(@org.springframework.web.bind.annotation.RequestBody HeartbeatSetRequest request) {
         // /loop --times N reaches here with maxTicks
         if (request.sessionId() == null || request.prompt() == null || request.prompt().isBlank()
-            || request.intervalSeconds() == null || request.intervalSeconds() < HeartbeatService.MIN_INTERVAL_SECONDS) {
+            || request.intervalSeconds() == null || request.intervalSeconds() < HeartbeatService.MIN_INTERVAL_SECONDS
+            || (request.maxTicks() != null && request.maxTicks() < 0)) {
             return java.util.Map.of("ok", false,
-                "reason", "sessionId, prompt and intervalSeconds >= " + HeartbeatService.MIN_INTERVAL_SECONDS + " required");
+                "reason", "sessionId, prompt, intervalSeconds >= " + HeartbeatService.MIN_INTERVAL_SECONDS
+                    + " and maxTicks >= 0 required");
         }
         requireSessionOwnership(request.sessionId());
         HeartbeatService.HeartbeatState st = heartbeatService.set(request.sessionId(), request.prompt(), request.intervalSeconds(),
