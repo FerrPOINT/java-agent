@@ -53,10 +53,10 @@ class McpOAuthRepositoryTest extends PostgresTestContainer {
     }
 
     @Test
-    void findByServerNameReturnsEntity() {
+    void findByProfileAndServerNameReturnsEntity() {
         mcpOAuthRepository.save(newMcpOAuth(SERVER_NAME_1, ACCESS_TOKEN_1, REFRESH_TOKEN_1));
 
-        McpOAuthEntity found = mcpOAuthRepository.findByServerName(SERVER_NAME_1).orElse(null);
+        McpOAuthEntity found = mcpOAuthRepository.findByProfileAndServerName("default", SERVER_NAME_1).orElse(null);
 
         assertThat(found).isNotNull();
         assertThat(found.getServerName()).isEqualTo(SERVER_NAME_1);
@@ -85,7 +85,7 @@ class McpOAuthRepositoryTest extends PostgresTestContainer {
         mcpOAuthRepository.deleteById(id);
 
         assertThat(mcpOAuthRepository.findById(id)).isEmpty();
-        assertThat(mcpOAuthRepository.findByServerName(SERVER_NAME_1)).isEmpty();
+        assertThat(mcpOAuthRepository.findByProfileAndServerName("default", SERVER_NAME_1)).isEmpty();
     }
 
     @Test
