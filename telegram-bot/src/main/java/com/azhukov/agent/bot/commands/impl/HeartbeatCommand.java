@@ -36,11 +36,15 @@ public class HeartbeatCommand implements CommandHandler {
         if (token == null || token.isBlank()) return null;
         Matcher m = INTERVAL_TOKEN_RE.matcher(token);
         if (!m.matches()) return null;
-        int seconds = 0;
-        if (m.group(1) != null) seconds += Integer.parseInt(m.group(1)) * 3600;
-        if (m.group(2) != null) seconds += Integer.parseInt(m.group(2)) * 60;
-        if (m.group(3) != null) seconds += Integer.parseInt(m.group(3));
-        return seconds > 0 ? seconds : null;
+        try {
+            long seconds = 0;
+            if (m.group(1) != null) seconds = Math.addExact(seconds, Math.multiplyExact(Long.parseLong(m.group(1)), 3600));
+            if (m.group(2) != null) seconds = Math.addExact(seconds, Math.multiplyExact(Long.parseLong(m.group(2)), 60));
+            if (m.group(3) != null) seconds = Math.addExact(seconds, Long.parseLong(m.group(3)));
+            return seconds > 0 && seconds <= Integer.MAX_VALUE ? (int) seconds : null;
+        } catch (NumberFormatException | ArithmeticException e) {
+            return null;
+        }
     }
 
     @Override
