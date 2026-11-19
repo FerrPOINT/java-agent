@@ -33,7 +33,7 @@ import static org.mockito.Mockito.*;
 class CentralJwtVerifierBoundaryTest {
     private static final String SUBJECT = "8c5ddf41-ae6d-4dc9-a7ec-15835dd6303e";
     private static final String ISSUER = "https://auth.fixture.invalid";
-    private static final String PAT = "sdlc_pat_synthetic_fixture";
+    private static final String PAT = "pdlc_pat_synthetic_fixture";
     private static final String PERSONAL = "https://auth.fixture.invalid/introspect";
 
     @ParameterizedTest

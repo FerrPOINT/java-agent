@@ -108,6 +108,10 @@ public final class CentralJwtVerifier {
         return uri;
     }
 
+    static boolean isPersonalToken(String bearerToken) {
+        return bearerToken.startsWith("pdlc_pat_");
+    }
+
     /** The proof and role come from the same live Auth confirmation, never from JWT role claims. */
     public HumanApplicationAccess verifyAccess(String bearerToken, String method) throws JwtException {
         if (bearerToken == null || bearerToken.isBlank() || bearerToken.length() > 16384) {
@@ -115,7 +119,7 @@ public final class CentralJwtVerifier {
         }
         long started = System.nanoTime();
         Instant wallStarted = Instant.now();
-        boolean personal = bearerToken.startsWith("sdlc_pat_") || bearerToken.startsWith("pdlc_pat_");
+        boolean personal = isPersonalToken(bearerToken);
         String subject = null;
         Instant tokenExpiry = null;
         com.azhukov.agent.core.model.IdentityDeletionProtocol.Window signedWindow = null;

@@ -188,21 +188,29 @@ class CentralJwtFilterTest {
 
     @Test
     void personalTokenNeedsBothCurrentApplicationAndMethodScope() throws Exception {
-        for (String prefix : new String[]{"sdlc_pat_", "pdlc_pat_"}) {
-            for (String method : new String[]{"GET", "POST"}) {
-                String proof = admission("admin", "[\"java-agent\"]");
-                sessionReply.set(proof.replace("\"id\":", "\"sub\":")
-                        .replace("{\"sub\":", "{\"scopes\":[\"java-agent:read\"],\"expires_at\":\""
-                                + Instant.now().plusSeconds(120) + "\",\"sub\":"));
-                var request = new MockHttpServletRequest(method, "/api/v2/sessions");
-                request.addHeader("Authorization", "Bearer " + prefix + "fixture-only");
-                var response = new MockHttpServletResponse();
-                AtomicInteger calls = new AtomicInteger();
-                filter().doFilter(request, response, (incoming, outgoing) -> calls.incrementAndGet());
-                assertThat(response.getStatus()).isEqualTo(method.equals("GET") ? 200 : 403);
-                assertThat(calls.get()).isEqualTo(method.equals("GET") ? 1 : 0);
-            }
+        for (String method : new String[]{"GET", "POST"}) {
+            String proof = admission("admin", "[\"java-agent\"]");
+            sessionReply.set(proof.replace("\"id\":", "\"sub\":")
+                    .replace("{\"sub\":", "{\"scopes\":[\"java-agent:read\"],\"expires_at\":\""
+                            + Instant.now().plusSeconds(120) + "\",\"sub\":"));
+            var request = new MockHttpServletRequest(method, "/api/v2/sessions");
+            request.addHeader("Authorization", "Bearer pdlc_pat_fixture-only");
+            var response = new MockHttpServletResponse();
+            AtomicInteger calls = new AtomicInteger();
+            filter().doFilter(request, response, (incoming, outgoing) -> calls.incrementAndGet());
+            assertThat(response.getStatus()).isEqualTo(method.equals("GET") ? 200 : 403);
+            assertThat(calls.get()).isEqualTo(method.equals("GET") ? 1 : 0);
         }
+    }
+
+    @Test
+    void retiredPersonalTokenIsRejectedBeforeIdentityConfirmation() throws Exception {
+        var request = new MockHttpServletRequest("GET", "/api/v2/sessions");
+        request.addHeader("Authorization", "Bearer sdlc_pat_fixture-only");
+        var response = new MockHttpServletResponse();
+        filter().doFilter(request, response, (incoming, outgoing) -> fail("Retired PAT admitted"));
+        assertThat(response.getStatus()).isEqualTo(401);
+        assertThat(sessionConfirmations.get()).isZero();
     }
 
     @Test
