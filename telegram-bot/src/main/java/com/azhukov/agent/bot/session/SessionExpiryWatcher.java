@@ -103,8 +103,12 @@ public class SessionExpiryWatcher {
                     log.info("Finalizing expired session {} (reason={}, userId={})",
                         session.getId(), reason, session.getUserId());
                     // Persist the cleanup intent atomically with deactivation before the HTTP call.
-                    if (sessionStore.finalizeWithCleanupPending(session.getId(), session.getUpdatedAt())) {
-                        cleanupIds.add(session.getId());
+                    try {
+                        if (sessionStore.finalizeWithCleanupPending(session.getId(), session.getUpdatedAt())) {
+                            cleanupIds.add(session.getId());
+                        }
+                    } catch (Exception e) {
+                        log.warn("Could not finalize expired session {}; will retry on the next check", session.getId());
                     }
                 }
             }

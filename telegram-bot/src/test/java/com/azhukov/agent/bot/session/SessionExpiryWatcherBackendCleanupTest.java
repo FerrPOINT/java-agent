@@ -61,6 +61,25 @@ class SessionExpiryWatcherBackendCleanupTest {
     }
 
     @Test
+    void staleSessionFailureDoesNotPreventOtherExpirationsOrRetries() {
+        var bad = new BotSessionEntity();
+        bad.setId(UUID.randomUUID()); bad.setUserId("bad");
+        bad.setCreatedAt(Instant.now().minusSeconds(3600)); bad.setUpdatedAt(Instant.now().minusSeconds(3600));
+        var good = new BotSessionEntity();
+        good.setId(UUID.randomUUID()); good.setUserId("good");
+        good.setCreatedAt(Instant.now().minusSeconds(3600)); good.setUpdatedAt(Instant.now().minusSeconds(3600));
+        var pending = new BotSessionEntity(); pending.setId(UUID.randomUUID());
+        when(sessionStore.listActiveSessions()).thenReturn(List.of(bad, good));
+        when(sessionStore.pendingCleanups()).thenReturn(List.of(pending));
+        when(sessionStore.finalizeWithCleanupPending(eq(bad.getId()), any())).thenThrow(new IllegalStateException("fixture"));
+
+        watcher.checkExpiredSessions();
+
+        verify(sessionStore).finalizeWithCleanupPending(good.getId(), good.getUpdatedAt());
+        verify(sessionStore).retryCleanup(eq(pending.getId()), any());
+    }
+
+    @Test
     void expiredSessionTriggersBackendCleanup() {
         UUID sessionId = UUID.randomUUID();
         BotSessionEntity session = new BotSessionEntity();
