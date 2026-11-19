@@ -33,6 +33,8 @@ class HeartbeatDeliveryPollerTest {
         telegram = mock(TelegramClient.class);
         BotProperties props = mock(BotProperties.class);
         when(props.isCronDeliveryEnabled()).thenReturn(true);
+        lenient().when(backend.suggestionPost(contains("/result/ack")))
+            .thenReturn(mapper.createObjectNode().put("acked", true));
         poller = new HeartbeatDeliveryPoller(backend, telegram, props);
     }
 
@@ -98,6 +100,21 @@ class HeartbeatDeliveryPollerTest {
 
         verify(telegram, times(2)).sendMessage(eq(42L), contains("final result"));
         verify(backend).suggestionPost(contains("/result/ack"));
+    }
+
+    @Test
+    void finishedHeartbeatRemainsWatchedWhenAckIsUnconfirmed() {
+        UUID sid = UUID.randomUUID();
+        poller.watch(sid, 42L);
+        stubResult(sid, "final result");
+        stubStatus(sid, false);
+        when(telegram.sendMessage(eq(42L), anyString())).thenReturn(Optional.of(7L));
+        when(backend.suggestionPost(contains("/result/ack"))).thenReturn(null);
+
+        poller.poll();
+        poller.poll();
+
+        verify(backend, times(2)).suggestionPost(contains("/result/ack"));
     }
 
     @Test
