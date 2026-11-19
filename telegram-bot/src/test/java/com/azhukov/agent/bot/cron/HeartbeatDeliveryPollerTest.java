@@ -118,6 +118,22 @@ class HeartbeatDeliveryPollerTest {
     }
 
     @Test
+    void replacedWatchIsNotRemovedByOldPollResult() {
+        UUID sid = UUID.randomUUID();
+        poller.watch(sid, 42L);
+        stubResult(sid, null);
+        when(backend.suggestionGet("/api/v1/agent/cron/heartbeat/" + sid)).thenAnswer(invocation -> {
+            poller.watch(sid, 42L);
+            return mapper.createObjectNode().put("set", false);
+        });
+
+        poller.poll();
+        poller.poll();
+
+        verify(backend, times(2)).suggestionGet("/api/v1/agent/cron/heartbeat/" + sid + "/result");
+    }
+
+    @Test
     void unavailableStatusDoesNotStopWatchingAfterDelivery() {
         UUID sid = UUID.randomUUID();
         poller.watch(sid, 42L);
