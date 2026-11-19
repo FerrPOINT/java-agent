@@ -98,28 +98,14 @@ public class CronJobTool implements ToolHandler {
             return cronError(e.getMessage());
         }
         try {
+            if (session == null) throw new IllegalArgumentException("Current session is required to create a cron job");
             UUID attachedSessionId = attachedSessionId(args.attachToSession(), session);
-            boolean hasHermesExtras = monitor.provided()
-                || args.continuity() != null
-                || args.attachToSession() != null;
-            CronJobEntity entity = hasHermesExtras
-                ? cronJobService.create(
-                    defaultJobName(args.name(), args.prompt(), skillList), args.schedule(), args.prompt(), args.deliver(),
-                     skills, contextFrom,
-                     args.repeat(),
-                     args.script(), args.noAgent() != null && args.noAgent(),
-                     enabledToolsets, args.workdir(),
-                     args.modelProvider(), args.modelName(), args.baseUrl(),
-                     monitor.value(), Boolean.TRUE.equals(args.continuity()), attachedSessionId
-                 )
-                : cronJobService.create(
-                    defaultJobName(args.name(), args.prompt(), skillList), args.schedule(), args.prompt(), args.deliver(),
-                    skills, contextFrom,
-                    args.repeat(),
-                    args.script(), args.noAgent() != null && args.noAgent(),
-                    enabledToolsets, args.workdir(),
-                    args.modelProvider(), args.modelName(), args.baseUrl()
-                );
+            CronJobEntity entity = cronJobService.create(
+            session.userId(), "default", defaultJobName(args.name(), args.prompt(), skillList), args.schedule(),
+            args.prompt(), args.deliver(), skills, contextFrom,
+            args.repeat(), args.script(), Boolean.TRUE.equals(args.noAgent()), enabledToolsets,
+            args.workdir(), args.modelProvider(), args.modelName(), args.baseUrl(),
+            monitor.value(), Boolean.TRUE.equals(args.continuity()), attachedSessionId);
             return cronOk(createEnvelope(entity));
         } catch (Exception e) {
             return cronError("Failed to create cron job: " + e.getMessage());
@@ -237,28 +223,11 @@ public class CronJobTool implements ToolHandler {
             return cronError("No updates provided.");
         }
         try {
-            boolean hasHermesExtras = monitor.provided()
-                || args.continuity() != null
-                || args.attachToSession() != null;
-            CronJobEntity entity = hasHermesExtras
-                ? cronJobService.update(
-                    job.get().getId(), name, args.schedule(), args.prompt(), args.deliver(), null,
-                    skills, contextFrom,
-                     args.repeat(),
-                     args.script(), args.noAgent(),
-                     enabledToolsets, args.workdir(),
-                     args.modelProvider(), args.modelName(), args.baseUrl(),
-                     monitor.provided() ? monitor.value() : null,
-                     args.continuity(), args.attachToSession(), session == null ? null : session.id()
-                 )
-                : cronJobService.update(
-                    job.get().getId(), name, args.schedule(), args.prompt(), args.deliver(), null,
-                    skills, contextFrom,
-                    args.repeat(),
-                    args.script(), args.noAgent(),
-                    enabledToolsets, args.workdir(),
-                    args.modelProvider(), args.modelName(), args.baseUrl()
-                );
+            CronJobEntity entity = cronJobService.update(
+                job.get().getId(), name, args.schedule(), args.prompt(), args.deliver(), null,
+                skills, contextFrom, args.repeat(), args.script(), args.noAgent(), enabledToolsets, args.workdir(),
+                args.modelProvider(), args.modelName(), args.baseUrl(), monitor.provided() ? monitor.value() : null,
+                args.continuity(), args.attachToSession(), session == null ? null : session.id());
             return cronOk(jobEnvelope(entity));
         } catch (Exception e) {
             return cronError("Failed to update cron job: " + e.getMessage());

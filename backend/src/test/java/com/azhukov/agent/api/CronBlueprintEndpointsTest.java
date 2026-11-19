@@ -49,12 +49,17 @@ class CronBlueprintEndpointsTest {
     @Test
     void createFillsTimeSlotIntoValidCron() {
         CronJobService jobs = Mockito.mock(CronJobService.class);
-        when(jobs.create(anyString(), anyString(), anyString(), any(), any())).thenAnswer(inv -> {
+        when(jobs.create(
+            org.mockito.ArgumentMatchers.eq(com.azhukov.agent.core.security.UserContext.getUserId()), org.mockito.ArgumentMatchers.eq("default"), anyString(), anyString(),
+            anyString(), any(), any(), org.mockito.ArgumentMatchers.isNull(),
+            org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.eq(false), org.mockito.ArgumentMatchers.isNull(),
+            org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(),
+            org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.eq(false), org.mockito.ArgumentMatchers.isNull())).thenAnswer(inv -> {
             CronJobEntity e = new CronJobEntity();
             e.setId(UUID.randomUUID());
-            e.setName(inv.getArgument(0));
-            e.setSchedule(inv.getArgument(1));
-            e.setPrompt(inv.getArgument(2));
+            e.setName(inv.getArgument(2));
+            e.setSchedule(inv.getArgument(3));
+            e.setPrompt(inv.getArgument(4));
             return e;
         });
         var dto = controller(jobs).createFromBlueprint("morning-brief",
@@ -67,12 +72,17 @@ class CronBlueprintEndpointsTest {
     @Test
     void defaultsProduceValidCronToo() {
         CronJobService jobs = Mockito.mock(CronJobService.class);
-        when(jobs.create(anyString(), anyString(), anyString(), any(), any())).thenAnswer(inv -> {
+        when(jobs.create(
+            org.mockito.ArgumentMatchers.eq(com.azhukov.agent.core.security.UserContext.getUserId()), org.mockito.ArgumentMatchers.eq("default"), anyString(), anyString(),
+            anyString(), any(), any(), org.mockito.ArgumentMatchers.isNull(),
+            org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.eq(false), org.mockito.ArgumentMatchers.isNull(),
+            org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(),
+            org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.eq(false), org.mockito.ArgumentMatchers.isNull())).thenAnswer(inv -> {
             CronJobEntity e = new CronJobEntity();
             e.setId(UUID.randomUUID());
-            e.setName(inv.getArgument(0));
-            e.setSchedule(inv.getArgument(1));
-            e.setPrompt(inv.getArgument(2));
+            e.setName(inv.getArgument(2));
+            e.setSchedule(inv.getArgument(3));
+            e.setPrompt(inv.getArgument(4));
             return e;
         });
         var dto = controller(jobs).createFromBlueprint("morning-brief", null);

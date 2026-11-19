@@ -99,12 +99,17 @@ class CronJobToolBranchTest {
 
     @Test
     void createJob_nullName_usesPromptPreviewAsDefaultName() {
-        when(cronJobService.create(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any())).thenAnswer(inv -> {
+        when(cronJobService.create(
+            org.mockito.ArgumentMatchers.eq(session().userId()), org.mockito.ArgumentMatchers.eq("default"), any(), any(),
+            any(), any(), any(), any(),
+            any(), any(), anyBoolean(), any(),
+            any(), any(), any(), any(),
+            org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.eq(false), org.mockito.ArgumentMatchers.isNull())).thenAnswer(inv -> {
             CronJobEntity e = new CronJobEntity();
             e.setId(UUID.randomUUID());
-            e.setName(inv.getArgument(0));
-            e.setSchedule(inv.getArgument(1));
-            e.setPrompt(inv.getArgument(2));
+            e.setName(inv.getArgument(2));
+            e.setSchedule(inv.getArgument(3));
+            e.setPrompt(inv.getArgument(4));
             e.setEnabled(true);
             return e;
         });
@@ -112,18 +117,26 @@ class CronJobToolBranchTest {
         ToolResult result = tool.execute("{\"action\":\"create\",\"schedule\":\"0 9 * * *\",\"prompt\":\"test\"}", assistant(), session());
         assertThat(json(result)).containsEntry("name", "test");
         org.mockito.Mockito.verify(cronJobService).create(
-            "test", "0 9 * * *", "test", null, null,
-            null, null, null, false, null, null, null, null, null);
+            session().userId(), "default", "test", "0 9 * * *",
+            "test", null, null, null,
+            null, null, false, null,
+            null, null, null, null,
+            null, false, null);
     }
 
     @Test
     void createJob_blankName_usesPromptPreviewAsDefaultName() {
-        when(cronJobService.create(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any())).thenAnswer(inv -> {
+        when(cronJobService.create(
+            org.mockito.ArgumentMatchers.eq(session().userId()), org.mockito.ArgumentMatchers.eq("default"), any(), any(),
+            any(), any(), any(), any(),
+            any(), any(), anyBoolean(), any(),
+            any(), any(), any(), any(),
+            org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.eq(false), org.mockito.ArgumentMatchers.isNull())).thenAnswer(inv -> {
             CronJobEntity e = new CronJobEntity();
             e.setId(UUID.randomUUID());
-            e.setName(inv.getArgument(0));
-            e.setSchedule(inv.getArgument(1));
-            e.setPrompt(inv.getArgument(2));
+            e.setName(inv.getArgument(2));
+            e.setSchedule(inv.getArgument(3));
+            e.setPrompt(inv.getArgument(4));
             e.setEnabled(true);
             return e;
         });
@@ -131,8 +144,11 @@ class CronJobToolBranchTest {
         ToolResult result = tool.execute("{\"action\":\"create\",\"name\":\"\",\"schedule\":\"0 9 * * *\",\"prompt\":\"test\"}", assistant(), session());
         assertThat(json(result)).containsEntry("name", "test");
         org.mockito.Mockito.verify(cronJobService).create(
-            "test", "0 9 * * *", "test", null, null,
-            null, null, null, false, null, null, null, null, null);
+            session().userId(), "default", "test", "0 9 * * *",
+            "test", null, null, null,
+            null, null, false, null,
+            null, null, null, null,
+            null, false, null);
     }
 
     @Test
@@ -187,7 +203,12 @@ class CronJobToolBranchTest {
 
     @Test
     void createJob_serviceThrows_returnsFail() {
-        when(cronJobService.create(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any()))
+        when(cronJobService.create(
+            org.mockito.ArgumentMatchers.eq(session().userId()), org.mockito.ArgumentMatchers.eq("default"), any(), any(),
+            any(), any(), any(), any(),
+            any(), any(), anyBoolean(), any(),
+            any(), any(), any(), any(),
+            org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.eq(false), org.mockito.ArgumentMatchers.isNull()))
             .thenThrow(new RuntimeException("DB error"));
         CronJobTool tool = new CronJobTool(cronJobService);
         ToolResult result = tool.execute(
@@ -433,8 +454,12 @@ class CronJobToolBranchTest {
         entity.setId(id);
         entity.setName("job1");
         when(cronJobService.findById(id)).thenReturn(Optional.of(entity));
-        when(cronJobService.update(eq(id), any(), any(), any(), any(), any(), any(), any(), any(),
-            any(), any(), any(), any(), any(), any(), any())).thenReturn(entity);
+        when(cronJobService.update(
+            eq(id), any(), any(), any(),
+            any(), any(), any(), any(),
+            any(), any(), any(), any(),
+            any(), any(), any(), any(),
+            org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull())).thenReturn(entity);
 
         CronJobTool tool = new CronJobTool(cronJobService);
         ToolResult result = tool.execute(
@@ -443,8 +468,11 @@ class CronJobToolBranchTest {
 
         assertThat(result.success()).isTrue();
         org.mockito.Mockito.verify(cronJobService).update(
-            id, null, null, null, null, null,
-            "", null, null, null, null, null, null, null, null, null);
+            id, null, null, null,
+            null, null, "", null,
+            null, null, null, null,
+            null, null, null, null,
+            null, null, null, null);
     }
 
     @Test
@@ -470,8 +498,12 @@ class CronJobToolBranchTest {
         entity.setId(id);
         entity.setName("job1");
         when(cronJobService.findById(id)).thenReturn(Optional.of(entity));
-        when(cronJobService.update(eq(id), any(), any(), any(), any(), any(), any(), any(), any(),
-            any(), any(), any(), any(), any(), any(), any())).thenReturn(entity);
+        when(cronJobService.update(
+            eq(id), any(), any(), any(),
+            any(), any(), any(), any(),
+            any(), any(), any(), any(),
+            any(), any(), any(), any(),
+            org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull())).thenReturn(entity);
 
         CronJobTool tool = new CronJobTool(cronJobService);
         ToolResult result = tool.execute(
@@ -480,8 +512,11 @@ class CronJobToolBranchTest {
 
         assertThat(result.success()).isTrue();
         org.mockito.Mockito.verify(cronJobService).update(
-            id, null, null, null, null, null,
-            null, "self," + HERMES_JOB_ID, null, null, null, "web,terminal", null, null, null, null);
+            id, null, null, null,
+            null, null, null, "self," + HERMES_JOB_ID,
+            null, null, null, "web,terminal",
+            null, null, null, null,
+            null, null, null, null);
     }
 
     @Test
@@ -508,16 +543,20 @@ class CronJobToolBranchTest {
 
     @Test
     void createJob_withMonitorContinuityAndAttachCreatesParityJob() {
-        when(cronJobService.create(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(),
-            any(), any(), any(), any(), any(), any(), anyBoolean(), any())).thenAnswer(inv -> {
+        when(cronJobService.create(
+            org.mockito.ArgumentMatchers.eq(session().userId()), org.mockito.ArgumentMatchers.eq("default"), any(), any(),
+            any(), any(), any(), any(),
+            any(), any(), anyBoolean(), any(),
+            any(), any(), any(), any(),
+            any(), anyBoolean(), any())).thenAnswer(inv -> {
                 CronJobEntity e = new CronJobEntity();
                 e.setId(COMPACT_ID_SOURCE);
-                e.setName(inv.getArgument(0));
-                e.setSchedule(inv.getArgument(1));
-                e.setPrompt(inv.getArgument(2));
-                e.setMonitor((String) inv.getArgument(14));
-                e.setContinuityEnabled((Boolean) inv.getArgument(15));
-                e.setAttachedSessionId((UUID) inv.getArgument(16));
+                e.setName(inv.getArgument(2));
+                e.setSchedule(inv.getArgument(3));
+                e.setPrompt(inv.getArgument(4));
+                e.setMonitor((String) inv.getArgument(16));
+                e.setContinuityEnabled((Boolean) inv.getArgument(17));
+                e.setAttachedSessionId((UUID) inv.getArgument(18));
                 e.setEnabled(true);
                 return e;
             });
@@ -536,23 +575,29 @@ class CronJobToolBranchTest {
             .containsEntry("attach_to_session", true)
             .containsEntry("attached_session_id", current.id().toString());
         org.mockito.Mockito.verify(cronJobService).create(
-            eq("watch"), eq("every 1h"), eq("watch"), isNull(), isNull(), isNull(), isNull(), isNull(),
-            eq(false), isNull(), isNull(), isNull(), isNull(), isNull(),
+            org.mockito.ArgumentMatchers.eq(session().userId()), org.mockito.ArgumentMatchers.eq("default"), eq("watch"), eq("every 1h"),
+            eq("watch"), isNull(), isNull(), isNull(),
+            isNull(), isNull(), eq(false), isNull(),
+            isNull(), isNull(), isNull(), isNull(),
             eq("check.sh"), eq(true), eq(current.id()));
     }
 
     @Test
     void createJob_withModelOverridePersistsProviderModelAndBaseUrl() {
-        when(cronJobService.create(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(),
-            any(), any(), any(), any(), any())).thenAnswer(inv -> {
+        when(cronJobService.create(
+            org.mockito.ArgumentMatchers.eq(session().userId()), org.mockito.ArgumentMatchers.eq("default"), any(), any(),
+            any(), any(), any(), any(),
+            any(), any(), anyBoolean(), any(),
+            any(), any(), any(), any(),
+            org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.eq(false), org.mockito.ArgumentMatchers.isNull())).thenAnswer(inv -> {
                 CronJobEntity e = new CronJobEntity();
                 e.setId(COMPACT_ID_SOURCE);
-                e.setName(inv.getArgument(0));
-                e.setSchedule(inv.getArgument(1));
-                e.setPrompt(inv.getArgument(2));
-                e.setModelProvider(inv.getArgument(11));
-                e.setModelName(inv.getArgument(12));
-                e.setBaseUrl(inv.getArgument(13));
+                e.setName(inv.getArgument(2));
+                e.setSchedule(inv.getArgument(3));
+                e.setPrompt(inv.getArgument(4));
+                e.setModelProvider(inv.getArgument(13));
+                e.setModelName(inv.getArgument(14));
+                e.setBaseUrl(inv.getArgument(15));
                 e.setEnabled(true);
                 return e;
             });
@@ -571,8 +616,11 @@ class CronJobToolBranchTest {
             .containsEntry("model", "gpt-4o")
             .containsEntry("base_url", "https://api.openai.com");
         org.mockito.Mockito.verify(cronJobService).create(
-            eq("modelled"), eq("every 1h"), eq("run"), isNull(), isNull(), isNull(), isNull(), isNull(),
-            eq(false), isNull(), isNull(), eq("openai"), eq("gpt-4o"), eq("https://api.openai.com"));
+            org.mockito.ArgumentMatchers.eq(session().userId()), org.mockito.ArgumentMatchers.eq("default"), eq("modelled"), eq("every 1h"),
+            eq("run"), isNull(), isNull(), isNull(),
+            isNull(), isNull(), eq(false), isNull(),
+            isNull(), eq("openai"), eq("gpt-4o"), eq("https://api.openai.com"),
+            org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.eq(false), org.mockito.ArgumentMatchers.isNull());
     }
 
     @Test
@@ -582,8 +630,12 @@ class CronJobToolBranchTest {
         existing.setId(id);
         existing.setName("job1");
         when(cronJobService.findById(id)).thenReturn(Optional.of(existing));
-        when(cronJobService.update(eq(id), any(), any(), any(), any(), any(), any(), any(), any(),
-            any(), any(), any(), any(), any(), any(), any())).thenAnswer(inv -> {
+        when(cronJobService.update(
+            eq(id), any(), any(), any(),
+            any(), any(), any(), any(),
+            any(), any(), any(), any(),
+            any(), any(), any(), any(),
+            org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull())).thenAnswer(inv -> {
                 CronJobEntity e = new CronJobEntity();
                 e.setId(id);
                 e.setName("job1");
@@ -609,9 +661,11 @@ class CronJobToolBranchTest {
             .containsEntry("model", "gpt-4o")
             .containsEntry("base_url", "https://api.openai.com");
         org.mockito.Mockito.verify(cronJobService).update(
-            eq(id), isNull(), isNull(), isNull(), isNull(), isNull(),
-            isNull(), isNull(), isNull(), isNull(), isNull(), isNull(), isNull(),
-            eq("openai"), eq("gpt-4o"), eq("https://api.openai.com"));
+            eq(id), isNull(), isNull(), isNull(),
+            isNull(), isNull(), isNull(), isNull(),
+            isNull(), isNull(), isNull(), isNull(),
+            isNull(), eq("openai"), eq("gpt-4o"), eq("https://api.openai.com"),
+            org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull());
     }
 
     @Test
@@ -662,12 +716,17 @@ class CronJobToolBranchTest {
 
     @Test
     void createJob_withDeliverToAndSkills() {
-        when(cronJobService.create(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any())).thenAnswer(inv -> {
+        when(cronJobService.create(
+            org.mockito.ArgumentMatchers.eq(session().userId()), org.mockito.ArgumentMatchers.eq("default"), any(), any(),
+            any(), any(), any(), any(),
+            any(), any(), anyBoolean(), any(),
+            any(), any(), any(), any(),
+            org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.eq(false), org.mockito.ArgumentMatchers.isNull())).thenAnswer(inv -> {
             CronJobEntity e = new CronJobEntity();
             e.setId(UUID.randomUUID());
-            e.setName(inv.getArgument(0));
-            e.setSchedule(inv.getArgument(1));
-            e.setPrompt(inv.getArgument(2));
+            e.setName(inv.getArgument(2));
+            e.setSchedule(inv.getArgument(3));
+            e.setPrompt(inv.getArgument(4));
             e.setEnabled(true);
             return e;
         });
@@ -677,19 +736,27 @@ class CronJobToolBranchTest {
             assistant(), session());
         assertThat(result.success()).isTrue();
         org.mockito.Mockito.verify(cronJobService).create(
-            "daily-report", "0 9 * * *", "Generate report", "telegram", "coding",
-            null, null, null, false, null, null, null, null, null);
+            session().userId(), "default", "daily-report", "0 9 * * *",
+            "Generate report", "telegram", "coding", null,
+            null, null, false, null,
+            null, null, null, null,
+            null, false, null);
     }
 
     @Test
     void createJob_withSkillsOnlyPayload() {
-        when(cronJobService.create(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any())).thenAnswer(inv -> {
+        when(cronJobService.create(
+            org.mockito.ArgumentMatchers.eq(session().userId()), org.mockito.ArgumentMatchers.eq("default"), any(), any(),
+            any(), any(), any(), any(),
+            any(), any(), anyBoolean(), any(),
+            any(), any(), any(), any(),
+            org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.eq(false), org.mockito.ArgumentMatchers.isNull())).thenAnswer(inv -> {
             CronJobEntity e = new CronJobEntity();
             e.setId(UUID.randomUUID());
-            e.setName(inv.getArgument(0));
-            e.setSchedule(inv.getArgument(1));
-            e.setPrompt(inv.getArgument(2));
-            e.setSkills(inv.getArgument(4));
+            e.setName(inv.getArgument(2));
+            e.setSchedule(inv.getArgument(3));
+            e.setPrompt(inv.getArgument(4));
+            e.setSkills(inv.getArgument(6));
             e.setEnabled(true);
             return e;
         });
@@ -701,19 +768,27 @@ class CronJobToolBranchTest {
 
         assertThat(result.success()).isTrue();
         org.mockito.Mockito.verify(cronJobService).create(
-            "daily-skill", "0 9 * * *", null, null, "coding",
-            null, null, null, false, null, null, null, null, null);
+            session().userId(), "default", "daily-skill", "0 9 * * *",
+            null, null, "coding", null,
+            null, null, false, null,
+            null, null, null, null,
+            null, false, null);
     }
 
     @Test
     void createJob_withSkillsArrayPayload() {
-        when(cronJobService.create(any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any())).thenAnswer(inv -> {
+        when(cronJobService.create(
+            org.mockito.ArgumentMatchers.eq(session().userId()), org.mockito.ArgumentMatchers.eq("default"), any(), any(),
+            any(), any(), any(), any(),
+            any(), any(), anyBoolean(), any(),
+            any(), any(), any(), any(),
+            org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.eq(false), org.mockito.ArgumentMatchers.isNull())).thenAnswer(inv -> {
             CronJobEntity e = new CronJobEntity();
             e.setId(UUID.randomUUID());
-            e.setName(inv.getArgument(0));
-            e.setSchedule(inv.getArgument(1));
-            e.setPrompt(inv.getArgument(2));
-            e.setSkills(inv.getArgument(4));
+            e.setName(inv.getArgument(2));
+            e.setSchedule(inv.getArgument(3));
+            e.setPrompt(inv.getArgument(4));
+            e.setSkills(inv.getArgument(6));
             e.setEnabled(true);
             return e;
         });
@@ -725,8 +800,11 @@ class CronJobToolBranchTest {
 
         assertThat(result.success()).isTrue();
         org.mockito.Mockito.verify(cronJobService).create(
-            "daily-skill", "0 9 * * *", null, null, "research,coding",
-            null, null, null, false, null, null, null, null, null);
+            session().userId(), "default", "daily-skill", "0 9 * * *",
+            null, null, "research,coding", null,
+            null, null, false, null,
+            null, null, null, null,
+            null, false, null);
     }
 
     // ── formatJob: entity with all fields set ──
