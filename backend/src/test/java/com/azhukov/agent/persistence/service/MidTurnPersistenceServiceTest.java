@@ -52,6 +52,17 @@ class MidTurnPersistenceServiceTest {
     }
 
     @Test
+    void messageRowsAndCountAreWrittenInSameTransaction() {
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        when(transactionTemplate.execute(any())).thenAnswer(inv -> {
+            calls.incrementAndGet();
+            return inv.getArgument(0, org.springframework.transaction.support.TransactionCallback.class).doInTransaction(null);
+        });
+        assertThat(service.persistNewMessages(UUID.randomUUID(), List.of(Message.user("hello")), 0)).isTrue();
+        assertThat(calls.get()).isEqualTo(1);
+    }
+
+    @Test
     void persistNewMessages_savesNewMessages() {
         stubTransaction();
         UUID sessionId = UUID.randomUUID();

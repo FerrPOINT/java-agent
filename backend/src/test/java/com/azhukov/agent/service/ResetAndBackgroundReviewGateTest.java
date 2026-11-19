@@ -60,7 +60,7 @@ class ResetAndBackgroundReviewGateTest {
         service = new AgentRuntimeService(
             agentRuntime,                      // 1 agentRuntime
             org.mockito.Mockito.mock(com.azhukov.agent.persistence.repository.BackgroundJobRepository.class), // 2 backgroundJobRepository
-            null,                              // 3 sessionRepository
+            org.mockito.Mockito.mock(com.azhukov.agent.persistence.repository.SessionRepository.class), // sessionRepository
             messageRepository,                 // 3 messageRepository
             null,                              // 4 sessionTitleService
             null,                              // 5 memoryProvider
@@ -88,6 +88,55 @@ class ResetAndBackgroundReviewGateTest {
             memoryNudgeManager,                // 27 memoryNudgeManager
             promptBuilder,                    // 28 promptBuilder
             new com.azhukov.agent.core.agent.SessionTurnLockManager()); // 29 sessionTurnLockManager
+    }
+
+    @Test
+    void cleanupFailureMustNotBeAcknowledgedAsSuccessful() {
+        UUID id = UUID.randomUUID();
+        org.mockito.Mockito.doThrow(new IllegalStateException("fixture cleanup failure"))
+            .when(memoryNudgeManager).clearSession(id);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.cleanupSessionState(id))
+            .isInstanceOf(IllegalStateException.class);
+        verify(promptBuilder).invalidateMemoryPrefix(String.valueOf(id));
+        verify(messageRepository, never()).deleteBySessionId(id);
+        org.mockito.Mockito.doNothing().when(memoryNudgeManager).clearSession(id);
+        service.cleanupSessionState(id);
+        verify(memoryNudgeManager, org.mockito.Mockito.times(2)).clearSession(id);
+        verify(promptBuilder, org.mockito.Mockito.times(2)).invalidateMemoryPrefix(String.valueOf(id));
+        verify(messageRepository, never()).deleteBySessionId(id);
+    }
+
+    @Test
+    void cleanupReportsMultipleFailuresAndStillReleasesTurnLockForRetry() throws Exception {
+        UUID id = UUID.randomUUID();
+        org.mockito.Mockito.doThrow(new IllegalStateException("nudge failed"))
+            .when(memoryNudgeManager).clearSession(id);
+        org.mockito.Mockito.doThrow(new IllegalStateException("prefix failed"))
+            .when(promptBuilder).invalidateMemoryPrefix(String.valueOf(id));
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.cleanupSessionState(id))
+            .isInstanceOf(IllegalStateException.class)
+            .satisfies(error -> assertThat(error.getSuppressed()).hasSize(1));
+        verify(messageRepository, never()).deleteBySessionId(id);
+        org.mockito.Mockito.doNothing().when(memoryNudgeManager).clearSession(id);
+        org.mockito.Mockito.doNothing().when(promptBuilder).invalidateMemoryPrefix(String.valueOf(id));
+        var executor = java.util.concurrent.Executors.newSingleThreadExecutor();
+        try {
+            executor.submit(() -> service.cleanupSessionState(id)).get(5, java.util.concurrent.TimeUnit.SECONDS);
+        } finally {
+            executor.shutdownNow();
+        }
+        verify(memoryNudgeManager, org.mockito.Mockito.times(2)).clearSession(id);
+        verify(promptBuilder, org.mockito.Mockito.times(2)).invalidateMemoryPrefix(String.valueOf(id));
+    }
+
+    @Test
+    void explicitResetStillDeletesHistoryWhenRuntimeCleanupFails() {
+        UUID id = UUID.randomUUID();
+        org.mockito.Mockito.doThrow(new IllegalStateException("fixture cleanup failure"))
+            .when(memoryNudgeManager).clearSession(id);
+        service.resetSession(id);
+        verify(messageRepository).deleteBySessionId(id);
+        verify(promptBuilder).invalidateMemoryPrefix(String.valueOf(id));
     }
 
     @Test

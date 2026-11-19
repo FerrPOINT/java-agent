@@ -73,6 +73,7 @@ public class MidTurnPersistenceService implements MidTurnPersistenceCallback {
                 }
                 if (!batch.isEmpty()) {
                     messageRepository.saveAll(batch);
+                    sessionRepository.incrementMessageCount(sessionId, now, batch.size());
                 }
                 return batch.size();
             });
@@ -81,19 +82,6 @@ public class MidTurnPersistenceService implements MidTurnPersistenceCallback {
             // Record batch size metric
             if (agentMetrics != null && persistedCount > 0) {
                 agentMetrics.recordPersistenceBatchSize(persistedCount);
-            }
-            // Each flush touches session metadata once using an atomic delta.
-            // This avoids a COUNT(*) over the full message history and remains
-            // correct when a session already has persisted messages.
-            if (persistedCount > 0) {
-                try {
-                    transactionTemplate.execute(status -> {
-                        sessionRepository.incrementMessageCount(sessionId, Instant.now(), persistedCount);
-                        return null;
-                    });
-                } catch (Exception statEx) {
-                    log.debug("Failed to update session stats after mid-turn persistence: {}", statEx.getMessage());
-                }
             }
             return true;
         } catch (Exception e) {

@@ -212,6 +212,10 @@ public class AgentBackendClient {
     // Sessions (SessionApiClient)
     // ------------------------------------------------------------------
 
+    public boolean cleanupSession(String sessionId) {
+        return sessions.cleanupSession(sessionId);
+    }
+
     public boolean resetSession(String sessionId) {
         return sessions.resetSession(sessionId);
     }

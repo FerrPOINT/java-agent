@@ -107,7 +107,6 @@ dependencies {
 
     // Commons utilities
     implementation 'com.cronutils:cron-utils:9.2.1'
-    implementation 'com.bucket4j:bucket4j-core:8.10.1'
 
     // (commons-imaging removed — was unused)
 
