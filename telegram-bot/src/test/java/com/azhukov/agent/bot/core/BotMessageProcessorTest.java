@@ -1370,7 +1370,7 @@ class BotMessageProcessorTest {
         processor.accept(photoEvent(1, 100L, "file123", "Look at this", null));
         ArgumentCaptor<String> msgCaptor = ArgumentCaptor.forClass(String.class);
         verify(backendClient).chatStream(msgCaptor.capture(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
-        assertThat(msgCaptor.getValue()).contains("Look at this");
+        assertThat(msgCaptor.getValue()).containsOnlyOnce("Look at this");
         assertThat(msgCaptor.getValue()).contains("[Photo: test.jpg]");
     }
 
