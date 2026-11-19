@@ -339,6 +339,25 @@ class BotSessionCleanupPostgresTest {
         } finally { proceed.countDown(); executor.shutdownNow(); }
     }
 
+    @Test void watcherDoesNotLoseOtherPendingCleanupWhenBackendThrows() {
+        var failed = session("watcher-throws-" + UUID.randomUUID());
+        var succeeds = session("watcher-other-" + UUID.randomUUID());
+        store.deactivateAllWithCleanupPending(failed.getUserId());
+        store.deactivateAllWithCleanupPending(succeeds.getUserId());
+        var backend = org.mockito.Mockito.mock(com.azhukov.agent.bot.core.AgentBackendClient.class);
+        org.mockito.Mockito.when(backend.cleanupSession(failed.getBackendSessionId().toString()))
+            .thenThrow(new IllegalStateException("synthetic backend exception")).thenReturn(true);
+        org.mockito.Mockito.when(backend.cleanupSession(succeeds.getBackendSessionId().toString())).thenReturn(true);
+        var watcher = new SessionExpiryWatcher(store, new SessionResetPolicy(), backend, org.mockito.Mockito.mock(BusySessionHandler.class));
+        try {
+            watcher.checkExpiredSessions();
+            assertThat(repository.findById(failed.getId()).orElseThrow().isCleanupPending()).isTrue();
+            assertThat(repository.findById(succeeds.getId()).orElseThrow().isCleanupPending()).isFalse();
+            watcher.checkExpiredSessions();
+            assertThat(repository.findById(failed.getId()).orElseThrow().isCleanupPending()).isFalse();
+        } finally { watcher.stop(); }
+    }
+
     @Test void watcherContinuesAfterOneCleanupFailsAndRetriesItLater() {
         var failed = session("watcher-failed-" + UUID.randomUUID());
         var succeeds = session("watcher-succeeds-" + UUID.randomUUID());
