@@ -63,7 +63,7 @@ class CentralJwtFilterTest {
             exchange.sendResponseHeaders(200, publicKeys.length);
             try (var output = exchange.getResponseBody()) { output.write(publicKeys); }
         });
-        sessionReply.set("{\"id\":\"" + SUBJECT + "\",\"status\":\"active\"}");
+        sessionReply.set("{\"id\":\"" + SUBJECT + "\",\"status\":\"active\",\"role\":\"user\"}");
         server.createContext("/me", exchange -> {
             sessionConfirmations.incrementAndGet();
             Instant notBefore=sessionReplyNotBefore.get();
@@ -92,7 +92,7 @@ class CentralJwtFilterTest {
         UserContext.clear();
         SecurityContextHolder.clearContext();
         sessionStatus.set(200);
-        sessionReply.set("{\"id\":\"" + SUBJECT + "\",\"status\":\"active\"}");
+        sessionReply.set("{\"id\":\"" + SUBJECT + "\",\"status\":\"active\",\"role\":\"user\"}");
         unexpectedRequests.set(0);
         sessionConfirmations.set(0);
         sessionReplyNotBefore.set(null);
@@ -191,9 +191,19 @@ class CentralJwtFilterTest {
         for (String prefix : new String[]{"sdlc_pat_", "pdlc_pat_"}) {
             for (String method : new String[]{"GET", "POST"}) {
                 String proof = admission("admin", "[\"java-agent\"]");
-                sessionReply.set(proof.replace("\"id\":", "\"sub\":")
-                        .replace("{\"sub\":", "{\"scopes\":[\"java-agent:read\"],\"expires_at\":\""
-                                + Instant.now().plusSeconds(120) + "\",\"sub\":"));
+                var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                var identity = mapper.readValue(proof, java.util.LinkedHashMap.class);
+                identity.remove("id");
+                identity.remove("status");
+                identity.remove("role");
+                identity.put("sub", SUBJECT);
+                identity.put("email", "fixture@example.test");
+                identity.put("display_name", "Fixture");
+                identity.put("subject_role", "admin");
+                identity.put("scopes", java.util.List.of("java-agent:read"));
+                identity.put("observed_at", Instant.now().toString());
+                identity.put("expires_at", Instant.now().plusSeconds(120).toString());
+                sessionReply.set(mapper.writeValueAsString(identity));
                 var request = new MockHttpServletRequest(method, "/api/v2/sessions");
                 request.addHeader("Authorization", "Bearer " + prefix + "fixture-only");
                 var response = new MockHttpServletResponse();
@@ -349,8 +359,8 @@ class CentralJwtFilterTest {
     @ValueSource(strings = {"foreign", "inactive", "malformed", "oversized"})
     void sessionReadbackMustConfirmExactActiveIdentityWithinResponseLimit(String failure) throws Exception {
         sessionReply.set(switch (failure) {
-            case "foreign" -> "{\"id\":\"" + UUID.randomUUID() + "\",\"status\":\"active\"}";
-            case "inactive" -> "{\"id\":\"" + SUBJECT + "\",\"status\":\"disabled\"}";
+            case "foreign" -> "{\"id\":\"" + UUID.randomUUID() + "\",\"status\":\"active\",\"role\":\"user\"}";
+            case "inactive" -> "{\"id\":\"" + SUBJECT + "\",\"status\":\"disabled\",\"role\":\"user\"}";
             case "oversized" -> "x".repeat(65537);
             default -> "broken-json";
         });

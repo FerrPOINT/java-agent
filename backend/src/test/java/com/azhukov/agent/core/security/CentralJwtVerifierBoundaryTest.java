@@ -118,7 +118,7 @@ class CentralJwtVerifierBoundaryTest {
     }
 
     @Test
-    void writeScopeIsConfirmedAtThePersonalEndpointWithOriginalLifetimeRequested() throws Exception {
+    void writeScopeIsConfirmedAtThePersonalEndpointWithOriginalLifetime() throws Exception {
         var identity = identity();
         identity.put("scopes", List.of("java-agent:write"));
         var fixture = fixture(json(identity));
@@ -129,7 +129,7 @@ class CentralJwtVerifierBoundaryTest {
         assertThat(proof.access().subject()).isEqualTo(SUBJECT);
         assertThat(proof.window().current()).isTrue();
         assertThat(proof.window().deadlineNanos()).isEqualTo(proof.access().deadlineNanos());
-        verify(fixture.client()).sendAsync(argThat((HttpRequest request) -> request.uri().equals(URI.create(PERSONAL + "?include_lifetime=true"))
+        verify(fixture.client()).sendAsync(argThat((HttpRequest request) -> request.uri().equals(URI.create(PERSONAL))
                 && request.method().equals("GET")
                 && request.headers().firstValue("Authorization").orElse("").equals("Bearer " + PAT)
                 && request.timeout().orElseThrow().equals(java.time.Duration.ofSeconds(5))),
@@ -198,7 +198,10 @@ class CentralJwtVerifierBoundaryTest {
     private static Map<String, Object> identity() {
         var result = new java.util.LinkedHashMap<String, Object>();
         result.put("sub", SUBJECT);
-        result.put("status", "active");
+        result.put("email", "fixture@example.test");
+        result.put("display_name", "Fixture");
+        result.put("subject_role", "user");
+        result.put("observed_at", Instant.now().toString());
         result.put("scopes", List.of("java-agent:read"));
         result.put("expires_at", Instant.now().plusSeconds(60).toString());
         return result;

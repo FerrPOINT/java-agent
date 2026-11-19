@@ -43,7 +43,7 @@ public class IdentityCoordinatorVerifier {
         URI session=URI.create(environment.getRequiredProperty("agent.central-auth.session-uri"));
         if(session.getHost()==null || session.getUserInfo()!=null || session.getQuery()!=null || session.getFragment()!=null
             || !("http".equals(session.getScheme()) || "https".equals(session.getScheme()))) throw unavailable();
-        introspection=session.resolve("/auth/tokens/introspect?include_lifetime=true");
+        introspection=session.resolve("/auth/tokens/introspect");
         client=HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).followRedirects(HttpClient.Redirect.NEVER).build();
         coordinators=Arrays.stream(environment.getProperty("agent.identity-deletion.coordinator-subjects","").split(","))
             .map(String::trim).filter(v->!v.isEmpty()).collect(Collectors.toUnmodifiableSet());
