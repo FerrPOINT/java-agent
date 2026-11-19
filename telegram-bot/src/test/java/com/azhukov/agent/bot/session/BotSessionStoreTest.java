@@ -24,6 +24,24 @@ class BotSessionStoreTest {
     }
 
     @Test
+    void creatingNamedSessionKeepsOtherForumTopicsActive() {
+        var current = new BotSessionEntity(); current.setId(UUID.randomUUID()); current.setUserId("owner"); current.setActive(true);
+        var other = new BotSessionEntity(); other.setId(UUID.randomUUID()); other.setUserId("owner"); other.setThreadId(42L); other.setActive(true);
+        when(repository.findAllLockedByUserId("owner")).thenReturn(List.of(current, other));
+        when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        var created = store.createFreshSession("owner", "chat", "user");
+        assertThat(created.isActive()).isTrue();
+        assertThat(created.getThreadId()).isNull();
+        assertThat(current.isActive()).isFalse();
+        assertThat(other.isActive()).isTrue();
+        verify(repository, never()).deactivateAllForUser(any());
+        var order = inOrder(repository);
+        order.verify(repository).saveAndFlush(current);
+        order.verify(repository).save(created);
+    }
+
+    @Test
     void switchingNamedSessionKeepsOtherForumTopicsActive() {
         var target = new BotSessionEntity(); target.setId(UUID.randomUUID()); target.setUserId("owner");
         target.setActive(false); target.setCleanupPending(true);

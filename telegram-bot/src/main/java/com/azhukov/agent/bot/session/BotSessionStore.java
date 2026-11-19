@@ -85,9 +85,10 @@ public class BotSessionStore {
      */
     @Transactional
     public BotSessionEntity createFreshSession(String userId, String chatId, String username) {
-        repository.deactivateAllForUser(userId);
+        List<BotSessionEntity> owned = repository.findAllLockedByUserId(userId);
         BotSessionEntity session = new BotSessionEntity();
         session.setUserId(userId);
+        deactivateCurrentLane(owned, session);
         session.setChatId(chatId);
         session.setUsername(username);
         session.setActive(true);
