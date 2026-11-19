@@ -140,6 +140,32 @@ class HeartbeatServiceTest {
     }
 
     @Test
+    void promptContainingSeparatorSurvivesPersistAndRestore() throws Exception {
+        UUID sid = UUID.randomUUID();
+        String prompt = "first\u0001second";
+        var entity = new com.azhukov.agent.persistence.entity.SessionEntity();
+        var repository = org.mockito.Mockito.mock(com.azhukov.agent.persistence.repository.SessionRepository.class);
+        org.mockito.Mockito.when(repository.findById(sid)).thenReturn(java.util.Optional.of(entity));
+        var original = new HeartbeatService();
+        var repositoryField = HeartbeatService.class.getDeclaredField("sessionRepository");
+        repositoryField.setAccessible(true);
+        repositoryField.set(original, repository);
+        original.set(sid, prompt, 60);
+
+        var jdbc = org.mockito.Mockito.mock(org.springframework.jdbc.core.JdbcTemplate.class);
+        org.mockito.Mockito.when(jdbc.queryForList(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.<Object>any()))
+            .thenReturn(java.util.List.of(java.util.Map.of("session_id", sid, "state_value", entity.getCliState().get("heartbeat"))));
+        var restored = new HeartbeatService();
+        var jdbcField = HeartbeatService.class.getDeclaredField("jdbcTemplate");
+        jdbcField.setAccessible(true);
+        jdbcField.set(restored, jdbc);
+        restored.restorePersisted();
+
+        assertThat(restored.get(sid)).isNotNull();
+        assertThat(restored.get(sid).prompt()).isEqualTo(prompt);
+    }
+
+    @Test
     @DisplayName("fire prompt carries the Hermes HEARTBEAT_PROMPT_TEMPLATE contract")
     void firePromptTemplate() {
         HeartbeatService svc = new HeartbeatService();
