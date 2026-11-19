@@ -147,6 +147,12 @@ public class McpOAuthManager {
         }
 
         String responseBody = response.body();
+        var responseJson = JSON.readTree(responseBody);
+        var refreshField = responseJson == null ? null : responseJson.get("refresh_token");
+        if (refreshField != null && !refreshField.isNull()
+                && (!refreshField.isTextual() || refreshField.asText().isBlank())) {
+            throw new IOException("OAuth token refresh response has invalid refresh_token for " + serverName);
+        }
         String newAccessToken = extractJsonField(responseBody, "access_token");
         String newRefreshToken = extractJsonField(responseBody, "refresh_token");
         String expiresInStr = extractJsonField(responseBody, "expires_in");
