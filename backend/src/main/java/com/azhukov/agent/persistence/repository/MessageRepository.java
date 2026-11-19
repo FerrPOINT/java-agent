@@ -60,6 +60,7 @@ public interface MessageRepository extends JpaRepository<MessageEntity, UUID> {
      * rows (active=false); a resume resolver that counts ALL rows keeps writing
      * into the superseded parent instead of following the chain to the live child.
      */
+    @Query("SELECT COUNT(m) FROM MessageEntity m WHERE m.sessionId = :sessionId AND (m.active = TRUE OR m.active IS NULL)")
     long countBySessionIdAndActiveTrue(UUID sessionId);
 
     /**
@@ -87,7 +88,7 @@ public interface MessageRepository extends JpaRepository<MessageEntity, UUID> {
      * Load only active (non-archived) messages for a session, ordered by creation time.
      * Mirrors Hermes get_messages(session_id) which filters active=1 by default.
      */
-    @Query("SELECT m FROM MessageEntity m WHERE m.sessionId = :sessionId AND m.active = TRUE ORDER BY m.createdAt ASC, m.insertOrder ASC NULLS FIRST, m.id ASC")
+    @Query("SELECT m FROM MessageEntity m WHERE m.sessionId = :sessionId AND (m.active = TRUE OR m.active IS NULL) ORDER BY m.createdAt ASC, m.insertOrder ASC NULLS FIRST, m.id ASC")
     List<MessageEntity> findBySessionIdAndActiveTrueOrderByCreatedAtAsc(UUID sessionId);
 
     /**

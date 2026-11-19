@@ -56,11 +56,15 @@ class MidTurnAtomicPostgresTest extends PostgresTestContainer {
             for (int i = 0; i < 7; i++) {
                 var row = new com.azhukov.agent.persistence.entity.MessageEntity();
                 row.setSessionId(id); row.setRole("user"); row.setContent("item-" + i);
-                row.setCreatedAt(timestamp); row.setActive(i < 3);
+                row.setCreatedAt(timestamp); row.setActive(i == 1 ? null : i < 3);
                 messages.save(row);
             }
             messages.flush();
             var adapter = new com.azhukov.agent.persistence.adapter.JpaMessageStore(messages);
+            assertThat(adapter.countBySessionIdAndActiveTrue(id)).isEqualTo(3);
+            assertThat(adapter.findBySessionIdAndActiveTrueOrderByCreatedAtAsc(id))
+                .extracting(com.azhukov.agent.persistence.entity.MessageEntity::getContent)
+                .containsExactly("item-0", "item-1", "item-2");
             assertThat(adapter.findBySessionIdAndActiveTrueOrderByCreatedAtDesc(id, 3))
                 .extracting(com.azhukov.agent.persistence.entity.MessageEntity::getContent)
                 .containsExactly("item-2", "item-1", "item-0");
