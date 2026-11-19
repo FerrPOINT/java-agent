@@ -138,6 +138,19 @@ class PhotoBatchDebouncerTest {
     }
 
     @Test
+    void albumUsesTelegramMessageOrderWhenEventsArriveOutOfOrder() {
+        var dispatched = new java.util.ArrayList<UpdateEvent>();
+        debouncer.onDispatch(dispatched::add);
+        debouncer.offer(makePhotoEvent(3, 100, "file3", "group1", "third"));
+        debouncer.offer(makePhotoEvent(1, 100, "file1", "group1", "first"));
+        debouncer.offer(makePhotoEvent(2, 100, "file2", "group1", "second"));
+        debouncer.flushAll();
+        assertThat(dispatched).hasSize(1);
+        assertThat(dispatched.getFirst().fileId()).isEqualTo("file1,file2,file3");
+        assertThat(dispatched.getFirst().caption()).isEqualTo("first\n\nsecond\n\nthird");
+    }
+
+    @Test
     void preservesCaptionMatchingPartOfEarlierMultilineCaption() {
         var dispatched = new java.util.ArrayList<UpdateEvent>();
         debouncer.onDispatch(dispatched::add);

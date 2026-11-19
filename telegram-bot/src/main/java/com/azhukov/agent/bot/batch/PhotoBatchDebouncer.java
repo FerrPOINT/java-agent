@@ -73,16 +73,18 @@ public class PhotoBatchDebouncer {
     private void deliver(GroupKey key, PhotoGroup group) {
         if (group == null || group.events.isEmpty()) return;
 
-        UpdateEvent first = group.events.getFirst();
+        // Polling processes admitted updates concurrently, so arrival here may differ from Telegram order.
+        var ordered = group.events.stream().sorted(java.util.Comparator.comparingLong(UpdateEvent::updateId)).toList();
+        UpdateEvent first = ordered.getFirst();
         // Collect all file IDs from the group
-        List<String> fileIds = group.events.stream()
+        List<String> fileIds = ordered.stream()
             .map(UpdateEvent::fileId)
             .filter(Objects::nonNull)
             .toList();
 
         // Merge captions like Hermes: exact duplicate captions are collapsed,
         // while substring matches remain distinct user input.
-        String mergedCaption = group.events.stream()
+        String mergedCaption = ordered.stream()
             .map(UpdateEvent::caption)
             .filter(Objects::nonNull)
             .map(String::strip)
