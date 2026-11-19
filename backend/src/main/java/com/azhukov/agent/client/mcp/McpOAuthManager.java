@@ -152,7 +152,7 @@ public class McpOAuthManager {
         if (expiresInStr != null && !expiresInStr.isBlank()) {
             try {
                 expiresAt = Instant.now().plusSeconds(Long.parseLong(expiresInStr.trim()));
-            } catch (NumberFormatException e) {
+            } catch (NumberFormatException | ArithmeticException | java.time.DateTimeException e) {
                 log.warn("Invalid expires_in for MCP server {}, using default", serverName);
             }
         }
