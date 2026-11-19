@@ -75,6 +75,30 @@ class McpOAuthManagerTest {
     }
 
     @Test
+    void getTokenDoesNotReturnUnexpiredCredentialAfterIssuerChanges() {
+        var entity = new McpOAuthEntity();
+        entity.setAccessToken("old-issuer-token");
+        entity.setExpiresAt(Instant.now().plusSeconds(3600));
+        entity.setTokenIssuer("https://old-auth.example.com");
+        var config = server("test-server");
+        config.setOauthTokenUrl("https://new-auth.example.com/token");
+        when(mcpOAuthRepository.findByProfileAndServerName("default", "test-server")).thenReturn(Optional.of(entity));
+
+        assertThat(manager.getToken("default", config)).isEmpty();
+    }
+
+    @Test
+    void getTokenRejectsMissingCurrentIssuerButAcceptsMatchingIssuer() {
+        var entity = new McpOAuthEntity(); entity.setAccessToken("valid-token");
+        entity.setExpiresAt(Instant.now().plusSeconds(3600)); entity.setTokenIssuer("https://auth.example.com");
+        var config = server("test-server");
+        when(mcpOAuthRepository.findByProfileAndServerName("default", "test-server")).thenReturn(Optional.of(entity));
+        assertThat(manager.getToken("default", config)).isEmpty();
+        config.setOauthTokenUrl("https://auth.example.com/token");
+        assertThat(manager.getToken("default", config)).contains("valid-token");
+    }
+
+    @Test
     void getToken_returnsEmpty_whenExpired_andRefreshFails() {
         McpOAuthEntity entity = new McpOAuthEntity();
         entity.setAccessToken("access-123");

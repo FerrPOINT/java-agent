@@ -51,6 +51,10 @@ public class McpOAuthManager {
             return Optional.empty();
         }
         McpOAuthEntity token = entity.get();
+        if (!issuerMatches(token, server.getOauthTokenUrl())) {
+            log.warn("Stored OAuth issuer no longer matches MCP server {}; re-authorization required", serverName);
+            return Optional.empty();
+        }
         if (token.getExpiresAt() != null && token.getExpiresAt().isBefore(Instant.now())) {
             // Token expired — attempt refresh automatically
             try {
@@ -65,13 +69,19 @@ public class McpOAuthManager {
             // Re-read after refresh attempt
             Optional<McpOAuthEntity> refreshed =
                 mcpOAuthRepository.findByProfileAndServerName(profile, serverName);
-            if (refreshed.isPresent() && refreshed.get().getExpiresAt() != null
-                && refreshed.get().getExpiresAt().isAfter(Instant.now())) {
-                return Optional.of(refreshed.get().getAccessToken());
+            if (refreshed.isPresent() && issuerMatches(refreshed.get(), server.getOauthTokenUrl())
+                && refreshed.get().getExpiresAt() != null && refreshed.get().getExpiresAt().isAfter(Instant.now())) {
+                return Optional.ofNullable(refreshed.get().getAccessToken()).filter(value -> !value.isBlank());
             }
             return Optional.empty();
         }
-        return Optional.of(token.getAccessToken());
+        return Optional.ofNullable(token.getAccessToken()).filter(value -> !value.isBlank());
+    }
+
+    private static boolean issuerMatches(McpOAuthEntity token, String tokenUrl) {
+        String storedIssuer = token.getTokenIssuer();
+        if (storedIssuer == null || storedIssuer.isBlank()) return true;
+        return tokenUrl != null && !tokenUrl.isBlank() && storedIssuer.equals(issuerOf(tokenUrl));
     }
 
     /** Refresh the stored credential using the selected MCP server configuration. */
