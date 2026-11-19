@@ -37,6 +37,7 @@ class SessionSearchRuntimePostgresTest extends PostgresTestContainer {
     @Autowired ToolRegistry registry;
     @Autowired ObjectMapper mapper;
     @Autowired org.springframework.transaction.support.TransactionTemplate transaction;
+    @Autowired com.azhukov.agent.service.AgentRuntimeService runtimeService;
 
     @Test
     void toolWorkerMustNotReadAnotherOwnersSession() {
@@ -172,8 +173,22 @@ class SessionSearchRuntimePostgresTest extends PostgresTestContainer {
         previousMessage.setTurnIndex(0);
         previousMessage.setCreatedAt(Instant.now());
         messages.saveAndFlush(previousMessage);
+        MessageEntity previousReply = new MessageEntity();
+        previousReply.setSessionId(previous.getId());
+        previousReply.setRole("assistant");
+        previousReply.setContent("prior reply");
+        previousReply.setTurnIndex(1);
+        previousReply.setCreatedAt(Instant.now());
+        messages.saveAndFlush(previousReply);
         UUID previousId = previous.getId();
         try {
+        UserContext.set("runtime-owner", UserContext.ROLE_USER);
+        try {
+            runtimeService.cleanupSessionState(previousId);
+        } finally {
+            UserContext.clear();
+        }
+        assertThat(messages.countBySessionId(previousId)).isEqualTo(2);
 
         var properties = new AgentProperties();
         properties.getSkills().getDefaultToolsets().clear();
@@ -218,7 +233,7 @@ class SessionSearchRuntimePostgresTest extends PostgresTestContainer {
         assertThat(requests).hasSize(3);
         assertThat(requests.get(2)).anySatisfy(m -> {
             assertThat(m.role()).isEqualTo(Role.TOOL);
-            assertThat(m.content()).contains("previous conclusion");
+            assertThat(m.content()).contains("previous conclusion", "prior reply");
         });
         } finally {
             transaction.executeWithoutResult(status -> {
