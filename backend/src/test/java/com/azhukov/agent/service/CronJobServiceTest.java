@@ -424,6 +424,40 @@ class CronJobServiceTest {
         assertThat(observed.get()).isSameAs(proof);
     }
 
+    @Test
+    void manualBackgroundRunFailsClosedWhenQueuedProofHasExpired() throws Exception {
+        var job = new CronJobEntity();
+        job.setId(UUID.randomUUID());
+        job.setUserId("owner-a");
+        when(cronJobRepository.findById(job.getId())).thenReturn(Optional.of(job));
+        var scheduler = mock(java.util.concurrent.ScheduledExecutorService.class);
+        var callback = org.mockito.ArgumentCaptor.forClass(Runnable.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "scheduler", scheduler);
+        // The access decision is valid at enqueue, then revoked before the queued callback runs.
+        var proof = mock(com.pdlc.auth.HumanApplicationAccess.class);
+        when(proof.subject()).thenReturn("owner-a");
+        when(proof.role()).thenReturn("user");
+        var allowed = new java.util.concurrent.atomic.AtomicBoolean(true);
+        when(proof.permits(any(), eq(false))).thenAnswer(inv -> allowed.get());
+        com.azhukov.agent.core.security.UserContext.setCentral(proof);
+        try {
+            service.runNowBackground(job.getId(), null);
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+        }
+        verify(scheduler).execute(callback.capture());
+        allowed.set(false);
+        var executor = java.util.concurrent.Executors.newSingleThreadExecutor();
+        try {
+            executor.submit(callback.getValue()).get();
+            assertThat(executor.submit(com.azhukov.agent.core.security.UserContext::getUserId).get()).isNull();
+        } finally {
+            executor.shutdownNow();
+        }
+        verify(cronJobRepository, times(1)).findById(job.getId());
+        verifyNoInteractions(agentRuntimeService);
+    }
+
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.NullSource
     @org.junit.jupiter.params.provider.ValueSource(strings = {"owner-a", "456"})
