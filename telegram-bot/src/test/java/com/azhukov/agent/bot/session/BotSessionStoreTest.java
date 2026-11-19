@@ -43,7 +43,7 @@ class BotSessionStoreTest {
         var target = new BotSessionEntity();
         target.setId(id); target.setUserId("owner"); target.setThreadId(42L); target.setActive(false);
         var current = new BotSessionEntity();
-        current.setUserId("owner"); current.setThreadId(42L); current.setActive(true);
+        current.setId(UUID.randomUUID()); current.setUserId("owner"); current.setThreadId(42L); current.setActive(true);
         when(repository.findById(id)).thenReturn(Optional.of(target));
         when(repository.findByUserIdAndThreadIdAndActiveTrue("owner", 42L)).thenReturn(Optional.of(current));
         when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -60,13 +60,42 @@ class BotSessionStoreTest {
         BotSessionEntity target = new BotSessionEntity();
         target.setId(id); target.setUserId("owner"); target.setActive(false);
         BotSessionEntity current = new BotSessionEntity();
-        current.setUserId("owner"); current.setActive(true);
+        current.setId(UUID.randomUUID()); current.setUserId("owner"); current.setActive(true);
         when(repository.findById(id)).thenReturn(Optional.of(target));
         when(repository.findByUserIdAndThreadIdAndActiveTrue("owner", null)).thenReturn(Optional.of(current));
         when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         assertThat(store.resumeSession(id, "owner")).isSameAs(target);
         assertThat(current.isActive()).isFalse();
         assertThat(target.isActive()).isTrue();
+    }
+
+    @Test
+    void resumeFlushesDeactivationBeforeActivatingAnotherSession() {
+        var id = UUID.randomUUID();
+        var target = new BotSessionEntity(); target.setId(id); target.setUserId("owner"); target.setActive(false);
+        var current = new BotSessionEntity(); current.setId(UUID.randomUUID()); current.setUserId("owner"); current.setActive(true);
+        when(repository.findById(id)).thenReturn(Optional.of(target));
+        when(repository.findByUserIdAndThreadIdAndActiveTrue("owner", null)).thenReturn(Optional.of(current));
+        when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        store.resumeSession(id, "owner");
+
+        var order = inOrder(repository);
+        order.verify(repository).saveAndFlush(current);
+        order.verify(repository).save(target);
+    }
+
+    @Test
+    void resumeAlreadyActiveSessionDoesNotDeactivateIt() {
+        var id = UUID.randomUUID();
+        var current = new BotSessionEntity(); current.setId(id); current.setUserId("owner"); current.setActive(true);
+        when(repository.findById(id)).thenReturn(Optional.of(current));
+        when(repository.findByUserIdAndThreadIdAndActiveTrue("owner", null)).thenReturn(Optional.of(current));
+        when(repository.save(current)).thenReturn(current);
+
+        assertThat(store.resumeSession(id, "owner")).isSameAs(current);
+        assertThat(current.isActive()).isTrue();
+        verify(repository, never()).saveAndFlush(any());
     }
 
     @Test
