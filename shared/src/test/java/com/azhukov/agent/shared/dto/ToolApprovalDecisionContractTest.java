@@ -40,6 +40,15 @@ class ToolApprovalDecisionContractTest {
             .isInstanceOf(IllegalArgumentException.class);
     }
 
+    @Test
+    void wireMayOmitAllForExactOrSingleSelection() throws Exception {
+        UUID id = UUID.randomUUID();
+        assertThat(json.readValue("{\"action\":\"DENY\"}", ToolApprovalDecision.class).all())
+            .isFalse();
+        assertThat(json.readValue("{\"action\":\"APPROVE\",\"requestId\":\"" + id + "\"}",
+            ToolApprovalDecision.class)).isEqualTo(new ToolApprovalDecision(APPROVE, false, id, null));
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {
         "{}",

@@ -5,13 +5,14 @@ import java.util.Objects;
 import java.util.UUID;
 
 /** One decision request for the backend, CLI and Telegram. */
-public record ToolApprovalDecision(Action action, boolean all, UUID requestId, String note) {
+public record ToolApprovalDecision(Action action, Boolean all, UUID requestId, String note) {
     public static final String PATH = "/agent/approvals/decisions";
 
     public enum Action { APPROVE, DENY }
 
     public ToolApprovalDecision {
         Objects.requireNonNull(action, "Approval action required");
+        all = Boolean.TRUE.equals(all);
         if (all && requestId != null) {
             throw new IllegalArgumentException("Choose all or one approval request");
         }
