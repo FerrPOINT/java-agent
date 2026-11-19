@@ -565,6 +565,24 @@ class ToolExecutionServiceTest {
     }
 
     @Test
+    void duplicateResultStubDoesNotExposeSecretsFromArguments() {
+        service.shutdown();
+        service = new ToolExecutionService(toolRegistry, properties,
+            new com.azhukov.agent.core.security.DefaultToolCallGuardrail(new com.azhukov.agent.core.security.GuardrailConfig()),
+            new SecretRedactor(properties), toolResultClassifier, toolOutputLimiter, agentMetrics);
+        String arguments = "{\"command\":\"password=syntheticSecret123\"}";
+        String result = "output".repeat(100);
+        when(toolRegistry.execute(eq("terminal"), anyString(), eq(arguments), eq(LAST_MSG), eq(SESSION)))
+            .thenReturn(ToolResult.ok(result));
+        when(toolResultClassifier.classify(any(ToolResult.class))).thenReturn(ToolResultClassifier.ResultType.SUCCESS);
+        when(toolOutputLimiter.truncate(any(ToolResult.class), anyString())).thenAnswer(inv -> inv.getArgument(0));
+
+        assertThat(service.execute("terminal", "first", arguments, LAST_MSG, SESSION).content()).isEqualTo(result);
+        String repeated = service.execute("terminal", "second", arguments, LAST_MSG, SESSION).content();
+        assertThat(repeated).contains("Duplicate result").doesNotContain("syntheticSecret123");
+    }
+
+    @Test
     @DisplayName("Should block web_search after the per-turn cap before registry execution")
     void shouldBlockWebSearchAfterCap() {
         var config = new com.azhukov.agent.core.security.GuardrailConfig();

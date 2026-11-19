@@ -33,7 +33,6 @@ public class DefaultToolCallGuardrail implements ToolCallGuardrail {
     );
 
     private static final int IDENTICAL_RESULT_STUB_MIN_CHARS = 512;
-    private static final int RESULT_STUB_ARGS_PREVIEW_CHARS = 120;
     private final GuardrailConfig config;
 
     private final Map<UUID, GuardrailSessionState> sessionStates = new ConcurrentHashMap<>();
@@ -181,13 +180,9 @@ public class DefaultToolCallGuardrail implements ToolCallGuardrail {
                 return null; // first occurrence (or changed) — keep full payload
             }
             int streak = state.stubStreakCounts.merge(signature, 1, Integer::sum);
-            String argsPreview = arguments != null && arguments.length() > RESULT_STUB_ARGS_PREVIEW_CHARS
-                ? arguments.substring(0, RESULT_STUB_ARGS_PREVIEW_CHARS) + "…"
-                : (arguments == null ? "" : arguments);
             return "[Duplicate result — identical to the previous " + toolName
                 + " result in this turn (call " + streak + " of the streak). "
-                + "Refer to the full payload above instead of repeating the call. "
-                + "Args: " + argsPreview + "]";
+                + "Refer to the full payload above instead of repeating the call.]";
         }
     }
 
