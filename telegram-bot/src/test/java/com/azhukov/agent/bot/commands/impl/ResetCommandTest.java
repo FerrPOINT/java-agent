@@ -92,8 +92,8 @@ class ResetCommandTest {
         var cmd = new ResetCommand(backendClient);
         BotSessionEntity session = new BotSessionEntity();
         session.setUserId("100");
-        // session.getId() is null
-        cmd.handle(makeEvent(""), session);
+        String result = cmd.handle(makeEvent(""), session);
+        assertThat(result).containsIgnoringCase("no active session");
         verifyNoInteractions(backendClient);
     }
 

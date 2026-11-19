@@ -27,15 +27,13 @@ public class ResetCommand implements CommandHandler {
 
     @Override
     public String handle(UpdateEvent event, BotSessionEntity session) {
-        if (session == null || session.getUserId() == null) {
+        if (session == null || session.getUserId() == null || session.getId() == null) {
             return "No active session.";
         }
-        if (session.getId() != null) {
-            String sid = BackendSessionResolver.resolveString(session);
-            if (sid == null) return "No backend session yet — send a message first.";
-            if (!backendClient.resetSession(sid)) {
-                return "Session reset failed or could not be confirmed. No local sessions were deactivated.";
-            }
+        String sid = BackendSessionResolver.resolveString(session);
+        if (sid == null) return "No backend session yet — send a message first.";
+        if (!backendClient.resetSession(sid)) {
+            return "Session reset failed or could not be confirmed. No local sessions were deactivated.";
         }
         return "Current session context reset. Send a message to continue.";
     }
