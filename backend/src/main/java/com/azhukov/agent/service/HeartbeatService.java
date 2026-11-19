@@ -242,6 +242,7 @@ public class HeartbeatService {
         st = new HeartbeatState(st.prompt(), st.intervalSeconds(), "active",
             st.createdAt(), Instant.now(), st.fireCount(), st.maxTicks());  // anchor reset — Hermes resume restarts the clock
         states.put(sessionId, st);
+        persist(sessionId, st);
         ensureWatchdog();
         return st;
     }
@@ -317,7 +318,10 @@ public class HeartbeatService {
         // Mark fired FIRST so a slow target can't double-fire
         HeartbeatState fired = new HeartbeatState(st.prompt(), st.intervalSeconds(),
             st.status(), st.createdAt(), Instant.now(), st.fireCount() + 1, st.maxTicks());
-        states.put(sessionId, fired);
+        synchronized (this) {
+            if (states.get(sessionId) != st) return;
+            states.put(sessionId, fired);
+        }
         String prompt = buildFirePrompt(fired);
         log.info("Heartbeat firing for session {} (fire #{}): {}",
             sessionId, fired.fireCount(), st.prompt());
@@ -334,16 +338,19 @@ public class HeartbeatService {
             deliveryAttempts.put(sessionId, new java.util.concurrent.atomic.AtomicInteger());
         }
         // /loop contract: LOOP_COMPLETE in the response stops the loop.
-        if (responseSignalsComplete(response)) {
-            log.info("Heartbeat/loop for session {} signalled LOOP_COMPLETE — clearing", sessionId);
-            states.remove(sessionId);
-            persist(sessionId, null);
-        } else if (fired.maxTicks() > 0 && fired.fireCount() >= fired.maxTicks()) {
-            log.info("Heartbeat/loop for session {} reached --times cap ({}); clearing", sessionId, fired.maxTicks());
-            states.remove(sessionId);
-            persist(sessionId, null);
-        } else {
-            persist(sessionId, fired);   // keep fireCount durable
+        synchronized (this) {
+            if (states.get(sessionId) != fired) return;
+            if (responseSignalsComplete(response)) {
+                log.info("Heartbeat/loop for session {} signalled LOOP_COMPLETE — clearing", sessionId);
+                states.remove(sessionId);
+                persist(sessionId, null);
+            } else if (fired.maxTicks() > 0 && fired.fireCount() >= fired.maxTicks()) {
+                log.info("Heartbeat/loop for session {} reached --times cap ({}); clearing", sessionId, fired.maxTicks());
+                states.remove(sessionId);
+                persist(sessionId, null);
+            } else {
+                persist(sessionId, fired);
+            }
         }
     }
 
