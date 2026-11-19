@@ -43,6 +43,9 @@ public class InboundMediaHandler {
     @Value("${agent.transcription.enabled:false}")
     private boolean transcriptionEnabled;
 
+    /** Confirmed media references kept separate from untrusted message text. */
+    public record AdmittedMedia(String description, java.util.List<String> artifactIds) {}
+
     /**
      * Handles an UpdateEvent that contains media. If the event does not
      * contain media, returns an empty Optional.
@@ -53,10 +56,9 @@ public class InboundMediaHandler {
      * resulting descriptions are concatenated with newlines.
      *
      * @param event the UpdateEvent to process
-     * @return Optional with a description string for LLM context, or empty
-     *         if the event has no media
+     * @return confirmed references and description, or empty if the event has no media
      */
-    public Optional<String> handle(UpdateEvent event) {
+    public Optional<AdmittedMedia> handle(UpdateEvent event) {
         if (event == null) return Optional.empty();
 
         String fileType = event.fileType();
@@ -74,15 +76,16 @@ public class InboundMediaHandler {
                 throw new AttachmentApiClient.AdmissionFailure(false, "Missing album attachment identifier");
             }
             StringBuilder combined = new StringBuilder();
+            java.util.List<String> artifactIds = new java.util.ArrayList<>();
             for (String id : ids) {
-                String trimmed = id.trim();
-                Optional<String> desc = handleSingle(event, fileType, trimmed);
-                if (desc.isPresent()) {
+                Optional<AdmittedMedia> admitted = handleSingle(event, fileType, id.trim());
+                if (admitted.isPresent()) {
                     if (combined.length() > 0) combined.append("\n");
-                    combined.append(desc.get());
+                    combined.append(admitted.get().description());
+                    artifactIds.addAll(admitted.get().artifactIds());
                 }
             }
-            return combined.length() > 0 ? Optional.of(combined.toString()) : Optional.empty();
+            return combined.length() > 0 ? Optional.of(new AdmittedMedia(combined.toString(), java.util.List.copyOf(artifactIds))) : Optional.empty();
         }
 
         return handleSingle(event, fileType, fileId);
@@ -91,7 +94,7 @@ public class InboundMediaHandler {
     /**
      * Handle a single (non-comma-separated) file ID.
      */
-    private Optional<String> handleSingle(UpdateEvent event, String fileType, String fileId) {
+    private Optional<AdmittedMedia> handleSingle(UpdateEvent event, String fileType, String fileId) {
 
         // Skip location — it's not a downloadable file
         if ("location".equals(fileType)) {
@@ -117,8 +120,7 @@ public class InboundMediaHandler {
         var artifact = attachmentApiClient.register(data, fileName, mimeFor(fileType, fileName),
                 dispositionFor(fileType), "telegram", event.userId() > 0 ? String.valueOf(event.userId()) : null,
                 null, event.messageId() > 0 ? String.valueOf(event.messageId()) : null);
-        String description = describe(fileType, fileId, data.length, fileName)
-                + " (artifact=" + artifact.id() + ")";
+        String description = describe(fileType, fileId, data.length, fileName);
         if ("voice".equals(fileType) && transcriptionEnabled) {
             String transcript = backendClient.transcribe(data);
             if (transcript == null || transcript.isBlank()) {
@@ -126,7 +128,7 @@ public class InboundMediaHandler {
             }
             description += "\n" + transcript;
         }
-        return Optional.of(description);
+        return Optional.of(new AdmittedMedia(description, java.util.List.of(artifact.id())));
     }
 
     private static String dispositionFor(String fileType) {

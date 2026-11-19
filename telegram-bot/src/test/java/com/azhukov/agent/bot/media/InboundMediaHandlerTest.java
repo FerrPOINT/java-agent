@@ -39,12 +39,12 @@ class InboundMediaHandlerTest {
         when(mediaDownloader.downloadToFileId("file-photo-1"))
             .thenReturn(Optional.of("image-bytes".getBytes()));
 
-        Optional<String> result = handler.handle(event);
+        Optional<InboundMediaHandler.AdmittedMedia> result = handler.handle(event);
 
         assertThat(result).isPresent();
         // B1: Should contain the file path, not just file_id
-        assertThat(result.get()).contains("[Photo:");
-        assertThat(result.get()).doesNotContain("Check this");
+        assertThat(result.get().description()).contains("[Photo:");
+        assertThat(result.get().description()).doesNotContain("Check this");
     }
 
     @Test
@@ -54,9 +54,13 @@ class InboundMediaHandlerTest {
             null, null, null, false, null, null);
         when(mediaDownloader.downloadToFileId("album-a")).thenReturn(Optional.of("a".getBytes()));
         when(mediaDownloader.downloadToFileId("album-b")).thenReturn(Optional.of("b".getBytes()));
-        String description = handler.handle(event).orElseThrow();
-        assertThat(description).doesNotContain("album caption");
-        assertThat(description.split("\\n")).hasSize(2);
+        when(attachmentApiClient.register(any(), any(), any(), any(), any(), any(), any(), any()))
+            .thenReturn(new com.azhukov.agent.bot.core.AttachmentApiClient.Registered("att_" + "a".repeat(32), "a".repeat(64), false),
+                new com.azhukov.agent.bot.core.AttachmentApiClient.Registered("att_" + "b".repeat(32), "b".repeat(64), false));
+        var admitted = handler.handle(event).orElseThrow();
+        assertThat(admitted.description()).doesNotContain("album caption");
+        assertThat(admitted.description().split("\\n")).hasSize(2);
+        assertThat(admitted.artifactIds()).containsExactly("att_" + "a".repeat(32), "att_" + "b".repeat(32));
     }
 
     @Test
@@ -67,11 +71,11 @@ class InboundMediaHandlerTest {
         when(mediaDownloader.downloadToFileId("file-doc-1"))
             .thenReturn(Optional.of(new byte[1024]));
 
-        Optional<String> result = handler.handle(event);
+        Optional<InboundMediaHandler.AdmittedMedia> result = handler.handle(event);
 
         assertThat(result).isPresent();
-        assertThat(result.get()).contains("[Document:");
-        assertThat(result.get()).contains("1024 bytes");
+        assertThat(result.get().description()).contains("[Document:");
+        assertThat(result.get().description()).contains("1024 bytes");
     }
 
     @Test
@@ -82,11 +86,11 @@ class InboundMediaHandlerTest {
         when(mediaDownloader.downloadToFileId("file-voice-1"))
             .thenReturn(Optional.of("voice-data".getBytes()));
 
-        Optional<String> result = handler.handle(event);
+        Optional<InboundMediaHandler.AdmittedMedia> result = handler.handle(event);
 
         assertThat(result).isPresent();
-        assertThat(result.get()).contains("[Voice message:");
-        assertThat(result.get()).contains("file-voice-1");
+        assertThat(result.get().description()).contains("[Voice message:");
+        assertThat(result.get().description()).contains("file-voice-1");
     }
 
     @Test
@@ -97,10 +101,10 @@ class InboundMediaHandlerTest {
         when(mediaDownloader.downloadToFileId("file-sticker-1"))
             .thenReturn(Optional.of("sticker-data".getBytes()));
 
-        Optional<String> result = handler.handle(event);
+        Optional<InboundMediaHandler.AdmittedMedia> result = handler.handle(event);
 
         assertThat(result).isPresent();
-        assertThat(result.get()).contains("[Sticker:");
+        assertThat(result.get().description()).contains("[Sticker:");
     }
 
     @Test
@@ -111,11 +115,11 @@ class InboundMediaHandlerTest {
         when(mediaDownloader.downloadToFileId("file-anim-1"))
             .thenReturn(Optional.of("gif-data".getBytes()));
 
-        Optional<String> result = handler.handle(event);
+        Optional<InboundMediaHandler.AdmittedMedia> result = handler.handle(event);
 
         assertThat(result).isPresent();
-        assertThat(result.get()).contains("[Animation/GIF:");
-        assertThat(result.get()).contains("file-anim-1");
+        assertThat(result.get().description()).contains("[Animation/GIF:");
+        assertThat(result.get().description()).contains("file-anim-1");
     }
 
     @Test
@@ -124,7 +128,7 @@ class InboundMediaHandlerTest {
             "jdoe", "Hello", null, null, null,
             null, null, null, false, null, null);
 
-        Optional<String> result = handler.handle(event);
+        Optional<InboundMediaHandler.AdmittedMedia> result = handler.handle(event);
 
         assertThat(result).isEmpty();
         verifyNoInteractions(mediaDownloader);
@@ -132,7 +136,7 @@ class InboundMediaHandlerTest {
 
     @Test
     void handle_nullEvent_returnsEmpty() {
-        Optional<String> result = handler.handle(null);
+        Optional<InboundMediaHandler.AdmittedMedia> result = handler.handle(null);
 
         assertThat(result).isEmpty();
     }
@@ -143,7 +147,7 @@ class InboundMediaHandlerTest {
             "jdoe", "Hello", null, null, null,
             null, null, null, false, null, null);
 
-        Optional<String> result = handler.handle(event);
+        Optional<InboundMediaHandler.AdmittedMedia> result = handler.handle(event);
 
         assertThat(result).isEmpty();
     }
@@ -169,10 +173,10 @@ class InboundMediaHandlerTest {
         when(mediaDownloader.downloadToFileId("file-photo-2"))
             .thenReturn(Optional.of("data".getBytes()));
 
-        Optional<String> result = handler.handle(event);
+        Optional<InboundMediaHandler.AdmittedMedia> result = handler.handle(event);
 
         assertThat(result).isPresent();
-        assertThat(result.get()).doesNotContain("caption=");
+        assertThat(result.get().description()).doesNotContain("caption=");
     }
 
     @Test
@@ -183,11 +187,12 @@ class InboundMediaHandlerTest {
         when(mediaDownloader.downloadToFileId("file-photo-path"))
             .thenReturn(Optional.of("image-bytes".getBytes()));
 
-        Optional<String> result = handler.handle(event);
+        Optional<InboundMediaHandler.AdmittedMedia> result = handler.handle(event);
 
         assertThat(result).isPresent();
-        assertThat(result.get()).contains("(artifact=att_0123456789abcdef0123456789abcdef)");
-        assertThat(result.get()).doesNotContain(AgentMediaPaths.mediaDir().toString());
+        assertThat(result.get().artifactIds()).containsExactly("att_0123456789abcdef0123456789abcdef");
+        assertThat(result.get().description()).doesNotContain("artifact=");
+        assertThat(result.get().description()).doesNotContain(AgentMediaPaths.mediaDir().toString());
     }
 
     @Test
@@ -236,13 +241,13 @@ class InboundMediaHandlerTest {
         when(mediaDownloader.downloadToFileId("photo-3"))
             .thenReturn(Optional.of("img3".getBytes()));
 
-        Optional<String> result = handler.handle(event);
+        Optional<InboundMediaHandler.AdmittedMedia> result = handler.handle(event);
 
         assertThat(result).isPresent();
         // Should contain three photo descriptions
-        assertThat(result.get()).contains("[Photo:");
+        assertThat(result.get().description()).contains("[Photo:");
         // Should mention /tmp/agent-media/ for each saved photo
-        long photoCount = result.get().lines().filter(l -> l.contains("[Photo:")).count();
+        long photoCount = result.get().description().lines().filter(l -> l.contains("[Photo:")).count();
         assertThat(photoCount).isEqualTo(3);
     }
 
@@ -257,10 +262,10 @@ class InboundMediaHandlerTest {
         when(mediaDownloader.downloadToFileId("photo-b"))
             .thenReturn(Optional.of("imgB".getBytes()));
 
-        Optional<String> result = handler.handle(event);
+        Optional<InboundMediaHandler.AdmittedMedia> result = handler.handle(event);
 
         assertThat(result).isPresent();
-        long photoCount = result.get().lines().filter(l -> l.contains("[Photo:")).count();
+        long photoCount = result.get().description().lines().filter(l -> l.contains("[Photo:")).count();
         assertThat(photoCount).isEqualTo(2);
     }
 
@@ -272,10 +277,10 @@ class InboundMediaHandlerTest {
         when(mediaDownloader.downloadToFileId("single-photo"))
             .thenReturn(Optional.of("data".getBytes()));
 
-        Optional<String> result = handler.handle(event);
+        Optional<InboundMediaHandler.AdmittedMedia> result = handler.handle(event);
 
         assertThat(result).isPresent();
-        long photoCount = result.get().lines().filter(l -> l.contains("[Photo:")).count();
+        long photoCount = result.get().description().lines().filter(l -> l.contains("[Photo:")).count();
         assertThat(photoCount).isEqualTo(1);
     }
 
