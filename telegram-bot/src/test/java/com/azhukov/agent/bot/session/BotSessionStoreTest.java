@@ -24,6 +24,34 @@ class BotSessionStoreTest {
     }
 
     @Test
+    void switchingNamedSessionKeepsOtherForumTopicsActive() {
+        var target = new BotSessionEntity(); target.setId(UUID.randomUUID()); target.setUserId("owner");
+        target.setActive(false); target.setCleanupPending(true);
+        var previous = new BotSessionEntity(); previous.setId(UUID.randomUUID()); previous.setUserId("owner"); previous.setActive(true);
+        var other = new BotSessionEntity(); other.setId(UUID.randomUUID()); other.setUserId("owner"); other.setThreadId(42L); other.setActive(true);
+        when(repository.findAllLockedByUserId("owner")).thenReturn(List.of(target, previous, other));
+
+        assertThat(store.activateSessionById("owner", target.getId())).isTrue();
+        assertThat(previous.isActive()).isFalse();
+        assertThat(other.isActive()).isTrue();
+        assertThat(target.isActive()).isTrue();
+        assertThat(target.isCleanupPending()).isFalse();
+        verify(repository, never()).deactivateAllForUser(any());
+        var order = inOrder(repository);
+        order.verify(repository).saveAndFlush(previous);
+        order.verify(repository).save(target);
+    }
+
+    @Test
+    void switchingAlreadyActiveNamedSessionKeepsItActive() {
+        var current = new BotSessionEntity(); current.setId(UUID.randomUUID()); current.setUserId("owner"); current.setActive(true);
+        when(repository.findAllLockedByUserId("owner")).thenReturn(List.of(current));
+        assertThat(store.activateSessionById("owner", current.getId())).isTrue();
+        assertThat(current.isActive()).isTrue();
+        verify(repository, never()).saveAndFlush(any());
+    }
+
+    @Test
     void resumeSwitchesOnlyTheTargetTopicAndCancelsItsPendingCleanup() {
         var target = new BotSessionEntity();
         target.setId(UUID.randomUUID()); target.setUserId("owner"); target.setThreadId(42L);

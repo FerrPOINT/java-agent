@@ -107,8 +107,8 @@ public class BotSessionStore {
         if (target.isEmpty()) {
             return false;
         }
-        repository.deactivateAllForUser(userId);
         BotSessionEntity entity = target.get();
+        deactivateCurrentLane(owned, entity);
         entity.setCleanupPending(false);
         entity.setCleanupOnBackendBinding(false);
         entity.setActive(true);
@@ -171,21 +171,25 @@ public class BotSessionStore {
         List<BotSessionEntity> owned = repository.findAllLockedByUserId(userId);
         BotSessionEntity target = owned.stream().filter(s -> s.getId().equals(sessionId)).findFirst().orElse(null);
         if (target == null) return null;
-        BotSessionEntity current = owned.stream()
-            .filter(s -> s.isActive() && java.util.Objects.equals(s.getThreadId(), target.getThreadId()))
-            .findFirst().orElse(null);
-        if (current != null && !java.util.Objects.equals(current.getId(), target.getId())) {
-            current.setActive(false);
-            current.setUpdatedAt(Instant.now());
-            // Release the unique active lane before activating the target in this transaction.
-            repository.saveAndFlush(current);
-        }
+        deactivateCurrentLane(owned, target);
         // Activate requested session and cancel stale cleanup while holding the row lock.
         target.setCleanupPending(false);
         target.setCleanupOnBackendBinding(false);
         target.setActive(true);
         target.setUpdatedAt(Instant.now());
         return repository.save(target);
+    }
+
+    private void deactivateCurrentLane(List<BotSessionEntity> owned, BotSessionEntity target) {
+        owned.stream()
+            .filter(s -> s.isActive() && java.util.Objects.equals(s.getThreadId(), target.getThreadId())
+                && !java.util.Objects.equals(s.getId(), target.getId()))
+            .findFirst().ifPresent(current -> {
+                current.setActive(false);
+                current.setUpdatedAt(Instant.now());
+                // Release the unique active lane before activating the target in this transaction.
+                repository.saveAndFlush(current);
+            });
     }
 
     @Transactional
