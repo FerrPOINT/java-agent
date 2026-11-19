@@ -1,5 +1,6 @@
 package com.azhukov.agent.cli;
 
+import com.azhukov.agent.shared.dto.ToolApprovalDecision;
 import com.azhukov.agent.shared.http.ChatEventStream;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -795,20 +796,6 @@ public class BackendClient {
         return node != null ? node : objectMapper.createArrayNode();
     }
 
-    public String approveTool(String requestId) {
-        if (!executePostBodilessNoBody("/api/v1/agent/approvals/{requestId}/approve", requestId)) {
-            return "Error: failed to approve tool request " + requestId;
-        }
-        return "Tool request approved: " + requestId;
-    }
-
-    public String denyTool(String requestId) {
-        if (!executePostBodilessNoBody("/api/v1/agent/approvals/{requestId}/deny", requestId)) {
-            return "Error: failed to deny tool request " + requestId;
-        }
-        return "Tool request denied: " + requestId;
-    }
-
     // ------------------------------------------------------------------
     // Bundle install / uninstall (C2)
     // ------------------------------------------------------------------
@@ -984,38 +971,17 @@ public class BackendClient {
     // Approve / deny
     // ------------------------------------------------------------------
 
-    public String approve(boolean all, String requestId) {
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("all", all);
-        if (requestId != null && !requestId.isBlank()) {
-            body.put("requestId", requestId);
-        }
+    public String decideApproval(ToolApprovalDecision decision) {
         try {
             String result = restClient.post()
-                .uri("/api/v1/agent/approve")
+                .uri("/api/v1" + ToolApprovalDecision.PATH)
                 .contentType(MediaType.APPLICATION_JSON)
-                .body(body)
+                .body(decision)
                 .retrieve()
                 .body(String.class);
             return result != null && !result.isBlank() ? result : "Error: approval response is empty";
         } catch (Exception e) {
-            return handleErr("approve", e);
-        }
-    }
-
-    public String deny(boolean all) {
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("all", all);
-        try {
-            String result = restClient.post()
-                .uri("/api/v1/agent/deny")
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(body)
-                .retrieve()
-                .body(String.class);
-            return result != null && !result.isBlank() ? result : "Error: denial response is empty";
-        } catch (Exception e) {
-            return handleErr("deny", e);
+            return handleErr("approval decision", e);
         }
     }
 

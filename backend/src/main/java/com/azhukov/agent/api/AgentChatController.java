@@ -1,11 +1,10 @@
 package com.azhukov.agent.api;
 
-import com.azhukov.agent.api.dto.ApproveRequest;
 import com.azhukov.agent.api.dto.BackgroundRequest;
 import com.azhukov.agent.api.dto.ChatRequest;
 import com.azhukov.agent.api.dto.ChatRequestIdentity;
 import com.azhukov.agent.shared.dto.ChatResponseDto;
-import com.azhukov.agent.api.dto.DenyRequest;
+import com.azhukov.agent.shared.dto.ToolApprovalDecision;
 import com.azhukov.agent.api.dto.DoctorDto;
 import com.azhukov.agent.api.dto.RefineRequest;
 import com.azhukov.agent.api.dto.SteerRequest;
@@ -422,55 +421,40 @@ public class AgentChatController {
         return memoryNudgeManagerProviderField;
     }
 
-    @PostMapping("/agent/approve")
-    public String approve(@Valid @RequestBody ApproveRequest request) {
-        if (request.isAll() && request.requestId() != null) {
+    @PostMapping(ToolApprovalDecision.PATH)
+    public String decideApproval(@RequestBody ToolApprovalDecision decision) {
+        List<ApprovalQueue.PendingApproval> targets;
+        if (decision.requestId() != null) {
+            var pending = approvalQueue.findRequest(decision.requestId());
+            if (pending == null) {
+                throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.NOT_FOUND, "Approval request not found");
+            }
+            targets = List.of(pending);
+        } else {
+            var pending = pendingApprovals();
+            targets = decision.all() ? pending : pending.stream().limit(1).toList();
+        }
+
+        for (var pending : targets) {
+            requireSessionOwnership(pending.sessionId());
+        }
+        boolean approve = decision.action() == ToolApprovalDecision.Action.APPROVE;
+        String action = approve ? "Approved" : "Denied";
+        var decided = targets.stream().map(pending -> approve
+                ? approvalQueue.approve(pending.requestId(), decision.note())
+                : approvalQueue.deny(pending.requestId(), decision.note()))
+            .filter(result -> result != null && (approve ? result.approved() : result.denied()))
+            .toList();
+
+        if (decision.all()) return action + " " + decided.size() + " pending requests";
+        if (targets.isEmpty()) return "No pending approvals";
+        if (decided.isEmpty()) {
             throw new org.springframework.web.server.ResponseStatusException(
-                org.springframework.http.HttpStatus.BAD_REQUEST, "Choose all or one approval request");
+                org.springframework.http.HttpStatus.CONFLICT, "Approval is no longer pending");
         }
-        if (request.isAll()) {
-            var targets = pendingApprovals();
-            for (var pending : targets) {
-                requireSessionOwnership(pending.sessionId());
-            }
-            long approved = targets.stream().map(p -> approvalQueue.approve(p.requestId(), null))
-                .filter(p -> p != null && p.approved()).count();
-            return "Approved " + approved + " pending requests";
-        }
-        if (request.requestId() != null) {
-            var pending = requireApprovalOwnership(request.requestId());
-            var result = approvalQueue.approve(pending.requestId(), null);
-            if (result == null || !result.approved()) return "Approval is no longer pending: " + request.requestId();
-            return "Approved: " + request.requestId();
-        }
-        var pendingList = pendingApprovals();
-        if (pendingList.isEmpty()) return "No pending approvals";
-        requireSessionOwnership(pendingList.get(0).sessionId());
-        var result = approvalQueue.approve(pendingList.get(0).requestId(), null);
-        return result != null && result.approved()
-            ? "Approved: " + result.requestId() : "Approval is no longer pending";
+        return action + ": " + decided.getFirst().requestId();
     }
-
-    @PostMapping("/agent/deny")
-    public String deny(@Valid @RequestBody DenyRequest request) {
-        if (request.isAll()) {
-            var targets = pendingApprovals();
-            for (var pending : targets) {
-                requireSessionOwnership(pending.sessionId());
-            }
-            long denied = targets.stream().map(p -> approvalQueue.deny(p.requestId(), null))
-                .filter(p -> p != null && p.denied()).count();
-            return "Denied " + denied + " pending requests";
-        }
-        var pendingList = pendingApprovals();
-        if (pendingList.isEmpty()) return "No pending approvals";
-        requireSessionOwnership(pendingList.get(0).sessionId());
-        var result = approvalQueue.deny(pendingList.get(0).requestId(), null);
-        return result != null && result.denied()
-            ? "Denied: " + result.requestId() : "Approval is no longer pending";
-    }
-
-    // ── Tool approval endpoints (A12) ──
 
     @GetMapping("/agent/approvals/pending")
     public List<ApprovalQueue.PendingApproval> pendingApprovals() {
@@ -484,38 +468,6 @@ public class AgentChatController {
                 .map(s -> scoped.equals(s.getUserId()))
                 .orElse(false))
             .toList();
-    }
-
-    private ApprovalQueue.PendingApproval requireApprovalOwnership(UUID requestId) {
-        var pending = approvalQueue.findRequest(requestId);
-        if (pending == null) {
-            throw new org.springframework.web.server.ResponseStatusException(
-                org.springframework.http.HttpStatus.NOT_FOUND, "Approval request not found");
-        }
-        requireSessionOwnership(pending.sessionId());
-        return pending;
-    }
-
-    @PostMapping(value = "/agent/approvals/{requestId}/approve", params = "!decision")
-    public ApprovalQueue.PendingApproval approveTool(@PathVariable UUID requestId, @RequestBody(required = false) String note) {
-        requireApprovalOwnership(requestId);
-        var result = approvalQueue.approve(requestId, note);
-        if (result == null || !result.approved()) {
-            throw new org.springframework.web.server.ResponseStatusException(
-                org.springframework.http.HttpStatus.CONFLICT, "Approval request is no longer awaiting approval");
-        }
-        return result;
-    }
-
-    @PostMapping(value = "/agent/approvals/{requestId}/deny", params = "!decision")
-    public ApprovalQueue.PendingApproval denyTool(@PathVariable UUID requestId, @RequestBody(required = false) String note) {
-        requireApprovalOwnership(requestId);
-        var result = approvalQueue.deny(requestId, note);
-        if (result == null || !result.denied()) {
-            throw new org.springframework.web.server.ResponseStatusException(
-                org.springframework.http.HttpStatus.CONFLICT, "Approval request is no longer awaiting denial");
-        }
-        return result;
     }
 
     // ── TTS endpoint ──

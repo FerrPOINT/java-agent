@@ -155,7 +155,7 @@ PostgreSQL
 | 6.4 | `POST /api/v1/agent/memory/approval` — body: `{enabled: bool}` → toggle gate | `api/AgentController.java` (patch) | — |
 | 6.5 | `GET /api/v1/agent/memory/all/{userId}` → List<MemoryDto> — all memory+user facts | `api/AgentController.java` (patch) | — |
 | 6.6 | `DELETE /api/v1/agent/memory/{userId}/{entryId}` — delete memory entry | `api/AgentController.java` (patch) | — |
-| 6.7 | DTOs: `PendingMemoryDto`, `MemoryDto`, `ApproveRequest`, `RejectRequest`, `ApprovalRequest` | `api/dto/` (новые) | — |
+| 6.7 | DTOs: `PendingMemoryDto`, `MemoryDto`, `ApproveMemoryRequest`, `RejectMemoryRequest`, `ApprovalRequest` | `api/dto/` (новые) | — |
 | 6.8 | `AgentRuntimeService` methods: `listPendingMemory`, `approvePendingMemory`, `rejectPendingMemory`, `setMemoryApproval`, `listAllMemory`, `deleteMemory` | `service/AgentRuntimeService.java` (patch) | — |
 
 ### Этап 7: Telegram-bot /memory command rewrite

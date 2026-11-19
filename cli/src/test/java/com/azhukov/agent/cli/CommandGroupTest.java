@@ -69,7 +69,7 @@ class CommandGroupTest {
         // ModelCommands
         assertThat(names).contains("model", "handoff", "reasoning", "fast", "voice");
         // ApprovalCommands
-        assertThat(names).contains("approve", "deny", "approvals", "approve-tool", "deny-tool",
+        assertThat(names).contains("approve", "deny", "approvals",
             "stop", "steer");
         // AdminCommands
         assertThat(names).contains("config", "doctor", "health", "usage", "insights", "agents",

@@ -1,5 +1,6 @@
 package com.azhukov.agent.cli;
 
+import com.azhukov.agent.shared.dto.ToolApprovalDecision;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -227,19 +228,21 @@ class CliFixesTest {
     }
 
     @Test
-    void approveToolCommandCallsBackend() {
-        when(client.approveTool("request-id")).thenReturn("Tool request approved: request-id");
-        String result = registry.execute("/approve-tool request-id", client, "sid");
-        assertThat(result).contains("Tool request approved");
-        assertThat(result).doesNotContain("Use the backend REST API");
+    void approveCommandSelectsExactRequest() {
+        var id = java.util.UUID.randomUUID();
+        var decision = new ToolApprovalDecision(ToolApprovalDecision.Action.APPROVE, false, id, null);
+        when(client.decideApproval(decision)).thenReturn("Approved: " + id);
+        String result = registry.execute("/approve " + id, client, "sid");
+        assertThat(result).isEqualTo("Approved: " + id);
     }
 
     @Test
-    void denyToolCommandCallsBackend() {
-        when(client.denyTool("request-id")).thenReturn("Tool request denied: request-id");
-        String result = registry.execute("/deny-tool request-id", client, "sid");
-        assertThat(result).contains("Tool request denied");
-        assertThat(result).doesNotContain("Use the backend REST API");
+    void denyCommandSelectsExactRequest() {
+        var id = java.util.UUID.randomUUID();
+        var decision = new ToolApprovalDecision(ToolApprovalDecision.Action.DENY, false, id, null);
+        when(client.decideApproval(decision)).thenReturn("Denied: " + id);
+        String result = registry.execute("/deny " + id, client, "sid");
+        assertThat(result).isEqualTo("Denied: " + id);
     }
 
     // ── C3: New commands ──
