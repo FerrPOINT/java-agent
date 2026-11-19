@@ -191,6 +191,24 @@ class CronJobControllerTest {
     }
 
     @Test
+    void heartbeatSetRejectsMissingSessionWithoutCreatingState() throws Exception {
+        UUID sessionId = UUID.randomUUID();
+        UserContext.set("user-a", UserContext.ROLE_USER);
+        try {
+            when(sessionRepository.findById(sessionId)).thenReturn(java.util.Optional.empty());
+            mockMvc.perform(post("/api/v1/agent/cron/heartbeat")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""
+                        {"sessionId":"%s","prompt":"check status","intervalSeconds":60}
+                        """.formatted(sessionId)))
+                .andExpect(status().isNotFound());
+            verify(heartbeatService, never()).set(any(), anyString(), org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.anyInt());
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
     void listEndpoint() throws Exception {
         CronJobEntity entity = new CronJobEntity();
         entity.setId(UUID.randomUUID());

@@ -119,12 +119,12 @@ public class CronJobController {
 
     private void requireSessionOwnership(UUID sessionId) {
         String scopedUserId = UserContext.scopeUserId();
-        if (scopedUserId == null) return;
-        sessionRepository.findById(sessionId).ifPresent(session -> {
-            if (!scopedUserId.equals(session.getUserId())) {
-                throw new SecurityException("Session does not belong to the current user");
-            }
-        });
+        var session = sessionRepository.findById(sessionId).orElseThrow(() ->
+            new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.NOT_FOUND, "Session not found"));
+        if (scopedUserId != null && !scopedUserId.equals(session.getUserId())) {
+            throw new SecurityException("Session does not belong to the current user");
+        }
     }
 
     @GetMapping("/heartbeat/{sessionId}")
