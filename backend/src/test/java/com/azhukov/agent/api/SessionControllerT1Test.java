@@ -5,7 +5,6 @@ import com.azhukov.agent.api.dto.ContextInfoDto;
 import com.azhukov.agent.api.dto.SessionSummaryDto;
 import com.azhukov.agent.api.dto.SnapshotRequest;
 import com.azhukov.agent.api.dto.TodoDto;
-import com.azhukov.agent.api.dto.UndoRequest;
 import com.azhukov.agent.api.dto.UsageDto;
 import com.azhukov.agent.api.mapper.DomainDtoMapper;
 import com.azhukov.agent.config.AgentProperties;
@@ -384,42 +383,24 @@ class SessionControllerT1Test {
             .andExpect(status().isBadRequest());
     }
 
-    // ── undoTurnsBody() ──
-
     @Test
-    void undoTurnsBody_success() throws Exception {
-        when(agentRuntimeService.undoTurns(SESSION_ID, 2)).thenReturn(2);
-
-        String body = objectMapper.writeValueAsString(new UndoRequest(SESSION_ID, 2));
+    void retiredUndoRouteIsNotAvailable() throws Exception {
         mockMvc.perform(post("/api/v1/agent/undo")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(body))
-            .andExpect(status().isOk())
-            .andExpect(content().string("2"));
+                .content("{\"sessionId\":\"" + SESSION_ID + "\",\"turns\":1}"))
+            .andExpect(status().isNotFound());
+        verify(agentRuntimeService, never()).undoTurns(any(UUID.class), any(Integer.class));
     }
 
     @Test
-    void undoTurnsBody_nullTurns_defaultsToOne() throws Exception {
-        when(agentRuntimeService.undoTurns(SESSION_ID, 1)).thenReturn(1);
+    void undoTurns_zeroIsPassedWithoutLegacyDefault() throws Exception {
+        when(agentRuntimeService.undoTurns(SESSION_ID, 0)).thenReturn(0);
 
-        String body = "{\"sessionId\":\"" + SESSION_ID + "\"}";
-        mockMvc.perform(post("/api/v1/agent/undo")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(body))
+        mockMvc.perform(post("/api/v1/agent/session/{sessionId}/undo", SESSION_ID)
+                .param("turns", "0"))
             .andExpect(status().isOk())
-            .andExpect(content().string("1"));
-    }
-
-    @Test
-    void undoTurnsBody_zeroTurns_defaultsToOne() throws Exception {
-        when(agentRuntimeService.undoTurns(SESSION_ID, 1)).thenReturn(1);
-
-        String body = "{\"sessionId\":\"" + SESSION_ID + "\",\"turns\":0}";
-        mockMvc.perform(post("/api/v1/agent/undo")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(body))
-            .andExpect(status().isOk())
-            .andExpect(content().string("1"));
+            .andExpect(content().string("0"));
+        verify(agentRuntimeService).undoTurns(SESSION_ID, 0);
     }
 
     // ── switchModel() ──

@@ -759,14 +759,13 @@ class FullApiE2ETest {
             "Should mention compression in response");
     }
 
-    @Test @Order(111) @DisplayName("POST /api/v1/agent/undo — undoes last turn")
+    @Test @Order(111) @DisplayName("POST /api/v1/agent/session/{sessionId}/undo — undoes last turn")
     void undoTurn() throws Exception {
         Assumptions.assumeTrue(sharedSessionId != null, "No shared session");
         // First add a turn to undo
         postWithRetry("/api/v1/agent/chat",
             "{\"sessionId\":\"" + sharedSessionId + "\",\"message\":\"Tell me a joke\"}");
-        HttpResponse<String> resp = post("/api/v1/agent/undo",
-            "{\"sessionId\":\"" + sharedSessionId + "\",\"turns\":1}");
+        HttpResponse<String> resp = post("/api/v1/agent/session/" + sharedSessionId + "/undo", "");
         assertEquals(200, resp.statusCode());
         int removed = Integer.parseInt(resp.body().trim());
         assertTrue(removed >= 1, "Should remove at least 1 turn, got: " + removed);
@@ -777,15 +776,6 @@ class FullApiE2ETest {
         Assumptions.assumeTrue(sharedSessionId != null, "No shared session");
         HttpResponse<String> resp = postWithRetry("/api/v1/agent/session/" + sharedSessionId + "/compress",
             "{\"focusTopic\":\"testing\"}");
-        assertEquals(200, resp.statusCode());
-    }
-
-    @Test @Order(113) @DisplayName("POST /api/v1/agent/session/{sessionId}/undo — path-based undo")
-    void undoSessionPath() throws Exception {
-        Assumptions.assumeTrue(sharedSessionId != null, "No shared session");
-        postWithRetry("/api/v1/agent/chat",
-            "{\"sessionId\":\"" + sharedSessionId + "\",\"message\":\"Say hi\"}");
-        HttpResponse<String> resp = post("/api/v1/agent/session/" + sharedSessionId + "/undo?turns=1", "");
         assertEquals(200, resp.statusCode());
     }
 

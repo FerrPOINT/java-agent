@@ -4,7 +4,6 @@ import com.azhukov.agent.api.dto.CompressRequest;
 import com.azhukov.agent.api.dto.ContextInfoDto;
 import com.azhukov.agent.api.dto.SessionSummaryDto;
 import com.azhukov.agent.api.dto.SnapshotRequest;
-import com.azhukov.agent.api.dto.UndoRequest;
 import com.azhukov.agent.api.dto.UsageDto;
 import jakarta.validation.Valid;
 import com.azhukov.agent.api.mapper.DomainDtoMapper;
@@ -150,13 +149,6 @@ public class SessionController {
         agentRuntimeService.compressSession(sessionId, focusTopic, keepLastN);
         return "Context compressed." + (focusTopic != null ? " Focus: " + focusTopic : "")
             + (keepLastN != null ? " Kept last " + keepLastN : "");
-    }
-
-    @PostMapping("/agent/undo")
-    public int undoTurnsBody(@Valid @RequestBody UndoRequest request) {
-        UUID sessionId = request.sessionId();
-        int turns = request.effectiveTurns();
-        return agentRuntimeService.undoTurns(sessionId, turns);
     }
 
     // ── Model switching ──
