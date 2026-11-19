@@ -55,6 +55,37 @@ class ResumeCommandTest {
     }
 
     @Test
+    void resumeOnlyMatchesCurrentTopicEvenWhenOtherTopicIsMoreRecent() {
+        BotSessionStore store = mock(BotSessionStore.class);
+        var foreignTopic = new BotSessionEntity();
+        foreignTopic.setId(UUID.randomUUID()); foreignTopic.setTitle("Project"); foreignTopic.setThreadId(7L);
+        var ownTopic = new BotSessionEntity();
+        ownTopic.setId(UUID.randomUUID()); ownTopic.setTitle("Project"); ownTopic.setThreadId(42L);
+        when(store.listByUserId("456")).thenReturn(List.of(foreignTopic, ownTopic));
+        when(store.resumeSession(ownTopic.getId(), "456")).thenReturn(ownTopic);
+        var event = new UpdateEvent(1, Type.COMMAND, -123, 456, "user", "/resume Project",
+            null, null, null, null, null, null, true, "resume", "Project", 1L, null, 42L);
+
+        assertThat(new ResumeCommand(store).handle(event, null)).contains("Resumed session");
+        verify(store, never()).resumeSession(foreignTopic.getId(), "456");
+        verify(store).resumeSession(ownTopic.getId(), "456");
+    }
+
+    @Test
+    void listExcludesOtherTopicSessions() {
+        BotSessionStore store = mock(BotSessionStore.class);
+        var dm = new BotSessionEntity(); dm.setTitle("Private session");
+        var topic = new BotSessionEntity(); topic.setTitle("Topic session"); topic.setThreadId(42L);
+        when(store.listByUserId("456")).thenReturn(List.of(dm, topic));
+        var event = new UpdateEvent(1, Type.COMMAND, -123, 456, "user", "/resume",
+            null, null, null, null, null, null, true, "resume", "", 1L, null, 42L);
+        assertThat(new ResumeCommand(store).handle(event, null))
+            .contains("Topic session").doesNotContain("Private session");
+        assertThat(new ResumeCommand(store).handle(makeEvent(""), null))
+            .contains("Private session").doesNotContain("Topic session");
+    }
+
+    @Test
     void nameAndDescription() {
         var cmd = new ResumeCommand(mock(BotSessionStore.class));
         assertThat(cmd.name()).isEqualTo("resume");
