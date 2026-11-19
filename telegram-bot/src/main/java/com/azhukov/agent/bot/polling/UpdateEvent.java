@@ -221,6 +221,11 @@ public record UpdateEvent(
                 Map<String, Object> largest = photos.get(photos.size() - 1);
                 fileId = (String) largest.get("file_id");
             }
+        } else if (message.containsKey("animation")) {
+            type = isEditedMessage ? Type.EDITED_MESSAGE : (isChannelPost ? Type.CHANNEL_POST : Type.ANIMATION);
+            if (!isEditedMessage && !isChannelPost) fileType = "animation";
+            Map<String, Object> anim = (Map<String, Object>) message.get("animation");
+            fileId = anim != null ? (String) anim.get("file_id") : null;
         } else if (message.containsKey("document")) {
             type = isEditedMessage ? Type.EDITED_MESSAGE : (isChannelPost ? Type.CHANNEL_POST : Type.DOCUMENT);
             if (!isEditedMessage && !isChannelPost) fileType = "document";
@@ -236,11 +241,6 @@ public record UpdateEvent(
             if (!isEditedMessage && !isChannelPost) fileType = "sticker";
             Map<String, Object> sticker = (Map<String, Object>) message.get("sticker");
             fileId = sticker != null ? (String) sticker.get("file_id") : null;
-        } else if (message.containsKey("animation")) {
-            type = isEditedMessage ? Type.EDITED_MESSAGE : (isChannelPost ? Type.CHANNEL_POST : Type.ANIMATION);
-            if (!isEditedMessage && !isChannelPost) fileType = "animation";
-            Map<String, Object> anim = (Map<String, Object>) message.get("animation");
-            fileId = anim != null ? (String) anim.get("file_id") : null;
         } else if (message.containsKey("location")) {
             // B3.6: Location message — parse lat/lon and format as text for LLM
             type = isEditedMessage ? Type.EDITED_MESSAGE : (isChannelPost ? Type.CHANNEL_POST : Type.LOCATION);

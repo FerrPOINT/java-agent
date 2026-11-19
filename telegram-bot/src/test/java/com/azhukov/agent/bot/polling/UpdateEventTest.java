@@ -118,6 +118,20 @@ class UpdateEventTest {
     }
 
     @Test
+    void animationTakesPrecedenceOverTelegramDocumentCompatibilityField() {
+        Map<String, Object> update = baseUpdate(106L);
+        Map<String, Object> msg = messageBase(123L, 456L, "jdoe");
+        msg.put("animation", Map.of("file_id", "animation-1"));
+        msg.put("document", Map.of("file_id", "document-1"));
+        update.put("message", msg);
+
+        UpdateEvent event = UpdateEvent.from(update);
+        assertThat(event.type()).isEqualTo(UpdateEvent.Type.ANIMATION);
+        assertThat(event.fileType()).isEqualTo("animation");
+        assertThat(event.fileId()).isEqualTo("animation-1");
+    }
+
+    @Test
     void fromDocumentMessage() {
         Map<String, Object> update = baseUpdate(106L);
         Map<String, Object> msg = messageBase(123L, 456L, "jdoe");
