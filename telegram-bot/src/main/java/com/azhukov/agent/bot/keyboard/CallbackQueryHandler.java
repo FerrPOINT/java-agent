@@ -98,7 +98,7 @@ public class CallbackQueryHandler {
             return null;
         }
 
-        String response = route(command, value, chatId, event.userId(), event.messageId());
+        String response = route(command, value, chatId, event.userId(), event.messageId(), event.messageThreadId());
 
         String answerText = response != null ? response : "OK";
         answer(callbackQueryId, answerText, false);
@@ -106,7 +106,7 @@ public class CallbackQueryHandler {
         return response;
     }
 
-    private String route(String command, String value, long chatId, long userId, long messageId) {
+    private String route(String command, String value, long chatId, long userId, long messageId, long threadId) {
         if (command == null || command.isBlank()) {
             return "Unknown command";
         }
@@ -119,7 +119,7 @@ public class CallbackQueryHandler {
         }
 
         return switch (command) {
-            case "mp" -> handleModelSelect(value, chatId, userId);
+            case "mp" -> handleModelSelect(value, chatId, userId, threadId);
             case "mpp" -> handleModelPage(value, chatId);
             case "pp" -> handleProviderSelect(value, chatId);
             case "ea" -> handleExecApproval(value, chatId, messageId);
@@ -131,14 +131,15 @@ public class CallbackQueryHandler {
     /**
      * mp:<model> — set the model override for the user's session.
      */
-    private String handleModelSelect(String model, long chatId, long userId) {
+    private String handleModelSelect(String model, long chatId, long userId, long threadId) {
         if (model == null || model.isBlank()) {
             return "No model specified";
         }
         if (!properties.getAvailableModels().isEmpty() && !properties.getAvailableModels().contains(model)) {
             return "Model not available: " + model;
         }
-        BotSessionEntity session = sessionStore.resolveOrCreate(String.valueOf(userId), String.valueOf(chatId), "");
+        BotSessionEntity session = sessionStore.resolveOrCreate(String.valueOf(userId), String.valueOf(chatId), "",
+            threadId > 0 ? threadId : null);
         if (session == null || session.getId() == null) {
             return "No active session";
         }

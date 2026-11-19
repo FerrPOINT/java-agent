@@ -59,15 +59,27 @@ class CallbackQueryHandlerTest {
     void handle_mpCallback_setsModel() {
         BotSessionEntity session = new BotSessionEntity();
         session.setId(UUID.randomUUID());
-        when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
-        org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
-            .thenReturn(session);
+        when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), isNull())).thenReturn(session);
 
         UpdateEvent event = callbackEvent("cq-1", "mp:kimi-k2");
         String result = handler.handle(event);
 
         assertThat(result).isEqualTo("Model set to: kimi-k2");
         verify(sessionStore).setModelOverride(session.getId(), "kimi-k2");
+    }
+
+    @Test
+    void modelCallbackUsesForumTopicLane() {
+        var session = new BotSessionEntity();
+        session.setId(UUID.randomUUID());
+        when(sessionStore.resolveOrCreate("456", "123", "", 42L)).thenReturn(session);
+        var event = new UpdateEvent(1, UpdateEvent.Type.CALLBACK_QUERY, 123L, 456L,
+            "user", null, null, null, null, "cq-topic", "mp:kimi-k2", null,
+            false, null, null, 100L, null, 42L);
+
+        assertThat(handler.handle(event)).isEqualTo("Model set to: kimi-k2");
+        verify(sessionStore).setModelOverride(session.getId(), "kimi-k2");
+        verify(sessionStore, never()).resolveOrCreate(anyString(), anyString(), anyString());
     }
 
     @Test
@@ -81,7 +93,7 @@ class CallbackQueryHandlerTest {
 
     @Test
     void handle_mpCallback_noSession_returnsError() {
-        when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(null);
+        when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), isNull())).thenReturn(null);
 
         UpdateEvent event = callbackEvent("cq-2", "mp:gpt-4");
         String result = handler.handle(event);
@@ -228,9 +240,7 @@ class CallbackQueryHandlerTest {
         when(authorizationService.isAuthorized(456L, "jdoe", 123L)).thenReturn(true);
         BotSessionEntity session = new BotSessionEntity();
         session.setId(UUID.randomUUID());
-        when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
-        org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
-            .thenReturn(session);
+        when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), isNull())).thenReturn(session);
 
         UpdateEvent event = callbackEvent("cq-auth-2", "mp:gpt-4");
         String result = handler.handle(event);
