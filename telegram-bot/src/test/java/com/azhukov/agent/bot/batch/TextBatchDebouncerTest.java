@@ -25,6 +25,27 @@ class TextBatchDebouncerTest {
     }
 
     @Test
+    void distinctUsersAndTopicsNeverShareOneBatch() {
+        var dispatched = new java.util.ArrayList<UpdateEvent>();
+        debouncer.onDispatch(dispatched::add);
+        var a = new UpdateEvent(1, UpdateEvent.Type.TEXT, -100L, 1L, "a", "first",
+            null, null, null, null, null, null, false, null, null, 101, null, 11);
+        var b = new UpdateEvent(2, UpdateEvent.Type.TEXT, -100L, 2L, "b", "second",
+            null, null, null, null, null, null, false, null, null, 102, null, 11);
+        var c = new UpdateEvent(3, UpdateEvent.Type.TEXT, -100L, 1L, "a", "third",
+            null, null, null, null, null, null, false, null, null, 103, null, 22);
+
+        debouncer.offer(a);
+        debouncer.offer(b);
+        debouncer.offer(c);
+        debouncer.flushAll();
+
+        assertThat(dispatched).extracting(UpdateEvent::text).containsExactlyInAnyOrder("first", "second", "third");
+        assertThat(dispatched).extracting(UpdateEvent::userId).containsExactlyInAnyOrder(1L, 2L, 1L);
+        assertThat(dispatched).extracting(UpdateEvent::messageThreadId).containsExactlyInAnyOrder(11L, 11L, 22L);
+    }
+
+    @Test
     void shortMessagesJoinedWithSpace() {
         long chatId = 100L;
         debouncer.offer(textEvent(1, chatId, "what is"));
