@@ -954,26 +954,26 @@ class FullApiE2ETest {
         assertTrue(body.isArray());
     }
 
-    @Test @Order(181) @DisplayName("POST /api/v1/agent/approve — approve with no pending returns message")
+    @Test @Order(181) @DisplayName("POST /api/v1/agent/approvals/decisions — approve with no pending returns message")
     void approveNoPending() throws Exception {
-        HttpResponse<String> resp = post("/api/v1/agent/approve",
-            "{\"all\":false}");
+        HttpResponse<String> resp = post("/api/v1/agent/approvals/decisions",
+            "{\"action\":\"APPROVE\",\"all\":false}");
         assertEquals(200, resp.statusCode());
         assertNotNull(resp.body());
     }
 
-    @Test @Order(182) @DisplayName("POST /api/v1/agent/deny — deny with no pending returns message")
+    @Test @Order(182) @DisplayName("POST /api/v1/agent/approvals/decisions — deny with no pending returns message")
     void denyNoPending() throws Exception {
-        HttpResponse<String> resp = post("/api/v1/agent/deny",
-            "{\"all\":false}");
+        HttpResponse<String> resp = post("/api/v1/agent/approvals/decisions",
+            "{\"action\":\"DENY\",\"all\":false}");
         assertEquals(200, resp.statusCode());
         assertNotNull(resp.body());
     }
 
-    @Test @Order(183) @DisplayName("POST /api/v1/agent/approve — approve all with no pending")
+    @Test @Order(183) @DisplayName("POST /api/v1/agent/approvals/decisions — approve all with no pending")
     void approveAll() throws Exception {
-        HttpResponse<String> resp = post("/api/v1/agent/approve",
-            "{\"all\":true}");
+        HttpResponse<String> resp = post("/api/v1/agent/approvals/decisions",
+            "{\"action\":\"APPROVE\",\"all\":true}");
         assertEquals(200, resp.statusCode());
     }
 
@@ -1538,17 +1538,19 @@ class FullApiE2ETest {
 
     // ── 39. AgentChat: per-session approvals, transcribe, debug-report ──
 
-    @Test @Order(360) @DisplayName("POST /api/v1/agent/approvals/{requestId}/approve — unknown request returns 404")
+    @Test @Order(360) @DisplayName("POST /api/v1/agent/approvals/decisions — unknown request returns 404")
     void approvalsSessionApprove() throws Exception {
         UUID fakeSession = UUID.randomUUID();
-        HttpResponse<String> resp = post("/api/v1/agent/approvals/" + fakeSession + "/approve", "");
+        HttpResponse<String> resp = post("/api/v1/agent/approvals/decisions",
+            "{\"action\":\"APPROVE\",\"requestId\":\"" + fakeSession + "\"}");
         assertEquals(404, resp.statusCode());
     }
 
-    @Test @Order(361) @DisplayName("POST /api/v1/agent/approvals/{requestId}/deny — unknown request returns 404")
+    @Test @Order(361) @DisplayName("POST /api/v1/agent/approvals/decisions — unknown request returns 404")
     void approvalsSessionDeny() throws Exception {
         UUID fakeSession = UUID.randomUUID();
-        HttpResponse<String> resp = post("/api/v1/agent/approvals/" + fakeSession + "/deny", "");
+        HttpResponse<String> resp = post("/api/v1/agent/approvals/decisions",
+            "{\"action\":\"DENY\",\"requestId\":\"" + fakeSession + "\"}");
         assertEquals(404, resp.statusCode());
     }
 

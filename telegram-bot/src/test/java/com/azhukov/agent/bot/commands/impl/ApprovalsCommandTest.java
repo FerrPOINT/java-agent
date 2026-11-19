@@ -12,7 +12,7 @@ import static org.mockito.Mockito.when;
 /**
  * {@code /approvals} contract: read-only view of the approval mode resolved
  * from the backend capabilities endpoint ({@code features.approval_events});
- * manual when enabled, off otherwise, with mode-appropriate guidance.
+ * manual or off when the backend supplies a boolean status.
  */
 class ApprovalsCommandTest {
 
@@ -46,11 +46,12 @@ class ApprovalsCommandTest {
     }
 
     @Test
-    void capabilitiesUnavailable_fallsBackToOff() {
-        when(client.suggestionGet("/v1/capabilities")).thenReturn(null);
+    void capabilitiesUnavailable_reportsError() throws Exception {
+        when(client.suggestionGet("/v1/capabilities"))
+            .thenReturn(null, mapper.readTree("{\"features\":{}}"));
 
-        String out = cmd.handle(event(), null);
-        assertThat(out).contains("Approval mode: off");
+        assertThat(cmd.handle(event(), null)).contains("approval mode is unavailable");
+        assertThat(cmd.handle(event(), null)).contains("approval mode is unavailable");
     }
 
     @Test

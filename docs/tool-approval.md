@@ -16,19 +16,20 @@ ambient guardrail scope.
 Clarify и review HTTP routes также требуют UUID session: невалидный строковый
 ключ не пропускает проверку владельца и отклоняется до чтения store.
 
-Текущий REST contract:
+## REST и команды
 
 - `GET /api/v1/agent/approvals/pending` возвращает доступные caller запросы.
-- `POST /api/v1/agent/approvals/{requestId}/approve` и `/deny` разрешают один
-  конкретный запрос с проверкой владельца его session. Неизвестный ID — HTTP404.
-  Решение задаётся операцией маршрута; прежний query `decision` отклоняется.
-  Заменённое или уже противоположное решение — HTTP409, без пустого успеха.
-- `POST /api/v1/agent/approve` принимает `requestId` либо `all=true`.
-  Пустой selector выбирает один текущий запрос; каждый элемент `all` всё равно
-  получает только одноразовое решение. `all` вместе с `requestId` отклоняется.
-- CLI `/approvals` показывает ID; `/approve-tool <requestId>` и
-  `/deny-tool <requestId>` используют именно его. Bot `/approve` и `/approve all`
-  подтверждают текущие запросы, `/deny` отклоняет их.
+- `POST /api/v1/agent/approvals/decisions` принимает `action` со значением
+  `APPROVE` или `DENY`, а также необязательное поле `note`. Для выбора передают
+  `requestId` либо `all: true`. Без селектора обрабатывается один доступный
+  запрос. Совместное указание ID и `all: true` отклоняется с HTTP 400.
+- Сервер проверяет владельца каждой целевой сессии до решения. Неизвестный ID
+  возвращает HTTP 404. Запрос, который по-прежнему известен, но уже не допускает
+  решение, возвращает HTTP 409. Для `all: true` результат сообщает число
+  подтверждённых или отклонённых запросов.
+- В CLI и Telegram команды `/approve` и `/deny` принимают `requestId` или `all`.
+  CLI `/approvals` показывает ID, Telegram `/approvals` показывает текущий
+  режим подтверждений и сообщает ошибку, если backend не вернул настройку.
 
 Прежнее поле `scope`, session ID вместо request ID и обещания `session`/`always`
 не поддерживаются. Их allowlist не участвовал в реальном execution policy,
