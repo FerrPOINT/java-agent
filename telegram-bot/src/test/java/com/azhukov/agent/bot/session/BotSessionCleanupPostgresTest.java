@@ -461,7 +461,7 @@ class BotSessionCleanupPostgresTest {
         assertThat(repository.findById(row.getId()).orElseThrow().isCleanupPending()).isFalse();
     }
 
-    @Test void newCommandMarksEveryActiveThreadForRetry() {
+    @Test void newCommandOnlyMarksItsCurrentThreadForRetry() {
         String owner = "threads-" + UUID.randomUUID();
         var first = session(owner);
         var second = new BotSessionEntity();
@@ -472,9 +472,9 @@ class BotSessionCleanupPostgresTest {
         var backend = org.mockito.Mockito.mock(com.azhukov.agent.bot.core.AgentBackendClient.class);
         org.mockito.Mockito.when(backend.cleanupSession(org.mockito.ArgumentMatchers.anyString())).thenReturn(false);
         new com.azhukov.agent.bot.commands.impl.NewSessionCommand(store, backend).handle(null, first);
-        assertThat(store.pendingCleanups()).extracting(BotSessionEntity::getId).contains(first.getId(), second.getId());
-        assertThat(store.retryCleanup(second.getId(), id -> true)).isTrue();
-        assertThat(repository.findById(second.getId()).orElseThrow().isCleanupPending()).isFalse();
+        assertThat(store.pendingCleanups()).extracting(BotSessionEntity::getId).contains(first.getId()).doesNotContain(second.getId());
+        assertThat(repository.findById(second.getId()).orElseThrow().isActive()).isTrue();
+        assertThat(store.retryCleanup(second.getId(), id -> true)).isFalse();
         assertThat(repository.findById(first.getId()).orElseThrow().isCleanupPending()).isTrue();
     }
 

@@ -25,11 +25,12 @@ class NewSessionCommandTest {
         session.setId(UUID.randomUUID());
         session.setBackendSessionId(UUID.randomUUID());
         session.setUserId("owner");
+        when(store.finalizeWithCleanupPending(session.getId(), session.getUpdatedAt())).thenReturn(true);
         when(store.retryCleanup(org.mockito.ArgumentMatchers.eq(session.getId()), org.mockito.ArgumentMatchers.any()))
             .thenAnswer(invocation -> ((java.util.function.Function<UUID, Boolean>) invocation.getArgument(1)).apply(session.getBackendSessionId()));
         new NewSessionCommand(store, backend).handle(null, session);
         org.mockito.Mockito.verify(backend, org.mockito.Mockito.never()).resetSession(anyString());
-        org.mockito.Mockito.verify(store).deactivateAllWithCleanupPending("owner");
+        org.mockito.Mockito.verify(store).finalizeWithCleanupPending(session.getId(), session.getUpdatedAt());
     }
 
     @Test
@@ -40,13 +41,14 @@ class NewSessionCommandTest {
         session.setId(UUID.randomUUID());
         session.setBackendSessionId(UUID.randomUUID());
         session.setUserId("owner");
+        when(store.finalizeWithCleanupPending(session.getId(), session.getUpdatedAt())).thenReturn(true);
         when(store.retryCleanup(org.mockito.ArgumentMatchers.eq(session.getId()), org.mockito.ArgumentMatchers.any()))
             .thenAnswer(invocation -> ((java.util.function.Function<UUID, Boolean>) invocation.getArgument(1)).apply(session.getBackendSessionId()));
         when(backend.cleanupSession(session.getBackendSessionId().toString())).thenReturn(true);
         assertThat(new NewSessionCommand(store, backend).handle(null, session)).contains("cleared");
         org.mockito.Mockito.verify(backend).cleanupSession(session.getBackendSessionId().toString());
         org.mockito.Mockito.verify(backend, org.mockito.Mockito.never()).resetSession(anyString());
-        org.mockito.Mockito.verify(store).deactivateAllWithCleanupPending("owner");
+        org.mockito.Mockito.verify(store).finalizeWithCleanupPending(session.getId(), session.getUpdatedAt());
     }
 
     @Test
@@ -57,12 +59,13 @@ class NewSessionCommandTest {
         session.setId(UUID.randomUUID());
         session.setBackendSessionId(UUID.randomUUID());
         session.setUserId("owner");
+        when(store.finalizeWithCleanupPending(session.getId(), session.getUpdatedAt())).thenReturn(true);
         when(store.retryCleanup(org.mockito.ArgumentMatchers.eq(session.getId()), org.mockito.ArgumentMatchers.any()))
             .thenAnswer(invocation -> ((java.util.function.Function<UUID, Boolean>) invocation.getArgument(1)).apply(session.getBackendSessionId()));
         when(backend.cleanupSession(anyString())).thenReturn(false);
         String result = new NewSessionCommand(store, backend).handle(null, session);
         assertThat(result).contains("cleanup failed");
-        org.mockito.Mockito.verify(store).deactivateAllWithCleanupPending("owner");
+        org.mockito.Mockito.verify(store).finalizeWithCleanupPending(session.getId(), session.getUpdatedAt());
         org.mockito.Mockito.verify(backend, org.mockito.Mockito.never()).resetSession(anyString());
     }
 
@@ -74,12 +77,26 @@ class NewSessionCommandTest {
         session.setId(UUID.randomUUID());
         session.setBackendSessionId(UUID.randomUUID());
         session.setUserId("owner");
+        when(store.finalizeWithCleanupPending(session.getId(), session.getUpdatedAt())).thenReturn(true);
         when(store.retryCleanup(org.mockito.ArgumentMatchers.eq(session.getId()), org.mockito.ArgumentMatchers.any()))
             .thenAnswer(invocation -> ((java.util.function.Function<UUID, Boolean>) invocation.getArgument(1)).apply(session.getBackendSessionId()));
         when(backend.cleanupSession(anyString())).thenThrow(new IllegalStateException("offline"));
         assertThat(new NewSessionCommand(store, backend).handle(null, session)).contains("cleanup failed");
-        org.mockito.Mockito.verify(store).deactivateAllWithCleanupPending("owner");
+        org.mockito.Mockito.verify(store).finalizeWithCleanupPending(session.getId(), session.getUpdatedAt());
         org.mockito.Mockito.verify(backend, org.mockito.Mockito.never()).resetSession(anyString());
+    }
+
+    @Test
+    void newOnlyFinalizesTheCurrentSession() {
+        var store = mock(BotSessionStore.class);
+        var session = new BotSessionEntity();
+        session.setId(UUID.randomUUID());
+        session.setUserId("owner");
+        session.setThreadId(42L);
+        when(store.finalizeWithCleanupPending(session.getId(), session.getUpdatedAt())).thenReturn(true);
+        new NewSessionCommand(store, mock(AgentBackendClient.class)).handle(null, session);
+        org.mockito.Mockito.verify(store).finalizeWithCleanupPending(session.getId(), session.getUpdatedAt());
+        org.mockito.Mockito.verify(store, org.mockito.Mockito.never()).deactivateAllWithCleanupPending(anyString());
     }
 
     @Test
@@ -102,6 +119,7 @@ class NewSessionCommandTest {
         var cmd = new NewSessionCommand(store, backendClient);
         BotSessionEntity session = new BotSessionEntity();
         session.setId(UUID.randomUUID());
+        when(store.finalizeWithCleanupPending(session.getId(), session.getUpdatedAt())).thenReturn(true);
         UpdateEvent event = new UpdateEvent(1, Type.COMMAND, 123, 456, "user",
             "/new", null, null, null, null, null, null, true, "new", "");
         String result = cmd.handle(event, session);

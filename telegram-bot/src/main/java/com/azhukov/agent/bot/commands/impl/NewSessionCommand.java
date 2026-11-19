@@ -31,7 +31,9 @@ public class NewSessionCommand implements CommandHandler {
         if (session == null || session.getId() == null) {
             return "No active session.";
         }
-        store.deactivateAllWithCleanupPending(session.getUserId());
+        if (!store.finalizeWithCleanupPending(session.getId(), session.getUpdatedAt())) {
+            return "Session changed; please retry /new.";
+        }
         boolean cleanupFailed = false;
         if (session.getBackendSessionId() != null) {
             try {
