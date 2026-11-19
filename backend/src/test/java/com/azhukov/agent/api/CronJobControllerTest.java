@@ -191,6 +191,24 @@ class CronJobControllerTest {
     }
 
     @Test
+    void heartbeatSetRejectsNegativeMaxTicksWithoutStartingUnlimitedLoop() throws Exception {
+        UUID sessionId = UUID.randomUUID();
+        UserContext.set("user-a", UserContext.ROLE_USER);
+        try {
+            mockMvc.perform(post("/api/v1/agent/cron/heartbeat")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""
+                        {"sessionId":"%s","prompt":"check status","intervalSeconds":60,"maxTicks":-1}
+                        """.formatted(sessionId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ok").value(false));
+            verify(heartbeatService, never()).set(any(), anyString(), org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.anyInt());
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
     void heartbeatSetRejectsMissingSessionWithoutCreatingState() throws Exception {
         UUID sessionId = UUID.randomUUID();
         UserContext.set("user-a", UserContext.ROLE_USER);
