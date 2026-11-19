@@ -69,6 +69,39 @@ class BotSessionCleanupPostgresTest {
         assertThat(store.retryCleanup(row.getId(), id -> { throw new AssertionError("duplicate cleanup"); })).isFalse();
     }
 
+    @Test void upgradeFromV10PreservesExistingRowsAndAppliesPendingDefaults() throws Exception {
+        String schema = "upgrade_" + UUID.randomUUID().toString().replace("-", "");
+        try (var connection = java.sql.DriverManager.getConnection(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+             var statement = connection.createStatement()) {
+            statement.execute("CREATE SCHEMA " + schema);
+        }
+        var ds = new org.springframework.jdbc.datasource.DriverManagerDataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+        try {
+            var before = org.flywaydb.core.Flyway.configure().dataSource(ds).schemas(schema).defaultSchema(schema)
+                .locations("classpath:db/bot-migration").table("flyway_bot_schema_history").target("10").load();
+            before.migrate();
+            UUID id = UUID.randomUUID();
+            try (var c = ds.getConnection(); var statement = c.createStatement()) {
+                statement.execute("INSERT INTO " + schema + ".bot_sessions(id,user_id,chat_id,active) VALUES ('" + id + "','upgrade-owner','123',true)");
+            }
+            var after = org.flywaydb.core.Flyway.configure().dataSource(ds).schemas(schema).defaultSchema(schema)
+                .locations("classpath:db/bot-migration").table("flyway_bot_schema_history").load();
+            assertThat(after.migrate().migrationsExecuted).isEqualTo(1);
+            after.validate();
+            try (var c = ds.getConnection(); var statement = c.createStatement();
+                 var rs = statement.executeQuery("SELECT user_id,active,cleanup_pending,cleanup_on_backend_binding FROM " + schema + ".bot_sessions WHERE id='" + id + "'")) {
+                assertThat(rs.next()).isTrue();
+                assertThat(rs.getString(1)).isEqualTo("upgrade-owner");
+                assertThat(rs.getBoolean(2)).isTrue();
+                assertThat(rs.getBoolean(3)).isFalse();
+                assertThat(rs.getBoolean(4)).isFalse();
+                assertThat(rs.next()).isFalse();
+            }
+        } finally {
+            try (var c = ds.getConnection(); var statement = c.createStatement()) { statement.execute("DROP SCHEMA " + schema + " CASCADE"); }
+        }
+    }
+
     @Test void repeatedIdenticalBackendBindingAfterCleanupDoesNotScheduleDuplicate() {
         var row = session("same-binding-" + UUID.randomUUID());
         store.deactivateAllWithCleanupPending(row.getUserId());
