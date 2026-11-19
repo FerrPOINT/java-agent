@@ -24,6 +24,29 @@ class BotSessionStoreTest {
     }
 
     @Test
+    void resumeSwitchesOnlyTheTargetTopicAndCancelsItsPendingCleanup() {
+        var target = new BotSessionEntity();
+        target.setId(UUID.randomUUID()); target.setUserId("owner"); target.setThreadId(42L);
+        target.setActive(false); target.setCleanupPending(true); target.setCleanupOnBackendBinding(true);
+        var previous = new BotSessionEntity();
+        previous.setId(UUID.randomUUID()); previous.setUserId("owner"); previous.setThreadId(42L); previous.setActive(true);
+        var other = new BotSessionEntity();
+        other.setId(UUID.randomUUID()); other.setUserId("owner"); other.setThreadId(99L); other.setActive(true);
+        when(repository.findAllLockedByUserId("owner")).thenReturn(List.of(target, previous, other));
+        when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        assertThat(store.resumeSession(target.getId(), "owner")).isSameAs(target);
+        assertThat(target.isActive()).isTrue();
+        assertThat(target.isCleanupPending()).isFalse();
+        assertThat(target.isCleanupOnBackendBinding()).isFalse();
+        assertThat(previous.isActive()).isFalse();
+        assertThat(other.isActive()).isTrue();
+        var order = inOrder(repository);
+        order.verify(repository).saveAndFlush(previous);
+        order.verify(repository).save(target);
+    }
+
+    @Test
     void pendingCleanupRetriesFailureAndClearsOnlyAfterSuccess() {
         UUID id = UUID.randomUUID();
         UUID backend = UUID.randomUUID();
