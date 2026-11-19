@@ -699,14 +699,6 @@ class FullApiE2ETest {
         assertTrue(body.isArray());
     }
 
-    @Test @Order(96) @DisplayName("GET /api/v1/agent/skills/bundles — alias for bundles")
-    void listBundlesAlias() throws Exception {
-        HttpResponse<String> resp = get("/api/v1/agent/skills/bundles");
-        assertEquals(200, resp.statusCode());
-        JsonNode body = parseJson(resp.body());
-        assertTrue(body.isArray());
-    }
-
     // ── 12. Checkpoint ──
 
     @Test @Order(100) @DisplayName("POST /api/v1/agent/checkpoint — creates checkpoint")

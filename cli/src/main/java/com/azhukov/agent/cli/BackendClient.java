@@ -519,7 +519,7 @@ public class BackendClient {
     public String compressSession(String sessionId, String focus) {
         Map<String, Object> body = new LinkedHashMap<>();
         if (focus != null && !focus.isBlank()) {
-            body.put("focus", focus);
+            body.put("focusTopic", focus);
         }
         try {
             String result = restClient.post()

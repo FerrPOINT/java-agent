@@ -448,12 +448,25 @@ class SkillControllerTest {
     }
 
     @Test
-    void bundlesAliasReturnsSameList() throws Exception {
-        when(agentRuntimeService.listBundles()).thenReturn(List.of("bundle-a"));
-
-        mockMvc.perform(get("/api/v1/agent/skills/bundles"))
+    void bundlesNameUsesCurrentSkillContentRoute() throws Exception {
+        when(skillManager.getSkill(eq("bundles"), org.mockito.ArgumentMatchers.isNull()))
+            .thenReturn("# Bundle maintenance");
+        mockMvc.perform(get("/api/v1/agent/skills/{name}", "bundles"))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$[0]").value("bundle-a"));
+            .andExpect(jsonPath("$.ok").value(true))
+            .andExpect(jsonPath("$.name").value("bundles"))
+            .andExpect(jsonPath("$.content").value("# Bundle maintenance"));
+        verify(agentRuntimeService, never()).listBundles();
+    }
+
+    @Test
+    void absentBundlesSkillDoesNotReturnTheBundleCatalog() throws Exception {
+        mockMvc.perform(get("/api/v1/agent/skills/{name}", "bundles"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.ok").value(false))
+            .andExpect(jsonPath("$.error").value("Skill not found: bundles"));
+        verify(skillManager).getSkill(eq("bundles"), org.mockito.ArgumentMatchers.isNull());
+        verify(agentRuntimeService, never()).listBundles();
     }
 
     @Test

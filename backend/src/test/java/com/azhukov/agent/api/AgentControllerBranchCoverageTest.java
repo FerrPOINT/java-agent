@@ -793,16 +793,6 @@ class AgentControllerBranchCoverageTest {
             .andExpect(jsonPath("$.length()").value(2));
     }
 
-    @Test
-    void bundlesAliasReturnsSameList() throws Exception {
-        mockMvc = skillMockMvc();
-        when(agentRuntimeService.listBundles()).thenReturn(List.of("bundle-1"));
-
-        mockMvc.perform(get("/api/v1/agent/skills/bundles"))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$[0]").value("bundle-1"));
-    }
-
     // ── Checkpoint endpoints ──
 
     @Test

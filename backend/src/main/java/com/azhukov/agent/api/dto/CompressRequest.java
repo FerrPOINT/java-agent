@@ -1,19 +1,12 @@
 package com.azhukov.agent.api.dto;
 
-import java.util.UUID;
+import com.fasterxml.jackson.annotation.JsonAnySetter;
+import io.swagger.v3.oas.annotations.media.Schema;
 
-public record CompressRequest(
-    UUID sessionId,
-    String focusTopic,
-    Integer keepLastN
-) {
-    // Backward-compatible constructor
-    public CompressRequest(UUID sessionId, String focus) {
-        this(sessionId, focus, null);
-    }
-
-    // Convenience accessor for backward compatibility
-    public String focus() {
-        return focusTopic;
+@Schema(additionalProperties = Schema.AdditionalPropertiesValue.FALSE)
+public record CompressRequest(String focusTopic, Integer keepLastN) {
+    @JsonAnySetter
+    public void rejectUnknownField(String name, Object value) {
+        throw new IllegalArgumentException("Unknown compression field: " + name);
     }
 }

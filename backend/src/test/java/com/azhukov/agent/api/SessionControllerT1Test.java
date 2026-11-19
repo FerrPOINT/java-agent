@@ -50,9 +50,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * T1 phase A — focused NEW unit tests for {@link SessionController}.
+ * Focused HTTP tests for {@link SessionController}.
  * Covers success, bad input, error, and edge paths via MockMvc + Mockito services.
- * Does NOT modify any existing tests.
  */
 @ExtendWith(MockitoExtension.class)
 class SessionControllerT1Test {
@@ -289,13 +288,16 @@ class SessionControllerT1Test {
     void compressSession_withFocusTopicAndKeepLastN() throws Exception {
         doNothing().when(agentRuntimeService).compressSession(eq(SESSION_ID), eq("topic"), eq(5));
 
-        String body = objectMapper.writeValueAsString(new CompressRequest(SESSION_ID, "topic", 5));
+        String body = objectMapper.writeValueAsString(new CompressRequest("topic", 5));
         mockMvc.perform(post("/api/v1/agent/session/{sessionId}/compress", SESSION_ID)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body))
             .andExpect(status().isOk())
             .andExpect(content().string(org.hamcrest.Matchers.containsString("Focus: topic")))
             .andExpect(content().string(org.hamcrest.Matchers.containsString("Kept last 5")));
+        var order = org.mockito.Mockito.inOrder(agentRuntimeService);
+        order.verify(agentRuntimeService).requireSessionOwnership(SESSION_ID);
+        order.verify(agentRuntimeService).compressSession(SESSION_ID, "topic", 5);
     }
 
     @Test
@@ -308,17 +310,26 @@ class SessionControllerT1Test {
     }
 
     @Test
-    void compressSession_focusFallbackToFocusAlias() throws Exception {
-        // focusTopic null but request present -> controller uses request.focus() which returns focusTopic (null)
-        // Test the path where request is non-null but focusTopic is null: focus stays null, no "Focus:" in output
-        lenient().doNothing().when(agentRuntimeService).compressSession(eq(SESSION_ID), isNull(), isNull());
-
-        String body = "{\"sessionId\":\"" + SESSION_ID + "\"}";
+    void compressSession_emptyBodyUsesOptionalDefaults() throws Exception {
         mockMvc.perform(post("/api/v1/agent/session/{sessionId}/compress", SESSION_ID)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(body))
+                .content("{}"))
             .andExpect(status().isOk())
             .andExpect(content().string("Context compressed."));
+        verify(agentRuntimeService).requireSessionOwnership(SESSION_ID);
+        verify(agentRuntimeService).compressSession(SESSION_ID, null, null);
+    }
+
+    @Test
+    void compressSession_rejectsRetiredAndUnknownFieldsWithoutEffect() throws Exception {
+        for (String field : List.of("focus", "sessionId", "unexpected")) {
+            String body = objectMapper.writeValueAsString(Map.of(field, SESSION_ID.toString()));
+            mockMvc.perform(post("/api/v1/agent/session/{sessionId}/compress", SESSION_ID)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(body))
+                .andExpect(status().isBadRequest());
+        }
+        verify(agentRuntimeService, never()).compressSession(any(), any(), any());
     }
 
     @Test
@@ -326,7 +337,7 @@ class SessionControllerT1Test {
         doThrow(new IllegalArgumentException("bad")).when(agentRuntimeService)
             .compressSession(any(), any(), any());
 
-        String body = objectMapper.writeValueAsString(new CompressRequest(SESSION_ID, "topic", 5));
+        String body = objectMapper.writeValueAsString(new CompressRequest("topic", 5));
         mockMvc.perform(post("/api/v1/agent/session/{sessionId}/compress", SESSION_ID)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body))

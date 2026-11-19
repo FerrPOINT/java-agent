@@ -112,6 +112,9 @@
 | Endpoint | Назначение |
 |---|---|
 | `POST /api/v1/agent/chat` | Sync chat |
+| `POST /api/v1/agent/session/{sessionId}/compress` | Сжать контекст выбранной сессии |
+| `GET /api/v1/agent/bundles` | Список установленных бандлов |
+| `GET /api/v1/agent/skills/{name}` | Содержимое навыка по имени |
 | `POST /api/v1/agent/chat/stream` | SSE streaming chat |
 | `POST /api/v1/agent/steer` | Inject message в активный run |
 | `POST /v1/chat/completions` | OpenAI-compatible chat completions |
@@ -124,6 +127,12 @@
 | `DELETE /api/v1/admin/users/keys/{keyId}` | Revoke an API key |
 | `GET /health` | Safe runtime health summary |
 | `GET /bot/health` (gateway) | Состояние процесса bot-сервиса; не end-to-end проверка Telegram API |
+
+Сжатие использует ID сессии из пути. Необязательное JSON-тело содержит только
+`focusTopic` (тема) и `keepLastN` (сохранить последние обмены); оба поля можно
+опустить. Неизвестные поля возвращают 400. CLI и Telegram используют тот же
+контракт. Имя навыка `bundles` обрабатывается обычным маршрутом содержимого
+навыка; каталог бандлов читается через `/agent/bundles`.
 
 ### Multi-user и аутентификация
 
