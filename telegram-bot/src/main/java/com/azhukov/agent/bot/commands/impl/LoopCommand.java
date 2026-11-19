@@ -64,8 +64,14 @@ public class LoopCommand implements CommandHandler {
         String until = null;
         List<String> rest = new ArrayList<>(List.of(arg.split("\\s+")));
         for (int i = 0; i < rest.size(); i++) {
-            if (rest.get(i).equalsIgnoreCase("--times") && i + 1 < rest.size()) {
-                try { times = Integer.parseInt(rest.get(i + 1)); } catch (NumberFormatException ignored) {}
+            if (rest.get(i).equalsIgnoreCase("--times")) {
+                if (i + 1 >= rest.size() || times != null) return "--times requires one positive integer.";
+                try {
+                    times = Integer.parseInt(rest.get(i + 1));
+                    if (times <= 0) return "--times requires one positive integer.";
+                } catch (NumberFormatException e) {
+                    return "--times requires one positive integer.";
+                }
                 rest.remove(i); rest.remove(i); i--;
             } else if (rest.get(i).equalsIgnoreCase("--until") && i + 1 < rest.size()) {
                 until = String.join(" ", rest.subList(i + 1, rest.size()));
