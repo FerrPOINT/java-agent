@@ -61,7 +61,4 @@ public interface BotSessionRepository extends JpaRepository<BotSessionEntity, UU
     @Query("UPDATE BotSessionEntity s SET s.updatedAt = :ts WHERE s.id = :id")
     void touchUpdatedAt(UUID id, Instant ts);
 
-    @Modifying
-    @Query("UPDATE BotSessionEntity s SET s.active = false WHERE s.userId = :userId AND s.active = true")
-    int deactivateAllForUser(String userId);
 }

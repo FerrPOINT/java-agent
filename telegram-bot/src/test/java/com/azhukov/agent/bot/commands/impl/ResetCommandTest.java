@@ -46,7 +46,7 @@ class ResetCommandTest {
         when(backend.resetSession(id.toString())).thenReturn(true);
         String result = new ResetCommand(backend).handle(makeEvent(""), session);
         assertThat(result).containsIgnoringCase("reset");
-        verify(store, never()).deactivateAll(anyString());
+        verifyNoInteractions(store);
     }
 
     @Test
@@ -93,7 +93,7 @@ class ResetCommandTest {
 
         String result = new ResetCommand(backendClient).handle(makeEvent(""), session);
         assertThat(result).containsIgnoringCase("failed");
-        verify(store, never()).deactivateAll(anyString());
+        verifyNoInteractions(store);
     }
 
     @Test

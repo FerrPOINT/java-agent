@@ -250,11 +250,6 @@ public class BotSessionStore {
         return repository.findByUserIdOrderByUpdatedAtDesc(userId);
     }
 
-    @Transactional
-    public int deactivateAll(String userId) {
-        return repository.deactivateAllForUser(userId);
-    }
-
     // ─── P0: Session Reset Policy ──────────────────────────────────
 
     /**

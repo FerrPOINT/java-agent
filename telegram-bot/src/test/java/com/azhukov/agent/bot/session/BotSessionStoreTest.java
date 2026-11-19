@@ -35,7 +35,6 @@ class BotSessionStoreTest {
         assertThat(created.getThreadId()).isNull();
         assertThat(current.isActive()).isFalse();
         assertThat(other.isActive()).isTrue();
-        verify(repository, never()).deactivateAllForUser(any());
         var order = inOrder(repository);
         order.verify(repository).saveAndFlush(current);
         order.verify(repository).save(created);
@@ -54,7 +53,6 @@ class BotSessionStoreTest {
         assertThat(other.isActive()).isTrue();
         assertThat(target.isActive()).isTrue();
         assertThat(target.isCleanupPending()).isFalse();
-        verify(repository, never()).deactivateAllForUser(any());
         var order = inOrder(repository);
         order.verify(repository).saveAndFlush(previous);
         order.verify(repository).save(target);
@@ -245,14 +243,6 @@ class BotSessionStoreTest {
         List<BotSessionEntity> result = store.listByUserId("123");
         assertThat(result).hasSize(1);
         assertThat(result.get(0).getUserId()).isEqualTo("123");
-    }
-
-    @Test
-    void deactivateAll_delegatesToRepository() {
-        when(repository.deactivateAllForUser("123")).thenReturn(3);
-        int count = store.deactivateAll("123");
-        assertThat(count).isEqualTo(3);
-        verify(repository).deactivateAllForUser("123");
     }
 
     @Test
