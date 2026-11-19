@@ -73,7 +73,11 @@ public class LoopCommand implements CommandHandler {
                     return "--times requires one positive integer.";
                 }
                 rest.remove(i); rest.remove(i); i--;
-            } else if (rest.get(i).equalsIgnoreCase("--until") && i + 1 < rest.size()) {
+            }
+        }
+        for (int i = 0; i < rest.size(); i++) {
+            if (rest.get(i).equalsIgnoreCase("--until")) {
+                if (i + 1 >= rest.size()) return "--until requires a stop condition.";
                 until = String.join(" ", rest.subList(i + 1, rest.size()));
                 rest.subList(i, rest.size()).clear();
                 break;

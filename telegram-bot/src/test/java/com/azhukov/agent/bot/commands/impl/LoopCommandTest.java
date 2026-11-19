@@ -103,6 +103,17 @@ class LoopCommandTest {
     }
 
     @Test
+    void timesAfterUntilStillLimitsTheLoop() throws Exception {
+        UUID sid = UUID.randomUUID();
+        when(client.suggestionPostJson(eq("/api/v1/agent/cron/heartbeat"), any())).thenReturn(json("{\"ok\":true}"));
+        cmd.handle(event("5m inspect --until green --times 3"), sessionWithBackend(sid));
+        var captor = org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+        verify(client).suggestionPostJson(anyString(), captor.capture());
+        assertThat(captor.getValue()).containsEntry("maxTicks", 3);
+        assertThat((String) captor.getValue().get("prompt")).contains("Stop condition: green\n").doesNotContain("--times");
+    }
+
+    @Test
     void explicitlyTooShortIntervalIsRejectedRatherThanSilentlyChanged() {
         String out = cmd.handle(event("10s inspect"), sessionWithBackend(UUID.randomUUID()));
         assertThat(out).contains("minimum");
