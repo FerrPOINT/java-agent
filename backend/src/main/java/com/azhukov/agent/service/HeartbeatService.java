@@ -342,13 +342,13 @@ public class HeartbeatService {
         } catch (Exception ex) {
             log.warn("Heartbeat turn failed for session {}: {}", sessionId, ex.getMessage());
         }
-        if (response != null && !response.isBlank()) {
-            lastFireResults.put(sessionId, response);
-            deliveryAttempts.put(sessionId, new java.util.concurrent.atomic.AtomicInteger());
-        }
         // /loop contract: LOOP_COMPLETE in the response stops the loop.
         synchronized (this) {
             if (states.get(sessionId) != fired) return;
+            if (response != null && !response.isBlank()) {
+                lastFireResults.put(sessionId, response);
+                deliveryAttempts.put(sessionId, new java.util.concurrent.atomic.AtomicInteger());
+            }
             if (responseSignalsComplete(response)) {
                 log.info("Heartbeat/loop for session {} signalled LOOP_COMPLETE — clearing", sessionId);
                 states.remove(sessionId);
