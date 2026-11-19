@@ -31,19 +31,15 @@ public class NewSessionCommand implements CommandHandler {
         if (session == null || session.getId() == null) {
             return "No active session.";
         }
-        // Release runtime state without deleting the transcript; deactivation
-        // binds the next message to a new backend session.
-        String backendId = session.getBackendSessionId() != null
-            ? session.getBackendSessionId().toString() : null;
+        store.deactivateAllWithCleanupPending(session.getUserId());
         boolean cleanupFailed = false;
-        if (backendId != null) {
+        if (session.getBackendSessionId() != null) {
             try {
-                cleanupFailed = !backendClient.cleanupSession(backendId);
+                cleanupFailed = !store.retryCleanup(session.getId(), id -> backendClient.cleanupSession(id.toString()));
             } catch (Exception e) {
                 cleanupFailed = true;
             }
         }
-        store.deactivateAll(session.getUserId());
         if (cleanupFailed) {
             return "Started a new session. Previous history is preserved, but runtime cleanup failed.";
         }

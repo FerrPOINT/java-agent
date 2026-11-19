@@ -75,6 +75,7 @@ dependencies {
     // method signatures; needed at runtime (was previously transitive via backend)
     implementation 'org.reactivestreams:reactive-streams'
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.testcontainers:postgresql:1.21.4'
     // Qualify the two real bot-owned reference tables against the actual owner
     // and backend Flyway resources, without a production backend dependency.
     testImplementation project(path: ':backend', configuration: 'identityOwnerTestElements')
@@ -102,6 +103,16 @@ tasks.register('streamDeliveryTest', Test) {
         includeTestsMatching 'com.azhukov.agent.bot.core.BotMessageProcessorTest'
         includeTestsMatching 'com.azhukov.agent.bot.streaming.StreamDeliveryRegressionTest'
     }
+    jvmArgs '-XX:+EnableDynamicAgentLoading'
+    maxHeapSize = '2g'
+}
+
+tasks.register('sessionCleanupPostgresTest', Test) {
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform { includeTags 'slow' }
+    filter { includeTestsMatching 'com.azhukov.agent.bot.session.BotSessionCleanupPostgresTest' }
     jvmArgs '-XX:+EnableDynamicAgentLoading'
     maxHeapSize = '2g'
 }

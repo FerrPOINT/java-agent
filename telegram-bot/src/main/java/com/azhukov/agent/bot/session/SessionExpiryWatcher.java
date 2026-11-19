@@ -78,6 +78,13 @@ public class SessionExpiryWatcher {
      */
     void checkExpiredSessions() {
         try {
+            for (BotSessionEntity pending : sessionStore.pendingCleanups()) {
+                try {
+                    sessionStore.retryCleanup(pending.getId(), id -> backendClient.cleanupSession(id.toString()));
+                } catch (Exception e) {
+                    log.warn("Retrying session cleanup failed for {}", pending.getId());
+                }
+            }
             Instant now = Instant.now();
             List<BotSessionEntity> activeSessions = sessionStore.listActiveSessions();
             for (BotSessionEntity session : activeSessions) {
@@ -101,22 +108,15 @@ public class SessionExpiryWatcher {
                 if (reason != null) {
                     log.info("Finalizing expired session {} (reason={}, userId={})",
                         session.getId(), reason, session.getUserId());
-                    // rev-69: notify backend to clean up per-session state
-                    // (context engine, guardrails, nudge counters, prompt cache,
-                    // interrupt tokens, steer buffer). Without this, expired bot
-                    // sessions leak backend state forever — the bot deactivates
-                    // its own row but the backend never knows.
-                    try {
-                        if (session.getBackendSessionId() != null) {
-                            if (!backendClient.cleanupSession(session.getBackendSessionId().toString())) {
-                                log.warn("Runtime cleanup failed for expired session {}; retry is required", session.getId());
-                            }
-                        }
-                    } catch (Exception e) {
-                        log.warn("Backend cleanup for expired session {} failed: {}",
-                            session.getId(), e.getMessage());
+                    // Persist the cleanup intent atomically with deactivation before the HTTP call.
+                    if (!sessionStore.finalizeWithCleanupPending(session.getId(), session.getUpdatedAt())) {
+                        continue;
                     }
-                    sessionStore.finalizeSession(session.getId());
+                    try {
+                        sessionStore.retryCleanup(session.getId(), id -> backendClient.cleanupSession(id.toString()));
+                    } catch (Exception e) {
+                        log.warn("Backend cleanup for expired session {} failed", session.getId());
+                    }
                 }
             }
         } catch (Exception e) {

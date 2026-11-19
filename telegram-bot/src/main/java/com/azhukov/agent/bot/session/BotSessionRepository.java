@@ -41,6 +41,12 @@ public interface BotSessionRepository extends JpaRepository<BotSessionEntity, UU
     // P0: Session expiry watcher — list all active sessions
     List<BotSessionEntity> findByActiveTrue();
 
+    List<BotSessionEntity> findByCleanupPendingTrueAndActiveFalse();
+
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT s FROM BotSessionEntity s WHERE s.id = :id")
+    Optional<BotSessionEntity> findLockedById(UUID id);
+
     /** Active, non-suspended sessions — candidates for resume-pending marking on shutdown. */
     List<BotSessionEntity> findByActiveTrueAndSuspendedFalse();
 
@@ -50,6 +56,10 @@ public interface BotSessionRepository extends JpaRepository<BotSessionEntity, UU
     @Modifying
     @Query("UPDATE BotSessionEntity s SET s.updatedAt = :ts WHERE s.id = :id")
     void touchUpdatedAt(UUID id, Instant ts);
+
+    @Modifying
+    @Query("UPDATE BotSessionEntity s SET s.active = false, s.cleanupOnBackendBinding = true, s.cleanupPending = CASE WHEN s.backendSessionId IS NULL THEN false ELSE true END WHERE s.userId = :userId AND s.active = true")
+    int deactivateAllForUserWithPendingCleanup(String userId);
 
     @Modifying
     @Query("UPDATE BotSessionEntity s SET s.active = false WHERE s.userId = :userId AND s.active = true")

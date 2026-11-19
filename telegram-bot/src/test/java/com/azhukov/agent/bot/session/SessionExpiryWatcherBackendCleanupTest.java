@@ -28,6 +28,9 @@ class SessionExpiryWatcherBackendCleanupTest {
         resetPolicy.setMode(SessionResetMode.IDLE);
         resetPolicy.setIdleMinutes(1);
         backendClient = mock(AgentBackendClient.class);
+        when(sessionStore.retryCleanup(any(UUID.class), any())).thenAnswer(invocation ->
+            ((java.util.function.Function<UUID, Boolean>) invocation.getArgument(1)).apply(invocation.getArgument(0)));
+        when(sessionStore.finalizeWithCleanupPending(any(UUID.class), any())).thenReturn(true);
         watcher = new SessionExpiryWatcher(sessionStore, resetPolicy, backendClient,
             mock(com.azhukov.agent.bot.session.BusySessionHandler.class));
     }
@@ -54,7 +57,27 @@ class SessionExpiryWatcherBackendCleanupTest {
 
         verify(backendClient).cleanupSession(sessionId.toString());
         verify(backendClient, never()).resetSession(anyString());
-        verify(sessionStore).finalizeSession(sessionId);
+        verify(sessionStore).finalizeWithCleanupPending(sessionId, session.getUpdatedAt());
+    }
+
+    @Test
+    void failedCleanupIsRetriedAfterSessionBecomesInactive() {
+        UUID sessionId = UUID.randomUUID();
+        BotSessionEntity session = new BotSessionEntity();
+        session.setId(sessionId);
+        session.setBackendSessionId(sessionId);
+        session.setUserId("user-1");
+        session.setActive(true);
+        session.setCreatedAt(Instant.now().minusSeconds(3600));
+        session.setUpdatedAt(Instant.now().minusSeconds(3600));
+        when(sessionStore.listActiveSessions()).thenReturn(List.of(session), List.of());
+        when(sessionStore.pendingCleanups()).thenReturn(List.of(), List.of(session));
+        when(backendClient.cleanupSession(sessionId.toString())).thenReturn(false, true);
+        watcher.checkExpiredSessions();
+        watcher.checkExpiredSessions();
+        verify(sessionStore).finalizeWithCleanupPending(sessionId, session.getUpdatedAt());
+        verify(backendClient, times(2)).cleanupSession(sessionId.toString());
+        verify(backendClient, never()).resetSession(anyString());
     }
 
     @Test
@@ -71,7 +94,7 @@ class SessionExpiryWatcherBackendCleanupTest {
         when(backendClient.cleanupSession(sessionId.toString())).thenReturn(false);
         watcher.checkExpiredSessions();
         watcher.checkExpiredSessions();
-        verify(sessionStore).finalizeSession(sessionId);
+        verify(sessionStore).finalizeWithCleanupPending(sessionId, session.getUpdatedAt());
         verify(backendClient, times(1)).cleanupSession(sessionId.toString());
     }
 
@@ -94,6 +117,6 @@ class SessionExpiryWatcherBackendCleanupTest {
         verify(backendClient).cleanupSession(sessionId.toString());
         verify(backendClient, never()).resetSession(anyString());
         // finalize must still happen even if backend cleanup failed
-        verify(sessionStore).finalizeSession(sessionId);
+        verify(sessionStore).finalizeWithCleanupPending(sessionId, session.getUpdatedAt());
     }
 }

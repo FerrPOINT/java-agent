@@ -102,12 +102,14 @@ public class BotSessionStore {
      */
     @Transactional
     public boolean activateSessionById(String userId, UUID sessionId) {
-        Optional<BotSessionEntity> target = repository.findById(sessionId);
+        Optional<BotSessionEntity> target = repository.findLockedById(sessionId);
         if (target.isEmpty() || !target.get().getUserId().equals(userId)) {
             return false;
         }
         repository.deactivateAllForUser(userId);
         BotSessionEntity entity = target.get();
+        entity.setCleanupPending(false);
+        entity.setCleanupOnBackendBinding(false);
         entity.setActive(true);
         entity.setUpdatedAt(Instant.now());
         repository.save(entity);
@@ -165,6 +167,8 @@ public class BotSessionStore {
 
     @Transactional
     public BotSessionEntity resumeSession(UUID sessionId, String userId) {
+        BotSessionEntity target = repository.findLockedById(sessionId).orElse(null);
+        if (target == null || !java.util.Objects.equals(target.getUserId(), userId)) return null;
         // Deactivate current active session
         BotSessionEntity current = repository.findByUserIdAndActiveTrue(userId).orElse(null);
         if (current != null) {
@@ -172,9 +176,9 @@ public class BotSessionStore {
             current.setUpdatedAt(Instant.now());
             repository.save(current);
         }
-        // Activate requested session
-        BotSessionEntity target = repository.findById(sessionId).orElse(null);
-        if (target == null) return null;
+        // Activate requested session and cancel stale cleanup while holding the row lock.
+        target.setCleanupPending(false);
+        target.setCleanupOnBackendBinding(false);
         target.setActive(true);
         target.setUpdatedAt(Instant.now());
         return repository.save(target);
@@ -238,6 +242,11 @@ public class BotSessionStore {
     }
 
     @Transactional
+    public int deactivateAllWithCleanupPending(String userId) {
+        return repository.deactivateAllForUserWithPendingCleanup(userId);
+    }
+
+    @Transactional
     public int deactivateAll(String userId) {
         return repository.deactivateAllForUser(userId);
     }
@@ -252,6 +261,38 @@ public class BotSessionStore {
     @Transactional(readOnly = true)
     public java.util.List<BotSessionEntity> listActiveSessions() {
         return repository.findByActiveTrue();
+    }
+
+    @Transactional(readOnly = true)
+    public List<BotSessionEntity> pendingCleanups() {
+        return repository.findByCleanupPendingTrueAndActiveFalse();
+    }
+
+    @Transactional
+    public boolean finalizeWithCleanupPending(UUID sessionId, Instant expectedUpdatedAt) {
+        var session = repository.findLockedById(sessionId).orElse(null);
+        if (session == null || !session.isActive() || !java.util.Objects.equals(session.getUpdatedAt(), expectedUpdatedAt)) {
+            return false;
+        }
+        session.setActive(false);
+        session.setCleanupOnBackendBinding(true);
+        session.setCleanupPending(session.getBackendSessionId() != null);
+        session.setUpdatedAt(Instant.now());
+        repository.save(session);
+        return true;
+    }
+
+    @Transactional
+    public boolean retryCleanup(UUID sessionId, java.util.function.Function<UUID, Boolean> cleanup) {
+        var session = repository.findLockedById(sessionId).orElse(null);
+        if (session == null || session.isActive() || !session.isCleanupPending()) return false;
+        UUID backendId = session.getBackendSessionId();
+        if (backendId == null || Boolean.TRUE.equals(cleanup.apply(backendId))) {
+            session.setCleanupPending(false);
+            repository.save(session);
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -329,8 +370,12 @@ public class BotSessionStore {
      */
     @Transactional
     public void updateBackendSessionId(UUID botSessionId, UUID backendSessionId) {
-        repository.findById(botSessionId).ifPresent(session -> {
+        repository.findLockedById(botSessionId).ifPresent(session -> {
+            boolean changed = !java.util.Objects.equals(session.getBackendSessionId(), backendSessionId);
             session.setBackendSessionId(backendSessionId);
+            if (!session.isActive() && session.isCleanupOnBackendBinding() && changed && backendSessionId != null) {
+                session.setCleanupPending(true);
+            }
             session.setUpdatedAt(Instant.now());
             repository.save(session);
         });

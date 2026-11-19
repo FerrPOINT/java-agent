@@ -24,6 +24,31 @@ class BotSessionStoreTest {
     }
 
     @Test
+    void pendingCleanupRetriesFailureAndClearsOnlyAfterSuccess() {
+        UUID id = UUID.randomUUID();
+        UUID backend = UUID.randomUUID();
+        var row = new BotSessionEntity();
+        row.setId(id); row.setBackendSessionId(backend); row.setActive(false); row.setCleanupPending(true);
+        when(repository.findLockedById(id)).thenReturn(Optional.of(row));
+        assertThat(store.retryCleanup(id, ignored -> false)).isFalse();
+        assertThat(row.isCleanupPending()).isTrue();
+        assertThat(store.retryCleanup(id, ignored -> true)).isTrue();
+        assertThat(row.isCleanupPending()).isFalse();
+    }
+
+    @Test
+    void pendingCleanupDoesNotTouchActiveSession() {
+        UUID id = UUID.randomUUID();
+        var row = new BotSessionEntity();
+        row.setId(id); row.setActive(true); row.setCleanupPending(true);
+        when(repository.findLockedById(id)).thenReturn(Optional.of(row));
+        java.util.function.Function<UUID, Boolean> action = mock(java.util.function.Function.class);
+        assertThat(store.retryCleanup(id, action)).isFalse();
+        verifyNoInteractions(action);
+        assertThat(row.isCleanupPending()).isTrue();
+    }
+
+    @Test
     void resolveOrCreate_existingSession_returnsExisting() {
         BotSessionEntity existing = new BotSessionEntity();
         existing.setUserId("123");
