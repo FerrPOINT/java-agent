@@ -391,6 +391,39 @@ class CronJobServiceTest {
         verify(cronJobRepository).deleteById(id);
     }
 
+    @Test
+    void manualBackgroundRunRetainsCallerIdentityOnSchedulerThread() throws Exception {
+        var job = new CronJobEntity();
+        job.setId(UUID.randomUUID());
+        job.setUserId("owner-a");
+        job.setName("identity test");
+        job.setPrompt("test");
+        job.setEnabled(true);
+        when(cronJobRepository.findById(job.getId())).thenReturn(Optional.of(job));
+        var scheduler = mock(java.util.concurrent.ScheduledExecutorService.class);
+        var callback = org.mockito.ArgumentCaptor.forClass(Runnable.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "scheduler", scheduler);
+        var observed = new java.util.concurrent.atomic.AtomicReference<com.pdlc.auth.HumanApplicationAccess>();
+        var proof = new com.pdlc.auth.HumanApplicationAccess("owner-a", "user", java.util.Set.of("java-agent"), 1, true,
+            Instant.now().plusSeconds(60), System.nanoTime() + 60_000_000_000L);
+        when(agentRuntimeService.runBackground(any(), eq(true), eq("owner-a"), any()))
+            .thenAnswer(inv -> { observed.set(com.azhukov.agent.core.security.UserContext.centralAccess()); return UUID.randomUUID().toString(); });
+        com.azhukov.agent.core.security.UserContext.setCentral(proof);
+        try {
+            service.runNowBackground(job.getId(), null);
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+        }
+        verify(scheduler).execute(callback.capture());
+        var executor = java.util.concurrent.Executors.newSingleThreadExecutor();
+        try {
+            executor.submit(callback.getValue()).get();
+        } finally {
+            executor.shutdownNow();
+        }
+        assertThat(observed.get()).isSameAs(proof);
+    }
+
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.NullSource
     @org.junit.jupiter.params.provider.ValueSource(strings = {"owner-a", "456"})
