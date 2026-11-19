@@ -103,6 +103,13 @@ class LoopCommandTest {
     }
 
     @Test
+    void oversizedIntervalDoesNotStartDefaultFiveMinuteLoop() {
+        String out = cmd.handle(event("2147483648s inspect"), sessionWithBackend(UUID.randomUUID()));
+        assertThat(out).contains("interval");
+        org.mockito.Mockito.verifyNoInteractions(client, poller);
+    }
+
+    @Test
     void setLoop_noPromptLeft_showsUsage() {
         String out = cmd.handle(event("10m"), sessionWithBackend(UUID.randomUUID()));
         assertThat(out).contains("Usage: /loop");
