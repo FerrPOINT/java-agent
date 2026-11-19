@@ -200,7 +200,8 @@ public class ApprovalQueue {
      * Returns a list of undecided approvals across all sessions.
      */
     public List<PendingApproval> getPendingApprovals() {
-        return pending.values().stream().map(request -> request.approval)
+        return pending.keySet().stream().map(this::getPending)
+            .filter(java.util.Objects::nonNull)
             .filter(ApprovalQueue::isUndecided)
             .collect(Collectors.toList());
     }
