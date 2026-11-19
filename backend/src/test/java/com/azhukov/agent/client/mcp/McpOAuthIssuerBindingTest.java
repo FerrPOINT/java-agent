@@ -40,6 +40,14 @@ class McpOAuthIssuerBindingTest {
     }
 
     @Test
+    void explicitDefaultPortsAreSameIssuer() {
+        assertThat(McpOAuthManager.issuerOf("https://auth.example.com:443/token"))
+            .isEqualTo(McpOAuthManager.issuerOf("https://auth.example.com/token"));
+        assertThat(McpOAuthManager.issuerOf("http://auth.example.com:80/token"))
+            .isEqualTo(McpOAuthManager.issuerOf("http://auth.example.com/token"));
+    }
+
+    @Test
     void differentHostsAreDifferentIssuers() {
         assertThat(McpOAuthManager.issuerOf("https://auth.example.com/token"))
             .isNotEqualTo(McpOAuthManager.issuerOf("https://auth.other.com/token"));

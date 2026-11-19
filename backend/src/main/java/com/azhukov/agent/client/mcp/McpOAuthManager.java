@@ -173,9 +173,11 @@ public class McpOAuthManager {
                 || uri.getHost() == null || uri.getUserInfo() != null) {
             throw new IllegalArgumentException("OAuth token URL must be an absolute HTTP(S) URL without userinfo");
         }
-        String port = uri.getPort() == -1 ? "" : ":" + uri.getPort();
-        return uri.getScheme().toLowerCase(java.util.Locale.ROOT) + "://"
-            + uri.getHost().toLowerCase(java.util.Locale.ROOT) + port;
+        String scheme = uri.getScheme().toLowerCase(java.util.Locale.ROOT);
+        int portNumber = uri.getPort();
+        String port = portNumber == -1 || (scheme.equals("https") && portNumber == 443)
+            || (scheme.equals("http") && portNumber == 80) ? "" : ":" + portNumber;
+        return scheme + "://" + uri.getHost().toLowerCase(java.util.Locale.ROOT) + port;
     }
 
     /** Store the token and its issuer under the same profile-scoped connection. */
