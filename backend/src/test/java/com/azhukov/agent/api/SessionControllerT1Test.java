@@ -354,33 +354,20 @@ class SessionControllerT1Test {
             .andExpect(content().string("3"));
     }
 
-    // ── compressSessionBody() (convenience form) ──
-
     @Test
-    void compressSessionBody_noSessionId_returns400() throws Exception {
-        // body with null sessionId -> IllegalArgumentException -> 400
-        mockMvc.perform(post("/api/v1/agent/compress")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("{}"))
-            .andExpect(status().isBadRequest());
-    }
-
-    @Test
-    void compressSessionBody_success() throws Exception {
-        doNothing().when(agentRuntimeService).compressSession(eq(SESSION_ID), eq("topic"), eq(2));
-
-        String body = objectMapper.writeValueAsString(new CompressRequest(SESSION_ID, "topic", 2));
-        mockMvc.perform(post("/api/v1/agent/compress")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(body))
-            .andExpect(status().isOk())
-            .andExpect(content().string(org.hamcrest.Matchers.containsString("Focus: topic")));
-    }
-
-    @Test
-    void compressSessionBody_nullBody_returns400() throws Exception {
-        mockMvc.perform(post("/api/v1/agent/compress"))
-            .andExpect(status().isBadRequest());
+    void retiredCompressionRouteDoesNotAcceptAnyBodyShape() throws Exception {
+        for (String body : new String[] {
+            "",
+            "{}",
+            "{\"sessionId\":\"" + SESSION_ID + "\",\"focusTopic\":\"topic\",\"keepLastN\":2}",
+            "{\"sessionId\":\"550e8400-e29b-41d4-a716-446655440000\"}"
+        }) {
+            mockMvc.perform(post("/api/v1/agent/compress")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(body))
+                .andExpect(status().isNotFound());
+        }
+        verify(agentRuntimeService, never()).compressSession(any(UUID.class), any(), any());
     }
 
     @Test

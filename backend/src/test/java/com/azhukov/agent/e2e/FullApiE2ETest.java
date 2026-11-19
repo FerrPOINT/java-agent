@@ -749,11 +749,11 @@ class FullApiE2ETest {
 
     // ── 13. Compress / Undo ──
 
-    @Test @Order(110) @DisplayName("POST /api/v1/agent/compress — compresses context")
+    @Test @Order(110) @DisplayName("POST /api/v1/agent/session/{sessionId}/compress — compresses context")
     void compressContext() throws Exception {
         Assumptions.assumeTrue(sharedSessionId != null, "No shared session");
-        HttpResponse<String> resp = postWithRetry("/api/v1/agent/compress",
-            "{\"sessionId\":\"" + sharedSessionId + "\"}");
+        HttpResponse<String> resp = postWithRetry("/api/v1/agent/session/" + sharedSessionId + "/compress",
+            "{\"focusTopic\":\"testing\"}");
         assertEquals(200, resp.statusCode());
         assertTrue(resp.body().contains("compressed") || resp.body().contains("Context"),
             "Should mention compression in response");
@@ -769,14 +769,6 @@ class FullApiE2ETest {
         assertEquals(200, resp.statusCode());
         int removed = Integer.parseInt(resp.body().trim());
         assertTrue(removed >= 1, "Should remove at least 1 turn, got: " + removed);
-    }
-
-    @Test @Order(112) @DisplayName("POST /api/v1/agent/session/{sessionId}/compress — path-based compress")
-    void compressSessionPath() throws Exception {
-        Assumptions.assumeTrue(sharedSessionId != null, "No shared session");
-        HttpResponse<String> resp = postWithRetry("/api/v1/agent/session/" + sharedSessionId + "/compress",
-            "{\"focusTopic\":\"testing\"}");
-        assertEquals(200, resp.statusCode());
     }
 
     // ── 14. Curator ──

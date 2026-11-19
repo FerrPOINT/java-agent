@@ -317,11 +317,11 @@ class AgentControllerTest {
         doNothing().when(agentRuntimeService)
             .compressSession(any(UUID.class), any(), any());
 
-        mockMvc.perform(post("/api/v1/agent/compress")
+        mockMvc.perform(post("/api/v1/agent/session/{sessionId}/compress",
+                "550e8400-e29b-41d4-a716-446655440000")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                     {
-                      "sessionId": "550e8400-e29b-41d4-a716-446655440000",
                       "focusTopic": "main topic"
                     }
                     """))

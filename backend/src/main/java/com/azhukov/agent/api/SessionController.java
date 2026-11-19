@@ -133,24 +133,6 @@ public class SessionController {
         return agentRuntimeService.undoTurns(sessionId, turns);
     }
 
-    // Convenience endpoints without sessionId path variable (for E2E / CLI usage)
-
-    @PostMapping("/agent/compress")
-    public String compressSessionBody(@RequestBody(required = false) CompressRequest request) {
-        UUID sessionId = request != null ? request.sessionId() : null;
-        if (sessionId == null) {
-            throw new IllegalArgumentException("sessionId is required");
-        }
-        String focusTopic = request.focusTopic();
-        if (focusTopic == null) {
-            focusTopic = request.focus();
-        }
-        Integer keepLastN = request.keepLastN();
-        agentRuntimeService.compressSession(sessionId, focusTopic, keepLastN);
-        return "Context compressed." + (focusTopic != null ? " Focus: " + focusTopic : "")
-            + (keepLastN != null ? " Kept last " + keepLastN : "");
-    }
-
     // ── Model switching ──
 
     @PostMapping("/agent/model")
