@@ -1383,12 +1383,17 @@ class AgentBackendClientTest {
     }
 
     @Test
-    void approve_withScope_success() {
+    void approve_withRequestId_sendsOnlyTheCurrentContract() {
+        String requestId = "09f71f58-118f-467d-a118-b3de808a1c11";
         when(responseSpec.body(String.class)).thenReturn("Approved");
-        client.approve(false, "files");
+
+        assertThat(client.approve(false, requestId)).isEqualTo("Approved");
+
         verify(postSpec).body(argThat((Object body) -> {
             if (!(body instanceof java.util.Map<?, ?> map)) return false;
-            return Boolean.FALSE.equals(map.get("all")) && "files".equals(map.get("scope"));
+            return map.size() == 2
+                    && Boolean.FALSE.equals(map.get("all"))
+                    && requestId.equals(map.get("requestId"));
         }));
     }
 
