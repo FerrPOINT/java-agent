@@ -318,11 +318,17 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         // active turn owns the per-chat lock; otherwise interrupt mode cannot
         // cancel anything until after that turn has already finished.
         if (busyHandler.isBusy(chatId)) {
+            if (!groupMessageFilter.shouldProcess(event)) return;
+            if (!authorizationService.isAuthorized(event)) {
+                telegramClient.sendMessage(chatId, "⛔ You are not authorized to use this bot.");
+                return;
+            }
             if (tryResolveTypedClarify(chatId, event)) {
                 return;
             }
             if (!streamEditor.isFinishingDelivery(chatId)) {
-                handleBusyMessage(chatId, event, busyHandler.getEffectiveBusyInputMode(), resolveSession(event), extractMessageText(event));
+                handleBusyMessage(chatId, event, busyHandler.getEffectiveBusyInputMode(), resolveSession(event),
+                    event.fileId() == null ? extractMessageText(event) : null);
                 return;
             }
         }
@@ -414,6 +420,12 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
 
         // Resolve session
         BotSessionEntity session = resolveSession(event);
+
+        // Queue media before admission if the busy state changed while acquiring the lock.
+        if (busyHandler.isBusy(chatId) && event.fileId() != null) {
+            handleBusyMessage(chatId, event, busyHandler.getEffectiveBusyInputMode(), session, null);
+            return;
+        }
 
         // Build message text from the event — now uses InboundMediaHandler for media
         String messageText = extractMessageText(event);
@@ -623,13 +635,15 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
      */
     private void handleBusyMessage(long chatId, UpdateEvent event, String effectiveMode,
                                     BotSessionEntity session, String messageText) {
-        if (messageText == null || messageText.isBlank()) {
+        boolean hasMedia = event.fileId() != null;
+        if (!hasMedia && (messageText == null || messageText.isBlank())) {
             log.debug("No text in busy message for chat {}, skipping", chatId);
             return;
         }
 
         boolean demotedForSubagents = false;
-        String actualMode = effectiveMode;
+        // The steer endpoint accepts text only; defer media admission to the next turn.
+        String actualMode = hasMedia && "steer".equals(effectiveMode) ? "queue" : effectiveMode;
 
         // #30170: Demote interrupt to queue when subagents are active
         if ("interrupt".equals(effectiveMode)) {
