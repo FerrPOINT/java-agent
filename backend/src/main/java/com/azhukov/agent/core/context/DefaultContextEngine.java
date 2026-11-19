@@ -707,9 +707,7 @@ public class DefaultContextEngine implements ContextEngine {
                          .hasSerializedBatch(e.getToolCallsJson())
                          && (e.getToolCallId() != null || e.getToolCallName() != null)) {
                          yield Message.assistantWithToolCalls(content,
-                             List.of(new com.azhukov.agent.core.model.ToolCall(
-                                 e.getToolCallId(), e.getToolCallId(), e.getToolResponseItemId(),
-                                  e.getToolCallName(), e.getToolCallArguments())),
+                             List.of(com.azhukov.agent.persistence.mapper.MessageMapper.INSTANCE.extractToolCall(e)),
                              turnIdx, reasoning);
                      }
                      yield Message.assistant(content, turnIdx, reasoning);
