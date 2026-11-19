@@ -77,6 +77,14 @@ class ApprovalQueueTest {
     }
 
     @Test
+    void expiredApprovalsAreNotListedAsPending() {
+        var queue = new ApprovalQueue();
+        var expired = queue.request(UUID.randomUUID(), new ToolCall("expired", "terminal", "{}"), "expired", Duration.ZERO);
+        var current = queue.request(UUID.randomUUID(), new ToolCall("current", "terminal", "{}"), "current");
+        assertThat(queue.getPendingApprovals()).containsExactly(current).doesNotContain(expired);
+    }
+
+    @Test
     void directApprovalHonorsTheRequestDeadline() {
         var queue = new ApprovalQueue();
         var session = UUID.randomUUID();
