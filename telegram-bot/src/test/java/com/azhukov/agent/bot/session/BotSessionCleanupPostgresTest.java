@@ -24,6 +24,33 @@ class BotSessionCleanupPostgresTest {
     @org.springframework.context.annotation.Import(BotSessionStore.class)
     static class TestApp {}
 
+    public static void main(String[] args) {
+        try (var child = new SpringApplicationBuilder(TestApp.class).web(WebApplicationType.NONE)
+            .run("--spring.datasource.url=" + System.getenv("CLEANUP_TEST_JDBC"),
+                "--spring.datasource.username=" + System.getenv("CLEANUP_TEST_USER"),
+                "--spring.datasource.password=" + System.getenv("CLEANUP_TEST_PASSWORD"),
+                "--spring.flyway.locations=classpath:db/bot-migration",
+                "--spring.flyway.table=flyway_bot_schema_history",
+                "--spring.flyway.baseline-on-migrate=true", "--spring.flyway.baseline-version=0",
+                "--spring.jpa.hibernate.ddl-auto=none", "--spring.main.banner-mode=off")) {
+            var store = child.getBean(BotSessionStore.class);
+            if ("create".equals(System.getenv("CLEANUP_TEST_PHASE"))) {
+                var row = new BotSessionEntity();
+                row.setUserId("jvm-restart-fixture"); row.setChatId("jvm-restart-fixture");
+                row.setBackendSessionId(UUID.fromString(System.getenv("CLEANUP_TEST_BACKEND_ID")));
+                row.setCreatedAt(Instant.now()); row.setUpdatedAt(Instant.now());
+                row = child.getBean(BotSessionRepository.class).saveAndFlush(row);
+                store.deactivateAllWithCleanupPending(row.getUserId());
+                if (store.retryCleanup(row.getId(), ignored -> false)) throw new IllegalStateException("failure was acknowledged");
+            } else {
+                var pending = store.pendingCleanups().stream()
+                    .filter(row -> "jvm-restart-fixture".equals(row.getUserId())).findFirst()
+                    .orElseThrow(() -> new IllegalStateException("pending cleanup missing after process restart"));
+                if (!store.retryCleanup(pending.getId(), ignored -> true)) throw new IllegalStateException("cleanup retry failed");
+            }
+        }
+    }
+
     static PostgreSQLContainer<?> postgres;
     ConfigurableApplicationContext context;
     BotSessionStore store;
@@ -55,6 +82,32 @@ class BotSessionCleanupPostgresTest {
         row.setUserId(owner); row.setChatId(owner); row.setBackendSessionId(UUID.randomUUID());
         row.setCreatedAt(Instant.now()); row.setUpdatedAt(Instant.now());
         return repository.findById(repository.saveAndFlush(row).getId()).orElseThrow();
+    }
+
+    @Test void pendingCleanupCanBeRecoveredBySeparateJvm() throws Exception {
+        var backendId = UUID.randomUUID();
+        context.close(); context = null;
+        for (String phase : new String[] { "create", "recover" }) {
+            var process = new ProcessBuilder(System.getProperty("java.home") + "/bin/java", "-cp",
+                System.getProperty("java.class.path"), BotSessionCleanupPostgresTest.class.getName());
+            process.environment().put("CLEANUP_TEST_JDBC", postgres.getJdbcUrl());
+            process.environment().put("CLEANUP_TEST_USER", postgres.getUsername());
+            process.environment().put("CLEANUP_TEST_PASSWORD", postgres.getPassword());
+            process.environment().put("CLEANUP_TEST_BACKEND_ID", backendId.toString());
+            process.environment().put("CLEANUP_TEST_PHASE", phase);
+            process.redirectErrorStream(true);
+            process.redirectOutput(ProcessBuilder.Redirect.DISCARD);
+            var child = process.start();
+            try {
+                assertThat(child.waitFor(60, TimeUnit.SECONDS)).as("%s JVM exits", phase).isTrue();
+                assertThat(child.exitValue()).as("%s JVM succeeds", phase).isZero();
+            } finally { if (child.isAlive()) child.destroyForcibly(); }
+        }
+        startContext();
+        var recovered = repository.findByUserIdOrderByUpdatedAtDesc("jvm-restart-fixture");
+        assertThat(recovered).hasSize(1);
+        assertThat(recovered.getFirst().getBackendSessionId()).isEqualTo(backendId);
+        assertThat(recovered.getFirst().isCleanupPending()).isFalse();
     }
 
     @Test void failedCleanupSurvivesContextRestartAndIsClearedOnSuccess() {
