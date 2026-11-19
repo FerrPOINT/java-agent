@@ -6,6 +6,7 @@ import com.azhukov.agent.core.client.ModelClient;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.persistence.entity.SessionEntity;
+import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.core.ports.CompressionLockPort;
 import com.azhukov.agent.core.ports.MessageStorePort;
 import com.azhukov.agent.core.ports.SessionStorePort;
@@ -78,6 +79,27 @@ class SessionRotationTest {
     }
 
     // ── 1. Session rotation on successful compression ──
+
+    @Test
+    void rotationRetainsAssistantReasoningInChildHistory() {
+        when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(oldSession));
+        when(sessionRepository.save(any(SessionEntity.class))).thenAnswer(inv -> {
+            SessionEntity entity = inv.getArgument(0);
+            if (entity.getId() == null) entity.setId(UUID.randomUUID());
+            return entity;
+        });
+        var call = new com.azhukov.agent.core.model.ToolCall("call-1", "call-1", "item-1", "search", "{}");
+        createCompressor().rotateSession(String.valueOf(sessionId),
+            List.of(Message.assistantWithToolCalls("answer", List.of(call), 1, "provider-reasoning")));
+        var captor = ArgumentCaptor.forClass(MessageEntity.class);
+        verify(messageRepository).save(captor.capture());
+        assertThat(captor.getValue().getReasoning()).isEqualTo("provider-reasoning");
+        assertThat(captor.getValue().getToolResponseItemId()).isEqualTo("item-1");
+        var replayed = org.mapstruct.factory.Mappers.getMapper(com.azhukov.agent.persistence.mapper.MessageMapper.class)
+            .toDomain(captor.getValue());
+        assertThat(replayed.reasoning()).isEqualTo("provider-reasoning");
+        assertThat(replayed.toolCalls()).containsExactly(call);
+    }
 
     @Test
     void rotateSessionCreatesChildSessionWithParentSessionId() {
