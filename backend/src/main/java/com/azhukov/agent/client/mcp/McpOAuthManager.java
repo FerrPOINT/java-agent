@@ -81,6 +81,7 @@ public class McpOAuthManager {
                 "No OAuth token URL configured for MCP server: " + serverName);
         }
 
+        issuerOf(tokenUrl); // Validate configuration before any credential mutation.
         McpOAuthEntity entity = mcpOAuthRepository.findByProfileAndServerName(profile, serverName)
             .orElseThrow(() -> new IllegalStateException(
                 "No stored OAuth token for MCP server: " + serverName));

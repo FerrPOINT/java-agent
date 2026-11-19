@@ -304,6 +304,20 @@ class McpOAuthManagerTest {
     }
 
     @Test
+    void refreshWithInvalidConfiguredEndpointPreservesStoredCredential() {
+        var config = server("test-server");
+        config.setOauthTokenUrl("not-an-endpoint");
+        var entity = new McpOAuthEntity();
+        entity.setRefreshToken("refresh");
+        entity.setTokenIssuer("https://mcp.example.com");
+        org.mockito.Mockito.lenient().when(mcpOAuthRepository.findByProfileAndServerName("default", "test-server")).thenReturn(Optional.of(entity));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> manager.refreshToken("default", config))
+            .isInstanceOf(IllegalArgumentException.class);
+        org.mockito.Mockito.verify(mcpOAuthRepository, org.mockito.Mockito.never()).delete(any());
+    }
+
+    @Test
     void refreshToken_issuerMismatch_discardsTokenAndThrows() {
         AgentProperties.McpProperties.ServerProperties serverConfig = new AgentProperties.McpProperties.ServerProperties();
         serverConfig.setName("migrated-server");
