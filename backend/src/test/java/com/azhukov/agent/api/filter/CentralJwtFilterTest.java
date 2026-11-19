@@ -102,7 +102,7 @@ class CentralJwtFilterTest {
         Instant now = Instant.now();
         JWTClaimsSet.Builder claims = new JWTClaimsSet.Builder().issuer(ISSUER).subject(SUBJECT)
                 .claim("sid", UUID.randomUUID().toString())
-                .audience("sdlc").issueTime(Date.from(now.minusSeconds(10)))
+                .audience("pdlc").issueTime(Date.from(now.minusSeconds(10)))
                 .expirationTime(Date.from(now.plusSeconds(120)));
         change.accept(claims);
         SignedJWT jwt = new SignedJWT(new JWSHeader.Builder(
@@ -126,7 +126,7 @@ class CentralJwtFilterTest {
         var environment = new MockEnvironment()
                 .withProperty("agent.central-auth.issuer", ISSUER)
                 .withProperty("agent.central-auth.jwks-uri", jwks)
-                .withProperty("agent.central-auth.audience", "sdlc")
+                .withProperty("agent.central-auth.audience", "pdlc")
                 .withProperty("agent.central-auth.session-uri", sessionUrl);
         environment.withProperty("agent.central-auth.personal-token-uri", sessionUrl);
         var verifier = new CentralJwtVerifier(environment);
@@ -243,7 +243,7 @@ class CentralJwtFilterTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"issuer", "audience", "missing_audience", "subject", "zero_subject",
+    @ValueSource(strings = {"issuer", "audience", "retired_audience", "mixed_audience", "missing_audience", "subject", "zero_subject",
             "expired", "missing_exp", "missing_iat", "future_iat", "missing_sid", "invalid_sid",
             "signature", "algorithm", "malformed"})
     void invalidCentralIdentityDoesNotFallBackToGlobalApiKey(String failure) throws Exception {
@@ -253,6 +253,8 @@ class CentralJwtFilterTest {
             switch (failure) {
                 case "issuer" -> builder.issuer("https://qa.sdlc1.invalid");
                 case "audience" -> builder.audience("foreign");
+                case "retired_audience" -> builder.audience("sdlc");
+                case "mixed_audience" -> builder.audience(java.util.List.of("pdlc", "sdlc"));
                 case "missing_audience" -> builder.claim("aud", null);
                 case "subject" -> builder.subject("owner-alias");
                 case "zero_subject" -> builder.subject(new UUID(0, 0).toString());
@@ -321,7 +323,7 @@ class CentralJwtFilterTest {
                 .withBean(AgentProperties.class, AgentProperties::new)
                 .withBean(UserAccessService.class, () -> mock(UserAccessService.class))
                 .withPropertyValues("agent.central-auth.enabled=true", "agent.central-auth.issuer=" + ISSUER,
-                        "agent.central-auth.jwks-uri=" + jwks, "agent.central-auth.audience=sdlc",
+                        "agent.central-auth.jwks-uri=" + jwks, "agent.central-auth.audience=pdlc",
                         "agent.central-auth.session-uri=" + sessionUrl)
                 .run(context -> {
                     assertThat(context).hasNotFailed().hasSingleBean(CentralJwtVerifier.class);

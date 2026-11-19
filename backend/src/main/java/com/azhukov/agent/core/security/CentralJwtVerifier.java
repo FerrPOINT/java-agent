@@ -71,10 +71,11 @@ public final class CentralJwtVerifier {
                 .followRedirects(HttpClient.Redirect.NEVER).build();
         NimbusJwtDecoder jwtDecoder = NimbusJwtDecoder.withJwkSetUri(jwksUri)
                 .jwsAlgorithm(SignatureAlgorithm.ES256).build();
+        List<String> expectedAudience = List.of(audience);
         jwtDecoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(
                 new JwtTimestampValidator(Duration.ZERO), new JwtIssuerValidator(issuer),
                 token -> {
-                    if (token.getAudience() != null && token.getAudience().contains(audience)
+                    if (expectedAudience.equals(token.getAudience())
                             && validSubject(token.getSubject()) && validSubject(token.getClaimAsString("sid"))
                             && token.getExpiresAt() != null
                             && token.getIssuedAt() != null && !token.getIssuedAt().isAfter(Instant.now())

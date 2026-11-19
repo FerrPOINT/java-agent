@@ -190,7 +190,7 @@ class CentralJwtVerifierBoundaryTest {
     private static MockEnvironment environment() {
         return new MockEnvironment().withProperty("agent.central-auth.issuer", ISSUER)
                 .withProperty("agent.central-auth.jwks-uri", "https://auth.fixture.invalid/jwks")
-                .withProperty("agent.central-auth.audience", "sdlc")
+                .withProperty("agent.central-auth.audience", "pdlc")
                 .withProperty("agent.central-auth.session-uri", "https://auth.fixture.invalid/me")
                 .withProperty("agent.central-auth.personal-token-uri", PERSONAL);
     }

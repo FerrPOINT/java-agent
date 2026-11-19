@@ -17,7 +17,7 @@ Auth `/auth/tokens/introspect?include_lifetime=true`; разрешение пр�
 | `agent.central-auth.enabled` | Включение общего входа; по умолчанию выключено |
 | `agent.central-auth.issuer` | Публичный issuer собственного Auth |
 | `agent.central-auth.jwks-uri` | Доступный Java endpoint собственного Auth `/oidc/jwks` |
-| `agent.central-auth.audience` | Ожидаемая audience, для SDLC — `sdlc` |
+| `agent.central-auth.audience` | Единственная ожидаемая audience. Central Auth PDLC использует `pdlc` |
 | `agent.central-auth.session-uri` | Доступный Java endpoint того же Auth `/auth/me` |
 | `agent.central-auth.personal-token-uri` | Фиксированный endpoint того же Auth `/auth/tokens/introspect`, обязателен для PAT |
 | `agent.central-auth.application-access-required` | Требовать enforced proof; по умолчаниюfalse для совместимого rollout |
