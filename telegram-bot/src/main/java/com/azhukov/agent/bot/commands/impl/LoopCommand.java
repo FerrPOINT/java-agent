@@ -84,6 +84,9 @@ public class LoopCommand implements CommandHandler {
         String prompt = joined;
         String first = joined.isEmpty() ? "" : joined.split("\\s+")[0];
         Integer parsed = HeartbeatCommand.parseIntervalToken(first);
+        if (parsed == null && HeartbeatCommand.isIntervalToken(first)) {
+            return "Invalid interval: value must be positive and fit in seconds.";
+        }
         if (parsed != null) {
             interval = parsed;
             prompt = joined.substring(first.length()).strip();

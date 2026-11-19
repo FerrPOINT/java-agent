@@ -32,6 +32,10 @@ public class HeartbeatCommand implements CommandHandler {
     private static final Pattern INTERVAL_TOKEN_RE =
         Pattern.compile("^(?=\\d)(?:(\\d+)h)?(?:(\\d+)m)?(?:(\\d+)s)?$", Pattern.CASE_INSENSITIVE);
 
+    static boolean isIntervalToken(String token) {
+        return token != null && INTERVAL_TOKEN_RE.matcher(token).matches();
+    }
+
     static Integer parseIntervalToken(String token) {
         if (token == null || token.isBlank()) return null;
         Matcher m = INTERVAL_TOKEN_RE.matcher(token);
