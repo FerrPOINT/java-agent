@@ -94,6 +94,14 @@ class LoopCommandTest {
         assertThat(prompt).doesNotContain("--until");
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"0", "-1", "invalid", "999999999999999999999"})
+    void invalidTimesNeverStartsUnlimitedLoop(String times) {
+        String out = cmd.handle(event("5m inspect --times " + times), sessionWithBackend(UUID.randomUUID()));
+        assertThat(out).contains("--times");
+        org.mockito.Mockito.verifyNoInteractions(client, poller);
+    }
+
     @Test
     void setLoop_noPromptLeft_showsUsage() {
         String out = cmd.handle(event("10m"), sessionWithBackend(UUID.randomUUID()));
