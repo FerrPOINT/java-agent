@@ -81,13 +81,10 @@ class IdenticalResultStubTest {
     }
 
     @Test
-    void longArgsArePreviewedInStub() {
+    void argumentsAreNotIncludedInStub() {
         String longArgs = "{\"query\":\"" + "q".repeat(300) + "\"}";
         guardrail.resultReferenceStub("web_search", longArgs, bigResult, false);
         String stub = guardrail.resultReferenceStub("web_search", longArgs, bigResult, false);
-        assertThat(stub).isNotNull();
-        // preview capped at 120 chars + ellipsis
-        int argsLen = stub.indexOf("Args: ");
-        assertThat(stub.length() - argsLen - 6).isLessThanOrEqualTo(122);
+        assertThat(stub).isNotNull().doesNotContain("Args:", "q".repeat(20));
     }
 }
