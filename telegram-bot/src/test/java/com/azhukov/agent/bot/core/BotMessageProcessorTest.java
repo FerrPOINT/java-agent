@@ -785,7 +785,7 @@ class BotMessageProcessorTest {
     @org.junit.jupiter.params.provider.ValueSource(strings = {"queue", "steer", "interrupt"})
     void floodWaitAllowsAnotherChatAndPreservesBusyInputMode(String mode) {
         properties.setStreamingTransport("draft");
-        properties.setBusyMode(mode);
+        properties.setBusyInputMode(mode);
         properties.getDisplay().setToolProgress("off");
         when(telegramClient.supportsDraftStreaming(anyString())).thenReturn(true);
         when(telegramClient.sendDraft(anyLong(), anyString(), anyInt())).thenReturn(true);
@@ -1414,6 +1414,56 @@ class BotMessageProcessorTest {
     }
 
     // ─── Busy session — queue mode ─────────────────────────────
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"queue", "steer", "interrupt"})
+    void busyMediaIsQueuedWithoutRegisteringOrSteering(String mode) {
+        properties.setBusyInputMode(mode);
+        busyHandler.markBusy(100L);
+        UpdateEvent event = photoEvent(2, 100L, "photo-fixture", "caption", null);
+        when(inboundMediaHandler.handle(event)).thenReturn(Optional.of("photo (artifact=att_0123456789abcdef0123456789abcdef)"));
+
+        processor.accept(event);
+
+        assertThat(busyHandler.hasQueued(100L)).isTrue();
+        verify(inboundMediaHandler, never()).handle(event);
+        verify(backendClient, never()).steer(anyString(), anyString());
+    }
+
+    @Test
+    void busyMediaFromUnauthorizedUserIsNotQueuedOrInterrupted() {
+        properties.setBusyInputMode("interrupt");
+        busyHandler.markBusy(100L);
+        UpdateEvent event = photoEvent(2, 100L, "untrusted-photo", "caption", null);
+        when(authorizationService.isAuthorized(event)).thenReturn(false);
+
+        processor.accept(event);
+
+        assertThat(busyHandler.hasQueued(100L)).isFalse();
+        assertThat(busyHandler.isInterrupted(100L)).isFalse();
+        verify(inboundMediaHandler, never()).handle(event);
+        verify(backendClient, never()).stop(anyString());
+    }
+
+    @Test
+    void queuedMediaIsAdmittedOnceAndSentAsStructuredAttachment() {
+        properties.setBusyInputMode("steer");
+        busyHandler.markBusy(100L);
+        UpdateEvent event = photoEvent(2, 100L, "photo-fixture", "caption", null);
+        String id = "att_0123456789abcdef0123456789abcdef";
+        when(inboundMediaHandler.handle(event)).thenReturn(Optional.of("[Photo] (artifact=" + id + ")"));
+        stubStreamingResult("response", true);
+
+        processor.accept(event);
+        busyHandler.markFree(100L);
+        processor.accept(textEvent(3, 100L, "next"));
+
+        verify(inboundMediaHandler, times(1)).handle(event);
+        verify(backendClient).chatStream(contains("caption"), nullable(String.class), any(),
+            argThat(refs -> refs != null && refs.equals(List.of(java.util.Map.of("artifactId", id)))),
+            any(), any(), any(), any(), any(), any(), any(), any());
+        verify(backendClient, never()).steer(anyString(), anyString());
+    }
 
     @Test
     void busyQueueModeQueuesMessage() {
