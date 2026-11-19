@@ -93,9 +93,9 @@ public class PhotoBatchDebouncer {
             .collect(java.util.stream.Collectors.joining("\n\n"));
         if (mergedCaption.isEmpty()) mergedCaption = null;
 
-        // Create merged event with first file_id (or join them)
-        String primaryFileId = fileIds.isEmpty() ? first.fileId() : fileIds.getFirst();
-        String mergedFileIds = fileIds.size() > 1 ? String.join(",", fileIds) : primaryFileId;
+        // Preserve invalid members so admission rejects the entire album, not a partial one.
+        String mergedFileIds = fileIds.size() != ordered.size() || fileIds.stream().anyMatch(String::isBlank)
+            ? null : String.join(",", fileIds);
 
         UpdateEvent merged = new UpdateEvent(
             first.updateId(), first.type(), first.chatId(), first.userId(),
