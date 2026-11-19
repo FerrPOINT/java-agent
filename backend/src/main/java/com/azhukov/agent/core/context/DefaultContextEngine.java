@@ -713,7 +713,7 @@ public class DefaultContextEngine implements ContextEngine {
                      yield Message.assistant(content, turnIdx, reasoning);
                  }
                  case "tool" -> Message.toolResult(e.getToolCallId(), content, turnIdx);
-                 default -> Message.user(content);
+                 default -> Message.userWithImages(content, e.getImageCount() == null ? 0 : e.getImageCount());
              });
          }
      } catch (Exception e) {

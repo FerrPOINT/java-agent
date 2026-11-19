@@ -115,6 +115,18 @@ class DefaultContextEngineTest {
     }
 
     @Test
+    void paginatedHistoryPreservesImageCount() {
+        contextProps.setMaxTokens(200_000);
+        var previous = entity("user", "photo", 1);
+        previous.setImageCount(2);
+        when(messageRepository.findBySessionIdAndActiveTrueOrderByCreatedAtDesc(eq(session.id()), anyInt()))
+            .thenReturn(List.of(previous));
+        var result = contextEngine.prepareContext(session, List.of(Message.system("System"), Message.user("Current")));
+        assertThat(result.stream().filter(message -> message.content() != null && message.content().contains("photo")).findFirst().orElseThrow()
+            .imageCount()).isEqualTo(2);
+    }
+
+    @Test
     void paginatedHistoryPreservesScalarToolResponseItemId() {
         var assistant = entity("assistant", "", 1);
         assistant.setToolCallId("call-1");

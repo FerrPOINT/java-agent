@@ -81,6 +81,22 @@ class SessionRotationTest {
     // ── 1. Session rotation on successful compression ──
 
     @Test
+    void rotationRetainsImageCountForLaterReplayAndBudgeting() {
+        when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(oldSession));
+        when(sessionRepository.save(any(SessionEntity.class))).thenAnswer(inv -> {
+            SessionEntity entity = inv.getArgument(0);
+            if (entity.getId() == null) entity.setId(UUID.randomUUID());
+            return entity;
+        });
+        createCompressor().rotateSession(String.valueOf(sessionId), List.of(Message.userWithImages("photo", 2)));
+        var captor = ArgumentCaptor.forClass(MessageEntity.class);
+        verify(messageRepository).save(captor.capture());
+        assertThat(captor.getValue().getImageCount()).isEqualTo(2);
+        assertThat(org.mapstruct.factory.Mappers.getMapper(com.azhukov.agent.persistence.mapper.MessageMapper.class)
+            .toDomain(captor.getValue()).imageCount()).isEqualTo(2);
+    }
+
+    @Test
     void rotationRetainsAssistantReasoningInChildHistory() {
         when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(oldSession));
         when(sessionRepository.save(any(SessionEntity.class))).thenAnswer(inv -> {
