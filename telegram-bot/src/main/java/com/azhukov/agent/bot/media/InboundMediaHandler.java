@@ -115,7 +115,7 @@ public class InboundMediaHandler {
         var artifact = attachmentApiClient.register(data, fileName, mimeFor(fileType, fileName),
                 dispositionFor(fileType), "telegram", event.userId() > 0 ? String.valueOf(event.userId()) : null,
                 null, event.messageId() > 0 ? String.valueOf(event.messageId()) : null);
-        String description = describe(event, fileType, fileId, data.length, fileName)
+        String description = describe(fileType, fileId, data.length, fileName)
                 + " (artifact=" + artifact.id() + ")";
         if ("voice".equals(fileType) && transcriptionEnabled) {
             String transcript = backendClient.transcribe(data);
@@ -212,16 +212,11 @@ public class InboundMediaHandler {
         };
     }
 
-    private String describe(UpdateEvent event, String fileType, String fileId, int sizeBytes, String fileName) {
-        String caption = event.caption();
-        String captionPart = (caption != null && !caption.isBlank())
-            ? ", caption=\"" + caption + "\""
-            : "";
-
+    private String describe(String fileType, String fileId, int sizeBytes, String fileName) {
         return switch (fileType) {
-            case "photo" -> "[Photo: " + fileName + captionPart + "]";
-            case "document" -> "[Document: " + fileName + ", size=" + sizeBytes + " bytes" + captionPart + "]";
-            case "voice" -> "[Voice message: file_id=" + fileId + ", size=" + sizeBytes + " bytes" + captionPart + "]";
+            case "photo" -> "[Photo: " + fileName + "]";
+            case "document" -> "[Document: " + fileName + ", size=" + sizeBytes + " bytes]";
+            case "voice" -> "[Voice message: file_id=" + fileId + ", size=" + sizeBytes + " bytes]";
             case "sticker" -> {
                 // B2.1: Check sticker cache first
                 Optional<String> cached = stickerCache.get(fileId);
