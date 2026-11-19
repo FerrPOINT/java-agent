@@ -80,6 +80,18 @@ class SessionExpiryWatcherBackendCleanupTest {
     }
 
     @Test
+    void failedActiveLookupDoesNotPreventPendingCleanup() {
+        var pending = new BotSessionEntity();
+        pending.setId(UUID.randomUUID());
+        when(sessionStore.listActiveSessions()).thenThrow(new IllegalStateException("fixture"));
+        when(sessionStore.pendingCleanups()).thenReturn(List.of(pending));
+
+        watcher.checkExpiredSessions();
+
+        verify(sessionStore).retryCleanup(eq(pending.getId()), any());
+    }
+
+    @Test
     void failedBacklogQueryDoesNotPreventNewlyFinalizedCleanup() {
         var expired = new BotSessionEntity();
         expired.setId(UUID.randomUUID());

@@ -80,7 +80,13 @@ public class SessionExpiryWatcher {
         try {
             var cleanupIds = new java.util.LinkedHashSet<java.util.UUID>();
             Instant now = Instant.now();
-            List<BotSessionEntity> activeSessions = sessionStore.listActiveSessions();
+            List<BotSessionEntity> activeSessions;
+            try {
+                activeSessions = sessionStore.listActiveSessions();
+            } catch (Exception e) {
+                log.warn("Could not load active sessions; will retry expiry on the next check");
+                activeSessions = List.of();
+            }
             for (BotSessionEntity session : activeSessions) {
                 // rev-123: never finalize a session whose chat is mid-turn
                 // (Hermes _has_active_processes_safe).
