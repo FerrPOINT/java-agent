@@ -195,6 +195,29 @@ class BotSessionCleanupPostgresTest {
         assertThat(repository.findById(row.getId()).orElseThrow().isCleanupPending()).isFalse();
     }
 
+    @Test void lostHttpResponseKeepsPendingAndRetriesAgainstIdempotentCleanup() throws Exception {
+        var row = session("unknown-http-" + UUID.randomUUID());
+        store.deactivateAllWithCleanupPending(row.getUserId());
+        var calls = new java.util.concurrent.atomic.AtomicInteger();
+        var server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/v1/agent/session/" + row.getBackendSessionId() + "/cleanup", exchange -> {
+            if (calls.incrementAndGet() == 1) { exchange.close(); return; }
+            exchange.sendResponseHeaders(200, -1); exchange.close();
+        });
+        server.start();
+        try {
+            var client = new com.azhukov.agent.bot.core.SessionApiClient(
+                org.springframework.web.client.RestClient.builder()
+                    .baseUrl("http://127.0.0.1:" + server.getAddress().getPort()).build(),
+                new com.fasterxml.jackson.databind.ObjectMapper());
+            assertThat(store.retryCleanup(row.getId(), id -> client.cleanupSession(id.toString()))).isFalse();
+            assertThat(repository.findById(row.getId()).orElseThrow().isCleanupPending()).isTrue();
+            assertThat(store.retryCleanup(row.getId(), id -> client.cleanupSession(id.toString()))).isTrue();
+            assertThat(repository.findById(row.getId()).orElseThrow().isCleanupPending()).isFalse();
+            assertThat(calls.get()).isEqualTo(2);
+        } finally { server.stop(0); }
+    }
+
     @Test void realHttpClientRetriesBackendRefusalAndPersistsOnlySuccess() throws Exception {
         var row = session("http-retry-" + UUID.randomUUID());
         store.deactivateAllWithCleanupPending(row.getUserId());
@@ -314,6 +337,26 @@ class BotSessionCleanupPostgresTest {
             assertThat(persisted.isActive()).isFalse();
             assertThat(persisted.isCleanupPending()).isTrue();
         } finally { proceed.countDown(); executor.shutdownNow(); }
+    }
+
+    @Test void watcherContinuesAfterOneCleanupFailsAndRetriesItLater() {
+        var failed = session("watcher-failed-" + UUID.randomUUID());
+        var succeeds = session("watcher-succeeds-" + UUID.randomUUID());
+        store.deactivateAllWithCleanupPending(failed.getUserId());
+        store.deactivateAllWithCleanupPending(succeeds.getUserId());
+        var backend = org.mockito.Mockito.mock(com.azhukov.agent.bot.core.AgentBackendClient.class);
+        org.mockito.Mockito.when(backend.cleanupSession(failed.getBackendSessionId().toString())).thenReturn(false, true);
+        org.mockito.Mockito.when(backend.cleanupSession(succeeds.getBackendSessionId().toString())).thenReturn(true);
+        var watcher = new SessionExpiryWatcher(store, new SessionResetPolicy(), backend, org.mockito.Mockito.mock(BusySessionHandler.class));
+        try {
+            watcher.checkExpiredSessions();
+            assertThat(repository.findById(failed.getId()).orElseThrow().isCleanupPending()).isTrue();
+            assertThat(repository.findById(succeeds.getId()).orElseThrow().isCleanupPending()).isFalse();
+            watcher.checkExpiredSessions();
+            assertThat(repository.findById(failed.getId()).orElseThrow().isCleanupPending()).isFalse();
+            org.mockito.Mockito.verify(backend, org.mockito.Mockito.times(2)).cleanupSession(failed.getBackendSessionId().toString());
+            org.mockito.Mockito.verify(backend).cleanupSession(succeeds.getBackendSessionId().toString());
+        } finally { watcher.stop(); }
     }
 
     @Test void watcherRetriesDurableCleanupAfterContextRestart() {
