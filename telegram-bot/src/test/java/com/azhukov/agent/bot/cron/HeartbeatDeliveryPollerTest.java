@@ -83,6 +83,24 @@ class HeartbeatDeliveryPollerTest {
     }
 
     @Test
+    void finishedHeartbeatKeepsWatchingAfterFailedDelivery() {
+        UUID sid = UUID.randomUUID();
+        poller.watch(sid, 42L);
+        stubResult(sid, "final result");
+        stubStatus(sid, false);
+        when(telegram.sendMessage(anyLong(), anyString())).thenReturn(Optional.empty(), Optional.of(7L));
+        ObjectNode nack = mapper.createObjectNode();
+        nack.put("drop", false);
+        when(backend.suggestionPost(contains("/result/nack"))).thenReturn(nack);
+
+        poller.poll();
+        poller.poll();
+
+        verify(telegram, times(2)).sendMessage(eq(42L), contains("final result"));
+        verify(backend).suggestionPost(contains("/result/ack"));
+    }
+
+    @Test
     void poisonedResultDroppedAfterNackSaysDrop() {
         UUID sid = UUID.randomUUID();
         poller.watch(sid, 42L);
