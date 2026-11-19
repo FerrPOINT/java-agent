@@ -46,6 +46,30 @@ class MidTurnAtomicPostgresTest extends PostgresTestContainer {
     }
 
     @Test
+    void activeHistoryLimitIgnoresNewerArchivedRows() {
+        var entity = new SessionEntity();
+        entity.setUserId("active-window-owner"); entity.setModelProvider("noop"); entity.setModelName("noop");
+        entity.setCreatedAt(Instant.now()); entity.setUpdatedAt(Instant.now());
+        var id = sessions.saveAndFlush(entity).getId();
+        try {
+            Instant timestamp = Instant.now();
+            for (int i = 0; i < 7; i++) {
+                var row = new com.azhukov.agent.persistence.entity.MessageEntity();
+                row.setSessionId(id); row.setRole("user"); row.setContent("item-" + i);
+                row.setCreatedAt(timestamp); row.setActive(i < 3);
+                messages.save(row);
+            }
+            messages.flush();
+            var adapter = new com.azhukov.agent.persistence.adapter.JpaMessageStore(messages);
+            assertThat(adapter.findBySessionIdAndActiveTrueOrderByCreatedAtDesc(id, 3))
+                .extracting(com.azhukov.agent.persistence.entity.MessageEntity::getContent)
+                .containsExactly("item-2", "item-1", "item-0");
+        } finally {
+            transaction.executeWithoutResult(status -> { messages.deleteBySessionId(id); sessions.deleteById(id); });
+        }
+    }
+
+    @Test
     void sameTimestampPaginationAndActiveReadsMatchFullHistoryOrder() {
         var entity = new SessionEntity();
         entity.setUserId("pagination-order-test"); entity.setModelProvider("noop"); entity.setModelName("noop");

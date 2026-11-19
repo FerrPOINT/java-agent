@@ -657,9 +657,8 @@ public class DefaultContextEngine implements ContextEngine {
          if (maxMessages <= 0) {
              maxMessages = 50;
          }
-         List<MessageEntity> descHistory = messageRepository.findBySessionIdOrderByCreatedAtDesc(
-                 session.id(), maxMessages).stream()
-             .filter(DefaultContextEngine::isActive).toList();
+         List<MessageEntity> descHistory = messageRepository.findBySessionIdAndActiveTrueOrderByCreatedAtDesc(
+                 session.id(), maxMessages);
          // Reverse to get ascending order (defensive copy in case the list is immutable)
          java.util.List<MessageEntity> ascHistory = new java.util.ArrayList<>(descHistory);
          java.util.Collections.reverse(ascHistory);
@@ -733,6 +732,10 @@ public class DefaultContextEngine implements ContextEngine {
         evictTurnCache(sessionId);
     }
 
+    private static boolean isActive(MessageEntity entity) {
+        return entity != null && !Boolean.FALSE.equals(entity.getActive());
+    }
+
     /**
      * Evict the turn-scoped history snapshot for the current request thread.
      * Called when a new turn starts or compression rotates the session.
@@ -742,10 +745,6 @@ public class DefaultContextEngine implements ContextEngine {
         if (snapshot != null && (sessionId == null || snapshot.sessionId().equals(sessionId))) {
             turnHistorySnapshot.remove();
         }
-    }
-    /** PR-3 parity: soft-deleted/archived rows must never re-enter the context. */
-    private static boolean isActive(MessageEntity entity) {
-        return entity != null && !Boolean.FALSE.equals(entity.getActive());
     }
 
 }

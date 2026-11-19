@@ -112,7 +112,7 @@ class DefaultContextEngineReplayDedupTest {
         MessageEntity userRow = new MessageEntity();
         userRow.setRole("user");
         userRow.setContent("hello");
-        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), anyInt()))
+        when(messageRepository.findBySessionIdAndActiveTrueOrderByCreatedAtDesc(any(UUID.class), anyInt()))
             .thenReturn(List.of(userRow, systemRow)); // desc: system last written
 
         List<Message> out = engine.prepareContext(session, List.of(

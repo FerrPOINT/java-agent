@@ -24,9 +24,8 @@ public class JpaMessageStore implements MessageStorePort {
     }
 
     @Override
-    public List<MessageEntity> findBySessionIdOrderByCreatedAtDesc(UUID sessionId, int limit) {
-        return messageRepository.findBySessionIdOrderByCreatedAtDesc(sessionId,
-            org.springframework.data.domain.PageRequest.of(0, limit));
+    public List<MessageEntity> findBySessionIdAndActiveTrueOrderByCreatedAtDesc(UUID sessionId, int limit) {
+        return messageRepository.findActivePageBySessionIdOrderByCreatedAtDesc(sessionId, limit, 0);
     }
 
     @Override

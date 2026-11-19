@@ -13,7 +13,7 @@ public interface MessageStorePort {
 
     List<MessageEntity> findBySessionIdOrderByCreatedAtAsc(UUID sessionId);
 
-    List<MessageEntity> findBySessionIdOrderByCreatedAtDesc(UUID sessionId, int limit);
+    List<MessageEntity> findBySessionIdAndActiveTrueOrderByCreatedAtDesc(UUID sessionId, int limit);
 
     List<MessageEntity> findBySessionIdAndActiveTrueOrderByCreatedAtAsc(UUID sessionId);
 
