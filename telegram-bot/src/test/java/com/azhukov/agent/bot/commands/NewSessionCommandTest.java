@@ -96,7 +96,7 @@ class NewSessionCommandTest {
         when(store.finalizeWithCleanupPending(session.getId(), session.getUpdatedAt())).thenReturn(true);
         new NewSessionCommand(store, mock(AgentBackendClient.class)).handle(null, session);
         org.mockito.Mockito.verify(store).finalizeWithCleanupPending(session.getId(), session.getUpdatedAt());
-        org.mockito.Mockito.verify(store, org.mockito.Mockito.never()).deactivateAllWithCleanupPending(anyString());
+        org.mockito.Mockito.verifyNoMoreInteractions(store);
     }
 
     @Test

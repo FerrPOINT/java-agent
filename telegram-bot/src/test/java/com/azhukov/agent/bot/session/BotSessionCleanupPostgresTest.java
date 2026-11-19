@@ -40,7 +40,7 @@ class BotSessionCleanupPostgresTest {
                 row.setBackendSessionId(UUID.fromString(System.getenv("CLEANUP_TEST_BACKEND_ID")));
                 row.setCreatedAt(Instant.now()); row.setUpdatedAt(Instant.now());
                 row = child.getBean(BotSessionRepository.class).saveAndFlush(row);
-                store.deactivateAllWithCleanupPending(row.getUserId());
+                store.finalizeWithCleanupPending(row.getId(), row.getUpdatedAt());
                 if (store.retryCleanup(row.getId(), ignored -> false)) throw new IllegalStateException("failure was acknowledged");
             } else {
                 var pending = store.pendingCleanups().stream()
@@ -157,7 +157,7 @@ class BotSessionCleanupPostgresTest {
 
     @Test void concurrentRetryAttemptsInvokeBackendAtMostOnceOnSuccess() throws Exception {
         var row = session("duplicate-retry-" + UUID.randomUUID());
-        store.deactivateAllWithCleanupPending(row.getUserId());
+        store.finalizeWithCleanupPending(row.getId(), row.getUpdatedAt());
         var entered = new CountDownLatch(1);
         var release = new CountDownLatch(1);
         var attempts = new java.util.concurrent.atomic.AtomicInteger();
@@ -191,7 +191,7 @@ class BotSessionCleanupPostgresTest {
 
     @Test void repeatedIdenticalBackendBindingAfterCleanupDoesNotScheduleDuplicate() {
         var row = session("same-binding-" + UUID.randomUUID());
-        store.deactivateAllWithCleanupPending(row.getUserId());
+        store.finalizeWithCleanupPending(row.getId(), row.getUpdatedAt());
         assertThat(store.retryCleanup(row.getId(), id -> true)).isTrue();
         store.updateBackendSessionId(row.getId(), row.getBackendSessionId());
         assertThat(repository.findById(row.getId()).orElseThrow().isCleanupPending()).isFalse();
@@ -202,7 +202,7 @@ class BotSessionCleanupPostgresTest {
         row.setUserId("resumed-late-" + UUID.randomUUID()); row.setChatId(row.getUserId());
         row.setCreatedAt(Instant.now()); row.setUpdatedAt(Instant.now());
         row = repository.saveAndFlush(row);
-        store.deactivateAllWithCleanupPending(row.getUserId());
+        store.finalizeWithCleanupPending(row.getId(), row.getUpdatedAt());
         assertThat(store.resumeSession(row.getId(), row.getUserId()).isActive()).isTrue();
         store.updateBackendSessionId(row.getId(), UUID.randomUUID());
         var saved = repository.findById(row.getId()).orElseThrow();
@@ -228,7 +228,7 @@ class BotSessionCleanupPostgresTest {
         row.setUserId("late-id-" + UUID.randomUUID()); row.setChatId(row.getUserId());
         row.setCreatedAt(Instant.now()); row.setUpdatedAt(Instant.now());
         row = repository.saveAndFlush(row);
-        store.deactivateAllWithCleanupPending(row.getUserId());
+        store.finalizeWithCleanupPending(row.getId(), row.getUpdatedAt());
         var backendId = UUID.randomUUID();
         store.updateBackendSessionId(row.getId(), backendId);
         var saved = repository.findById(row.getId()).orElseThrow();
@@ -239,7 +239,7 @@ class BotSessionCleanupPostgresTest {
 
     @Test void exceptionalBackendCleanupRollsBackPendingAndAllowsRetry() {
         var row = session("exception-retry-" + UUID.randomUUID());
-        store.deactivateAllWithCleanupPending(row.getUserId());
+        store.finalizeWithCleanupPending(row.getId(), row.getUpdatedAt());
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> store.retryCleanup(row.getId(), id -> {
             throw new IllegalStateException("synthetic backend failure");
         })).isInstanceOf(IllegalStateException.class);
@@ -250,7 +250,7 @@ class BotSessionCleanupPostgresTest {
 
     @Test void lostHttpResponseKeepsPendingAndRetriesAgainstIdempotentCleanup() throws Exception {
         var row = session("unknown-http-" + UUID.randomUUID());
-        store.deactivateAllWithCleanupPending(row.getUserId());
+        store.finalizeWithCleanupPending(row.getId(), row.getUpdatedAt());
         var calls = new java.util.concurrent.atomic.AtomicInteger();
         var server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/api/v1/agent/session/" + row.getBackendSessionId() + "/cleanup", exchange -> {
@@ -273,7 +273,7 @@ class BotSessionCleanupPostgresTest {
 
     @Test void realHttpClientRetriesBackendRefusalAndPersistsOnlySuccess() throws Exception {
         var row = session("http-retry-" + UUID.randomUUID());
-        store.deactivateAllWithCleanupPending(row.getUserId());
+        store.finalizeWithCleanupPending(row.getId(), row.getUpdatedAt());
         var calls = new java.util.concurrent.atomic.AtomicInteger();
         var server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/api/v1/agent/session/" + row.getBackendSessionId() + "/cleanup", exchange -> {
@@ -329,7 +329,7 @@ class BotSessionCleanupPostgresTest {
                 repository.save(stale);
             }));
             assertThat(loaded.await(10, TimeUnit.SECONDS)).isTrue();
-            store.deactivateAllWithCleanupPending(row.getUserId());
+            store.finalizeWithCleanupPending(row.getId(), row.getUpdatedAt());
             proceed.countDown();
             writer.get(10, TimeUnit.SECONDS);
             var persisted = repository.findById(row.getId()).orElseThrow();
@@ -395,8 +395,8 @@ class BotSessionCleanupPostgresTest {
     @Test void watcherDoesNotLoseOtherPendingCleanupWhenBackendThrows() {
         var failed = session("watcher-throws-" + UUID.randomUUID());
         var succeeds = session("watcher-other-" + UUID.randomUUID());
-        store.deactivateAllWithCleanupPending(failed.getUserId());
-        store.deactivateAllWithCleanupPending(succeeds.getUserId());
+        store.finalizeWithCleanupPending(failed.getId(), failed.getUpdatedAt());
+        store.finalizeWithCleanupPending(succeeds.getId(), succeeds.getUpdatedAt());
         var backend = org.mockito.Mockito.mock(com.azhukov.agent.bot.core.AgentBackendClient.class);
         org.mockito.Mockito.when(backend.cleanupSession(failed.getBackendSessionId().toString()))
             .thenThrow(new IllegalStateException("synthetic backend exception")).thenReturn(true);
@@ -414,8 +414,8 @@ class BotSessionCleanupPostgresTest {
     @Test void watcherContinuesAfterOneCleanupFailsAndRetriesItLater() {
         var failed = session("watcher-failed-" + UUID.randomUUID());
         var succeeds = session("watcher-succeeds-" + UUID.randomUUID());
-        store.deactivateAllWithCleanupPending(failed.getUserId());
-        store.deactivateAllWithCleanupPending(succeeds.getUserId());
+        store.finalizeWithCleanupPending(failed.getId(), failed.getUpdatedAt());
+        store.finalizeWithCleanupPending(succeeds.getId(), succeeds.getUpdatedAt());
         var backend = org.mockito.Mockito.mock(com.azhukov.agent.bot.core.AgentBackendClient.class);
         org.mockito.Mockito.when(backend.cleanupSession(failed.getBackendSessionId().toString())).thenReturn(false, true);
         org.mockito.Mockito.when(backend.cleanupSession(succeeds.getBackendSessionId().toString())).thenReturn(true);
@@ -547,10 +547,11 @@ class BotSessionCleanupPostgresTest {
         try {
             for (int i = 0; i < 30; i++) {
                 var start = new CountDownLatch(1);
-                var a = executor.submit(() -> { start.await(); return store.deactivateAllWithCleanupPending(owner); });
+                var current = repository.findById(firstId).orElseThrow();
+                var a = executor.submit(() -> { start.await(); return store.finalizeWithCleanupPending(firstId, current.getUpdatedAt()); });
                 var b = executor.submit(() -> { start.await(); return store.activateSessionById(owner, secondId); });
                 start.countDown();
-                assertThat(a.get(15, TimeUnit.SECONDS)).isGreaterThanOrEqualTo(0);
+                assertThat(a.get(15, TimeUnit.SECONDS)).isTrue();
                 assertThat(b.get(15, TimeUnit.SECONDS)).isTrue();
                 assertThat(store.activateSessionById(owner, firstId)).isTrue();
             }
@@ -576,7 +577,7 @@ class BotSessionCleanupPostgresTest {
                 assertThat(one.get(15, TimeUnit.SECONDS)).isTrue();
                 assertThat(two.get(15, TimeUnit.SECONDS)).isTrue();
             }
-            assertThat(repository.findByUserIdOrderByUpdatedAtDesc(owner).stream().filter(BotSessionEntity::isActive)).hasSize(1);
+            assertThat(repository.findByUserIdOrderByUpdatedAtDesc(owner).stream().filter(BotSessionEntity::isActive)).hasSize(2);
         } finally { executor.shutdownNow(); }
     }
 

@@ -62,10 +62,6 @@ public interface BotSessionRepository extends JpaRepository<BotSessionEntity, UU
     void touchUpdatedAt(UUID id, Instant ts);
 
     @Modifying
-    @Query("UPDATE BotSessionEntity s SET s.active = false, s.cleanupOnBackendBinding = true, s.cleanupPending = CASE WHEN s.backendSessionId IS NULL THEN false ELSE true END WHERE s.userId = :userId AND s.active = true")
-    int deactivateAllForUserWithPendingCleanup(String userId);
-
-    @Modifying
     @Query("UPDATE BotSessionEntity s SET s.active = false WHERE s.userId = :userId AND s.active = true")
     int deactivateAllForUser(String userId);
 }

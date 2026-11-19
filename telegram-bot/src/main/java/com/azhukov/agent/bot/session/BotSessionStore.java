@@ -250,12 +250,6 @@ public class BotSessionStore {
     }
 
     @Transactional
-    public int deactivateAllWithCleanupPending(String userId) {
-        repository.findAllLockedByUserId(userId);
-        return repository.deactivateAllForUserWithPendingCleanup(userId);
-    }
-
-    @Transactional
     public int deactivateAll(String userId) {
         return repository.deactivateAllForUser(userId);
     }
