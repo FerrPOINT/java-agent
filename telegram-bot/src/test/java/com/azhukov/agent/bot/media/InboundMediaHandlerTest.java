@@ -32,7 +32,7 @@ class InboundMediaHandlerTest {
     }
 
     @Test
-    void handle_photo_returnsPhotoDescriptionWithCaption() {
+    void handle_photo_returnsPhotoDescriptionWithoutDuplicatingCaption() {
         UpdateEvent event = new UpdateEvent(100L, UpdateEvent.Type.PHOTO, 123L, 456L,
             "jdoe", null, "Check this", "file-photo-1", "photo",
             null, null, null, false, null, null);
@@ -44,7 +44,19 @@ class InboundMediaHandlerTest {
         assertThat(result).isPresent();
         // B1: Should contain the file path, not just file_id
         assertThat(result.get()).contains("[Photo:");
-        assertThat(result.get()).contains("caption=\"Check this\"");
+        assertThat(result.get()).doesNotContain("Check this");
+    }
+
+    @Test
+    void albumCaptionIsNotRepeatedForEachPhoto() {
+        UpdateEvent event = new UpdateEvent(100L, UpdateEvent.Type.PHOTO, 123L, 456L,
+            "jdoe", null, "album caption", "album-a,album-b", "photo",
+            null, null, null, false, null, null);
+        when(mediaDownloader.downloadToFileId("album-a")).thenReturn(Optional.of("a".getBytes()));
+        when(mediaDownloader.downloadToFileId("album-b")).thenReturn(Optional.of("b".getBytes()));
+        String description = handler.handle(event).orElseThrow();
+        assertThat(description).doesNotContain("album caption");
+        assertThat(description.split("\\n")).hasSize(2);
     }
 
     @Test
