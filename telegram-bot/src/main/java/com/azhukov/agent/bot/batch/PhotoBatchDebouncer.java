@@ -82,10 +82,14 @@ public class PhotoBatchDebouncer {
 
         // Merge captions like Hermes: exact duplicate captions are collapsed,
         // while substring matches remain distinct user input.
-        String mergedCaption = null;
-        for (UpdateEvent event : group.events) {
-            mergedCaption = mergeCaption(mergedCaption, event.caption());
-        }
+        String mergedCaption = group.events.stream()
+            .map(UpdateEvent::caption)
+            .filter(Objects::nonNull)
+            .map(String::strip)
+            .filter(caption -> !caption.isBlank())
+            .distinct()
+            .collect(java.util.stream.Collectors.joining("\n\n"));
+        if (mergedCaption.isEmpty()) mergedCaption = null;
 
         // Create merged event with first file_id (or join them)
         String primaryFileId = fileIds.isEmpty() ? first.fileId() : fileIds.getFirst();
@@ -129,23 +133,6 @@ public class PhotoBatchDebouncer {
     int pendingCount(String mediaGroupId) {
         return groups.entrySet().stream().filter(entry -> entry.getKey().mediaGroupId().equals(mediaGroupId))
             .mapToInt(entry -> entry.getValue().events.size()).sum();
-    }
-
-    static String mergeCaption(String existingText, String newText) {
-        if (newText == null || newText.isBlank()) {
-            return existingText;
-        }
-        if (existingText == null || existingText.isBlank()) {
-            return newText;
-        }
-
-        String normalizedNew = newText.strip();
-        for (String existingCaption : existingText.split("\n\n")) {
-            if (existingCaption.strip().equals(normalizedNew)) {
-                return existingText;
-            }
-        }
-        return (existingText + "\n\n" + newText).strip();
     }
 
     // ─── Internal ──────────────────────────────────────────────────
