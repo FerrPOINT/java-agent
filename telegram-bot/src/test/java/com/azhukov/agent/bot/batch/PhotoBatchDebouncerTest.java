@@ -42,6 +42,17 @@ class PhotoBatchDebouncerTest {
     }
 
     @Test
+    void missingAlbumMemberIdIsNotSilentlyDiscarded() {
+        var dispatched = new java.util.ArrayList<UpdateEvent>();
+        debouncer.onDispatch(dispatched::add);
+        debouncer.offer(makePhotoEvent(1L, 100L, "valid", "group1", "caption"));
+        debouncer.offer(makePhotoEvent(2L, 100L, null, "group1", null));
+        debouncer.flushAll();
+        assertThat(dispatched).hasSize(1);
+        assertThat(dispatched.getFirst().fileId()).isNull();
+    }
+
+    @Test
     void offer_multiplePhotosSameGroup_dispatchesMerged() throws Exception {
         CountDownLatch latch = new CountDownLatch(1);
         AtomicInteger count = new AtomicInteger(0);
