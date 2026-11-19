@@ -53,11 +53,11 @@ public class LoopCommand implements CommandHandler {
             String action = (lower.equals("off") || lower.equals("stop")) ? "clear" : lower;
             JsonNode r = backendClient.suggestionPost("/api/v1/agent/cron/heartbeat/" + sid
                 + "/" + action);
-            if (lower.equals("off") || lower.equals("stop")) {
-                deliveryPoller.unwatch(java.util.UUID.fromString(sid));
+            if (r == null || !r.path("ok").asBoolean(false)) return "No loop set.";
+            if (lower.equals("resume")) {
+                deliveryPoller.watch(java.util.UUID.fromString(sid), event.chatId());
             }
-            return r != null && r.path("ok").asBoolean(false)
-                ? r.path("message").asText("Done.") : "No loop set.";
+            return r.path("message").asText("Done.");
         }
 
         Integer times = null;
