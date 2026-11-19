@@ -109,6 +109,7 @@ class HeartbeatServiceTest {
 
         assertThat(svc.get(sid).prompt()).isEqualTo("replacement");
         assertThat(svc.get(sid).fireCount()).isZero();
+        assertThat(svc.peekLastFireResult(sid)).isNull();
     }
 
     @Test
