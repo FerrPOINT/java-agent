@@ -308,6 +308,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
 
     @Override
     public boolean mayBatch(UpdateEvent event) {
+        if (event.type() == UpdateEvent.Type.TEXT && !groupMessageFilter.shouldProcess(event)) return false;
         if (authorizationService.isAuthorized(event)) return true;
         telegramClient.sendMessage(event.chatId(), "⛔ You are not authorized to use this bot.");
         return false;

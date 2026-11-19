@@ -192,6 +192,20 @@ class BotMessageProcessorTest {
             editCaptureService, updateDispatcher, streamingOrchestrator);
     }
 
+    @Test
+    void unmentionedGroupTextIsNotBufferedWithMentionedMessage() {
+        var unmentioned = textEvent(1, -100, "private group conversation");
+        var mentioned = textEvent(2, -100, "@bot answer this");
+        when(groupMessageFilter.shouldProcess(unmentioned)).thenReturn(false);
+        when(textBatchDebouncer.offer(mentioned)).thenReturn(true);
+
+        processor.accept(unmentioned);
+        processor.accept(mentioned);
+
+        verify(textBatchDebouncer, never()).offer(unmentioned);
+        verify(textBatchDebouncer).offer(mentioned);
+    }
+
     // ─── Helper methods ──────────────────────────────────────────
 
     private UpdateEvent textEvent(long updateId, long chatId, String text) {
