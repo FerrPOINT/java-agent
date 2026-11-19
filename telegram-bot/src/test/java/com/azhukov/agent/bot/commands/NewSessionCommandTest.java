@@ -100,6 +100,19 @@ class NewSessionCommandTest {
     }
 
     @Test
+    void newDoesNotCleanupWhenSessionChanged() {
+        var store = mock(BotSessionStore.class);
+        var backend = mock(AgentBackendClient.class);
+        var session = new BotSessionEntity();
+        session.setId(UUID.randomUUID());
+        session.setBackendSessionId(UUID.randomUUID());
+        when(store.finalizeWithCleanupPending(session.getId(), session.getUpdatedAt())).thenReturn(false);
+        assertThat(new NewSessionCommand(store, backend).handle(null, session)).contains("retry");
+        org.mockito.Mockito.verifyNoInteractions(backend);
+        org.mockito.Mockito.verify(store, org.mockito.Mockito.never()).retryCleanup(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
     void name_isNew() {
         var cmd = new NewSessionCommand(mock(BotSessionStore.class), mock(AgentBackendClient.class));
         assertThat(cmd.name()).isEqualTo("new");
