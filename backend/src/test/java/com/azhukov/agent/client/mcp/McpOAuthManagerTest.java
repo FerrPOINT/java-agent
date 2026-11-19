@@ -318,7 +318,7 @@ class McpOAuthManagerTest {
     }
 
     @Test
-    void refreshToken_issuerMismatch_discardsTokenAndThrows() {
+    void refreshToken_issuerMismatch_preservesTokenAndThrows() {
         AgentProperties.McpProperties.ServerProperties serverConfig = new AgentProperties.McpProperties.ServerProperties();
         serverConfig.setName("migrated-server");
         serverConfig.setOauthTokenUrl("https://new-auth.example.com/token");
@@ -336,8 +336,8 @@ class McpOAuthManagerTest {
             .isInstanceOf(IllegalStateException.class)
             .hasMessageContaining("has no matching issuer")
             .hasMessageContaining("re-authorization required");
-        // the mismatched token is DISCARDED, never replayed at the new issuer
-        org.mockito.Mockito.verify(mcpOAuthRepository).delete(entity);
+        // A configuration change must not destroy credentials minted by the previous issuer.
+        org.mockito.Mockito.verify(mcpOAuthRepository, org.mockito.Mockito.never()).delete(any());
     }
 
     @ParameterizedTest

@@ -92,7 +92,6 @@ public class McpOAuthManager {
         }
 
         if (!issuerMatches(entity, tokenUrl)) {
-            mcpOAuthRepository.delete(entity);
             throw new IllegalStateException(
                 "Stored OAuth token for MCP server " + serverName
                 + " has no matching issuer; re-authorization required");
