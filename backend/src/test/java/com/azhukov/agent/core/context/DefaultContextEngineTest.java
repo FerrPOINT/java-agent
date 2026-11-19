@@ -115,6 +115,23 @@ class DefaultContextEngineTest {
     }
 
     @Test
+    void paginatedHistoryPreservesScalarToolResponseItemId() {
+        var assistant = entity("assistant", "", 1);
+        assistant.setToolCallId("call-1");
+        assistant.setToolResponseItemId("item-1");
+        assistant.setToolCallName("search");
+        assistant.setToolCallArguments("{}");
+        var tool = entity("tool", "found", 1);
+        tool.setToolCallId("call-1");
+        when(messageRepository.findBySessionIdAndActiveTrueOrderByCreatedAtDesc(eq(session.id()), anyInt()))
+            .thenReturn(List.of(tool, assistant));
+
+        var result = contextEngine.prepareContext(session, List.of(Message.system("System"), Message.user("Current")));
+        assertThat(result.stream().filter(message -> message.role() == Role.ASSISTANT).findFirst().orElseThrow()
+            .toolCalls().getFirst().responseItemId()).isEqualTo("item-1");
+    }
+
+    @Test
     void prepareContextHydratesStoredAssistantToolCallsArrayFromRepository() {
         MessageEntity assistantMsg = entity("assistant", "", 1);
         assistantMsg.setToolCallId("call-1");

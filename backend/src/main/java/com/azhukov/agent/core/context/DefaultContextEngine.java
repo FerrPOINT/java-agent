@@ -708,7 +708,8 @@ public class DefaultContextEngine implements ContextEngine {
                          && (e.getToolCallId() != null || e.getToolCallName() != null)) {
                          yield Message.assistantWithToolCalls(content,
                              List.of(new com.azhukov.agent.core.model.ToolCall(
-                                 e.getToolCallId(), e.getToolCallName(), e.getToolCallArguments())),
+                                 e.getToolCallId(), e.getToolCallId(), e.getToolResponseItemId(),
+                                  e.getToolCallName(), e.getToolCallArguments())),
                              turnIdx, reasoning);
                      }
                      yield Message.assistant(content, turnIdx, reasoning);
