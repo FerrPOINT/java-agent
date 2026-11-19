@@ -112,7 +112,11 @@ public class SessionExpiryWatcher {
                     }
                 }
             }
-            sessionStore.pendingCleanups().stream().map(BotSessionEntity::getId).forEach(cleanupIds::add);
+            try {
+                sessionStore.pendingCleanups().stream().map(BotSessionEntity::getId).forEach(cleanupIds::add);
+            } catch (Exception e) {
+                log.warn("Could not load pending session cleanups; will retry on the next check");
+            }
             for (var id : cleanupIds) {
                 try {
                     sessionStore.retryCleanup(id, backendId -> backendClient.cleanupSession(backendId.toString()));
