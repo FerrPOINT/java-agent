@@ -64,8 +64,12 @@ public class McpOAuthManager {
 
     private static boolean issuerMatches(McpOAuthEntity token, String tokenUrl) {
         String storedIssuer = token.getTokenIssuer();
-        return storedIssuer != null && !storedIssuer.isBlank()
-            && tokenUrl != null && !tokenUrl.isBlank() && issuerOf(storedIssuer).equals(issuerOf(tokenUrl));
+        if (storedIssuer == null || storedIssuer.isBlank() || tokenUrl == null || tokenUrl.isBlank()) return false;
+        try {
+            return issuerOf(storedIssuer).equals(issuerOf(tokenUrl));
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
     }
 
     /** Refresh the stored credential using the selected MCP server configuration. */

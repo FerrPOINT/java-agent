@@ -136,6 +136,17 @@ class McpOAuthManagerTest {
     }
 
     @Test
+    void malformedStoredIssuerIsRejectedWithoutBreakingTokenLookup() {
+        var entity = new McpOAuthEntity();
+        entity.setAccessToken("access-123");
+        entity.setTokenIssuer("not-an-origin");
+        entity.setExpiresAt(Instant.now().plusSeconds(3600));
+        when(mcpOAuthRepository.findByProfileAndServerName("default", "test-server")).thenReturn(Optional.of(entity));
+
+        assertThat(manager.getToken("default", server("test-server"))).isEmpty();
+    }
+
+    @Test
     void getTokenDoesNotReturnUnexpiredCredentialAfterIssuerChanges() {
         var entity = new McpOAuthEntity();
         entity.setAccessToken("old-issuer-token");
