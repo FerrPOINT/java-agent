@@ -68,8 +68,8 @@ public class HeartbeatDeliveryPoller {
                         log.info("HEARTBEAT_DELIVERED chatId={} sessionId={} msgId={} chars={}",
                             e.getValue(), e.getKey(), sent.get(), text.length());
                         log.info("HEARTBEAT_DELIVERY_TOTAL delivered={}", delivered.incrementAndGet());
-                        backendClient.suggestionPost(
-                            "/api/v1/agent/cron/heartbeat/" + e.getKey() + "/result/ack");
+                        if (backendClient.suggestionPost(
+                            "/api/v1/agent/cron/heartbeat/" + e.getKey() + "/result/ack") == null) continue;
                     } else {
                         // Send failed — NACK; after 5 attempts the backend drops
                         // the poisoned result instead of retrying forever
@@ -79,16 +79,16 @@ public class HeartbeatDeliveryPoller {
                         JsonNode nack = backendClient.suggestionPost(
                             "/api/v1/agent/cron/heartbeat/" + e.getKey() + "/result/nack");
                         if (nack != null && nack.path("drop").asBoolean(false)) {
-                            backendClient.suggestionPost(
-                                "/api/v1/agent/cron/heartbeat/" + e.getKey() + "/result/ack");
+                            if (backendClient.suggestionPost(
+                                "/api/v1/agent/cron/heartbeat/" + e.getKey() + "/result/ack") == null) continue;
                         } else {
                             continue;
                         }
                     }
                 } else {
                     // Empty result (e.g. model said nothing) — ACK to clear it
-                    backendClient.suggestionPost(
-                        "/api/v1/agent/cron/heartbeat/" + e.getKey() + "/result/ack");
+                    if (backendClient.suggestionPost(
+                        "/api/v1/agent/cron/heartbeat/" + e.getKey() + "/result/ack") == null) continue;
                 }
                 // Stop watching cleared/finished loops
                 JsonNode st = backendClient.suggestionGet(
