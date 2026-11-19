@@ -31,6 +31,17 @@ class HistorySanitizerTest {
     }
 
     @Test
+    void modelRequestRetainsImagesWhenDroppingOrphanBetweenUsers() {
+        var out = HistorySanitizer.sanitizeForModelRequest(List.of(
+            Message.userWithImages("first", 2),
+            Message.toolResult("orphan", "discarded", 1),
+            Message.userWithImages("second", 3)));
+        assertThat(out).hasSize(1);
+        assertThat(out.getFirst().content()).contains("first", "second");
+        assertThat(out.getFirst().imageCount()).isEqualTo(5);
+    }
+
+    @Test
     void dropsOrphanToolResultAfterCompression() {
         // Compressor dropped the assistant tool_call but kept the tool result
         List<Message> history = List.of(
