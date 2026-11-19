@@ -101,7 +101,8 @@ public class CronJobTool implements ToolHandler {
             if (session == null) throw new IllegalArgumentException("Current session is required to create a cron job");
             UUID attachedSessionId = attachedSessionId(args.attachToSession(), session);
             CronJobEntity entity = cronJobService.create(
-            session.userId(), "default", defaultJobName(args.name(), args.prompt(), skillList), args.schedule(),
+            session.userId(), session.metadata().getOrDefault("profile", "default"),
+            defaultJobName(args.name(), args.prompt(), skillList), args.schedule(),
             args.prompt(), args.deliver(), skills, contextFrom,
             args.repeat(), args.script(), Boolean.TRUE.equals(args.noAgent()), enabledToolsets,
             args.workdir(), args.modelProvider(), args.modelName(), args.baseUrl(),
