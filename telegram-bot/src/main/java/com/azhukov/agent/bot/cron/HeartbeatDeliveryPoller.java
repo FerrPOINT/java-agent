@@ -56,14 +56,15 @@ public class HeartbeatDeliveryPoller {
             try {
                 JsonNode r = backendClient.suggestionGet(
                     "/api/v1/agent/cron/heartbeat/" + e.getKey() + "/result");
-                if (r == null) continue;
-                if (!r.path("hasResult").asBoolean(false)) {
+                if (r == null || !r.path("hasResult").isBoolean()) continue;
+                if (!r.path("hasResult").asBoolean()) {
                     JsonNode st = backendClient.suggestionGet(
                         "/api/v1/agent/cron/heartbeat/" + e.getKey());
                     if (st != null && st.path("set").isBoolean() && !st.path("set").asBoolean()) watched.remove(e.getKey(), e.getValue());
                     continue;
                 }
-                String text = r.path("result").asText("");
+                if (!r.path("result").isTextual()) continue;
+                String text = r.path("result").asText();
                 if (!text.isBlank()) {
                     var sent = telegramClient.sendMessage(e.getValue().chatId,
                         "♥ Heartbeat:\n\n" + truncate(text));
