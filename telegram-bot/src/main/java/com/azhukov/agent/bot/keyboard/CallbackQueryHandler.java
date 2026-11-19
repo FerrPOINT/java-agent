@@ -214,7 +214,6 @@ public class CallbackQueryHandler {
         String prefix = slug + ":";
         List<String> filtered = models.stream()
             .filter(m -> m.toLowerCase().startsWith(prefix.toLowerCase()))
-            .map(m -> m.substring(prefix.length()))  // strip the prefix for display
             .toList();
         if (!filtered.isEmpty()) {
             return filtered;

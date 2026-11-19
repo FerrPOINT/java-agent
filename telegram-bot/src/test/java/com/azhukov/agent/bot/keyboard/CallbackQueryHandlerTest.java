@@ -129,6 +129,16 @@ class CallbackQueryHandlerTest {
     // ─── P2-19: Provider keyboard filtering tests ──────────────────
 
     @Test
+    void providerKeyboardPreservesConfiguredModelIdentifier() {
+        properties.getAvailableModels().add("openai:gpt-4");
+        handler.handle(callbackEvent("cq-provider", "pp:openai"));
+        var markup = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(client).sendMessage(eq(123L), eq("Models for openai:"), isNull(), isNull(),
+            isNull(), markup.capture(), eq(false));
+        assertThat(markup.getValue()).contains("mp:openai:gpt-4");
+    }
+
+    @Test
     void handle_ppCallback_filtersModelsByProviderPrefix() {
         properties.getAvailableModels().add("openai:gpt-4");
         properties.getAvailableModels().add("openai:gpt-4o");
