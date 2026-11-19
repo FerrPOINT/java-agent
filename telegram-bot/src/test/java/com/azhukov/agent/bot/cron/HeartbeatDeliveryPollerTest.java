@@ -118,6 +118,20 @@ class HeartbeatDeliveryPollerTest {
     }
 
     @Test
+    void unavailableStatusDoesNotStopWatchingAfterDelivery() {
+        UUID sid = UUID.randomUUID();
+        poller.watch(sid, 42L);
+        stubResult(sid, "result");
+        when(telegram.sendMessage(eq(42L), anyString())).thenReturn(Optional.of(7L));
+        when(backend.suggestionGet("/api/v1/agent/cron/heartbeat/" + sid)).thenReturn(null);
+
+        poller.poll();
+        poller.poll();
+
+        verify(backend, times(2)).suggestionGet("/api/v1/agent/cron/heartbeat/" + sid + "/result");
+    }
+
+    @Test
     void poisonedResultDroppedAfterNackSaysDrop() {
         UUID sid = UUID.randomUUID();
         poller.watch(sid, 42L);
