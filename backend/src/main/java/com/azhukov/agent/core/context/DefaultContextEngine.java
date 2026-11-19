@@ -214,6 +214,7 @@ public class DefaultContextEngine implements ContextEngine {
  || messages.get(0).role() == Role.DEVELOPER)) ? 1 : 0;
  if (from < messages.size()) {
  Message firstIncoming = messages.get(from);
+ // Image payloads can share redacted text; equality cannot establish their identity.
  if (firstIncoming.role() == Role.USER && firstIncoming.imageCount() == 0) {
  // Hermes parity (_persist_session cursor semantics): drop ALL trailing
  // history USER rows equal to the incoming message. Mid-turn persistence
@@ -227,7 +228,7 @@ public class DefaultContextEngine implements ContextEngine {
  while (!context.isEmpty()
      && context.get(context.size() - 1).role() == Role.USER
      && java.util.Objects.equals(context.get(context.size() - 1).content(), firstIncoming.content())
-      && java.util.Objects.equals(context.get(context.size() - 1).imageCount(), firstIncoming.imageCount())) {
+      && context.get(context.size() - 1).imageCount() == 0) {
  context.remove(context.size() - 1);
  }
  }
