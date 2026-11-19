@@ -1087,6 +1087,7 @@ class McpLifecycleManagerNewFeaturesTest {
         McpLifecycleManager manager = new McpLifecycleManager(properties, new ObjectMapper(), null, null, null, null, null, null, null);
         AgentProperties.McpProperties.ServerProperties server = new AgentProperties.McpProperties.ServerProperties();
         server.setName("srv");
+        server.setBaseUrl("https://mcp.example/mcp");
         server.getHeaders().put("X-Api-Key", "secret");
 
         HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create("https://mcp.example/mcp"));
@@ -1094,6 +1095,34 @@ class McpLifecycleManagerNewFeaturesTest {
             .customize(builder, "POST", URI.create("https://mcp.example/mcp"), "{}", null);
 
         assertThat(builder.build().headers().firstValue("X-Api-Key")).contains("secret");
+    }
+
+    @Test
+    void remoteCustomizerRejectsRequestsToAnotherOrigin() throws Exception {
+        var manager = new McpLifecycleManager(new AgentProperties(), new ObjectMapper(), null, null, null, null, null, null, null);
+        var server = new AgentProperties.McpProperties.ServerProperties();
+        server.setName("srv"); server.setBaseUrl("https://mcp.example/mcp");
+        server.getHeaders().put("X-Api-Key", "confidential");
+        var oauth = mock(McpOAuthManager.class);
+        injectOAuthManager(manager, oauth);
+        when(oauth.getToken("default", server)).thenReturn(Optional.of("oauth-secret"));
+
+        var allowed = HttpRequest.newBuilder(URI.create("https://mcp.example:443/stream"));
+        manager.remoteHeaderCustomizer(server).customize(allowed, "POST", URI.create("https://mcp.example:443/stream"), "{}", null);
+        assertThat(allowed.build().headers().firstValue("Authorization")).contains("Bearer oauth-secret");
+        var foreign = HttpRequest.newBuilder(URI.create("https://other.example/stream"));
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> manager.remoteHeaderCustomizer(server)
+            .customize(foreign, "POST", URI.create("https://other.example/stream"), "{}", null))
+            .isInstanceOf(IllegalArgumentException.class);
+        assertThat(foreign.build().headers().firstValue("Authorization")).isEmpty();
+        assertThat(foreign.build().headers().firstValue("X-Api-Key")).isEmpty();
+        verify(oauth, times(1)).getToken("default", server);
+        for (String url : List.of("http://mcp.example/stream", "https://mcp.example:444/stream")) {
+            var uri = URI.create(url);
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> manager.remoteHeaderCustomizer(server)
+                .customize(HttpRequest.newBuilder(uri), "POST", uri, "{}", null))
+                .isInstanceOf(IllegalArgumentException.class);
+        }
     }
 
     @Test

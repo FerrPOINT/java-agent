@@ -790,9 +790,28 @@ public class McpLifecycleManager {
 
     McpSyncHttpClientRequestCustomizer remoteHeaderCustomizer(AgentProperties.McpProperties.ServerProperties server) {
         return (builder, method, uri, body, context) -> {
+            if (!sameHttpOrigin(server.getBaseUrl(), uri)) {
+                throw new IllegalArgumentException("MCP request origin differs from configured server");
+            }
             Map<String, String> headers = resolveRemoteHeaders(server);
             headers.forEach(builder::setHeader);
         };
+    }
+
+    private static boolean sameHttpOrigin(String baseUrl, java.net.URI request) {
+        try {
+            java.net.URI base = java.net.URI.create(baseUrl);
+            if (request == null || base.getHost() == null || request.getHost() == null
+                    || base.getScheme() == null || request.getScheme() == null) return false;
+            String scheme = base.getScheme().toLowerCase(java.util.Locale.ROOT);
+            if (!scheme.equals("http") && !scheme.equals("https")) return false;
+            int basePort = base.getPort() < 0 ? (scheme.equals("https") ? 443 : 80) : base.getPort();
+            int requestPort = request.getPort() < 0 ? (scheme.equals("https") ? 443 : 80) : request.getPort();
+            return scheme.equalsIgnoreCase(request.getScheme())
+                && base.getHost().equalsIgnoreCase(request.getHost()) && basePort == requestPort;
+        } catch (IllegalArgumentException | NullPointerException e) {
+            return false;
+        }
     }
 
     Map<String, String> resolveRemoteHeaders(AgentProperties.McpProperties.ServerProperties server) {
