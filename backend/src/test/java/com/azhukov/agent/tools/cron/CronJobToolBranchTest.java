@@ -95,6 +95,28 @@ class CronJobToolBranchTest {
         assertThat(result.success()).isTrue();
     }
 
+    @Test
+    void createJobInheritsCurrentSessionProfile() {
+        CronJobTool tool = new CronJobTool(cronJobService);
+        Session profiled = session().withMetadata("profile", "research");
+        when(cronJobService.create(any(), any(), any(), any(), any(), any(), any(), any(),
+                any(), any(), anyBoolean(), any(), any(), any(), any(), any(), any(), anyBoolean(), any()))
+            .thenAnswer(inv -> {
+                var job = new CronJobEntity();
+                job.setId(UUID.randomUUID());
+                job.setName("test");
+                job.setSchedule("0 9 * * *");
+                job.setPrompt("test");
+                return job;
+            });
+
+        ToolResult result = tool.execute("{\"action\":\"create\",\"schedule\":\"0 9 * * *\",\"prompt\":\"test\"}", assistant(), profiled);
+
+        assertThat(result.success()).isTrue();
+        org.mockito.Mockito.verify(cronJobService).create(eq("user-1"), eq("research"), any(), any(), any(),
+            any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any(), any(), anyBoolean(), any());
+    }
+
     // ── create job: validation branches ──
 
     @Test
@@ -459,12 +481,13 @@ class CronJobToolBranchTest {
             any(), any(), any(), any(),
             any(), any(), any(), any(),
             any(), any(), any(), any(),
-            org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull())).thenReturn(entity);
+            org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), any(UUID.class))).thenReturn(entity);
 
         CronJobTool tool = new CronJobTool(cronJobService);
+        Session current = session();
         ToolResult result = tool.execute(
             "{\"action\":\"update\",\"job_id\":\"" + id + "\",\"skills\":[]}",
-            assistant(), session());
+            assistant(), current);
 
         assertThat(result.success()).isTrue();
         org.mockito.Mockito.verify(cronJobService).update(
@@ -472,7 +495,7 @@ class CronJobToolBranchTest {
             null, null, "", null,
             null, null, null, null,
             null, null, null, null,
-            null, null, null, null);
+            null, null, null, current.id());
     }
 
     @Test
@@ -503,12 +526,13 @@ class CronJobToolBranchTest {
             any(), any(), any(), any(),
             any(), any(), any(), any(),
             any(), any(), any(), any(),
-            org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull())).thenReturn(entity);
+            org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), any(UUID.class))).thenReturn(entity);
 
         CronJobTool tool = new CronJobTool(cronJobService);
+        Session current = session();
         ToolResult result = tool.execute(
             "{\"action\":\"update\",\"job_id\":\"" + id + "\",\"context_from\":[\"self\",\"" + HERMES_JOB_ID + "\"],\"enabled_toolsets\":[\"web\",\"terminal\"]}",
-            assistant(), session());
+            assistant(), current);
 
         assertThat(result.success()).isTrue();
         org.mockito.Mockito.verify(cronJobService).update(
@@ -516,7 +540,7 @@ class CronJobToolBranchTest {
             null, null, null, "self," + HERMES_JOB_ID,
             null, null, null, "web,terminal",
             null, null, null, null,
-            null, null, null, null);
+            null, null, null, current.id());
     }
 
     @Test
@@ -635,7 +659,7 @@ class CronJobToolBranchTest {
             any(), any(), any(), any(),
             any(), any(), any(), any(),
             any(), any(), any(), any(),
-            org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull())).thenAnswer(inv -> {
+            org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), any(UUID.class))).thenAnswer(inv -> {
                 CronJobEntity e = new CronJobEntity();
                 e.setId(id);
                 e.setName("job1");
@@ -648,10 +672,11 @@ class CronJobToolBranchTest {
             });
 
         CronJobTool tool = new CronJobTool(cronJobService);
+        Session current = session();
         ToolResult result = tool.execute(
             "{\"action\":\"update\",\"job_id\":\"" + id + "\",\"model_provider\":\"openai\","
                 + "\"model_name\":\"gpt-4o\",\"base_url\":\"https://api.openai.com\"}",
-            assistant(), session());
+            assistant(), current);
 
         Map<String, Object> payload = json(result);
         @SuppressWarnings("unchecked")
@@ -665,7 +690,7 @@ class CronJobToolBranchTest {
             isNull(), isNull(), isNull(), isNull(),
             isNull(), isNull(), isNull(), isNull(),
             isNull(), eq("openai"), eq("gpt-4o"), eq("https://api.openai.com"),
-            org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull());
+            isNull(), isNull(), isNull(), eq(current.id()));
     }
 
     @Test
