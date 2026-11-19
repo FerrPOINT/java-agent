@@ -195,69 +195,17 @@ public class McpOAuthManager {
         mcpOAuthRepository.save(entity);
     }
 
-    /** Extract a string field value from a JSON response body (simple parser, no Jackson needed). */
+    private static final com.fasterxml.jackson.databind.ObjectMapper JSON = new com.fasterxml.jackson.databind.ObjectMapper();
+
+    /** Read a top-level OAuth response scalar; malformed or structured values are rejected. */
     public static String extractJsonField(String json, String fieldName) {
-        if (json == null || json.isEmpty()) {
+        if (json == null || fieldName == null) return null;
+        try {
+            var root = JSON.readTree(json);
+            var value = root != null && root.isObject() ? root.get(fieldName) : null;
+            return value != null && (value.isTextual() || value.isNumber()) ? value.asText() : null;
+        } catch (java.io.IOException e) {
             return null;
-        }
-        // Search for "fieldName":"value" pattern
-        String needle = "\"" + fieldName + "\"";
-        int idx = json.indexOf(needle);
-        if (idx < 0) {
-            return null;
-        }
-        int colonIdx = json.indexOf(":", idx + needle.length());
-        if (colonIdx < 0) {
-            return null;
-        }
-        // Skip whitespace after colon
-        int valueStart = colonIdx + 1;
-        while (valueStart < json.length() && Character.isWhitespace(json.charAt(valueStart))) {
-            valueStart++;
-        }
-        if (valueStart >= json.length()) {
-            return null;
-        }
-        char firstChar = json.charAt(valueStart);
-        if (firstChar == '"') {
-            // String value
-            int valueEnd = valueStart + 1;
-            StringBuilder sb = new StringBuilder();
-            while (valueEnd < json.length()) {
-                char c = json.charAt(valueEnd);
-                if (c == '\\' && valueEnd + 1 < json.length()) {
-                    char next = json.charAt(valueEnd + 1);
-                    // M36 fix: decode JSON unicode escapes instead of
-                    // dropping the backslash and keeping literal "uXXXX".
-                    if (next == 'u' && valueEnd + 5 < json.length()) {
-                        String hex = json.substring(valueEnd + 2, valueEnd + 6);
-                        try {
-                            sb.append((char) Integer.parseInt(hex, 16));
-                            valueEnd += 6;
-                        } catch (NumberFormatException nfe) {
-                            // Not a valid escape — keep as-is.
-                            sb.append(next);
-                            valueEnd += 2;
-                        }
-                    } else {
-                        sb.append(next);
-                        valueEnd += 2;
-                    }
-                } else if (c == '"') {
-                    break;
-                } else {
-                    sb.append(c);
-                    valueEnd++;
-                }
-            }
-            return sb.toString();
-        } else {
-            // Numeric or other value — read until comma or closing brace
-            int valueEnd = valueStart;
-            while (valueEnd < json.length() && json.charAt(valueEnd) != ',' && json.charAt(valueEnd) != '}') {
-                valueEnd++;
-            }
-            return json.substring(valueStart, valueEnd).trim();
         }
     }
 

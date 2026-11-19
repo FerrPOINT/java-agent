@@ -264,6 +264,29 @@ class McpOAuthFlowServiceTest {
     }
 
     @Test
+    void completeRejectsNestedTokenResponseWithoutStoringCredentials() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/token", exchange -> {
+            byte[] bytes = "{\"nested\":{\"access_token\":\"not-a-token\"}}".getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, bytes.length);
+            try (var output = exchange.getResponseBody()) { output.write(bytes); }
+        });
+        server.start();
+        try {
+            var config = config("srv");
+            config.setOauthTokenUrl("http://127.0.0.1:" + server.getAddress().getPort() + "/token");
+            var flow = pendingFlow("srv");
+            when(flowRepository.findByStateHash(any(String.class))).thenReturn(Optional.of(flow));
+            when(configStore.find("default", "srv")).thenReturn(Optional.of(config));
+            assertThat(service().complete("srv", "code", "state")).containsEntry("ok", false);
+            verify(oauthManager, never()).storeToken(any(), any(), any(), any(), any(), any());
+            assertThat(flow.getStatus()).isEqualTo("failed");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void completeRejectsDisappearedConfigurationWithoutStoringToken() {
         McpOAuthFlowEntity flow = pendingFlow("srv");
         when(flowRepository.findByStateHash(any(String.class))).thenReturn(Optional.of(flow));

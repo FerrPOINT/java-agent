@@ -87,6 +87,14 @@ class McpOAuthManagerTest {
     }
 
     @Test
+    void oauthFieldsMustBeValidTopLevelScalars() {
+        assertThat(McpOAuthManager.extractJsonField("{\"refresh_token\":null}", "refresh_token")).isNull();
+        assertThat(McpOAuthManager.extractJsonField("{\"extra\":{\"access_token\":\"nested\"}}", "access_token")).isNull();
+        assertThat(McpOAuthManager.extractJsonField("{\"access_token\":\"unterminated", "access_token")).isNull();
+        assertThat(McpOAuthManager.extractJsonField("{\"expires_in\":[3600]}", "expires_in")).isNull();
+    }
+
+    @Test
     void extractJsonField_extractsStringField() {
         String json = "{\"access_token\":\"tok123\",\"expires_in\":3600}";
         assertThat(McpOAuthManager.extractJsonField(json, "access_token")).isEqualTo("tok123");
