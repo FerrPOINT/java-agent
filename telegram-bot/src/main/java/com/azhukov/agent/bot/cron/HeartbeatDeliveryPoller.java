@@ -33,10 +33,14 @@ public class HeartbeatDeliveryPoller {
     private final BotProperties properties;
 
     /** Sessions we know have an active heartbeat — populated on /heartbeat set. */
-    private final Map<UUID, Long> watched = new ConcurrentHashMap<>();
+    private static final class Watch {
+        private final long chatId;
+        private Watch(long chatId) { this.chatId = chatId; }
+    }
+    private final Map<UUID, Watch> watched = new ConcurrentHashMap<>();
 
     public void watch(UUID sessionId, long chatId) {
-        watched.put(sessionId, chatId);
+        watched.put(sessionId, new Watch(chatId));
     }
 
     public void unwatch(UUID sessionId) {
@@ -48,7 +52,7 @@ public class HeartbeatDeliveryPoller {
         if (!properties.isCronDeliveryEnabled() || watched.isEmpty()) {
             return;
         }
-        for (Map.Entry<UUID, Long> e : watched.entrySet()) {
+        for (Map.Entry<UUID, Watch> e : watched.entrySet()) {
             try {
                 JsonNode r = backendClient.suggestionGet(
                     "/api/v1/agent/cron/heartbeat/" + e.getKey() + "/result");
@@ -56,17 +60,17 @@ public class HeartbeatDeliveryPoller {
                 if (!r.path("hasResult").asBoolean(false)) {
                     JsonNode st = backendClient.suggestionGet(
                         "/api/v1/agent/cron/heartbeat/" + e.getKey());
-                    if (st != null && st.path("set").isBoolean() && !st.path("set").asBoolean()) unwatch(e.getKey());
+                    if (st != null && st.path("set").isBoolean() && !st.path("set").asBoolean()) watched.remove(e.getKey(), e.getValue());
                     continue;
                 }
                 String text = r.path("result").asText("");
                 if (!text.isBlank()) {
-                    var sent = telegramClient.sendMessage(e.getValue(),
+                    var sent = telegramClient.sendMessage(e.getValue().chatId,
                         "♥ Heartbeat:\n\n" + truncate(text));
                     if (sent.isPresent()) {
                         // Delivery succeeded — ACK so the result is dropped server-side
                         log.info("HEARTBEAT_DELIVERED chatId={} sessionId={} msgId={} chars={}",
-                            e.getValue(), e.getKey(), sent.get(), text.length());
+                            e.getValue().chatId, e.getKey(), sent.get(), text.length());
                         log.info("HEARTBEAT_DELIVERY_TOTAL delivered={}", delivered.incrementAndGet());
                         if (backendClient.suggestionPost(
                             "/api/v1/agent/cron/heartbeat/" + e.getKey() + "/result/ack") == null) continue;
@@ -74,7 +78,7 @@ public class HeartbeatDeliveryPoller {
                         // Send failed — NACK; after 5 attempts the backend drops
                         // the poisoned result instead of retrying forever
                         log.warn("HEARTBEAT_DELIVERY_FAILED chatId={} sessionId={} — nacking for retry",
-                            e.getValue(), e.getKey());
+                            e.getValue().chatId, e.getKey());
                         log.warn("HEARTBEAT_DELIVERY_TOTAL failed={}", failed.incrementAndGet());
                         JsonNode nack = backendClient.suggestionPost(
                             "/api/v1/agent/cron/heartbeat/" + e.getKey() + "/result/nack");
@@ -94,7 +98,7 @@ public class HeartbeatDeliveryPoller {
                 JsonNode st = backendClient.suggestionGet(
                     "/api/v1/agent/cron/heartbeat/" + e.getKey());
                 if (st != null && st.path("set").isBoolean() && !st.path("set").asBoolean()) {
-                    unwatch(e.getKey());
+                    watched.remove(e.getKey(), e.getValue());
                 }
             } catch (Exception ex) {
                 log.debug("Heartbeat delivery poll failed for {}: {}", e.getKey(), ex.getMessage());
