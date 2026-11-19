@@ -276,6 +276,8 @@ public class SessionCompressionHelper {
         MessageEntity clone = new MessageEntity();
         clone.setRole(source.getRole());
         clone.setContent(source.getContent());
+        clone.setReasoning(source.getReasoning());
+        clone.setToolResponseItemId(source.getToolResponseItemId());
         clone.setToolCallId(source.getToolCallId());
         clone.setToolCallName(source.getToolCallName());
         clone.setToolCallArguments(source.getToolCallArguments());
