@@ -149,6 +149,21 @@ class HeartbeatDeliveryPollerTest {
     }
 
     @Test
+    void malformedAckDoesNotStopWatchingFinishedHeartbeat() {
+        UUID sid = UUID.randomUUID();
+        poller.watch(sid, 42L);
+        stubResult(sid, "final result");
+        stubStatus(sid, false);
+        when(telegram.sendMessage(eq(42L), anyString())).thenReturn(Optional.of(7L));
+        when(backend.suggestionPost(contains("/result/ack"))).thenReturn(mapper.createObjectNode());
+
+        poller.poll();
+        poller.poll();
+
+        verify(backend, times(2)).suggestionPost(contains("/result/ack"));
+    }
+
+    @Test
     void unavailableStatusDoesNotStopWatchingAfterDelivery() {
         UUID sid = UUID.randomUUID();
         poller.watch(sid, 42L);
