@@ -153,9 +153,9 @@ public class McpOAuthManager {
                 && (!refreshField.isTextual() || refreshField.asText().isBlank())) {
             throw new IOException("OAuth token refresh response has invalid refresh_token for " + serverName);
         }
-        String newAccessToken = extractJsonField(responseBody, "access_token");
-        String newRefreshToken = extractJsonField(responseBody, "refresh_token");
-        String expiresInStr = extractJsonField(responseBody, "expires_in");
+        String newAccessToken = extractJsonField(responseJson, "access_token");
+        String newRefreshToken = extractJsonField(responseJson, "refresh_token");
+        String expiresInStr = extractJsonField(responseJson, "expires_in");
 
         if (newAccessToken == null || newAccessToken.isBlank()) {
             throw new IOException("OAuth token refresh response missing access_token for " + serverName);
@@ -217,13 +217,16 @@ public class McpOAuthManager {
     public static String extractJsonField(String json, String fieldName) {
         if (json == null || fieldName == null) return null;
         try {
-            var root = JSON.readTree(json);
-            var value = root != null && root.isObject() ? root.get(fieldName) : null;
-            boolean tokenField = "access_token".equals(fieldName) || "refresh_token".equals(fieldName);
-            return value != null && (value.isTextual() || (!tokenField && value.isNumber())) ? value.asText() : null;
+            return extractJsonField(JSON.readTree(json), fieldName);
         } catch (java.io.IOException e) {
             return null;
         }
+    }
+
+    private static String extractJsonField(com.fasterxml.jackson.databind.JsonNode root, String fieldName) {
+        var value = root != null && root.isObject() ? root.get(fieldName) : null;
+        boolean tokenField = "access_token".equals(fieldName) || "refresh_token".equals(fieldName);
+        return value != null && (value.isTextual() || (!tokenField && value.isNumber())) ? value.asText() : null;
     }
 
     public static String sanitizeError(String text) {
