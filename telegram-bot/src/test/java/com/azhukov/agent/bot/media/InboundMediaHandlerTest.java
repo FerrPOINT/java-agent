@@ -25,7 +25,8 @@ class InboundMediaHandlerTest {
         backendClient = mock(com.azhukov.agent.bot.core.AgentBackendClient.class);
         attachmentApiClient = mock(com.azhukov.agent.bot.core.AttachmentApiClient.class);
         when(attachmentApiClient.register(any(), any(), any(), any(), any(), any(), any(), any()))
-            .thenReturn(Optional.empty());
+            .thenReturn(new com.azhukov.agent.bot.core.AttachmentApiClient.Registered(
+                    "att_0123456789abcdef0123456789abcdef", "a".repeat(64), false));
         when(stickerCache.get(any())).thenReturn(Optional.empty());
         handler = new InboundMediaHandler(mediaDownloader, stickerCache, backendClient, attachmentApiClient);
     }
@@ -136,19 +137,16 @@ class InboundMediaHandlerTest {
     }
 
     @Test
-    void handle_downloadFails_returnsDescriptionWithDownloadFailed() {
+    void handle_downloadFailureStopsAdmission() {
         UpdateEvent event = new UpdateEvent(107L, UpdateEvent.Type.PHOTO, 123L, 456L,
             "jdoe", null, null, "file-photo-fail", "photo",
             null, null, null, false, null, null);
         when(mediaDownloader.downloadToFileId("file-photo-fail"))
             .thenReturn(Optional.empty());
 
-        Optional<String> result = handler.handle(event);
-
-        assertThat(result).isPresent();
-        assertThat(result.get()).contains("[Photo:");
-        // Should indicate download failed
-        assertThat(result.get()).contains("download failed");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> handler.handle(event))
+            .isInstanceOf(com.azhukov.agent.bot.core.AttachmentApiClient.AdmissionFailure.class);
+        verify(attachmentApiClient, never()).register(any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -166,7 +164,7 @@ class InboundMediaHandlerTest {
     }
 
     @Test
-    void handle_photo_includesFilePathForVision() {
+    void handle_photoUsesConfirmedArtifactWithoutLocalPath() {
         UpdateEvent event = new UpdateEvent(109L, UpdateEvent.Type.PHOTO, 123L, 456L,
             "jdoe", null, "look at this", "file-photo-path", "photo",
             null, null, null, false, null, null);
@@ -176,12 +174,12 @@ class InboundMediaHandlerTest {
         Optional<String> result = handler.handle(event);
 
         assertThat(result).isPresent();
-        // B1: The description should include a file path for vision tools to analyze
-        assertThat(result.get()).contains(AgentMediaPaths.mediaDir().toString());
+        assertThat(result.get()).contains("(artifact=att_0123456789abcdef0123456789abcdef)");
+        assertThat(result.get()).doesNotContain(AgentMediaPaths.mediaDir().toString());
     }
 
     @Test
-    void handle_fileTooLarge_returnsDescriptionWithoutPath() {
+    void handle_fileTooLargeStopsAdmission() {
         UpdateEvent event = new UpdateEvent(110L, UpdateEvent.Type.DOCUMENT, 123L, 456L,
             "jdoe", null, null, "file-big", "document",
             null, null, null, false, null, null);
@@ -190,12 +188,25 @@ class InboundMediaHandlerTest {
         when(mediaDownloader.downloadToFileId("file-big"))
             .thenReturn(Optional.of(largeFile));
 
-        Optional<String> result = handler.handle(event);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> handler.handle(event))
+            .isInstanceOf(com.azhukov.agent.bot.core.AttachmentApiClient.AdmissionFailure.class);
+        verify(attachmentApiClient, never()).register(any(), any(), any(), any(), any(), any(), any(), any());
+    }
 
-        assertThat(result).isPresent();
-        assertThat(result.get()).contains("[Document:");
-        // Should NOT contain a file path (was not saved)
-        assertThat(result.get()).doesNotContain(AgentMediaPaths.mediaDir().toString());
+    @Test
+    void unknownUploadStopsInputAndRetainsDownloadedBytes() throws Exception {
+        UpdateEvent event = new UpdateEvent(107L, UpdateEvent.Type.PHOTO, 123L, 456L,
+            "jdoe", null, "caption", "upload-unknown", "photo", null, null, null, false, null, null);
+        byte[] bytes = "retained media".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        when(mediaDownloader.downloadToFileId("upload-unknown")).thenReturn(Optional.of(bytes));
+        when(attachmentApiClient.register(any(), any(), any(), any(), any(), any(), any(), any()))
+            .thenThrow(new com.azhukov.agent.bot.core.AttachmentApiClient.AdmissionFailure(true, "Unknown"));
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> handler.handle(event))
+            .isInstanceOf(com.azhukov.agent.bot.core.AttachmentApiClient.AdmissionFailure.class);
+        var retained = AgentMediaPaths.mediaDir().resolve("photo_upload-unknown.jpg");
+        try { assertThat(java.nio.file.Files.readAllBytes(retained)).isEqualTo(bytes); }
+        finally { java.nio.file.Files.deleteIfExists(retained); }
+        verify(attachmentApiClient).register(any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     // ─── Photo album: comma-separated file IDs ─────────────────────

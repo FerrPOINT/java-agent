@@ -30,24 +30,12 @@ class ApproveCommandTest {
         assertThat(result).isEqualTo("Approved all");
     }
 
-    @Test
-    void approveSession() {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"session", "always"})
+    void removedGrantScopesDoNotCallBackend(String scope) {
         AgentBackendClient client = mock(AgentBackendClient.class);
-        when(client.approve(false, "session")).thenReturn("Approved for session");
-        var cmd = new ApproveCommand(client);
-        UpdateEvent event = makeEvent("session");
-        String result = cmd.handle(event, null);
-        assertThat(result).isEqualTo("Approved for session");
-    }
-
-    @Test
-    void approveAlways() {
-        AgentBackendClient client = mock(AgentBackendClient.class);
-        when(client.approve(false, "always")).thenReturn("Approved always");
-        var cmd = new ApproveCommand(client);
-        UpdateEvent event = makeEvent("always");
-        String result = cmd.handle(event, null);
-        assertThat(result).isEqualTo("Approved always");
+        assertThat(new ApproveCommand(client).handle(makeEvent(scope), null)).contains("single-use");
+        verifyNoInteractions(client);
     }
 
     @Test

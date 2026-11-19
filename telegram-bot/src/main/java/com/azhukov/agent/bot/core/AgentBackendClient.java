@@ -450,20 +450,12 @@ public class AgentBackendClient {
     // Approvals (ApprovalApiClient)
     // ------------------------------------------------------------------
 
-    public String approve(boolean all, String scope) {
-        return approvals.approve(all, scope);
+    public String approve(boolean all, String requestId) {
+        return approvals.approve(all, requestId);
     }
 
     public String deny(boolean all) {
         return approvals.deny(all);
-    }
-
-    public String resolveApproval(String sessionKey, String choice) {
-        return approvals.resolveApproval(sessionKey, choice);
-    }
-
-    public String resolveSlashConfirm(String sessionKey, String confirmId, String choice) {
-        return approvals.resolveSlashConfirm(sessionKey, confirmId, choice);
     }
 
     // ------------------------------------------------------------------
