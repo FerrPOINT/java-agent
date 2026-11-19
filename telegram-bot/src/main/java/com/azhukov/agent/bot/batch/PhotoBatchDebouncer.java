@@ -22,8 +22,8 @@ public class PhotoBatchDebouncer {
         t.setDaemon(true);
         return t;
     });
-    private final Map<String, PhotoGroup> groups = new ConcurrentHashMap<>();
-    private final Map<String, ScheduledFuture<?>> timers = new ConcurrentHashMap<>();
+    private record GroupKey(long chatId, long userId, long threadId, String mediaGroupId) {}
+    private final Map<GroupKey, PhotoGroup> groups = new ConcurrentHashMap<>();
     private final List<java.util.function.Consumer<UpdateEvent>> dispatchers = new CopyOnWriteArrayList<>();
 
     /**
@@ -40,20 +40,15 @@ public class PhotoBatchDebouncer {
             return false; // Single photo, process immediately
         }
 
-        PhotoGroup group = groups.computeIfAbsent(mediaGroupId, k -> new PhotoGroup());
-        synchronized (group) {
-            group.add(event);
-        }
-
-        // Reset debounce timer
-        ScheduledFuture<?> existing = timers.remove(mediaGroupId);
-        if (existing != null) {
-            existing.cancel(false);
-        }
-
-        ScheduledFuture<?> future = scheduler.schedule(
-            () -> dispatch(mediaGroupId), DEBOUNCE_MS, TimeUnit.MILLISECONDS);
-        timers.put(mediaGroupId, future);
+        var key = new GroupKey(event.chatId(), event.userId(), event.messageThreadId(), mediaGroupId);
+        groups.compute(key, (ignored, existing) -> {
+            PhotoGroup group = existing == null ? new PhotoGroup() : existing;
+            group.events.add(event);
+            if (group.timer != null) group.timer.cancel(false);
+            Object ticket = group.ticket = new Object();
+            group.timer = scheduler.schedule(() -> dispatch(key, ticket), DEBOUNCE_MS, TimeUnit.MILLISECONDS);
+            return group;
+        });
 
         return true;
     }
@@ -65,9 +60,17 @@ public class PhotoBatchDebouncer {
         dispatchers.add(dispatcher);
     }
 
-    private void dispatch(String mediaGroupId) {
-        PhotoGroup group = groups.remove(mediaGroupId);
-        timers.remove(mediaGroupId);
+    private void dispatch(GroupKey key, Object ticket) {
+        var claimed = new java.util.concurrent.atomic.AtomicReference<PhotoGroup>();
+        groups.computeIfPresent(key, (ignored, group) -> {
+            if (group.ticket != ticket) return group;
+            claimed.set(group);
+            return null;
+        });
+        deliver(key, claimed.get());
+    }
+
+    private void deliver(GroupKey key, PhotoGroup group) {
         if (group == null || group.events.isEmpty()) return;
 
         UpdateEvent first = group.events.getFirst();
@@ -98,7 +101,7 @@ public class PhotoBatchDebouncer {
             first.messageThreadId(), first.forwardedFrom()
         );
 
-        log.debug("Dispatching photo group {}: {} photos", mediaGroupId, group.events.size());
+        log.debug("Dispatching photo group {}: {} photos", key.mediaGroupId(), group.events.size());
         for (var d : dispatchers) {
             d.accept(merged);
         }
@@ -106,22 +109,26 @@ public class PhotoBatchDebouncer {
 
     /** Flush all pending groups immediately (for shutdown or testing). */
     public void flushAll() {
-        for (String groupId : new ArrayList<>(groups.keySet())) {
-            ScheduledFuture<?> f = timers.remove(groupId);
-            if (f != null) f.cancel(false);
-            dispatch(groupId);
+        for (GroupKey key : new ArrayList<>(groups.keySet())) {
+            var claimed = new java.util.concurrent.atomic.AtomicReference<PhotoGroup>();
+            groups.computeIfPresent(key, (ignored, group) -> {
+                if (group.timer != null) group.timer.cancel(false);
+                claimed.set(group);
+                return null;
+            });
+            deliver(key, claimed.get());
         }
     }
 
     /** Test helper: check if a group has pending photos. */
     boolean hasPending(String mediaGroupId) {
-        return groups.containsKey(mediaGroupId);
+        return groups.keySet().stream().anyMatch(key -> key.mediaGroupId().equals(mediaGroupId));
     }
 
     /** Test helper: get number of pending photos in a group. */
     int pendingCount(String mediaGroupId) {
-        PhotoGroup group = groups.get(mediaGroupId);
-        return group != null ? group.events.size() : 0;
+        return groups.entrySet().stream().filter(entry -> entry.getKey().mediaGroupId().equals(mediaGroupId))
+            .mapToInt(entry -> entry.getValue().events.size()).sum();
     }
 
     static String mergeCaption(String existingText, String newText) {
@@ -146,9 +153,7 @@ public class PhotoBatchDebouncer {
     /** Tracks buffered album updates and the scheduled flush for one Telegram media group. */
     private static class PhotoGroup {
         final List<UpdateEvent> events = new CopyOnWriteArrayList<>();
-
-        void add(UpdateEvent event) {
-            events.add(event);
-        }
+        ScheduledFuture<?> timer;
+        Object ticket;
     }
 }

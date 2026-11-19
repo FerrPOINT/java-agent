@@ -87,6 +87,29 @@ class PhotoBatchDebouncerTest {
     }
 
     @Test
+    void sameGroupIdAcrossChatsDoesNotMerge() {
+        var dispatched = new java.util.ArrayList<UpdateEvent>();
+        debouncer.onDispatch(dispatched::add);
+        debouncer.offer(makePhotoEvent(1, 100, "file1", "same-id", "one"));
+        debouncer.offer(makePhotoEvent(2, 101, "file2", "same-id", "two"));
+        debouncer.flushAll();
+        assertThat(dispatched).hasSize(2);
+        assertThat(dispatched).extracting(UpdateEvent::fileId).containsExactlyInAnyOrder("file1", "file2");
+    }
+
+    @Test
+    void flushClaimsEachAlbumExactlyOnce() {
+        var dispatched = new java.util.ArrayList<UpdateEvent>();
+        debouncer.onDispatch(dispatched::add);
+        debouncer.offer(makePhotoEvent(1, 100, "file1", "group1", "one"));
+        debouncer.offer(makePhotoEvent(2, 100, "file2", "group1", "two"));
+        debouncer.flushAll();
+        debouncer.flushAll();
+        assertThat(dispatched).hasSize(1);
+        assertThat(dispatched.getFirst().fileId()).isEqualTo("file1,file2");
+    }
+
+    @Test
     void mergeCaptionDeduplicatesExactTrimmedRepeatsLikeHermes() {
         assertThat(PhotoBatchDebouncer.mergeCaption("Revenue", "Revenue  "))
             .isEqualTo("Revenue");
