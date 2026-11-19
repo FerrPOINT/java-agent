@@ -83,6 +83,22 @@ class DefaultContextEngineReplayDedupTest {
     }
 
     @Test
+    void identicalTextWithDifferentImageCountsDoesNotDropEarlierMessage() {
+        when(lineage.loadMessagesWithAncestors(any(UUID.class))).thenReturn(List.of(Message.userWithImages("photo", 2)));
+        var out = engine.prepareContext(session, List.of(Message.system("sys"), Message.userWithImages("photo", 1)));
+        assertThat(out.stream().filter(m -> m.role() == Role.USER).findFirst().orElseThrow().imageCount())
+            .isEqualTo(3);
+    }
+
+    @Test
+    void repeatedPersistedImageMessageIsDeduplicated() {
+        when(lineage.loadMessagesWithAncestors(any(UUID.class))).thenReturn(List.of(Message.userWithImages("photo", 2)));
+        var out = engine.prepareContext(session, List.of(Message.system("sys"), Message.userWithImages("photo", 2)));
+        assertThat(out.stream().filter(m -> m.role() == Role.USER).findFirst().orElseThrow().imageCount())
+            .isEqualTo(2);
+    }
+
+    @Test
     void persistedSystemRowsNeverLoadAsHistory() {
         MessageEntity systemRow = new MessageEntity();
         systemRow.setRole("system");

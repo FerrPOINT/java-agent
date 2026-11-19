@@ -226,7 +226,8 @@ public class DefaultContextEngine implements ContextEngine {
  // 'orphan' — 13 -> 12 messages — corrupting the replayed context).
  while (!context.isEmpty()
      && context.get(context.size() - 1).role() == Role.USER
-     && java.util.Objects.equals(context.get(context.size() - 1).content(), firstIncoming.content())) {
+     && java.util.Objects.equals(context.get(context.size() - 1).content(), firstIncoming.content())
+      && java.util.Objects.equals(context.get(context.size() - 1).imageCount(), firstIncoming.imageCount())) {
  context.remove(context.size() - 1);
  }
  }
