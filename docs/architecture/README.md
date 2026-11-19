@@ -1,18 +1,5 @@
 # Architecture Documentation
 
-## Главный архитектурный закон
-
-Обязательное решение владельца от 2026-11-16:
-[одна актуальная модель Base](https://github.com/FerrPOINT/services-base/blob/a25aefd6381088aef3f1d7b2f30b8e4aa2fc5e0f/docs/REPO_STANDARDS.md#current-contract-and-modes).
-У правила один владелец; замена контракта включает миграцию данных, обновление
-всех consumers и удаление старого пути, включая read-only readers/verifiers.
-Соседние версии, compatibility-слои и fallback на старое запрещены. Сохранность
-бизнес-данных и аудита обеспечивается актуальной моделью по этому закону.
-Описанные ниже прежние переходные механизмы — состояние реализации, которое
-подлежит проверке; они не дают исключения из главного закона.
-
-Открытый архитектурный долг и порядок устранения: [аудит Base](https://github.com/FerrPOINT/services-base/blob/4ac9fcebcb215ce5c7073d197c752a60e66e8cda/docs/plans/single-current-model-audit-20261116.md).
-
 > Java Agent — Spring Boot 4.1 + Java 25 + LangChain4j + MCP + Telegram Bot
 
 This directory contains the architecture documentation for the Java Agent project.
