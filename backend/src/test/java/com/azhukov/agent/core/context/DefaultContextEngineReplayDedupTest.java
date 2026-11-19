@@ -91,9 +91,10 @@ class DefaultContextEngineReplayDedupTest {
     }
 
     @Test
-    void repeatedPersistedImageMessageIsDeduplicated() {
-        when(lineage.loadMessagesWithAncestors(any(UUID.class))).thenReturn(List.of(Message.userWithImages("photo", 2)));
-        var out = engine.prepareContext(session, List.of(Message.system("sys"), Message.userWithImages("photo", 2)));
+    void equalRedactedImagePlaceholdersDoNotProveDuplicate() {
+        String redacted = "[image_url: data:image/png;base64,<redacted>]";
+        when(lineage.loadMessagesWithAncestors(any(UUID.class))).thenReturn(List.of(Message.userWithImages(redacted, 1)));
+        var out = engine.prepareContext(session, List.of(Message.system("sys"), Message.userWithImages(redacted, 1)));
         assertThat(out.stream().filter(m -> m.role() == Role.USER).findFirst().orElseThrow().imageCount())
             .isEqualTo(2);
     }

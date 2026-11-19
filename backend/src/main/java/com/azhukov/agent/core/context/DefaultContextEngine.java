@@ -214,7 +214,7 @@ public class DefaultContextEngine implements ContextEngine {
  || messages.get(0).role() == Role.DEVELOPER)) ? 1 : 0;
  if (from < messages.size()) {
  Message firstIncoming = messages.get(from);
- if (firstIncoming.role() == Role.USER) {
+ if (firstIncoming.role() == Role.USER && firstIncoming.imageCount() == 0) {
  // Hermes parity (_persist_session cursor semantics): drop ALL trailing
  // history USER rows equal to the incoming message. Mid-turn persistence
  // writes the user message before the first model call, and a mid-turn
