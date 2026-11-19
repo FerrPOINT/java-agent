@@ -119,7 +119,7 @@ public class McpOAuthManager {
             .timeout(Duration.ofSeconds(30))
             .build();
 
-        log.info("Refreshing OAuth token for MCP server {} from {}", serverName, tokenUrl);
+        log.info("Refreshing OAuth token for MCP server {}", serverName);
 
         HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
