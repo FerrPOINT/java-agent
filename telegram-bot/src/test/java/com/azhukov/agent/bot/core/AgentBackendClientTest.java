@@ -1,5 +1,6 @@
 package com.azhukov.agent.bot.core;
 
+import com.azhukov.agent.shared.dto.ToolApprovalDecision;
 import com.azhukov.agent.bot.config.BotProperties;
 import com.azhukov.agent.bot.session.BotSessionEntity;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -1379,40 +1380,37 @@ class AgentBackendClientTest {
     @Test
     void approve_success_returnsResponseBody() {
         when(responseSpec.body(String.class)).thenReturn("Approved 3 items");
-        assertThat(client.approve(true, null)).isEqualTo("Approved 3 items");
+        assertThat(client.decideApproval(new ToolApprovalDecision(ToolApprovalDecision.Action.APPROVE, true, null, null))).isEqualTo("Approved 3 items");
     }
 
     @Test
     void approve_withRequestId_sendsOnlyTheCurrentContract() {
-        String requestId = "09f71f58-118f-467d-a118-b3de808a1c11";
+        var decision = new ToolApprovalDecision(ToolApprovalDecision.Action.APPROVE, false,
+            java.util.UUID.fromString("09f71f58-118f-467d-a118-b3de808a1c11"), null);
         when(responseSpec.body(String.class)).thenReturn("Approved");
 
-        assertThat(client.approve(false, requestId)).isEqualTo("Approved");
+        assertThat(client.decideApproval(decision)).isEqualTo("Approved");
 
-        verify(postSpec).body(argThat((Object body) -> {
-            if (!(body instanceof java.util.Map<?, ?> map)) return false;
-            return map.size() == 2
-                    && Boolean.FALSE.equals(map.get("all"))
-                    && requestId.equals(map.get("requestId"));
-        }));
+        verify(postSpec).uri("/api/v1" + ToolApprovalDecision.PATH);
+        verify(postSpec).body(decision);
     }
 
     @Test
     void approve_exception_returnsErrorMessage() {
         when(responseSpec.body(String.class)).thenThrow(new RuntimeException("fail"));
-        assertThat(client.approve(true, null)).startsWith("Error:");
+        assertThat(client.decideApproval(new ToolApprovalDecision(ToolApprovalDecision.Action.APPROVE, true, null, null))).startsWith("Error:");
     }
 
     @Test
     void deny_success_returnsResponseBody() {
         when(responseSpec.body(String.class)).thenReturn("Denied");
-        assertThat(client.deny(true)).isEqualTo("Denied");
+        assertThat(client.decideApproval(new ToolApprovalDecision(ToolApprovalDecision.Action.DENY, true, null, null))).isEqualTo("Denied");
     }
 
     @Test
     void deny_exception_returnsErrorMessage() {
         when(responseSpec.body(String.class)).thenThrow(new RuntimeException("fail"));
-        assertThat(client.deny(false)).startsWith("Error:");
+        assertThat(client.decideApproval(new ToolApprovalDecision(ToolApprovalDecision.Action.DENY, false, null, null))).startsWith("Error:");
     }
 
     // ═══════════════════════════════════════════════════════════════
