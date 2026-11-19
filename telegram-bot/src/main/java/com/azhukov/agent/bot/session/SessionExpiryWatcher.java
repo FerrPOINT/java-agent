@@ -104,7 +104,13 @@ public class SessionExpiryWatcher {
                         session.getId(), busyEx.getMessage());
                     continue;
                 }
-                String reason = resetPolicy.shouldReset(session.getCreatedAt(), session.getUpdatedAt(), now);
+                String reason;
+                try {
+                    reason = resetPolicy.shouldReset(session.getCreatedAt(), session.getUpdatedAt(), now);
+                } catch (Exception e) {
+                    log.warn("Could not evaluate expiry for session {}; keeping it active", session.getId());
+                    continue;
+                }
                 if (reason != null) {
                     log.info("Finalizing expired session {} (reason={}, userId={})",
                         session.getId(), reason, session.getUserId());

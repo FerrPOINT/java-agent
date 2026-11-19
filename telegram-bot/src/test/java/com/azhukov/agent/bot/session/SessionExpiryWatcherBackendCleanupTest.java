@@ -80,6 +80,27 @@ class SessionExpiryWatcherBackendCleanupTest {
     }
 
     @Test
+    void malformedSessionDoesNotPreventOtherExpiryOrPendingCleanup() {
+        var malformed = new BotSessionEntity();
+        malformed.setId(UUID.randomUUID());
+        malformed.setUserId("malformed");
+        var expired = new BotSessionEntity();
+        expired.setId(UUID.randomUUID());
+        expired.setUserId("valid");
+        expired.setCreatedAt(Instant.now().minusSeconds(3600));
+        expired.setUpdatedAt(Instant.now().minusSeconds(3600));
+        var pending = new BotSessionEntity();
+        pending.setId(UUID.randomUUID());
+        when(sessionStore.listActiveSessions()).thenReturn(List.of(malformed, expired));
+        when(sessionStore.pendingCleanups()).thenReturn(List.of(pending));
+
+        watcher.checkExpiredSessions();
+
+        verify(sessionStore).finalizeWithCleanupPending(expired.getId(), expired.getUpdatedAt());
+        verify(sessionStore).retryCleanup(eq(pending.getId()), any());
+    }
+
+    @Test
     void failedActiveLookupDoesNotPreventPendingCleanup() {
         var pending = new BotSessionEntity();
         pending.setId(UUID.randomUUID());
