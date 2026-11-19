@@ -165,8 +165,17 @@ public class HeartbeatService {
                 UUID sid = java.util.UUID.fromString(String.valueOf(row.get("session_id")));
                 String raw = String.valueOf(row.get("state_value"));
                 if (raw == null || raw.isBlank()) continue;
-                String[] parts = raw.split(Pattern.quote(SEP), -1);
-                if (parts.length < 5) continue;
+                String[] parts = new String[5];
+                int end = raw.length();
+                boolean valid = true;
+                for (int i = 4; i > 0; i--) {
+                    int separator = raw.lastIndexOf(SEP, end - 1);
+                    if (separator < 0) { valid = false; break; }
+                    parts[i] = raw.substring(separator + SEP.length(), end);
+                    end = separator;
+                }
+                if (!valid) continue;
+                parts[0] = raw.substring(0, end);
                 try {
                     HeartbeatState st = new HeartbeatState(parts[0],
                         Integer.parseInt(parts[1]), parts[2], Instant.now(), null,
