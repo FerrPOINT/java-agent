@@ -56,8 +56,8 @@ public class TextBatchDebouncer {
         var key = new BatchKey(event.chatId(), event.userId(), event.messageThreadId());
 
         buffers.compute(key, (ignored, existing) -> {
-            BatchEntry entry = existing == null ? new BatchEntry(event) : existing;
-            entry.add(event.text());
+            BatchEntry entry = existing == null ? new BatchEntry() : existing;
+            entry.add(event);
             if (entry.timer != null) entry.timer.cancel(false);
             Object ticket = entry.ticket = new Object();
             entry.timer = scheduler.schedule(() -> dispatch(key, ticket),
@@ -171,32 +171,28 @@ public class TextBatchDebouncer {
 
     /** Keeps pending text updates and their flush timer together for a single chat. */
     private static class BatchEntry {
-        private final List<String> texts = new java.util.ArrayList<>();
-        private final UpdateEvent firstEvent;
+        private final List<UpdateEvent> events = new java.util.ArrayList<>();
         private ScheduledFuture<?> timer;
         private Object ticket;
 
-        BatchEntry(UpdateEvent firstEvent) {
-            this.firstEvent = firstEvent;
-        }
-
-        void add(String text) {
-            texts.add(text);
+        void add(UpdateEvent event) {
+            events.add(event);
         }
 
         UpdateEvent firstEvent() {
-            return firstEvent;
+            return events.stream().min(java.util.Comparator.comparingLong(UpdateEvent::updateId)).orElse(null);
         }
 
         int totalLength() {
-            return texts.stream().mapToInt(String::length).sum();
+            return events.stream().map(UpdateEvent::text).mapToInt(String::length).sum();
         }
 
         String mergedText() {
             // Adaptive join: space for short messages, newline for long
-            boolean allShort = texts.stream().allMatch(t -> t.length() <= 320);
+            boolean allShort = events.stream().map(UpdateEvent::text).allMatch(t -> t.length() <= 320);
             String separator = allShort ? " " : "\n";
-            return String.join(separator, texts);
+            return events.stream().sorted(java.util.Comparator.comparingLong(UpdateEvent::updateId))
+                .map(UpdateEvent::text).collect(java.util.stream.Collectors.joining(separator));
         }
     }
 }

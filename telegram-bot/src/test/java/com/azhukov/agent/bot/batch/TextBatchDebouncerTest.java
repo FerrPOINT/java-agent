@@ -71,6 +71,20 @@ class TextBatchDebouncerTest {
     }
 
     @Test
+    void textBatchKeepsTelegramUpdateOrder() {
+        properties.getTextBatch().setFastDelayMs(10_000);
+        var dispatched = new java.util.ArrayList<UpdateEvent>();
+        debouncer.onDispatch(dispatched::add);
+        debouncer.offer(textEvent(3, 100, "third"));
+        debouncer.offer(textEvent(1, 100, "first"));
+        debouncer.offer(textEvent(2, 100, "second"));
+        debouncer.flushAll();
+        assertThat(dispatched).hasSize(1);
+        assertThat(dispatched.getFirst().text()).isEqualTo("first second third");
+        assertThat(dispatched.getFirst().updateId()).isEqualTo(1);
+    }
+
+    @Test
     void shortMessagesJoinedWithSpace() {
         long chatId = 100L;
         debouncer.offer(textEvent(1, chatId, "what is"));
