@@ -132,14 +132,30 @@ class LoopCommandTest {
     }
 
     @Test
-    void stop_clearsHeartbeatAndUnwatchesPoller() throws Exception {
+    void stopClearsHeartbeatButRetainsWatchForPendingResult() throws Exception {
         UUID sid = UUID.randomUUID();
         when(client.suggestionPost("/api/v1/agent/cron/heartbeat/" + sid + "/clear"))
             .thenReturn(json("{\"ok\":true,\"message\":\"cleared\"}"));
 
         String out = cmd.handle(event("stop"), sessionWithBackend(sid));
         assertThat(out).contains("cleared");
-        verify(poller).unwatch(sid);
+        org.mockito.Mockito.verifyNoInteractions(poller);
+    }
+
+    @Test
+    void failedStopRetainsDeliveryWatch() throws Exception {
+        UUID sid = UUID.randomUUID();
+        when(client.suggestionPost(anyString())).thenReturn(null);
+        assertThat(cmd.handle(event("stop"), sessionWithBackend(sid))).contains("No loop set");
+        org.mockito.Mockito.verifyNoInteractions(poller);
+    }
+
+    @Test
+    void resumeRestoresDeliveryWatch() throws Exception {
+        UUID sid = UUID.randomUUID();
+        when(client.suggestionPost(anyString())).thenReturn(json("{\"ok\":true}"));
+        cmd.handle(event("resume"), sessionWithBackend(sid));
+        verify(poller).watch(sid, 42L);
     }
 
     @Test
