@@ -86,7 +86,6 @@ class DefaultAgentRuntimeSharedExecutorTest {
         when(iterationBudget.recordToolExecution(any(), any(String.class), any(long.class))).thenReturn(snapshot);
         when(turnStateManager.getOrStart(any(UUID.class), any(int.class)))
             .thenReturn(mock(com.azhukov.agent.core.state.TurnState.class));
-        when(guardrail.isHalted()).thenReturn(false);
         // c2: canonical batch executor applies the aggregate tool-result budget.
         when(toolExecutionService.enforceToolResultBudget(any()))
             .thenAnswer(inv -> inv.getArgument(0));

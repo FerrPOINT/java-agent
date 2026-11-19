@@ -40,8 +40,8 @@ class DeployDevDockerTest(unittest.TestCase):
             pwsh.chmod(0o755)
             environment = os.environ | {
                 "PATH": str(bindir) + os.pathsep + os.environ["PATH"],
-                "SDLC_WORKSPACE_DIR": workspace.as_posix(), "SDLC_PROJECT": project,
-                "SDLC_PYTHON": Path(sys.executable).as_posix(), "DEPLOY_CALLS": calls.as_posix(),
+                "PDLC_WORKSPACE_DIR": workspace.as_posix(), "PDLC_PROJECT": project,
+                "PDLC_PYTHON": Path(sys.executable).as_posix(), "DEPLOY_CALLS": calls.as_posix(),
                 "MSYS2_ARG_CONV_EXCL": "*",
             }
             for key in missing:
@@ -84,7 +84,7 @@ class DeployDevDockerTest(unittest.TestCase):
         self.assertEqual([], calls)
 
     def test_requires_explicit_selection_before_any_command(self):
-        for key in ("SDLC_WORKSPACE_DIR", "SDLC_PROJECT"):
+        for key in ("PDLC_WORKSPACE_DIR", "PDLC_PROJECT"):
             with self.subTest(key=key):
                 completed, calls, _ = self.run_launcher(missing=(key,))
                 self.assertNotEqual(0, completed.returncode)

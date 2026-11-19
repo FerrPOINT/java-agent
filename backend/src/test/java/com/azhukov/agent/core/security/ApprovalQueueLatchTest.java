@@ -17,13 +17,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ApprovalQueueLatchTest {
 
     @Test
-    void awaitDecisionReturnsImmediatelyWhenAlreadyDecided() {
+    void removedRequestCannotBecomeConsent() {
         ApprovalQueue queue = new ApprovalQueue();
         UUID sessionId = UUID.randomUUID();
 
-        // No pending approval → should return true immediately
-        boolean result = queue.awaitDecision(sessionId, 1000);
-        assertThat(result).isTrue();
+        var request = queue.request(sessionId, new com.azhukov.agent.core.model.ToolCall("id", "tool", "{}"), "test");
+        queue.clear(sessionId);
+        assertThat(queue.awaitDecision(request, 1000)).isFalse();
+        assertThat(queue.consumeDecision(request)).isNull();
     }
 
     @Test
@@ -33,7 +34,7 @@ class ApprovalQueueLatchTest {
         com.azhukov.agent.core.model.ToolCall call =
             new com.azhukov.agent.core.model.ToolCall("1", "terminal", "{}");
 
-        queue.request(sessionId, call, "test");
+        var request = queue.request(sessionId, call, "test");
 
         AtomicBoolean decided = new AtomicBoolean(false);
         CountDownLatch started = new CountDownLatch(1);
@@ -43,7 +44,7 @@ class ApprovalQueueLatchTest {
 
         Thread waiter = new Thread(() -> {
             started.countDown();
-            boolean result = queue.awaitDecision(sessionId, 5000);
+            boolean result = queue.awaitDecision(request, 5000);
             decided.set(result);
             decisionDone.countDown();
         });
@@ -55,7 +56,7 @@ class ApprovalQueueLatchTest {
         // The waiter's awaitDecision will block on the internal CountDownLatch
         // until approve() signals it. We verify via decisionDone that it
         // was released promptly (not by timeout).
-        queue.approve(sessionId, "approve", "ok");
+        queue.approve(request.requestId(), "ok");
 
         decisionDone.await(2, TimeUnit.SECONDS);
 
@@ -70,7 +71,7 @@ class ApprovalQueueLatchTest {
         com.azhukov.agent.core.model.ToolCall call =
             new com.azhukov.agent.core.model.ToolCall("1", "terminal", "{}");
 
-        queue.request(sessionId, call, "test");
+        var request = queue.request(sessionId, call, "test");
 
         AtomicBoolean decided = new AtomicBoolean(false);
         CountDownLatch started = new CountDownLatch(1);
@@ -78,7 +79,7 @@ class ApprovalQueueLatchTest {
 
         Thread waiter = new Thread(() -> {
             started.countDown();
-            boolean result = queue.awaitDecision(sessionId, 5000);
+            boolean result = queue.awaitDecision(request, 5000);
             decided.set(result);
             decisionDone.countDown();
         });
@@ -86,7 +87,7 @@ class ApprovalQueueLatchTest {
         waiter.start();
         started.await();
 
-        queue.deny(sessionId, "no");
+        queue.deny(request.requestId(), "no");
 
         decisionDone.await(2, TimeUnit.SECONDS);
 
@@ -103,10 +104,10 @@ class ApprovalQueueLatchTest {
             new com.azhukov.agent.core.model.ToolCall("1", "terminal", "{}");
 
         // Request with a very long timeout so it won't auto-deny during the test
-        queue.request(sessionId, call, "test", java.time.Duration.ofMinutes(10));
+        var request = queue.request(sessionId, call, "test", java.time.Duration.ofMinutes(10));
 
         long start = System.currentTimeMillis();
-        boolean result = queue.awaitDecision(sessionId, 200); // 200ms timeout
+        boolean result = queue.awaitDecision(request, 200); // 200ms timeout
         long elapsed = System.currentTimeMillis() - start;
 
         // Should return false (timeout) after ~200ms, not 5 minutes
@@ -122,7 +123,7 @@ class ApprovalQueueLatchTest {
         com.azhukov.agent.core.model.ToolCall call =
             new com.azhukov.agent.core.model.ToolCall("1", "terminal", "{}");
 
-        queue.request(sessionId, call, "test");
+        var request = queue.request(sessionId, call, "test");
 
         AtomicBoolean decided = new AtomicBoolean(false);
         CountDownLatch started = new CountDownLatch(1);
@@ -130,7 +131,7 @@ class ApprovalQueueLatchTest {
 
         Thread waiter = new Thread(() -> {
             started.countDown();
-            boolean result = queue.awaitDecision(sessionId, 5000);
+            boolean result = queue.awaitDecision(request, 5000);
             decided.set(result);
             decisionDone.countDown();
         });
@@ -153,7 +154,7 @@ class ApprovalQueueLatchTest {
         com.azhukov.agent.core.model.ToolCall call =
             new com.azhukov.agent.core.model.ToolCall("1", "terminal", "{}");
 
-        queue.request(sessionId, call, "test", java.time.Duration.ofMinutes(10));
+        var request = queue.request(sessionId, call, "test", java.time.Duration.ofMinutes(10));
 
         AtomicBoolean decided = new AtomicBoolean(false);
         CountDownLatch started = new CountDownLatch(1);
@@ -161,7 +162,7 @@ class ApprovalQueueLatchTest {
 
         Thread waiter = new Thread(() -> {
             started.countDown();
-            boolean result = queue.awaitDecision(sessionId, 30000);
+            boolean result = queue.awaitDecision(request, 30000);
             decided.set(result);
             decisionDone.countDown();
         });

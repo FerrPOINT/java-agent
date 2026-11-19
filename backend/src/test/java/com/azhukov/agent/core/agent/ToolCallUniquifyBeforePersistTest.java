@@ -102,7 +102,6 @@ class ToolCallUniquifyBeforePersistTest {
         when(turnStateManager.getOrStart(any(UUID.class), any(int.class)))
             .thenReturn(mock(com.azhukov.agent.core.state.TurnState.class));
         ToolCallGuardrail guardrail = mock(ToolCallGuardrail.class);
-        when(guardrail.isHalted()).thenReturn(false);
 
         var contextReferenceService = mock(com.azhukov.agent.core.context.ContextReferenceService.class);
         when(contextReferenceService.resolve(any())).thenReturn(List.of());

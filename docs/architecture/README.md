@@ -66,3 +66,56 @@ All diagrams use **Mermaid** syntax (renders inline in GitLab/GitHub).
 4. Check [Component Diagram](component-diagram.md) for module dependencies.
 5. Use [ERD](erd.md) for the data model.
 6. Browse [Design Patterns](design-patterns.md) for implementation conventions.
+
+## Единый README verifier
+
+Base `scripts/verify_readme.py --root .` исполняет универсальные проверки;
+продукт хранит только `readme-requirements.json`. Forge docs aggregator вызывает
+тот же CLI. Контракт и negative tests принадлежат Base; SDK adoption и actual
+docs gate проверяются отдельно от исходных изменений и UI pin.
+
+## Актуальные compression и attachment contracts
+
+Компрессия принимает `focusTopic` и `keepLastN`; прежнее поле `focus`
+отклоняется. CLI и бот отправляют `focusTopic`. Общие статические функции
+исполнителя принадлежат `TurnExecutorUtils`; методов-переадресаций в
+`TurnExecutor` нет. Skills bundles читаются через `/api/v1/agent/bundles`.
+OAuth lookup всегда включает профиль.
+
+Скачанное Telegram-вложение сохраняется локально и регистрируется через
+`POST /api/v1/attachments` до запуска чата. ID, content hash и duplicate
+подтверждаются ответом владельца. Локальный путь не является альтернативным
+входом: отказ или неизвестный результат регистрации останавливают отправку
+агенту. При Unknown файл остаётся для сверки, автоматического повтора upload
+нет. Текст старых сообщений сохраняется как исходный аудит; фиктивные artifact
+IDs при миграции не создаются. Данные, доступные только по прежнему пути,
+требуют реальной регистрации байтов перед новым использованием.
+
+## Единый Cron API
+
+Актуальный [Cron API](../cron-api.md) принадлежит `CronJobController`;
+`CronJobService` сохраняет правила конфигурации, профильный доступ и ownership.
+Два прежних compatibility controllers удалены. Текущий API поддерживает
+script/noAgent, model settings, monitor/continuity и attachment session без
+второго CRUD API и route aliases. Source и regression cases подготовлены;
+compiled API/CLI/bot qualification учитывается отдельно.
+
+## Владельцы approval и execution guardrails
+
+`ToolApprovalPolicy` отвечает за MCP admission и запросы существующей
+`ApprovalQueue`. Execution rules принадлежат одному `ToolCallGuardrail`:
+повторные одинаковые failures, advisory no-progress, per-turn quotas и
+ссылки на byte-identical результаты. Повторные успешные reads не блокируются.
+Все counters принадлежат UUID сессии; reset нового turn и cleanup затрагивают
+только её. Запуск без session scope является ошибкой, global bucket отсутствует.
+
+`AgentSecurityConfig` создаёт по одному policy/guardrail bean; удалённые
+`ToolGuardrails` и `ToolLoopGuardrail` не являются альтернативными режимами.
+Sync и streaming используют один текущий before/after contract. Tool result
+reference меняет только context copy после реального вызова, не выполняет retry.
+
+Решение approval связано с исходным request ID и атомарно потребляется один раз.
+Session ID не выбирает решение. Неиспользуемые `ApprovalGate` и
+`CommandApprovalManager`, фиктивные session/always grants и EA/SC callbacks
+удалены; реальный runtime не имел consumer их allowlist или producer prompts.
+API и CLI используют [текущий контракт](../tool-approval.md).

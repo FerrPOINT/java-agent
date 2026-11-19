@@ -308,7 +308,7 @@ Docker images используют `eclipse-temurin:25-jre-noble`; slim-обра
 | Docs & test-standard ratchet | `python3 scripts/check_docs_standard.py` (baseline: `docs/standards/coverage-baseline.json`) |
 | Ratchet + coverage floors | `python3 scripts/check_docs_standard.py --check-coverage` |
 | Local Docker E2E | `./scripts/e2e-docker-compose-test.sh` |
-| README invariants | `python3 -m unittest scripts.tests.test_verify_readme -v` и `python3 scripts/verify_readme.py` |
+| README invariants | `python3 ../services-base/scripts/verify_readme.py --root .` |
 | Compose bot/backend auth wiring | `python3 scripts/check-compose-backend-auth.py` |
 
 `release_verify.py` фиксирует pass/fail/not-run gates, точные счётчики тестов, JaCoCo-метрики и консервативный endpoint-reference inventory в `build/release-verification.json`. HTTP и CLI E2E опциональны: им нужен живой локальный backend; Docker E2E опционален, потому что поднимает изолированный стек.

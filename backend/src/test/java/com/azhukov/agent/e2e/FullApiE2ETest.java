@@ -18,6 +18,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -699,12 +700,20 @@ class FullApiE2ETest {
         assertTrue(body.isArray());
     }
 
-    @Test @Order(96) @DisplayName("GET /api/v1/agent/skills/bundles — alias for bundles")
-    void listBundlesAlias() throws Exception {
-        HttpResponse<String> resp = get("/api/v1/agent/skills/bundles");
-        assertEquals(200, resp.statusCode());
-        JsonNode body = parseJson(resp.body());
-        assertTrue(body.isArray());
+    @Test @Order(96) @DisplayName("GET /api/v1/agent/skills/bundles — uses the skill content contract")
+    void readsBundlesAsSkillSlug() throws Exception {
+        HttpResponse<String> response = get("/api/v1/agent/skills/bundles");
+        assertEquals(200, response.statusCode());
+        JsonNode skill = parseJson(response.body());
+        assertTrue(skill.isObject());
+        assertTrue(skill.path("ok").isBoolean());
+    }
+
+    @Test @Order(97) @DisplayName("Retired Cron CRUD routes are absent from the running application")
+    void retiredCronCrudRoutesAreAbsent() throws Exception {
+        for (String path : List.of("/api/jobs", "/api/cron/jobs", "/p/default/api/jobs", "/p/default/api/cron/jobs")) {
+            assertEquals(404, get(path).statusCode());
+        }
     }
 
     // ── 12. Checkpoint ──
@@ -1529,21 +1538,18 @@ class FullApiE2ETest {
 
     // ── 39. AgentChat: per-session approvals, transcribe, debug-report ──
 
-    @Test @Order(360) @DisplayName("POST /api/v1/agent/approvals/{sessionId}/approve — approve with no pending")
+    @Test @Order(360) @DisplayName("POST /api/v1/agent/approvals/{requestId}/approve — unknown request returns 404")
     void approvalsSessionApprove() throws Exception {
         UUID fakeSession = UUID.randomUUID();
         HttpResponse<String> resp = post("/api/v1/agent/approvals/" + fakeSession + "/approve", "");
-        // No pending approval → returns null or error, but should not crash
-        assertTrue(resp.statusCode() == 200 || resp.statusCode() == 404,
-            "Expected 200 or 404, got " + resp.statusCode());
+        assertEquals(404, resp.statusCode());
     }
 
-    @Test @Order(361) @DisplayName("POST /api/v1/agent/approvals/{sessionId}/deny — deny with no pending")
+    @Test @Order(361) @DisplayName("POST /api/v1/agent/approvals/{requestId}/deny — unknown request returns 404")
     void approvalsSessionDeny() throws Exception {
         UUID fakeSession = UUID.randomUUID();
         HttpResponse<String> resp = post("/api/v1/agent/approvals/" + fakeSession + "/deny", "");
-        assertTrue(resp.statusCode() == 200 || resp.statusCode() == 404,
-            "Expected 200 or 404, got " + resp.statusCode());
+        assertEquals(404, resp.statusCode());
     }
 
     @Test @Order(362) @DisplayName("POST /api/v1/agent/transcribe — empty audio returns error")

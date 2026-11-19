@@ -196,11 +196,9 @@ class AgentChatControllerPendingReviewTest {
     }
 
     @Test
-    void invalidSessionIdFailsClosedAsNotPending() throws Exception {
-        when(memoryNudgeManagerProvider.getObject()).thenReturn(memoryNudgeManager);
+    void invalidSessionIdIsRejectedBeforeReviewLookup() throws Exception {
         mockMvc.perform(get("/api/v1/agent/session/{id}/review/pending", "not-a-uuid"))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.pending").value(false))
-            .andExpect(jsonPath("$.error").value("invalid session id"));
+            .andExpect(status().isBadRequest());
+        org.mockito.Mockito.verifyNoInteractions(memoryNudgeManager);
     }
 }

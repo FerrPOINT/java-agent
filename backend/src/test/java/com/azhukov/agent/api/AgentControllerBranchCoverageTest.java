@@ -477,7 +477,7 @@ class AgentControllerBranchCoverageTest {
     }
 
     @Test
-    void approveWithInvalidSessionIdReturnsMessage() throws Exception {
+    void approvesOnlyThroughTheCurrentRequestIdContract() throws Exception {
         mockMvc = chatMockMvc();
         mockMvc.perform(post("/api/v1/agent/approve")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -487,21 +487,21 @@ class AgentControllerBranchCoverageTest {
                       "all": false
                     }
                     """))
-            .andExpect(status().isOk());
+            .andExpect(status().isBadRequest());
     }
 
     @Test
-    void approveWithValidSessionIdNoPendingReturnsMessage() throws Exception {
+    void approveWithUnknownRequestIdReturnsNotFound() throws Exception {
         mockMvc = chatMockMvc();
         mockMvc.perform(post("/api/v1/agent/approve")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                     {
-                      "scope": "550e8400-e29b-41d4-a716-446655440000",
+                      "requestId": "550e8400-e29b-41d4-a716-446655440000",
                       "all": false
                     }
                     """))
-            .andExpect(status().isOk());
+            .andExpect(status().isNotFound());
     }
 
     @Test
@@ -543,16 +543,17 @@ class AgentControllerBranchCoverageTest {
     @Test
     void approveToolReturnsOk() throws Exception {
         mockMvc = chatMockMvc();
-        mockMvc.perform(post("/api/v1/agent/approvals/" + SESSION_ID + "/approve")
-                .contentType(MediaType.APPLICATION_JSON)
-                .param("decision", "approve"))
+        var request = approvalQueue.request(SESSION_ID, new com.azhukov.agent.core.model.ToolCall("id", "terminal", "{}"), "test");
+        mockMvc.perform(post("/api/v1/agent/approvals/" + request.requestId() + "/approve")
+                .contentType(MediaType.APPLICATION_JSON))
             .andExpect(status().isOk());
     }
 
     @Test
     void denyToolReturnsOk() throws Exception {
         mockMvc = chatMockMvc();
-        mockMvc.perform(post("/api/v1/agent/approvals/" + SESSION_ID + "/deny")
+        var request = approvalQueue.request(SESSION_ID, new com.azhukov.agent.core.model.ToolCall("id", "terminal", "{}"), "test");
+        mockMvc.perform(post("/api/v1/agent/approvals/" + request.requestId() + "/deny")
                 .contentType(MediaType.APPLICATION_JSON))
             .andExpect(status().isOk());
     }
@@ -791,16 +792,6 @@ class AgentControllerBranchCoverageTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$").isArray())
             .andExpect(jsonPath("$.length()").value(2));
-    }
-
-    @Test
-    void bundlesAliasReturnsSameList() throws Exception {
-        mockMvc = skillMockMvc();
-        when(agentRuntimeService.listBundles()).thenReturn(List.of("bundle-1"));
-
-        mockMvc.perform(get("/api/v1/agent/skills/bundles"))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$[0]").value("bundle-1"));
     }
 
     // ── Checkpoint endpoints ──

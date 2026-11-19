@@ -6,7 +6,7 @@ import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.security.ApprovalQueue;
-import com.azhukov.agent.core.security.ToolGuardrails;
+import com.azhukov.agent.core.security.ToolApprovalPolicy;
 import com.azhukov.agent.core.state.TurnState;
 import com.azhukov.agent.core.tool.ToolExecutionService;
 import org.junit.jupiter.api.DisplayName;
@@ -19,9 +19,11 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
@@ -32,6 +34,37 @@ import static org.mockito.Mockito.when;
  */
 class TurnExecutorBatchGateRegressionTest {
 
+    @Test
+    void missingApprovalDependenciesBlockBeforeToolExecution() {
+        var svc = mock(ToolExecutionService.class);
+        var session = Session.create("user", "noop", "noop");
+        var calls = List.of(new ToolCall("c1", "terminal", "{}"));
+        for (boolean skipApproval : List.of(false, true)) {
+            assertThatThrownBy(() -> executor(properties(), null, new ApprovalQueue(), svc)
+                .executeToolBatch(calls, Set.of("terminal"), session,
+                    mock(TurnState.class), 1, skipApproval, null))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("approval policy and queue");
+            assertThatThrownBy(() -> executor(properties(), mock(ToolApprovalPolicy.class), null, svc)
+                .executeToolBatch(calls, Set.of("terminal"), session,
+                    mock(TurnState.class), 1, skipApproval, null))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("approval policy and queue");
+        }
+        verifyNoInteractions(svc);
+    }
+
+    @Test
+    void approvalProducerFailurePropagatesBeforeToolExecution() {
+        var svc = mock(ToolExecutionService.class);
+        var policy = mock(ToolApprovalPolicy.class);
+        when(policy.requiresApproval(any(), any())).thenReturn(true);
+        when(policy.requestApproval(any(), any())).thenThrow(new IllegalStateException("approval unavailable"));
+        assertThatThrownBy(() -> executor(properties(), policy, new ApprovalQueue(), svc)
+            .executeToolBatch(List.of(new ToolCall("c1", "terminal", "{}")), Set.of("terminal"),
+                Session.create("user", "noop", "noop"), mock(TurnState.class), 1, false, null))
+            .isInstanceOf(IllegalStateException.class).hasMessage("approval unavailable");
+        verifyNoInteractions(svc);
+    }
+
     private AgentProperties properties() {
         AgentProperties p = new AgentProperties();
         p.getSecurity().setApprovalsEnabled(true);
@@ -40,7 +73,7 @@ class TurnExecutorBatchGateRegressionTest {
         return p;
     }
 
-    private TurnExecutor executor(AgentProperties props, ToolGuardrails guardrails,
+    private TurnExecutor executor(AgentProperties props, ToolApprovalPolicy guardrails,
                                   ApprovalQueue queue, ToolExecutionService svc) {
         return new TurnExecutor(
             props, null, null, svc,
@@ -54,7 +87,7 @@ class TurnExecutorBatchGateRegressionTest {
     void nullApprovalProducerDeniesInsteadOfExecuting() {
         AgentProperties props = properties();
         ApprovalQueue queue = mock(ApprovalQueue.class);
-        ToolGuardrails guardrails = mock(ToolGuardrails.class);
+        ToolApprovalPolicy guardrails = mock(ToolApprovalPolicy.class);
         ToolExecutionService svc = mock(ToolExecutionService.class);
         AtomicInteger executions = new AtomicInteger();
         when(svc.execute(anyString(), anyString(), anyString(), any(), any(), any()))
@@ -62,11 +95,11 @@ class TurnExecutorBatchGateRegressionTest {
         when(svc.enforceToolResultBudget(any())).thenAnswer(inv -> inv.getArgument(0));
         // Guardrail flags the tool, but the producer returns null (e.g. approvals
         // UI unavailable). Old gate: requestApproval(...)!=null → false → EXECUTED.
-        when(guardrails.requiresApproval(any(ToolCall.class))).thenReturn(true);
+        when(guardrails.requiresApproval(any(ToolCall.class), any())).thenReturn(true);
         when(guardrails.requestApproval(any(UUID.class), any(ToolCall.class))).thenReturn(null);
         when(queue.isPending(any())).thenReturn(false);
         when(queue.getPending(any())).thenReturn(null);
-        when(queue.awaitDecision(any(UUID.class), any(long.class))).thenReturn(false);
+        when(queue.awaitDecision(any(ApprovalQueue.PendingApproval.class), any(long.class))).thenReturn(false);
         when(queue.isApproved(any())).thenReturn(false);
 
         TurnExecutor executor = executor(props, guardrails, queue, svc);
@@ -86,8 +119,8 @@ class TurnExecutorBatchGateRegressionTest {
     void skipApprovalBypassesGate() {
         AgentProperties props = properties();
         ApprovalQueue queue = mock(ApprovalQueue.class);
-        ToolGuardrails guardrails = mock(ToolGuardrails.class);
-        when(guardrails.requiresApproval(any(ToolCall.class))).thenReturn(true);
+        ToolApprovalPolicy guardrails = mock(ToolApprovalPolicy.class);
+        when(guardrails.requiresApproval(any(ToolCall.class), any())).thenReturn(true);
         ToolExecutionService svc = mock(ToolExecutionService.class);
         AtomicInteger executions = new AtomicInteger();
         when(svc.execute(anyString(), anyString(), anyString(), any(), any(), any()))
@@ -110,10 +143,10 @@ class TurnExecutorBatchGateRegressionTest {
     void browserInfrastructureFailureSkipsDependentBrowserCallsOnly() {
         AgentProperties props = properties();
         ApprovalQueue queue = mock(ApprovalQueue.class);
-        ToolGuardrails guardrails = mock(ToolGuardrails.class);
+        ToolApprovalPolicy guardrails = mock(ToolApprovalPolicy.class);
         ToolExecutionService svc = mock(ToolExecutionService.class);
         List<String> executed = new CopyOnWriteArrayList<>();
-        when(guardrails.requiresApproval(any(ToolCall.class))).thenReturn(false);
+        when(guardrails.requiresApproval(any(ToolCall.class), any())).thenReturn(false);
         when(svc.execute(anyString(), anyString(), anyString(), any(), any(), any()))
             .thenAnswer(invocation -> {
                 String toolName = invocation.getArgument(0);
@@ -147,8 +180,8 @@ class TurnExecutorBatchGateRegressionTest {
     void subagentChildAutoDenies() {
         AgentProperties props = properties();
         ApprovalQueue queue = mock(ApprovalQueue.class);
-        ToolGuardrails guardrails = mock(ToolGuardrails.class);
-        when(guardrails.requiresApproval(any(ToolCall.class))).thenReturn(true);
+        ToolApprovalPolicy guardrails = mock(ToolApprovalPolicy.class);
+        when(guardrails.requiresApproval(any(ToolCall.class), any())).thenReturn(true);
         ToolExecutionService svc = mock(ToolExecutionService.class);
         AtomicInteger executions = new AtomicInteger();
         when(svc.execute(anyString(), anyString(), anyString(), any(), any(), any()))
@@ -172,8 +205,8 @@ class TurnExecutorBatchGateRegressionTest {
     void subagentChildExecutesUngatedTool() {
         AgentProperties props = properties();
         ApprovalQueue queue = mock(ApprovalQueue.class);
-        ToolGuardrails guardrails = mock(ToolGuardrails.class);
-        when(guardrails.requiresApproval(any(ToolCall.class))).thenReturn(false);
+        ToolApprovalPolicy guardrails = mock(ToolApprovalPolicy.class);
+        when(guardrails.requiresApproval(any(ToolCall.class), any())).thenReturn(false);
         ToolExecutionService svc = mock(ToolExecutionService.class);
         AtomicInteger executions = new AtomicInteger();
         when(svc.execute(anyString(), anyString(), anyString(), any(), any(), any()))
@@ -201,7 +234,7 @@ class TurnExecutorBatchGateRegressionTest {
         when(svc.execute(anyString(), anyString(), anyString(), any(), any(), any()))
             .thenReturn(ToolResult.ok("42"));
         when(svc.enforceToolResultBudget(any())).thenAnswer(inv -> inv.getArgument(0));
-        TurnExecutor executor = executor(props, mock(ToolGuardrails.class), null, svc);
+        TurnExecutor executor = executor(props, mock(ToolApprovalPolicy.class), new ApprovalQueue(), svc);
 
         Session session = Session.create("user", "noop", "noop");
         List<ToolCall> calls = List.of(new ToolCall("c1", "execute_code", "{\"code\":\"1+1\"}"));
@@ -231,7 +264,7 @@ class TurnExecutorBatchGateRegressionTest {
         when(svc.execute(anyString(), anyString(), anyString(), any(), any(), any()))
             .thenReturn(ToolResult.ok("answer"));
         when(svc.enforceToolResultBudget(any())).thenAnswer(inv -> inv.getArgument(0));
-        TurnExecutor executor = executor(props, mock(ToolGuardrails.class), null, svc);
+        TurnExecutor executor = executor(props, mock(ToolApprovalPolicy.class), new ApprovalQueue(), svc);
         Session session = Session.create("user", "noop", "noop");
 
         var result = executor.executeToolBatch(
@@ -263,7 +296,7 @@ class TurnExecutorBatchGateRegressionTest {
         SteerBuffer steerBuffer = new SteerBuffer();
         TurnExecutor executor = new TurnExecutor(
             props, null, null, svc, new ToolResultFormatter(), new TokenEstimator(),
-            new InterruptToken(), null, null, null, steerBuffer);
+            new InterruptToken(), new ApprovalQueue(), mock(ToolApprovalPolicy.class), null, steerBuffer);
 
         Session session = Session.create("user", "noop", "noop");
         UUID sessionId = session.id();

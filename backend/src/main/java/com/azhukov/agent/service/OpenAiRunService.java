@@ -337,7 +337,7 @@ public class OpenAiRunService {
                     synchronized (record) {
                         if (record.isTerminal() || record.stopRequested.get()) return;
                         ApprovalQueue.PendingApproval pending = approvalQueue.getPending(record.controlSessionId());
-                        if (pending != null && !pending.approved() && !pending.denied() && !pending.superseded()) {
+                        if (pending != null && !pending.approved() && !pending.denied()) {
                             if (!pending.requestId().equals(lastApprovalId)) {
                                 record.publish("waiting_for_approval", "approval.request", approvalPayload(pending));
                                 lastApprovalId = pending.requestId();

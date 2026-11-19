@@ -228,17 +228,17 @@ class CliFixesTest {
 
     @Test
     void approveToolCommandCallsBackend() {
-        when(client.approveTool("sid")).thenReturn("Tool approved for session: sid");
-        String result = registry.execute("/approve-tool sid", client, "sid");
-        assertThat(result).contains("Tool approved");
+        when(client.approveTool("request-id")).thenReturn("Tool request approved: request-id");
+        String result = registry.execute("/approve-tool request-id", client, "sid");
+        assertThat(result).contains("Tool request approved");
         assertThat(result).doesNotContain("Use the backend REST API");
     }
 
     @Test
     void denyToolCommandCallsBackend() {
-        when(client.denyTool("sid")).thenReturn("Tool denied for session: sid");
-        String result = registry.execute("/deny-tool sid", client, "sid");
-        assertThat(result).contains("Tool denied");
+        when(client.denyTool("request-id")).thenReturn("Tool request denied: request-id");
+        String result = registry.execute("/deny-tool request-id", client, "sid");
+        assertThat(result).contains("Tool request denied");
         assertThat(result).doesNotContain("Use the backend REST API");
     }
 
