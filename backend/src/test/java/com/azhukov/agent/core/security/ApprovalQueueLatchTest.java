@@ -117,7 +117,7 @@ class ApprovalQueueLatchTest {
     }
 
     @Test
-    void awaitDecisionReturnsWhenCleared() throws Exception {
+    void clearReleasesWaiterWithoutGrantingConsent() throws Exception {
         ApprovalQueue queue = new ApprovalQueue();
         UUID sessionId = UUID.randomUUID();
         com.azhukov.agent.core.model.ToolCall call =
@@ -141,10 +141,9 @@ class ApprovalQueueLatchTest {
 
         queue.clear(sessionId);
 
-        decisionDone.await(2, TimeUnit.SECONDS);
-
+        assertThat(decisionDone.await(2, TimeUnit.SECONDS)).isTrue();
         waiter.join(2000);
-        assertThat(decided).isTrue();
+        assertThat(queue.consumeDecision(request)).isNull();
     }
 
     @Test
