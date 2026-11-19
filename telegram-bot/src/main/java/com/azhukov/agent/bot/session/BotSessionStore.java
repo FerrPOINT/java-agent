@@ -168,7 +168,7 @@ public class BotSessionStore {
         BotSessionEntity target = repository.findById(sessionId).orElse(null);
         if (target == null || !java.util.Objects.equals(target.getUserId(), userId)) return null;
         // Deactivate current active session only after validating the target owner.
-        BotSessionEntity current = repository.findByUserIdAndActiveTrue(userId).orElse(null);
+        BotSessionEntity current = findActive(userId, target.getThreadId()).orElse(null);
         if (current != null) {
             current.setActive(false);
             current.setUpdatedAt(Instant.now());

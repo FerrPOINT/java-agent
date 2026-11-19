@@ -38,6 +38,23 @@ class BotSessionStoreTest {
     }
 
     @Test
+    void resumeOnlyReplacesActiveSessionInTargetsTopic() {
+        UUID id = UUID.randomUUID();
+        var target = new BotSessionEntity();
+        target.setId(id); target.setUserId("owner"); target.setThreadId(42L); target.setActive(false);
+        var current = new BotSessionEntity();
+        current.setUserId("owner"); current.setThreadId(42L); current.setActive(true);
+        when(repository.findById(id)).thenReturn(Optional.of(target));
+        when(repository.findByUserIdAndThreadIdAndActiveTrue("owner", 42L)).thenReturn(Optional.of(current));
+        when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        assertThat(store.resumeSession(id, "owner")).isSameAs(target);
+        assertThat(current.isActive()).isFalse();
+        assertThat(target.isActive()).isTrue();
+        verify(repository, never()).findByUserIdAndActiveTrue(any());
+    }
+
+    @Test
     void resumeOwnSessionDeactivatesPreviousAndActivatesTarget() {
         UUID id = UUID.randomUUID();
         BotSessionEntity target = new BotSessionEntity();
@@ -45,7 +62,7 @@ class BotSessionStoreTest {
         BotSessionEntity current = new BotSessionEntity();
         current.setUserId("owner"); current.setActive(true);
         when(repository.findById(id)).thenReturn(Optional.of(target));
-        when(repository.findByUserIdAndActiveTrue("owner")).thenReturn(Optional.of(current));
+        when(repository.findByUserIdAndThreadIdAndActiveTrue("owner", null)).thenReturn(Optional.of(current));
         when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         assertThat(store.resumeSession(id, "owner")).isSameAs(target);
         assertThat(current.isActive()).isFalse();
