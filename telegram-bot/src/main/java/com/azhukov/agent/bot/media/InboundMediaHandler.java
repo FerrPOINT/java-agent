@@ -69,11 +69,13 @@ public class InboundMediaHandler {
         // Photo album fix: PhotoBatchDebouncer may merge multiple file IDs
         // into a single comma-separated string. Split and process each.
         if (fileId.contains(",")) {
-            String[] ids = fileId.split(",");
+            String[] ids = fileId.split(",", -1);
+            if (java.util.Arrays.stream(ids).anyMatch(String::isBlank)) {
+                throw new AttachmentApiClient.AdmissionFailure(false, "Missing album attachment identifier");
+            }
             StringBuilder combined = new StringBuilder();
             for (String id : ids) {
                 String trimmed = id.trim();
-                if (trimmed.isEmpty()) continue;
                 Optional<String> desc = handleSingle(event, fileType, trimmed);
                 if (desc.isPresent()) {
                     if (combined.length() > 0) combined.append("\n");
