@@ -280,20 +280,13 @@ class InboundMediaHandlerTest {
     }
 
     @Test
-    void handle_commaSeparatedWithEmptyEntriesSkipsEmpty() {
+    void handle_commaSeparatedWithEmptyEntriesRejectsWholeAlbumBeforeDownload() {
         UpdateEvent event = new UpdateEvent(114L, UpdateEvent.Type.PHOTO, 123L, 456L,
             "jdoe", null, null, "photo-x,,photo-y", "photo",
             null, null, null, false, null, null);
 
-        when(mediaDownloader.downloadToFileId("photo-x"))
-            .thenReturn(Optional.of("imgX".getBytes()));
-        when(mediaDownloader.downloadToFileId("photo-y"))
-            .thenReturn(Optional.of("imgY".getBytes()));
-
-        Optional<String> result = handler.handle(event);
-
-        assertThat(result).isPresent();
-        long photoCount = result.get().lines().filter(l -> l.contains("[Photo:")).count();
-        assertThat(photoCount).isEqualTo(2);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> handler.handle(event))
+            .isInstanceOf(com.azhukov.agent.bot.core.AttachmentApiClient.AdmissionFailure.class);
+        org.mockito.Mockito.verifyNoInteractions(mediaDownloader);
     }
 }
