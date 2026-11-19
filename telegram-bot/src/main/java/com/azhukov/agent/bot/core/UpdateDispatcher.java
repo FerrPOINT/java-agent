@@ -58,6 +58,8 @@ public class UpdateDispatcher {
         void handleEditCapture(UpdateEvent event);
         /** True when a text event is a response to a live clarify prompt. */
         boolean shouldBypassTextBatch(UpdateEvent event);
+        /** Check each sender before text or photos are combined into a batch. */
+        boolean mayBatch(UpdateEvent event);
         /** Send an error message to the chat (top-level error handler). */
         void sendError(long chatId, String message);
     }
@@ -76,6 +78,7 @@ public class UpdateDispatcher {
                 case CALLBACK_QUERY -> handlers.handleCallbackQuery(event);
                 case COMMAND -> handlers.handleCommand(event);
                 case TEXT -> {
+                    if (!handlers.mayBatch(event)) return;
                     // A clarify reply must bypass batching: buffering it keeps the
                     // original turn blocked even though the user has answered.
                     if (handlers.shouldBypassTextBatch(event)) {
@@ -94,6 +97,7 @@ public class UpdateDispatcher {
                     handlers.handleTextOrMedia(event);
                 }
                 case PHOTO -> {
+                    if (!handlers.mayBatch(event)) return;
                     // B1.4/B1.5: Photo batch/album — if mediaGroupId present, batch
                     if (event.mediaGroupId() != null && !event.mediaGroupId().isBlank()
                         && offerPhotoBatch(event)) {

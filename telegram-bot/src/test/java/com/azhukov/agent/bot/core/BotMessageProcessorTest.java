@@ -1431,6 +1431,44 @@ class BotMessageProcessorTest {
     }
 
     @Test
+    void unauthorizedTextCannotJoinAnAuthorizedUsersBatch() {
+        var batch = new TextBatchDebouncer(properties);
+        var dispatched = new java.util.ArrayList<UpdateEvent>();
+        batch.onDispatch(dispatched::add);
+        var dispatcher = new UpdateDispatcher(properties, editCaptureService, batch, photoBatchDebouncer);
+        var allowed = textEvent(10, 100L, "allowed");
+        var denied = new UpdateEvent(11, UpdateEvent.Type.TEXT, 100L, 999L, "denied", "forbidden",
+            null, null, null, null, null, null, false, null, null, 111, null, 0);
+        when(authorizationService.isAuthorized(denied)).thenReturn(false);
+
+        dispatcher.dispatch(allowed, processor);
+        dispatcher.dispatch(denied, processor);
+        batch.flushAll();
+
+        assertThat(dispatched).hasSize(1);
+        assertThat(dispatched.getFirst().text()).isEqualTo("allowed");
+    }
+
+    @Test
+    void unauthorizedPhotoCannotJoinAnAuthorizedUsersAlbum() {
+        var batch = new PhotoBatchDebouncer();
+        var dispatched = new java.util.ArrayList<UpdateEvent>();
+        batch.onDispatch(dispatched::add);
+        var dispatcher = new UpdateDispatcher(properties, editCaptureService, textBatchDebouncer, batch);
+        var allowed = photoEvent(10, 100L, "allowed-photo", "", "album");
+        var denied = new UpdateEvent(11, UpdateEvent.Type.PHOTO, 100L, 999L, "denied", null,
+            null, "forbidden-photo", "photo", null, null, null, false, null, null, 111, "album", 0);
+        when(authorizationService.isAuthorized(denied)).thenReturn(false);
+
+        dispatcher.dispatch(allowed, processor);
+        dispatcher.dispatch(denied, processor);
+        batch.flushAll();
+
+        assertThat(dispatched).hasSize(1);
+        assertThat(dispatched.getFirst().fileId()).isEqualTo("allowed-photo");
+    }
+
+    @Test
     void busyMediaFromUnauthorizedUserIsNotQueuedOrInterrupted() {
         properties.setBusyInputMode("interrupt");
         busyHandler.markBusy(100L);
