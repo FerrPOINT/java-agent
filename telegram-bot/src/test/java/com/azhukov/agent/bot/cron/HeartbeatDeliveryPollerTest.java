@@ -134,6 +134,21 @@ class HeartbeatDeliveryPollerTest {
     }
 
     @Test
+    void malformedResultDoesNotDiscardWatch() {
+        UUID sid = UUID.randomUUID();
+        poller.watch(sid, 42L);
+        when(backend.suggestionGet("/api/v1/agent/cron/heartbeat/" + sid + "/result"))
+            .thenReturn(mapper.createObjectNode());
+        stubStatus(sid, false);
+
+        poller.poll();
+        poller.poll();
+
+        verify(backend, times(2)).suggestionGet("/api/v1/agent/cron/heartbeat/" + sid + "/result");
+        verify(backend, never()).suggestionPost(contains("/result/ack"));
+    }
+
+    @Test
     void unavailableStatusDoesNotStopWatchingAfterDelivery() {
         UUID sid = UUID.randomUUID();
         poller.watch(sid, 42L);
