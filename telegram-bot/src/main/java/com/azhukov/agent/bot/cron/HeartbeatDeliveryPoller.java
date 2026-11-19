@@ -52,7 +52,11 @@ public class HeartbeatDeliveryPoller {
             try {
                 JsonNode r = backendClient.suggestionGet(
                     "/api/v1/agent/cron/heartbeat/" + e.getKey() + "/result");
-                if (r == null || !r.path("hasResult").asBoolean(false)) {
+                if (r == null) continue;
+                if (!r.path("hasResult").asBoolean(false)) {
+                    JsonNode st = backendClient.suggestionGet(
+                        "/api/v1/agent/cron/heartbeat/" + e.getKey());
+                    if (st != null && !st.path("set").asBoolean(false)) unwatch(e.getKey());
                     continue;
                 }
                 String text = r.path("result").asText("");
@@ -77,6 +81,8 @@ public class HeartbeatDeliveryPoller {
                         if (nack != null && nack.path("drop").asBoolean(false)) {
                             backendClient.suggestionPost(
                                 "/api/v1/agent/cron/heartbeat/" + e.getKey() + "/result/ack");
+                        } else {
+                            continue;
                         }
                     }
                 } else {
