@@ -1001,6 +1001,13 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
 
     private String extractMessageText(UpdateEvent event) {
         try {
+            boolean requiresFile = switch (event.type()) {
+                case PHOTO, DOCUMENT, VOICE, STICKER, ANIMATION -> true;
+                default -> false;
+            };
+            if (requiresFile && (event.fileId() == null || event.fileId().isBlank())) {
+                throw new AttachmentApiClient.AdmissionFailure(false, "Missing attachment identifier");
+            }
             if (event.text() != null && !event.text().isBlank()) {
                 // If there's text along with media (caption is handled below), use text
                 if (event.fileId() != null) {

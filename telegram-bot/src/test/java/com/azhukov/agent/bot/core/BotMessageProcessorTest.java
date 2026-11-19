@@ -1352,6 +1352,13 @@ class BotMessageProcessorTest {
     }
 
     @Test
+    void photoWithoutFileIdDoesNotSendCaptionAsPlainText() {
+        processor.accept(photoEvent(1, 100L, null, "explain this photo", null));
+        verify(backendClient, never()).chatStream(any(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(telegramClient).sendMessage(eq(100L), contains("Вложение не принято"), any(), isNull(), isNull());
+    }
+
+    @Test
     void unknownOrRejectedArtifactDoesNotStartChatOrRetryUpload() {
         when(inboundMediaHandler.handle(any())).thenThrow(
                 new AttachmentApiClient.AdmissionFailure(true, "Unknown"));
