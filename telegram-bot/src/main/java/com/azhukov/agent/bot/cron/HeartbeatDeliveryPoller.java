@@ -73,8 +73,7 @@ public class HeartbeatDeliveryPoller {
                         log.info("HEARTBEAT_DELIVERED chatId={} sessionId={} msgId={} chars={}",
                             e.getValue().chatId, e.getKey(), sent.get(), text.length());
                         log.info("HEARTBEAT_DELIVERY_TOTAL delivered={}", delivered.incrementAndGet());
-                        if (backendClient.suggestionPost(
-                            "/api/v1/agent/cron/heartbeat/" + e.getKey() + "/result/ack") == null) continue;
+                        if (!ackResult(e.getKey())) continue;
                     } else {
                         // Send failed — NACK; after 5 attempts the backend drops
                         // the poisoned result instead of retrying forever
@@ -84,16 +83,14 @@ public class HeartbeatDeliveryPoller {
                         JsonNode nack = backendClient.suggestionPost(
                             "/api/v1/agent/cron/heartbeat/" + e.getKey() + "/result/nack");
                         if (nack != null && nack.path("drop").asBoolean(false)) {
-                            if (backendClient.suggestionPost(
-                                "/api/v1/agent/cron/heartbeat/" + e.getKey() + "/result/ack") == null) continue;
+                            if (!ackResult(e.getKey())) continue;
                         } else {
                             continue;
                         }
                     }
                 } else {
                     // Empty result (e.g. model said nothing) — ACK to clear it
-                    if (backendClient.suggestionPost(
-                        "/api/v1/agent/cron/heartbeat/" + e.getKey() + "/result/ack") == null) continue;
+                    if (!ackResult(e.getKey())) continue;
                 }
                 // Stop watching cleared/finished loops
                 JsonNode st = backendClient.suggestionGet(
@@ -105,6 +102,12 @@ public class HeartbeatDeliveryPoller {
                 log.debug("Heartbeat delivery poll failed for {}: {}", e.getKey(), ex.getMessage());
             }
         }
+    }
+
+    private boolean ackResult(UUID sessionId) {
+        JsonNode response = backendClient.suggestionPost(
+            "/api/v1/agent/cron/heartbeat/" + sessionId + "/result/ack");
+        return response != null && response.path("acked").isBoolean();
     }
 
     private static String truncate(String s) {
