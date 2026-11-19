@@ -120,8 +120,8 @@ public class CallbackQueryHandler {
 
         return switch (command) {
             case "mp" -> handleModelSelect(value, chatId, userId, threadId);
-            case "mpp" -> handleModelPage(value, chatId);
-            case "pp" -> handleProviderSelect(value, chatId);
+            case "mpp" -> handleModelPage(value, chatId, threadId);
+            case "pp" -> handleProviderSelect(value, chatId, threadId);
             case "ea" -> handleExecApproval(value, chatId, messageId);
             case "sc" -> handleSlashConfirm(value, chatId);
             default -> "Unknown action: " + command;
@@ -150,7 +150,7 @@ public class CallbackQueryHandler {
     /**
      * mpp:<page> — show model keyboard for the given page.
      */
-    private String handleModelPage(String pageStr, long chatId) {
+    private String handleModelPage(String pageStr, long chatId, long threadId) {
         int page;
         try {
             page = Integer.parseInt(pageStr);
@@ -163,7 +163,8 @@ public class CallbackQueryHandler {
         }
         var rows = modelKeyboardBuilder.build(models, page);
         String markup = inlineKeyboardBuilder.build(rows);
-        telegramClient.sendMessage(chatId, "Select a model (page " + (page + 1) + "):", null, null, markup);
+        telegramClient.sendMessage(chatId, "Select a model (page " + (page + 1) + "):", null, null,
+            threadId > 0 ? Math.toIntExact(threadId) : null, markup, false);
         return null; // message already sent
     }
 
@@ -172,13 +173,14 @@ public class CallbackQueryHandler {
      * P2-19: Filters models by provider slug prefix (e.g. "openai:gpt-4" → provider "openai").
      * Falls back to showing all models if no models match the provider slug.
      */
-    private String handleProviderSelect(String slug, long chatId) {
+    private String handleProviderSelect(String slug, long chatId, long threadId) {
         if ("back".equals(slug)) {
             // Show provider list
             Map<String, String> providers = providerKeyboardBuilder.defaultProviders();
             var rows = providerKeyboardBuilder.buildProviders(providers);
             String markup = inlineKeyboardBuilder.build(rows);
-            telegramClient.sendMessage(chatId, "Select a provider:", null, null, markup);
+            telegramClient.sendMessage(chatId, "Select a provider:", null, null,
+                threadId > 0 ? Math.toIntExact(threadId) : null, markup, false);
             return null;
         }
 
@@ -198,7 +200,8 @@ public class CallbackQueryHandler {
 
         var rows = providerKeyboardBuilder.buildModels(filtered);
         String markup = inlineKeyboardBuilder.build(rows);
-        telegramClient.sendMessage(chatId, "Models for " + slug + ":", null, null, markup);
+        telegramClient.sendMessage(chatId, "Models for " + slug + ":", null, null,
+            threadId > 0 ? Math.toIntExact(threadId) : null, markup, false);
         return null;
     }
 

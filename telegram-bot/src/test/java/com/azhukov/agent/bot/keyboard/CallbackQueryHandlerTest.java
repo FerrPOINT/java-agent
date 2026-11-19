@@ -83,6 +83,19 @@ class CallbackQueryHandlerTest {
     }
 
     @Test
+    void modelNavigationKeepsForumTopic() {
+        properties.getAvailableModels().add("kimi-k2");
+        var event = new UpdateEvent(1, UpdateEvent.Type.CALLBACK_QUERY, 123L, 456L,
+            "user", null, null, null, null, "cq-topic", "mpp:1", null,
+            false, null, null, 100L, null, 42L);
+
+        handler.handle(event);
+
+        verify(client).sendMessage(eq(123L), contains("Select a model"), isNull(), isNull(),
+            eq(42), anyString(), eq(false));
+    }
+
+    @Test
     void forgedModelCallbackCannotSelectOutsideConfiguredList() {
         properties.getAvailableModels().add("app-test");
         assertThat(handler.handle(callbackEvent("cq-deny", "mp:unavailable")))
@@ -110,7 +123,7 @@ class CallbackQueryHandlerTest {
         String result = handler.handle(event);
 
         // Should send a message with inline keyboard
-        verify(client).sendMessage(eq(123L), eq("Models for openai:"), any(), any(), any());
+        verify(client).sendMessage(eq(123L), eq("Models for openai:"), isNull(), isNull(), isNull(), anyString(), eq(false));
     }
 
     // ─── P2-19: Provider keyboard filtering tests ──────────────────
@@ -125,7 +138,7 @@ class CallbackQueryHandlerTest {
         handler.handle(event);
 
         // Should send "Models for openai:" with filtered models
-        verify(client).sendMessage(eq(123L), eq("Models for openai:"), any(), any(), any());
+        verify(client).sendMessage(eq(123L), eq("Models for openai:"), isNull(), isNull(), isNull(), anyString(), eq(false));
     }
 
     @Test
@@ -138,7 +151,7 @@ class CallbackQueryHandlerTest {
         UpdateEvent event = callbackEvent("cq-pp-2", "pp:openai");
         handler.handle(event);
 
-        verify(client).sendMessage(eq(123L), eq("Models for openai:"), any(), any(), any());
+        verify(client).sendMessage(eq(123L), eq("Models for openai:"), isNull(), isNull(), isNull(), anyString(), eq(false));
     }
 
     @Test
@@ -150,7 +163,7 @@ class CallbackQueryHandlerTest {
         UpdateEvent event = callbackEvent("cq-pp-3", "pp:anthropic");
         handler.handle(event);
 
-        verify(client).sendMessage(eq(123L), eq("Models for anthropic:"), any(), any(), any());
+        verify(client).sendMessage(eq(123L), eq("Models for anthropic:"), isNull(), isNull(), isNull(), anyString(), eq(false));
     }
 
     @Test
@@ -162,7 +175,7 @@ class CallbackQueryHandlerTest {
         handler.handle(event);
 
         // Should still send the message — fallback to all models
-        verify(client).sendMessage(eq(123L), eq("Models for unknown-provider:"), any(), any(), any());
+        verify(client).sendMessage(eq(123L), eq("Models for unknown-provider:"), isNull(), isNull(), isNull(), anyString(), eq(false));
     }
 
     @Test
@@ -170,7 +183,7 @@ class CallbackQueryHandlerTest {
         UpdateEvent event = callbackEvent("cq-4", "pp:back");
         String result = handler.handle(event);
 
-        verify(client).sendMessage(eq(123L), eq("Select a provider:"), any(), any(), any());
+        verify(client).sendMessage(eq(123L), eq("Select a provider:"), isNull(), isNull(), isNull(), anyString(), eq(false));
     }
 
     @Test
@@ -181,7 +194,7 @@ class CallbackQueryHandlerTest {
         UpdateEvent event = callbackEvent("cq-5", "mpp:0");
         String result = handler.handle(event);
 
-        verify(client).sendMessage(eq(123L), contains("Select a model"), any(), any(), any());
+        verify(client).sendMessage(eq(123L), contains("Select a model"), isNull(), isNull(), isNull(), anyString(), eq(false));
     }
 
     @Test
