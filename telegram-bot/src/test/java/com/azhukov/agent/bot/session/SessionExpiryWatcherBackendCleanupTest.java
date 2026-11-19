@@ -41,6 +41,26 @@ class SessionExpiryWatcherBackendCleanupTest {
     }
 
     @Test
+    void finalizesExpiredSessionsBeforeRetryingBackloggedCleanup() {
+        var expired = new BotSessionEntity();
+        expired.setId(UUID.randomUUID());
+        expired.setUserId("owner");
+        expired.setActive(true);
+        expired.setCreatedAt(Instant.now().minusSeconds(3600));
+        expired.setUpdatedAt(Instant.now().minusSeconds(3600));
+        var pending = new BotSessionEntity();
+        pending.setId(UUID.randomUUID());
+        when(sessionStore.listActiveSessions()).thenReturn(List.of(expired));
+        when(sessionStore.pendingCleanups()).thenReturn(List.of(pending));
+
+        watcher.checkExpiredSessions();
+
+        var order = inOrder(sessionStore);
+        order.verify(sessionStore).finalizeWithCleanupPending(expired.getId(), expired.getUpdatedAt());
+        order.verify(sessionStore).retryCleanup(eq(pending.getId()), any());
+    }
+
+    @Test
     void expiredSessionTriggersBackendCleanup() {
         UUID sessionId = UUID.randomUUID();
         BotSessionEntity session = new BotSessionEntity();

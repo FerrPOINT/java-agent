@@ -78,13 +78,7 @@ public class SessionExpiryWatcher {
      */
     void checkExpiredSessions() {
         try {
-            for (BotSessionEntity pending : sessionStore.pendingCleanups()) {
-                try {
-                    sessionStore.retryCleanup(pending.getId(), id -> backendClient.cleanupSession(id.toString()));
-                } catch (Exception e) {
-                    log.warn("Retrying session cleanup failed for {}", pending.getId());
-                }
-            }
+            var cleanupIds = new java.util.LinkedHashSet<java.util.UUID>();
             Instant now = Instant.now();
             List<BotSessionEntity> activeSessions = sessionStore.listActiveSessions();
             for (BotSessionEntity session : activeSessions) {
@@ -109,14 +103,17 @@ public class SessionExpiryWatcher {
                     log.info("Finalizing expired session {} (reason={}, userId={})",
                         session.getId(), reason, session.getUserId());
                     // Persist the cleanup intent atomically with deactivation before the HTTP call.
-                    if (!sessionStore.finalizeWithCleanupPending(session.getId(), session.getUpdatedAt())) {
-                        continue;
+                    if (sessionStore.finalizeWithCleanupPending(session.getId(), session.getUpdatedAt())) {
+                        cleanupIds.add(session.getId());
                     }
-                    try {
-                        sessionStore.retryCleanup(session.getId(), id -> backendClient.cleanupSession(id.toString()));
-                    } catch (Exception e) {
-                        log.warn("Backend cleanup for expired session {} failed", session.getId());
-                    }
+                }
+            }
+            sessionStore.pendingCleanups().stream().map(BotSessionEntity::getId).forEach(cleanupIds::add);
+            for (var id : cleanupIds) {
+                try {
+                    sessionStore.retryCleanup(id, backendId -> backendClient.cleanupSession(backendId.toString()));
+                } catch (Exception e) {
+                    log.warn("Retrying session cleanup failed for {}", id);
                 }
             }
         } catch (Exception e) {
