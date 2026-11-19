@@ -138,15 +138,34 @@ class PhotoBatchDebouncerTest {
     }
 
     @Test
+    void preservesCaptionMatchingPartOfEarlierMultilineCaption() {
+        var dispatched = new java.util.ArrayList<UpdateEvent>();
+        debouncer.onDispatch(dispatched::add);
+        debouncer.offer(makePhotoEvent(1, 100, "file1", "group1", "first\n\nsecond"));
+        debouncer.offer(makePhotoEvent(2, 100, "file2", "group1", "first"));
+        debouncer.flushAll();
+        assertThat(dispatched).hasSize(1);
+        assertThat(dispatched.getFirst().caption()).isEqualTo("first\n\nsecond\n\nfirst");
+    }
+
+    @Test
     void mergeCaptionDeduplicatesExactTrimmedRepeatsLikeHermes() {
-        assertThat(PhotoBatchDebouncer.mergeCaption("Revenue", "Revenue  "))
-            .isEqualTo("Revenue");
+        var dispatched = new java.util.ArrayList<UpdateEvent>();
+        debouncer.onDispatch(dispatched::add);
+        debouncer.offer(makePhotoEvent(1, 100, "file1", "group1", "Revenue"));
+        debouncer.offer(makePhotoEvent(2, 100, "file2", "group1", "Revenue  "));
+        debouncer.flushAll();
+        assertThat(dispatched.getFirst().caption()).isEqualTo("Revenue");
     }
 
     @Test
     void mergeCaptionKeepsShorterSubstringCaptionLikeHermes() {
-        assertThat(PhotoBatchDebouncer.mergeCaption("Meeting agenda", "Meeting"))
-            .isEqualTo("Meeting agenda\n\nMeeting");
+        var dispatched = new java.util.ArrayList<UpdateEvent>();
+        debouncer.onDispatch(dispatched::add);
+        debouncer.offer(makePhotoEvent(1, 100, "file1", "group1", "Meeting agenda"));
+        debouncer.offer(makePhotoEvent(2, 100, "file2", "group1", "Meeting"));
+        debouncer.flushAll();
+        assertThat(dispatched.getFirst().caption()).isEqualTo("Meeting agenda\n\nMeeting");
     }
 
     private UpdateEvent makePhotoEvent(long updateId, long chatId, String fileId,
