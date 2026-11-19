@@ -56,7 +56,7 @@ public class HeartbeatDeliveryPoller {
                 if (!r.path("hasResult").asBoolean(false)) {
                     JsonNode st = backendClient.suggestionGet(
                         "/api/v1/agent/cron/heartbeat/" + e.getKey());
-                    if (st != null && !st.path("set").asBoolean(false)) unwatch(e.getKey());
+                    if (st != null && st.path("set").isBoolean() && !st.path("set").asBoolean()) unwatch(e.getKey());
                     continue;
                 }
                 String text = r.path("result").asText("");
@@ -93,7 +93,7 @@ public class HeartbeatDeliveryPoller {
                 // Stop watching cleared/finished loops
                 JsonNode st = backendClient.suggestionGet(
                     "/api/v1/agent/cron/heartbeat/" + e.getKey());
-                if (st == null || !st.path("set").asBoolean(false)) {
+                if (st != null && st.path("set").isBoolean() && !st.path("set").asBoolean()) {
                     unwatch(e.getKey());
                 }
             } catch (Exception ex) {
