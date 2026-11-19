@@ -406,7 +406,7 @@ class CronJobServiceTest {
         service.runNow(id);
         verify(agentRuntimeService).runBackground(org.mockito.AdditionalMatchers.and(
             org.mockito.ArgumentMatchers.startsWith("[IMPORTANT: You are running as a scheduled cron job."),
-            org.mockito.ArgumentMatchers.contains("Do something")), eq(true), eq(storedOwner != null ? storedOwner : AgentProperties.DEFAULT_USER_ID), eq(java.util.Map.of()));
+            org.mockito.ArgumentMatchers.contains("Do something")), eq(true), eq(storedOwner != null ? storedOwner : AgentProperties.DEFAULT_USER_ID), eq(java.util.Map.of(com.azhukov.agent.tools.cron.CronJobTool.CRON_RUN_METADATA, "true")));
     }
 
     @Test
@@ -476,7 +476,7 @@ class CronJobServiceTest {
         verify(skillManager).getSkill("hermes-agent");
         verify(skillManager).getSkill("backend-dev");
         // Verify the enhanced prompt (with skills injected) was passed to runtime
-        verify(agentRuntimeService).runBackground(org.mockito.ArgumentMatchers.contains("Use this skill"), eq(true), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(java.util.Map.of()));
+        verify(agentRuntimeService).runBackground(org.mockito.ArgumentMatchers.contains("Use this skill"), eq(true), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(java.util.Map.of(com.azhukov.agent.tools.cron.CronJobTool.CRON_RUN_METADATA, "true")));
     }
 
     @Test
@@ -494,7 +494,7 @@ class CronJobServiceTest {
 
         verify(agentRuntimeService).runBackground(org.mockito.AdditionalMatchers.and(
             org.mockito.ArgumentMatchers.startsWith("[IMPORTANT: You are running as a scheduled cron job."),
-            org.mockito.ArgumentMatchers.contains("Do something plain")), eq(true), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(java.util.Map.of()));
+            org.mockito.ArgumentMatchers.contains("Do something plain")), eq(true), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(java.util.Map.of(com.azhukov.agent.tools.cron.CronJobTool.CRON_RUN_METADATA, "true")));
         verifyNoInteractions(skillManager);
     }
 
@@ -968,7 +968,7 @@ class CronJobServiceTest {
         service.runNow(id);
 
         // Verify LLM was NOT called
-        verify(agentRuntimeService, never()).runBackground(any(), org.mockito.ArgumentMatchers.anyBoolean(), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(java.util.Map.of()));
+        verify(agentRuntimeService, never()).runBackground(any(), org.mockito.ArgumentMatchers.anyBoolean(), org.mockito.ArgumentMatchers.anyString(), any());
     }
 
     // ── Fix 5/6/7: Override field tests ──
@@ -1042,6 +1042,7 @@ class CronJobServiceTest {
 
         verify(agentRuntimeService).runBackground(org.mockito.AdditionalMatchers.and(
             org.mockito.ArgumentMatchers.startsWith("[IMPORTANT: You are running as a scheduled cron job."),
-            org.mockito.ArgumentMatchers.contains("Do something")), eq(true), org.mockito.ArgumentMatchers.anyString(), eq(java.util.Map.of("delegation_toolsets", "web,terminal", "cron_workdir", "/opt/dev")));
+            org.mockito.ArgumentMatchers.contains("Do something")), eq(true), org.mockito.ArgumentMatchers.anyString(), eq(java.util.Map.of("delegation_toolsets", "web,terminal", "cron_workdir", "/opt/dev",
+                com.azhukov.agent.tools.cron.CronJobTool.CRON_RUN_METADATA, "true")));
     }
 }
