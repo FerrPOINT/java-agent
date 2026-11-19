@@ -34,6 +34,12 @@ class McpOAuthIssuerBindingTest {
     }
 
     @Test
+    void hostnameCaseDoesNotChangeIssuer() {
+        assertThat(McpOAuthManager.issuerOf("https://AUTH.Example.COM/token"))
+            .isEqualTo(McpOAuthManager.issuerOf("https://auth.example.com/token"));
+    }
+
+    @Test
     void differentHostsAreDifferentIssuers() {
         assertThat(McpOAuthManager.issuerOf("https://auth.example.com/token"))
             .isNotEqualTo(McpOAuthManager.issuerOf("https://auth.other.com/token"));

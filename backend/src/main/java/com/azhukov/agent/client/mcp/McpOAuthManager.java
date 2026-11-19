@@ -65,7 +65,7 @@ public class McpOAuthManager {
     private static boolean issuerMatches(McpOAuthEntity token, String tokenUrl) {
         String storedIssuer = token.getTokenIssuer();
         return storedIssuer != null && !storedIssuer.isBlank()
-            && tokenUrl != null && !tokenUrl.isBlank() && storedIssuer.equals(issuerOf(tokenUrl));
+            && tokenUrl != null && !tokenUrl.isBlank() && issuerOf(storedIssuer).equals(issuerOf(tokenUrl));
     }
 
     /** Refresh the stored credential using the selected MCP server configuration. */
@@ -170,7 +170,8 @@ public class McpOAuthManager {
             throw new IllegalArgumentException("OAuth token URL must be an absolute HTTP(S) URL without userinfo");
         }
         String port = uri.getPort() == -1 ? "" : ":" + uri.getPort();
-        return uri.getScheme().toLowerCase(java.util.Locale.ROOT) + "://" + uri.getHost() + port;
+        return uri.getScheme().toLowerCase(java.util.Locale.ROOT) + "://"
+            + uri.getHost().toLowerCase(java.util.Locale.ROOT) + port;
     }
 
     /** Store the token and its issuer under the same profile-scoped connection. */

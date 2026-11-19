@@ -125,6 +125,17 @@ class McpOAuthManagerTest {
     }
 
     @Test
+    void getTokenAcceptsExistingIssuerWithDifferentHostnameCase() {
+        var entity = new McpOAuthEntity();
+        entity.setAccessToken("access-123");
+        entity.setTokenIssuer("https://MCP.Example.com");
+        entity.setExpiresAt(Instant.now().plusSeconds(3600));
+        when(mcpOAuthRepository.findByProfileAndServerName("default", "test-server")).thenReturn(Optional.of(entity));
+
+        assertThat(manager.getToken("default", server("test-server"))).contains("access-123");
+    }
+
+    @Test
     void getTokenDoesNotReturnUnexpiredCredentialAfterIssuerChanges() {
         var entity = new McpOAuthEntity();
         entity.setAccessToken("old-issuer-token");
