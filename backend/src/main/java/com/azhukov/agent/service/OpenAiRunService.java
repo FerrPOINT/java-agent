@@ -52,6 +52,7 @@ public class OpenAiRunService {
 
     private static final long RUN_STATUS_TTL_SECONDS = 3600;
     private static final long RUN_EVENT_STREAM_TIMEOUT_MS = 600_000L;
+    private static final List<String> APPROVAL_CHOICES = List.of("once", "deny");
 
     private final AgentRuntimeService agentRuntimeService;
     private final OpenAiSessionService openAiSessionService;
@@ -210,7 +211,7 @@ public class OpenAiRunService {
         String choice = normalizeApprovalChoice(rawChoice);
         if (choice == null) {
             return ControlResult.badRequest(
-                "Invalid approval choice; expected once or deny",
+                "Invalid approval choice; expected " + String.join(" or ", APPROVAL_CHOICES),
                 "invalid_approval_choice");
         }
         if (requestId != null && (requestId.isBlank() || requestId.length() > 256)) {
@@ -365,7 +366,7 @@ public class OpenAiRunService {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("request_id", approval.requestId().toString());
         payload.put("reason", apiErrorText(approval.reason()));
-        payload.put("choices", List.of("once", "session", "always", "deny"));
+        payload.put("choices", APPROVAL_CHOICES);
         if (approval.call() != null) {
             payload.put("tool", approval.call().name());
             payload.put("arguments", apiErrorText(approval.call().arguments()));
@@ -430,10 +431,7 @@ public class OpenAiRunService {
             case "approve", "approved", "allow" -> "once";
             default -> value;
         };
-        return switch (value) {
-            case "once", "deny" -> value;
-            default -> null;
-        };
+        return APPROVAL_CHOICES.contains(value) ? value : null;
     }
 
     private void sweepTerminalRuns() {

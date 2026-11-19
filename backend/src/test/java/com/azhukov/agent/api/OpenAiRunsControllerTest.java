@@ -1289,6 +1289,7 @@ class OpenAiRunsControllerTest {
 
         assertThat(result.getResponse().getContentAsString())
             .contains("approval.request")
+            .contains("\"choices\":[\"once\",\"deny\"]")
             .contains("OPENAI_API_KEY=[REDACTED]")
             .contains("TOKEN=[REDACTED]")
             .doesNotContain("sk-approvalsecret123456789012345")
