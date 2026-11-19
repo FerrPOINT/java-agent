@@ -180,7 +180,7 @@ class McpOAuthFlowServiceTest {
 
         assertThat(result).containsEntry("ok", false);
         assertThat(String.valueOf(result.get("detail"))).contains("already used");
-        verify(oauthManager, never()).storeToken(any(), any(), any(), any());
+        verify(oauthManager, never()).storeToken(any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -235,8 +235,10 @@ class McpOAuthFlowServiceTest {
             McpServerConfigEntity config = config("srv");
             config.setOauthTokenUrl("http://127.0.0.1:" + server.getAddress().getPort() + "/token");
             McpOAuthFlowEntity flow = pendingFlow("srv");
+            flow.setProfile("research");
+            config.setProfile("research");
             when(flowRepository.findByStateHash(any(String.class))).thenReturn(Optional.of(flow));
-            when(configStore.find("default", "srv")).thenReturn(Optional.of(config));
+            when(configStore.find("research", "srv")).thenReturn(Optional.of(config));
             McpOAuthFlowService service = service();
             Instant before = Instant.now();
 
@@ -249,7 +251,8 @@ class McpOAuthFlowServiceTest {
                 "redirect_uri=https%3A%2F%2Flocal%2Fapi%2Fmcp%2Foauth%2Fcallback%2Fsrv");
             assertThat(flow.getStatus()).isEqualTo("completed");
             ArgumentCaptor<Instant> expiry = ArgumentCaptor.forClass(Instant.class);
-            verify(oauthManager).storeToken(eq("srv"), eq("qa-access"), eq("qa-refresh"), expiry.capture());
+            verify(oauthManager).storeToken(eq("research"), eq("srv"), eq("qa-access"), eq("qa-refresh"),
+                expiry.capture(), eq(config.getOauthTokenUrl()));
             assertThat(expiry.getValue()).isBetween(before.plusSeconds(expectedTtl), Instant.now().plusSeconds(expectedTtl));
             verify(flowRepository).save(flow);
 
@@ -270,6 +273,6 @@ class McpOAuthFlowServiceTest {
             .containsEntry("ok", false).containsEntry("detail", "server OAuth configuration disappeared");
         assertThat(flow.getStatus()).isEqualTo("failed");
         verify(flowRepository).save(flow);
-        verify(oauthManager, never()).storeToken(any(), any(), any(), any());
+        verify(oauthManager, never()).storeToken(any(), any(), any(), any(), any(), any());
     }
 }

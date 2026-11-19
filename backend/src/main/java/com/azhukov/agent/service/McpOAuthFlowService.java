@@ -77,7 +77,7 @@ public class McpOAuthFlowService {
         String stateHash = sha256Hex(state);
 
         McpOAuthFlowEntity flow = new McpOAuthFlowEntity();
-        flow.setProfile(normalize(profile));
+        flow.setProfile(config.getProfile());
         flow.setServerName(serverName);
         flow.setStateHash(stateHash);
         flow.setCodeChallenge(challenge);
@@ -144,7 +144,8 @@ public class McpOAuthFlowService {
         }
 
         McpOAuthManager oauth = oauth();
-        oauth.storeToken(flow.getServerName(), accessToken, refreshToken, Instant.now().plusSeconds(ttl));
+        oauth.storeToken(flow.getProfile(), flow.getServerName(), accessToken, refreshToken,
+            Instant.now().plusSeconds(ttl), config.getOauthTokenUrl());
 
         flow.setStatus("completed");
         flows().save(flow);
@@ -271,10 +272,6 @@ public class McpOAuthFlowService {
 
     private static Map<String, Object> failure(String detail) {
         return Map.of("ok", false, "status", "failed", "detail", detail);
-    }
-
-    private static String normalize(String profile) {
-        return profile == null || profile.isBlank() ? "default" : profile.trim().toLowerCase();
     }
 
     private McpOAuthFlowRepository flows() {
