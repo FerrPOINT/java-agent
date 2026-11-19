@@ -95,7 +95,8 @@ public class LoopCommand implements CommandHandler {
             return "Usage: /loop [interval] <prompt> [--times N] [--until <condition>]\n"
                 + "Also: /loop status | pause | resume | stop";
         }
-        int effective = interval != null ? Math.max(interval, 60) : 300;
+        if (interval != null && interval < 60) return "Interval too small — minimum is 60s.";
+        int effective = interval != null ? interval : 300;
 
         StringBuilder loopPrompt = new StringBuilder();
         loopPrompt.append("[/loop]").append(times != null ? " (max " + times + " iterations)" : "")

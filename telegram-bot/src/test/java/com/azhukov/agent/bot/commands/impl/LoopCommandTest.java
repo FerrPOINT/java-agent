@@ -103,6 +103,13 @@ class LoopCommandTest {
     }
 
     @Test
+    void explicitlyTooShortIntervalIsRejectedRatherThanSilentlyChanged() {
+        String out = cmd.handle(event("10s inspect"), sessionWithBackend(UUID.randomUUID()));
+        assertThat(out).contains("minimum");
+        org.mockito.Mockito.verifyNoInteractions(client, poller);
+    }
+
+    @Test
     void oversizedIntervalDoesNotStartDefaultFiveMinuteLoop() {
         String out = cmd.handle(event("2147483648s inspect"), sessionWithBackend(UUID.randomUUID()));
         assertThat(out).contains("interval");
