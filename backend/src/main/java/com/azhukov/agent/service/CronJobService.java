@@ -512,13 +512,19 @@ private static final String CRON_EXECUTION_HINT = """
         CronJobEntity entity = cronJobRepository.findById(id)
             .orElseThrow(() -> new IllegalArgumentException("Cron job not found: " + id));
         requireOwnership(entity);
-        scheduler.execute(() -> {
+        var origin = com.azhukov.agent.core.security.NativeIdentityOrigin.current();
+        scheduler.execute(UserContext.wrap(() -> {
+            var previousOrigin = com.azhukov.agent.core.security.NativeIdentityOrigin.current();
+            com.azhukov.agent.core.security.NativeIdentityOrigin.bind(origin);
             try {
+                UserContext.requireCurrentAccess();
                 executeManualNow(id, extraPrompt);
             } catch (Exception e) {
                 log.warn("Manual background cron run {} did not complete: {}", id, e.getMessage());
+            } finally {
+                com.azhukov.agent.core.security.NativeIdentityOrigin.bind(previousOrigin);
             }
-        });
+        }));
         return entity;
     }
 
