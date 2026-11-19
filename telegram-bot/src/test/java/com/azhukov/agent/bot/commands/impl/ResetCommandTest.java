@@ -41,6 +41,7 @@ class ResetCommandTest {
         BotSessionStore store = mock(BotSessionStore.class);
         AgentBackendClient backendClient = mock(AgentBackendClient.class);
         when(store.deactivateAll("100")).thenReturn(3);
+        when(backendClient.resetSession(anyString())).thenReturn(true);
         UUID sessionId = UUID.randomUUID();
         var cmd = new ResetCommand(store, backendClient);
         BotSessionEntity session = new BotSessionEntity();
@@ -69,6 +70,20 @@ class ResetCommandTest {
         // Verify backend context was reset before sessions were deactivated
         verify(backendClient).resetSession(sessionId.toString());
         verify(store).deactivateAll("100");
+    }
+
+    @Test
+    void failedBackendResetDoesNotDeactivateSessionsOrClaimSuccess() {
+        BotSessionStore store = mock(BotSessionStore.class);
+        AgentBackendClient backendClient = mock(AgentBackendClient.class);
+        UUID sessionId = UUID.randomUUID();
+        BotSessionEntity session = new BotSessionEntity();
+        session.setUserId("100"); session.setId(sessionId); session.setBackendSessionId(sessionId);
+        when(backendClient.resetSession(sessionId.toString())).thenReturn(false);
+
+        String result = new ResetCommand(store, backendClient).handle(makeEvent(""), session);
+        assertThat(result).containsIgnoringCase("failed");
+        verify(store, never()).deactivateAll(anyString());
     }
 
     @Test

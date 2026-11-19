@@ -35,7 +35,9 @@ public class ResetCommand implements CommandHandler {
         if (session.getId() != null) {
             String sid = BackendSessionResolver.resolveString(session);
             if (sid == null) return "No backend session yet — send a message first.";
-            backendClient.resetSession(sid);
+            if (!backendClient.resetSession(sid)) {
+                return "Session reset failed or could not be confirmed. No local sessions were deactivated.";
+            }
         }
         int count = store.deactivateAll(session.getUserId());
         return "All sessions reset (" + count + " deactivated). Send a message to start fresh.";
