@@ -5,6 +5,9 @@ import com.azhukov.agent.persistence.entity.McpOAuthEntity;
 import com.azhukov.agent.persistence.repository.McpOAuthRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
@@ -44,6 +47,7 @@ class McpOAuthManagerTest {
             var config = server("test-server");
             config.setOauthTokenUrl("http://127.0.0.1:" + http.getAddress().getPort() + "/token");
             var entity = new McpOAuthEntity(); entity.setRefreshToken("old-refresh");
+            entity.setTokenIssuer(McpOAuthManager.issuerOf(config.getOauthTokenUrl()));
             when(mcpOAuthRepository.findByProfileAndServerName("default", "test-server")).thenReturn(Optional.of(entity));
             org.assertj.core.api.Assertions.assertThatThrownBy(() -> manager.refreshToken("default", config))
                 .hasMessageContaining("400").hasMessageNotContaining("sensitive-canary");
@@ -65,6 +69,7 @@ class McpOAuthManagerTest {
             var config = server("test-server");
             config.setOauthTokenUrl("http://127.0.0.1:" + http.getAddress().getPort() + "/token");
             var entity = new McpOAuthEntity(); entity.setRefreshToken("old-refresh");
+            entity.setTokenIssuer(McpOAuthManager.issuerOf(config.getOauthTokenUrl()));
             when(mcpOAuthRepository.findByProfileAndServerName("default", "test-server")).thenReturn(Optional.of(entity));
             org.assertj.core.api.Assertions.assertThatThrownBy(() -> manager.refreshToken("default", config))
                 .isInstanceOf(java.io.IOException.class);
@@ -87,6 +92,7 @@ class McpOAuthManagerTest {
             var config = server("test-server");
             config.setOauthTokenUrl("http://127.0.0.1:" + http.getAddress().getPort() + "/token");
             var entity = new McpOAuthEntity(); entity.setRefreshToken("old-refresh");
+            entity.setTokenIssuer(McpOAuthManager.issuerOf(config.getOauthTokenUrl()));
             when(mcpOAuthRepository.findByProfileAndServerName("default", "test-server")).thenReturn(Optional.of(entity));
             org.assertj.core.api.Assertions.assertThatThrownBy(() -> manager.refreshToken("default", config))
                 .isInstanceOf(java.io.IOException.class).hasMessageNotContaining("sensitive-canary");
@@ -108,6 +114,7 @@ class McpOAuthManagerTest {
     void getToken_returnsToken_whenNotExpired() {
         McpOAuthEntity entity = new McpOAuthEntity();
         entity.setAccessToken("access-123");
+        entity.setTokenIssuer("https://mcp.example.com");
         entity.setExpiresAt(Instant.now().plusSeconds(3600));
         when(mcpOAuthRepository.findByProfileAndServerName("default", "test-server")).thenReturn(Optional.of(entity));
 
@@ -135,6 +142,7 @@ class McpOAuthManagerTest {
         var entity = new McpOAuthEntity(); entity.setAccessToken("valid-token");
         entity.setExpiresAt(Instant.now().plusSeconds(3600)); entity.setTokenIssuer("https://auth.example.com");
         var config = server("test-server");
+        config.setOauthTokenUrl(null);
         when(mcpOAuthRepository.findByProfileAndServerName("default", "test-server")).thenReturn(Optional.of(entity));
         assertThat(manager.getToken("default", config)).isEmpty();
         config.setOauthTokenUrl("https://auth.example.com/token");
@@ -175,6 +183,14 @@ class McpOAuthManagerTest {
     }
 
     @Test
+    void invalidEndpointIsRejectedBeforeCredentialMutation() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+            manager.storeToken("research", "test-server", "access", "refresh", null, "not an endpoint"))
+            .isInstanceOf(IllegalArgumentException.class);
+        org.mockito.Mockito.verifyNoInteractions(mcpOAuthRepository);
+    }
+
+    @Test
     void oauthFieldsMustBeValidTopLevelScalars() {
         assertThat(McpOAuthManager.extractJsonField("{\"refresh_token\":null}", "refresh_token")).isNull();
         assertThat(McpOAuthManager.extractJsonField("{\"extra\":{\"access_token\":\"nested\"}}", "access_token")).isNull();
@@ -204,28 +220,20 @@ class McpOAuthManagerTest {
         assertThat(McpOAuthManager.extractJsonField(json, "access_token")).isEqualTo("to\"ken");
     }
 
-    // ─── P2-17: refreshToken interrupt handling ──────────────────────
-
     @Test
-    void getToken_interruptedDuringAutoRefresh_restoresInterruptFlag() {
-        McpOAuthEntity entity = new McpOAuthEntity();
-        entity.setAccessToken("access-123");
+    void getToken_interruptedDuringAutoRefresh_restoresInterruptFlag() throws Exception {
+        var entity = new McpOAuthEntity();
+        entity.setAccessToken("expired");
+        entity.setTokenIssuer("https://mcp.example.com");
         entity.setExpiresAt(Instant.now().minusSeconds(3600));
         when(mcpOAuthRepository.findByProfileAndServerName("default", "test-server")).thenReturn(Optional.of(entity));
-
-        // Simulate interrupt by pre-interrupting the thread
-        Thread.currentThread().interrupt();
+        var interrupted = org.mockito.Mockito.spy(manager);
+        var config = server("test-server");
+        org.mockito.Mockito.doThrow(new InterruptedException()).when(interrupted).refreshToken("default", config);
         try {
-            Optional<String> token = manager.getToken("default", server("test-server"));
-            // Should return empty (no valid token after failed refresh)
-            assertThat(token).isEmpty();
-            // Interrupt flag should be restored
-            // Note: the refreshToken method will throw because the server fixture has no OAuth endpoint,
-            // but the InterruptedException catch won't trigger here since the failure is
-            // IllegalStateException, not InterruptedException. This test verifies the
-            // getToken path doesn't crash when token is expired.
+            assertThat(interrupted.getToken("default", config)).isEmpty();
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
         } finally {
-            // Clear interrupt flag for subsequent tests
             Thread.interrupted();
         }
     }
@@ -273,8 +281,6 @@ class McpOAuthManagerTest {
             .hasMessageContaining("No OAuth token URL configured");
     }
 
-    // ─── V67 (WP-e): refresh tokens are bound to their issuer ──────────
-
     @Test
     void refreshToken_issuerMismatch_discardsTokenAndThrows() {
         AgentProperties.McpProperties.ServerProperties serverConfig = new AgentProperties.McpProperties.ServerProperties();
@@ -292,60 +298,96 @@ class McpOAuthManagerTest {
         org.assertj.core.api.Assertions.assertThatThrownBy(() ->
                 manager.refreshToken("default", serverConfig))
             .isInstanceOf(IllegalStateException.class)
-            .hasMessageContaining("was issued by https://old-auth.example.com")
+            .hasMessageContaining("has no matching issuer")
             .hasMessageContaining("re-authorization required");
         // the mismatched token is DISCARDED, never replayed at the new issuer
         org.mockito.Mockito.verify(mcpOAuthRepository).delete(entity);
     }
 
-    @Test
-    void refreshToken_matchingIssuer_proceedsToRefresh() {
-        AgentProperties.McpProperties.ServerProperties serverConfig = new AgentProperties.McpProperties.ServerProperties();
-        serverConfig.setName("stable-server");
-        serverConfig.setOauthTokenUrl("https://auth.example.com/token");
+    @ParameterizedTest
+    @NullAndEmptySource
+    @ValueSource(strings = {" ", "https://other.example.com"})
+    void unboundOrForeignIssuerCannotReadOrRefreshCredential(String issuer) throws Exception {
+        var requests = new java.util.concurrent.atomic.AtomicInteger();
+        var http = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        http.createContext("/token", exchange -> {
+            requests.incrementAndGet();
+            exchange.sendResponseHeaders(400, -1);
+            exchange.close();
+        });
+        http.start();
+        try {
+            var config = server("renamed-connection");
+            config.setOauthTokenUrl("http://127.0.0.1:" + http.getAddress().getPort() + "/token");
+            var entity = new McpOAuthEntity();
+            entity.setAccessToken("unbound-access");
+            entity.setRefreshToken("unbound-refresh");
+            entity.setTokenIssuer(issuer);
+            when(mcpOAuthRepository.findByProfileAndServerName("research", "renamed-connection"))
+                .thenReturn(Optional.of(entity));
 
-        McpOAuthEntity entity = new McpOAuthEntity();
-        entity.setProfile("default");
-        entity.setServerName("stable-server");
-        entity.setRefreshToken("refresh-token");
-        entity.setTokenIssuer("https://auth.example.com");
-        when(mcpOAuthRepository.findByProfileAndServerName("default", "stable-server"))
-            .thenReturn(Optional.of(entity));
-
-        // The issuer check passes; the refresh itself fails on the HTTP call
-        // (no server behind example.com in tests) — but NOT with the issuer error.
-        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
-                manager.refreshToken("default", serverConfig))
-            .isNotInstanceOf(IllegalStateException.class);
-        org.mockito.Mockito.verify(mcpOAuthRepository, org.mockito.Mockito.never())
-            .delete(entity);
+            for (var expiry : new Instant[] {null, Instant.now().plusSeconds(3600), Instant.now().minusSeconds(3600)}) {
+                entity.setExpiresAt(expiry);
+                assertThat(manager.getToken("research", config)).isEmpty();
+            }
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> manager.refreshToken("research", config))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("re-authorization required");
+            assertThat(requests.get()).isZero();
+            org.mockito.Mockito.verify(mcpOAuthRepository, org.mockito.Mockito.never()).save(any());
+        } finally {
+            http.stop(0);
+        }
     }
 
-    @Test
-    void refreshToken_legacyNullIssuer_proceedsWithoutDiscard() {
-        // Pre-V67 rows have NULL issuer: unbound, but not silently replayed-
-        // and-dropped — the refresh runs and re-binds the issuer on success.
-        AgentProperties.McpProperties.ServerProperties serverConfig = new AgentProperties.McpProperties.ServerProperties();
-        serverConfig.setName("legacy-server");
-        serverConfig.setOauthTokenUrl("https://auth.example.com/token");
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void matchingIssuerRefreshUsesSelectedProfileAndFormCredentials(boolean withClientCredentials) throws Exception {
+        var requestBody = new java.util.concurrent.atomic.AtomicReference<String>();
+        var http = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        http.createContext("/token", exchange -> {
+            requestBody.set(new String(exchange.getRequestBody().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8));
+            byte[] body = "{\"access_token\":\"new-access\",\"expires_in\":3600}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, body.length);
+            try (var output = exchange.getResponseBody()) { output.write(body); }
+        });
+        http.start();
+        try {
+            var config = server("custom-connection");
+            config.setOauthTokenUrl("http://127.0.0.1:" + http.getAddress().getPort() + "/token");
+            if (withClientCredentials) {
+                config.setOauthClientId("client id");
+                config.setOauthClientSecret("client&secret");
+                config.setOauthScopes("read write");
+            }
+            var entity = new McpOAuthEntity();
+            entity.setAccessToken("expired");
+            entity.setRefreshToken("refresh&token");
+            entity.setExpiresAt(Instant.now().minusSeconds(60));
+            entity.setTokenIssuer(McpOAuthManager.issuerOf(config.getOauthTokenUrl()));
+            when(mcpOAuthRepository.findByProfileAndServerName("research", "custom-connection"))
+                .thenReturn(Optional.of(entity));
 
-        McpOAuthEntity entity = new McpOAuthEntity();
-        entity.setProfile("default");
-        entity.setServerName("legacy-server");
-        entity.setRefreshToken("refresh-token");
-        entity.setTokenIssuer(null);
-        when(mcpOAuthRepository.findByProfileAndServerName("default", "legacy-server"))
-            .thenReturn(Optional.of(entity));
-
-        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
-                manager.refreshToken("default", serverConfig))
-            .isNotInstanceOf(IllegalStateException.class);
-        org.mockito.Mockito.verify(mcpOAuthRepository, org.mockito.Mockito.never())
-            .delete(entity);
+            assertThat(manager.getToken("research", config)).contains("new-access");
+            assertThat(requestBody.get()).contains("grant_type=refresh_token", "refresh_token=refresh%26token");
+            if (withClientCredentials) {
+                assertThat(requestBody.get()).contains("client_id=client+id", "client_secret=client%26secret", "scope=read+write");
+            } else {
+                assertThat(requestBody.get()).doesNotContain("client_id=", "client_secret=", "scope=");
+            }
+            verify(mcpOAuthRepository).save(entity);
+            assertThat(entity.getProfile()).isEqualTo("research");
+            assertThat(entity.getRefreshToken()).isEqualTo("refresh&token");
+            assertThat(entity.getTokenIssuer()).isEqualTo(McpOAuthManager.issuerOf(config.getOauthTokenUrl()));
+            org.mockito.Mockito.verify(mcpOAuthRepository, org.mockito.Mockito.never()).findByProfileAndServerName("default", "custom-connection");
+        } finally {
+            http.stop(0);
+        }
     }
+
     private static AgentProperties.McpProperties.ServerProperties server(String name) {
         var server = new AgentProperties.McpProperties.ServerProperties();
         server.setName(name);
+        server.setOauthTokenUrl("https://mcp.example.com/oauth/token");
         return server;
     }
 }

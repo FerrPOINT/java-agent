@@ -15,7 +15,6 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
-import java.util.regex.Pattern;
 
 @Component
 @Slf4j
@@ -27,21 +26,6 @@ public class McpOAuthManager {
     private final HttpClient httpClient = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(10))
         .build();
-
-    // Credential stripping pattern for error logging
-    private static final Pattern CREDENTIAL_PATTERN = Pattern.compile(
-        "(?:"
-        + "ghp_[A-Za-z0-9_]{1,255}"
-        + "|sk-[A-Za-z0-9_]{1,255}"
-        + "|Bearer\\s+\\S+"
-        + "|token=[^\\s&,;\"']{1,255}"
-        + "|key=[^\\s&,;\"']{1,255}"
-        + "|API_KEY=[^\\s&,;\"']{1,255}"
-        + "|password=[^\\s&,;\"']{1,255}"
-        + "|secret=[^\\s&,;\"']{1,255}"
-        + ")",
-        Pattern.CASE_INSENSITIVE
-    );
 
     public Optional<String> getToken(String profile, ServerProperties server) {
         String serverName = server.getName();
@@ -80,8 +64,8 @@ public class McpOAuthManager {
 
     private static boolean issuerMatches(McpOAuthEntity token, String tokenUrl) {
         String storedIssuer = token.getTokenIssuer();
-        if (storedIssuer == null || storedIssuer.isBlank()) return true;
-        return tokenUrl != null && !tokenUrl.isBlank() && storedIssuer.equals(issuerOf(tokenUrl));
+        return storedIssuer != null && !storedIssuer.isBlank()
+            && tokenUrl != null && !tokenUrl.isBlank() && storedIssuer.equals(issuerOf(tokenUrl));
     }
 
     /** Refresh the stored credential using the selected MCP server configuration. */
@@ -92,7 +76,6 @@ public class McpOAuthManager {
             throw new IllegalStateException(
                 "No OAuth token URL configured for MCP server: " + serverName);
         }
-        String currentIssuer = issuerOf(tokenUrl);
 
         McpOAuthEntity entity = mcpOAuthRepository.findByProfileAndServerName(profile, serverName)
             .orElseThrow(() -> new IllegalStateException(
@@ -103,16 +86,11 @@ public class McpOAuthManager {
                 "No refresh token stored for MCP server: " + serverName);
         }
 
-        // WP-e (V67): a refresh token minted by issuer A must never be replayed
-        // at issuer B (protected-resource metadata edit, server migration). A
-        // mismatched issuer invalidates the stored token instead of leaking it.
-        String storedIssuer = entity.getTokenIssuer();
-        if (storedIssuer != null && !storedIssuer.isBlank() && !storedIssuer.equals(currentIssuer)) {
+        if (!issuerMatches(entity, tokenUrl)) {
             mcpOAuthRepository.delete(entity);
             throw new IllegalStateException(
                 "Stored OAuth token for MCP server " + serverName
-                + " was issued by " + storedIssuer + " but the server now points at "
-                + currentIssuer + " — token discarded; re-authorization required");
+                + " has no matching issuer; re-authorization required");
         }
 
         // Build form-encoded POST body per RFC 6749 §6
@@ -179,20 +157,26 @@ public class McpOAuthManager {
         log.info("Successfully refreshed OAuth token for MCP server {}", serverName);
     }
 
-    /** V67: issuer identity = token endpoint origin (scheme + host + port). */
+    /** Issuer identity is the token endpoint origin (scheme, host and port). */
     static String issuerOf(String tokenUrl) {
+        URI uri;
         try {
-            java.net.URL url = new java.net.URI(tokenUrl).toURL();
-            String port = url.getPort() == -1 ? "" : ":" + url.getPort();
-            return url.getProtocol() + "://" + url.getHost() + port;
-        } catch (Exception e) {
-            return tokenUrl; // opaque fallback: compare raw strings
+            uri = URI.create(tokenUrl);
+        } catch (IllegalArgumentException | NullPointerException e) {
+            throw new IllegalArgumentException("OAuth token URL must be an absolute HTTP(S) URL");
         }
+        if (!("http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme()))
+                || uri.getHost() == null || uri.getUserInfo() != null) {
+            throw new IllegalArgumentException("OAuth token URL must be an absolute HTTP(S) URL without userinfo");
+        }
+        String port = uri.getPort() == -1 ? "" : ":" + uri.getPort();
+        return uri.getScheme().toLowerCase(java.util.Locale.ROOT) + "://" + uri.getHost() + port;
     }
 
     /** Store the token and its issuer under the same profile-scoped connection. */
     public void storeToken(String profile, String serverName, String accessToken,
                            String refreshToken, Instant expiresAt, String tokenUrl) {
+        String issuer = issuerOf(tokenUrl);
         McpOAuthEntity entity = mcpOAuthRepository.findByProfileAndServerName(profile, serverName)
             .orElseGet(McpOAuthEntity::new);
         entity.setProfile(profile);
@@ -200,7 +184,7 @@ public class McpOAuthManager {
         entity.setAccessToken(accessToken);
         entity.setRefreshToken(refreshToken);
         entity.setExpiresAt(expiresAt);
-        entity.setTokenIssuer(issuerOf(tokenUrl));
+        entity.setTokenIssuer(issuer);
         Instant now = Instant.now();
         if (entity.getCreatedAt() == null) {
             entity.setCreatedAt(now);
@@ -227,12 +211,5 @@ public class McpOAuthManager {
         var value = root != null && root.isObject() ? root.get(fieldName) : null;
         boolean tokenField = "access_token".equals(fieldName) || "refresh_token".equals(fieldName);
         return value != null && (value.isTextual() || (!tokenField && value.isNumber())) ? value.asText() : null;
-    }
-
-    public static String sanitizeError(String text) {
-        if (text == null || text.isEmpty()) {
-            return text;
-        }
-        return CREDENTIAL_PATTERN.matcher(text).replaceAll("[REDACTED]");
     }
 }

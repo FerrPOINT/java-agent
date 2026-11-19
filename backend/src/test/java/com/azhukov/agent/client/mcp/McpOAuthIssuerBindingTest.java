@@ -1,6 +1,9 @@
 package com.azhukov.agent.client.mcp;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -13,6 +16,8 @@ class McpOAuthIssuerBindingTest {
 
     @Test
     void issuerIsEndpointOrigin() {
+        assertThat(McpOAuthManager.issuerOf("HTTPS://auth.example.com/oauth/token"))
+            .isEqualTo("https://auth.example.com");
         assertThat(McpOAuthManager.issuerOf("https://auth.example.com/oauth/token"))
             .isEqualTo("https://auth.example.com");
         assertThat(McpOAuthManager.issuerOf("https://auth.example.com:8443/token"))
@@ -40,9 +45,12 @@ class McpOAuthIssuerBindingTest {
             .isNotEqualTo(McpOAuthManager.issuerOf("https://auth.example.com:9443/token"));
     }
 
-    @Test
-    void unparseableUrlFallsBackToRawString() {
-        assertThat(McpOAuthManager.issuerOf("not a url at all"))
-            .isEqualTo("not a url at all");
+    @ParameterizedTest
+    @NullAndEmptySource
+    @ValueSource(strings = {"not a url at all", "/relative/token", "https:/missing-host",
+        "ftp://auth.example.com/token", "https://user:secret@auth.example.com/token"})
+    void invalidEndpointCannotBecomeAnIssuer(String endpoint) {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> McpOAuthManager.issuerOf(endpoint))
+            .isInstanceOf(IllegalArgumentException.class).hasMessageNotContaining("user:secret");
     }
 }
