@@ -169,6 +169,16 @@ class HeartbeatCommandTest {
 
         String out = cmd.handle(event("resume"), session(sid));
         assertThat(out).contains("Heartbeat resumed");
+        verify(poller).watch(sid, 7L);
+    }
+
+    @Test
+    void failedResumeDoesNotRegisterWatch() throws Exception {
+        UUID sid = UUID.randomUUID();
+        when(client.suggestionPost("/api/v1/agent/cron/heartbeat/" + sid + "/resume"))
+            .thenReturn(json("{\"ok\":false}"));
+        assertThat(cmd.handle(event("resume"), session(sid))).contains("No heartbeat");
+        org.mockito.Mockito.verifyNoInteractions(poller);
     }
 
     @Test

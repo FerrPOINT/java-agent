@@ -80,8 +80,9 @@ public class HeartbeatCommand implements CommandHandler {
         }
         if (lower.equals("resume")) {
             JsonNode r = backendClient.suggestionPost("/api/v1/agent/cron/heartbeat/" + sid + "/resume");
-            return r != null && r.path("ok").asBoolean(false)
-                ? "▶ " + r.path("message").asText("Resumed.") : "No heartbeat to resume.";
+            if (r == null || !r.path("ok").asBoolean(false)) return "No heartbeat to resume.";
+            deliveryPoller.watch(java.util.UUID.fromString(sid), chatId);
+            return "▶ " + r.path("message").asText("Resumed.");
         }
         if (lower.equals("clear") || lower.equals("stop") || lower.equals("off")) {
             JsonNode r = backendClient.suggestionPost("/api/v1/agent/cron/heartbeat/" + sid + "/clear");
