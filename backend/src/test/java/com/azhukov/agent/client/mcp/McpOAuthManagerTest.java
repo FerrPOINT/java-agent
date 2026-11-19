@@ -75,6 +75,27 @@ class McpOAuthManagerTest {
     }
 
     @Test
+    void malformedProviderBodyDoesNotExposeSecretsInException() throws Exception {
+        var http = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        http.createContext("/token", exchange -> {
+            byte[] body = "{\"access_token\":\"sensitive-canary\", broken}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, body.length);
+            try (var output = exchange.getResponseBody()) { output.write(body); }
+        });
+        http.start();
+        try {
+            var config = server("test-server");
+            config.setOauthTokenUrl("http://127.0.0.1:" + http.getAddress().getPort() + "/token");
+            var entity = new McpOAuthEntity(); entity.setRefreshToken("old-refresh");
+            when(mcpOAuthRepository.findByProfileAndServerName("default", "test-server")).thenReturn(Optional.of(entity));
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> manager.refreshToken("default", config))
+                .isInstanceOf(java.io.IOException.class).hasMessageNotContaining("sensitive-canary");
+        } finally {
+            http.stop(0);
+        }
+    }
+
+    @Test
     void getToken_returnsEmpty_whenNoEntity() {
         when(mcpOAuthRepository.findByProfileAndServerName("default", "test-server")).thenReturn(Optional.empty());
 
