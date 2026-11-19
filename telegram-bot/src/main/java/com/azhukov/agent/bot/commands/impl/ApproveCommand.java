@@ -35,9 +35,7 @@ public class ApproveCommand implements CommandHandler {
         String arg = args.trim().toLowerCase();
         return switch (arg) {
             case "all" -> backendClient.approve(true, null);
-            case "session" -> backendClient.approve(false, "session");
-            case "always" -> backendClient.approve(false, "always");
-            default -> "Usage: /approve [all|session|always]";
+            default -> "Usage: /approve [all] — approvals are single-use";
         };
     }
 }
