@@ -197,9 +197,7 @@ public class McpOAuthFlowService {
                 .build();
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() != 200) {
-                throw new IllegalStateException("token exchange failed with status "
-                    + response.statusCode() + ": "
-                    + McpOAuthManager.sanitizeError(response.body()));
+                throw new IllegalStateException("token exchange failed with status " + response.statusCode());
             }
             return response.body();
         } catch (InterruptedException e) {

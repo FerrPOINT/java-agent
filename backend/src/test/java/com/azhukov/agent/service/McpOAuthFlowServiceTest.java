@@ -264,6 +264,28 @@ class McpOAuthFlowServiceTest {
     }
 
     @Test
+    void tokenExchangeErrorDoesNotLeakProviderResponse() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/token", exchange -> {
+            byte[] bytes = "{\"error\":\"invalid_grant\",\"access_token\":\"sensitive-canary\"}".getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(400, bytes.length);
+            try (var output = exchange.getResponseBody()) { output.write(bytes); }
+        });
+        server.start();
+        try {
+            var config = config("srv");
+            config.setOauthTokenUrl("http://127.0.0.1:" + server.getAddress().getPort() + "/token");
+            when(flowRepository.findByStateHash(any(String.class))).thenReturn(Optional.of(pendingFlow("srv")));
+            when(configStore.find("default", "srv")).thenReturn(Optional.of(config));
+            assertThatThrownBy(() -> service().complete("srv", "code", "state"))
+                .hasMessageContaining("400").hasMessageNotContaining("sensitive-canary");
+            verify(oauthManager, never()).storeToken(any(), any(), any(), any(), any(), any());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void completeRejectsNestedTokenResponseWithoutStoringCredentials() throws Exception {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/token", exchange -> {

@@ -32,6 +32,27 @@ class McpOAuthManagerTest {
     }
 
     @Test
+    void refreshFailureDoesNotExposeProviderBody() throws Exception {
+        var http = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        http.createContext("/token", exchange -> {
+            byte[] body = "{\"refresh_token\":\"sensitive-canary\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(400, body.length);
+            try (var output = exchange.getResponseBody()) { output.write(body); }
+        });
+        http.start();
+        try {
+            var config = server("test-server");
+            config.setOauthTokenUrl("http://127.0.0.1:" + http.getAddress().getPort() + "/token");
+            var entity = new McpOAuthEntity(); entity.setRefreshToken("old-refresh");
+            when(mcpOAuthRepository.findByProfileAndServerName("default", "test-server")).thenReturn(Optional.of(entity));
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> manager.refreshToken("default", config))
+                .hasMessageContaining("400").hasMessageNotContaining("sensitive-canary");
+        } finally {
+            http.stop(0);
+        }
+    }
+
+    @Test
     void getToken_returnsEmpty_whenNoEntity() {
         when(mcpOAuthRepository.findByProfileAndServerName("default", "test-server")).thenReturn(Optional.empty());
 
@@ -114,29 +135,6 @@ class McpOAuthManagerTest {
     void extractJsonField_handlesEscapedQuotes() {
         String json = "{\"access_token\":\"to\\\"ken\",\"refresh_token\":\"r\\\"ef\"}";
         assertThat(McpOAuthManager.extractJsonField(json, "access_token")).isEqualTo("to\"ken");
-    }
-
-    @Test
-    void sanitizeError_stripsCredentials() {
-        assertThat(McpOAuthManager.sanitizeError("Bearer sk-abc123 failed"))
-            .contains("[REDACTED]")
-            .doesNotContain("sk-abc123");
-        assertThat(McpOAuthManager.sanitizeError("token=ghp_secret123 error"))
-            .contains("[REDACTED]")
-            .doesNotContain("ghp_secret123");
-        assertThat(McpOAuthManager.sanitizeError("password=hello123 error"))
-            .contains("[REDACTED]")
-            .doesNotContain("hello123");
-    }
-
-    @Test
-    void sanitizeError_returnsNullForNull() {
-        assertThat(McpOAuthManager.sanitizeError(null)).isNull();
-    }
-
-    @Test
-    void sanitizeError_returnsEmptyForEmpty() {
-        assertThat(McpOAuthManager.sanitizeError("")).isEmpty();
     }
 
     // ─── P2-17: refreshToken interrupt handling ──────────────────────

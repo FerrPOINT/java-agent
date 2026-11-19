@@ -132,9 +132,8 @@ public class McpOAuthManager {
         HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
         if (response.statusCode() != 200) {
-            String sanitized = sanitizeError(response.body());
             throw new IOException("OAuth token refresh failed for " + serverName
-                + " with status " + response.statusCode() + ": " + sanitized);
+                + " with status " + response.statusCode());
         }
 
         String responseBody = response.body();
