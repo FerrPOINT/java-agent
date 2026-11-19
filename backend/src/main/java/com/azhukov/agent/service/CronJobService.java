@@ -537,6 +537,7 @@ private static final String CRON_EXECUTION_HINT = """
                 jobLocks.remove(id, lock);
                 throw new IllegalArgumentException("Cron job not found: " + id);
             }
+            requireOwnership(entity);
             if (executeJob(entity, extraPrompt) == CronExecutionOutcome.RESULT_NOT_COMMITTED) {
                 throw new IllegalStateException("Cron execution result could not be committed");
             }

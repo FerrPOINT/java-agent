@@ -89,6 +89,25 @@ class CronJobOwnershipTest {
         verifyNoInteractions(executions, messages);
     }
 
+    @Test
+    void queuedManualRunRejectsJobWhoseOwnerChangedBeforeExecution() {
+        UserContext.set("owner", UserContext.ROLE_USER);
+        var owned = job("owner");
+        var reassigned = job("foreign");
+        reassigned.setId(owned.getId());
+        when(jobs.findById(owned.getId())).thenReturn(Optional.of(owned), Optional.of(reassigned));
+        var scheduler = mock(java.util.concurrent.ScheduledExecutorService.class);
+        var callback = org.mockito.ArgumentCaptor.forClass(Runnable.class);
+        ReflectionTestUtils.setField(service, "scheduler", scheduler);
+
+        service.runNowBackground(owned.getId(), null);
+        verify(scheduler).execute(callback.capture());
+        callback.getValue().run();
+
+        verifyNoInteractions(executions, messages);
+        verify(jobs, never()).recordRun(any());
+    }
+
     @ParameterizedTest
     @CsvSource({"user,owner", "admin,owner", "admin,foreign", "admin,"})
     void ownerAndAdministratorCanStillPauseTheirVisibleJob(String role, String owner) {
