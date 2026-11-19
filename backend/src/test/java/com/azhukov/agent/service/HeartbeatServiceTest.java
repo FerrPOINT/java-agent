@@ -67,6 +67,79 @@ class HeartbeatServiceTest {
     }
 
     @Test
+    void staleDueSnapshotCannotResurrectClearedHeartbeat() {
+        HeartbeatService svc = new HeartbeatService();
+        UUID sid = UUID.randomUUID();
+        var snapshot = svc.set(sid, "old", 60);
+        assertThat(svc.clear(sid)).isTrue();
+
+        svc.tick(sid, snapshot, Instant.now().plusSeconds(120));
+
+        assertThat(svc.get(sid)).isNull();
+    }
+
+    @Test
+    void staleDueSnapshotCannotOverridePausedHeartbeat() {
+        HeartbeatService svc = new HeartbeatService();
+        UUID sid = UUID.randomUUID();
+        var snapshot = svc.set(sid, "old", 60);
+        svc.pause(sid);
+
+        svc.tick(sid, snapshot, Instant.now().plusSeconds(120));
+
+        assertThat(svc.get(sid).status()).isEqualTo("paused");
+    }
+
+    @Test
+    void replacementDuringTurnSurvivesCompletionOfOldTurn() throws Exception {
+        HeartbeatService svc = new HeartbeatService();
+        var runtime = org.mockito.Mockito.mock(AgentRuntimeService.class);
+        var field = HeartbeatService.class.getDeclaredField("agentRuntimeService");
+        field.setAccessible(true);
+        field.set(svc, runtime);
+        UUID sid = UUID.randomUUID();
+        var old = svc.set(sid, "old", 60);
+        org.mockito.Mockito.when(runtime.runHeartbeatTurn(org.mockito.ArgumentMatchers.eq(sid), org.mockito.ArgumentMatchers.anyString()))
+            .thenAnswer(invocation -> {
+                svc.set(sid, "replacement", 120);
+                return "LOOP_COMPLETE";
+            });
+
+        svc.tick(sid, old, Instant.now().plusSeconds(120));
+
+        assertThat(svc.get(sid).prompt()).isEqualTo("replacement");
+        assertThat(svc.get(sid).fireCount()).isZero();
+    }
+
+    @Test
+    void resumePersistsActiveStateAndClearDuringTurnRemovesPersistedState() throws Exception {
+        HeartbeatService svc = new HeartbeatService();
+        var repository = org.mockito.Mockito.mock(com.azhukov.agent.persistence.repository.SessionRepository.class);
+        var entity = new com.azhukov.agent.persistence.entity.SessionEntity();
+        UUID sid = UUID.randomUUID();
+        org.mockito.Mockito.when(repository.findById(sid)).thenReturn(java.util.Optional.of(entity));
+        var repositoryField = HeartbeatService.class.getDeclaredField("sessionRepository");
+        repositoryField.setAccessible(true);
+        repositoryField.set(svc, repository);
+        svc.set(sid, "old", 60);
+        svc.pause(sid);
+        svc.resume(sid);
+        assertThat(entity.getCliState().get("heartbeat")).contains("active");
+
+        var runtime = org.mockito.Mockito.mock(AgentRuntimeService.class);
+        var runtimeField = HeartbeatService.class.getDeclaredField("agentRuntimeService");
+        runtimeField.setAccessible(true);
+        runtimeField.set(svc, runtime);
+        org.mockito.Mockito.when(runtime.runHeartbeatTurn(org.mockito.ArgumentMatchers.eq(sid), org.mockito.ArgumentMatchers.anyString()))
+            .thenAnswer(invocation -> { svc.clear(sid); return "done"; });
+        var active = svc.get(sid);
+        svc.tick(sid, active, Instant.now().plusSeconds(120));
+
+        assertThat(svc.get(sid)).isNull();
+        assertThat(entity.getCliState()).doesNotContainKey("heartbeat");
+    }
+
+    @Test
     @DisplayName("fire prompt carries the Hermes HEARTBEAT_PROMPT_TEMPLATE contract")
     void firePromptTemplate() {
         HeartbeatService svc = new HeartbeatService();
