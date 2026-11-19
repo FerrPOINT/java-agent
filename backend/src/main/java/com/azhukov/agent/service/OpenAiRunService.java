@@ -210,7 +210,7 @@ public class OpenAiRunService {
         String choice = normalizeApprovalChoice(rawChoice);
         if (choice == null) {
             return ControlResult.badRequest(
-                "Invalid approval choice; expected one of: once, session, always, deny",
+                "Invalid approval choice; expected once or deny",
                 "invalid_approval_choice");
         }
         if (requestId != null && (requestId.isBlank() || requestId.length() > 256)) {
@@ -431,7 +431,7 @@ public class OpenAiRunService {
             default -> value;
         };
         return switch (value) {
-            case "once", "session", "always", "deny" -> value;
+            case "once", "deny" -> value;
             default -> null;
         };
     }
