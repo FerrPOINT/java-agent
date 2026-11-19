@@ -25,6 +25,31 @@ class TextBatchDebouncerTest {
     }
 
     @Test
+    void concurrentOffersAndFlushDoNotLoseMessages() throws Exception {
+        properties.getTextBatch().setFastDelayMs(10_000);
+        var delivered = new java.util.concurrent.LinkedBlockingQueue<UpdateEvent>();
+        debouncer.onDispatch(delivered::add);
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            for (int i = 0; i < 300; i++) {
+                debouncer.offer(textEvent(2L * i, 100L, "first"));
+                var barrier = new java.util.concurrent.CyclicBarrier(2);
+                var offer = pool.submit(() -> { barrier.await(); debouncer.offer(textEvent(2, 100L, "second")); return null; });
+                var flush = pool.submit(() -> { barrier.await(); debouncer.flushAll(); return null; });
+                offer.get();
+                flush.get();
+                debouncer.flushAll();
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+        long first = delivered.stream().map(UpdateEvent::text).mapToLong(s -> s.split("first", -1).length - 1).sum();
+        long second = delivered.stream().map(UpdateEvent::text).mapToLong(s -> s.split("second", -1).length - 1).sum();
+        assertThat(first).isEqualTo(300);
+        assertThat(second).isEqualTo(300);
+    }
+
+    @Test
     void distinctUsersAndTopicsNeverShareOneBatch() {
         var dispatched = new java.util.ArrayList<UpdateEvent>();
         debouncer.onDispatch(dispatched::add);

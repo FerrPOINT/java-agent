@@ -31,7 +31,6 @@ public class TextBatchDebouncer {
     });
     private record BatchKey(long chatId, long userId, long threadId) {}
     private final Map<BatchKey, BatchEntry> buffers = new ConcurrentHashMap<>();
-    private final Map<BatchKey, ScheduledFuture<?>> timers = new ConcurrentHashMap<>();
     private final List<java.util.function.Consumer<UpdateEvent>> dispatchers = new CopyOnWriteArrayList<>();
 
     /**
@@ -56,30 +55,15 @@ public class TextBatchDebouncer {
         }
         var key = new BatchKey(event.chatId(), event.userId(), event.messageThreadId());
 
-        BatchEntry entry = buffers.computeIfAbsent(key, k -> {
-            BatchEntry e = new BatchEntry();
-            e.setFirstEvent(event);
-            return e;
-        });
-        synchronized (entry) {
-            // Ensure firstEvent is set if entry was already created
-            if (entry.firstEvent() == null) {
-                entry.setFirstEvent(event);
-            }
+        buffers.compute(key, (ignored, existing) -> {
+            BatchEntry entry = existing == null ? new BatchEntry(event) : existing;
             entry.add(event.text());
-            int totalLen = entry.totalLength();
-            long delay = computeDelay(totalLen);
-
-            // Cancel existing timer
-            ScheduledFuture<?> existing = timers.remove(key);
-            if (existing != null) {
-                existing.cancel(false);
-            }
-
-            // Schedule dispatch
-            ScheduledFuture<?> future = scheduler.schedule(() -> dispatch(key), delay, TimeUnit.MILLISECONDS);
-            timers.put(key, future);
-        }
+            if (entry.timer != null) entry.timer.cancel(false);
+            Object ticket = entry.ticket = new Object();
+            entry.timer = scheduler.schedule(() -> dispatch(key, ticket),
+                computeDelay(entry.totalLength()), TimeUnit.MILLISECONDS);
+            return entry;
+        });
         return true;
     }
 
@@ -114,11 +98,19 @@ public class TextBatchDebouncer {
         }
     }
 
-    private void dispatch(BatchKey key) {
-        long chatId = key.chatId();
-        BatchEntry entry = buffers.remove(key);
-        timers.remove(key);
+    private void dispatch(BatchKey key, Object ticket) {
+        var claimed = new java.util.concurrent.atomic.AtomicReference<BatchEntry>();
+        buffers.computeIfPresent(key, (ignored, entry) -> {
+            if (entry.ticket != ticket) return entry;
+            claimed.set(entry);
+            return null;
+        });
+        deliver(key, claimed.get());
+    }
+
+    private void deliver(BatchKey key, BatchEntry entry) {
         if (entry == null) return;
+        long chatId = key.chatId();
 
         // P34: Post-debounce re-validation — check if chat is still active/paused
         Predicate<Long> guard = shouldDispatch;
@@ -154,9 +146,13 @@ public class TextBatchDebouncer {
      */
     public void flushAll() {
         for (BatchKey key : new java.util.ArrayList<>(buffers.keySet())) {
-            ScheduledFuture<?> f = timers.remove(key);
-            if (f != null) f.cancel(false);
-            dispatch(key);
+            var claimed = new java.util.concurrent.atomic.AtomicReference<BatchEntry>();
+            buffers.computeIfPresent(key, (ignored, entry) -> {
+                if (entry.timer != null) entry.timer.cancel(false);
+                claimed.set(entry);
+                return null;
+            });
+            deliver(key, claimed.get());
         }
     }
 
@@ -175,18 +171,17 @@ public class TextBatchDebouncer {
 
     /** Keeps pending text updates and their flush timer together for a single chat. */
     private static class BatchEntry {
-        private final List<String> texts = new CopyOnWriteArrayList<>();
-        private UpdateEvent firstEvent;
+        private final List<String> texts = new java.util.ArrayList<>();
+        private final UpdateEvent firstEvent;
+        private ScheduledFuture<?> timer;
+        private Object ticket;
 
-        void add(String text) {
-            if (texts.isEmpty() && firstEvent != null) {
-                // Keep first event's metadata, but we'll override text
-            }
-            texts.add(text);
+        BatchEntry(UpdateEvent firstEvent) {
+            this.firstEvent = firstEvent;
         }
 
-        void setFirstEvent(UpdateEvent event) {
-            this.firstEvent = event;
+        void add(String text) {
+            texts.add(text);
         }
 
         UpdateEvent firstEvent() {
