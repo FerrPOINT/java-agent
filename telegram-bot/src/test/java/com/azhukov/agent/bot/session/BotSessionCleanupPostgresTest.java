@@ -102,6 +102,40 @@ class BotSessionCleanupPostgresTest {
         }
     }
 
+    @Test void concurrentRetryAttemptsInvokeBackendAtMostOnceOnSuccess() throws Exception {
+        var row = session("duplicate-retry-" + UUID.randomUUID());
+        store.deactivateAllWithCleanupPending(row.getUserId());
+        var entered = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        var attempts = new java.util.concurrent.atomic.AtomicInteger();
+        var pool = Executors.newFixedThreadPool(2);
+        var waitingPid = new java.util.concurrent.CompletableFuture<Integer>();
+        var tx = new org.springframework.transaction.support.TransactionTemplate(context.getBean(org.springframework.transaction.PlatformTransactionManager.class));
+        try {
+            var first = pool.submit(() -> store.retryCleanup(row.getId(), id -> {
+                attempts.incrementAndGet(); entered.countDown();
+                try { if (!release.await(10, TimeUnit.SECONDS)) throw new IllegalStateException("timeout"); }
+                catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new IllegalStateException(e); }
+                return true;
+            }));
+            assertThat(entered.await(10, TimeUnit.SECONDS)).isTrue();
+            var second = pool.submit(() -> tx.execute(status -> {
+                var jdbc = new org.springframework.jdbc.core.JdbcTemplate(context.getBean(javax.sql.DataSource.class));
+                waitingPid.complete(jdbc.queryForObject("SELECT pg_backend_pid()", Integer.class));
+                return store.retryCleanup(row.getId(), id -> { attempts.incrementAndGet(); return true; });
+            }));
+            int pid = waitingPid.get(5, TimeUnit.SECONDS);
+            var jdbc = new org.springframework.jdbc.core.JdbcTemplate(context.getBean(javax.sql.DataSource.class));
+            org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(8)).untilAsserted(() ->
+                assertThat(jdbc.queryForObject("SELECT wait_event_type = 'Lock' FROM pg_stat_activity WHERE pid = ?", Boolean.class, pid)).isTrue());
+            release.countDown();
+            assertThat(first.get(10, TimeUnit.SECONDS)).isTrue();
+            assertThat(second.get(10, TimeUnit.SECONDS)).isFalse();
+            assertThat(attempts.get()).isEqualTo(1);
+            assertThat(repository.findById(row.getId()).orElseThrow().isCleanupPending()).isFalse();
+        } finally { release.countDown(); pool.shutdownNow(); }
+    }
+
     @Test void repeatedIdenticalBackendBindingAfterCleanupDoesNotScheduleDuplicate() {
         var row = session("same-binding-" + UUID.randomUUID());
         store.deactivateAllWithCleanupPending(row.getUserId());
