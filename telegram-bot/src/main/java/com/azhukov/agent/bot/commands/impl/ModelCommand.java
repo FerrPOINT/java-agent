@@ -50,11 +50,11 @@ public class ModelCommand implements CommandHandler {
             if (current == null || current.isBlank()) {
                 current = "default";
             }
-            return sendModelKeyboard(event.chatId(), "Current model: " + current + "\nSelect a model:");
+            return sendModelKeyboard(event, "Current model: " + current + "\nSelect a model:");
         }
         String trimmed = args.trim();
         if ("list".equalsIgnoreCase(trimmed)) {
-            return sendModelKeyboard(event.chatId(), "Select a model:");
+            return sendModelKeyboard(event, "Select a model:");
         }
         if ("default".equalsIgnoreCase(trimmed) || "reset".equalsIgnoreCase(trimmed)) {
             store.setModelOverride(session.getId(), null);
@@ -71,7 +71,7 @@ public class ModelCommand implements CommandHandler {
      * B2.2: Send a paginated inline keyboard for model selection.
      * If no available models are configured, falls back to a text hint.
      */
-    private String sendModelKeyboard(long chatId, String header) {
+    private String sendModelKeyboard(UpdateEvent event, String header) {
         List<String> models = properties.getAvailableModels();
         if (models == null || models.isEmpty()) {
             return "No models configured. Set bot.available-models in application.yml or use /model <name>.";
@@ -80,13 +80,13 @@ public class ModelCommand implements CommandHandler {
         List<List<KeyboardButton>> rows = modelKeyboardBuilder.build(models, 0);
         String replyMarkup = inlineKeyboardBuilder.build(rows);
         boolean ok = telegramClient.sendMessage(
-            chatId,
-            header,
-            null, null, replyMarkup
+            event.chatId(), header, null, null,
+            event.messageThreadId() > 0 ? Math.toIntExact(event.messageThreadId()) : null,
+            replyMarkup, false
         ).isPresent();
 
         if (!ok) {
-            log.warn("Failed to send model keyboard to chat {}", chatId);
+            log.warn("Failed to send model keyboard to chat {}", event.chatId());
             return "Failed to show model keyboard. Use /model <name> instead.";
         }
         // Message already sent with keyboard — return empty so handleCommand doesn't send again

@@ -41,6 +41,9 @@ public class TopicCommand implements CommandHandler {
 
     @Override
     public String handle(UpdateEvent event, BotSessionEntity session) {
+        if (event.messageThreadId() > 0) {
+            return "Topic sessions are available only outside forum threads; use them in a direct message.";
+        }
         String args = event.commandArgs();
         if (args == null || args.isBlank()) {
             return "Usage: /topic list|create|switch <name>";

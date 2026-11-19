@@ -59,15 +59,40 @@ class CallbackQueryHandlerTest {
     void handle_mpCallback_setsModel() {
         BotSessionEntity session = new BotSessionEntity();
         session.setId(UUID.randomUUID());
-        when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
-        org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
-            .thenReturn(session);
+        when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), isNull())).thenReturn(session);
 
         UpdateEvent event = callbackEvent("cq-1", "mp:kimi-k2");
         String result = handler.handle(event);
 
         assertThat(result).isEqualTo("Model set to: kimi-k2");
         verify(sessionStore).setModelOverride(session.getId(), "kimi-k2");
+    }
+
+    @Test
+    void modelCallbackUsesForumTopicLane() {
+        var session = new BotSessionEntity();
+        session.setId(UUID.randomUUID());
+        when(sessionStore.resolveOrCreate("456", "123", "", 42L)).thenReturn(session);
+        var event = new UpdateEvent(1, UpdateEvent.Type.CALLBACK_QUERY, 123L, 456L,
+            "user", null, null, null, null, "cq-topic", "mp:kimi-k2", null,
+            false, null, null, 100L, null, 42L);
+
+        assertThat(handler.handle(event)).isEqualTo("Model set to: kimi-k2");
+        verify(sessionStore).setModelOverride(session.getId(), "kimi-k2");
+        verify(sessionStore, never()).resolveOrCreate(anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void modelNavigationKeepsForumTopic() {
+        properties.getAvailableModels().add("kimi-k2");
+        var event = new UpdateEvent(1, UpdateEvent.Type.CALLBACK_QUERY, 123L, 456L,
+            "user", null, null, null, null, "cq-topic", "mpp:1", null,
+            false, null, null, 100L, null, 42L);
+
+        handler.handle(event);
+
+        verify(client).sendMessage(eq(123L), contains("Select a model"), isNull(), isNull(),
+            eq(42), anyString(), eq(false));
     }
 
     @Test
@@ -81,7 +106,7 @@ class CallbackQueryHandlerTest {
 
     @Test
     void handle_mpCallback_noSession_returnsError() {
-        when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(null);
+        when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), isNull())).thenReturn(null);
 
         UpdateEvent event = callbackEvent("cq-2", "mp:gpt-4");
         String result = handler.handle(event);
@@ -98,10 +123,20 @@ class CallbackQueryHandlerTest {
         String result = handler.handle(event);
 
         // Should send a message with inline keyboard
-        verify(client).sendMessage(eq(123L), eq("Models for openai:"), any(), any(), any());
+        verify(client).sendMessage(eq(123L), eq("Models for openai:"), isNull(), isNull(), isNull(), anyString(), eq(false));
     }
 
     // ─── P2-19: Provider keyboard filtering tests ──────────────────
+
+    @Test
+    void providerKeyboardPreservesConfiguredModelIdentifier() {
+        properties.getAvailableModels().add("openai:gpt-4");
+        handler.handle(callbackEvent("cq-provider", "pp:openai"));
+        var markup = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(client).sendMessage(eq(123L), eq("Models for openai:"), isNull(), isNull(),
+            isNull(), markup.capture(), eq(false));
+        assertThat(markup.getValue()).contains("mp:openai:gpt-4");
+    }
 
     @Test
     void handle_ppCallback_filtersModelsByProviderPrefix() {
@@ -113,7 +148,7 @@ class CallbackQueryHandlerTest {
         handler.handle(event);
 
         // Should send "Models for openai:" with filtered models
-        verify(client).sendMessage(eq(123L), eq("Models for openai:"), any(), any(), any());
+        verify(client).sendMessage(eq(123L), eq("Models for openai:"), isNull(), isNull(), isNull(), anyString(), eq(false));
     }
 
     @Test
@@ -126,7 +161,7 @@ class CallbackQueryHandlerTest {
         UpdateEvent event = callbackEvent("cq-pp-2", "pp:openai");
         handler.handle(event);
 
-        verify(client).sendMessage(eq(123L), eq("Models for openai:"), any(), any(), any());
+        verify(client).sendMessage(eq(123L), eq("Models for openai:"), isNull(), isNull(), isNull(), anyString(), eq(false));
     }
 
     @Test
@@ -138,7 +173,7 @@ class CallbackQueryHandlerTest {
         UpdateEvent event = callbackEvent("cq-pp-3", "pp:anthropic");
         handler.handle(event);
 
-        verify(client).sendMessage(eq(123L), eq("Models for anthropic:"), any(), any(), any());
+        verify(client).sendMessage(eq(123L), eq("Models for anthropic:"), isNull(), isNull(), isNull(), anyString(), eq(false));
     }
 
     @Test
@@ -150,7 +185,7 @@ class CallbackQueryHandlerTest {
         handler.handle(event);
 
         // Should still send the message — fallback to all models
-        verify(client).sendMessage(eq(123L), eq("Models for unknown-provider:"), any(), any(), any());
+        verify(client).sendMessage(eq(123L), eq("Models for unknown-provider:"), isNull(), isNull(), isNull(), anyString(), eq(false));
     }
 
     @Test
@@ -158,7 +193,7 @@ class CallbackQueryHandlerTest {
         UpdateEvent event = callbackEvent("cq-4", "pp:back");
         String result = handler.handle(event);
 
-        verify(client).sendMessage(eq(123L), eq("Select a provider:"), any(), any(), any());
+        verify(client).sendMessage(eq(123L), eq("Select a provider:"), isNull(), isNull(), isNull(), anyString(), eq(false));
     }
 
     @Test
@@ -169,7 +204,7 @@ class CallbackQueryHandlerTest {
         UpdateEvent event = callbackEvent("cq-5", "mpp:0");
         String result = handler.handle(event);
 
-        verify(client).sendMessage(eq(123L), contains("Select a model"), any(), any(), any());
+        verify(client).sendMessage(eq(123L), contains("Select a model"), isNull(), isNull(), isNull(), anyString(), eq(false));
     }
 
     @Test
@@ -228,9 +263,7 @@ class CallbackQueryHandlerTest {
         when(authorizationService.isAuthorized(456L, "jdoe", 123L)).thenReturn(true);
         BotSessionEntity session = new BotSessionEntity();
         session.setId(UUID.randomUUID());
-        when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
-        org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
-            .thenReturn(session);
+        when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), isNull())).thenReturn(session);
 
         UpdateEvent event = callbackEvent("cq-auth-2", "mp:gpt-4");
         String result = handler.handle(event);

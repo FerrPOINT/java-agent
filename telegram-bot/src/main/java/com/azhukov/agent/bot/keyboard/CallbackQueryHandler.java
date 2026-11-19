@@ -98,7 +98,7 @@ public class CallbackQueryHandler {
             return null;
         }
 
-        String response = route(command, value, chatId, event.userId(), event.messageId());
+        String response = route(command, value, chatId, event.userId(), event.messageId(), event.messageThreadId());
 
         String answerText = response != null ? response : "OK";
         answer(callbackQueryId, answerText, false);
@@ -106,7 +106,7 @@ public class CallbackQueryHandler {
         return response;
     }
 
-    private String route(String command, String value, long chatId, long userId, long messageId) {
+    private String route(String command, String value, long chatId, long userId, long messageId, long threadId) {
         if (command == null || command.isBlank()) {
             return "Unknown command";
         }
@@ -119,9 +119,9 @@ public class CallbackQueryHandler {
         }
 
         return switch (command) {
-            case "mp" -> handleModelSelect(value, chatId, userId);
-            case "mpp" -> handleModelPage(value, chatId);
-            case "pp" -> handleProviderSelect(value, chatId);
+            case "mp" -> handleModelSelect(value, chatId, userId, threadId);
+            case "mpp" -> handleModelPage(value, chatId, threadId);
+            case "pp" -> handleProviderSelect(value, chatId, threadId);
             case "ea" -> handleExecApproval(value, chatId, messageId);
             case "sc" -> handleSlashConfirm(value, chatId);
             default -> "Unknown action: " + command;
@@ -131,14 +131,15 @@ public class CallbackQueryHandler {
     /**
      * mp:<model> — set the model override for the user's session.
      */
-    private String handleModelSelect(String model, long chatId, long userId) {
+    private String handleModelSelect(String model, long chatId, long userId, long threadId) {
         if (model == null || model.isBlank()) {
             return "No model specified";
         }
         if (!properties.getAvailableModels().isEmpty() && !properties.getAvailableModels().contains(model)) {
             return "Model not available: " + model;
         }
-        BotSessionEntity session = sessionStore.resolveOrCreate(String.valueOf(userId), String.valueOf(chatId), "");
+        BotSessionEntity session = sessionStore.resolveOrCreate(String.valueOf(userId), String.valueOf(chatId), "",
+            threadId > 0 ? threadId : null);
         if (session == null || session.getId() == null) {
             return "No active session";
         }
@@ -149,7 +150,7 @@ public class CallbackQueryHandler {
     /**
      * mpp:<page> — show model keyboard for the given page.
      */
-    private String handleModelPage(String pageStr, long chatId) {
+    private String handleModelPage(String pageStr, long chatId, long threadId) {
         int page;
         try {
             page = Integer.parseInt(pageStr);
@@ -162,7 +163,8 @@ public class CallbackQueryHandler {
         }
         var rows = modelKeyboardBuilder.build(models, page);
         String markup = inlineKeyboardBuilder.build(rows);
-        telegramClient.sendMessage(chatId, "Select a model (page " + (page + 1) + "):", null, null, markup);
+        telegramClient.sendMessage(chatId, "Select a model (page " + (page + 1) + "):", null, null,
+            threadId > 0 ? Math.toIntExact(threadId) : null, markup, false);
         return null; // message already sent
     }
 
@@ -171,13 +173,14 @@ public class CallbackQueryHandler {
      * P2-19: Filters models by provider slug prefix (e.g. "openai:gpt-4" → provider "openai").
      * Falls back to showing all models if no models match the provider slug.
      */
-    private String handleProviderSelect(String slug, long chatId) {
+    private String handleProviderSelect(String slug, long chatId, long threadId) {
         if ("back".equals(slug)) {
             // Show provider list
             Map<String, String> providers = providerKeyboardBuilder.defaultProviders();
             var rows = providerKeyboardBuilder.buildProviders(providers);
             String markup = inlineKeyboardBuilder.build(rows);
-            telegramClient.sendMessage(chatId, "Select a provider:", null, null, markup);
+            telegramClient.sendMessage(chatId, "Select a provider:", null, null,
+                threadId > 0 ? Math.toIntExact(threadId) : null, markup, false);
             return null;
         }
 
@@ -197,7 +200,8 @@ public class CallbackQueryHandler {
 
         var rows = providerKeyboardBuilder.buildModels(filtered);
         String markup = inlineKeyboardBuilder.build(rows);
-        telegramClient.sendMessage(chatId, "Models for " + slug + ":", null, null, markup);
+        telegramClient.sendMessage(chatId, "Models for " + slug + ":", null, null,
+            threadId > 0 ? Math.toIntExact(threadId) : null, markup, false);
         return null;
     }
 
@@ -210,7 +214,6 @@ public class CallbackQueryHandler {
         String prefix = slug + ":";
         List<String> filtered = models.stream()
             .filter(m -> m.toLowerCase().startsWith(prefix.toLowerCase()))
-            .map(m -> m.substring(prefix.length()))  // strip the prefix for display
             .toList();
         if (!filtered.isEmpty()) {
             return filtered;

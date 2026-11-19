@@ -32,7 +32,7 @@ class ModelCommandTest {
     private ModelCommand makeCommand(BotSessionStore store, BotProperties properties) {
         tc = mock(TelegramClient.class);
         when(tc.sendMessage(anyLong(), any())).thenReturn(Optional.of(1L));
-        when(tc.sendMessage(anyLong(), any(), any(), any(), any())).thenReturn(Optional.of(1L));
+        when(tc.sendMessage(anyLong(), any(), any(), any(), any(), any(), eq(false))).thenReturn(Optional.of(1L));
         return new ModelCommand(store, properties, mock(ModelKeyboardBuilder.class), mock(InlineKeyboardBuilder.class), tc);
     }
 
@@ -51,7 +51,7 @@ class ModelCommandTest {
         // in the header message (Hermes parity).
         verify(tc).sendMessage(anyLong(),
             argThat(text -> text != null && text.contains("gpt-4o") && text.contains("Select a model")),
-            isNull(), isNull(), any());
+            isNull(), isNull(), isNull(), any(), eq(false));
     }
 
     @Test
@@ -67,7 +67,22 @@ class ModelCommandTest {
         cmd.handle(event, session);
         verify(tc).sendMessage(anyLong(),
             argThat(text -> text != null && text.contains("app-test")),
-            isNull(), isNull(), any());
+            isNull(), isNull(), isNull(), any(), eq(false));
+    }
+
+    @Test
+    void forumModelCommandSendsKeyboardToSameTopic() {
+        var properties = new BotProperties();
+        properties.getAvailableModels().add("app-test");
+        var cmd = makeCommand(mock(BotSessionStore.class), properties);
+        var session = new BotSessionEntity();
+        session.setId(UUID.randomUUID());
+        var event = new UpdateEvent(1, Type.COMMAND, 123, 456, "user", "/model", null,
+            null, null, null, null, null, true, "model", "", 100L, null, 42L);
+
+        cmd.handle(event, session);
+
+        verify(tc).sendMessage(eq(123L), any(), isNull(), isNull(), eq(42), any(), eq(false));
     }
 
     @Test

@@ -5,7 +5,6 @@ import com.azhukov.agent.bot.core.AgentBackendClient;
 import com.azhukov.agent.bot.polling.UpdateEvent;
 import com.azhukov.agent.bot.session.BackendSessionResolver;
 import com.azhukov.agent.bot.session.BotSessionEntity;
-import com.azhukov.agent.bot.session.BotSessionStore;
 import org.springframework.stereotype.Component;
 import lombok.RequiredArgsConstructor;
 
@@ -13,7 +12,6 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class ResetCommand implements CommandHandler {
 
-    private final BotSessionStore store;
     private final AgentBackendClient backendClient;
 
 
@@ -29,15 +27,14 @@ public class ResetCommand implements CommandHandler {
 
     @Override
     public String handle(UpdateEvent event, BotSessionEntity session) {
-        if (session == null || session.getUserId() == null) {
+        if (session == null || session.getUserId() == null || session.getId() == null) {
             return "No active session.";
         }
-        if (session.getId() != null) {
-            String sid = BackendSessionResolver.resolveString(session);
-            if (sid == null) return "No backend session yet — send a message first.";
-            backendClient.resetSession(sid);
+        String sid = BackendSessionResolver.resolveString(session);
+        if (sid == null) return "No backend session yet — send a message first.";
+        if (!backendClient.resetSession(sid)) {
+            return "Session reset failed or could not be confirmed. No local sessions were deactivated.";
         }
-        int count = store.deactivateAll(session.getUserId());
-        return "All sessions reset (" + count + " deactivated). Send a message to start fresh.";
+        return "Current session context reset. Send a message to continue.";
     }
 }
