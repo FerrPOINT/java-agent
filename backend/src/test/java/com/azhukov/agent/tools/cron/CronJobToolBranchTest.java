@@ -96,6 +96,17 @@ class CronJobToolBranchTest {
     }
 
     @Test
+    void scheduledRunCannotCreateAnotherJob() {
+        CronJobTool tool = new CronJobTool(cronJobService);
+        Session scheduled = session().withMetadata("cron_run", "true");
+
+        ToolResult result = tool.execute("{\"action\":\"create\",\"schedule\":\"0 9 * * *\",\"prompt\":\"test\"}", assistant(), scheduled);
+
+        assertCronError(result, "Creating cron jobs from a scheduled run is disabled");
+        org.mockito.Mockito.verifyNoInteractions(cronJobService);
+    }
+
+    @Test
     void createJobInheritsCurrentSessionProfile() {
         CronJobTool tool = new CronJobTool(cronJobService);
         Session profiled = session().withMetadata("profile", "research");

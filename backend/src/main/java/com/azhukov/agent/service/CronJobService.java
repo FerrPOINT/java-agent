@@ -869,6 +869,7 @@ private static final String CRON_EXECUTION_HINT = """
             enhancedPrompt = CRON_EXECUTION_HINT + enhancedPrompt;
 
             Map<String, String> runtimeMetadata = new java.util.HashMap<>();
+            runtimeMetadata.put(com.azhukov.agent.tools.cron.CronJobTool.CRON_RUN_METADATA, "true");
             if (job.getEnabledToolsets() != null && !job.getEnabledToolsets().isBlank()) {
                 runtimeMetadata.put("delegation_toolsets", job.getEnabledToolsets());
                 log.debug("Cron job '{}' restricts toolsets to {}", job.getName(), job.getEnabledToolsets());
