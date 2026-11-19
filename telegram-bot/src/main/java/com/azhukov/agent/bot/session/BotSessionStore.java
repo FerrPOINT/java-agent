@@ -299,20 +299,6 @@ public class BotSessionStore {
     }
 
     /**
-     * Finalize an expired session — deactivate it and update timestamp.
-     *
-     * @param sessionId the session UUID
-     */
-    @Transactional
-    public void finalizeSession(UUID sessionId) {
-        repository.findById(sessionId).ifPresent(session -> {
-            session.setActive(false);
-            session.setUpdatedAt(Instant.now());
-            repository.save(session);
-        });
-    }
-
-    /**
      * Suspend a session — marks it for auto-reset on next access.
      * Used by /stop to break stuck-resume loops.
      *
