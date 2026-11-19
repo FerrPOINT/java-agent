@@ -98,6 +98,34 @@ class PhotoBatchDebouncerTest {
     }
 
     @Test
+    void concurrentOffersAndFlushDoNotLosePhotos() throws Exception {
+        var delivered = new java.util.concurrent.LinkedBlockingQueue<UpdateEvent>();
+        debouncer.onDispatch(delivered::add);
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            for (int i = 0; i < 300; i++) {
+                debouncer.offer(makePhotoEvent(2L * i, 100, "first", "album", null));
+                var barrier = new java.util.concurrent.CyclicBarrier(2);
+                var offer = pool.submit(() -> {
+                    barrier.await();
+                    debouncer.offer(makePhotoEvent(2, 100, "second", "album", null));
+                    return null;
+                });
+                var flush = pool.submit(() -> { barrier.await(); debouncer.flushAll(); return null; });
+                offer.get();
+                flush.get();
+                debouncer.flushAll();
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+        assertThat(delivered.stream().flatMap(event -> java.util.Arrays.stream(event.fileId().split(",")))
+            .filter("first"::equals).count()).isEqualTo(300);
+        assertThat(delivered.stream().flatMap(event -> java.util.Arrays.stream(event.fileId().split(",")))
+            .filter("second"::equals).count()).isEqualTo(300);
+    }
+
+    @Test
     void flushClaimsEachAlbumExactlyOnce() {
         var dispatched = new java.util.ArrayList<UpdateEvent>();
         debouncer.onDispatch(dispatched::add);
