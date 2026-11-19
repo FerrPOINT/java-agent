@@ -102,8 +102,9 @@ public class BotSessionStore {
      */
     @Transactional
     public boolean activateSessionById(String userId, UUID sessionId) {
-        Optional<BotSessionEntity> target = repository.findLockedById(sessionId);
-        if (target.isEmpty() || !target.get().getUserId().equals(userId)) {
+        List<BotSessionEntity> owned = repository.findAllLockedByUserId(userId);
+        Optional<BotSessionEntity> target = owned.stream().filter(s -> s.getId().equals(sessionId)).findFirst();
+        if (target.isEmpty()) {
             return false;
         }
         repository.deactivateAllForUser(userId);
@@ -167,8 +168,9 @@ public class BotSessionStore {
 
     @Transactional
     public BotSessionEntity resumeSession(UUID sessionId, String userId) {
-        BotSessionEntity target = repository.findLockedById(sessionId).orElse(null);
-        if (target == null || !java.util.Objects.equals(target.getUserId(), userId)) return null;
+        List<BotSessionEntity> owned = repository.findAllLockedByUserId(userId);
+        BotSessionEntity target = owned.stream().filter(s -> s.getId().equals(sessionId)).findFirst().orElse(null);
+        if (target == null) return null;
         // Deactivate current active session
         BotSessionEntity current = repository.findByUserIdAndActiveTrue(userId).orElse(null);
         if (current != null) {
@@ -243,6 +245,7 @@ public class BotSessionStore {
 
     @Transactional
     public int deactivateAllWithCleanupPending(String userId) {
+        repository.findAllLockedByUserId(userId);
         return repository.deactivateAllForUserWithPendingCleanup(userId);
     }
 

@@ -44,6 +44,10 @@ public interface BotSessionRepository extends JpaRepository<BotSessionEntity, UU
     List<BotSessionEntity> findByCleanupPendingTrueAndActiveFalse();
 
     @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT s FROM BotSessionEntity s WHERE s.userId = :userId ORDER BY s.id")
+    List<BotSessionEntity> findAllLockedByUserId(String userId);
+
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT s FROM BotSessionEntity s WHERE s.id = :id")
     Optional<BotSessionEntity> findLockedById(UUID id);
 

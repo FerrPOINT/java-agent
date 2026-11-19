@@ -347,6 +347,90 @@ class BotSessionCleanupPostgresTest {
             .as("a stale expiry decision must not deactivate a resumed session").isTrue();
     }
 
+    @Test void cleanupAndConcurrentNewOnAnotherThreadMustNotDeadlock() throws Exception {
+        String owner = "cleanup-new-race-" + UUID.randomUUID();
+        var first = session(owner);
+        var second = new BotSessionEntity();
+        second.setUserId(owner); second.setChatId(owner); second.setThreadId(42L);
+        second.setBackendSessionId(UUID.randomUUID()); second.setCreatedAt(Instant.now()); second.setUpdatedAt(Instant.now());
+        second = repository.saveAndFlush(second);
+        UUID firstId = first.getId(), secondId = second.getId();
+        UUID low = java.util.Comparator.comparing(UUID::toString).compare(firstId, secondId) < 0 ? firstId : secondId;
+        UUID high = low.equals(firstId) ? secondId : firstId;
+        var held = new CountDownLatch(1);
+        var waitingPid = new java.util.concurrent.CompletableFuture<Integer>();
+        var proceed = new CountDownLatch(1);
+        var executor = Executors.newFixedThreadPool(2);
+        var tx = new org.springframework.transaction.support.TransactionTemplate(context.getBean(org.springframework.transaction.PlatformTransactionManager.class));
+        try {
+            store.finalizeWithCleanupPending(high, repository.findById(high).orElseThrow().getUpdatedAt());
+            var cleanup = executor.submit(() -> store.retryCleanup(high, id -> {
+                held.countDown();
+                try { if (!proceed.await(10, TimeUnit.SECONDS)) throw new IllegalStateException("timeout"); }
+                catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new IllegalStateException(e); }
+                return true;
+            }));
+            assertThat(held.await(10, TimeUnit.SECONDS)).isTrue();
+            var switching = executor.submit(() -> tx.execute(status -> {
+                var jdbc = new org.springframework.jdbc.core.JdbcTemplate(context.getBean(javax.sql.DataSource.class));
+                waitingPid.complete(jdbc.queryForObject("SELECT pg_backend_pid()", Integer.class));
+                return store.activateSessionById(owner, firstId);
+            }));
+            int pid = waitingPid.get(5, TimeUnit.SECONDS);
+            var jdbc = new org.springframework.jdbc.core.JdbcTemplate(context.getBean(javax.sql.DataSource.class));
+            org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(8)).untilAsserted(() ->
+                assertThat(jdbc.queryForObject("SELECT wait_event_type = 'Lock' FROM pg_stat_activity WHERE pid = ?", Boolean.class, pid)).isTrue());
+            proceed.countDown();
+            assertThat(cleanup.get(15, TimeUnit.SECONDS)).isTrue();
+            assertThat(switching.get(15, TimeUnit.SECONDS)).isTrue();
+        } finally { proceed.countDown(); executor.shutdownNow(); }
+    }
+
+    @Test void concurrentNewAndTopicActivationUseConsistentLockOrder() throws Exception {
+        String owner = "new-topic-race-" + UUID.randomUUID();
+        var first = session(owner);
+        var second = new BotSessionEntity();
+        second.setUserId(owner); second.setChatId(owner); second.setThreadId(42L);
+        second.setBackendSessionId(UUID.randomUUID()); second.setCreatedAt(Instant.now()); second.setUpdatedAt(Instant.now());
+        second = repository.saveAndFlush(second);
+        UUID firstId = first.getId(), secondId = second.getId();
+        var executor = Executors.newFixedThreadPool(2);
+        try {
+            for (int i = 0; i < 30; i++) {
+                var start = new CountDownLatch(1);
+                var a = executor.submit(() -> { start.await(); return store.deactivateAllWithCleanupPending(owner); });
+                var b = executor.submit(() -> { start.await(); return store.activateSessionById(owner, secondId); });
+                start.countDown();
+                assertThat(a.get(15, TimeUnit.SECONDS)).isGreaterThanOrEqualTo(0);
+                assertThat(b.get(15, TimeUnit.SECONDS)).isTrue();
+                assertThat(store.activateSessionById(owner, firstId)).isTrue();
+            }
+        } finally { executor.shutdownNow(); }
+    }
+
+    @Test void concurrentTopicActivationsForSameOwnerMustNotDeadlock() throws Exception {
+        String owner = "topic-race-" + UUID.randomUUID();
+        var first = session(owner);
+        var second = new BotSessionEntity();
+        second.setUserId(owner); second.setChatId(owner); second.setThreadId(42L);
+        second.setBackendSessionId(UUID.randomUUID());
+        second.setCreatedAt(Instant.now()); second.setUpdatedAt(Instant.now());
+        second = repository.saveAndFlush(second);
+        UUID firstId = first.getId(), secondId = second.getId();
+        var executor = Executors.newFixedThreadPool(2);
+        try {
+            for (int i = 0; i < 30; i++) {
+                var start = new CountDownLatch(1);
+                var one = executor.submit(() -> { start.await(); return store.activateSessionById(owner, firstId); });
+                var two = executor.submit(() -> { start.await(); return store.activateSessionById(owner, secondId); });
+                start.countDown();
+                assertThat(one.get(15, TimeUnit.SECONDS)).isTrue();
+                assertThat(two.get(15, TimeUnit.SECONDS)).isTrue();
+            }
+            assertThat(repository.findByUserIdOrderByUpdatedAtDesc(owner).stream().filter(BotSessionEntity::isActive)).hasSize(1);
+        } finally { executor.shutdownNow(); }
+    }
+
     @Test void resumeWaitsForCleanupAndActiveSessionIsNotCleanedAgain() throws Exception {
         var row = session("race-" + UUID.randomUUID());
         assertThat(store.finalizeWithCleanupPending(row.getId(), row.getUpdatedAt())).isTrue();
