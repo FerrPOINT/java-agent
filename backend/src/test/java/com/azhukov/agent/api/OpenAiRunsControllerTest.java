@@ -1059,6 +1059,25 @@ class OpenAiRunsControllerTest {
         waitForStatus(runId, "completed");
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"session", "always"})
+    void approvalEndpointRejectsUnsupportedPersistentScopes(String choice) throws Exception {
+        BlockingRun blockingRun = blockRuntime();
+        try {
+            String runId = createRun("needs approval");
+            var controlSessionId = runService.get(runId).controlSessionId();
+            var pending = approvalQueue.request(controlSessionId, new ToolCall("call", "terminal", "{}"), "test");
+            mockMvc.perform(post("/v1/runs/{runId}/approval", runId)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"choice\":\"" + choice + "\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("invalid_approval_choice"));
+            assertThat(approvalQueue.getPending(controlSessionId)).isSameAs(pending);
+        } finally {
+            blockingRun.complete();
+        }
+    }
+
     @Test
     void approvalEndpointResolvesPendingApproval() throws Exception {
         BlockingRun blockingRun = blockRuntime();
