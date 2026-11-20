@@ -26,7 +26,7 @@ class IdentityCoordinatorVerifierHttpTest {
     private static final String ISSUER = "https://auth.example.test";
     private static final String COORDINATOR = "00000000-0000-4000-8000-000000000001";
     private static final String OTHER = "00000000-0000-4000-8000-000000000002";
-    private static final String PAT = "sdlc_pat_synthetic_fixture_only";
+    private static final String PAT = "pdlc_pat_synthetic_fixture_only";
     private static final String SCOPE = "java-agent:identity-lifecycle";
     private static final ObjectMapper JSON = new ObjectMapper();
 
@@ -117,12 +117,12 @@ class IdentityCoordinatorVerifierHttpTest {
             Window first = verifier.verify("Bearer " + PAT, request(ISSUER), deadline);
             assertEquals(deadline, first.deadlineNanos());
             first.requireCurrent();
-            Window second = verifier.verify("Bearer pdlc_pat_legacy_synthetic", request(ISSUER), originalDeadline());
+            Window second = verifier.verify("Bearer pdlc_pat_second_fixture", request(ISSUER), originalDeadline());
             second.requireCurrent();
             assertEquals(2, stub.calls.get(), "each verification must confirm the current PAT");
             assertEquals("GET", stub.method.get());
-            assertEquals("include_lifetime=true", stub.query.get());
-            assertEquals("Bearer pdlc_pat_legacy_synthetic", stub.authorization.get());
+            assertNull(stub.query.get());
+            assertEquals("Bearer pdlc_pat_second_fixture", stub.authorization.get());
             assertEquals("application/json", stub.accept.get());
         }
     }
@@ -164,7 +164,8 @@ class IdentityCoordinatorVerifierHttpTest {
             for (String authorization : new String[] {null, "", "Basic fixture", "bearer " + PAT}) {
                 failure(401, "identity_coordinator_required", () -> verifier.verify(authorization, request(ISSUER), originalDeadline()));
             }
-            for (String authorization : List.of("Bearer eyJhbGci.fixture", "Bearer sdlc_pat_" + "x".repeat(16384))) {
+            for (String authorization : List.of("Bearer eyJhbGci.fixture", "Bearer sdlc_pat_retired_fixture",
+                    "Bearer pdlc_pat_" + "x".repeat(16384))) {
                 failure(403, "identity_coordinator_capability_required", () -> verifier.verify(authorization, request(ISSUER), originalDeadline()));
             }
             assertEquals(0, stub.calls.get());

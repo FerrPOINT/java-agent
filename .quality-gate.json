@@ -30,7 +30,6 @@
       "scripts/endpoint_coverage_report.py",
       "scripts/check_test_lanes.py",
       "scripts/deploy-dev-systemd.sh",
-      "scripts/deploy-dev-docker.sh",
       "scripts/parity-dashboard.py",
       "scripts/vendor/base_quality_selection.py",
       "scripts/vendor/base-quality-tooling.json",
@@ -41,7 +40,6 @@
       "scripts/tests/test_check_default_settings_reference.py",
       "scripts/tests/test_release_verify.py",
       "scripts/tests/test_deploy_dev_systemd.py",
-      "scripts/tests/test_deploy_dev_docker.py",
       "scripts/tests/test_parity_dashboard.py"
     ],
     "backend": [
@@ -533,7 +531,6 @@
         "-m",
         "unittest",
         "scripts.tests.test_deploy_dev_systemd",
-        "scripts.tests.test_deploy_dev_docker",
         "scripts.tests.test_parity_dashboard",
         "-q"
       ],

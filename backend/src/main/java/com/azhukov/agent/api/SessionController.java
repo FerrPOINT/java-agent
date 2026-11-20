@@ -4,7 +4,6 @@ import com.azhukov.agent.api.dto.CompressRequest;
 import com.azhukov.agent.api.dto.ContextInfoDto;
 import com.azhukov.agent.api.dto.SessionSummaryDto;
 import com.azhukov.agent.api.dto.SnapshotRequest;
-import com.azhukov.agent.api.dto.UndoRequest;
 import com.azhukov.agent.api.dto.UsageDto;
 import jakarta.validation.Valid;
 import com.azhukov.agent.api.mapper.DomainDtoMapper;
@@ -127,28 +126,6 @@ public class SessionController {
     @PostMapping("/agent/session/{sessionId}/undo")
     public int undoTurns(@PathVariable UUID sessionId, @RequestParam(defaultValue = "1") int turns) {
         agentRuntimeService.requireSessionOwnership(sessionId);
-        return agentRuntimeService.undoTurns(sessionId, turns);
-    }
-
-    // Convenience endpoints without sessionId path variable (for E2E / CLI usage)
-
-    @PostMapping("/agent/compress")
-    public String compressSessionBody(@RequestBody(required = false) CompressRequest request) {
-        UUID sessionId = request != null ? request.sessionId() : null;
-        if (sessionId == null) {
-            throw new IllegalArgumentException("sessionId is required");
-        }
-        String focusTopic = request.focusTopic();
-        Integer keepLastN = request.keepLastN();
-        agentRuntimeService.compressSession(sessionId, focusTopic, keepLastN);
-        return "Context compressed." + (focusTopic != null ? " Focus: " + focusTopic : "")
-            + (keepLastN != null ? " Kept last " + keepLastN : "");
-    }
-
-    @PostMapping("/agent/undo")
-    public int undoTurnsBody(@Valid @RequestBody UndoRequest request) {
-        UUID sessionId = request.sessionId();
-        int turns = request.effectiveTurns();
         return agentRuntimeService.undoTurns(sessionId, turns);
     }
 

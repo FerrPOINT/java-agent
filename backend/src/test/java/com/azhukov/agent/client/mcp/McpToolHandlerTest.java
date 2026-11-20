@@ -68,8 +68,7 @@ class McpToolHandlerTest {
 
         manager.getClientsForTest().put("srv", new McpLifecycleManager.McpServerState(server, client, List.of(current)));
         var nativeHandler = manager.new McpToolHandler("srv", "tool");
-        var oauth = mock(McpOAuthManager.class);
-        var aliasHandler = new com.azhukov.agent.tools.mcp.McpTool(manager, oauth);
+        var aliasHandler = new com.azhukov.agent.tools.mcp.McpTool(manager);
 
         assertThat(nativeHandler.execute("{}", null, null, expected).success()).isFalse();
         assertThat(aliasHandler.execute(aliasArgs, null, null, expected).success()).isFalse();
@@ -105,7 +104,7 @@ class McpToolHandlerTest {
         manager.getClientsForTest().put("srv",
             new McpLifecycleManager.McpServerState(server, client, List.of(requested, other)));
 
-        var handler = new com.azhukov.agent.tools.mcp.McpTool(manager, mock(McpOAuthManager.class));
+        var handler = new com.azhukov.agent.tools.mcp.McpTool(manager);
         String args = "{\"server_name\":\"srv\",\"tool_name\":\"fixture-a\"}";
         var call = new com.azhukov.agent.core.model.ToolCall("alias", "mcp_tool", args);
         var admission = guard.mcpAdmission(call);

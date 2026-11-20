@@ -12,17 +12,15 @@ steps:
 
   - name: undo one turn deletes that turn's messages
     method: POST
-    path: /agent/undo
-    body: { sessionId: "{session_id}", turns: 1 }
+    path: /agent/session/{session_id}/undo?turns=1
     assert:
       - { path: "$", gte: 1 }
 
-  - name: "undo with turns=0 clamps to 1 (Hermes parity)"
+  - name: "undo with turns=0 leaves the session unchanged"
     method: POST
-    path: /agent/undo
-    body: { sessionId: "{session_id}", turns: 0 }
+    path: /agent/session/{session_id}/undo?turns=0
     assert:
-      - { path: "$", gte: 1 }
+      - { path: "$", eq: 0 }
 
   - name: voice-mode toggles
     method: POST

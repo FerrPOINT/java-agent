@@ -63,7 +63,7 @@ class CentralJwtFilterTest {
             exchange.sendResponseHeaders(200, publicKeys.length);
             try (var output = exchange.getResponseBody()) { output.write(publicKeys); }
         });
-        sessionReply.set("{\"id\":\"" + SUBJECT + "\",\"status\":\"active\"}");
+        sessionReply.set("{\"id\":\"" + SUBJECT + "\",\"status\":\"active\",\"role\":\"user\"}");
         server.createContext("/me", exchange -> {
             sessionConfirmations.incrementAndGet();
             Instant notBefore=sessionReplyNotBefore.get();
@@ -92,7 +92,7 @@ class CentralJwtFilterTest {
         UserContext.clear();
         SecurityContextHolder.clearContext();
         sessionStatus.set(200);
-        sessionReply.set("{\"id\":\"" + SUBJECT + "\",\"status\":\"active\"}");
+        sessionReply.set("{\"id\":\"" + SUBJECT + "\",\"status\":\"active\",\"role\":\"user\"}");
         unexpectedRequests.set(0);
         sessionConfirmations.set(0);
         sessionReplyNotBefore.set(null);
@@ -102,7 +102,7 @@ class CentralJwtFilterTest {
         Instant now = Instant.now();
         JWTClaimsSet.Builder claims = new JWTClaimsSet.Builder().issuer(ISSUER).subject(SUBJECT)
                 .claim("sid", UUID.randomUUID().toString())
-                .audience("sdlc").issueTime(Date.from(now.minusSeconds(10)))
+                .audience("pdlc").issueTime(Date.from(now.minusSeconds(10)))
                 .expirationTime(Date.from(now.plusSeconds(120)));
         change.accept(claims);
         SignedJWT jwt = new SignedJWT(new JWSHeader.Builder(
@@ -126,7 +126,7 @@ class CentralJwtFilterTest {
         var environment = new MockEnvironment()
                 .withProperty("agent.central-auth.issuer", ISSUER)
                 .withProperty("agent.central-auth.jwks-uri", jwks)
-                .withProperty("agent.central-auth.audience", "sdlc")
+                .withProperty("agent.central-auth.audience", "pdlc")
                 .withProperty("agent.central-auth.session-uri", sessionUrl);
         environment.withProperty("agent.central-auth.personal-token-uri", sessionUrl);
         var verifier = new CentralJwtVerifier(environment);
@@ -188,21 +188,39 @@ class CentralJwtFilterTest {
 
     @Test
     void personalTokenNeedsBothCurrentApplicationAndMethodScope() throws Exception {
-        for (String prefix : new String[]{"sdlc_pat_", "pdlc_pat_"}) {
             for (String method : new String[]{"GET", "POST"}) {
                 String proof = admission("admin", "[\"java-agent\"]");
-                sessionReply.set(proof.replace("\"id\":", "\"sub\":")
-                        .replace("{\"sub\":", "{\"scopes\":[\"java-agent:read\"],\"expires_at\":\""
-                                + Instant.now().plusSeconds(120) + "\",\"sub\":"));
+                var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                var identity = mapper.readValue(proof, java.util.LinkedHashMap.class);
+                identity.remove("id");
+                identity.remove("status");
+                identity.remove("role");
+                identity.put("sub", SUBJECT);
+                identity.put("email", "fixture@example.test");
+                identity.put("display_name", "Fixture");
+                identity.put("subject_role", "admin");
+                identity.put("scopes", java.util.List.of("java-agent:read"));
+                identity.put("observed_at", Instant.now().toString());
+                identity.put("expires_at", Instant.now().plusSeconds(120).toString());
+                sessionReply.set(mapper.writeValueAsString(identity));
                 var request = new MockHttpServletRequest(method, "/api/v2/sessions");
-                request.addHeader("Authorization", "Bearer " + prefix + "fixture-only");
+                request.addHeader("Authorization", "Bearer pdlc_pat_fixture-only");
                 var response = new MockHttpServletResponse();
                 AtomicInteger calls = new AtomicInteger();
                 filter().doFilter(request, response, (incoming, outgoing) -> calls.incrementAndGet());
                 assertThat(response.getStatus()).isEqualTo(method.equals("GET") ? 200 : 403);
                 assertThat(calls.get()).isEqualTo(method.equals("GET") ? 1 : 0);
-            }
         }
+    }
+
+    @Test
+    void retiredPersonalTokenIsRejectedBeforeIdentityConfirmation() throws Exception {
+        var request = new MockHttpServletRequest("GET", "/api/v2/sessions");
+        request.addHeader("Authorization", "Bearer sdlc_pat_fixture-only");
+        var response = new MockHttpServletResponse();
+        filter().doFilter(request, response, (incoming, outgoing) -> fail("Retired PAT admitted"));
+        assertThat(response.getStatus()).isEqualTo(401);
+        assertThat(sessionConfirmations.get()).isZero();
     }
 
     @Test
@@ -243,7 +261,7 @@ class CentralJwtFilterTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"issuer", "audience", "missing_audience", "subject", "zero_subject",
+    @ValueSource(strings = {"issuer", "audience", "retired_audience", "mixed_audience", "missing_audience", "subject", "zero_subject",
             "expired", "missing_exp", "missing_iat", "future_iat", "missing_sid", "invalid_sid",
             "signature", "algorithm", "malformed"})
     void invalidCentralIdentityDoesNotFallBackToGlobalApiKey(String failure) throws Exception {
@@ -253,6 +271,8 @@ class CentralJwtFilterTest {
             switch (failure) {
                 case "issuer" -> builder.issuer("https://qa.sdlc1.invalid");
                 case "audience" -> builder.audience("foreign");
+                case "retired_audience" -> builder.audience("sdlc");
+                case "mixed_audience" -> builder.audience(java.util.List.of("pdlc", "sdlc"));
                 case "missing_audience" -> builder.claim("aud", null);
                 case "subject" -> builder.subject("owner-alias");
                 case "zero_subject" -> builder.subject(new UUID(0, 0).toString());
@@ -321,7 +341,7 @@ class CentralJwtFilterTest {
                 .withBean(AgentProperties.class, AgentProperties::new)
                 .withBean(UserAccessService.class, () -> mock(UserAccessService.class))
                 .withPropertyValues("agent.central-auth.enabled=true", "agent.central-auth.issuer=" + ISSUER,
-                        "agent.central-auth.jwks-uri=" + jwks, "agent.central-auth.audience=sdlc",
+                        "agent.central-auth.jwks-uri=" + jwks, "agent.central-auth.audience=pdlc",
                         "agent.central-auth.session-uri=" + sessionUrl)
                 .run(context -> {
                     assertThat(context).hasNotFailed().hasSingleBean(CentralJwtVerifier.class);
@@ -349,8 +369,8 @@ class CentralJwtFilterTest {
     @ValueSource(strings = {"foreign", "inactive", "malformed", "oversized"})
     void sessionReadbackMustConfirmExactActiveIdentityWithinResponseLimit(String failure) throws Exception {
         sessionReply.set(switch (failure) {
-            case "foreign" -> "{\"id\":\"" + UUID.randomUUID() + "\",\"status\":\"active\"}";
-            case "inactive" -> "{\"id\":\"" + SUBJECT + "\",\"status\":\"disabled\"}";
+            case "foreign" -> "{\"id\":\"" + UUID.randomUUID() + "\",\"status\":\"active\",\"role\":\"user\"}";
+            case "inactive" -> "{\"id\":\"" + SUBJECT + "\",\"status\":\"disabled\",\"role\":\"user\"}";
             case "oversized" -> "x".repeat(65537);
             default -> "broken-json";
         });
