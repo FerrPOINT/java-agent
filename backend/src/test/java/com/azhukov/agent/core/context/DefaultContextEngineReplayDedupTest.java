@@ -83,6 +83,23 @@ class DefaultContextEngineReplayDedupTest {
     }
 
     @Test
+    void identicalTextWithDifferentImageCountsDoesNotDropEarlierMessage() {
+        when(lineage.loadMessagesWithAncestors(any(UUID.class))).thenReturn(List.of(Message.userWithImages("photo", 2)));
+        var out = engine.prepareContext(session, List.of(Message.system("sys"), Message.userWithImages("photo", 1)));
+        assertThat(out.stream().filter(m -> m.role() == Role.USER).findFirst().orElseThrow().imageCount())
+            .isEqualTo(3);
+    }
+
+    @Test
+    void equalRedactedImagePlaceholdersDoNotProveDuplicate() {
+        String redacted = "[image_url: data:image/png;base64,<redacted>]";
+        when(lineage.loadMessagesWithAncestors(any(UUID.class))).thenReturn(List.of(Message.userWithImages(redacted, 1)));
+        var out = engine.prepareContext(session, List.of(Message.system("sys"), Message.userWithImages(redacted, 1)));
+        assertThat(out.stream().filter(m -> m.role() == Role.USER).findFirst().orElseThrow().imageCount())
+            .isEqualTo(2);
+    }
+
+    @Test
     void persistedSystemRowsNeverLoadAsHistory() {
         MessageEntity systemRow = new MessageEntity();
         systemRow.setRole("system");
@@ -112,7 +129,7 @@ class DefaultContextEngineReplayDedupTest {
         MessageEntity userRow = new MessageEntity();
         userRow.setRole("user");
         userRow.setContent("hello");
-        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), anyInt()))
+        when(messageRepository.findBySessionIdAndActiveTrueOrderByCreatedAtDesc(any(UUID.class), anyInt()))
             .thenReturn(List.of(userRow, systemRow)); // desc: system last written
 
         List<Message> out = engine.prepareContext(session, List.of(

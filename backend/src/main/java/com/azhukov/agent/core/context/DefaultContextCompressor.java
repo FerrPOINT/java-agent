@@ -903,11 +903,14 @@ public class DefaultContextCompressor implements ContextCompressor {
          row.setSessionId(childSessionId);
          row.setRole(message.role().name().toLowerCase());
          row.setContent(message.content() != null ? message.content() : "");
+         row.setReasoning(message.role() == Role.ASSISTANT ? message.reasoning() : null);
+         row.setImageCount(message.imageCount());
          if (message.toolCalls() != null && !message.toolCalls().isEmpty()) {
              ToolCall first = message.toolCalls().get(0);
              row.setToolCallId(first.pairingId());
              row.setToolCallName(first.name());
              row.setToolCallArguments(first.arguments());
+             row.setToolResponseItemId(first.responseItemId());
              row.setToolCallsJson(ToolCallPersistenceCodec.serialize(message.toolCalls()));
          } else if (message.role() == Role.TOOL) {
              row.setToolCallId(message.toolCallId());

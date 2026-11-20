@@ -100,6 +100,8 @@ class SessionCompressionHelperTest {
             entity("user", "five")
         );
         MessageEntity concurrentTail = entity("assistant", "arrived during compression");
+        concurrentTail.setReasoning("late reasoning");
+        concurrentTail.setToolResponseItemId("response-42");
         concurrentTail.setToolCallId("late-call");
         concurrentTail.setToolCallName("read_file");
         concurrentTail.setToolCallArguments("{\"path\":\"README.md\"}");
@@ -131,6 +133,8 @@ class SessionCompressionHelperTest {
         assertThat(saved.get(0).getContent()).isEqualTo("summary");
         assertThat(saved.get(1).getContent()).isEqualTo("live ask");
         assertThat(saved.get(2).getContent()).isEqualTo("arrived during compression");
+        assertThat(saved.get(2).getReasoning()).isEqualTo("late reasoning");
+        assertThat(saved.get(2).getToolResponseItemId()).isEqualTo("response-42");
         assertThat(saved.get(2).getToolCallName()).isEqualTo("read_file");
         assertThat(saved.get(2).getToolCalls()).contains("late-call");
         assertThat(saved.get(2).getActive()).isTrue();

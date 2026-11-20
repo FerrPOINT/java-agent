@@ -139,23 +139,12 @@ public class SessionLineageService implements SessionLineagePort {
      * @return list of messages in ascending order by creation time
      */
     private List<Message> loadMessagesForSession(UUID sessionId) {
-        // The repository's active-row method is the runtime source of truth after
-        // rotation. Fall back to the legacy query only for callers/tests that have
-        // not adopted the active flag yet; production repositories never return null.
         List<MessageEntity> entities = messageRepository.findBySessionIdAndActiveTrueOrderByCreatedAtAsc(sessionId);
-        if (entities == null) {
-            // Mockito's unstubbed repository call returns null; preserve that
-            // compatibility without replaying intentionally archived rows.
-            entities = messageRepository.findBySessionIdOrderByCreatedAtAsc(sessionId);
-        }
-        if (entities == null || entities.isEmpty()) {
+        if (entities.isEmpty()) {
             return Collections.emptyList();
         }
         List<Message> messages = new ArrayList<>(entities.size());
         for (MessageEntity entity : entities) {
-            if (Boolean.FALSE.equals(entity.getActive())) {
-                continue;
-            }
             Message msg = messageMapper.toDomain(entity);
             if (msg != null) {
                 messages.add(msg);

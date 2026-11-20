@@ -73,7 +73,7 @@ class DefaultContextEngineTest {
 
     @Test
     void prepareContextAddsSystemMessageFirst() {
-        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), anyInt())).thenReturn(Collections.emptyList());
+        when(messageRepository.findBySessionIdAndActiveTrueOrderByCreatedAtDesc(any(UUID.class), anyInt())).thenReturn(Collections.emptyList());
 
         List<Message> incoming = List.of(Message.system("You are a helpful assistant."), Message.user("Hello"));
         List<Message> result = contextEngine.prepareContext(session, incoming);
@@ -91,7 +91,7 @@ class DefaultContextEngineTest {
         MessageEntity userMsg = entity("user", "previous user question", 1);
         MessageEntity assistantMsg = entity("assistant", "previous assistant answer", 1);
         assistantMsg.setReasoning("provider reasoning");
-        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(eq(session.id()), anyInt()))
+        when(messageRepository.findBySessionIdAndActiveTrueOrderByCreatedAtDesc(eq(session.id()), anyInt()))
                 .thenReturn(List.of(assistantMsg, userMsg)); // Desc order (newest first)
 
         List<Message> incoming = List.of(Message.system("System prompt"), Message.user("Current question"));
@@ -109,20 +109,38 @@ class DefaultContextEngineTest {
     }
 
     @Test
-    void prepareContextSkipsInactiveArchivedHistoryRows() {
-        MessageEntity archivedUser = entity("user", "archived user question", 1);
-        archivedUser.setActive(false);
-        archivedUser.setCompacted(true);
-        MessageEntity liveAssistant = entity("assistant", "live assistant answer", 2);
-        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(eq(session.id()), anyInt()))
-                .thenReturn(List.of(liveAssistant, archivedUser));
+    void prepareContextRequestsOnlyActiveHistoryBeforeApplyingLimit() {
+        contextEngine.prepareContext(session, List.of(Message.system("System"), Message.user("Current")));
+        verify(messageRepository).findBySessionIdAndActiveTrueOrderByCreatedAtDesc(eq(session.id()), anyInt());
+    }
 
-        List<Message> result = contextEngine.prepareContext(
-            session,
-            List.of(Message.system("System prompt"), Message.user("Current question")));
+    @Test
+    void paginatedHistoryPreservesImageCount() {
+        contextProps.setMaxTokens(200_000);
+        var previous = entity("user", "photo", 1);
+        previous.setImageCount(2);
+        when(messageRepository.findBySessionIdAndActiveTrueOrderByCreatedAtDesc(eq(session.id()), anyInt()))
+            .thenReturn(List.of(previous));
+        var result = contextEngine.prepareContext(session, List.of(Message.system("System"), Message.user("Current")));
+        assertThat(result.stream().filter(message -> message.content() != null && message.content().contains("photo")).findFirst().orElseThrow()
+            .imageCount()).isEqualTo(2);
+    }
 
-        assertThat(result).extracting(Message::content)
-            .containsExactly("System prompt", "live assistant answer", "Current question");
+    @Test
+    void paginatedHistoryPreservesScalarToolResponseItemId() {
+        var assistant = entity("assistant", "", 1);
+        assistant.setToolCallId("call-1");
+        assistant.setToolResponseItemId("item-1");
+        assistant.setToolCallName("search");
+        assistant.setToolCallArguments("{}");
+        var tool = entity("tool", "found", 1);
+        tool.setToolCallId("call-1");
+        when(messageRepository.findBySessionIdAndActiveTrueOrderByCreatedAtDesc(eq(session.id()), anyInt()))
+            .thenReturn(List.of(tool, assistant));
+
+        var result = contextEngine.prepareContext(session, List.of(Message.system("System"), Message.user("Current")));
+        assertThat(result.stream().filter(message -> message.role() == Role.ASSISTANT).findFirst().orElseThrow()
+            .toolCalls().getFirst().responseItemId()).isEqualTo("item-1");
     }
 
     @Test
@@ -141,7 +159,7 @@ class DefaultContextEngineTest {
         toolResult1.setToolCallId("call-1");
         MessageEntity toolResult2 = entity("tool", "search result", 1);
         toolResult2.setToolCallId("call-2");
-        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(eq(session.id()), anyInt()))
+        when(messageRepository.findBySessionIdAndActiveTrueOrderByCreatedAtDesc(eq(session.id()), anyInt()))
             .thenReturn(List.of(toolResult2, toolResult1, assistantMsg));
 
         List<Message> result = contextEngine.prepareContext(
@@ -165,7 +183,7 @@ class DefaultContextEngineTest {
     void prepareContextAppendsMemoryRecallViaMemoryProvider() {
 
         MessageEntity userMsg = entity("user", "What do you know about me?", 1);
-        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(eq(session.id()), anyInt()))
+        when(messageRepository.findBySessionIdAndActiveTrueOrderByCreatedAtDesc(eq(session.id()), anyInt()))
                 .thenReturn(List.of(userMsg));
 
         List<Message> incoming = List.of(Message.system("System prompt"), Message.user("Tell me something"));
@@ -185,7 +203,7 @@ class DefaultContextEngineTest {
         // Hermes parity: skills are NOT injected by prepareContext — the
         // skills index is built by DefaultPromptBuilder into the system
         // prompt's volatile tier. The system message stays byte-identical.
-        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), anyInt()))
+        when(messageRepository.findBySessionIdAndActiveTrueOrderByCreatedAtDesc(any(UUID.class), anyInt()))
                 .thenReturn(Collections.emptyList());
 
         List<Message> incoming = List.of(Message.system("System prompt"), Message.user("Help me"));
@@ -208,7 +226,7 @@ class DefaultContextEngineTest {
                 entity("assistant", "msg-2", 1),
                 entity("user", "msg-1", 1)
         );
-        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(eq(session.id()), anyInt())).thenReturn(history);
+        when(messageRepository.findBySessionIdAndActiveTrueOrderByCreatedAtDesc(eq(session.id()), anyInt())).thenReturn(history);
 
         List<Message> incoming = List.of(Message.system("System prompt"), Message.user("current"));
         List<Message> result = contextEngine.prepareContext(session, incoming);
@@ -232,7 +250,7 @@ class DefaultContextEngineTest {
                 entity("assistant", "msg-2", 1),
                 entity("user", "msg-1", 1)
         );
-        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(eq(session.id()), anyInt())).thenReturn(history);
+        when(messageRepository.findBySessionIdAndActiveTrueOrderByCreatedAtDesc(eq(session.id()), anyInt())).thenReturn(history);
 
         List<Message> incoming = List.of(Message.system("System prompt"), Message.user("current"));
         List<Message> result = contextEngine.prepareContext(session, incoming);
@@ -244,7 +262,7 @@ class DefaultContextEngineTest {
 
     @Test
     void prepareContextTriggersCompressorWhenCharsExceedMaxTokensEstimate() {
-        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), anyInt()))
+        when(messageRepository.findBySessionIdAndActiveTrueOrderByCreatedAtDesc(any(UUID.class), anyInt()))
                 .thenReturn(Collections.emptyList());
 
         // maxTokens=100 => 100 * 4 = 400 chars threshold. Create a system message alone that is already over.
@@ -263,7 +281,7 @@ class DefaultContextEngineTest {
 
     @Test
     void prepareContextHandlesEmptyHistoryGracefully() {
-        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), anyInt()))
+        when(messageRepository.findBySessionIdAndActiveTrueOrderByCreatedAtDesc(any(UUID.class), anyInt()))
                 .thenReturn(Collections.emptyList());
 
         List<Message> incoming = List.of(Message.user("Just a user message"));

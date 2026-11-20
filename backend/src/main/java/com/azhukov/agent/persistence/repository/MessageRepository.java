@@ -15,6 +15,7 @@ import java.util.UUID;
 @Repository
 public interface MessageRepository extends JpaRepository<MessageEntity, UUID> {
 
+    @Query("SELECT m FROM MessageEntity m WHERE m.sessionId = :sessionId ORDER BY m.createdAt ASC, m.insertOrder ASC NULLS FIRST, m.id ASC")
     List<MessageEntity> findBySessionIdOrderByCreatedAtAsc(UUID sessionId);
 
     /**
@@ -30,6 +31,7 @@ public interface MessageRepository extends JpaRepository<MessageEntity, UUID> {
     @org.springframework.transaction.annotation.Transactional
     void deleteBySessionId(UUID sessionId);
 
+    @Query("SELECT m FROM MessageEntity m WHERE m.sessionId = :sessionId ORDER BY m.createdAt ASC, m.insertOrder ASC NULLS FIRST, m.id ASC")
     Page<MessageEntity> findBySessionIdOrderByCreatedAtAsc(UUID sessionId, Pageable pageable);
 
     List<MessageEntity> findBySessionIdAndTurnIndexOrderByCreatedAtAsc(UUID sessionId, Integer turnIndex);
@@ -58,6 +60,7 @@ public interface MessageRepository extends JpaRepository<MessageEntity, UUID> {
      * rows (active=false); a resume resolver that counts ALL rows keeps writing
      * into the superseded parent instead of following the chain to the live child.
      */
+    @Query("SELECT COUNT(m) FROM MessageEntity m WHERE m.sessionId = :sessionId AND (m.active = TRUE OR m.active IS NULL)")
     long countBySessionIdAndActiveTrue(UUID sessionId);
 
     /**
@@ -78,12 +81,14 @@ public interface MessageRepository extends JpaRepository<MessageEntity, UUID> {
      * @param pageable  pagination (page 0, size N gives the first N = newest N)
      * @return the last N messages in descending order
      */
+    @Query("SELECT m FROM MessageEntity m WHERE m.sessionId = :sessionId ORDER BY m.createdAt DESC, m.insertOrder DESC NULLS LAST, m.id DESC")
     List<MessageEntity> findBySessionIdOrderByCreatedAtDesc(UUID sessionId, Pageable pageable);
 
     /**
      * Load only active (non-archived) messages for a session, ordered by creation time.
      * Mirrors Hermes get_messages(session_id) which filters active=1 by default.
      */
+    @Query("SELECT m FROM MessageEntity m WHERE m.sessionId = :sessionId AND (m.active = TRUE OR m.active IS NULL) ORDER BY m.createdAt ASC, m.insertOrder ASC NULLS FIRST, m.id ASC")
     List<MessageEntity> findBySessionIdAndActiveTrueOrderByCreatedAtAsc(UUID sessionId);
 
     /**
@@ -127,7 +132,7 @@ public interface MessageRepository extends JpaRepository<MessageEntity, UUID> {
         SELECT * FROM messages
         WHERE session_id = :sessionId
           AND COALESCE(active, TRUE) = TRUE
-        ORDER BY created_at ASC, id ASC
+        ORDER BY created_at ASC, insert_order ASC NULLS FIRST, id ASC
         LIMIT :limit OFFSET :offset
         """, nativeQuery = true)
     List<MessageEntity> findActivePageBySessionIdOrderByCreatedAtAsc(
@@ -140,7 +145,7 @@ public interface MessageRepository extends JpaRepository<MessageEntity, UUID> {
         SELECT * FROM messages
         WHERE session_id = :sessionId
           AND COALESCE(active, TRUE) = TRUE
-        ORDER BY created_at DESC, id DESC
+        ORDER BY created_at DESC, insert_order DESC NULLS LAST, id DESC
         LIMIT :limit OFFSET :offset
         """, nativeQuery = true)
     List<MessageEntity> findActivePageBySessionIdOrderByCreatedAtDesc(
@@ -152,7 +157,7 @@ public interface MessageRepository extends JpaRepository<MessageEntity, UUID> {
     @Query(value = """
         SELECT * FROM messages
         WHERE session_id = :sessionId
-        ORDER BY created_at DESC, id DESC
+        ORDER BY created_at DESC, insert_order DESC NULLS LAST, id DESC
         LIMIT :limit OFFSET :offset
         """, nativeQuery = true)
     List<MessageEntity> findPageBySessionIdOrderByCreatedAtDesc(

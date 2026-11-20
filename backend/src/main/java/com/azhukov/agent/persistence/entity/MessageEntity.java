@@ -72,5 +72,8 @@ public class MessageEntity {
     /** Whether the message was archived by compaction (active=false, compacted=true). */
     private Boolean compacted = false;
 
+    @Column(name = "insert_order", insertable = false, updatable = false)
+    private Long insertOrder;
+
     private Instant createdAt;
 }
