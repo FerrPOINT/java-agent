@@ -18,9 +18,8 @@ import java.util.UUID;
  * contract ({@code /api/v1/attachments}).
  *
  * <p>Inbound Telegram media is registered as an artifact BEFORE the chat
- * request; the chat request then references the artifact id. On any backend
- * failure the caller falls back to the legacy local-path description — media
- * handling must never hard-fail because the artifact lane is down.
+ * request; the chat request then references the confirmed artifact id. A rejected
+ * or unknown registration stops dispatch. The client never retries an upload.
  */
 @Slf4j
 @Service
@@ -31,18 +30,23 @@ public class AttachmentApiClient extends BaseBackendClient {
         super(restClient, objectMapper);
     }
 
-    /** Registration result: id on success, null on any failure. */
+    /** Confirmed registration; failures never become an alternate attachment input. */
     public record Registered(String id, String contentHash, boolean duplicate) {}
 
-    /**
-     * Register an inbound artifact. Returns empty on ANY failure (network,
-     * 4xx/5xx or an unparsable body).
-     */
-    public java.util.Optional<Registered> register(byte[] data, String fileName, String mimeType,
-                                                   String disposition, String origin,
-                                                   String ownerId, UUID sessionId, String messageId) {
+    public static final class AdmissionFailure extends RuntimeException {
+        private final boolean outcomeUnknown;
+        public AdmissionFailure(boolean outcomeUnknown, String message) {
+            super(message);
+            this.outcomeUnknown = outcomeUnknown;
+        }
+        public boolean outcomeUnknown() { return outcomeUnknown; }
+    }
+
+    public Registered register(byte[] data, String fileName, String mimeType,
+                               String disposition, String origin,
+                               String ownerId, UUID sessionId, String messageId) {
         if (data == null || data.length == 0) {
-            return java.util.Optional.empty();
+            throw new AdmissionFailure(false, "Empty attachment");
         }
         try {
             MultipartBodyBuilder builder = new MultipartBodyBuilder();
@@ -73,17 +77,27 @@ public class AttachmentApiClient extends BaseBackendClient {
                 .retrieve()
                 .body(String.class);
             JsonNode node = readTree(json);
-            if (node == null || node.path("id").asText("").isBlank()) {
-                return java.util.Optional.empty();
+            if (node == null || !node.path("id").isTextual()
+                    || !node.path("id").asText().matches("att_[a-f0-9]{32}")
+                    || !node.path("contentHash").isTextual()
+                    || !node.path("duplicate").isBoolean()
+                    || !node.path("rejection").isNull() && !node.path("rejection").isMissingNode()) {
+                throw new AdmissionFailure(true, "Unconfirmed attachment response");
             }
-            return java.util.Optional.of(new Registered(
-                node.path("id").asText(),
-                node.path("contentHash").asText(null),
-                node.path("duplicate").asBoolean(false)));
-        } catch (Exception e) {
-            log.debug("attachment register failed ({}): {}",
-                e.getClass().getSimpleName(), e.getMessage());
-            return java.util.Optional.empty();
+            String expectedHash = java.util.HexFormat.of().formatHex(
+                    java.security.MessageDigest.getInstance("SHA-256").digest(data));
+            if (!expectedHash.equals(node.path("contentHash").asText())) {
+                throw new AdmissionFailure(true, "Attachment response content does not match");
+            }
+            return new Registered(node.path("id").asText(), expectedHash, node.path("duplicate").asBoolean());
+        } catch (AdmissionFailure failure) {
+            throw failure;
+        } catch (org.springframework.web.client.RestClientResponseException failure) {
+            int status = failure.getStatusCode().value();
+            throw new AdmissionFailure(status < 400 || status >= 500 || status == 408,
+                    "Attachment registration HTTP " + status);
+        } catch (Exception failure) {
+            throw new AdmissionFailure(true, "Attachment registration outcome is unknown");
         }
     }
 

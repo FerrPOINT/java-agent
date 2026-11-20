@@ -307,6 +307,14 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
     // ─── Text / Media ──────────────────────────────────────────────
 
     @Override
+    public boolean mayBatch(UpdateEvent event) {
+        if (event.type() == UpdateEvent.Type.TEXT && !groupMessageFilter.shouldProcess(event)) return false;
+        if (authorizationService.isAuthorized(event)) return true;
+        telegramClient.sendMessage(event.chatId(), "⛔ You are not authorized to use this bot.");
+        return false;
+    }
+
+    @Override
     public boolean shouldBypassTextBatch(UpdateEvent event) {
         return event != null && busyHandler.isBusy(event.chatId());
     }
@@ -318,11 +326,17 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         // active turn owns the per-chat lock; otherwise interrupt mode cannot
         // cancel anything until after that turn has already finished.
         if (busyHandler.isBusy(chatId)) {
+            if (!groupMessageFilter.shouldProcess(event)) return;
+            if (!authorizationService.isAuthorized(event)) {
+                telegramClient.sendMessage(chatId, "⛔ You are not authorized to use this bot.");
+                return;
+            }
             if (tryResolveTypedClarify(chatId, event)) {
                 return;
             }
             if (!streamEditor.isFinishingDelivery(chatId)) {
-                handleBusyMessage(chatId, event, busyHandler.getEffectiveBusyInputMode(), resolveSession(event));
+                handleBusyMessage(chatId, event, busyHandler.getEffectiveBusyInputMode(), resolveSession(event),
+                    event.fileId() == null ? extractMessageText(event) : null);
                 return;
             }
         }
@@ -362,7 +376,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
     }
 
     private boolean tryResolveTypedClarify(long chatId, UpdateEvent event) {
-        if (clarifyTextInterceptor == null) {
+        if (clarifyTextInterceptor == null || event.fileId() != null) {
             return false;
         }
         String messageText = extractMessageText(event);
@@ -415,17 +429,20 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         // Resolve session
         BotSessionEntity session = resolveSession(event);
 
+        // Queue media before admission if the busy state changed while acquiring the lock.
+        if (busyHandler.isBusy(chatId) && event.fileId() != null) {
+            handleBusyMessage(chatId, event, busyHandler.getEffectiveBusyInputMode(), session, null);
+            return;
+        }
+
         // Build message text from the event — now uses InboundMediaHandler for media
-        String messageText = extractMessageText(event);
-        if (messageText == null || messageText.isBlank()) {
+        AdmittedMessage admitted = admitMessage(event);
+        if (admitted == null || admitted.text() == null || admitted.text().isBlank()) {
             log.debug("No text content in update {}, skipping", event.updateId());
             return;
         }
-        // WP-11: collect artifact ids the media handler registered, strip the
-        // inline markers from the visible text, and forward them as structured
-        // attachment references on the chat request.
-        java.util.List<String> artifactIds = extractArtifactIds(messageText);
-        messageText = stripArtifactMarkers(messageText);
+        String messageText = admitted.text();
+        java.util.List<String> artifactIds = admitted.artifactIds();
 
         if (busyHandler.isBusy(chatId) && clarifyTextInterceptor != null
                 && messageText != null && !messageText.isBlank()) {
@@ -437,7 +454,7 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         // Check busy state
         if (busyHandler.isBusy(chatId)) {
             String effectiveMode = busyHandler.getEffectiveBusyInputMode();
-            handleBusyMessage(chatId, event, effectiveMode, session);
+            handleBusyMessage(chatId, event, effectiveMode, session, messageText);
             return;
         }
 
@@ -622,15 +639,16 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
      * @param session the bot session (for session ID lookup)
      */
     private void handleBusyMessage(long chatId, UpdateEvent event, String effectiveMode,
-                                    BotSessionEntity session) {
-        String messageText = extractMessageText(event);
-        if (messageText == null || messageText.isBlank()) {
+                                    BotSessionEntity session, String messageText) {
+        boolean hasMedia = event.fileId() != null;
+        if (!hasMedia && (messageText == null || messageText.isBlank())) {
             log.debug("No text in busy message for chat {}, skipping", chatId);
             return;
         }
 
         boolean demotedForSubagents = false;
-        String actualMode = effectiveMode;
+        // The steer endpoint accepts text only; defer media admission to the next turn.
+        String actualMode = hasMedia && "steer".equals(effectiveMode) ? "queue" : effectiveMode;
 
         // #30170: Demote interrupt to queue when subagents are active
         if ("interrupt".equals(effectiveMode)) {
@@ -978,58 +996,41 @@ public class BotMessageProcessor implements Consumer<UpdateEvent>, UpdateDispatc
         return "dm";
     }
 
+    private record AdmittedMessage(String text, java.util.List<String> artifactIds) {}
+
     private String extractMessageText(UpdateEvent event) {
-        if (event.text() != null && !event.text().isBlank()) {
-            // If there's text along with media (caption is handled below), use text
-            if (event.fileId() != null) {
-                // Text + media: enrich with media description
-                Optional<String> mediaDesc = inboundMediaHandler.handle(event);
-                if (mediaDesc.isPresent()) {
-                    return event.text() + "\n" + mediaDesc.get();
-                }
+        AdmittedMessage admitted = admitMessage(event);
+        return admitted == null ? null : admitted.text();
+    }
+
+    private AdmittedMessage admitMessage(UpdateEvent event) {
+        try {
+            boolean requiresFile = switch (event.type()) {
+                case PHOTO, DOCUMENT, VOICE, STICKER, ANIMATION -> true;
+                default -> false;
+            };
+            if (requiresFile && (event.fileId() == null || event.fileId().isBlank())) {
+                throw new AttachmentApiClient.AdmissionFailure(false, "Missing attachment identifier");
             }
-            return event.text();
-        }
-        if (event.caption() != null && !event.caption().isBlank()) {
-            // Caption with media: enrich with media description from InboundMediaHandler
-            Optional<String> mediaDesc = inboundMediaHandler.handle(event);
-            if (mediaDesc.isPresent()) {
-                return event.caption() + "\n" + mediaDesc.get();
+            String text = event.text() != null && !event.text().isBlank() ? event.text() : event.caption();
+            if (event.fileId() == null) {
+                return new AdmittedMessage(text, java.util.List.of());
             }
-            return event.caption();
+            var media = inboundMediaHandler.handle(event).orElseThrow(() ->
+                new AttachmentApiClient.AdmissionFailure(false, "Unsupported attachment"));
+            String combined = text == null || text.isBlank() ? media.description() : text + "\n" + media.description();
+            return new AdmittedMessage(combined, media.artifactIds());
+        } catch (AttachmentApiClient.AdmissionFailure failure) {
+            String message = failure.outcomeUnknown()
+                    ? "Результат загрузки вложения не подтверждён. Сообщение не отправлено агенту; автоматического повтора нет."
+                    : "Вложение не принято. Сообщение не отправлено агенту.";
+            sendError(event.chatId(), message);
+            return null;
         }
-        // For media without caption/text, use InboundMediaHandler to get a description
-        if (event.fileId() != null) {
-            Optional<String> mediaDesc = inboundMediaHandler.handle(event);
-            if (mediaDesc.isPresent()) {
-                return mediaDesc.get();
-            }
-            // Fallback to placeholder if handler returns empty
-            return "[Media attachment: " + (event.fileType() != null ? event.fileType() : "unknown") + "]";
-        }
-        return null;
     }
 
     private void sendFormatted(long chatId, String text) {
         sendFormatted(chatId, text, 0L, 0L);
-    }
-
-    /** WP-11: artifact ids the media handler appended as {@code (artifact=att_...)}. */
-    static java.util.List<String> extractArtifactIds(String messageText) {
-        if (messageText == null) return java.util.List.of();
-        java.util.List<String> ids = new java.util.ArrayList<>();
-        java.util.regex.Matcher m = java.util.regex.Pattern
-            .compile("\\(artifact=(att_[a-f0-9]+)\\)").matcher(messageText);
-        while (m.find()) {
-            ids.add(m.group(1));
-        }
-        return ids;
-    }
-
-    /** WP-11: remove {@code (artifact=att_...)} markers from user-visible text. */
-    static String stripArtifactMarkers(String messageText) {
-        if (messageText == null) return null;
-        return messageText.replaceAll("\\s*\\(artifact=att_[a-f0-9]+\\)", "");
     }
 
     private boolean sendFormattedWithReceipt(long chatId, String text, long userMessageId, long messageThreadId) {
