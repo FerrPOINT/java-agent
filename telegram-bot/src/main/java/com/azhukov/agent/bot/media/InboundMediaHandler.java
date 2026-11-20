@@ -111,7 +111,7 @@ public class InboundMediaHandler {
         if (data.length == 0 || data.length > MAX_FILE_SIZE_BYTES) {
             throw new AttachmentApiClient.AdmissionFailure(false, "Attachment is empty or exceeds 20 MB");
         }
-        // Retain the downloaded file for reconciliation if the upload outcome is unknown.
+        // The local copy expires independently; no automatic upload reconciliation is available.
         Path savedPath = saveMedia(fileId, fileType, data);
         if (savedPath == null) {
             throw new AttachmentApiClient.AdmissionFailure(false, "Attachment could not be retained locally");
