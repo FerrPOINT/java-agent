@@ -5,7 +5,7 @@
 UUID subject и
 UUID session ID; затем тем же bearer выполняется `/auth/me` для проверки
 действующей сессии, текущей роли и допуска. PAT проверяется существующим endpoint
-Auth `/auth/tokens/introspect?include_lifetime=true`; разрешение приложения и
+Auth `/auth/tokens/introspect`; разрешение приложения и
 точный `java-agent:read` либо `java-agent:write` scope проверяются совместно. Отозванная сессия перестаёт давать доступ без
 ожидания
 истечения JWT.
@@ -20,7 +20,7 @@ Auth `/auth/tokens/introspect?include_lifetime=true`; разрешение пр�
 | `agent.central-auth.audience` | Единственная ожидаемая audience. Central Auth PDLC использует `pdlc` |
 | `agent.central-auth.session-uri` | Доступный Java endpoint того же Auth `/auth/me` |
 | `agent.central-auth.personal-token-uri` | Фиксированный endpoint того же Auth `/auth/tokens/introspect`, обязателен для PAT |
-| `agent.central-auth.application-access-required` | Требовать enforced proof; по умолчаниюfalse для совместимого rollout |
+| `agent.central-auth.application-access-required` | Требовать enforced proof; по умолчаниюfalse; активация политики доступа выполняется отдельно |
 
 Все четыре значения обязательны при включении режима. Для environment variables
 используется стандартное Spring-преобразование, например
@@ -42,7 +42,10 @@ Global API key, per-user legacy key и dev principal не служат fallback 
 предел ответа 64KiB и запрет redirects. Отсутствие приложения или PAT scope даёт
 HTTP403 без нового SSO-цикла; malformed proof и недоступный обязательный
 PAT endpoint дают503. Исходный срок proof, JWT/PAT и monotonic window не
-продлеваются. SSE callbacks закрывают поток по истечении; новая итерация и
+продлеваются. PAT всегда возвращает текущий `subject_role` и исходные часы
+`observed_at`/`expires_at`. Без application proof срок пользовательского запроса
+ограничен самим credential; дополнительного минутного срока нет. Короткое
+подтверждение application access сохраняет собственный срок. SSE callbacks закрывают поток по истечении; новая итерация и
 инструмент проверяют текущий срок до запуска. Bearer не выводится в диагностике.
 Базовые health endpoints доступны без пользовательской сессии.
 

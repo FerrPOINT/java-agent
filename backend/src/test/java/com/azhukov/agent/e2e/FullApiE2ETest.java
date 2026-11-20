@@ -758,44 +758,26 @@ class FullApiE2ETest {
 
     // ── 13. Compress / Undo ──
 
-    @Test @Order(110) @DisplayName("POST /api/v1/agent/compress — compresses context")
+    @Test @Order(110) @DisplayName("POST /api/v1/agent/session/{sessionId}/compress — compresses context")
     void compressContext() throws Exception {
         Assumptions.assumeTrue(sharedSessionId != null, "No shared session");
-        HttpResponse<String> resp = postWithRetry("/api/v1/agent/compress",
-            "{\"sessionId\":\"" + sharedSessionId + "\"}");
+        HttpResponse<String> resp = postWithRetry("/api/v1/agent/session/" + sharedSessionId + "/compress",
+            "{\"focusTopic\":\"testing\"}");
         assertEquals(200, resp.statusCode());
         assertTrue(resp.body().contains("compressed") || resp.body().contains("Context"),
             "Should mention compression in response");
     }
 
-    @Test @Order(111) @DisplayName("POST /api/v1/agent/undo — undoes last turn")
+    @Test @Order(111) @DisplayName("POST /api/v1/agent/session/{sessionId}/undo — undoes last turn")
     void undoTurn() throws Exception {
         Assumptions.assumeTrue(sharedSessionId != null, "No shared session");
         // First add a turn to undo
         postWithRetry("/api/v1/agent/chat",
             "{\"sessionId\":\"" + sharedSessionId + "\",\"message\":\"Tell me a joke\"}");
-        HttpResponse<String> resp = post("/api/v1/agent/undo",
-            "{\"sessionId\":\"" + sharedSessionId + "\",\"turns\":1}");
+        HttpResponse<String> resp = post("/api/v1/agent/session/" + sharedSessionId + "/undo", "");
         assertEquals(200, resp.statusCode());
         int removed = Integer.parseInt(resp.body().trim());
         assertTrue(removed >= 1, "Should remove at least 1 turn, got: " + removed);
-    }
-
-    @Test @Order(112) @DisplayName("POST /api/v1/agent/session/{sessionId}/compress — path-based compress")
-    void compressSessionPath() throws Exception {
-        Assumptions.assumeTrue(sharedSessionId != null, "No shared session");
-        HttpResponse<String> resp = postWithRetry("/api/v1/agent/session/" + sharedSessionId + "/compress",
-            "{\"focusTopic\":\"testing\"}");
-        assertEquals(200, resp.statusCode());
-    }
-
-    @Test @Order(113) @DisplayName("POST /api/v1/agent/session/{sessionId}/undo — path-based undo")
-    void undoSessionPath() throws Exception {
-        Assumptions.assumeTrue(sharedSessionId != null, "No shared session");
-        postWithRetry("/api/v1/agent/chat",
-            "{\"sessionId\":\"" + sharedSessionId + "\",\"message\":\"Say hi\"}");
-        HttpResponse<String> resp = post("/api/v1/agent/session/" + sharedSessionId + "/undo?turns=1", "");
-        assertEquals(200, resp.statusCode());
     }
 
     // ── 14. Curator ──

@@ -121,7 +121,7 @@ class IdentityCoordinatorVerifierHttpTest {
             second.requireCurrent();
             assertEquals(2, stub.calls.get(), "each verification must confirm the current PAT");
             assertEquals("GET", stub.method.get());
-            assertEquals("include_lifetime=true", stub.query.get());
+            assertNull(stub.query.get());
             assertEquals("Bearer pdlc_pat_second_fixture", stub.authorization.get());
             assertEquals("application/json", stub.accept.get());
         }

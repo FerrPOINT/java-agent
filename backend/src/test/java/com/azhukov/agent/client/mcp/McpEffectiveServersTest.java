@@ -21,13 +21,14 @@ class McpEffectiveServersTest {
     void persistedServersMergeWithYamlServers() {
         AgentProperties properties = new AgentProperties();
         properties.getMcp().setEnabled(true);
+        properties.getProfile().setName(" Research ");
         properties.getMcp().getServers().clear();
         AgentProperties.McpProperties.ServerProperties yaml = new AgentProperties.McpProperties.ServerProperties();
         yaml.setName("yaml-server");
         properties.getMcp().getServers().add(yaml);
 
         var entity = new com.azhukov.agent.persistence.entity.McpServerConfigEntity();
-        entity.setProfile("default");
+        entity.setProfile("research");
         entity.setName("echo-dev");
         entity.setEnabled(true);
         entity.setTransport("stdio");
@@ -37,7 +38,7 @@ class McpEffectiveServersTest {
         entity.setTrust("full");
 
         com.azhukov.agent.service.McpConfigStore store = Mockito.mock(com.azhukov.agent.service.McpConfigStore.class);
-        Mockito.when(store.list("default")).thenReturn(List.of(entity));
+        Mockito.when(store.list("research")).thenReturn(List.of(entity));
         ObjectProvider<com.azhukov.agent.service.McpConfigStore> provider =
             (ObjectProvider<com.azhukov.agent.service.McpConfigStore>) Mockito.mock(ObjectProvider.class,
                 Mockito.withSettings().stubOnly());
