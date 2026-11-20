@@ -51,7 +51,7 @@ class SessionSearchRuntimePostgresTest extends PostgresTestContainer {
         UUID foreignId = sessions.saveAndFlush(foreign).getId();
         try {
             var properties = new AgentProperties();
-            var execution = new ToolExecutionService(registry, properties, new DefaultToolCallGuardrail(properties),
+            var execution = new ToolExecutionService(registry, properties, new DefaultToolCallGuardrail(new GuardrailConfig()),
                 new SecretRedactor(properties), new ToolResultClassifier(), new ToolOutputLimiter(properties), null);
             var session = Session.create("runtime-owner", "noop", "noop");
             UserContext.set("runtime-owner", UserContext.ROLE_USER);
@@ -88,7 +88,7 @@ class SessionSearchRuntimePostgresTest extends PostgresTestContainer {
         UUID messageId = messages.saveAndFlush(message).getId();
         try {
             var properties = new AgentProperties();
-            var execution = new ToolExecutionService(registry, properties, new DefaultToolCallGuardrail(properties),
+            var execution = new ToolExecutionService(registry, properties, new DefaultToolCallGuardrail(new GuardrailConfig()),
                 new SecretRedactor(properties), new ToolResultClassifier(), new ToolOutputLimiter(properties), null);
             var owner = Session.create("runtime-owner", "noop", "noop");
             var search = execution.execute("session_search", "search", "{\"query\":\"uniqueworkerquery\"}", null, owner);
@@ -116,7 +116,7 @@ class SessionSearchRuntimePostgresTest extends PostgresTestContainer {
         ownerB.setModelName("noop"); ownerB.setCreatedAt(Instant.now()); ownerB.setUpdatedAt(Instant.now());
         UUID b = sessions.saveAndFlush(ownerB).getId();
         var properties = new AgentProperties();
-        var execution = new ToolExecutionService(registry, properties, new DefaultToolCallGuardrail(properties),
+        var execution = new ToolExecutionService(registry, properties, new DefaultToolCallGuardrail(new GuardrailConfig()),
             new SecretRedactor(properties), new ToolResultClassifier(), new ToolOutputLimiter(properties), null);
         var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
         var start = new java.util.concurrent.CountDownLatch(1);
@@ -217,12 +217,12 @@ class SessionSearchRuntimePostgresTest extends PostgresTestContainer {
             }
             return ChatResponse.text("continued", "STOP");
         };
-        var execution = new ToolExecutionService(registry, properties, new DefaultToolCallGuardrail(properties),
+        var execution = new ToolExecutionService(registry, properties, new DefaultToolCallGuardrail(new GuardrailConfig()),
             new SecretRedactor(properties), new ToolResultClassifier(), new ToolOutputLimiter(properties), null);
         var runtime = new DefaultAgentRuntime(model, registry, execution, new DefaultPromptBuilder(properties, registry), context,
             mock(MemoryProvider.class), mock(SkillManager.class), new DefaultIterationBudget(properties),
             new MessageSanitizer(new SecretRedactor(properties)), references, properties,
-            new UserInputSanitizer(), new DefaultToolCallGuardrail(properties), new TurnStateManager(), null,
+            new UserInputSanitizer(), new DefaultToolCallGuardrail(new GuardrailConfig()), new TurnStateManager(), null,
             new InterruptToken(), null, new SteerBuffer(), new ErrorClassifier(), null,
             new ApprovalQueue(), null, null, new TokenEstimator(), new ToolResultFormatter(), null, null);
         var result = runtime.runTurn(Session.create("runtime-owner", "noop", "noop"), "continue the previous chat");

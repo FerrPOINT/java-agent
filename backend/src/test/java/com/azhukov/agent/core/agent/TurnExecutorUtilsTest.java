@@ -615,49 +615,4 @@ class TurnExecutorUtilsTest {
         }
     }
 
-    // ── TurnExecutor delegation sanity ───────────────────────────────
-
-    @Nested
-    @DisplayName("TurnExecutor delegation (backward compatibility)")
-    class TurnExecutorDelegation {
-
-        @Test
-        @DisplayName("TurnExecutor.detectRefusalPattern delegates to TurnExecutorUtils")
-        void refusalDelegation() {
-            assertThat(TurnExecutor.detectRefusalPattern("I cannot help"))
-                .isEqualTo(TurnExecutorUtils.detectRefusalPattern("I cannot help"));
-        }
-
-        @Test
-        @DisplayName("TurnExecutor.extractRetryAfterMs delegates to TurnExecutorUtils")
-        void retryAfterDelegation() {
-            Exception e = new RuntimeException("Retry-After: 5");
-            assertThat(TurnExecutor.extractRetryAfterMs(e))
-                .isEqualTo(TurnExecutorUtils.extractRetryAfterMs(e));
-        }
-
-        @Test
-        @DisplayName("TurnExecutor.lowerMessageContains delegates to TurnExecutorUtils")
-        void lowerMessageDelegation() {
-            Exception e = new RuntimeException("connection timeout");
-            assertThat(TurnExecutor.lowerMessageContains(e, "timeout"))
-                .isEqualTo(TurnExecutorUtils.lowerMessageContains(e, "timeout"));
-        }
-
-        @Test
-        @DisplayName("TurnExecutor.containsThinkingBlocks delegates to TurnExecutorUtils")
-        void thinkingBlocksDelegation() {
-            List<Message> context = List.of(Message.assistant("<think>test</think>", 0));
-            assertThat(TurnExecutor.containsThinkingBlocks(context))
-                .isEqualTo(TurnExecutorUtils.containsThinkingBlocks(context));
-        }
-
-        @Test
-        @DisplayName("TurnExecutor.estimateResponseTokens delegates to TurnExecutorUtils")
-        void estimateTokensDelegation() {
-            ChatResponse response = new ChatResponse("hello", List.of());
-            assertThat(TurnExecutor.estimateResponseTokens(response))
-                .isEqualTo(TurnExecutorUtils.estimateResponseTokens(response));
-        }
-    }
 }

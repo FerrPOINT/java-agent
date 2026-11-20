@@ -32,15 +32,23 @@ public class HeartbeatCommand implements CommandHandler {
     private static final Pattern INTERVAL_TOKEN_RE =
         Pattern.compile("^(?=\\d)(?:(\\d+)h)?(?:(\\d+)m)?(?:(\\d+)s)?$", Pattern.CASE_INSENSITIVE);
 
+    static boolean isIntervalToken(String token) {
+        return token != null && INTERVAL_TOKEN_RE.matcher(token).matches();
+    }
+
     static Integer parseIntervalToken(String token) {
         if (token == null || token.isBlank()) return null;
         Matcher m = INTERVAL_TOKEN_RE.matcher(token);
         if (!m.matches()) return null;
-        int seconds = 0;
-        if (m.group(1) != null) seconds += Integer.parseInt(m.group(1)) * 3600;
-        if (m.group(2) != null) seconds += Integer.parseInt(m.group(2)) * 60;
-        if (m.group(3) != null) seconds += Integer.parseInt(m.group(3));
-        return seconds > 0 ? seconds : null;
+        try {
+            long seconds = 0;
+            if (m.group(1) != null) seconds = Math.addExact(seconds, Math.multiplyExact(Long.parseLong(m.group(1)), 3600));
+            if (m.group(2) != null) seconds = Math.addExact(seconds, Math.multiplyExact(Long.parseLong(m.group(2)), 60));
+            if (m.group(3) != null) seconds = Math.addExact(seconds, Long.parseLong(m.group(3)));
+            return seconds > 0 && seconds <= Integer.MAX_VALUE ? (int) seconds : null;
+        } catch (NumberFormatException | ArithmeticException e) {
+            return null;
+        }
     }
 
     @Override
@@ -80,8 +88,9 @@ public class HeartbeatCommand implements CommandHandler {
         }
         if (lower.equals("resume")) {
             JsonNode r = backendClient.suggestionPost("/api/v1/agent/cron/heartbeat/" + sid + "/resume");
-            return r != null && r.path("ok").asBoolean(false)
-                ? "▶ " + r.path("message").asText("Resumed.") : "No heartbeat to resume.";
+            if (r == null || !r.path("ok").asBoolean(false)) return "No heartbeat to resume.";
+            deliveryPoller.watch(java.util.UUID.fromString(sid), chatId);
+            return "▶ " + r.path("message").asText("Resumed.");
         }
         if (lower.equals("clear") || lower.equals("stop") || lower.equals("off")) {
             JsonNode r = backendClient.suggestionPost("/api/v1/agent/cron/heartbeat/" + sid + "/clear");

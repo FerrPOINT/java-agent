@@ -1,40 +1,23 @@
 package com.azhukov.agent.config;
 
 import com.azhukov.agent.config.split.AgentSecurityConfig;
+import com.azhukov.agent.core.security.ApprovalQueue;
+import com.azhukov.agent.core.security.ToolApprovalPolicy;
+import com.azhukov.agent.core.security.ToolCallGuardrail;
 import org.junit.jupiter.api.Test;
-
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.Mockito.mock;
 
-/**
- * NEW-3: Verify that the duplicate @Bean method for ToolGuardrails has been removed.
- * Only one toolGuardrails bean method should exist in the security config.
- */
 class AgentConfigNoDuplicateBeanTest {
-
     @Test
-    void onlyOneToolGuardrailsBeanMethodExists() throws NoSuchMethodException {
-        AgentSecurityConfig config = new AgentSecurityConfig();
-
-        // The toolGuardrails method should exist
-        assertThat(config.getClass().getMethod("toolGuardrails",
-            AgentProperties.class, com.azhukov.agent.core.security.ApprovalQueue.class))
-            .isNotNull();
-
-        // The legacy duplicate method should NOT exist
-        assertThatThrownBy(() ->
-            config.getClass().getMethod("legacyToolGuardrails",
-                AgentProperties.class, com.azhukov.agent.core.security.ApprovalQueue.class))
-            .isInstanceOf(NoSuchMethodException.class);
-    }
-
-    @Test
-    void toolGuardrails_bean_returnsDefaultToolGuardrails() {
-        AgentSecurityConfig config = new AgentSecurityConfig();
-        AgentProperties properties = new AgentProperties();
-
-        Object bean = config.toolGuardrails(properties, mock(com.azhukov.agent.core.security.ApprovalQueue.class));
-        assertThat(bean).isInstanceOf(com.azhukov.agent.core.security.DefaultToolGuardrails.class);
+    void securityConfigurationHasOneApprovalPolicyAndOneLoopGuardrail() {
+        try (var context = new AnnotationConfigApplicationContext()) {
+            context.registerBean(AgentProperties.class, AgentProperties::new);
+            context.registerBean(ApprovalQueue.class, ApprovalQueue::new);
+            context.register(AgentSecurityConfig.class);
+            context.refresh();
+            assertThat(context.getBeansOfType(ToolApprovalPolicy.class)).hasSize(1);
+            assertThat(context.getBeansOfType(ToolCallGuardrail.class)).hasSize(1);
+        }
     }
 }

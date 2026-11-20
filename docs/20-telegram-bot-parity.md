@@ -56,8 +56,8 @@
 | A1.6 | `/compress` | Ручное сжатие контекста сессии. Опциональный focus-topic: `/compress <topic>`. Backend суммаризует историю | `POST /api/v1/agent/session/{sessionId}/compress` (новый) | `CompressCommandTest` (3) |
 | A1.7 | `/undo` | Откат N последних ходов (default 1): `/undo 3`. Soft-delete сообщений, evict agent cache | `POST /api/v1/agent/session/{sessionId}/undo?turns=N` (новый) | `UndoCommandTest` (3) |
 | A1.8 | `/retry` | Повторить последний user-message: берёт последний user-input из истории, повторно отправляет | — (локально из истории) | `RetryCommandTest` (2) |
-| A1.9 | `/approve` | Одобрить pending dangerous command. `/approve all` — все. `/approve session` — запомнить для сессии (связь с YOLO) | `POST /api/v1/agent/approve` (новый) | `ApproveCommandTest` (3) |
-| A1.10 | `/deny` | Отклонить pending dangerous command. `/deny all` — все | `POST /api/v1/agent/deny` (новый) | `DenyCommandTest` (3) |
+| A1.9 | `/approve` | Одобрить один запрос, запрос по ID или все доступные запросы | `POST /api/v1/agent/approvals/decisions` | `ApproveCommandTest` |
+| A1.10 | `/deny` | Отклонить один запрос, запрос по ID или все доступные запросы | `POST /api/v1/agent/approvals/decisions` | `DenyCommandTest` |
 | A1.11 | `/agents` | Список активных агентов и задач. Backend отдаёт список running turns | `GET /api/v1/agent/agents` (новый) | `AgentsCommandTest` (2) |
 | A1.12 | `/insights` | Usage insights — токены за день/неделю, top models, cost estimate | `GET /api/v1/agent/insights` (новый) | `InsightsCommandTest` (2) |
 
@@ -194,8 +194,8 @@ Phase 3:         B3.1  B3.2  B3.3  B3.4  B3.5  B3.6  B3.7  B3.8
 | 1.15 | `/compress` (A1.6) | — | `POST /session/{id}/compress` (новый) | 3 |
 | 1.16 | `/undo` (A1.7) | — | `POST /session/{id}/undo?turns=N` (новый) | 3 |
 | 1.17 | `/retry` (A1.8) | `BotMessageRepository` | — | 2 |
-| 1.18 | `/approve` (A1.9) | — | `POST /agent/approve` (новый) | 3 |
-| 1.19 | `/deny` (A1.10) | — | `POST /agent/deny` (новый) | 3 |
+| 1.18 | `/approve` (A1.9) | — | `POST /agent/approvals/decisions`, действие `APPROVE` | `ApproveCommandTest` |
+| 1.19 | `/deny` (A1.10) | — | `POST /agent/approvals/decisions`, действие `DENY` | `DenyCommandTest` |
 | 1.20 | `/agents` (A1.11) | — | `GET /agent/agents` (новый) | 2 |
 | 1.21 | `/insights` (A1.12) | — | `GET /agent/insights` (новый) | 2 |
 
@@ -279,14 +279,13 @@ Phase 3:         B3.1  B3.2  B3.3  B3.4  B3.5  B3.6  B3.7  B3.8
 
 ## 4. Изменения в backend
 
-### 4.1 Новые endpoints (10 шт)
+### 4.1 Endpoints
 
 | Endpoint | Метод | Описание | Этап |
 |----------|-------|----------|------|
 | `/api/v1/agent/session/{sessionId}/compress` | POST | Сжатие контекста сессии | 1.15 |
 | `/api/v1/agent/session/{sessionId}/undo?turns=N` | POST | Откат N ходов | 1.16 |
-| `/api/v1/agent/approve` | POST | Одобрить pending command | 1.18 |
-| `/api/v1/agent/deny` | POST | Отклонить pending command | 1.19 |
+| `/api/v1/agent/approvals/decisions` | POST | Подтвердить или отклонить запрос | 1.18, 1.19 |
 | `/api/v1/agent/agents` | GET | Список активных агентов | 1.20 |
 | `/api/v1/agent/insights` | GET | Usage insights | 1.21 |
 | `/api/v1/agent/session/{sessionId}/branch` | POST | Fork сессии | 2.17 |

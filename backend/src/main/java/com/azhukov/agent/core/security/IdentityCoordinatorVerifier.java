@@ -43,7 +43,7 @@ public class IdentityCoordinatorVerifier {
         URI session=URI.create(environment.getRequiredProperty("agent.central-auth.session-uri"));
         if(session.getHost()==null || session.getUserInfo()!=null || session.getQuery()!=null || session.getFragment()!=null
             || !("http".equals(session.getScheme()) || "https".equals(session.getScheme()))) throw unavailable();
-        introspection=session.resolve("/auth/tokens/introspect?include_lifetime=true");
+        introspection=session.resolve("/auth/tokens/introspect");
         client=HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).followRedirects(HttpClient.Redirect.NEVER).build();
         coordinators=Arrays.stream(environment.getProperty("agent.identity-deletion.coordinator-subjects","").split(","))
             .map(String::trim).filter(v->!v.isEmpty()).collect(Collectors.toUnmodifiableSet());
@@ -52,7 +52,9 @@ public class IdentityCoordinatorVerifier {
     public Window verify(String authorization,Request request,long originalDeadline) {
         if(authorization==null || !authorization.startsWith("Bearer ")) throw new Failure(401,"identity_coordinator_required");
         String token=authorization.substring(7);
-        if(token.length()>16384 || !(token.startsWith("sdlc_pat_") || token.startsWith("pdlc_pat_"))) throw new Failure(403,"identity_coordinator_capability_required");
+        if (token.length() > 16384 || !CentralJwtVerifier.isPersonalToken(token)) {
+            throw new Failure(403, "identity_coordinator_capability_required");
+        }
         long started=System.nanoTime();
         if(originalDeadline-started<=0) throw new Failure(401,"identity_authority_expired");
         HttpRequest query=HttpRequest.newBuilder(introspection).timeout(Duration.ofSeconds(5))

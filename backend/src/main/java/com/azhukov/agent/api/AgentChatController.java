@@ -1,11 +1,10 @@
 package com.azhukov.agent.api;
 
-import com.azhukov.agent.api.dto.ApproveRequest;
 import com.azhukov.agent.api.dto.BackgroundRequest;
 import com.azhukov.agent.api.dto.ChatRequest;
 import com.azhukov.agent.api.dto.ChatRequestIdentity;
 import com.azhukov.agent.shared.dto.ChatResponseDto;
-import com.azhukov.agent.api.dto.DenyRequest;
+import com.azhukov.agent.shared.dto.ToolApprovalDecision;
 import com.azhukov.agent.api.dto.DoctorDto;
 import com.azhukov.agent.api.dto.RefineRequest;
 import com.azhukov.agent.api.dto.SteerRequest;
@@ -70,9 +69,6 @@ public class AgentChatController {
     private final com.azhukov.agent.persistence.repository.MessageRepository messageRepository;
     private final com.azhukov.agent.persistence.mapper.MessageMapper messageMapper;
     private final ApprovalQueue approvalQueue;
-    // rev-97: session-scope approval allowlist (Hermes approve_session parity).
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    private com.azhukov.agent.core.security.CommandApprovalManager commandApprovalManager;
     private final AgentProperties properties;
     private final AgentMetrics agentMetrics;
     private final ToolRegistry toolRegistry;
@@ -278,10 +274,9 @@ public class AgentChatController {
         final UUID parsedSessionId;
         try {
             parsedSessionId = UUID.fromString(sessionId);
-        } catch (IllegalArgumentException ignored) {
-            // Pending entries are keyed by session text; non-UUID test/legacy keys
-            // cannot resolve entries owned by a different key.
-            return;
+        } catch (IllegalArgumentException invalid) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.BAD_REQUEST, "Session ID must be a UUID");
         }
         requireSessionOwnership(parsedSessionId);
     }
@@ -426,87 +421,40 @@ public class AgentChatController {
         return memoryNudgeManagerProviderField;
     }
 
-    @PostMapping("/agent/approve")
-    public String approve(@Valid @RequestBody ApproveRequest request) {
-        if (request.isAll()) {
-            for (var pending : approvalQueue.getPendingApprovals()) {
-                requireSessionOwnership(pending.sessionId());
-                approvalQueue.approve(pending.sessionId(), "approve", null);
+    @PostMapping(ToolApprovalDecision.PATH)
+    public String decideApproval(@RequestBody ToolApprovalDecision decision) {
+        List<ApprovalQueue.PendingApproval> targets;
+        if (decision.requestId() != null) {
+            var pending = approvalQueue.findRequest(decision.requestId());
+            if (pending == null) {
+                throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.NOT_FOUND, "Approval request not found");
             }
-            return "Approved all pending approvals";
+            targets = List.of(pending);
+        } else {
+            var pending = pendingApprovals();
+            targets = decision.all() ? pending : pending.stream().limit(1).toList();
         }
-        String scope = request.scope();
-        // rev-97: scope carries either a session UUID (approve a specific
-        // session's pending request) OR an approval-scope keyword — the bot's
-        // /approve [session|always] sends the keywords here. Hermes parity:
-        // 'session' adds the command pattern to the session allowlist,
-        // 'always' adds it permanently (persistence handled by the caller;
-        // here both widen this approval AND seed the session allowlist).
-        if ("session".equalsIgnoreCase(scope) || "always".equalsIgnoreCase(scope)) {
-            var pendingList = approvalQueue.getPendingApprovals();
-            if (pendingList.isEmpty()) return "No pending approvals";
-            var target = pendingList.get(0);
-            requireSessionOwnership(target.sessionId());
-            approvalQueue.approve(target.sessionId(), "approve",
-                "approved with scope=" + scope);
-            // Seed the session allowlist with the approved command pattern so
-            // subsequent identical calls skip the prompt (Hermes approve_session).
-            if (commandApprovalManager != null && target.call() != null
-                && target.call().arguments() != null) {
-                String cmd = extractCommandFromArgs(target.call().arguments());
-                if (cmd != null && !cmd.isBlank()) {
-                    commandApprovalManager.allowForSession(cmd);
-                }
-            }
-            return "Approved (scope=" + scope.toLowerCase() + "): " + target.sessionId();
-        }
-        if (scope != null && !scope.isBlank()) {
-            try {
-                UUID sessionId = UUID.fromString(scope);
-                requireSessionOwnership(sessionId);
-                var result = approvalQueue.approve(sessionId, "approve", null);
-                if (result == null) return "No pending approval for session: " + scope;
-                return "Approved: " + scope;
-            } catch (IllegalArgumentException e) {
-                return "Invalid session ID: " + scope;
-            }
-        }
-        var pendingList = approvalQueue.getPendingApprovals();
-        if (pendingList.isEmpty()) return "No pending approvals";
-        requireSessionOwnership(pendingList.get(0).sessionId());
-        approvalQueue.approve(pendingList.get(0).sessionId(), "approve", null);
-        return "Approved: " + pendingList.get(0).sessionId();
-    }
 
-    /** Extract the command string from a terminal-tool JSON argument blob. */
-    private String extractCommandFromArgs(String arguments) {
-        try {
-            var node = new com.fasterxml.jackson.databind.ObjectMapper().readTree(arguments);
-            if (node != null && node.has("command")) {
-                return node.get("command").asText(null);
-            }
-        } catch (Exception ignored) {
+        for (var pending : targets) {
+            requireSessionOwnership(pending.sessionId());
         }
-        return null;
-    }
+        boolean approve = decision.action() == ToolApprovalDecision.Action.APPROVE;
+        String action = approve ? "Approved" : "Denied";
+        var decided = targets.stream().map(pending -> approve
+                ? approvalQueue.approve(pending.requestId(), decision.note())
+                : approvalQueue.deny(pending.requestId(), decision.note()))
+            .filter(result -> result != null && (approve ? result.approved() : result.denied()))
+            .toList();
 
-    @PostMapping("/agent/deny")
-    public String deny(@Valid @RequestBody DenyRequest request) {
-        if (request.isAll()) {
-            for (var pending : approvalQueue.getPendingApprovals()) {
-                requireSessionOwnership(pending.sessionId());
-                approvalQueue.deny(pending.sessionId(), null);
-            }
-            return "Denied all pending approvals";
+        if (decision.all()) return action + " " + decided.size() + " pending requests";
+        if (targets.isEmpty()) return "No pending approvals";
+        if (decided.isEmpty()) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.CONFLICT, "Approval is no longer pending");
         }
-        var pendingList = approvalQueue.getPendingApprovals();
-        if (pendingList.isEmpty()) return "No pending approvals";
-        requireSessionOwnership(pendingList.get(0).sessionId());
-        approvalQueue.deny(pendingList.get(0).sessionId(), null);
-        return "Denied: " + pendingList.get(0).sessionId();
+        return action + ": " + decided.getFirst().requestId();
     }
-
-    // ── Tool approval endpoints (A12) ──
 
     @GetMapping("/agent/approvals/pending")
     public List<ApprovalQueue.PendingApproval> pendingApprovals() {
@@ -520,18 +468,6 @@ public class AgentChatController {
                 .map(s -> scoped.equals(s.getUserId()))
                 .orElse(false))
             .toList();
-    }
-
-    @PostMapping("/agent/approvals/{sessionId}/approve")
-    public ApprovalQueue.PendingApproval approveTool(@PathVariable UUID sessionId, @RequestParam(required = false, defaultValue = "approve") String decision, @RequestBody(required = false) String note) {
-        requireSessionOwnership(sessionId);
-        return approvalQueue.approve(sessionId, decision, note);
-    }
-
-    @PostMapping("/agent/approvals/{sessionId}/deny")
-    public ApprovalQueue.PendingApproval denyTool(@PathVariable UUID sessionId, @RequestBody(required = false) String note) {
-        requireSessionOwnership(sessionId);
-        return approvalQueue.deny(sessionId, note);
     }
 
     // ── TTS endpoint ──

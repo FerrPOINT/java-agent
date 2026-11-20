@@ -113,7 +113,6 @@ class DefaultAgentRuntimeRetryTest {
         when(turnStateManager.getOrStart(any(UUID.class), any(int.class)))
             .thenReturn(mock(com.azhukov.agent.core.state.TurnState.class));
 
-        when(guardrail.isHalted()).thenReturn(false);
 
         runtime = new DefaultAgentRuntime(
             modelClient, toolRegistry, toolExecutionService, promptBuilder,
@@ -509,7 +508,6 @@ class DefaultAgentRuntimeRetryTest {
         when(iterationBudget.recordModelCall(any(), any(int.class), any(int.class))).thenReturn(snapshot);
         when(turnStateManager.getOrStart(any(UUID.class), any(int.class)))
             .thenReturn(mock(com.azhukov.agent.core.state.TurnState.class));
-        when(guardrail.isHalted()).thenReturn(false);
 
         DefaultAgentRuntime customRuntime = new DefaultAgentRuntime(
             modelClient, toolRegistry, toolExecutionService, promptBuilder,

@@ -14,17 +14,17 @@ class TurnExecutorHelpersTest {
     @Test
     void refusalPatternsAreDetected() {
         // TurnExecutorUtils patterns: "I cannot", "I can't", "I'm unable to" …
-        assertThat(TurnExecutor.detectRefusalPattern("I cannot help with that request"))
+        assertThat(TurnExecutorUtils.detectRefusalPattern("I cannot help with that request"))
             .isNotNull();
-        assertThat(TurnExecutor.detectRefusalPattern("I'm unable to comply"))
+        assertThat(TurnExecutorUtils.detectRefusalPattern("I'm unable to comply"))
             .isNotNull();
-        assertThat(TurnExecutor.detectRefusalPattern("I won't be able to do that"))
+        assertThat(TurnExecutorUtils.detectRefusalPattern("I won't be able to do that"))
             .isNotNull();
-        assertThat(TurnExecutor.detectRefusalPattern("Request refused due to policy"))
+        assertThat(TurnExecutorUtils.detectRefusalPattern("Request refused due to policy"))
             .isNull();
-        assertThat(TurnExecutor.detectRefusalPattern("Sure, here is your answer"))
+        assertThat(TurnExecutorUtils.detectRefusalPattern("Sure, here is your answer"))
             .isNull();
-        assertThat(TurnExecutor.detectRefusalPattern(null)).isNull();
+        assertThat(TurnExecutorUtils.detectRefusalPattern(null)).isNull();
     }
 
     @Test

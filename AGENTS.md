@@ -1,5 +1,17 @@
 # AGENTS.md — Java Agent Development Guide
 
+## Главный архитектурный закон
+
+Перед разработкой и ревью читать [главный закон Base](https://github.com/FerrPOINT/services-base/blob/a25aefd6381088aef3f1d7b2f30b8e4aa2fc5e0f/docs/REPO_STANDARDS.md#current-contract-and-modes),
+принятый владельцем 2026-11-16: одна актуальная реализация, контракт и источник
+истины. Никаких дубликатов, соседних legacy-версий, compatibility-обёрток и fallback
+на старое, включая readers. Данные переводятся штатной миграцией в актуальную
+модель; заменённые структуры и код удаляются. Бизнес-данные, аудит и применённые
+миграции сохраняются по закону Base, без старого parser/verifier рядом.
+Это главный критерий приёмки; зелёные тесты его не заменяют. Прежние разрешения
+переходной совместимости отменены; существующее нарушение фиксируется как долг,
+а не исключение. Закон не разрешает удалять данные или менять production.
+
 ## Docker и Kubernetes
 
 Поддерживаются обычный Docker/Compose без Kubernetes и Kubernetes. Общие API,
@@ -247,7 +259,8 @@ private final ScheduledExecutorService executor = Executors.newSingleThreadSched
 - Secret redaction: `DefaultRedactor` маскирует secrets в output.
 - `redact-secrets` config (`agent.security.redact-secrets`): toggle masking of API keys, tokens, passwords in logs/output.
 - `redact-pii` config (`agent.security.redact-pii`): toggle masking of PII (emails, phone numbers, IPs) in logs/output.
-- Approval gate: destructive tools требуют confirmation (`ApprovalGate`).
+- Approval gate: destructive tools требуют одноразовое подтверждение через
+  `ToolApprovalPolicy` и `ApprovalQueue`; текущий контракт — [tool approval](docs/tool-approval.md).
 - Telegram auth: `agent.gateway.telegram.allowed-user-ids`, `allowed-usernames`, `allow-by-default`.
 
 ### 8. Configuration

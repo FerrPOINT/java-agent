@@ -10,7 +10,6 @@ import org.mockito.quality.Strictness;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.web.client.RestClient;
 
-import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -89,72 +88,69 @@ class AttachmentApiClientTest {
         server.verify();
     }
 
-    @Test
-    void registerParsesArtifactId() {
-        when(responseSpec.body(String.class)).thenReturn(
-            "{\"id\":\"att_abc\",\"contentHash\":\"h1\",\"duplicate\":false}");
+    private static final byte[] DATA = {1, 2};
+    private static final String ID = "att_0123456789abcdef0123456789abcdef";
 
-        Optional<AttachmentApiClient.Registered> result =
-            client.register(new byte[] {1, 2}, "photo.jpg", "image/jpeg", "photo",
-                "telegram", "123", null, "456");
-
-        assertThat(result).isPresent();
-        assertThat(result.get().id()).isEqualTo("att_abc");
-        assertThat(result.get().duplicate()).isFalse();
+    private String receipt(boolean duplicate) throws Exception {
+        String hash = java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(DATA));
+        return "{\"id\":\"" + ID + "\",\"contentHash\":\"" + hash
+                + "\",\"duplicate\":" + duplicate + ",\"rejection\":null}";
     }
 
     @Test
-    void registerReturnsDuplicateFlag() {
-        when(responseSpec.body(String.class)).thenReturn(
-            "{\"id\":\"att_existing\",\"contentHash\":\"h1\",\"duplicate\":true}");
-
-        Optional<AttachmentApiClient.Registered> result =
-            client.register(new byte[] {1}, "photo.jpg", "image/jpeg", "photo",
-                "telegram", "123", null, null);
-
-        assertThat(result).isPresent();
-        assertThat(result.get().duplicate()).isTrue();
+    void registrationConfirmsExactBytesAndDuplicateStatus() throws Exception {
+        for (boolean duplicate : new boolean[] {false, true}) {
+            when(responseSpec.body(String.class)).thenReturn(receipt(duplicate));
+            var result = client.register(DATA, "photo.jpg", "image/jpeg", "photo", "telegram", "123", null, "456");
+            assertThat(result.id()).isEqualTo(ID);
+            assertThat(result.duplicate()).isEqualTo(duplicate);
+        }
     }
 
     @Test
-    void registerEmptyOn500() {
-        when(responseSpec.body(String.class))
-            .thenThrow(new RuntimeException("500 Internal Server Error"));
-
-        Optional<AttachmentApiClient.Registered> result =
-            client.register(new byte[] {1}, "photo.jpg", "image/jpeg", "photo",
-                "telegram", "123", null, null);
-
-        assertThat(result).isEmpty();
+    void malformedOrMismatchedAcknowledgementRemainsUnknownWithoutRetry() throws Exception {
+        for (String body : new String[] {"not-json{{", "{}", receipt(false).replace(ID, "att_bad"),
+                receipt(false).replace("contentHash", "wrongHash"), receipt(false).replace("false", "\"false\""),
+                receipt(false).replaceAll("(?<=\"contentHash\":\")[a-f0-9]{64}", "0".repeat(64))}) {
+            when(responseSpec.body(String.class)).thenReturn(body);
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> client.register(DATA, "photo.jpg", "image/jpeg",
+                    "photo", "telegram", "123", null, null))
+                .isInstanceOfSatisfying(AttachmentApiClient.AdmissionFailure.class,
+                        failure -> assertThat(failure.outcomeUnknown()).isTrue());
+        }
+        org.mockito.Mockito.verify(restClient, org.mockito.Mockito.times(6)).post();
     }
 
     @Test
-    void registerEmptyOnUnparsableBody() {
-        when(responseSpec.body(String.class)).thenReturn("not-json{{");
-
-        Optional<AttachmentApiClient.Registered> result =
-            client.register(new byte[] {1}, "photo.jpg", "image/jpeg", "photo",
-                "telegram", "123", null, null);
-
-        assertThat(result).isEmpty();
+    void networkFailureIsUnknownAndDoesNotRetry() {
+        when(responseSpec.body(String.class)).thenThrow(new org.springframework.web.client.ResourceAccessException("lost response"));
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> client.register(DATA, "photo.jpg", "image/jpeg",
+                "photo", "telegram", "123", null, null))
+            .isInstanceOfSatisfying(AttachmentApiClient.AdmissionFailure.class,
+                    failure -> assertThat(failure.outcomeUnknown()).isTrue());
+        org.mockito.Mockito.verify(restClient).post();
     }
 
     @Test
-    void registerEmptyOnBodyWithoutId() {
-        when(responseSpec.body(String.class)).thenReturn("{\"duplicate\":false}");
-
-        Optional<AttachmentApiClient.Registered> result =
-            client.register(new byte[] {1}, "photo.jpg", "image/jpeg", "photo",
-                "telegram", "123", null, null);
-
-        assertThat(result).isEmpty();
+    void rejectedAndUncertainHttpOutcomesRemainDistinct() {
+        for (int status : new int[] {403, 408, 500}) {
+            org.mockito.Mockito.doThrow(new org.springframework.web.client.RestClientResponseException(
+                    "fixture", org.springframework.http.HttpStatusCode.valueOf(status), "fixture",
+                    org.springframework.http.HttpHeaders.EMPTY, new byte[0], null))
+                .when(responseSpec).body(String.class);
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> client.register(DATA, "photo.jpg", "image/jpeg",
+                    "photo", "telegram", "123", null, null))
+                .isInstanceOfSatisfying(AttachmentApiClient.AdmissionFailure.class,
+                        failure -> assertThat(failure.outcomeUnknown()).isEqualTo(status != 403));
+        }
     }
 
     @Test
-    void registerEmptyOnEmptyData() {
-        Optional<AttachmentApiClient.Registered> result =
-            client.register(new byte[0], "x", "image/jpeg", "photo",
-                "telegram", "123", null, null);
-        assertThat(result).isEmpty();
+    void emptyInputIsRejectedBeforeUpload() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> client.register(new byte[0], "x", "image/jpeg",
+                "photo", "telegram", "123", null, null))
+            .isInstanceOfSatisfying(AttachmentApiClient.AdmissionFailure.class,
+                    failure -> assertThat(failure.outcomeUnknown()).isFalse());
+        org.mockito.Mockito.verifyNoInteractions(restClient);
     }
 }

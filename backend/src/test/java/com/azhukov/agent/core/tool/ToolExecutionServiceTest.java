@@ -24,12 +24,14 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -73,6 +75,20 @@ class ToolExecutionServiceTest {
     void closeToolWorkers() {
         com.azhukov.agent.core.security.UserContext.clear();
         service.shutdown();
+    }
+
+    @Test
+    void absentSessionCannotReuseAmbientGuardrailScope() {
+        var ambientSession = UUID.randomUUID();
+        InterruptToken.setCurrentSessionId(ambientSession);
+        try {
+            assertThatThrownBy(() -> service.execute("read_file", "c1", "{}", LAST_MSG, null))
+                .isInstanceOf(NullPointerException.class).hasMessage("Tool execution requires a session");
+            assertThat(InterruptToken.currentSessionId()).isEqualTo(ambientSession);
+            verifyNoInteractions(guardrail, toolRegistry);
+        } finally {
+            InterruptToken.clearCurrentSessionId();
+        }
     }
 
     @org.junit.jupiter.params.ParameterizedTest
@@ -404,11 +420,11 @@ class ToolExecutionServiceTest {
         TurnState turnState = new TurnState("session-1", 0);
         ToolResult rawResult = ToolResult.ok("result");
 
-        when(guardrail.beforeCall(eq(toolName), eq(arguments), eq(turnState)))
+        when(guardrail.beforeCall(eq(toolName), eq(arguments)))
             .thenReturn(GuardrailDecision.allow(toolName));
         when(toolRegistry.execute(toolName, "call-8", arguments, LAST_MSG, SESSION)).thenReturn(rawResult);
         when(redactor.redact("result")).thenReturn("result");
-        when(guardrail.afterCall(eq(toolName), eq(arguments), any(ToolResult.class), anyBoolean(), eq(turnState)))
+        when(guardrail.afterCall(eq(toolName), eq(arguments), any(ToolResult.class), anyBoolean()))
             .thenReturn(GuardrailDecision.allow(toolName));
         when(toolResultClassifier.classify(any(ToolResult.class)))
             .thenReturn(ToolResultClassifier.ResultType.SUCCESS);
@@ -496,6 +512,15 @@ class ToolExecutionServiceTest {
     }
 
     private static class RecordingGuardrail implements ToolCallGuardrail {
+        @Override public void reset(UUID sessionId) {
+            beforeSessionIds.removeIf(sessionId::equals);
+            afterSessionIds.removeIf(sessionId::equals);
+        }
+        @Override public void removeSession(UUID sessionId) { reset(sessionId); }
+        @Override public boolean isHalted(UUID sessionId) { return false; }
+        @Override public String haltMessage(UUID sessionId) { throw new IllegalStateException("Not halted"); }
+        @Override public String resultReferenceStub(String tool, String args, String result, boolean failed) { return null; }
+
         final List<UUID> beforeSessionIds = new ArrayList<>();
         final List<UUID> afterSessionIds = new ArrayList<>();
 
@@ -516,15 +541,16 @@ class ToolExecutionServiceTest {
     @Test
     @DisplayName("Should append idempotent no-progress warning to a successful tool result")
     void shouldAppendNoProgressWarning() {
-        ToolLoopGuardrail loopGuardrail = new ToolLoopGuardrail(true, 2, 3, 2, 50, 50);
-        service.setToolLoopGuardrail(loopGuardrail);
+        var config = new com.azhukov.agent.core.security.GuardrailConfig();
+        config.setMaxWebSearches(50);
+        service.shutdown();
+        service = new ToolExecutionService(toolRegistry, properties,
+            new com.azhukov.agent.core.security.DefaultToolCallGuardrail(config),
+            redactor, toolResultClassifier, toolOutputLimiter, agentMetrics);
         String toolName = "read_file";
         String arguments = "{\"path\":\"README.md\"}";
         ToolResult rawResult = ToolResult.ok("same content");
 
-        when(guardrail.beforeCall(toolName, arguments)).thenReturn(GuardrailDecision.allow(toolName));
-        when(guardrail.afterCall(eq(toolName), eq(arguments), any(ToolResult.class), anyBoolean()))
-            .thenReturn(GuardrailDecision.allow(toolName));
         when(toolRegistry.execute(eq(toolName), anyString(), eq(arguments), eq(LAST_MSG), eq(SESSION))).thenReturn(rawResult);
         when(redactor.redact("same content")).thenReturn("same content");
         when(toolResultClassifier.classify(any(ToolResult.class))).thenReturn(ToolResultClassifier.ResultType.SUCCESS);
@@ -539,17 +565,36 @@ class ToolExecutionServiceTest {
     }
 
     @Test
+    void duplicateResultStubDoesNotExposeSecretsFromArguments() {
+        service.shutdown();
+        service = new ToolExecutionService(toolRegistry, properties,
+            new com.azhukov.agent.core.security.DefaultToolCallGuardrail(new com.azhukov.agent.core.security.GuardrailConfig()),
+            new SecretRedactor(properties), toolResultClassifier, toolOutputLimiter, agentMetrics);
+        String arguments = "{\"command\":\"password=syntheticSecret123\"}";
+        String result = "output".repeat(100);
+        when(toolRegistry.execute(eq("terminal"), anyString(), eq(arguments), eq(LAST_MSG), eq(SESSION)))
+            .thenReturn(ToolResult.ok(result));
+        when(toolResultClassifier.classify(any(ToolResult.class))).thenReturn(ToolResultClassifier.ResultType.SUCCESS);
+        when(toolOutputLimiter.truncate(any(ToolResult.class), anyString())).thenAnswer(inv -> inv.getArgument(0));
+
+        assertThat(service.execute("terminal", "first", arguments, LAST_MSG, SESSION).content()).isEqualTo(result);
+        String repeated = service.execute("terminal", "second", arguments, LAST_MSG, SESSION).content();
+        assertThat(repeated).contains("Duplicate result").doesNotContain("syntheticSecret123");
+    }
+
+    @Test
     @DisplayName("Should block web_search after the per-turn cap before registry execution")
     void shouldBlockWebSearchAfterCap() {
-        ToolLoopGuardrail loopGuardrail = new ToolLoopGuardrail(true, 2, 3, 2, 1, 50);
-        service.setToolLoopGuardrail(loopGuardrail);
+        var config = new com.azhukov.agent.core.security.GuardrailConfig();
+        config.setMaxWebSearches(1);
+        service.shutdown();
+        service = new ToolExecutionService(toolRegistry, properties,
+            new com.azhukov.agent.core.security.DefaultToolCallGuardrail(config),
+            redactor, toolResultClassifier, toolOutputLimiter, agentMetrics);
         String toolName = "web_search";
         String arguments = "{\"query\":\"test\"}";
         ToolResult rawResult = ToolResult.ok("result");
 
-        when(guardrail.beforeCall(toolName, arguments)).thenReturn(GuardrailDecision.allow(toolName));
-        when(guardrail.afterCall(eq(toolName), eq(arguments), any(ToolResult.class), anyBoolean()))
-            .thenReturn(GuardrailDecision.allow(toolName));
         when(toolRegistry.execute(eq(toolName), anyString(), eq(arguments), eq(LAST_MSG), eq(SESSION))).thenReturn(rawResult);
         when(redactor.redact("result")).thenReturn("result");
         when(toolResultClassifier.classify(any(ToolResult.class))).thenReturn(ToolResultClassifier.ResultType.SUCCESS);
@@ -569,22 +614,23 @@ class ToolExecutionServiceTest {
     @Test
     @DisplayName("Reset loop guardrail clears the per-turn web_search cap")
     void resetLoopGuardrailClearsCap() {
-        ToolLoopGuardrail loopGuardrail = new ToolLoopGuardrail(true, 2, 3, 2, 1, 50);
-        service.setToolLoopGuardrail(loopGuardrail);
+        var config = new com.azhukov.agent.core.security.GuardrailConfig();
+        config.setMaxWebSearches(1);
+        service.shutdown();
+        service = new ToolExecutionService(toolRegistry, properties,
+            new com.azhukov.agent.core.security.DefaultToolCallGuardrail(config),
+            redactor, toolResultClassifier, toolOutputLimiter, agentMetrics);
         String toolName = "web_search";
         String arguments = "{\"query\":\"test\"}";
         ToolResult rawResult = ToolResult.ok("result");
 
-        when(guardrail.beforeCall(toolName, arguments)).thenReturn(GuardrailDecision.allow(toolName));
-        when(guardrail.afterCall(eq(toolName), eq(arguments), any(ToolResult.class), anyBoolean()))
-            .thenReturn(GuardrailDecision.allow(toolName));
         when(toolRegistry.execute(eq(toolName), anyString(), eq(arguments), eq(LAST_MSG), eq(SESSION))).thenReturn(rawResult);
         when(redactor.redact("result")).thenReturn("result");
         when(toolResultClassifier.classify(any(ToolResult.class))).thenReturn(ToolResultClassifier.ResultType.SUCCESS);
         when(toolOutputLimiter.truncate(any(ToolResult.class), anyString())).thenAnswer(inv -> inv.getArgument(0));
 
         service.execute(toolName, "call-1", arguments, LAST_MSG, SESSION);
-        service.resetLoopGuardrailForTurn();
+        service.resetForTurn(SESSION.id());
         ToolResult afterReset = service.execute(toolName, "call-2", arguments, LAST_MSG, SESSION);
 
         assertThat(afterReset.success()).isTrue();

@@ -53,21 +53,31 @@ public class LoopCommand implements CommandHandler {
             String action = (lower.equals("off") || lower.equals("stop")) ? "clear" : lower;
             JsonNode r = backendClient.suggestionPost("/api/v1/agent/cron/heartbeat/" + sid
                 + "/" + action);
-            if (lower.equals("off") || lower.equals("stop")) {
-                deliveryPoller.unwatch(java.util.UUID.fromString(sid));
+            if (r == null || !r.path("ok").asBoolean(false)) return "No loop set.";
+            if (lower.equals("resume")) {
+                deliveryPoller.watch(java.util.UUID.fromString(sid), event.chatId());
             }
-            return r != null && r.path("ok").asBoolean(false)
-                ? r.path("message").asText("Done.") : "No loop set.";
+            return r.path("message").asText("Done.");
         }
 
         Integer times = null;
         String until = null;
         List<String> rest = new ArrayList<>(List.of(arg.split("\\s+")));
         for (int i = 0; i < rest.size(); i++) {
-            if (rest.get(i).equalsIgnoreCase("--times") && i + 1 < rest.size()) {
-                try { times = Integer.parseInt(rest.get(i + 1)); } catch (NumberFormatException ignored) {}
+            if (rest.get(i).equalsIgnoreCase("--times")) {
+                if (i + 1 >= rest.size() || times != null) return "--times requires one positive integer.";
+                try {
+                    times = Integer.parseInt(rest.get(i + 1));
+                    if (times <= 0) return "--times requires one positive integer.";
+                } catch (NumberFormatException e) {
+                    return "--times requires one positive integer.";
+                }
                 rest.remove(i); rest.remove(i); i--;
-            } else if (rest.get(i).equalsIgnoreCase("--until") && i + 1 < rest.size()) {
+            }
+        }
+        for (int i = 0; i < rest.size(); i++) {
+            if (rest.get(i).equalsIgnoreCase("--until")) {
+                if (i + 1 >= rest.size()) return "--until requires a stop condition.";
                 until = String.join(" ", rest.subList(i + 1, rest.size()));
                 rest.subList(i, rest.size()).clear();
                 break;
@@ -78,6 +88,9 @@ public class LoopCommand implements CommandHandler {
         String prompt = joined;
         String first = joined.isEmpty() ? "" : joined.split("\\s+")[0];
         Integer parsed = HeartbeatCommand.parseIntervalToken(first);
+        if (parsed == null && HeartbeatCommand.isIntervalToken(first)) {
+            return "Invalid interval: value must be positive and fit in seconds.";
+        }
         if (parsed != null) {
             interval = parsed;
             prompt = joined.substring(first.length()).strip();
@@ -86,7 +99,8 @@ public class LoopCommand implements CommandHandler {
             return "Usage: /loop [interval] <prompt> [--times N] [--until <condition>]\n"
                 + "Also: /loop status | pause | resume | stop";
         }
-        int effective = interval != null ? Math.max(interval, 60) : 300;
+        if (interval != null && interval < 60) return "Interval too small — minimum is 60s.";
+        int effective = interval != null ? interval : 300;
 
         StringBuilder loopPrompt = new StringBuilder();
         loopPrompt.append("[/loop]").append(times != null ? " (max " + times + " iterations)" : "")

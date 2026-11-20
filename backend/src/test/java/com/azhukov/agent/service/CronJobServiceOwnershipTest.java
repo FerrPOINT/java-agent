@@ -49,10 +49,10 @@ class CronJobServiceOwnershipTest {
             .thenAnswer(call -> cronJobRepository.findById(call.getArgument(0)));
         properties = new AgentProperties();
         properties.getCron().setEnabled(false);
-        service = new CronJobService(cronJobRepository, agentRuntimeServiceProvider,
-            properties, skillManager, cronExecutionLogRepository, messageRepository,
-            CronJobServiceTest.unitTransaction(),
-            new com.azhukov.agent.service.CronScheduleParser());
+        service = new CronJobService(
+            cronJobRepository, agentRuntimeServiceProvider, properties, skillManager,
+            cronExecutionLogRepository, messageRepository, CronJobServiceTest.unitTransaction(), new com.azhukov.agent.service.CronScheduleParser(),
+            org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class));
 
         foreignJob = new CronJobEntity();
         foreignJob.setId(UUID.randomUUID());
@@ -78,7 +78,12 @@ class CronJobServiceOwnershipTest {
     @Test
     void nonAdminCannotUpdateForeignJob() {
         loginAs("user-a");
-        assertThatThrownBy(() -> service.update(foreignJob.getId(), "hijack", null, null, null, null))
+        assertThatThrownBy(() -> service.update(
+            foreignJob.getId(), "hijack", null, null,
+            null, null, null, null,
+            null, null, null, null,
+            null, null, null, null,
+            null, null, null, null))
             .isInstanceOf(SecurityException.class)
             .hasMessageContaining("does not belong");
         verify(cronJobRepository, never()).save(any());
@@ -116,7 +121,12 @@ class CronJobServiceOwnershipTest {
     @Test
     void ownerCanUpdateOwnJob() {
         loginAs("user-other");
-        assertThatCode(() -> service.update(foreignJob.getId(), "renamed", null, null, null, null))
+        assertThatCode(() -> service.update(
+            foreignJob.getId(), "renamed", null, null,
+            null, null, null, null,
+            null, null, null, null,
+            null, null, null, null,
+            null, null, null, null))
             .doesNotThrowAnyException();
     }
 

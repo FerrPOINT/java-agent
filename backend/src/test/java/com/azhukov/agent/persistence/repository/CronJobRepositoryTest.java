@@ -54,9 +54,10 @@ class CronJobRepositoryTest extends PostgresTestContainer {
         valid = cronJobRepository.save(valid);
         var properties = new AgentProperties();
         properties.getCron().setEnabled(true);
-        var service = new CronJobService(cronJobRepository, context.getBeanProvider(AgentRuntimeService.class),
-            properties, org.mockito.Mockito.mock(com.azhukov.agent.core.skill.SkillManager.class),
-            executionLogs, messages, transactions, scheduleParser);
+        var service = new CronJobService(
+            cronJobRepository, context.getBeanProvider(AgentRuntimeService.class), properties, org.mockito.Mockito.mock(com.azhukov.agent.core.skill.SkillManager.class),
+            executionLogs, messages, transactions, scheduleParser,
+            org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class));
         try {
             service.init();
             var disabled = cronJobRepository.findById(invalid.getId()).orElseThrow();
@@ -66,7 +67,10 @@ class CronJobRepositoryTest extends PostgresTestContainer {
             assertThat(cronJobRepository.findById(valid.getId()).orElseThrow().getNextRunAt()).isEqualTo(due);
 
             UUID id = disabled.getId();
-            transactions.executeWithoutResult(status -> service.update(id, null, "0 9 * * *", null, null, null));
+            transactions.executeWithoutResult(status -> service.update(
+                id, null, "0 9 * * *", null, null, null,
+                null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null));
             transactions.executeWithoutResult(status -> service.resume(id));
             var resumed = cronJobRepository.findById(id).orElseThrow();
             assertThat(resumed.isEnabled()).isTrue();

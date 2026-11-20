@@ -55,14 +55,9 @@ class CronJobServiceCrudBranchTest {
             .thenAnswer(call -> cronJobRepository.findById(call.getArgument(0)));
         properties = new AgentProperties();
         service = new CronJobService(
-            cronJobRepository,
-            agentRuntimeServiceProvider,
-            properties,
-            skillManager,
-            cronExecutionLogRepository,
-            messageRepository,
-            CronJobServiceTest.unitTransaction(),
-            new CronScheduleParser());
+            cronJobRepository, agentRuntimeServiceProvider, properties, skillManager,
+            cronExecutionLogRepository, messageRepository, CronJobServiceTest.unitTransaction(), new CronScheduleParser(),
+            org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class));
         lenient().when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(inv -> {
             CronJobEntity e = inv.getArgument(0);
             if (e.getId() == null) {
@@ -108,11 +103,10 @@ class CronJobServiceCrudBranchTest {
         UUID sessionId = UUID.randomUUID();
         ownedAttachment(sessionId);
         CronJobEntity job = service.create(
-            "full", "0 * * * *", "prompt", "telegram:123",
-            "skill-a,skill-b", "output_text", 3,
-            "script.sh", false,
-            "terminal,file", "/tmp",
-            "openai-compatible", "gpt-5", "https://api.test",
+            com.azhukov.agent.core.security.UserContext.scopeUserId(), "default", "full", "0 * * * *",
+            "prompt", "telegram:123", "skill-a,skill-b", "output_text",
+            3, "script.sh", false, "terminal,file",
+            "/tmp", "openai-compatible", "gpt-5", "https://api.test",
             "monitor.sh", true, sessionId);
 
         assertThat(job.getName()).isEqualTo("full");
@@ -126,10 +120,12 @@ class CronJobServiceCrudBranchTest {
 
     @Test
     void createInProfileStampsProfile() {
-        CronJobEntity job = service.createInProfile(
-            "work", "profiled", "0 * * * *", "prompt", "local",
-            null, null, null, null, false,
-            null, null, null, null, null);
+        CronJobEntity job = service.create(
+            com.azhukov.agent.core.security.UserContext.scopeUserId(), "work", "profiled", "0 * * * *",
+            "prompt", "local", null, null,
+            null, null, false, null,
+            null, null, null, null,
+            null, false, null);
 
         assertThat(job.getProfile()).isEqualTo("work");
         assertThat(job.getName()).isEqualTo("profiled");
@@ -138,7 +134,12 @@ class CronJobServiceCrudBranchTest {
     @Test
     void createRejectsInvalidSchedule() {
         assertThatThrownBy(() ->
-            service.create("bad", "not-a-schedule", "prompt", null))
+            service.create(
+            com.azhukov.agent.core.security.UserContext.scopeUserId(), "default", "bad", "not-a-schedule",
+            "prompt", null, null, null,
+            null, null, false, null,
+            null, null, null, null,
+            null, false, null))
             .isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -171,7 +172,12 @@ class CronJobServiceCrudBranchTest {
         when(cronJobRepository.findById(id)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() ->
-            service.update(id, null, null, null, null, null))
+            service.update(
+            id, null, null, null,
+            null, null, null, null,
+            null, null, null, null,
+            null, null, null, null,
+            null, null, null, null))
             .isInstanceOf(IllegalArgumentException.class);
     }
 

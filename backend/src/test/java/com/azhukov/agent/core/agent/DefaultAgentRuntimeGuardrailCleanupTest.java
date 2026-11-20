@@ -8,7 +8,7 @@ import com.azhukov.agent.core.memory.MemoryProvider;
 import com.azhukov.agent.core.security.MessageSanitizer;
 import com.azhukov.agent.core.prompt.PromptBuilder;
 import com.azhukov.agent.core.security.ApprovalQueue;
-import com.azhukov.agent.core.security.ToolGuardrails;
+import com.azhukov.agent.core.security.ToolApprovalPolicy;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.core.state.TurnStateManager;
 import com.azhukov.agent.core.tool.ToolExecutionService;
@@ -49,7 +49,7 @@ class DefaultAgentRuntimeGuardrailCleanupTest {
     @Mock private SteerBuffer steerBuffer;
     @Mock private com.azhukov.agent.client.langchain4j.ErrorClassifier errorClassifier;
     @Mock private ContextCompressor contextCompressor;
-    @Mock private ToolGuardrails toolGuardrails;
+    @Mock private ToolApprovalPolicy approvalPolicy;
 
     @Test
     void cleanupSessionEvictsGuardrailState() {
@@ -59,12 +59,12 @@ class DefaultAgentRuntimeGuardrailCleanupTest {
             messageSanitizer, contextReferenceService, new AgentProperties(),
             inputSanitizer, guardrail, turnStateManager, backgroundReviewService,
             interruptToken, turnFinalizer, steerBuffer, errorClassifier, contextCompressor,
-            new ApprovalQueue(), toolGuardrails, null,
+            new ApprovalQueue(), approvalPolicy, null,
             new TokenEstimator(), new ToolResultFormatter(), null, null);
 
         UUID sessionId = UUID.randomUUID();
         runtime.cleanupSession(sessionId);
 
-        verify(toolGuardrails).removeSession(sessionId);
+        verify(guardrail).removeSession(sessionId);
     }
 }

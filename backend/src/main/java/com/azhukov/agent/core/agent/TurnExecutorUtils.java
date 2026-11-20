@@ -20,9 +20,7 @@ import java.util.Map;
  * These methods have no dependency on instance state and are shared by
  * {@code TurnExecutor}, {@code FallbackModelCaller}, {@code DefaultAgentRuntime},
  * and {@code AgentStreamingService}. Keeping them here avoids bloating
- * {@code TurnExecutor} with unrelated static helpers while preserving the
- * public API (each method is {@code public static} and {@code TurnExecutor}
- * still delegates here for backward compatibility).
+ * {@code TurnExecutor} with unrelated static helpers. Callers use this utility owner directly.
  *
  * <h2>Method groups</h2>
  * <ul>

@@ -113,7 +113,6 @@ class DefaultAgentRuntimeThinkBlockTest {
         when(turnStateManager.getOrStart(any(UUID.class), any(int.class)))
             .thenReturn(mock(TurnState.class));
 
-        when(guardrail.isHalted()).thenReturn(false);
 
         runtime = new DefaultAgentRuntime(
             modelClient, toolRegistry, toolExecutionService, promptBuilder,

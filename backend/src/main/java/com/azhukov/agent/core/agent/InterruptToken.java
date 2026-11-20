@@ -87,7 +87,7 @@ public class InterruptToken {
 
     /**
      * Returns the session ID associated with the current thread, or null if none.
-     * Used by components that need session-scoped state (e.g. DefaultToolGuardrails).
+     * Used by components that need session-scoped state (e.g. DefaultToolApprovalPolicy).
      */
     public static UUID currentSessionId() {
         return currentSessionId.get();

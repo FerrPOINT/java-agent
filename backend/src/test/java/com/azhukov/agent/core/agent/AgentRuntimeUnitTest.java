@@ -278,7 +278,7 @@ class AgentRuntimeUnitTest {
             .thenReturn(List.of(Message.system("sys"), Message.user("hi")));
 
         ToolExecutionService toolExecutionService = new ToolExecutionService(registry, properties,
-            new DefaultToolCallGuardrail(properties), new SecretRedactor(properties),
+            new DefaultToolCallGuardrail(new com.azhukov.agent.core.security.GuardrailConfig()), new SecretRedactor(properties),
             new com.azhukov.agent.core.tool.ToolResultClassifier(),
             new com.azhukov.agent.core.tool.ToolOutputLimiter(properties), null);
 
@@ -287,7 +287,7 @@ class AgentRuntimeUnitTest {
             new DefaultIterationBudget(properties),
             new MessageSanitizer(new SecretRedactor(properties)),
             mockContextReferenceService(), properties, new UserInputSanitizer(),
-            new DefaultToolCallGuardrail(properties), new TurnStateManager(), null, null, null, new SteerBuffer(),
+            new DefaultToolCallGuardrail(new com.azhukov.agent.core.security.GuardrailConfig()), new TurnStateManager(), null, null, null, new SteerBuffer(),
             new ErrorClassifier(), null, new com.azhukov.agent.core.security.ApprovalQueue(), null, null,
             new TokenEstimator(), new ToolResultFormatter(), null, null
         );
@@ -309,7 +309,7 @@ class AgentRuntimeUnitTest {
 
     private DefaultAgentRuntime buildRuntime(ToolRegistry registry, AgentProperties properties, MockModelClient model) {
         ToolExecutionService toolExecutionService = new ToolExecutionService(registry, properties,
-            new DefaultToolCallGuardrail(properties), new SecretRedactor(properties),
+            new DefaultToolCallGuardrail(new com.azhukov.agent.core.security.GuardrailConfig()), new SecretRedactor(properties),
             new com.azhukov.agent.core.tool.ToolResultClassifier(),
             new com.azhukov.agent.core.tool.ToolOutputLimiter(properties), null);
         return buildRuntime(registry, properties, model, toolExecutionService);
@@ -334,7 +334,7 @@ class AgentRuntimeUnitTest {
             new DefaultIterationBudget(properties),
             new MessageSanitizer(new SecretRedactor(properties)),
             mockContextReferenceService(), properties, new UserInputSanitizer(),
-            new DefaultToolCallGuardrail(properties), new TurnStateManager(), null, null, null, new SteerBuffer(),
+            new DefaultToolCallGuardrail(new com.azhukov.agent.core.security.GuardrailConfig()), new TurnStateManager(), null, null, null, new SteerBuffer(),
             new ErrorClassifier(), null, new com.azhukov.agent.core.security.ApprovalQueue(), null, null,
             new TokenEstimator(), new ToolResultFormatter(), null, null
         );
