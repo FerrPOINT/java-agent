@@ -44,7 +44,10 @@ class CronJobServiceDaemonTest {
         properties.getCron().setEnabled(false);
         lenient().when(agentRuntimeServiceProvider.getIfAvailable()).thenReturn(agentRuntimeService);
         CronJobServiceTest.stubExecutionHistory(cronExecutionLogRepository);
-        service = new CronJobService(cronJobRepository, agentRuntimeServiceProvider, properties, skillManager, cronExecutionLogRepository, messageRepository, new org.springframework.transaction.support.TransactionTemplate(org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class)), new CronScheduleParser());
+        service = new CronJobService(
+            cronJobRepository, agentRuntimeServiceProvider, properties, skillManager,
+            cronExecutionLogRepository, messageRepository, new org.springframework.transaction.support.TransactionTemplate(org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class)), new CronScheduleParser(),
+            org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class));
     }
 
     @Test
@@ -56,7 +59,12 @@ class CronJobServiceDaemonTest {
             e.setId(UUID.randomUUID());
             return e;
         });
-        CronJobEntity job = service.create("daemon-test", "0 * * * *", "Run task", null);
+        CronJobEntity job = service.create(
+            com.azhukov.agent.core.security.UserContext.scopeUserId(), "default", "daemon-test", "0 * * * *",
+            "Run task", null, null, null,
+            null, null, false, null,
+            null, null, null, null,
+            null, false, null);
         assertThat(job.getName()).isEqualTo("daemon-test");
     }
 

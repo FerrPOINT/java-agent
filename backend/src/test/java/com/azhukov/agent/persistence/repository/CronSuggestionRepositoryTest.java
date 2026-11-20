@@ -389,7 +389,12 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
     @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     void rolledBackUpdateKeepsOriginalSchedule() {
         withScheduledJob((tx, jobId, tasks, original) -> {
-            tx.executeWithoutResult(status -> { cronJobService.update(jobId, "updated", null, null, null, null); status.setRollbackOnly(); });
+            tx.executeWithoutResult(status -> { cronJobService.update(
+            jobId, "updated", null, null,
+            null, null, null, null,
+            null, null, null, null,
+            null, null, null, null,
+            null, null, null, null); status.setRollbackOnly(); });
             assertThat(cronJobRepository.findById(jobId).orElseThrow().getName()).isNotEqualTo("updated");
             assertThat((Object) tasks.get(jobId)).isSameAs(original);
             assertThat(original.isCancelled()).isFalse();
@@ -400,7 +405,12 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
     @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     void committedUpdateReplacesOriginalSchedule() {
         withScheduledJob((tx, jobId, tasks, original) -> {
-            tx.executeWithoutResult(status -> cronJobService.update(jobId, "updated", null, null, null, null));
+            tx.executeWithoutResult(status -> cronJobService.update(
+            jobId, "updated", null, null,
+            null, null, null, null,
+            null, null, null, null,
+            null, null, null, null,
+            null, null, null, null));
             assertThat(cronJobRepository.findById(jobId).orElseThrow().getName()).isEqualTo("updated");
             assertThat((Object) tasks.get(jobId)).isNotNull().isNotSameAs(original);
             assertThat(original.isCancelled()).isTrue();
@@ -664,7 +674,12 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
         boolean enabled = properties.getCron().isEnabled();
         properties.getCron().setEnabled(true);
         org.springframework.test.util.ReflectionTestUtils.setField(cronJobService, "scheduler", scheduler);
-        var job = cronJobService.create("schedule-race-" + java.util.UUID.randomUUID(), "every 1h", "work", "local");
+        var job = cronJobService.create(
+            com.azhukov.agent.core.security.UserContext.scopeUserId(), "default", "schedule-race-" + java.util.UUID.randomUUID(), "every 1h",
+            "work", "local", null, null,
+            null, null, false, null,
+            null, null, null, null,
+            null, false, null);
         var executor = java.util.concurrent.Executors.newSingleThreadExecutor();
         try {
             boolean manual = "update-paused".equals(change);
@@ -676,7 +691,8 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
                 case "pause" -> assertThat(cronController.pause(job.getId()).enabled()).isFalse();
                 case "update", "update-paused" -> assertThat(cronController.update(job.getId(),
                     new com.azhukov.agent.api.CronJobController.UpdateCronRequest(job.getName(), "every 2h",
-                        null, null, null, null, null, null)).schedule()).isEqualTo("every 2h");
+                        null, null, null, null, null, null, null, null, null, null,
+                        null, null, null, null, null, null, null)).schedule()).isEqualTo("every 2h");
                 case "remove" -> assertThat(cronController.delete(job.getId()).getStatusCode().is2xxSuccessful()).isTrue();
                 default -> throw new AssertionError(change);
             }
@@ -715,7 +731,12 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
             throw new IllegalStateException("provider failed");
         }).when(runtime).runBackground(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(true), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(java.util.Map.of()));
 
-        var job = cronJobService.create("delivery-revision-" + java.util.UUID.randomUUID(), "every 1h", "work", "telegram:701938011");
+        var job = cronJobService.create(
+            com.azhukov.agent.core.security.UserContext.scopeUserId(), "default", "delivery-revision-" + java.util.UUID.randomUUID(), "every 1h",
+            "work", "telegram:701938011", null, null,
+            null, null, false, null,
+            null, null, null, null,
+            null, false, null);
         cronJobService.pause(job.getId());
         var jdbc = new org.springframework.jdbc.core.JdbcTemplate(dataSource);
         try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
@@ -724,7 +745,9 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
                 assertThat(entered.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
                 if (changeDestination) {
                     cronController.update(job.getId(), new com.azhukov.agent.api.CronJobController.UpdateCronRequest(
-                        job.getName(), job.getSchedule(), null, "local", false, null, null, null));
+                        job.getName(), job.getSchedule(), null, "local", false,
+                        null, null, null, null, null, null, null, null, null,
+                        null, null, null, null, null));
                 }
             } finally {
                 release.countDown();
@@ -772,14 +795,29 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
         boolean wasEnabled = props.getCron().isEnabled();
         props.getCron().setEnabled(true);
         org.springframework.test.util.ReflectionTestUtils.setField(cronJobService, "scheduler", scheduler);
-        var job = cronJobService.create("review-race", "every 1h", "work", "local");
+        var job = cronJobService.create(
+            com.azhukov.agent.core.security.UserContext.scopeUserId(), "default", "review-race", "every 1h",
+            "work", "local", null, null,
+            null, null, false, null,
+            null, null, null, null,
+            null, false, null);
         try (var executor = java.util.concurrent.Executors.newFixedThreadPool(2)) {
             try {
-                var older = executor.submit(() -> cronJobService.update(job.getId(), null, "every 2h", null, null, null));
+                var older = executor.submit(() -> cronJobService.update(
+            job.getId(), null, "every 2h", null,
+            null, null, null, null,
+            null, null, null, null,
+            null, null, null, null,
+            null, null, null, null));
                 assertThat(olderReconcilerEntered.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
                 var newer = executor.submit(() -> {
                     newerStarted.countDown();
-                    cronJobService.update(job.getId(), null, "every 3h", null, null, null);
+                    cronJobService.update(
+            job.getId(), null, "every 3h", null,
+            null, null, null, null,
+            null, null, null, null,
+            null, null, null, null,
+            null, null, null, null);
                 });
                 assertThat(newerStarted.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
                 assertThatThrownBy(() -> newer.get(250, java.util.concurrent.TimeUnit.MILLISECONDS))
@@ -814,7 +852,12 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
         var tx = new org.springframework.transaction.support.TransactionTemplate(transactionManager);
         var olderCommitted = new java.util.concurrent.CountDownLatch(1);
         var releaseOlder = new java.util.concurrent.CountDownLatch(1);
-        var job = cronJobService.create("publication-race", "every 1h", "work", "local");
+        var job = cronJobService.create(
+            com.azhukov.agent.core.security.UserContext.scopeUserId(), "default", "publication-race", "every 1h",
+            "work", "local", null, null,
+            null, null, false, null,
+            null, null, null, null,
+            null, false, null);
         var timers = (java.util.Map<?, ?>) org.springframework.test.util.ReflectionTestUtils
             .getField(cronJobService, "scheduledTasks");
         try (var executor = java.util.concurrent.Executors.newSingleThreadExecutor()) {
@@ -832,10 +875,20 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
                                 }
                             }
                         });
-                    cronJobService.update(job.getId(), null, "every 2h", null, null, null);
+                    cronJobService.update(
+            job.getId(), null, "every 2h", null,
+            null, null, null, null,
+            null, null, null, null,
+            null, null, null, null,
+            null, null, null, null);
                 }));
                 assertThat(olderCommitted.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
-                cronJobService.update(job.getId(), null, "every 3h", null, null, null);
+                cronJobService.update(
+            job.getId(), null, "every 3h", null,
+            null, null, null, null,
+            null, null, null, null,
+            null, null, null, null,
+            null, null, null, null);
                 Object newerTimer = timers.get(job.getId());
                 assertThat(newerTimer).isNotNull();
                 releaseOlder.countDown();
@@ -859,14 +912,24 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
             .getField(cronJobService, "properties");
         boolean enabled = properties.getCron().isEnabled();
         long timeout = pool.getConnectionTimeout();
-        var job = cronJobService.create("pool-test", "every 1h", "work", "local");
+        var job = cronJobService.create(
+            com.azhukov.agent.core.security.UserContext.scopeUserId(), "default", "pool-test", "every 1h",
+            "work", "local", null, null,
+            null, null, false, null,
+            null, null, null, null,
+            null, false, null);
         var held = new java.util.ArrayList<java.sql.Connection>();
         try {
             for (int i = 1; i < pool.getMaximumPoolSize(); i++) held.add(dataSource.getConnection());
             pool.setConnectionTimeout(500);
             properties.getCron().setEnabled(true);
 
-            var updated = cronJobService.update(job.getId(), null, "every 2h", null, null, null);
+            var updated = cronJobService.update(
+            job.getId(), null, "every 2h", null,
+            null, null, null, null,
+            null, null, null, null,
+            null, null, null, null,
+            null, null, null, null);
             assertThat(updated.getNextRunAt()).isAfter(Instant.now().plusSeconds(7100));
             assertThat(cronJobRepository.findById(job.getId()).orElseThrow().getNextRunAt())
                 .isEqualTo(updated.getNextRunAt());
