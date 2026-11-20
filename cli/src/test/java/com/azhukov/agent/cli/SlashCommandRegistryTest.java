@@ -49,7 +49,7 @@ class SlashCommandRegistryTest {
         // Memory management
         assertThat(names).contains("memory-all", "memory-pending", "memory-approve", "memory-reject", "memory-delete");
         // Tool approvals
-        assertThat(names).contains("approvals", "approve-tool", "deny-tool");
+        assertThat(names).contains("approvals");
         // Other
         assertThat(names).contains("clear", "branch", "background", "install", "uninstall");
         // Cron

@@ -41,7 +41,7 @@ class ToolExecutionServiceParallelTest {
     private AgentProperties properties = new AgentProperties();
 
     private ToolCallGuardrail guardrail() {
-        return new DefaultToolCallGuardrail(properties);
+        return new DefaultToolCallGuardrail(new com.azhukov.agent.core.security.GuardrailConfig());
     }
 
     private SecretRedactor redactor() {

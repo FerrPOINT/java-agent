@@ -99,7 +99,6 @@ class DefaultAgentRuntimeFallbackTest {
         when(iterationBudget.recordToolExecution(any(), any(String.class), any(long.class))).thenReturn(snapshot);
         when(turnStateManager.getOrStart(any(UUID.class), any(int.class)))
             .thenReturn(mock(com.azhukov.agent.core.state.TurnState.class));
-        when(guardrail.isHalted()).thenReturn(false);
 
         runtime = new DefaultAgentRuntime(
             modelClient, toolRegistry, toolExecutionService, promptBuilder,

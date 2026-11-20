@@ -149,7 +149,7 @@ public class SessionApiClient extends BaseBackendClient {
     public String compressSession(String sessionId, String focus) {
         Map<String, Object> body = body();
         if (focus != null && !focus.isBlank()) {
-            body.put("focus", focus);
+            body.put("focusTopic", focus);
         }
         try {
             restClient.post()

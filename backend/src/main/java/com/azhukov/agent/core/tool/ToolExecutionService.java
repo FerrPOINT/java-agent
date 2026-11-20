@@ -103,38 +103,23 @@ public class ToolExecutionService {
     public ToolResult execute(String toolName, String toolCallId, String arguments, Message lastAssistant, Session session,
                               TurnState turnState, ToolTrustMetadata mcpAdmission) {
         UserContext.requireCurrentAccess();
+        java.util.Objects.requireNonNull(session, "Tool execution requires a session");
+        java.util.Objects.requireNonNull(session.id(), "Tool execution requires a session ID");
         // PR-3 parity: guardrails must observe the executing session (scope
         // guardrail callbacks to the session so InterruptToken.currentSessionId()
         // resolves inside before/afterCall).
         UUID previousSessionScope = com.azhukov.agent.core.agent.InterruptToken.currentSessionId();
-        if (session != null) {
-            com.azhukov.agent.core.agent.InterruptToken.setCurrentSessionId(session.id());
-        }
+        com.azhukov.agent.core.agent.InterruptToken.setCurrentSessionId(session.id());
         try {
-        var before = turnState == null ? guardrail.beforeCall(toolName, arguments) : guardrail.beforeCall(toolName, arguments, turnState);
+        var before = guardrail.beforeCall(toolName, arguments);
         if (before.isBlockOrHalt()) {
             log.warn("Guardrail {} tool {}: {}", before.action(), toolName, before.message());
-            return failureResult(before.message());
-        }
-
-        // Tool loop guardrail (Hermes parity: tool_guardrails.py before_call)
-        if (toolLoopGuardrail != null) {
-            String loopWarning = toolLoopGuardrail.beforeCall(toolName, arguments);
-            if (loopWarning != null) {
-                log.warn("Tool loop guardrail: {}", loopWarning);
-                // Runaway caps (web_search/delegate_task) are hard blocks;
-                // repeat warnings are advisory (append to result, don't block).
-                if (loopWarning.startsWith("Blocked ")) {
-                    // PR-3 parity: hard block returns a structured JSON envelope
-                    // with the machine-readable code the caller can branch on.
-                    com.fasterxml.jackson.databind.node.ObjectNode payload = JSON.createObjectNode();
-                    payload.put("success", false);
-                    payload.put("error", loopWarning);
-                    payload.put("code", "loop_" + toolName + "_cap");
-                    payload.put("action", "block");
-                    return new ToolResult(false, payload.toString(), loopWarning);
-                }
-            }
+            com.fasterxml.jackson.databind.node.ObjectNode payload = JSON.createObjectNode();
+            payload.put("success", false);
+            payload.put("error", before.message());
+            payload.put("code", before.code());
+            payload.put("action", before.action().name().toLowerCase(java.util.Locale.ROOT));
+            return new ToolResult(false, payload.toString(), before.message());
         }
 
         // Hermes parity (tool_executor.py:1025-1033): checkpoint the workspace
@@ -225,9 +210,7 @@ public class ToolExecutionService {
             turnState.recordExecution(new com.azhukov.agent.core.model.ToolCall(toolCallId, toolName, arguments), result, duration);
         }
 
-        var after = turnState == null
-            ? guardrail.afterCall(toolName, arguments, result, failed)
-            : guardrail.afterCall(toolName, arguments, result, failed, turnState);
+        var after = guardrail.afterCall(toolName, arguments, result, failed);
         if (after.isBlockOrHalt()) {
             log.warn("Guardrail {} after tool {}: {}", after.action(), toolName, after.message());
             result = ToolResult.fail((result.error() != null ? result.error() + "\n" : "") + "Guardrail: " + after.message());
@@ -281,27 +264,12 @@ public class ToolExecutionService {
             : (safeContent == null || safeContent.isBlank()
                 ? failureWithContent(null, redactor.redact(result.error()))
                 : failureWithContent(safeContent, redactor.redact(result.error())));
-        // Tool loop guardrail (Hermes parity: tool_guardrails.py after_call)
-        if (toolLoopGuardrail != null) {
-            String loopWarning = toolLoopGuardrail.afterCall(toolName, arguments,
-                safeResult.content(), !safeResult.success());
-            if (loopWarning != null) {
-                log.debug("Tool loop guardrail after {}: {}", toolName, loopWarning);
-                safeResult = safeResult.success()
-                    ? ToolResult.ok(ToolLoopGuardrail.appendWarning(safeResult.content(), loopWarning))
-                    : ToolResult.fail(ToolLoopGuardrail.appendWarning(safeResult.content(), loopWarning));
-            }
-        }
-        // P-07 (Hermes 761990b780): byte-identical successful results ≥512
-        // chars enter context as a reference stub from the 2nd consecutive
-        // repeat — the tool still ran, only the context copy is deduplicated.
-        if (toolLoopGuardrail != null) {
-            String stub = toolLoopGuardrail.resultReferenceStub(toolName, arguments,
-                safeResult.content(), !safeResult.success());
-            if (stub != null) {
-                log.debug("Identical-result stub applied for {} (streak dedupe)", toolName);
-                safeResult = safeResult.success() ? ToolResult.ok(stub) : ToolResult.fail(stub);
-            }
+        String stub = guardrail.resultReferenceStub(toolName, arguments, safeResult.content(), !safeResult.success());
+        if (stub != null) safeResult = ToolResult.ok(stub);
+        if (after.action() == com.azhukov.agent.core.security.GuardrailAction.WARN) {
+            String content = (safeResult.content() == null ? "" : safeResult.content())
+                + "\n\n[Tool loop guardrail: " + after.message() + "]";
+            safeResult = safeResult.success() ? ToolResult.ok(content) : failureWithContent(content, safeResult.error());
         }
         // Preserve oversized successful output before the in-context limiter
         // truncates it. The replacement contains a preview + absolute temp
@@ -378,15 +346,6 @@ public class ToolExecutionService {
         this.securityGuidanceScanner = scanner;
     }
 
-    // Tool loop guardrail (Hermes parity: tool_guardrails.py). Optional —
-    // setter injection keeps the @RequiredArgsConstructor signature stable.
-    private ToolLoopGuardrail toolLoopGuardrail;
-
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    void setToolLoopGuardrail(ToolLoopGuardrail toolLoopGuardrail) {
-        this.toolLoopGuardrail = toolLoopGuardrail;
-    }
-
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     void setToolResultStorage(ToolResultStorage toolResultStorage) {
         this.toolResultStorage = toolResultStorage;
@@ -403,10 +362,8 @@ public class ToolExecutionService {
     }
 
     /** Reset per-turn guardrail counters at the start of every agent turn. */
-    public void resetLoopGuardrailForTurn() {
-        if (toolLoopGuardrail != null) {
-            toolLoopGuardrail.resetForTurn();
-        }
+    public void resetForTurn(java.util.UUID sessionId) {
+        guardrail.reset(sessionId);
         if (fileMutationTracker != null) {
             fileMutationTracker.resetForTurn();
         }

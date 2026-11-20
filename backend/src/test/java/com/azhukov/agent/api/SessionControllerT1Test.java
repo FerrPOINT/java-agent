@@ -309,9 +309,16 @@ class SessionControllerT1Test {
     }
 
     @Test
-    void compressSession_focusFallbackToFocusAlias() throws Exception {
-        // focusTopic null but request present -> controller uses request.focus() which returns focusTopic (null)
-        // Test the path where request is non-null but focusTopic is null: focus stays null, no "Focus:" in output
+    void compressSession_rejectsObsoleteFocusField() throws Exception {
+        String body = "{\"focus\":\"topic\"}";
+        mockMvc.perform(post("/api/v1/agent/session/{sessionId}/compress", SESSION_ID)
+                .contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isBadRequest());
+        verify(agentRuntimeService, never()).compressSession(any(), any(), any());
+    }
+
+    @Test
+    void compressSession_absentFocusRemainsAbsent() throws Exception {
         lenient().doNothing().when(agentRuntimeService).compressSession(eq(SESSION_ID), isNull(), isNull());
 
         String body = "{\"sessionId\":\"" + SESSION_ID + "\"}";

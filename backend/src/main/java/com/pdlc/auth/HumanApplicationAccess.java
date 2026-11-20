@@ -35,6 +35,7 @@ public record HumanApplicationAccess(String subject, String role, Set<String> ap
             throw new AdmissionDeniedException();
         }
         Instant now = Instant.now();
+        long receivedNanos = System.nanoTime();
         String role = "admin".equals(identity.get("role")) ? "admin" : "user";
         Set<String> applications = Set.of();
         long revision = 0;
@@ -73,12 +74,15 @@ public record HumanApplicationAccess(String subject, String role, Set<String> ap
         if (requireProof && !enforced) throw new AdmissionDeniedException();
         if (tokenExpiresAt != null && tokenExpiresAt.isBefore(expires)) expires = tokenExpiresAt;
         Duration remaining = Duration.between(now, expires);
-        if (remaining.isNegative() || remaining.isZero() || System.nanoTime() - startedNanos < 0) {
+        long elapsedNanos = receivedNanos - startedNanos;
+        if (remaining.isNegative() || remaining.isZero() || elapsedNanos < 0
+                || elapsedNanos >= WINDOW.toNanos()) {
             throw new AdmissionDeniedException();
         }
         long lifetimeNanos = remaining.compareTo(WINDOW) < 0 ? remaining.toNanos() : WINDOW.toNanos();
+        lifetimeNanos = Math.min(lifetimeNanos, WINDOW.toNanos() - elapsedNanos);
         HumanApplicationAccess result = new HumanApplicationAccess(subject, role, applications, revision,
-                enforced, expires, startedNanos + lifetimeNanos);
+                enforced, expires, receivedNanos + lifetimeNanos);
         if (!result.isCurrent()) throw new AdmissionDeniedException();
         return result;
     }

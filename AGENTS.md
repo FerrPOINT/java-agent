@@ -259,7 +259,8 @@ private final ScheduledExecutorService executor = Executors.newSingleThreadSched
 - Secret redaction: `DefaultRedactor` маскирует secrets в output.
 - `redact-secrets` config (`agent.security.redact-secrets`): toggle masking of API keys, tokens, passwords in logs/output.
 - `redact-pii` config (`agent.security.redact-pii`): toggle masking of PII (emails, phone numbers, IPs) in logs/output.
-- Approval gate: destructive tools требуют confirmation (`ApprovalGate`).
+- Approval gate: destructive tools требуют одноразовое подтверждение через
+  `ToolApprovalPolicy` и `ApprovalQueue`; текущий контракт — [tool approval](docs/tool-approval.md).
 - Telegram auth: `agent.gateway.telegram.allowed-user-ids`, `allowed-usernames`, `allow-by-default`.
 
 ### 8. Configuration
