@@ -39,6 +39,7 @@ import static org.mockito.Mockito.when;
 class ToolExecutionServiceParallelTest {
 
     private AgentProperties properties = new AgentProperties();
+    private final Session session = Session.create("tool-test", "noop", "noop");
 
     private ToolCallGuardrail guardrail() {
         return new DefaultToolCallGuardrail(new com.azhukov.agent.core.security.GuardrailConfig());
@@ -71,7 +72,7 @@ class ToolExecutionServiceParallelTest {
                 });
 
             ToolExecutionService service = buildService(registry);
-            ToolResult result = service.execute("tool-a", "c1", "{}", null, null);
+            ToolResult result = service.execute("tool-a", "c1", "{}", null, session);
 
             assertThat(result.success()).isTrue();
             assertThat(result.content()).isEqualTo("result-a");
@@ -110,7 +111,7 @@ class ToolExecutionServiceParallelTest {
 
             List<ToolResult> results = new ArrayList<>();
             for (ToolCall call : calls) {
-                results.add(service.execute(call.name(), call.id(), call.arguments(), null, null));
+                results.add(service.execute(call.name(), call.id(), call.arguments(), null, session));
             }
 
             // All tools executed successfully
@@ -144,7 +145,7 @@ class ToolExecutionServiceParallelTest {
 
             long start = System.currentTimeMillis();
             for (int i = 0; i < 3; i++) {
-                service.execute("tool", "c" + i, "{}", null, null);
+                service.execute("tool", "c" + i, "{}", null, session);
             }
             long total = System.currentTimeMillis() - start;
 
@@ -169,7 +170,7 @@ class ToolExecutionServiceParallelTest {
                 .thenReturn(ToolResult.ok("1234567890ABCDEF"));
 
             ToolExecutionService service = buildService(registry);
-            ToolResult result = service.execute("big", "c1", "{}", null, null);
+            ToolResult result = service.execute("big", "c1", "{}", null, session);
 
             // head+tail truncation (Hermes parity): 4 head + notice + 6 tail
             assertThat(result.content()).startsWith("1234");
@@ -186,7 +187,7 @@ class ToolExecutionServiceParallelTest {
                 .thenReturn(ToolResult.ok("short output"));
 
             ToolExecutionService service = buildService(registry);
-            ToolResult result = service.execute("small", "c1", "{}", null, null);
+            ToolResult result = service.execute("small", "c1", "{}", null, session);
 
             assertThat(result.content()).isEqualTo("short output");
         }
@@ -200,7 +201,7 @@ class ToolExecutionServiceParallelTest {
                 .thenReturn(ToolResult.fail("Very long error message that exceeds the limit 1234567890ABCDEF"));
 
             ToolExecutionService service = buildService(registry);
-            ToolResult result = service.execute("fail", "c1", "{}", null, null);
+            ToolResult result = service.execute("fail", "c1", "{}", null, session);
 
             assertThat(result.success()).isFalse();
             assertThat(result.error()).contains("OUTPUT TRUNCATED");
@@ -238,7 +239,7 @@ class ToolExecutionServiceParallelTest {
 
             // Call execute 3 times — all should succeed, no interrupt possible at service level
             for (int i = 0; i < 3; i++) {
-                ToolResult result = service.execute("tool", "c" + i, "{}", null, null);
+                ToolResult result = service.execute("tool", "c" + i, "{}", null, session);
                 assertThat(result.success()).isTrue();
             }
             assertThat(callCount.get()).isEqualTo(3);
@@ -263,7 +264,7 @@ class ToolExecutionServiceParallelTest {
                 });
 
             ToolExecutionService service = buildService(registry);
-            ToolResult result = service.execute("slow", "c1", "{}", null, null);
+            ToolResult result = service.execute("slow", "c1", "{}", null, session);
 
             assertThat(result.success()).isFalse();
             assertThat(result.error()).contains("timed out");
@@ -288,12 +289,12 @@ class ToolExecutionServiceParallelTest {
             ToolExecutionService service = buildService(registry);
 
             // First tool fails
-            ToolResult failResult = service.execute("fail-tool", "c1", "{}", null, null);
+            ToolResult failResult = service.execute("fail-tool", "c1", "{}", null, session);
             assertThat(failResult.success()).isFalse();
             assertThat(failResult.error()).contains("tool crashed");
 
             // Second tool succeeds — service doesn't prevent subsequent calls
-            ToolResult okResult = service.execute("ok-tool", "c2", "{}", null, null);
+            ToolResult okResult = service.execute("ok-tool", "c2", "{}", null, session);
             assertThat(okResult.success()).isTrue();
             assertThat(okResult.content()).isEqualTo("ok");
         }
@@ -335,7 +336,7 @@ class ToolExecutionServiceParallelTest {
 
             List<ToolResult> results = new ArrayList<>();
             for (ToolCall call : calls) {
-                results.add(service.execute(call.name(), call.id(), call.arguments(), null, null));
+                results.add(service.execute(call.name(), call.id(), call.arguments(), null, session));
             }
 
             // All 3 tools were executed (tool-2 failure didn't stop tool-3)
@@ -366,7 +367,7 @@ class ToolExecutionServiceParallelTest {
                 });
 
             ToolExecutionService service = buildService(registry);
-            ToolResult result = service.execute("flaky", "c1", "{}", null, null);
+            ToolResult result = service.execute("flaky", "c1", "{}", null, session);
 
             assertThat(result.success()).isTrue();
             assertThat(result.content()).isEqualTo("finally succeeded");
@@ -385,7 +386,7 @@ class ToolExecutionServiceParallelTest {
                 });
 
             ToolExecutionService service = buildService(registry);
-            ToolResult result = service.execute("always-fail", "c1", "{}", null, null);
+            ToolResult result = service.execute("always-fail", "c1", "{}", null, session);
 
             assertThat(result.success()).isFalse();
             assertThat(result.error()).contains("permanent failure");
@@ -404,7 +405,7 @@ class ToolExecutionServiceParallelTest {
                 });
 
             ToolExecutionService service = buildService(registry);
-            ToolResult result = service.execute("bad-args", "c1", "{}", null, null);
+            ToolResult result = service.execute("bad-args", "c1", "{}", null, session);
 
             assertThat(result.success()).isFalse();
             assertThat(result.error()).contains("invalid arguments");
@@ -427,7 +428,7 @@ class ToolExecutionServiceParallelTest {
 
             properties.getToolOutput().setMaxChars(10000);
             ToolExecutionService service = buildService(registry);
-            ToolResult result = service.execute("show-config", "c1", "{}", null, null);
+            ToolResult result = service.execute("show-config", "c1", "{}", null, session);
 
             assertThat(result.content()).doesNotContain("sk-abc123def456ghi789jkl012mno345pqr");
             assertThat(result.content()).contains("[REDACTED:");
@@ -442,7 +443,7 @@ class ToolExecutionServiceParallelTest {
 
             properties.getToolOutput().setMaxChars(10000);
             ToolExecutionService service = buildService(registry);
-            ToolResult result = service.execute("fail-with-secret", "c1", "{}", null, null);
+            ToolResult result = service.execute("fail-with-secret", "c1", "{}", null, session);
 
             assertThat(result.success()).isFalse();
             assertThat(result.error()).doesNotContain("mypass12345678");

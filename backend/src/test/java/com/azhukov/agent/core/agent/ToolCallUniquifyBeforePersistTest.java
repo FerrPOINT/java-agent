@@ -119,7 +119,7 @@ class ToolCallUniquifyBeforePersistTest {
             mock(MessageSanitizer.class), contextReferenceService, properties,
             mock(UserInputSanitizer.class), guardrail, turnStateManager, null,
             mock(InterruptToken.class), null, mock(SteerBuffer.class), null, null,
-            new com.azhukov.agent.core.security.ApprovalQueue(), null, null,
+            new com.azhukov.agent.core.security.ApprovalQueue(), mock(com.azhukov.agent.core.security.ToolApprovalPolicy.class), null,
             new TokenEstimator(), new ToolResultFormatter(), recording, null);
 
         runtime.runTurn(Session.create("user", "noop", "noop"), "search two things");

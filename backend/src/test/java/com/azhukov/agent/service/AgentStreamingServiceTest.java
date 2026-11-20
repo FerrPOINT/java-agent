@@ -189,6 +189,7 @@ class AgentStreamingServiceTest {
             new AgentSessionResolver(sessionStorePort(), sessionMapper, transactionTemplate, mock(com.azhukov.agent.core.ports.MessageStorePort.class), mock(com.azhukov.agent.core.agent.SessionLineageService.class), mock(com.azhukov.agent.core.agent.ProjectContextDetector.class)),
             lineageService,
             new CliStateApplier(null), null, null, new ModelMetadataService(), null);
+        streamingService.setToolApproval(new ApprovalQueue(), mock(ToolApprovalPolicy.class));
     }
 
 

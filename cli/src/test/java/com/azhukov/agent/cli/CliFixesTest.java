@@ -310,10 +310,17 @@ class CliFixesTest {
     // ── C4: Session persistence ──
 
     @Test
-    void saveCommandReturnsMessage() {
-        String result = registry.execute("/save", client, "test-session-id");
-        assertThat(result).contains("Session saved");
-        assertThat(result).contains("test-session-id");
+    void saveCommandReturnsMessage(@org.junit.jupiter.api.io.TempDir java.nio.file.Path directory) throws Exception {
+        String previousHome = System.getProperty("user.home");
+        System.setProperty("user.home", directory.toString());
+        try {
+            String result = registry.execute("/save", client, "test-session-id");
+            assertThat(result).contains("Session saved", "test-session-id");
+            assertThat(java.nio.file.Files.readString(directory.resolve(".java-agent-cli/session.txt")))
+                .isEqualTo("test-session-id");
+        } finally {
+            System.setProperty("user.home", previousHome);
+        }
     }
 
     // ── C7: Aliases ──

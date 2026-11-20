@@ -288,7 +288,7 @@ class AgentRuntimeUnitTest {
             new MessageSanitizer(new SecretRedactor(properties)),
             mockContextReferenceService(), properties, new UserInputSanitizer(),
             new DefaultToolCallGuardrail(new com.azhukov.agent.core.security.GuardrailConfig()), new TurnStateManager(), null, null, null, new SteerBuffer(),
-            new ErrorClassifier(), null, new com.azhukov.agent.core.security.ApprovalQueue(), null, null,
+            new ErrorClassifier(), null, new com.azhukov.agent.core.security.ApprovalQueue(), mock(com.azhukov.agent.core.security.ToolApprovalPolicy.class), null,
             new TokenEstimator(), new ToolResultFormatter(), null, null
         );
 
@@ -335,7 +335,7 @@ class AgentRuntimeUnitTest {
             new MessageSanitizer(new SecretRedactor(properties)),
             mockContextReferenceService(), properties, new UserInputSanitizer(),
             new DefaultToolCallGuardrail(new com.azhukov.agent.core.security.GuardrailConfig()), new TurnStateManager(), null, null, null, new SteerBuffer(),
-            new ErrorClassifier(), null, new com.azhukov.agent.core.security.ApprovalQueue(), null, null,
+            new ErrorClassifier(), null, new com.azhukov.agent.core.security.ApprovalQueue(), mock(com.azhukov.agent.core.security.ToolApprovalPolicy.class), null,
             new TokenEstimator(), new ToolResultFormatter(), null, null
         );
     }
