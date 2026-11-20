@@ -36,6 +36,8 @@ class MidTurnAtomicPostgresTest extends PostgresTestContainer {
             var batch = List.of(Message.user("first"), Message.assistant("second", 0), Message.toolResult("call", "third", 0));
             assertThat(service.persistNewMessages(id, batch, 0)).isTrue();
             var rows = messages.findBySessionIdOrderByCreatedAtAsc(id);
+            assertThat(rows).extracting(com.azhukov.agent.persistence.entity.MessageEntity::getCreatedAt)
+                .doesNotContainNull().containsOnly(rows.getFirst().getCreatedAt());
             assertThat(rows).extracting(com.azhukov.agent.persistence.entity.MessageEntity::getContent)
                 .containsExactly("first", "second", "third");
             assertThat(rows).extracting(com.azhukov.agent.persistence.entity.MessageEntity::getInsertOrder)
