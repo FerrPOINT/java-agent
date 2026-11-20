@@ -107,7 +107,7 @@ public class HeartbeatDeliveryPoller {
     private boolean ackResult(UUID sessionId) {
         JsonNode response = backendClient.suggestionPost(
             "/api/v1/agent/cron/heartbeat/" + sessionId + "/result/ack");
-        return response != null && response.path("acked").isBoolean();
+        return response != null && response.path("acked").isBoolean() && response.path("acked").asBoolean();
     }
 
     private static String truncate(String s) {
