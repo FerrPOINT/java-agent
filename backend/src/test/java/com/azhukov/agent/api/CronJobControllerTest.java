@@ -74,7 +74,12 @@ class CronJobControllerTest {
         entity.setSchedule("0 * * * *");
         entity.setPrompt("test prompt");
         entity.setEnabled(true);
-        when(cronJobService.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any())).thenReturn(entity);
+        when(cronJobService.create(
+            any(), any(), any(), any(),
+            any(), any(), any(), any(),
+            any(), any(), anyBoolean(), any(),
+            any(), any(), any(), any(),
+            any(), anyBoolean(), any())).thenReturn(entity);
 
         mockMvc.perform(post("/api/v1/agent/cron")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -94,7 +99,12 @@ class CronJobControllerTest {
         entity.setPrompt("p");
         entity.setEnabled(true);
         entity.setContextFrom("11111111-1111-1111-1111-111111111111");
-        when(cronJobService.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any())).thenReturn(entity);
+        when(cronJobService.create(
+            any(), any(), any(), any(),
+            any(), any(), any(), any(),
+            any(), any(), anyBoolean(), any(),
+            any(), any(), any(), any(),
+            any(), anyBoolean(), any())).thenReturn(entity);
 
         mockMvc.perform(post("/api/v1/agent/cron")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -106,9 +116,12 @@ class CronJobControllerTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.contextFrom").value("11111111-1111-1111-1111-111111111111"));
 
-        verify(cronJobService).create(isNull(), eq("chained"), eq("0 * * * *"), eq("p"), isNull(), isNull(),
-            eq("11111111-1111-1111-1111-111111111111"),
-            isNull(), isNull(), eq(false), eq("web"), eq("/tmp"), isNull(), isNull(), isNull());
+        verify(cronJobService).create(
+            isNull(), isNull(), eq("chained"), eq("0 * * * *"),
+            eq("p"), isNull(), isNull(), eq("11111111-1111-1111-1111-111111111111"),
+            isNull(), isNull(), eq(false), eq("web"),
+            eq("/tmp"), isNull(), isNull(), isNull(),
+            isNull(), eq(false), isNull());
     }
 
     @Test
@@ -123,7 +136,11 @@ class CronJobControllerTest {
 
             verify(cronSuggestionService).acceptSuggestion(org.mockito.ArgumentMatchers.any(UUID.class), eq("user-b"));
             verify(cronJobService, never()).create(
-                any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any());
+            any(), org.mockito.ArgumentMatchers.eq("default"), any(), any(),
+            any(), any(), any(), any(),
+            any(), any(), anyBoolean(), any(),
+            any(), any(), any(), any(),
+            org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.eq(false), org.mockito.ArgumentMatchers.isNull());
         } finally {
             UserContext.clear();
         }
@@ -174,15 +191,123 @@ class CronJobControllerTest {
     }
 
     @Test
+    void heartbeatSetRejectsNegativeMaxTicksWithoutStartingUnlimitedLoop() throws Exception {
+        UUID sessionId = UUID.randomUUID();
+        UserContext.set("user-a", UserContext.ROLE_USER);
+        try {
+            mockMvc.perform(post("/api/v1/agent/cron/heartbeat")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""
+                        {"sessionId":"%s","prompt":"check status","intervalSeconds":60,"maxTicks":-1}
+                        """.formatted(sessionId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ok").value(false));
+            verify(heartbeatService, never()).set(any(), anyString(), org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.anyInt());
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
+    void heartbeatSetRejectsMissingSessionWithoutCreatingState() throws Exception {
+        UUID sessionId = UUID.randomUUID();
+        UserContext.set("user-a", UserContext.ROLE_USER);
+        try {
+            when(sessionRepository.findById(sessionId)).thenReturn(java.util.Optional.empty());
+            mockMvc.perform(post("/api/v1/agent/cron/heartbeat")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""
+                        {"sessionId":"%s","prompt":"check status","intervalSeconds":60}
+                        """.formatted(sessionId)))
+                .andExpect(status().isNotFound());
+            verify(heartbeatService, never()).set(any(), anyString(), org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.anyInt());
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
     void listEndpoint() throws Exception {
         CronJobEntity entity = new CronJobEntity();
         entity.setId(UUID.randomUUID());
         entity.setName("job1");
-        when(cronJobService.list(org.mockito.ArgumentMatchers.nullable(String.class))).thenReturn(List.of(entity));
+        when(cronJobService.list(true)).thenReturn(List.of(entity));
 
         mockMvc.perform(get("/api/v1/agent/cron"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$[0].name").value("job1"));
+    }
+
+    @Test
+    void currentCreationPreservesProfileScriptMonitorAndSessionScope() throws Exception {
+        UUID session = UUID.randomUUID();
+        CronJobEntity entity = new CronJobEntity();
+        entity.setId(UUID.randomUUID()); entity.setName("script-job"); entity.setProfile("team");
+        UserContext.set("owner-a", UserContext.ROLE_USER);
+        try {
+            when(cronJobService.create(
+            any(), any(), any(), any(),
+            any(), any(), any(), any(),
+            any(), any(), anyBoolean(), any(),
+            any(), any(), any(), any(),
+            any(), anyBoolean(), any())).thenReturn(entity);
+            mockMvc.perform(post("/api/v1/agent/cron").contentType(MediaType.APPLICATION_JSON).content("""
+                    {"name":"script-job","schedule":"0 * * * *","profile":"team","script":"daily.sh",
+                     "noAgent":true,"repeatCount":2,"enabledToolsets":"terminal","workdir":"/jobs",
+                     "modelProvider":"noop","modelName":"fixture","baseUrl":"http://localhost:8090",
+                     "continuityEnabled":false,"attachedSessionId":"%s"}
+                    """.formatted(session)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.profile").value("team"));
+            verify(cronJobService).create(
+            eq("owner-a"), eq("team"), eq("script-job"), eq("0 * * * *"),
+            isNull(), isNull(), isNull(), isNull(),
+            eq(2), eq("daily.sh"), eq(true), eq("terminal"),
+            eq("/jobs"), eq("noop"), eq("fixture"), eq("http://localhost:8090"),
+            isNull(), eq(false), eq(session));
+        } finally { UserContext.clear(); }
+    }
+
+    @Test
+    void currentUpdatePreservesConfigurationAndExplicitSessionAttachment() throws Exception {
+        UUID id = UUID.randomUUID(), session = UUID.randomUUID();
+        CronJobEntity entity = new CronJobEntity(); entity.setId(id); entity.setName("updated");
+        when(cronJobService.update(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(entity);
+        mockMvc.perform(put("/api/v1/agent/cron/{id}", id).contentType(MediaType.APPLICATION_JSON).content("""
+                {"name":"updated","schedule":"0 * * * *","skills":"audit","repeatCount":3,
+                 "script":"daily.sh","noAgent":false,"monitor":"https://example.test/status",
+                 "continuityEnabled":true,"attachToSession":true,"attachedSessionId":"%s"}
+                """.formatted(session))).andExpect(status().isOk());
+        verify(cronJobService).update(eq(id), eq("updated"), eq("0 * * * *"), isNull(), isNull(), isNull(),
+                eq("audit"), isNull(), eq(3), eq("daily.sh"), eq(false), isNull(), isNull(), isNull(), isNull(), isNull(),
+                eq("https://example.test/status"), eq(true), eq(true), eq(session));
+    }
+
+    @Test
+    void profileListUsesTheExistingScopedServiceBoundary() throws Exception {
+        when(cronJobService.listForProfile("team", false)).thenReturn(List.of());
+        mockMvc.perform(get("/api/v1/agent/cron?profile=team&includeDisabled=false"))
+            .andExpect(status().isOk()).andExpect(content().json("[]"));
+        verify(cronJobService).listForProfile("team", false);
+    }
+
+    @Test
+    void obsoleteFieldsAndActorOverridesAreRejectedBeforeMutation() throws Exception {
+        for (String field : List.of("no_agent", "monitor_script", "monitor_url", "attached_session_id", "userId")) {
+            mockMvc.perform(post("/api/v1/agent/cron").contentType(MediaType.APPLICATION_JSON).content(
+                    "{\"name\":\"job\",\"schedule\":\"0 * * * *\",\"prompt\":\"work\",\"" + field + "\":\"obsolete\"}"))
+                .andExpect(status().isBadRequest());
+        }
+        org.mockito.Mockito.verifyNoInteractions(cronJobService);
+    }
+
+    @Test
+    void retiredCrudRoutesAreNotRegistered() throws Exception {
+        for (String route : List.of("/api/jobs", "/api/cron/jobs", "/p/team/api/jobs", "/p/team/api/cron/jobs")) {
+            mockMvc.perform(get(route)).andExpect(status().isNotFound());
+            mockMvc.perform(post(route).contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isNotFound());
+        }
     }
 
     @Test

@@ -97,24 +97,6 @@ private static final String CRON_EXECUTION_HINT = """
     private EventService eventService;
     private ProfileService profileService;
 
-    /**
-     * Legacy constructor without delivery-ledger wiring: delivery enqueue is
-     * skipped (provider is null). Retained for tests of non-delivery behavior.
-     */
-    public CronJobService(
-        CronJobRepository cronJobRepository,
-        ObjectProvider<AgentRuntimeService> agentRuntimeServiceProvider,
-        AgentProperties properties,
-        SkillManager skillManager,
-        CronExecutionLogRepository cronExecutionLogRepository,
-        com.azhukov.agent.persistence.repository.MessageRepository messageRepository,
-        TransactionTemplate transactionTemplate,
-        CronScheduleParser scheduleParser
-    ) {
-        this(cronJobRepository, agentRuntimeServiceProvider, properties, skillManager,
-            cronExecutionLogRepository, messageRepository, transactionTemplate, scheduleParser, null, null, null);
-    }
-
     @Autowired
     public CronJobService(
         CronJobRepository cronJobRepository,
@@ -219,128 +201,8 @@ private static final String CRON_EXECUTION_HINT = """
         }
     }
 
-    // ── Create overloads (backward-compatible) ──
-
-    public CronJobEntity create(String name, String schedule, String prompt, String deliverTo) {
-        return create(name, schedule, prompt, deliverTo, null, null);
-    }
-
-    public CronJobEntity create(String name, String schedule, String prompt, String deliverTo, String skills) {
-        return create(name, schedule, prompt, deliverTo, skills, null);
-    }
-
-    public CronJobEntity createInProfile(String profile, String name, String schedule, String prompt, String deliverTo, String skills) {
-        return createInProfile(profile, name, schedule, prompt, deliverTo, skills, null);
-    }
-
-    public CronJobEntity create(String name, String schedule, String prompt, String deliverTo, String skills, String contextFrom) {
-        return create(name, schedule, prompt, deliverTo, skills, contextFrom,
-            null, null, false, null, null, null, null, null);
-    }
-
-    public CronJobEntity createInProfile(String profile, String name, String schedule, String prompt, String deliverTo, String skills, String contextFrom) {
-        return createInProfile(profile, name, schedule, prompt, deliverTo, skills, contextFrom,
-            null, null, false, null, null, null, null, null);
-    }
-
-    /**
-     * Full-featured create with all Hermes parity fields.
-     */
+    /** Create one owner/profile-scoped job using the current full contract. */
     public CronJobEntity create(
-        String name, String schedule, String prompt, String deliverTo,
-        String skills, String contextFrom,
-        Integer repeatCount,
-        String script, boolean noAgent,
-        String enabledToolsets, String workdir,
-        String modelProvider, String modelName, String baseUrl
-    ) {
-        return createScoped(null, DEFAULT_PROFILE, name, schedule, prompt, deliverTo, skills, contextFrom, repeatCount,
-            script, noAgent, enabledToolsets, workdir, modelProvider, modelName, baseUrl,
-            null, false, null);
-    }
-
-    public CronJobEntity createInProfile(
-        String profile,
-        String name, String schedule, String prompt, String deliverTo,
-        String skills, String contextFrom,
-        Integer repeatCount,
-        String script, boolean noAgent,
-        String enabledToolsets, String workdir,
-        String modelProvider, String modelName, String baseUrl
-    ) {
-        return createScoped(null, profile, name, schedule, prompt, deliverTo, skills, contextFrom, repeatCount,
-            script, noAgent, enabledToolsets, workdir, modelProvider, modelName, baseUrl,
-            null, false, null);
-    }
-
-    /**
-     * rev-89 ownership contract (main): userId-first create — the job is owned by
-     * the creating user from the first row. PR-3 parity service kept the
-     * unscoped creates; this wrapper preserves CronJobController's contract.
-     */
-    public CronJobEntity create(
-        String userId,
-        String name, String schedule, String prompt, String deliverTo,
-        String skills, String contextFrom,
-        Integer repeatCount,
-        String script, boolean noAgent,
-        String enabledToolsets, String workdir,
-        String modelProvider, String modelName, String baseUrl
-    ) {
-        return createScoped(userId, DEFAULT_PROFILE, name, schedule, prompt, deliverTo, skills, contextFrom,
-            repeatCount, script, noAgent, enabledToolsets, workdir, modelProvider, modelName, baseUrl,
-            null, false, null);
-    }
-    /** PR-3 parity: create with monitor/continuity/attached-session, userId-scoped. */
-    public CronJobEntity create(
-        String userId,
-        String name, String schedule, String prompt, String deliverTo,
-        String skills, String contextFrom,
-        Integer repeatCount,
-        String script, boolean noAgent,
-        String enabledToolsets, String workdir,
-        String modelProvider, String modelName, String baseUrl,
-        String monitor, boolean continuity, UUID attachedSessionId
-    ) {
-        return createScoped(userId, DEFAULT_PROFILE, name, schedule, prompt, deliverTo, skills, contextFrom,
-            repeatCount, script, noAgent, enabledToolsets, workdir, modelProvider, modelName, baseUrl,
-            monitor, continuity, attachedSessionId);
-    }
-
-
-    /**
-     * Full-featured create with Hermes monitor, continuity, and session-attach fields.
-     */
-    public CronJobEntity create(
-        String name, String schedule, String prompt, String deliverTo,
-        String skills, String contextFrom,
-        Integer repeatCount,
-        String script, boolean noAgent,
-        String enabledToolsets, String workdir,
-        String modelProvider, String modelName, String baseUrl,
-        String monitor, boolean continuityEnabled, UUID attachedSessionId
-    ) {
-        return createScoped(null, DEFAULT_PROFILE, name, schedule, prompt, deliverTo, skills, contextFrom,
-            repeatCount, script, noAgent, enabledToolsets, workdir, modelProvider, modelName, baseUrl,
-            monitor, continuityEnabled, attachedSessionId);
-    }
-
-    public CronJobEntity createInProfile(
-        String profile,
-        String name, String schedule, String prompt, String deliverTo,
-        String skills, String contextFrom,
-        Integer repeatCount,
-        String script, boolean noAgent,
-        String enabledToolsets, String workdir,
-        String modelProvider, String modelName, String baseUrl,
-        String monitor, boolean continuityEnabled, UUID attachedSessionId
-    ) {
-        return createScoped(null, profile, name, schedule, prompt, deliverTo, skills, contextFrom,
-            repeatCount, script, noAgent, enabledToolsets, workdir, modelProvider, modelName, baseUrl,
-            monitor, continuityEnabled, attachedSessionId);
-    }
-
-    private CronJobEntity createScoped(
         String userId,
         String profile,
         String name, String schedule, String prompt, String deliverTo,
@@ -366,12 +228,12 @@ private static final String CRON_EXECUTION_HINT = """
         if (!noAgent && isBlank(prompt) && normalizedScript == null && isBlank(skills)) {
             throw new IllegalArgumentException(EMPTY_PAYLOAD_ERROR);
         }
-        String ownerId = userId != null ? userId : UserContext.scopeUserId();
-        requireAttachedSessionOwnership(ownerId, attachedSessionId);
-        String effectiveContextFrom = continuityEnabled ? applyContinuity(contextFrom, true) : contextFrom;
-
         CronJobEntity entity = new CronJobEntity();
-        entity.setUserId(ownerId);
+        // Null explicitly denotes a global/system job, never an inferred caller.
+        entity.setUserId(userId);
+        requireOwnership(entity);
+        requireAttachedSessionOwnership(userId, attachedSessionId);
+        String effectiveContextFrom = continuityEnabled ? applyContinuity(contextFrom, true) : contextFrom;
         entity.setProfile(normalizedProfile);
         entity.setName(name);
         entity.setSchedule(schedule);
@@ -469,32 +331,6 @@ private static final String CRON_EXECUTION_HINT = """
         return includeDisabled
             ? cronJobRepository.findByProfile(normalizedProfile, sort)
             : cronJobRepository.findByProfileAndEnabledTrue(normalizedProfile, sort);
-    }
-
-    // ── Update overloads (backward-compatible) ──
-
-    @org.springframework.transaction.annotation.Transactional
-    public CronJobEntity update(UUID id, String name, String schedule, String prompt, String deliverTo, Boolean enabled) {
-        return update(id, name, schedule, prompt, deliverTo, enabled,
-            null, null, null, null, null, null, null, null, null, null);
-    }
-
-    /**
-     * Full-featured update with all Hermes parity fields.
-     * Each field is only applied if non-null (Boolean fields use explicit non-null check).
-     */
-    @org.springframework.transaction.annotation.Transactional
-    public CronJobEntity update(
-        UUID id, String name, String schedule, String prompt, String deliverTo, Boolean enabled,
-        String skills, String contextFrom,
-        Integer repeatCount,
-        String script, Boolean noAgent,
-        String enabledToolsets, String workdir,
-        String modelProvider, String modelName, String baseUrl
-    ) {
-        return update(id, name, schedule, prompt, deliverTo, enabled, skills, contextFrom,
-            repeatCount, script, noAgent, enabledToolsets, workdir, modelProvider, modelName,
-            baseUrl, null, null, null, null);
     }
 
     /**
@@ -676,13 +512,19 @@ private static final String CRON_EXECUTION_HINT = """
         CronJobEntity entity = cronJobRepository.findById(id)
             .orElseThrow(() -> new IllegalArgumentException("Cron job not found: " + id));
         requireOwnership(entity);
-        scheduler.execute(() -> {
+        var origin = com.azhukov.agent.core.security.NativeIdentityOrigin.current();
+        scheduler.execute(UserContext.wrap(() -> {
+            var previousOrigin = com.azhukov.agent.core.security.NativeIdentityOrigin.current();
+            com.azhukov.agent.core.security.NativeIdentityOrigin.bind(origin);
             try {
+                UserContext.requireCurrentAccess();
                 executeManualNow(id, extraPrompt);
             } catch (Exception e) {
                 log.warn("Manual background cron run {} did not complete: {}", id, e.getMessage());
+            } finally {
+                com.azhukov.agent.core.security.NativeIdentityOrigin.bind(previousOrigin);
             }
-        });
+        }));
         return entity;
     }
 
@@ -695,6 +537,7 @@ private static final String CRON_EXECUTION_HINT = """
                 jobLocks.remove(id, lock);
                 throw new IllegalArgumentException("Cron job not found: " + id);
             }
+            requireOwnership(entity);
             if (executeJob(entity, extraPrompt) == CronExecutionOutcome.RESULT_NOT_COMMITTED) {
                 throw new IllegalStateException("Cron execution result could not be committed");
             }
@@ -1033,6 +876,7 @@ private static final String CRON_EXECUTION_HINT = """
             enhancedPrompt = CRON_EXECUTION_HINT + enhancedPrompt;
 
             Map<String, String> runtimeMetadata = new java.util.HashMap<>();
+            runtimeMetadata.put(com.azhukov.agent.tools.cron.CronJobTool.CRON_RUN_METADATA, "true");
             if (job.getEnabledToolsets() != null && !job.getEnabledToolsets().isBlank()) {
                 runtimeMetadata.put("delegation_toolsets", job.getEnabledToolsets());
                 log.debug("Cron job '{}' restricts toolsets to {}", job.getName(), job.getEnabledToolsets());

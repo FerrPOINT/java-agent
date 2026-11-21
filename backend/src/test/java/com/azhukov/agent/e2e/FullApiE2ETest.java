@@ -18,6 +18,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -699,12 +700,20 @@ class FullApiE2ETest {
         assertTrue(body.isArray());
     }
 
-    @Test @Order(96) @DisplayName("GET /api/v1/agent/skills/bundles — alias for bundles")
-    void listBundlesAlias() throws Exception {
-        HttpResponse<String> resp = get("/api/v1/agent/skills/bundles");
-        assertEquals(200, resp.statusCode());
-        JsonNode body = parseJson(resp.body());
-        assertTrue(body.isArray());
+    @Test @Order(96) @DisplayName("GET /api/v1/agent/skills/bundles — uses the skill content contract")
+    void readsBundlesAsSkillSlug() throws Exception {
+        HttpResponse<String> response = get("/api/v1/agent/skills/bundles");
+        assertEquals(200, response.statusCode());
+        JsonNode skill = parseJson(response.body());
+        assertTrue(skill.isObject());
+        assertTrue(skill.path("ok").isBoolean());
+    }
+
+    @Test @Order(97) @DisplayName("Retired Cron CRUD routes are absent from the running application")
+    void retiredCronCrudRoutesAreAbsent() throws Exception {
+        for (String path : List.of("/api/jobs", "/api/cron/jobs", "/p/default/api/jobs", "/p/default/api/cron/jobs")) {
+            assertEquals(404, get(path).statusCode());
+        }
     }
 
     // ── 12. Checkpoint ──
@@ -749,44 +758,26 @@ class FullApiE2ETest {
 
     // ── 13. Compress / Undo ──
 
-    @Test @Order(110) @DisplayName("POST /api/v1/agent/compress — compresses context")
+    @Test @Order(110) @DisplayName("POST /api/v1/agent/session/{sessionId}/compress — compresses context")
     void compressContext() throws Exception {
         Assumptions.assumeTrue(sharedSessionId != null, "No shared session");
-        HttpResponse<String> resp = postWithRetry("/api/v1/agent/compress",
-            "{\"sessionId\":\"" + sharedSessionId + "\"}");
+        HttpResponse<String> resp = postWithRetry("/api/v1/agent/session/" + sharedSessionId + "/compress",
+            "{\"focusTopic\":\"testing\"}");
         assertEquals(200, resp.statusCode());
         assertTrue(resp.body().contains("compressed") || resp.body().contains("Context"),
             "Should mention compression in response");
     }
 
-    @Test @Order(111) @DisplayName("POST /api/v1/agent/undo — undoes last turn")
+    @Test @Order(111) @DisplayName("POST /api/v1/agent/session/{sessionId}/undo — undoes last turn")
     void undoTurn() throws Exception {
         Assumptions.assumeTrue(sharedSessionId != null, "No shared session");
         // First add a turn to undo
         postWithRetry("/api/v1/agent/chat",
             "{\"sessionId\":\"" + sharedSessionId + "\",\"message\":\"Tell me a joke\"}");
-        HttpResponse<String> resp = post("/api/v1/agent/undo",
-            "{\"sessionId\":\"" + sharedSessionId + "\",\"turns\":1}");
+        HttpResponse<String> resp = post("/api/v1/agent/session/" + sharedSessionId + "/undo", "");
         assertEquals(200, resp.statusCode());
         int removed = Integer.parseInt(resp.body().trim());
         assertTrue(removed >= 1, "Should remove at least 1 turn, got: " + removed);
-    }
-
-    @Test @Order(112) @DisplayName("POST /api/v1/agent/session/{sessionId}/compress — path-based compress")
-    void compressSessionPath() throws Exception {
-        Assumptions.assumeTrue(sharedSessionId != null, "No shared session");
-        HttpResponse<String> resp = postWithRetry("/api/v1/agent/session/" + sharedSessionId + "/compress",
-            "{\"focusTopic\":\"testing\"}");
-        assertEquals(200, resp.statusCode());
-    }
-
-    @Test @Order(113) @DisplayName("POST /api/v1/agent/session/{sessionId}/undo — path-based undo")
-    void undoSessionPath() throws Exception {
-        Assumptions.assumeTrue(sharedSessionId != null, "No shared session");
-        postWithRetry("/api/v1/agent/chat",
-            "{\"sessionId\":\"" + sharedSessionId + "\",\"message\":\"Say hi\"}");
-        HttpResponse<String> resp = post("/api/v1/agent/session/" + sharedSessionId + "/undo?turns=1", "");
-        assertEquals(200, resp.statusCode());
     }
 
     // ── 14. Curator ──
@@ -945,26 +936,26 @@ class FullApiE2ETest {
         assertTrue(body.isArray());
     }
 
-    @Test @Order(181) @DisplayName("POST /api/v1/agent/approve — approve with no pending returns message")
+    @Test @Order(181) @DisplayName("POST /api/v1/agent/approvals/decisions — approve with no pending returns message")
     void approveNoPending() throws Exception {
-        HttpResponse<String> resp = post("/api/v1/agent/approve",
-            "{\"all\":false}");
+        HttpResponse<String> resp = post("/api/v1/agent/approvals/decisions",
+            "{\"action\":\"APPROVE\",\"all\":false}");
         assertEquals(200, resp.statusCode());
         assertNotNull(resp.body());
     }
 
-    @Test @Order(182) @DisplayName("POST /api/v1/agent/deny — deny with no pending returns message")
+    @Test @Order(182) @DisplayName("POST /api/v1/agent/approvals/decisions — deny with no pending returns message")
     void denyNoPending() throws Exception {
-        HttpResponse<String> resp = post("/api/v1/agent/deny",
-            "{\"all\":false}");
+        HttpResponse<String> resp = post("/api/v1/agent/approvals/decisions",
+            "{\"action\":\"DENY\",\"all\":false}");
         assertEquals(200, resp.statusCode());
         assertNotNull(resp.body());
     }
 
-    @Test @Order(183) @DisplayName("POST /api/v1/agent/approve — approve all with no pending")
+    @Test @Order(183) @DisplayName("POST /api/v1/agent/approvals/decisions — approve all with no pending")
     void approveAll() throws Exception {
-        HttpResponse<String> resp = post("/api/v1/agent/approve",
-            "{\"all\":true}");
+        HttpResponse<String> resp = post("/api/v1/agent/approvals/decisions",
+            "{\"action\":\"APPROVE\",\"all\":true}");
         assertEquals(200, resp.statusCode());
     }
 
@@ -1529,21 +1520,20 @@ class FullApiE2ETest {
 
     // ── 39. AgentChat: per-session approvals, transcribe, debug-report ──
 
-    @Test @Order(360) @DisplayName("POST /api/v1/agent/approvals/{sessionId}/approve — approve with no pending")
+    @Test @Order(360) @DisplayName("POST /api/v1/agent/approvals/decisions — unknown request returns 404")
     void approvalsSessionApprove() throws Exception {
         UUID fakeSession = UUID.randomUUID();
-        HttpResponse<String> resp = post("/api/v1/agent/approvals/" + fakeSession + "/approve", "");
-        // No pending approval → returns null or error, but should not crash
-        assertTrue(resp.statusCode() == 200 || resp.statusCode() == 404,
-            "Expected 200 or 404, got " + resp.statusCode());
+        HttpResponse<String> resp = post("/api/v1/agent/approvals/decisions",
+            "{\"action\":\"APPROVE\",\"requestId\":\"" + fakeSession + "\"}");
+        assertEquals(404, resp.statusCode());
     }
 
-    @Test @Order(361) @DisplayName("POST /api/v1/agent/approvals/{sessionId}/deny — deny with no pending")
+    @Test @Order(361) @DisplayName("POST /api/v1/agent/approvals/decisions — unknown request returns 404")
     void approvalsSessionDeny() throws Exception {
         UUID fakeSession = UUID.randomUUID();
-        HttpResponse<String> resp = post("/api/v1/agent/approvals/" + fakeSession + "/deny", "");
-        assertTrue(resp.statusCode() == 200 || resp.statusCode() == 404,
-            "Expected 200 or 404, got " + resp.statusCode());
+        HttpResponse<String> resp = post("/api/v1/agent/approvals/decisions",
+            "{\"action\":\"DENY\",\"requestId\":\"" + fakeSession + "\"}");
+        assertEquals(404, resp.statusCode());
     }
 
     @Test @Order(362) @DisplayName("POST /api/v1/agent/transcribe — empty audio returns error")

@@ -24,7 +24,7 @@ class ToolExecutionServiceFullTest {
     private AgentProperties properties = new AgentProperties();
 
     private com.azhukov.agent.core.security.ToolCallGuardrail guardrail() {
-        return new DefaultToolCallGuardrail(properties);
+        return new DefaultToolCallGuardrail(new com.azhukov.agent.core.security.GuardrailConfig());
     }
 
     private SecretRedactor redactor() {
@@ -76,7 +76,7 @@ class ToolExecutionServiceFullTest {
         ToolRegistry registry = buildRegistry(ToolResult.ok("1234567890"));
         ToolExecutionService service = buildService(registry);
 
-        ToolResult result = service.execute("ok", "c1", "{}", null, null);
+        ToolResult result = service.execute("ok", "c1", "{}", null, Session.create("u", "p", "m"));
 
         // head+tail truncation (Hermes parity): 5-char cap → 2 head + notice + 3 tail
         assertThat(result.content()).startsWith("12");
@@ -89,7 +89,7 @@ class ToolExecutionServiceFullTest {
         ToolRegistry registry = buildRegistry(null);
         ToolExecutionService service = buildService(registry);
 
-        ToolResult result = service.execute("throw", "c1", "{}", null, null);
+        ToolResult result = service.execute("throw", "c1", "{}", null, Session.create("u", "p", "m"));
 
         assertThat(result.success()).isFalse();
         assertThat(result.error()).contains("boom");
@@ -100,7 +100,7 @@ class ToolExecutionServiceFullTest {
         ToolRegistry registry = buildRegistry(null);
         ToolExecutionService service = buildService(registry);
 
-        ToolResult result = service.execute("arg-error", "c1", "{}", null, null);
+        ToolResult result = service.execute("arg-error", "c1", "{}", null, Session.create("u", "p", "m"));
 
         assertThat(result.success()).isFalse();
         assertThat(result.error()).contains("bad");
@@ -115,7 +115,7 @@ class ToolExecutionServiceFullTest {
         ToolRegistry registry = buildSlowRegistry(5000, calls);
         ToolExecutionService service = buildService(registry, props);
 
-        ToolResult result = service.execute("slow", "c1", "{}", null, null);
+        ToolResult result = service.execute("slow", "c1", "{}", null, Session.create("u", "p", "m"));
 
         assertThat(result.success()).isFalse();
         assertThat(result.error()).contains("timed out");
@@ -145,7 +145,7 @@ class ToolExecutionServiceFullTest {
         });
         ToolExecutionService service = buildService(registry, props);
 
-        ToolResult result = service.execute("slow", "c1", "{}", null, null);
+        ToolResult result = service.execute("slow", "c1", "{}", null, Session.create("u", "p", "m"));
 
         assertThat(result.success()).isFalse();
         assertThat(result.error()).contains("timed out");
@@ -167,7 +167,7 @@ class ToolExecutionServiceFullTest {
         });
         ToolExecutionService service = buildService(registry);
 
-        ToolResult result = service.execute("flaky", "c1", "{}", null, null);
+        ToolResult result = service.execute("flaky", "c1", "{}", null, Session.create("u", "p", "m"));
 
         assertThat(result.success()).isTrue();
         assertThat(result.content()).isEqualTo("finally");

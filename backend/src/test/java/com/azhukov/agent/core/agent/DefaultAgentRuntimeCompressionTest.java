@@ -110,7 +110,6 @@ class DefaultAgentRuntimeCompressionTest {
         when(iterationBudget.recordToolExecution(any(), any(String.class), any(long.class))).thenReturn(snapshot);
         when(turnStateManager.getOrStart(any(UUID.class), any(int.class)))
             .thenReturn(mock(com.azhukov.agent.core.state.TurnState.class));
-        when(guardrail.isHalted()).thenReturn(false);
 
         runtime = new DefaultAgentRuntime(
             modelClient, toolRegistry, toolExecutionService, promptBuilder,
@@ -157,7 +156,6 @@ class DefaultAgentRuntimeCompressionTest {
         when(iterationBudget.recordModelCall(any(), any(int.class), any(int.class))).thenReturn(snapshot);
         when(turnStateManager.getOrStart(any(UUID.class), any(int.class)))
             .thenReturn(mock(com.azhukov.agent.core.state.TurnState.class));
-        when(guardrail.isHalted()).thenReturn(false);
 
         DefaultAgentRuntime disabledRuntime = new DefaultAgentRuntime(
             modelClient, toolRegistry, toolExecutionService, promptBuilder,
@@ -211,7 +209,6 @@ class DefaultAgentRuntimeCompressionTest {
         when(iterationBudget.recordModelCall(any(), any(int.class), any(int.class))).thenReturn(snapshot);
         when(turnStateManager.getOrStart(any(UUID.class), any(int.class)))
             .thenReturn(mock(com.azhukov.agent.core.state.TurnState.class));
-        when(guardrail.isHalted()).thenReturn(false);
 
         DefaultAgentRuntime disabledRuntime = new DefaultAgentRuntime(
             modelClient, toolRegistry, toolExecutionService, promptBuilder,
@@ -277,7 +274,6 @@ class DefaultAgentRuntimeCompressionTest {
         when(iterationBudget.recordModelCall(any(), any(int.class), any(int.class))).thenReturn(snapshot);
         when(turnStateManager.getOrStart(any(UUID.class), any(int.class)))
             .thenReturn(mock(com.azhukov.agent.core.state.TurnState.class));
-        when(guardrail.isHalted()).thenReturn(false);
 
         DefaultAgentRuntime multiRuntime = new DefaultAgentRuntime(
             modelClient, toolRegistry, toolExecutionService, promptBuilder,
@@ -341,7 +337,6 @@ class DefaultAgentRuntimeCompressionTest {
         when(iterationBudget.recordModelCall(any(), any(int.class), any(int.class))).thenReturn(snapshot);
         when(turnStateManager.getOrStart(any(UUID.class), any(int.class)))
             .thenReturn(mock(com.azhukov.agent.core.state.TurnState.class));
-        when(guardrail.isHalted()).thenReturn(false);
 
         DefaultAgentRuntime tierRuntime = new DefaultAgentRuntime(
             modelClient, toolRegistry, toolExecutionService, promptBuilder,
@@ -393,7 +388,6 @@ class DefaultAgentRuntimeCompressionTest {
         when(iterationBudget.recordModelCall(any(), any(int.class), any(int.class))).thenReturn(snapshot);
         when(turnStateManager.getOrStart(any(UUID.class), any(int.class)))
             .thenReturn(mock(com.azhukov.agent.core.state.TurnState.class));
-        when(guardrail.isHalted()).thenReturn(false);
 
         DefaultAgentRuntime disabledRuntime = new DefaultAgentRuntime(
             modelClient, toolRegistry, toolExecutionService, promptBuilder,

@@ -4,6 +4,7 @@ import com.azhukov.agent.client.mcp.McpLifecycleManager;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.model.ToolDefinition;
+import com.azhukov.agent.service.McpConfigStore;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -52,8 +53,19 @@ public class McpDashboardController {
         }
     }
 
+    private String profileOrRuntime(String profile) {
+        return profile == null ? mcpLifecycleManager.runtimeProfile() : profile;
+    }
+
+    private void requireRuntimeProfile(String profile) {
+        if (profile != null && !McpConfigStore.profileKey(profile).equals(mcpLifecycleManager.runtimeProfile())) {
+            throw new IllegalArgumentException("This MCP operation uses the profile of the running agent");
+        }
+    }
+
     @GetMapping("/servers")
     public Map<String, Object> listServers(@RequestParam(name = "profile", required = false) String profile) {
+        requireRuntimeProfile(profile);
         Map<String, McpLifecycleManager.McpServerInfo> live = liveServers();
         List<Map<String, Object>> servers = properties.getMcp().getServers().stream()
             .sorted((a, b) -> a.getName().compareToIgnoreCase(b.getName()))
@@ -76,6 +88,7 @@ public class McpDashboardController {
         @PathVariable String name,
         @RequestParam(name = "profile", required = false) String profile
     ) {
+        requireRuntimeProfile(profile);
         AgentProperties.McpProperties.ServerProperties configured = configuredServer(name);
         if (configured == null && !liveServers().containsKey(name)) {
             return notFound("Server '" + name + "' not found");
@@ -126,7 +139,7 @@ public class McpDashboardController {
 
     @GetMapping("/catalog")
     @io.swagger.v3.oas.annotations.Operation(summary = "Reviewed catalog entries (data only; install creates a persisted config)")
-    public Map<String, Object> catalog(@RequestParam(name = "profile", required = false) String profile) {
+    public Map<String, Object> catalog() {
         return Map.of("entries", CATALOG);
     }
 
@@ -142,7 +155,7 @@ public class McpDashboardController {
         }
         try {
             com.azhukov.agent.service.McpConfigStore.ServerConfigInput input = parseServerInput(body);
-            var saved = store.upsert(profile, input);
+            var saved = store.upsert(profileOrRuntime(profile), input);
             return ResponseEntity.ok(store.redactedView(saved));
         } catch (IllegalArgumentException e) {
             return badRequest(e.getMessage());
@@ -171,7 +184,7 @@ public class McpDashboardController {
                 }
                 @SuppressWarnings("unchecked")
                 Map<String, Object> entryBody = (Map<String, Object>) entryMap;
-                saved.add(store.redactedView(store.upsert(profile, parseServerInput(entryBody))));
+                saved.add(store.redactedView(store.upsert(profileOrRuntime(profile), parseServerInput(entryBody))));
             }
         } catch (IllegalArgumentException e) {
             return badRequest(e.getMessage());
@@ -189,7 +202,7 @@ public class McpDashboardController {
         if (store == null) {
             return notImplemented("MCP config store is not available in this deployment");
         }
-        boolean deleted = store.delete(profile, name);
+        boolean deleted = store.delete(profileOrRuntime(profile), name);
         return deleted
             ? ResponseEntity.ok(Map.of("ok", true, "deleted", name))
             : notFound("Server '" + name + "' not found");
@@ -209,7 +222,7 @@ public class McpDashboardController {
         boolean enabled = body == null
             || body.get("enabled") == null
             || Boolean.parseBoolean(String.valueOf(body.get("enabled")));
-        return store.setEnabled(profile, name, enabled)
+        return store.setEnabled(profileOrRuntime(profile), name, enabled)
             .<ResponseEntity<Map<String, Object>>>map(saved ->
                 ResponseEntity.ok(store.redactedView(saved)))
             .orElseGet(() -> notFound("Server '" + name + "' not found"));
@@ -230,7 +243,7 @@ public class McpDashboardController {
         String base = redirectBase != null ? redirectBase
             : (body == null ? null : str(body.get("redirect_base")));
         try {
-            var started = flows.start(profile, name, base);
+            var started = flows.start(profileOrRuntime(profile), name, base);
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("flow_id", started.flowId());
             response.put("authorization_url", started.authorizationUrl());
@@ -325,7 +338,7 @@ public class McpDashboardController {
         }
         String serverName = body.get("server_name") == null ? name : str(body.get("server_name"));
         try {
-            var saved = store.upsert(profile, new com.azhukov.agent.service.McpConfigStore.ServerConfigInput(
+            var saved = store.upsert(profileOrRuntime(profile), new com.azhukov.agent.service.McpConfigStore.ServerConfigInput(
                 serverName,
                 true,
                 str(entry.get("transport")),

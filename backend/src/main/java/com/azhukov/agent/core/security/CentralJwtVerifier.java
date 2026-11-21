@@ -71,10 +71,11 @@ public final class CentralJwtVerifier {
                 .followRedirects(HttpClient.Redirect.NEVER).build();
         NimbusJwtDecoder jwtDecoder = NimbusJwtDecoder.withJwkSetUri(jwksUri)
                 .jwsAlgorithm(SignatureAlgorithm.ES256).build();
+        List<String> expectedAudience = List.of(audience);
         jwtDecoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(
                 new JwtTimestampValidator(Duration.ZERO), new JwtIssuerValidator(issuer),
                 token -> {
-                    if (token.getAudience() != null && token.getAudience().contains(audience)
+                    if (expectedAudience.equals(token.getAudience())
                             && validSubject(token.getSubject()) && validSubject(token.getClaimAsString("sid"))
                             && token.getExpiresAt() != null
                             && token.getIssuedAt() != null && !token.getIssuedAt().isAfter(Instant.now())
@@ -107,6 +108,10 @@ public final class CentralJwtVerifier {
         return uri;
     }
 
+    static boolean isPersonalToken(String bearerToken) {
+        return bearerToken.startsWith("pdlc_pat_");
+    }
+
     /** The proof and role come from the same live Auth confirmation, never from JWT role claims. */
     public HumanApplicationAccess verifyAccess(String bearerToken, String method) throws JwtException {
         if (bearerToken == null || bearerToken.isBlank() || bearerToken.length() > 16384) {
@@ -114,7 +119,7 @@ public final class CentralJwtVerifier {
         }
         long started = System.nanoTime();
         Instant wallStarted = Instant.now();
-        boolean personal = bearerToken.startsWith("sdlc_pat_") || bearerToken.startsWith("pdlc_pat_");
+        boolean personal = isPersonalToken(bearerToken);
         String subject = null;
         Instant tokenExpiry = null;
         com.azhukov.agent.core.model.IdentityDeletionProtocol.Window signedWindow = null;
@@ -135,6 +140,10 @@ public final class CentralJwtVerifier {
             throw new CentralAuthUnavailableException();
         }
         Map<String, Object> user = confirmIdentity(bearerToken, personal ? personalTokenUri : sessionUri);
+        Object identityRole = user.get(personal ? "subject_role" : "role");
+        if (!(identityRole instanceof String currentRole)) throw new CentralAuthUnavailableException();
+        if ("service_account".equals(currentRole)) throw new CentralAccessDeniedException();
+        Instant sourceObservedAt = wallStarted;
         if (personal) {
             Object owner = user.get("sub");
             if (!(owner instanceof String id) || !validSubject(id)) {
@@ -148,22 +157,27 @@ public final class CentralJwtVerifier {
             }
             Object expires = user.get("expires_at");
             if (!(expires instanceof String text)) throw new CentralAuthUnavailableException();
-            try { tokenExpiry = java.time.OffsetDateTime.parse(text).toInstant(); }
-            catch (java.time.DateTimeException malformed) { throw new CentralAuthUnavailableException(); }
+            Object observed = user.get("observed_at");
+            if (!(observed instanceof String clock)) throw new CentralAuthUnavailableException();
+            try {
+                tokenExpiry = java.time.OffsetDateTime.parse(text).toInstant();
+                sourceObservedAt = java.time.OffsetDateTime.parse(clock).toInstant();
+            } catch (java.time.DateTimeException malformed) { throw new CentralAuthUnavailableException(); }
         } else if (!subject.equals(user.get("id")) || !"active".equals(user.get("status"))) {
             throw new BadJwtException("Central identity binding is not active");
         }
         if(signedWindow!=null && !signedWindow.current())throw new BadJwtException("Central identity expired");
         try {
+            var credential = new HumanApplicationAccess.Credential(currentRole, sourceObservedAt, tokenExpiry);
             var proof = HumanApplicationAccess.confirm(user, issuer, subject, started, wallStarted,
-                    tokenExpiry, requireApplicationProof);
+                    credential, requireApplicationProof);
             if(signedWindow!=null)proof=new HumanApplicationAccess(proof.subject(),proof.role(),proof.applications(),proof.revision(),
                 proof.enforced(),proof.expiresAt(),Math.min(proof.deadlineNanos(),signedWindow.deadlineNanos()));
             if (!proof.permits(Set.of("java-agent"), false)) throw new CentralAccessDeniedException();
             return proof;
         } catch (HumanApplicationAccess.AdmissionDeniedException denied) {
             throw new CentralAccessDeniedException();
-        } catch (IllegalArgumentException malformed) {
+        } catch (IllegalArgumentException | ArithmeticException malformed) {
             throw new CentralAuthUnavailableException();
         }
     }
@@ -182,9 +196,7 @@ public final class CentralJwtVerifier {
     }
 
     private Map<String, Object> confirmIdentity(String token, URI endpoint) {
-        // Auth includes the original PAT lifetime only on this explicit bounded readback.
-        URI target = endpoint.equals(personalTokenUri) ? URI.create(endpoint + "?include_lifetime=true") : endpoint;
-        HttpRequest request = HttpRequest.newBuilder(target).timeout(Duration.ofSeconds(5))
+        HttpRequest request = HttpRequest.newBuilder(endpoint).timeout(Duration.ofSeconds(5))
                 .header("Authorization", "Bearer " + token).header("Accept", "application/json").GET().build();
         var pending = sessionClient.sendAsync(request,
                 HttpResponse.BodyHandlers.limiting(HttpResponse.BodyHandlers.ofByteArray(), 65536));

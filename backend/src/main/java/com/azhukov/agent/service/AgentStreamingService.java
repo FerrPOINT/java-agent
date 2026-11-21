@@ -39,7 +39,7 @@ import com.azhukov.agent.core.tool.ToolExecutionService;
 import com.azhukov.agent.core.tool.ToolRegistry;
 import com.azhukov.agent.core.security.ApprovalQueue;
 import com.azhukov.agent.core.security.UserContext;
-import com.azhukov.agent.core.security.ToolGuardrails;
+import com.azhukov.agent.core.security.ToolApprovalPolicy;
 import com.azhukov.agent.core.state.TurnState;
 import com.azhukov.agent.core.state.TurnStateManager;
 import com.azhukov.agent.core.budget.IterationBudget;
@@ -166,12 +166,12 @@ public class AgentStreamingService {
     }
 
     private ApprovalQueue approvalQueue;
-    private ToolGuardrails toolGuardrails;
+    private ToolApprovalPolicy approvalPolicy;
 
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
-    void setToolApproval(ApprovalQueue approvalQueue, ToolGuardrails toolGuardrails) {
+    @org.springframework.beans.factory.annotation.Autowired
+    void setToolApproval(ApprovalQueue approvalQueue, ToolApprovalPolicy approvalPolicy) {
         this.approvalQueue = approvalQueue;
-        this.toolGuardrails = toolGuardrails;
+        this.approvalPolicy = approvalPolicy;
     }
 
     // c2 B2: guardrail halt check — same per-iteration gate the sync loop runs.
@@ -202,9 +202,8 @@ public class AgentStreamingService {
     // Lazily initialized from existing dependencies to preserve the
     // @RequiredArgsConstructor signature (tests construct this class positionally
     // without going through Spring's @PostConstruct lifecycle).
-    // The deps not available here (contextCompressor, approvalQueue,
-    // memoryNudgeManager) are passed as null — they are only used by
-    // proactive compression and other sync-only helpers.
+    // Only contextCompressor is omitted: streaming owns its compression flow.
+    // Tool approval dependencies are required on both execution paths.
     private com.azhukov.agent.core.agent.TurnExecutor turnExecutor;
 
     private com.azhukov.agent.core.agent.TurnExecutor turnExecutor() {
@@ -216,7 +215,7 @@ public class AgentStreamingService {
             turnExecutor = new com.azhukov.agent.core.agent.TurnExecutor(
                 properties, null, contextEngine,
                 toolExecutionService, toolResultFormatter, tokenEstimator,
-                interruptToken, approvalQueue, toolGuardrails, memoryNudgeManager, steerBuffer);
+                interruptToken, approvalQueue, approvalPolicy, memoryNudgeManager, steerBuffer);
         }
         return turnExecutor;
     }
@@ -497,7 +496,7 @@ public class AgentStreamingService {
         try {
 
         // Reset per-turn loop counters before any model/tool execution.
-        toolExecutionService.resetLoopGuardrailForTurn();
+        toolExecutionService.resetForTurn(session.id());
 
         // Tools: select before building the prompt so system guidance matches
         // the exact tool definitions this request exposes (P-04).

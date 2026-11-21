@@ -126,14 +126,28 @@ class CronSuggestionServiceTest {
 
         CronJobEntity entity = new CronJobEntity();
         entity.setId(UUID.randomUUID());
-        when(cronJobService.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any()))
+        when(cronJobService.create(
+            any(), org.mockito.ArgumentMatchers.eq("default"), any(), any(),
+            any(), any(), any(), any(),
+            any(), any(), anyBoolean(), any(),
+            any(), any(), any(), any(),
+            org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.eq(false), org.mockito.ArgumentMatchers.isNull()))
             .thenReturn(entity);
         assertThat(service.acceptSuggestion(UUID.fromString(userARecord.id()))).isNull();
-        verify(cronJobService, never()).create(any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any());
+        verify(cronJobService, never()).create(
+            any(), org.mockito.ArgumentMatchers.eq("default"), any(), any(),
+            any(), any(), any(), any(),
+            any(), any(), anyBoolean(), any(),
+            any(), any(), any(), any(),
+            org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.eq(false), org.mockito.ArgumentMatchers.isNull());
 
         assertThat(service.acceptSuggestion(UUID.fromString(userBRecord.id()))).isSameAs(entity);
-        verify(cronJobService).create("user-b", "daily-report", "0 9 * * *", "Generate report", null, null,
-            null, null, null, false, null, null, null, null, null);
+        verify(cronJobService).create(
+            "user-b", "default", "daily-report", "0 9 * * *",
+            "Generate report", null, null, null,
+            null, null, false, null,
+            null, null, null, null,
+            null, false, null);
     }
 
     @Test
@@ -184,14 +198,23 @@ class CronSuggestionServiceTest {
         CronJobEntity entity = new CronJobEntity();
         entity.setId(UUID.randomUUID());
         entity.setName("daily-report");
-        when(cronJobService.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any())).thenReturn(entity);
+        when(cronJobService.create(
+            any(), org.mockito.ArgumentMatchers.eq("default"), any(), any(),
+            any(), any(), any(), any(),
+            any(), any(), anyBoolean(), any(),
+            any(), any(), any(), any(),
+            org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.eq(false), org.mockito.ArgumentMatchers.isNull())).thenReturn(entity);
 
         var created = service.acceptSuggestion(UUID.fromString(record.id()));
 
         assertThat(created).isNotNull();
         assertThat(created.getName()).isEqualTo("daily-report");
-        verify(cronJobService).create(AgentProperties.DEFAULT_USER_ID, "daily-report", "0 9 * * *", "Generate report", "telegram", null,
-            null, null, null, false, null, null, null, null, null);
+        verify(cronJobService).create(
+            AgentProperties.DEFAULT_USER_ID, "default", "daily-report", "0 9 * * *",
+            "Generate report", "telegram", null, null,
+            null, null, false, null,
+            null, null, null, null,
+            null, false, null);
 
         // Suggestion should now be accepted
         var all = service.listAll();
@@ -206,7 +229,12 @@ class CronSuggestionServiceTest {
 
         var result = service.acceptSuggestion(UUID.fromString(record.id()));
         assertThat(result).isNull();
-        verify(cronJobService, never()).create(any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any());
+        verify(cronJobService, never()).create(
+            any(), org.mockito.ArgumentMatchers.eq("default"), any(), any(),
+            any(), any(), any(), any(),
+            any(), any(), anyBoolean(), any(),
+            any(), any(), any(), any(),
+            org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.eq(false), org.mockito.ArgumentMatchers.isNull());
     }
 
     @Test
@@ -242,7 +270,12 @@ class CronSuggestionServiceTest {
 
         CronJobEntity entity = new CronJobEntity();
         entity.setId(UUID.randomUUID());
-        when(cronJobService.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any())).thenReturn(entity);
+        when(cronJobService.create(
+            any(), org.mockito.ArgumentMatchers.eq("default"), any(), any(),
+            any(), any(), any(), any(),
+            any(), any(), anyBoolean(), any(),
+            any(), any(), any(), any(),
+            org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.eq(false), org.mockito.ArgumentMatchers.isNull())).thenReturn(entity);
         service.acceptSuggestion(UUID.fromString(r1.id()));
 
         int removed = service.clearAccepted();
@@ -291,7 +324,12 @@ class CronSuggestionServiceTest {
     void acceptRemovesFromPendingAndLatches() {
         service.seedCatalogSuggestions();
         var rec = service.listPending().get(0);
-        when(cronJobService.create(any(), any(), any(), any(), any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any(), any())).thenReturn(new CronJobEntity());
+        when(cronJobService.create(
+            any(), org.mockito.ArgumentMatchers.eq("default"), any(), any(),
+            any(), any(), any(), any(),
+            any(), any(), anyBoolean(), any(),
+            any(), any(), any(), any(),
+            org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.eq(false), org.mockito.ArgumentMatchers.isNull())).thenReturn(new CronJobEntity());
         service.acceptSuggestion(UUID.fromString(rec.id()));
         // Only the accepted one leaves pending; the rest stay
         assertThat(service.listPending()).hasSize(3);

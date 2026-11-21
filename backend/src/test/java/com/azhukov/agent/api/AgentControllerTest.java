@@ -317,11 +317,11 @@ class AgentControllerTest {
         doNothing().when(agentRuntimeService)
             .compressSession(any(UUID.class), any(), any());
 
-        mockMvc.perform(post("/api/v1/agent/compress")
+        mockMvc.perform(post("/api/v1/agent/session/{sessionId}/compress",
+                "550e8400-e29b-41d4-a716-446655440000")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                     {
-                      "sessionId": "550e8400-e29b-41d4-a716-446655440000",
                       "focusTopic": "main topic"
                     }
                     """))
@@ -333,14 +333,9 @@ class AgentControllerTest {
         mockMvc = sessionMockMvc();
         when(agentRuntimeService.undoTurns(any(UUID.class), any(Integer.class))).thenReturn(3);
 
-        mockMvc.perform(post("/api/v1/agent/undo")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("""
-                    {
-                      "sessionId": "550e8400-e29b-41d4-a716-446655440000",
-                      "turns": 3
-                    }
-                    """))
+        mockMvc.perform(post("/api/v1/agent/session/{sessionId}/undo",
+                "550e8400-e29b-41d4-a716-446655440000")
+                .param("turns", "3"))
             .andExpect(status().isOk())
             .andExpect(content().string("3"));
     }

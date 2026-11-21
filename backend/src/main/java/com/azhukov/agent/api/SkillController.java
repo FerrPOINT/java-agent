@@ -181,11 +181,5 @@ public class SkillController {
         return agentRuntimeService.listBundles();
     }
 
-    /**
-     * Alias kept for backward compatibility.
-     */
-    @GetMapping("/agent/skills/bundles")
-    public List<String> bundlesAlias() {
-        return agentRuntimeService.listBundles();
-    }
+
 }
