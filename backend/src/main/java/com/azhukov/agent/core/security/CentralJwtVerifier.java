@@ -109,7 +109,11 @@ public final class CentralJwtVerifier {
     }
 
     static boolean isPersonalToken(String bearerToken) {
-        return bearerToken.startsWith("pdlc_pat_");
+        return !bearerToken.isEmpty() && bearerToken.chars().allMatch(character ->
+                character >= 'a' && character <= 'z'
+                        || character >= 'A' && character <= 'Z'
+                        || character >= '0' && character <= '9'
+                        || character == '_' || character == '-');
     }
 
     /** The proof and role come from the same live Auth confirmation, never from JWT role claims. */

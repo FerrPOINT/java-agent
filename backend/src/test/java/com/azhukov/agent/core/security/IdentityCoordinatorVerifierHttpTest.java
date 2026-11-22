@@ -111,19 +111,21 @@ class IdentityCoordinatorVerifierHttpTest {
 
     @Test
     void registeredServicePatUsesExactFreshIntrospectionAndPreservesOriginalDeadline() throws Exception {
-        try (Stub stub = new Stub()) {
-            IdentityCoordinatorVerifier verifier = stub.verifier();
-            long deadline = System.nanoTime() + Duration.ofSeconds(7).toNanos();
-            Window first = verifier.verify("Bearer " + PAT, request(ISSUER), deadline);
-            assertEquals(deadline, first.deadlineNanos());
-            first.requireCurrent();
-            Window second = verifier.verify("Bearer pdlc_pat_second_fixture", request(ISSUER), originalDeadline());
-            second.requireCurrent();
-            assertEquals(2, stub.calls.get(), "each verification must confirm the current PAT");
-            assertEquals("GET", stub.method.get());
-            assertNull(stub.query.get());
-            assertEquals("Bearer pdlc_pat_second_fixture", stub.authorization.get());
-            assertEquals("application/json", stub.accept.get());
+        for (String credential : List.of(PAT, "sdlc_pat_synthetic_fixture_only", "opaque_fixture_42")) {
+            try (Stub stub = new Stub()) {
+                IdentityCoordinatorVerifier verifier = stub.verifier();
+                long deadline = System.nanoTime() + Duration.ofSeconds(7).toNanos();
+                Window first = verifier.verify("Bearer " + credential, request(ISSUER), deadline);
+                assertEquals(deadline, first.deadlineNanos());
+                first.requireCurrent();
+                Window second = verifier.verify("Bearer " + credential, request(ISSUER), originalDeadline());
+                second.requireCurrent();
+                assertEquals(2, stub.calls.get(), "each verification must confirm the current PAT");
+                assertEquals("GET", stub.method.get());
+                assertNull(stub.query.get());
+                assertEquals("Bearer " + credential, stub.authorization.get());
+                assertEquals("application/json", stub.accept.get());
+            }
         }
     }
 
@@ -164,7 +166,7 @@ class IdentityCoordinatorVerifierHttpTest {
             for (String authorization : new String[] {null, "", "Basic fixture", "bearer " + PAT}) {
                 failure(401, "identity_coordinator_required", () -> verifier.verify(authorization, request(ISSUER), originalDeadline()));
             }
-            for (String authorization : List.of("Bearer eyJhbGci.fixture", "Bearer sdlc_pat_retired_fixture",
+            for (String authorization : List.of("Bearer eyJhbGci.fixture", "Bearer invalid credential",
                     "Bearer pdlc_pat_" + "x".repeat(16384))) {
                 failure(403, "identity_coordinator_capability_required", () -> verifier.verify(authorization, request(ISSUER), originalDeadline()));
             }

@@ -85,11 +85,11 @@ class CentralJwtVerifierBoundaryTest {
         verifier.init();
         var decoder = mock(JwtDecoder.class);
         var client = mock(HttpClient.class);
-        when(decoder.decode("synthetic-jwt")).thenThrow(new JwtException("synthetic key service failure"));
+        when(decoder.decode("synthetic.jwt.fixture")).thenThrow(new JwtException("synthetic key service failure"));
         ReflectionTestUtils.setField(verifier, "decoder", decoder);
         ReflectionTestUtils.setField(verifier, "sessionClient", client);
 
-        assertThatThrownBy(() -> verifier.verifyAccess("synthetic-jwt", "GET"))
+        assertThatThrownBy(() -> verifier.verifyAccess("synthetic.jwt.fixture", "GET"))
                 .isInstanceOf(CentralJwtVerifier.CentralAuthUnavailableException.class);
         verifyNoInteractions(client);
     }

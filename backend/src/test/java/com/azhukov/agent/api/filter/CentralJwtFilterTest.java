@@ -188,6 +188,7 @@ class CentralJwtFilterTest {
 
     @Test
     void personalTokenNeedsBothCurrentApplicationAndMethodScope() throws Exception {
+        for (String credential : new String[]{"pdlc_pat_fixture-only", "sdlc_pat_fixture-only", "credential_ABC-123"}) {
             for (String method : new String[]{"GET", "POST"}) {
                 String proof = admission("admin", "[\"java-agent\"]");
                 var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
@@ -204,21 +205,22 @@ class CentralJwtFilterTest {
                 identity.put("expires_at", Instant.now().plusSeconds(120).toString());
                 sessionReply.set(mapper.writeValueAsString(identity));
                 var request = new MockHttpServletRequest(method, "/api/v2/sessions");
-                request.addHeader("Authorization", "Bearer pdlc_pat_fixture-only");
+                request.addHeader("Authorization", "Bearer " + credential);
                 var response = new MockHttpServletResponse();
                 AtomicInteger calls = new AtomicInteger();
                 filter().doFilter(request, response, (incoming, outgoing) -> calls.incrementAndGet());
                 assertThat(response.getStatus()).isEqualTo(method.equals("GET") ? 200 : 403);
                 assertThat(calls.get()).isEqualTo(method.equals("GET") ? 1 : 0);
+            }
         }
     }
 
     @Test
-    void retiredPersonalTokenIsRejectedBeforeIdentityConfirmation() throws Exception {
+    void malformedOpaqueCredentialIsRejectedBeforeIdentityConfirmation() throws Exception {
         var request = new MockHttpServletRequest("GET", "/api/v2/sessions");
-        request.addHeader("Authorization", "Bearer sdlc_pat_fixture-only");
+        request.addHeader("Authorization", "Bearer invalid credential");
         var response = new MockHttpServletResponse();
-        filter().doFilter(request, response, (incoming, outgoing) -> fail("Retired PAT admitted"));
+        filter().doFilter(request, response, (incoming, outgoing) -> fail("Malformed credential admitted"));
         assertThat(response.getStatus()).isEqualTo(401);
         assertThat(sessionConfirmations.get()).isZero();
     }
@@ -267,7 +269,7 @@ class CentralJwtFilterTest {
     void invalidCentralIdentityDoesNotFallBackToGlobalApiKey(String failure) throws Exception {
         ECKey signing = failure.equals("signature") ? new ECKeyGenerator(Curve.P_256).generate()
                 : failure.equals("algorithm") ? new ECKeyGenerator(Curve.P_384).generate() : key;
-        String encoded = failure.equals("malformed") ? "invalid-token" : token(builder -> {
+        String encoded = failure.equals("malformed") ? "invalid.jwt.fixture" : token(builder -> {
             switch (failure) {
                 case "issuer" -> builder.issuer("https://qa.sdlc1.invalid");
                 case "audience" -> builder.audience("foreign");
