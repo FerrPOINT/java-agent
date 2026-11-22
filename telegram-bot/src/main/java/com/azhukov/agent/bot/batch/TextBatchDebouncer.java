@@ -29,8 +29,8 @@ public class TextBatchDebouncer {
         t.setDaemon(true);
         return t;
     });
-    private final Map<Long, BatchEntry> buffers = new ConcurrentHashMap<>();
-    private final Map<Long, ScheduledFuture<?>> timers = new ConcurrentHashMap<>();
+    private record BatchKey(long chatId, long userId, long threadId) {}
+    private final Map<BatchKey, BatchEntry> buffers = new ConcurrentHashMap<>();
     private final List<java.util.function.Consumer<UpdateEvent>> dispatchers = new CopyOnWriteArrayList<>();
 
     /**
@@ -53,32 +53,17 @@ public class TextBatchDebouncer {
         if (event.type() != UpdateEvent.Type.TEXT) {
             return false;
         }
-        long chatId = event.chatId();
+        var key = new BatchKey(event.chatId(), event.userId(), event.messageThreadId());
 
-        BatchEntry entry = buffers.computeIfAbsent(chatId, k -> {
-            BatchEntry e = new BatchEntry();
-            e.setFirstEvent(event);
-            return e;
+        buffers.compute(key, (ignored, existing) -> {
+            BatchEntry entry = existing == null ? new BatchEntry() : existing;
+            entry.add(event);
+            if (entry.timer != null) entry.timer.cancel(false);
+            Object ticket = entry.ticket = new Object();
+            entry.timer = scheduler.schedule(() -> dispatch(key, ticket),
+                computeDelay(entry.totalLength()), TimeUnit.MILLISECONDS);
+            return entry;
         });
-        synchronized (entry) {
-            // Ensure firstEvent is set if entry was already created
-            if (entry.firstEvent() == null) {
-                entry.setFirstEvent(event);
-            }
-            entry.add(event.text());
-            int totalLen = entry.totalLength();
-            long delay = computeDelay(totalLen);
-
-            // Cancel existing timer
-            ScheduledFuture<?> existing = timers.remove(chatId);
-            if (existing != null) {
-                existing.cancel(false);
-            }
-
-            // Schedule dispatch
-            ScheduledFuture<?> future = scheduler.schedule(() -> dispatch(chatId), delay, TimeUnit.MILLISECONDS);
-            timers.put(chatId, future);
-        }
         return true;
     }
 
@@ -113,10 +98,19 @@ public class TextBatchDebouncer {
         }
     }
 
-    private void dispatch(long chatId) {
-        BatchEntry entry = buffers.remove(chatId);
-        timers.remove(chatId);
+    private void dispatch(BatchKey key, Object ticket) {
+        var claimed = new java.util.concurrent.atomic.AtomicReference<BatchEntry>();
+        buffers.computeIfPresent(key, (ignored, entry) -> {
+            if (entry.ticket != ticket) return entry;
+            claimed.set(entry);
+            return null;
+        });
+        deliver(key, claimed.get());
+    }
+
+    private void deliver(BatchKey key, BatchEntry entry) {
         if (entry == null) return;
+        long chatId = key.chatId();
 
         // P34: Post-debounce re-validation — check if chat is still active/paused
         Predicate<Long> guard = shouldDispatch;
@@ -151,55 +145,54 @@ public class TextBatchDebouncer {
      * Flush all pending buffers immediately (for shutdown or testing).
      */
     public void flushAll() {
-        for (Long chatId : new java.util.ArrayList<>(buffers.keySet())) {
-            ScheduledFuture<?> f = timers.remove(chatId);
-            if (f != null) f.cancel(false);
-            dispatch(chatId);
+        for (BatchKey key : new java.util.ArrayList<>(buffers.keySet())) {
+            var claimed = new java.util.concurrent.atomic.AtomicReference<BatchEntry>();
+            buffers.computeIfPresent(key, (ignored, entry) -> {
+                if (entry.timer != null) entry.timer.cancel(false);
+                claimed.set(entry);
+                return null;
+            });
+            deliver(key, claimed.get());
         }
     }
 
     /** Test helper: check if a chat has a pending buffer. */
     boolean hasPending(long chatId) {
-        return buffers.containsKey(chatId);
+        return buffers.keySet().stream().anyMatch(key -> key.chatId() == chatId);
     }
 
     /** Test helper: get pending text for a chat. */
     String getPendingText(long chatId) {
-        BatchEntry entry = buffers.get(chatId);
-        return entry != null ? entry.mergedText() : null;
+        return buffers.entrySet().stream().filter(entry -> entry.getKey().chatId() == chatId)
+            .map(entry -> entry.getValue().mergedText()).findFirst().orElse(null);
     }
 
     // ─── Internal ──────────────────────────────────────────────────
 
     /** Keeps pending text updates and their flush timer together for a single chat. */
     private static class BatchEntry {
-        private final List<String> texts = new CopyOnWriteArrayList<>();
-        private UpdateEvent firstEvent;
+        private final List<UpdateEvent> events = new java.util.ArrayList<>();
+        private ScheduledFuture<?> timer;
+        private Object ticket;
 
-        void add(String text) {
-            if (texts.isEmpty() && firstEvent != null) {
-                // Keep first event's metadata, but we'll override text
-            }
-            texts.add(text);
-        }
-
-        void setFirstEvent(UpdateEvent event) {
-            this.firstEvent = event;
+        void add(UpdateEvent event) {
+            events.add(event);
         }
 
         UpdateEvent firstEvent() {
-            return firstEvent;
+            return events.stream().min(java.util.Comparator.comparingLong(UpdateEvent::updateId)).orElse(null);
         }
 
         int totalLength() {
-            return texts.stream().mapToInt(String::length).sum();
+            return events.stream().map(UpdateEvent::text).mapToInt(String::length).sum();
         }
 
         String mergedText() {
             // Adaptive join: space for short messages, newline for long
-            boolean allShort = texts.stream().allMatch(t -> t.length() <= 320);
+            boolean allShort = events.stream().map(UpdateEvent::text).allMatch(t -> t.length() <= 320);
             String separator = allShort ? " " : "\n";
-            return String.join(separator, texts);
+            return events.stream().sorted(java.util.Comparator.comparingLong(UpdateEvent::updateId))
+                .map(UpdateEvent::text).collect(java.util.stream.Collectors.joining(separator));
         }
     }
 }

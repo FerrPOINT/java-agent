@@ -1,7 +1,6 @@
 package com.azhukov.agent.tools.mcp;
 
 import com.azhukov.agent.client.mcp.McpLifecycleManager;
-import com.azhukov.agent.client.mcp.McpOAuthManager;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
@@ -13,7 +12,6 @@ import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
@@ -26,7 +24,6 @@ import java.util.stream.Collectors;
     toolset = "core"
 )
 @Component
-@Slf4j
 @RequiredArgsConstructor
 public class McpTool implements ToolHandler {
 
@@ -34,7 +31,6 @@ public class McpTool implements ToolHandler {
     private static final int MAX_TOOL_ERROR_CHARS = 2048;
 
     private final McpLifecycleManager mcpLifecycleManager;
-    private final McpOAuthManager mcpOAuthManager;
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
@@ -58,8 +54,6 @@ public class McpTool implements ToolHandler {
         if (args.toolName() == null || args.toolName().isBlank()) {
             return jsonError("mcp_tool requires 'tool_name'.");
         }
-        mcpOAuthManager.getToken(args.serverName())
-            .ifPresent(token -> log.debug("Using OAuth token for MCP server {}", args.serverName()));
         try {
             String argumentsJson = args.arguments() == null || args.arguments().isBlank() ? "{}" : args.arguments();
             var result = mcpLifecycleManager.executeModelTool(args.serverName(), args.toolName(), argumentsJson, admission);

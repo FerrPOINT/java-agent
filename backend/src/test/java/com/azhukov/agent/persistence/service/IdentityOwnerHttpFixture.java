@@ -32,7 +32,7 @@ import org.springframework.web.servlet.config.annotation.EnableWebMvc;
 /** Real servlet/filter/controller HTTP and an isolated Auth server, without product bootstrap/JIT. */
 final class IdentityOwnerHttpFixture implements AutoCloseable {
     static final String ISSUER="https://auth.example.test";
-    static final String PAT="sdlc_pat_public_synthetic_owner_test";
+    static final String PAT="pdlc_pat_public_synthetic_owner_test";
     final UUID coordinator=UUID.randomUUID();
     final AtomicInteger status=new AtomicInteger(200);
     final AtomicReference<String> role=new AtomicReference<>("service_account");

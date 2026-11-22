@@ -44,7 +44,10 @@ class CronJobServiceDaemonTest {
         properties.getCron().setEnabled(false);
         lenient().when(agentRuntimeServiceProvider.getIfAvailable()).thenReturn(agentRuntimeService);
         CronJobServiceTest.stubExecutionHistory(cronExecutionLogRepository);
-        service = new CronJobService(cronJobRepository, agentRuntimeServiceProvider, properties, skillManager, cronExecutionLogRepository, messageRepository, new org.springframework.transaction.support.TransactionTemplate(org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class)), new CronScheduleParser());
+        service = new CronJobService(
+            cronJobRepository, agentRuntimeServiceProvider, properties, skillManager,
+            cronExecutionLogRepository, messageRepository, new org.springframework.transaction.support.TransactionTemplate(org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class)), new CronScheduleParser(),
+            org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class));
     }
 
     @Test
@@ -56,15 +59,17 @@ class CronJobServiceDaemonTest {
             e.setId(UUID.randomUUID());
             return e;
         });
-        CronJobEntity job = service.create("daemon-test", "0 * * * *", "Run task", null);
+        CronJobEntity job = service.create(
+            com.azhukov.agent.core.security.UserContext.scopeUserId(), "default", "daemon-test", "0 * * * *",
+            "Run task", null, null, null,
+            null, null, false, null,
+            null, null, null, null,
+            null, false, null);
         assertThat(job.getName()).isEqualTo("daemon-test");
     }
 
     @Test
-    void executeJobDoesNotRunConcurrentlyForSameJob() {
-        // This is a structural test verifying the per-job lock mechanism exists.
-        // We can't easily test actual concurrency in unit tests, but we verify
-        // the service handles the basic execute/reschedule flow without error.
+    void manualRunPassesCronExecutionContext() {
         UUID jobId = UUID.randomUUID();
         CronJobEntity job = new CronJobEntity();
         job.setId(jobId);
@@ -75,12 +80,12 @@ class CronJobServiceDaemonTest {
         job.setCreatedAt(Instant.now());
 
         when(cronJobRepository.findById(jobId)).thenReturn(java.util.Optional.of(job));
-        when(agentRuntimeService.runBackground(any(), org.mockito.ArgumentMatchers.anyBoolean(), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(java.util.Map.of()))).thenReturn("session-id");
+        when(agentRuntimeService.runBackground(any(), org.mockito.ArgumentMatchers.anyBoolean(), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(java.util.Map.of("cron_run", "true")))).thenReturn("session-id");
 
         // Execute job — should work without error
         service.runNow(jobId);
 
-        verify(agentRuntimeService).runBackground(any(), org.mockito.ArgumentMatchers.anyBoolean(), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(java.util.Map.of()));
+        verify(agentRuntimeService).runBackground(any(), org.mockito.ArgumentMatchers.anyBoolean(), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(java.util.Map.of("cron_run", "true")));
     }
 
     @Test

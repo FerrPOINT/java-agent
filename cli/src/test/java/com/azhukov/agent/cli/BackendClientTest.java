@@ -1,5 +1,6 @@
 package com.azhukov.agent.cli;
 
+import com.azhukov.agent.shared.dto.ToolApprovalDecision;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -256,13 +257,13 @@ class BackendClientTest {
     @Test
     void approveCallsEndpoint() {
         mockPostChain("Approved all");
-        assertThat(backendClient.approve(true, null)).isEqualTo("Approved all");
+        assertThat(backendClient.decideApproval(new ToolApprovalDecision(ToolApprovalDecision.Action.APPROVE, true, null, null))).isEqualTo("Approved all");
     }
 
     @Test
     void denyCallsEndpoint() {
         mockPostChain("Denied all");
-        assertThat(backendClient.deny(true)).isEqualTo("Denied all");
+        assertThat(backendClient.decideApproval(new ToolApprovalDecision(ToolApprovalDecision.Action.DENY, true, null, null))).isEqualTo("Denied all");
     }
 
     // ── Admin ──

@@ -1,5 +1,6 @@
 package com.azhukov.agent.cli;
 
+import com.azhukov.agent.shared.dto.ToolApprovalDecision;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -227,19 +228,21 @@ class CliFixesTest {
     }
 
     @Test
-    void approveToolCommandCallsBackend() {
-        when(client.approveTool("sid")).thenReturn("Tool approved for session: sid");
-        String result = registry.execute("/approve-tool sid", client, "sid");
-        assertThat(result).contains("Tool approved");
-        assertThat(result).doesNotContain("Use the backend REST API");
+    void approveCommandSelectsExactRequest() {
+        var id = java.util.UUID.randomUUID();
+        var decision = new ToolApprovalDecision(ToolApprovalDecision.Action.APPROVE, false, id, null);
+        when(client.decideApproval(decision)).thenReturn("Approved: " + id);
+        String result = registry.execute("/approve " + id, client, "sid");
+        assertThat(result).isEqualTo("Approved: " + id);
     }
 
     @Test
-    void denyToolCommandCallsBackend() {
-        when(client.denyTool("sid")).thenReturn("Tool denied for session: sid");
-        String result = registry.execute("/deny-tool sid", client, "sid");
-        assertThat(result).contains("Tool denied");
-        assertThat(result).doesNotContain("Use the backend REST API");
+    void denyCommandSelectsExactRequest() {
+        var id = java.util.UUID.randomUUID();
+        var decision = new ToolApprovalDecision(ToolApprovalDecision.Action.DENY, false, id, null);
+        when(client.decideApproval(decision)).thenReturn("Denied: " + id);
+        String result = registry.execute("/deny " + id, client, "sid");
+        assertThat(result).isEqualTo("Denied: " + id);
     }
 
     // ── C3: New commands ──
@@ -307,10 +310,17 @@ class CliFixesTest {
     // ── C4: Session persistence ──
 
     @Test
-    void saveCommandReturnsMessage() {
-        String result = registry.execute("/save", client, "test-session-id");
-        assertThat(result).contains("Session saved");
-        assertThat(result).contains("test-session-id");
+    void saveCommandReturnsMessage(@org.junit.jupiter.api.io.TempDir java.nio.file.Path directory) throws Exception {
+        String previousHome = System.getProperty("user.home");
+        System.setProperty("user.home", directory.toString());
+        try {
+            String result = registry.execute("/save", client, "test-session-id");
+            assertThat(result).contains("Session saved", "test-session-id");
+            assertThat(java.nio.file.Files.readString(directory.resolve(".java-agent-cli/session.txt")))
+                .isEqualTo("test-session-id");
+        } finally {
+            System.setProperty("user.home", previousHome);
+        }
     }
 
     // ── C7: Aliases ──

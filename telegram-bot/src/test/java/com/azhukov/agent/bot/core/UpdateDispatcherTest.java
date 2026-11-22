@@ -40,6 +40,7 @@ class UpdateDispatcherTest {
         @Override public void handleEditedMessage(UpdateEvent e) { lastCall = "edited"; lastEvent = e; editedCount++; }
         @Override public void handleEditCapture(UpdateEvent e) { lastCall = "editCapture"; lastEvent = e; editCaptureCount++; }
         @Override public boolean shouldBypassTextBatch(UpdateEvent e) { return false; }
+        @Override public boolean mayBatch(UpdateEvent e) { return true; }
         @Override public void sendError(long chatId, String message) { lastCall = "error"; errorChatId = chatId; errorMsg = message; }
     }
 

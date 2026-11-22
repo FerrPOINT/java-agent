@@ -91,7 +91,7 @@ class SyncRecoveryParityTest {
         };
 
         ToolExecutionService toolExecutionService = new ToolExecutionService(registry, properties,
-            new DefaultToolCallGuardrail(properties), new SecretRedactor(properties),
+            new DefaultToolCallGuardrail(new com.azhukov.agent.core.security.GuardrailConfig()), new SecretRedactor(properties),
             new com.azhukov.agent.core.tool.ToolResultClassifier(),
             new com.azhukov.agent.core.tool.ToolOutputLimiter(properties), null);
 
@@ -104,7 +104,7 @@ class SyncRecoveryParityTest {
             mock(MemoryProvider.class), mock(SkillManager.class),
             overrideBudget != null ? overrideBudget : new DefaultIterationBudget(properties),
             new MessageSanitizer(new SecretRedactor(properties)), svc, properties,
-            new UserInputSanitizer(), new DefaultToolCallGuardrail(properties),
+            new UserInputSanitizer(), new DefaultToolCallGuardrail(new com.azhukov.agent.core.security.GuardrailConfig()),
             new TurnStateManager(), null, interrupt, null, new SteerBuffer(),
             new ErrorClassifier(), null, new com.azhukov.agent.core.security.ApprovalQueue(), null, null,
             new TokenEstimator(), new ToolResultFormatter(), null, null);

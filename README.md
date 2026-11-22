@@ -112,6 +112,9 @@
 | Endpoint | Назначение |
 |---|---|
 | `POST /api/v1/agent/chat` | Sync chat |
+| `POST /api/v1/agent/session/{sessionId}/compress` | Сжать контекст выбранной сессии |
+| `GET /api/v1/agent/bundles` | Список установленных бандлов |
+| `GET /api/v1/agent/skills/{name}` | Содержимое навыка по имени |
 | `POST /api/v1/agent/chat/stream` | SSE streaming chat |
 | `POST /api/v1/agent/steer` | Inject message в активный run |
 | `POST /v1/chat/completions` | OpenAI-compatible chat completions |
@@ -125,12 +128,23 @@
 | `GET /health` | Safe runtime health summary |
 | `GET /bot/health` (gateway) | Состояние процесса bot-сервиса; не end-to-end проверка Telegram API |
 
+Сжатие использует ID сессии из пути. Необязательное JSON-тело содержит только
+`focusTopic` (тема) и `keepLastN` (сохранить последние обмены); оба поля можно
+опустить. Неизвестные поля возвращают 400. CLI и Telegram используют тот же
+контракт. Имя навыка `bundles` обрабатывается обычным маршрутом содержимого
+навыка; каталог бандлов читается через `/agent/bundles`.
+
 ### Multi-user и аутентификация
 
 Общий вход SDLC включается явно через `agent.central-auth.enabled=true`:
 используется bearer собственного Auth, действующая сессия и owner scope без
 fallback на global key. Настройки и ограничения — [общая авторизация](docs/central-auth.md).
 Ниже описан standalone-режим при выключенном общем входе.
+
+MCP OAuth хранит credential по паре «профиль — подключение». Чтение и обновление
+токена разрешены только при совпадении сохранённого issuer с origin текущего
+HTTP(S) token endpoint. Неизвестный или изменившийся issuer требует повторной
+OAuth-авторизации; отправки токена для автоматической перепривязки нет.
 
 Общая лента событий через HTTP и WebSocket доступна только администраторам.
 Pub-канал привязан к создавшему его пользователю и профилю: другой пользователь
@@ -245,24 +259,16 @@ flowchart TD
 
 ## 🚀 Deployment
 
+Запускайте принятый образ Java Agent из явно выбранного инициализированного
+workspace штатной [командой Base](https://github.com/FerrPOINT/services-base/blob/main/deploy/WORKSPACE_MANAGEMENT.md#команды).
+
 ```bash
-# Bash launcher for the existing initialized SDLC workspace.
-SDLC_WORKSPACE_DIR=/path/to/sdlc2 SDLC_PROJECT=sdlc2 ./scripts/deploy-dev-docker.sh
+pwsh -NoProfile -File /path/to/workspace/workspace.ps1 Start -Service java-agent-backend -Python python3
 ```
 
-Launcher вызывает PowerShell7 `workspace.ps1 Start -Service java-agent-backend`
-в явно выбранном workspace. Он запускает уже принятый образ; Build/Apply нового
-кандидата выполняются отдельно штатным helper. Профиль должен совпадать с
-`SDLC_PROJECT` (`sdlc1`, `sdlc2`, `sdlc3`), иметь `initialized=true` и существующий
-runtime внутри своего workspace. При необходимости путь к Python3 задаётся
-через `SDLC_PYTHON`; тот же interpreter передаётся workspace helper. Docker/systemd команды, chown, создание volumes и fresh init
-этим launcher не выполняются. Launcher и квалифицированный Base helper должны
-быть установлены в выбранном workspace.
-
-Standalone Compose-файлы ниже остаются отдельными шаблонами, не маршрутом запуска
-инициализированного SDLC. Временные локальные QA/build из этих шаблонов оформляются
-через Base ComposeHelper v2 с собственным project и cleanup; постоянный SDLC
-управляется workspace helper.
+Base проверяет профиль, runtime и ресурсы выбранного workspace. Для нового образа
+используйте `Build` и `Apply` того же workspace. Compose-файлы Java Agent
+предназначены для standalone-окружений и изолированных проверок.
 
 Пути состояния, права, перенос старого writable layer, rollback и TTL описаны
 в [контракте хранения](docs/architecture/storage.md).
@@ -277,8 +283,7 @@ tests finish; a missing required LINE report fails the gate.
 
 | Compose file | Назначение |
 |---|---|
-| `scripts/deploy-dev-docker.sh` | Адресный Start существующего Java backend через helper выбранного workspace |
-| `docker-compose.dev.yml` | Отдельный standalone-шаблон backend/bot; workspace launcher его не использует |
+| `docker-compose.dev.yml` | Standalone-шаблон backend и Telegram-бота |
 | `docker-compose.prod.yml` | Production-like stack на порту `8080` с PostgreSQL `5432` |
 | `docker-compose.local.yml` | Local dev fixture на `18090`/`18091` |
 | `docker-compose.e2e.yml` | E2E testing stack |
@@ -308,7 +313,7 @@ Docker images используют `eclipse-temurin:25-jre-noble`; slim-обра
 | Docs & test-standard ratchet | `python3 scripts/check_docs_standard.py` (baseline: `docs/standards/coverage-baseline.json`) |
 | Ratchet + coverage floors | `python3 scripts/check_docs_standard.py --check-coverage` |
 | Local Docker E2E | `./scripts/e2e-docker-compose-test.sh` |
-| README invariants | `python3 -m unittest scripts.tests.test_verify_readme -v` и `python3 scripts/verify_readme.py` |
+| README invariants | `python3 ../services-base/scripts/verify_readme.py --root .` |
 | Compose bot/backend auth wiring | `python3 scripts/check-compose-backend-auth.py` |
 
 `release_verify.py` фиксирует pass/fail/not-run gates, точные счётчики тестов, JaCoCo-метрики и консервативный endpoint-reference inventory в `build/release-verification.json`. HTTP и CLI E2E опциональны: им нужен живой локальный backend; Docker E2E опционален, потому что поднимает изолированный стек.

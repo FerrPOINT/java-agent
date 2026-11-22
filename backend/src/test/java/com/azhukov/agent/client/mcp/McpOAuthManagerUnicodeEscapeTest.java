@@ -22,9 +22,9 @@ class McpOAuthManagerUnicodeEscapeTest {
     }
 
     @Test
-    void invalidUnicodeEscapeFallsBackGracefully() {
+    void invalidUnicodeEscapeIsRejected() {
         String json = "{\"error_description\":\"bad \\uZZZZ escape\"}";
         String value = McpOAuthManager.extractJsonField(json, "error_description");
-        assertThat(value).contains("uZZZZ");
+        assertThat(value).isNull();
     }
 }
