@@ -41,8 +41,7 @@ class IdentityCoordinatorVerifierHttpTest {
     private static Map<String, Object> body() {
         Map<String, Object> value = new LinkedHashMap<>();
         value.put("sub", COORDINATOR);
-        value.put("email", "coordinator@synthetic.example.test");
-        value.put("subject_role", "service_account");
+        value.put("subject_kind", "service");
         value.put("scopes", List.of(SCOPE));
         value.put("observed_at", Instant.now().minusSeconds(1).toString());
         value.put("expires_at", Instant.now().plusSeconds(60).toString());
@@ -160,6 +159,28 @@ class IdentityCoordinatorVerifierHttpTest {
     }
 
     @Test
+    void untimedServiceCredentialStillUsesTheOriginalRequestAndObservationClocks() throws Exception {
+        try (Stub stub = new Stub()) {
+            Instant observed = Instant.now().minusSeconds(1);
+            Map<String, Object> response = body();
+            response.put("observed_at", observed.toString());
+            response.put("expires_at", null);
+            stub.response(response);
+            IdentityCoordinatorVerifier verifier = stub.verifier();
+            long deadline = System.nanoTime() + Duration.ofSeconds(6).toNanos();
+            Window window = verifier.verify("Bearer " + PAT, request(ISSUER), deadline);
+            assertEquals(observed.plusSeconds(9), window.expiresAt());
+            assertEquals(deadline, window.deadlineNanos());
+            window.requireCurrent();
+
+            response.put("observed_at", Instant.now().minusSeconds(10).toString());
+            stub.response(response);
+            failure(401, "identity_authority_expired",
+                () -> verifier.verify("Bearer " + PAT, request(ISSUER), originalDeadline()));
+        }
+    }
+
+    @Test
     void missingWrongSchemeJwtAndOversizeTokenAreRejectedBeforeAnyUpstreamRequest() throws Exception {
         try (Stub stub = new Stub()) {
             IdentityCoordinatorVerifier verifier = stub.verifier();
@@ -217,16 +238,15 @@ class IdentityCoordinatorVerifierHttpTest {
     }
 
     @Test
-    void humanRoleUnregisteredServiceAndMissingLifecycleScopeAreDenied() throws Exception {
+    void humanAgentUnregisteredServiceAndMissingLifecycleScopeAreDenied() throws Exception {
         try (Stub stub = new Stub()) {
             IdentityCoordinatorVerifier verifier = stub.verifier();
-            for (String key : List.of("subject_role", "sub", "scopes")) {
+            for (Map<String, Object> variation : List.<Map<String, Object>>of(
+                    Map.of("subject_kind", "human", "subject_role", "admin", "email", "human@example.test"),
+                    Map.of("subject_kind", "agent", "subject_role", "service_account", "email", "agent@example.test"),
+                    Map.of("sub", OTHER), Map.of("scopes", List.of("application-access:read")))) {
                 Map<String, Object> response = body();
-                response.put(key, switch (key) {
-                    case "subject_role" -> "admin";
-                    case "sub" -> OTHER;
-                    default -> List.of("application-access:read");
-                });
+                response.putAll(variation);
                 stub.response(response);
                 failure(403, "identity_coordinator_capability_required", () -> verifier.verify("Bearer " + PAT, request(ISSUER), originalDeadline()));
             }
@@ -246,19 +266,21 @@ class IdentityCoordinatorVerifierHttpTest {
     }
 
     @Test
-    void malformedSubjectBlankEmailMissingFieldsAndMalformedJsonFailClosed() throws Exception {
+    void malformedSubjectProfileMetadataMissingFieldsAndMalformedJsonFailClosed() throws Exception {
         try (Stub stub = new Stub()) {
             IdentityCoordinatorVerifier verifier = stub.verifier();
             for (String subject : List.of("not-a-uuid", "00000000-0000-0000-0000-000000000000", "00000000-0000-4000-8000-1")) {
                 Map<String, Object> response = body(); response.put("sub", subject); stub.response(response);
                 failure(503, "identity_owner_confirmation_unavailable", () -> verifier.verify("Bearer " + PAT, request(ISSUER), originalDeadline()));
             }
-            for (String field : List.of("sub", "email", "subject_role", "observed_at", "expires_at")) {
+            for (String field : List.of("sub", "subject_kind", "observed_at", "expires_at")) {
                 Map<String, Object> response = body(); response.remove(field); stub.response(response);
                 failure(503, "identity_owner_confirmation_unavailable", () -> verifier.verify("Bearer " + PAT, request(ISSUER), originalDeadline()));
             }
-            Map<String, Object> response = body(); response.put("email", "  "); stub.response(response);
-            failure(503, "identity_owner_confirmation_unavailable", () -> verifier.verify("Bearer " + PAT, request(ISSUER), originalDeadline()));
+            for (String field : List.of("email", "display_name", "subject_role", "application_access")) {
+                Map<String, Object> response = body(); response.put(field, null); stub.response(response);
+                failure(503, "identity_owner_confirmation_unavailable", () -> verifier.verify("Bearer " + PAT, request(ISSUER), originalDeadline()));
+            }
             for (String invalid : List.of("{", "null", "[]")) {
                 stub.response.set(invalid);
                 failure(503, "identity_owner_confirmation_unavailable", () -> verifier.verify("Bearer " + PAT, request(ISSUER), originalDeadline()));
