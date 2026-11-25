@@ -62,7 +62,7 @@ dependencies {
     implementation "dev.langchain4j:langchain4j-http-client-jdk:${langchain4jVersion}"
 
     // MCP (not in Spring Boot BOM)
-    implementation 'io.modelcontextprotocol.sdk:mcp:2.1.0'
+    implementation 'io.modelcontextprotocol.sdk:mcp:2.2.0'
 
     // DB / migrations — versions managed by Spring Boot 4.1 BOM
     implementation 'org.flywaydb:flyway-core'
