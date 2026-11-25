@@ -54,7 +54,8 @@ class FlywayConfigTest {
                 + owned + "','" + session + "','keep prompt','DONE','keep result'), ('"
                 + unknown + "',NULL,'legacy work','RUNNING',NULL)");
             var migration = Flyway.configure().dataSource(source)
-                .locations("classpath:db/migration", "classpath:db/h2").baselineVersion("76").load();
+                .locations("classpath:db/migration", "classpath:db/h2")
+                .baselineVersion("76").target("77").load();
             migration.baseline();
             migration.migrate();
 
