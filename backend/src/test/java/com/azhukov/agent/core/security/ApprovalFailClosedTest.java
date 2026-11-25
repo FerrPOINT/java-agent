@@ -28,7 +28,7 @@ class ApprovalFailClosedTest {
     void timedOutApprovalIsNotApproved() throws Exception {
         ApprovalQueue queue = new ApprovalQueue();
         UUID session = UUID.randomUUID();
-        queue.request(session, call(), "destructive", Duration.ofMillis(50));
+        var request = queue.request(session, call(), "destructive", Duration.ofMillis(50));
 
         // Wait past the expiry, then simulate the executor's gate sequence.
         // timing-assertion: verifies fail-closed after expiry duration
@@ -46,7 +46,7 @@ class ApprovalFailClosedTest {
     void pendingApprovalIsNotApprovedWhileUndecided() {
         ApprovalQueue queue = new ApprovalQueue();
         UUID session = UUID.randomUUID();
-        queue.request(session, call(), "destructive", Duration.ofMinutes(5));
+        var request = queue.request(session, call(), "destructive", Duration.ofMinutes(5));
 
         assertFalse(queue.isApproved(session), "undecided approval must not execute");
         assertTrue(queue.isPending(session));
@@ -56,12 +56,12 @@ class ApprovalFailClosedTest {
     void awaitDecisionTimesOutAndIsApprovedStaysFalse() throws Exception {
         ApprovalQueue queue = new ApprovalQueue();
         UUID session = UUID.randomUUID();
-        queue.request(session, call(), "destructive", Duration.ofMinutes(5));
+        var request = queue.request(session, call(), "destructive", Duration.ofMinutes(5));
 
         AtomicReference<Boolean> decided = new AtomicReference<>(null);
         CountDownLatch done = new CountDownLatch(1);
         Thread waiter = new Thread(() -> {
-            decided.set(queue.awaitDecision(session, 150));
+            decided.set(queue.awaitDecision(request, 150));
             done.countDown();
         });
         waiter.start();
@@ -77,13 +77,13 @@ class ApprovalFailClosedTest {
     void supersededApprovalIsNotApproved() throws Exception {
         ApprovalQueue queue = new ApprovalQueue();
         UUID session = UUID.randomUUID();
-        queue.request(session, call(), "destructive", Duration.ofMinutes(5));
+        var request = queue.request(session, call(), "destructive", Duration.ofMinutes(5));
 
         // A waiter already blocked on request #1's latch — supersede releases IT.
         AtomicReference<Boolean> released = new AtomicReference<>(null);
         CountDownLatch waiterDone = new CountDownLatch(1);
         Thread waiter = new Thread(() -> {
-            released.set(queue.awaitDecision(session, 5000));
+            released.set(queue.awaitDecision(request, 5000));
             waiterDone.countDown();
         });
         waiter.start();
@@ -108,8 +108,8 @@ class ApprovalFailClosedTest {
     void explicitApproveIsTheOnlyPathToApproved() {
         ApprovalQueue queue = new ApprovalQueue();
         UUID session = UUID.randomUUID();
-        queue.request(session, call(), "destructive", Duration.ofMinutes(5));
-        queue.approve(session, "approve", null);
+        var request = queue.request(session, call(), "destructive", Duration.ofMinutes(5));
+        queue.approve(request.requestId(), null);
         assertTrue(queue.isApproved(session));
         assertFalse(queue.isPending(session));
     }
@@ -127,10 +127,11 @@ class ApprovalFailClosedTest {
         UUID session = UUID.randomUUID();
 
         // First dangerous call → prompt → user approves → gate consumes.
-        queue.request(session, new ToolCall("c1", "delete_file", "{}"), "destructive", Duration.ofMinutes(5));
-        queue.approve(session, "approve", null);
+        var request = queue.request(session, new ToolCall("c1", "delete_file", "{}"), "destructive", Duration.ofMinutes(5));
+        queue.approve(request.requestId(), null);
         assertTrue(queue.isApproved(session), "approved before execution");
-        queue.clear(session); // runtime consumes (rev-131)
+        assertTrue(queue.consumeDecision(request).approved());
+        assertNull(queue.consumeDecision(request));
 
         // Second dangerous call: guardrail fires again, queue re-prompts.
         assertFalse(queue.isApproved(session), "consumed approval must not linger");

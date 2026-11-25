@@ -54,7 +54,8 @@ class FlywayConfigTest {
                 + owned + "','" + session + "','keep prompt','DONE','keep result'), ('"
                 + unknown + "',NULL,'legacy work','RUNNING',NULL)");
             var migration = Flyway.configure().dataSource(source)
-                .locations("classpath:db/migration", "classpath:db/h2").baselineVersion("76").target("77").load();
+                .locations("classpath:db/migration", "classpath:db/h2")
+                .baselineVersion("76").target("77").load();
             migration.baseline();
             migration.migrate();
 
@@ -70,32 +71,6 @@ class FlywayConfigTest {
                 assertThat(row.next()).isTrue();
                 assertThat(row.getString(1)).isNull();
                 assertThat(row.getString(2)).isEqualTo("legacy completion");
-            }
-        }
-    }
-
-    @Test
-    void h2MessageOrderMigrationPreservesLegacyAndOrdersNewRows() throws Exception {
-        var config = new HikariConfig();
-        config.setJdbcUrl("jdbc:h2:mem:message_order_" + java.util.UUID.randomUUID() + ";MODE=PostgreSQL");
-        config.setUsername("sa");
-        try (var source = new HikariDataSource(config);
-             var connection = source.getConnection(); var sql = connection.createStatement()) {
-            sql.execute("CREATE TABLE messages (id UUID PRIMARY KEY, content TEXT)");
-            var old = java.util.UUID.randomUUID();
-            sql.execute("INSERT INTO messages(id, content) VALUES ('" + old + "', 'legacy')");
-            var migration = Flyway.configure().dataSource(source)
-                .locations("classpath:db/migration", "classpath:db/h2").baselineVersion("78").load();
-            migration.baseline();
-            migration.migrate();
-            sql.execute("INSERT INTO messages(id, content) VALUES (RANDOM_UUID(), 'first'), (RANDOM_UUID(), 'second')");
-            try (var rows = sql.executeQuery("SELECT content,insert_order FROM messages ORDER BY insert_order ASC NULLS FIRST")) {
-                assertThat(rows.next()).isTrue(); assertThat(rows.getString(1)).isEqualTo("legacy");
-                rows.getLong(2); assertThat(rows.wasNull()).isTrue();
-                assertThat(rows.next()).isTrue(); assertThat(rows.getString(1)).isEqualTo("first");
-                long first = rows.getLong(2);
-                assertThat(rows.next()).isTrue(); assertThat(rows.getString(1)).isEqualTo("second");
-                assertThat(rows.getLong(2)).isGreaterThan(first);
             }
         }
     }

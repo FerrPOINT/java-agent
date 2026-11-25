@@ -1,5 +1,6 @@
 package com.azhukov.agent.bot.commands.impl;
 
+import com.azhukov.agent.shared.dto.ToolApprovalDecision;
 import com.azhukov.agent.bot.core.AgentBackendClient;
 import com.azhukov.agent.bot.polling.UpdateEvent;
 import com.azhukov.agent.bot.polling.UpdateEvent.Type;
@@ -13,7 +14,7 @@ class ApproveCommandTest {
     @Test
     void defaultApprove_single() {
         AgentBackendClient client = mock(AgentBackendClient.class);
-        when(client.approve(false, null)).thenReturn("Approved");
+        when(client.decideApproval(new ToolApprovalDecision(ToolApprovalDecision.Action.APPROVE, false, null, null))).thenReturn("Approved");
         var cmd = new ApproveCommand(client);
         UpdateEvent event = makeEvent("");
         String result = cmd.handle(event, null);
@@ -23,31 +24,19 @@ class ApproveCommandTest {
     @Test
     void approveAll() {
         AgentBackendClient client = mock(AgentBackendClient.class);
-        when(client.approve(true, null)).thenReturn("Approved all");
+        when(client.decideApproval(new ToolApprovalDecision(ToolApprovalDecision.Action.APPROVE, true, null, null))).thenReturn("Approved all");
         var cmd = new ApproveCommand(client);
         UpdateEvent event = makeEvent("all");
         String result = cmd.handle(event, null);
         assertThat(result).isEqualTo("Approved all");
     }
 
-    @Test
-    void approveSession() {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"session", "always"})
+    void removedGrantScopesDoNotCallBackend(String scope) {
         AgentBackendClient client = mock(AgentBackendClient.class);
-        when(client.approve(false, "session")).thenReturn("Approved for session");
-        var cmd = new ApproveCommand(client);
-        UpdateEvent event = makeEvent("session");
-        String result = cmd.handle(event, null);
-        assertThat(result).isEqualTo("Approved for session");
-    }
-
-    @Test
-    void approveAlways() {
-        AgentBackendClient client = mock(AgentBackendClient.class);
-        when(client.approve(false, "always")).thenReturn("Approved always");
-        var cmd = new ApproveCommand(client);
-        UpdateEvent event = makeEvent("always");
-        String result = cmd.handle(event, null);
-        assertThat(result).isEqualTo("Approved always");
+        assertThat(new ApproveCommand(client).handle(makeEvent(scope), null)).contains("Usage");
+        verifyNoInteractions(client);
     }
 
     @Test

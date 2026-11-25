@@ -1,10 +1,9 @@
 package com.azhukov.agent.api;
 
-import com.azhukov.agent.api.dto.ApproveRequest;
+import com.azhukov.agent.shared.dto.ToolApprovalDecision;
 import com.azhukov.agent.api.dto.BackgroundRequest;
 import com.azhukov.agent.api.dto.ChatRequest;
 import com.azhukov.agent.shared.dto.ChatResponseDto;
-import com.azhukov.agent.api.dto.DenyRequest;
 import com.azhukov.agent.api.dto.DoctorDto;
 import com.azhukov.agent.api.dto.RefineRequest;
 import com.azhukov.agent.api.dto.StopRequest;
@@ -104,7 +103,6 @@ class AgentChatControllerT1Test {
     @Mock private AgentProperties.MemoryProperties memoryProperties;
     @Mock private AgentProperties.BackgroundReviewProperties backgroundReviewProperties;
     @Mock private AgentMetrics agentMetrics;
-    @Mock private com.azhukov.agent.core.security.CommandApprovalManager commandApprovalManager;
     private com.azhukov.agent.core.agent.SessionTurnLockManager sessionTurnLockManager;
 
     @BeforeEach
@@ -143,16 +141,12 @@ class AgentChatControllerT1Test {
             agentMetrics,
             toolRegistry
         );
-        // rev-97: inject CommandApprovalManager for session/always scope tests
         try {
-            var field = AgentChatController.class.getDeclaredField("commandApprovalManager");
-            field.setAccessible(true);
-            field.set(controller, commandApprovalManager);
             var lockField = AgentChatController.class.getDeclaredField("sessionTurnLockManager");
             lockField.setAccessible(true);
             lockField.set(controller, sessionTurnLockManager);
         } catch (Exception e) {
-            // field injection is optional — ignore if missing
+            throw new AssertionError("Session lock fixture wiring failed", e);
         }
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler(new com.fasterxml.jackson.databind.ObjectMapper()))
@@ -537,8 +531,8 @@ class AgentChatControllerT1Test {
 
     @Test
     void approve_noPendingApprovals() throws Exception {
-        String body = objectMapper.writeValueAsString(new ApproveRequest(false, null));
-        mockMvc.perform(post("/api/v1/agent/approve")
+        String body = objectMapper.writeValueAsString(ToolApprovalDecision.fromCommand(ToolApprovalDecision.Action.APPROVE, ""));
+        mockMvc.perform(post("/api/v1" + ToolApprovalDecision.PATH)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body))
             .andExpect(status().isOk())
@@ -547,83 +541,50 @@ class AgentChatControllerT1Test {
 
     @Test
     void approve_omittedAllDefaultsToFalse() throws Exception {
-        mockMvc.perform(post("/api/v1/agent/approve")
+        mockMvc.perform(post("/api/v1" + ToolApprovalDecision.PATH)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("{}"))
+                .content("{\"action\":\"APPROVE\"}"))
             .andExpect(status().isOk())
             .andExpect(content().string("No pending approvals"));
     }
 
     @Test
-    void approve_invalidSessionIdScope() throws Exception {
-        String body = "{\"all\":false,\"scope\":\"not-a-uuid\"}";
-        mockMvc.perform(post("/api/v1/agent/approve")
+    void approve_invalidRequestIdScope() throws Exception {
+        String body = "{\"action\":\"APPROVE\",\"all\":false,\"requestId\":\"not-a-uuid\"}";
+        mockMvc.perform(post("/api/v1" + ToolApprovalDecision.PATH)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body))
-            .andExpect(status().isOk())
-            .andExpect(content().string("Invalid session ID: not-a-uuid"));
+            .andExpect(status().isBadRequest());
     }
 
     @Test
-    void approve_validSessionIdScope_noPending() throws Exception {
-        String body = "{\"all\":false,\"scope\":\"" + SESSION_ID + "\"}";
-        mockMvc.perform(post("/api/v1/agent/approve")
+    void approve_unknownRequestIdScope_returns404() throws Exception {
+        String body = "{\"action\":\"APPROVE\",\"all\":false,\"requestId\":\"" + SESSION_ID + "\"}";
+        mockMvc.perform(post("/api/v1" + ToolApprovalDecision.PATH)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body))
-            .andExpect(status().isOk())
-            .andExpect(content().string("No pending approval for session: " + SESSION_ID));
+            .andExpect(status().isNotFound());
     }
 
-    // ── rev-97: approve with session/always scope keywords ──
-
-    @Test
-    void approve_sessionScope_approvesAndSeedsAllowlist() throws Exception {
-        UUID sid = SESSION_ID;
-        com.azhukov.agent.core.model.ToolCall call =
-            new com.azhukov.agent.core.model.ToolCall("pair-1", "terminal", "{\"command\":\"ls -la\"}");
-        approvalQueue.request(sid, call, "test");
-        String body = "{\"all\":false,\"scope\":\"session\"}";
-        mockMvc.perform(post("/api/v1/agent/approve")
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"session", "always"})
+    void removedGrantScopesAreRejectedWithoutApproving(String scope) throws Exception {
+        var pending = approvalQueue.request(SESSION_ID,
+            new com.azhukov.agent.core.model.ToolCall("call", "terminal", "{}"), "test");
+        mockMvc.perform(post("/api/v1" + ToolApprovalDecision.PATH)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(body))
-            .andExpect(status().isOk())
-            .andExpect(content().string(containsString("Approved (scope=session)")));
-        assertThat(approvalQueue.isApproved(sid)).isTrue();
-        verify(commandApprovalManager).allowForSession("ls -la");
-    }
-
-    @Test
-    void approve_alwaysScope_approvesAndSeedsAllowlist() throws Exception {
-        UUID sid = SESSION_ID;
-        com.azhukov.agent.core.model.ToolCall call =
-            new com.azhukov.agent.core.model.ToolCall("pair-2", "terminal", "{\"command\":\"rm /tmp/foo\"}");
-        approvalQueue.request(sid, call, "test");
-        String body = "{\"all\":false,\"scope\":\"always\"}";
-        mockMvc.perform(post("/api/v1/agent/approve")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(body))
-            .andExpect(status().isOk())
-            .andExpect(content().string(containsString("Approved (scope=always)")));
-        assertThat(approvalQueue.isApproved(sid)).isTrue();
-        verify(commandApprovalManager).allowForSession("rm /tmp/foo");
-    }
-
-    @Test
-    void approve_sessionScope_noPending_returnsNoApprovals() throws Exception {
-        String body = "{\"all\":false,\"scope\":\"session\"}";
-        mockMvc.perform(post("/api/v1/agent/approve")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(body))
-            .andExpect(status().isOk())
-            .andExpect(content().string("No pending approvals"));
+                .content("{\"action\":\"APPROVE\",\"scope\":\"" + scope + "\"}"))
+            .andExpect(status().isBadRequest());
+        assertThat(approvalQueue.getPending(SESSION_ID)).isSameAs(pending);
+        assertThat(approvalQueue.isApproved(SESSION_ID)).isFalse();
     }
 
     // ── deny() ──
 
     @Test
     void deny_noPendingApprovals() throws Exception {
-        String body = objectMapper.writeValueAsString(new DenyRequest(false));
-        mockMvc.perform(post("/api/v1/agent/deny")
+        String body = objectMapper.writeValueAsString(ToolApprovalDecision.fromCommand(ToolApprovalDecision.Action.DENY, ""));
+        mockMvc.perform(post("/api/v1" + ToolApprovalDecision.PATH)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body))
             .andExpect(status().isOk())
@@ -632,21 +593,21 @@ class AgentChatControllerT1Test {
 
     @Test
     void deny_omittedAllDefaultsToFalse() throws Exception {
-        mockMvc.perform(post("/api/v1/agent/deny")
+        mockMvc.perform(post("/api/v1" + ToolApprovalDecision.PATH)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("{}"))
+                .content("{\"action\":\"DENY\"}"))
             .andExpect(status().isOk())
             .andExpect(content().string("No pending approvals"));
     }
 
     @Test
     void deny_all_whenEmpty() throws Exception {
-        String body = objectMapper.writeValueAsString(new DenyRequest(true));
-        mockMvc.perform(post("/api/v1/agent/deny")
+        String body = objectMapper.writeValueAsString(ToolApprovalDecision.fromCommand(ToolApprovalDecision.Action.DENY, "all"));
+        mockMvc.perform(post("/api/v1" + ToolApprovalDecision.PATH)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body))
             .andExpect(status().isOk())
-            .andExpect(content().string("Denied all pending approvals"));
+            .andExpect(content().string("Denied 0 pending requests"));
     }
 
     // ── pendingApprovals() ──
@@ -753,11 +714,87 @@ class AgentChatControllerT1Test {
     }
 
     @Test
+    void approveAllOnlyChangesTheCallersVisibleRequests() throws Exception {
+        UserContext.set("owner", UserContext.ROLE_USER);
+        try {
+            var otherSession = UUID.randomUUID();
+            when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(sessionOf("owner")));
+            when(sessionRepository.findById(otherSession)).thenReturn(Optional.of(sessionOf("other-owner")));
+            var own = approvalQueue.request(SESSION_ID,
+                new com.azhukov.agent.core.model.ToolCall("a", "terminal", "{}"), "own");
+            var foreign = approvalQueue.request(otherSession,
+                new com.azhukov.agent.core.model.ToolCall("b", "terminal", "{}"), "foreign");
+            mockMvc.perform(post("/api/v1" + ToolApprovalDecision.PATH)
+                    .contentType(MediaType.APPLICATION_JSON).content("{\"action\":\"APPROVE\",\"all\":true}"))
+                .andExpect(status().isOk()).andExpect(content().string("Approved 1 pending requests"));
+            assertThat(approvalQueue.consumeDecision(own).approved()).isTrue();
+            assertThat(approvalQueue.getPending(otherSession)).isSameAs(foreign);
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
+    void priorDenialCannotBeReportedAsSuccessfulApproval() throws Exception {
+        var request = approvalQueue.request(SESSION_ID,
+            new com.azhukov.agent.core.model.ToolCall("id", "terminal", "{}"), "test");
+        approvalQueue.deny(request.requestId(), null);
+        mockMvc.perform(approvalById(request.requestId()))
+            .andExpect(status().isConflict());
+        assertThat(approvalQueue.isDenied(SESSION_ID)).isTrue();
+    }
+
+    @Test
+    void currentApprovalSelectorCannotBeCombinedWithAll() throws Exception {
+        var pending = approvalQueue.request(SESSION_ID,
+            new com.azhukov.agent.core.model.ToolCall("id", "terminal", "{}"), "test");
+        mockMvc.perform(post("/api/v1" + ToolApprovalDecision.PATH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"action\":\"APPROVE\",\"all\":true,\"requestId\":\"" + pending.requestId() + "\"}"))
+            .andExpect(status().isBadRequest());
+        assertThat(approvalQueue.getPending(SESSION_ID)).isSameAs(pending);
+    }
+
+    @Test
+    void decisionRequiresTheCurrentActionField() throws Exception {
+        var pending = approvalQueue.request(SESSION_ID,
+            new com.azhukov.agent.core.model.ToolCall("id", "terminal", "{}"), "test");
+        mockMvc.perform(post("/api/v1" + ToolApprovalDecision.PATH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"decision\":\"DENY\",\"requestId\":\"" + pending.requestId() + "\"}"))
+            .andExpect(status().isBadRequest());
+        assertThat(approvalQueue.getPending(SESSION_ID)).isSameAs(pending);
+    }
+
+    @Test
+    void lateApprovalRequestCannotTargetReplacementInSameSession() throws Exception {
+        UserContext.set("owner", UserContext.ROLE_USER);
+        try {
+            when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(sessionOf("owner")));
+            var first = approvalQueue.request(SESSION_ID,
+                new com.azhukov.agent.core.model.ToolCall("a", "terminal", "{}"), "first");
+            var second = approvalQueue.request(SESSION_ID,
+                new com.azhukov.agent.core.model.ToolCall("b", "delete_file", "{}"), "second");
+            mockMvc.perform(approvalById(first.requestId()))
+                .andExpect(status().isNotFound());
+            mockMvc.perform(approvalById(SESSION_ID))
+                .andExpect(status().isNotFound());
+            assertThat(approvalQueue.getPending(SESSION_ID)).isEqualTo(second);
+            mockMvc.perform(approvalById(second.requestId()))
+                .andExpect(status().isOk());
+            assertThat(approvalQueue.consumeDecision(second).approved()).isTrue();
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
     void approveTool_otherUsersSession_returns403() throws Exception {
         UserContext.set("user-77", UserContext.ROLE_USER);
         try {
             when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.of(sessionOf("owner")));
-            mockMvc.perform(post("/api/v1/agent/approvals/" + SESSION_ID + "/approve"))
+            var request = approvalQueue.request(SESSION_ID, new com.azhukov.agent.core.model.ToolCall("id", "terminal", "{}"), "test");
+            mockMvc.perform(approvalById(request.requestId()))
                 .andExpect(status().isForbidden());
         } finally {
             UserContext.clear();
@@ -794,4 +831,13 @@ class AgentChatControllerT1Test {
             UserContext.clear();
         }
     }
+
+    private org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder approvalById(UUID id)
+            throws Exception {
+        return post("/api/v1" + ToolApprovalDecision.PATH)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(objectMapper.writeValueAsString(
+                new ToolApprovalDecision(ToolApprovalDecision.Action.APPROVE, false, id, null)));
+    }
+
 }

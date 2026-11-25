@@ -214,8 +214,7 @@ public class DefaultContextEngine implements ContextEngine {
  || messages.get(0).role() == Role.DEVELOPER)) ? 1 : 0;
  if (from < messages.size()) {
  Message firstIncoming = messages.get(from);
- // Image payloads can share redacted text; equality cannot establish their identity.
- if (firstIncoming.role() == Role.USER && firstIncoming.imageCount() == 0) {
+ if (firstIncoming.role() == Role.USER) {
  // Hermes parity (_persist_session cursor semantics): drop ALL trailing
  // history USER rows equal to the incoming message. Mid-turn persistence
  // writes the user message before the first model call, and a mid-turn
@@ -227,8 +226,7 @@ public class DefaultContextEngine implements ContextEngine {
  // 'orphan' — 13 -> 12 messages — corrupting the replayed context).
  while (!context.isEmpty()
      && context.get(context.size() - 1).role() == Role.USER
-     && java.util.Objects.equals(context.get(context.size() - 1).content(), firstIncoming.content())
-      && context.get(context.size() - 1).imageCount() == 0) {
+     && java.util.Objects.equals(context.get(context.size() - 1).content(), firstIncoming.content())) {
  context.remove(context.size() - 1);
  }
  }
@@ -659,8 +657,9 @@ public class DefaultContextEngine implements ContextEngine {
          if (maxMessages <= 0) {
              maxMessages = 50;
          }
-         List<MessageEntity> descHistory = messageRepository.findBySessionIdAndActiveTrueOrderByCreatedAtDesc(
-                 session.id(), maxMessages);
+         List<MessageEntity> descHistory = messageRepository.findBySessionIdOrderByCreatedAtDesc(
+                 session.id(), maxMessages).stream()
+             .filter(DefaultContextEngine::isActive).toList();
          // Reverse to get ascending order (defensive copy in case the list is immutable)
          java.util.List<MessageEntity> ascHistory = new java.util.ArrayList<>(descHistory);
          java.util.Collections.reverse(ascHistory);
@@ -709,13 +708,14 @@ public class DefaultContextEngine implements ContextEngine {
                          .hasSerializedBatch(e.getToolCallsJson())
                          && (e.getToolCallId() != null || e.getToolCallName() != null)) {
                          yield Message.assistantWithToolCalls(content,
-                             List.of(com.azhukov.agent.persistence.mapper.MessageMapper.INSTANCE.extractToolCall(e)),
+                             List.of(new com.azhukov.agent.core.model.ToolCall(
+                                 e.getToolCallId(), e.getToolCallName(), e.getToolCallArguments())),
                              turnIdx, reasoning);
                      }
                      yield Message.assistant(content, turnIdx, reasoning);
                  }
                  case "tool" -> Message.toolResult(e.getToolCallId(), content, turnIdx);
-                 default -> Message.userWithImages(content, e.getImageCount() == null ? 0 : e.getImageCount());
+                 default -> Message.user(content);
              });
          }
      } catch (Exception e) {
@@ -733,10 +733,6 @@ public class DefaultContextEngine implements ContextEngine {
         evictTurnCache(sessionId);
     }
 
-    private static boolean isActive(MessageEntity entity) {
-        return entity != null && !Boolean.FALSE.equals(entity.getActive());
-    }
-
     /**
      * Evict the turn-scoped history snapshot for the current request thread.
      * Called when a new turn starts or compression rotates the session.
@@ -746,6 +742,10 @@ public class DefaultContextEngine implements ContextEngine {
         if (snapshot != null && (sessionId == null || snapshot.sessionId().equals(sessionId))) {
             turnHistorySnapshot.remove();
         }
+    }
+    /** PR-3 parity: soft-deleted/archived rows must never re-enter the context. */
+    private static boolean isActive(MessageEntity entity) {
+        return entity != null && !Boolean.FALSE.equals(entity.getActive());
     }
 
 }

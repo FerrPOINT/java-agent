@@ -96,7 +96,7 @@ class RotationStormRegressionTest {
         bulkyRow.setRole("user");
         bulkyRow.setCreatedAt(Instant.now());
         bulkyRow.setActive(true);
-        lenient().when(mr.findBySessionIdAndActiveTrueOrderByCreatedAtDesc(any(UUID.class), anyInt()))
+        lenient().when(mr.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), anyInt()))
             .thenReturn(java.util.List.of(bulkyRow));
 
         String bulky = "y".repeat(2_000);

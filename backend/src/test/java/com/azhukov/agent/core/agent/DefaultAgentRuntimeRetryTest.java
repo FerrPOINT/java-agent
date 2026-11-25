@@ -113,7 +113,6 @@ class DefaultAgentRuntimeRetryTest {
         when(turnStateManager.getOrStart(any(UUID.class), any(int.class)))
             .thenReturn(mock(com.azhukov.agent.core.state.TurnState.class));
 
-        when(guardrail.isHalted()).thenReturn(false);
 
         runtime = new DefaultAgentRuntime(
             modelClient, toolRegistry, toolExecutionService, promptBuilder,
@@ -121,7 +120,7 @@ class DefaultAgentRuntimeRetryTest {
             messageSanitizer, contextReferenceService, properties,
             inputSanitizer, guardrail, turnStateManager, backgroundReviewService,
             interruptToken, turnFinalizer, steerBuffer, errorClassifier, null,
-            new com.azhukov.agent.core.security.ApprovalQueue(), null, null,
+            new com.azhukov.agent.core.security.ApprovalQueue(), mock(com.azhukov.agent.core.security.ToolApprovalPolicy.class), null,
             new TokenEstimator(), new ToolResultFormatter(), null, null);
     }
 
@@ -509,7 +508,6 @@ class DefaultAgentRuntimeRetryTest {
         when(iterationBudget.recordModelCall(any(), any(int.class), any(int.class))).thenReturn(snapshot);
         when(turnStateManager.getOrStart(any(UUID.class), any(int.class)))
             .thenReturn(mock(com.azhukov.agent.core.state.TurnState.class));
-        when(guardrail.isHalted()).thenReturn(false);
 
         DefaultAgentRuntime customRuntime = new DefaultAgentRuntime(
             modelClient, toolRegistry, toolExecutionService, promptBuilder,
@@ -517,7 +515,7 @@ class DefaultAgentRuntimeRetryTest {
             messageSanitizer, mock(ContextReferenceService.class), properties,
             inputSanitizer, guardrail, turnStateManager, backgroundReviewService,
             interruptToken, turnFinalizer, steerBuffer, errorClassifier, null,
-            new com.azhukov.agent.core.security.ApprovalQueue(), null, null,
+            new com.azhukov.agent.core.security.ApprovalQueue(), mock(com.azhukov.agent.core.security.ToolApprovalPolicy.class), null,
             new TokenEstimator(), new ToolResultFormatter(), null, null);
 
         Session session = Session.create("user-1", "openai-compatible", "test-model");

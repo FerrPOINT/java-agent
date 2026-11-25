@@ -70,7 +70,7 @@ class DefaultContextEngineBranchCoverageTest {
         DefaultContextEngine engine = new DefaultContextEngine(
             memoryProvider, skillManager, messageRepository, contextCompressor, properties);
 
-        when(messageRepository.findBySessionIdAndActiveTrueOrderByCreatedAtDesc(any(UUID.class), anyInt()))
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), anyInt()))
             .thenReturn(Collections.emptyList());
 
         List<Message> incoming = List.of(Message.developer("You are a dev assistant."), Message.user("Hello"));
@@ -89,7 +89,7 @@ class DefaultContextEngineBranchCoverageTest {
         // Hermes parity: the skills INDEX lives in the system prompt's volatile
         // tier (DefaultPromptBuilder.buildSkillsIndex), NOT in prepareContext.
         // Raw SKILL.md content must never leak into the context messages.
-        when(messageRepository.findBySessionIdAndActiveTrueOrderByCreatedAtDesc(any(UUID.class), anyInt()))
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), anyInt()))
             .thenReturn(Collections.emptyList());
 
         List<Message> incoming = List.of(Message.developer("Dev prompt."), Message.user("Hi"));
@@ -106,7 +106,7 @@ class DefaultContextEngineBranchCoverageTest {
         DefaultContextEngine engine = new DefaultContextEngine(
             memoryProvider, skillManager, messageRepository, contextCompressor, properties);
 
-        when(messageRepository.findBySessionIdAndActiveTrueOrderByCreatedAtDesc(any(UUID.class), anyInt()))
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), anyInt()))
             .thenReturn(Collections.emptyList());
 
         List<Message> incoming = List.of(Message.system("System"), Message.user("Hi"));
@@ -123,7 +123,7 @@ class DefaultContextEngineBranchCoverageTest {
         DefaultContextEngine engine = new DefaultContextEngine(
             memoryProvider, skillManager, messageRepository, contextCompressor, properties);
 
-        when(messageRepository.findBySessionIdAndActiveTrueOrderByCreatedAtDesc(any(UUID.class), anyInt()))
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), anyInt()))
             .thenReturn(Collections.emptyList());
 
         List<Message> incoming = List.of(Message.system("System"), Message.user("Hi"));
@@ -144,7 +144,7 @@ class DefaultContextEngineBranchCoverageTest {
         properties.getContext().setMaxContextMessages(50);
 
         String longContent = "x".repeat(500);
-        when(messageRepository.findBySessionIdAndActiveTrueOrderByCreatedAtDesc(any(UUID.class), anyInt()))
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), anyInt()))
             .thenReturn(Collections.emptyList());
 
         List<Message> incoming = List.of(Message.system("System"), Message.user("Hi"));
@@ -161,7 +161,7 @@ class DefaultContextEngineBranchCoverageTest {
         DefaultContextEngine engine = new DefaultContextEngine(
             memoryProvider, skillManager, messageRepository, contextCompressor, properties);
 
-        when(messageRepository.findBySessionIdAndActiveTrueOrderByCreatedAtDesc(any(UUID.class), anyInt()))
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), anyInt()))
             .thenReturn(Collections.emptyList());
 
         List<Message> incoming = List.of(Message.system("System"), Message.user("Hi"));
@@ -178,7 +178,7 @@ class DefaultContextEngineBranchCoverageTest {
         DefaultContextEngine engine = new DefaultContextEngine(
             memoryProvider, skillManager, messageRepository, contextCompressor, properties);
 
-        when(messageRepository.findBySessionIdAndActiveTrueOrderByCreatedAtDesc(any(UUID.class), anyInt()))
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), anyInt()))
             .thenThrow(new RuntimeException("DB connection failed"));
 
         List<Message> incoming = List.of(Message.system("System"), Message.user("Hi"));
@@ -204,7 +204,7 @@ class DefaultContextEngineBranchCoverageTest {
         toolMsg.setTurnIndex(2);
         toolMsg.setToolCallId("call-1");
 
-        when(messageRepository.findBySessionIdAndActiveTrueOrderByCreatedAtDesc(eq(session.id()), anyInt()))
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(eq(session.id()), anyInt()))
             .thenReturn(List.of(toolMsg));
 
         List<Message> incoming = List.of(Message.system("System"), Message.user("Current"));
@@ -228,7 +228,7 @@ class DefaultContextEngineBranchCoverageTest {
         userMsg.setContent("test");
         userMsg.setTurnIndex(null);
 
-        when(messageRepository.findBySessionIdAndActiveTrueOrderByCreatedAtDesc(eq(session.id()), anyInt()))
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(eq(session.id()), anyInt()))
             .thenReturn(List.of(userMsg));
 
         List<Message> incoming = List.of(Message.system("System"), Message.user("Current"));
@@ -249,7 +249,7 @@ class DefaultContextEngineBranchCoverageTest {
         nullContentMsg.setContent(null);
         nullContentMsg.setTurnIndex(1);
 
-        when(messageRepository.findBySessionIdAndActiveTrueOrderByCreatedAtDesc(eq(session.id()), anyInt()))
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(eq(session.id()), anyInt()))
             .thenReturn(List.of(nullContentMsg));
 
         List<Message> incoming = List.of(Message.system("System"), Message.user("Current"));
@@ -311,7 +311,7 @@ class DefaultContextEngineBranchCoverageTest {
         DefaultContextEngine engine = new DefaultContextEngine(
             memoryProvider, skillManager, messageRepository, contextCompressor, properties, cacheTracker);
 
-        when(messageRepository.findBySessionIdAndActiveTrueOrderByCreatedAtDesc(any(UUID.class), anyInt()))
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), anyInt()))
             .thenReturn(Collections.emptyList());
 
         // Set lastCompressedAt to now (within cooldown)
@@ -477,7 +477,7 @@ class DefaultContextEngineBranchCoverageTest {
         DefaultContextEngine engine = new DefaultContextEngine(
             memoryProvider, skillManager, messageRepository, contextCompressor, properties);
 
-        when(messageRepository.findBySessionIdAndActiveTrueOrderByCreatedAtDesc(any(UUID.class), anyInt()))
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), anyInt()))
             .thenReturn(Collections.emptyList());
 
         // Create 10 messages — all under limit with maxContextMessages=50
@@ -500,7 +500,7 @@ class DefaultContextEngineBranchCoverageTest {
         DefaultContextEngine engine = new DefaultContextEngine(
             memoryProvider, skillManager, messageRepository, contextCompressor, properties, cacheTracker);
 
-        when(messageRepository.findBySessionIdAndActiveTrueOrderByCreatedAtDesc(any(UUID.class), anyInt()))
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), anyInt()))
             .thenReturn(Collections.emptyList());
 
         List<Message> incoming = List.of(Message.system("Sys"), Message.user("Hi"));
@@ -515,7 +515,7 @@ class DefaultContextEngineBranchCoverageTest {
         ContextEngine engine = new DefaultContextEngine(
             memoryProvider, skillManager, messageRepository, contextCompressor, properties);
 
-        when(messageRepository.findBySessionIdAndActiveTrueOrderByCreatedAtDesc(any(UUID.class), anyInt()))
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), anyInt()))
             .thenReturn(Collections.emptyList());
 
         List<Message> messages = List.of(Message.user("test"));

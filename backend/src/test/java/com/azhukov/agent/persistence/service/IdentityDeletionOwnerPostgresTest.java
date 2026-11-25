@@ -479,8 +479,8 @@ class IdentityDeletionOwnerPostgresTest {
             assertThat(post(server,r,"check","public-synthetic-native-key",null).statusCode()).isEqualTo(403);
             assertThat(post(server,r,"check","eyJhbGciOiJFUzI1NiJ9.public.synthetic",null).statusCode()).isEqualTo(403);
             assertThat(server.authCalls.get()).isZero();
-            server.role.set("admin");assertThat(post(server,r,"check",IdentityOwnerHttpFixture.PAT,null).statusCode()).isEqualTo(403);
-            server.role.set("service_account");server.scopes.set(List.of("java-agent:read"));
+            server.subjectKind.set("human");assertThat(post(server,r,"check",IdentityOwnerHttpFixture.PAT,null).statusCode()).isEqualTo(403);
+            server.subjectKind.set("service");server.scopes.set(List.of("java-agent:read"));
             assertThat(post(server,r,"check",IdentityOwnerHttpFixture.PAT,null).statusCode()).isEqualTo(403);
             server.scopes.set(List.of("java-agent:identity-lifecycle"));server.subject.set(UUID.randomUUID().toString());
             assertThat(post(server,r,"check",IdentityOwnerHttpFixture.PAT,null).statusCode()).isEqualTo(403);

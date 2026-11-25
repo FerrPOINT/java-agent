@@ -68,7 +68,7 @@ class DefaultContextEngineTrimToFitTest {
 
     @Test
     void trimToFitRemovesToolCallAndResultTogether() {
-        when(messageRepository.findBySessionIdAndActiveTrueOrderByCreatedAtDesc(any(UUID.class), anyInt()))
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), anyInt()))
             .thenReturn(Collections.emptyList());
 
         // Build context: system + user + assistant(toolCalls) + tool(result) + user
@@ -98,7 +98,7 @@ class DefaultContextEngineTrimToFitTest {
 
     @Test
     void trimToFitWithMultipleToolCallsRemovesAllResults() {
-        when(messageRepository.findBySessionIdAndActiveTrueOrderByCreatedAtDesc(any(UUID.class), anyInt()))
+        when(messageRepository.findBySessionIdOrderByCreatedAtDesc(any(UUID.class), anyInt()))
             .thenReturn(Collections.emptyList());
 
         // Context with 2 tool calls and 2 results — trimming should remove pairs together

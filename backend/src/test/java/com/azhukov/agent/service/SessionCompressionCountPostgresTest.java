@@ -65,32 +65,6 @@ class SessionCompressionCountPostgresTest extends PostgresTestContainer {
     }
 
     @Test
-    void compressedMessagesAndConcurrentTailRetainTheirOrder() {
-        Instant now = Instant.now();
-        SessionEntity session = new SessionEntity();
-        session.setUserId("compression-order-owner");
-        session.setModelProvider("noop");
-        session.setModelName("noop");
-        session.setCreatedAt(now.minusSeconds(20));
-        session.setUpdatedAt(now.minusSeconds(20));
-        UUID id = sessions.saveAndFlush(session).getId();
-        MessageEntity original = new MessageEntity();
-        original.setSessionId(id); original.setRole("user"); original.setContent("old");
-        original.setCreatedAt(now.minusSeconds(10)); original.setTurnIndex(0);
-        UUID originalId = messages.saveAndFlush(original).getId();
-        MessageEntity tail = new MessageEntity();
-        tail.setSessionId(id); tail.setRole("user"); tail.setContent("concurrent-tail");
-        tail.setCreatedAt(now.minusSeconds(1)); tail.setTurnIndex(1);
-        messages.saveAndFlush(tail);
-        helper.persistCompressed(id, List.of(Message.system("summary"), Message.user("retained-user"),
-            Message.assistant("retained-assistant", 1)), now, Set.of(originalId));
-        messages.flush();
-        assertThat(messages.findBySessionIdOrderByCreatedAtAsc(id).stream()
-            .filter(e -> !Boolean.FALSE.equals(e.getActive())).map(MessageEntity::getContent))
-            .containsExactly("summary", "retained-user", "retained-assistant", "concurrent-tail");
-    }
-
-    @Test
     void retainedArchiveAndSummaryAreBothIncludedInSessionCount() {
         SessionEntity session = new SessionEntity();
         session.setUserId("compression-owner");

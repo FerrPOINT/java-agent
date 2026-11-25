@@ -26,7 +26,7 @@ class IdentityCoordinatorVerifierHttpTest {
     private static final String ISSUER = "https://auth.example.test";
     private static final String COORDINATOR = "00000000-0000-4000-8000-000000000001";
     private static final String OTHER = "00000000-0000-4000-8000-000000000002";
-    private static final String PAT = "sdlc_pat_synthetic_fixture_only";
+    private static final String PAT = "pdlc_pat_synthetic_fixture_only";
     private static final String SCOPE = "java-agent:identity-lifecycle";
     private static final ObjectMapper JSON = new ObjectMapper();
 
@@ -41,8 +41,7 @@ class IdentityCoordinatorVerifierHttpTest {
     private static Map<String, Object> body() {
         Map<String, Object> value = new LinkedHashMap<>();
         value.put("sub", COORDINATOR);
-        value.put("email", "coordinator@synthetic.example.test");
-        value.put("subject_role", "service_account");
+        value.put("subject_kind", "service");
         value.put("scopes", List.of(SCOPE));
         value.put("observed_at", Instant.now().minusSeconds(1).toString());
         value.put("expires_at", Instant.now().plusSeconds(60).toString());
@@ -111,19 +110,21 @@ class IdentityCoordinatorVerifierHttpTest {
 
     @Test
     void registeredServicePatUsesExactFreshIntrospectionAndPreservesOriginalDeadline() throws Exception {
-        try (Stub stub = new Stub()) {
-            IdentityCoordinatorVerifier verifier = stub.verifier();
-            long deadline = System.nanoTime() + Duration.ofSeconds(7).toNanos();
-            Window first = verifier.verify("Bearer " + PAT, request(ISSUER), deadline);
-            assertEquals(deadline, first.deadlineNanos());
-            first.requireCurrent();
-            Window second = verifier.verify("Bearer pdlc_pat_legacy_synthetic", request(ISSUER), originalDeadline());
-            second.requireCurrent();
-            assertEquals(2, stub.calls.get(), "each verification must confirm the current PAT");
-            assertEquals("GET", stub.method.get());
-            assertEquals("include_lifetime=true", stub.query.get());
-            assertEquals("Bearer pdlc_pat_legacy_synthetic", stub.authorization.get());
-            assertEquals("application/json", stub.accept.get());
+        for (String credential : List.of(PAT, "sdlc_pat_synthetic_fixture_only", "opaque_fixture_42")) {
+            try (Stub stub = new Stub()) {
+                IdentityCoordinatorVerifier verifier = stub.verifier();
+                long deadline = System.nanoTime() + Duration.ofSeconds(7).toNanos();
+                Window first = verifier.verify("Bearer " + credential, request(ISSUER), deadline);
+                assertEquals(deadline, first.deadlineNanos());
+                first.requireCurrent();
+                Window second = verifier.verify("Bearer " + credential, request(ISSUER), originalDeadline());
+                second.requireCurrent();
+                assertEquals(2, stub.calls.get(), "each verification must confirm the current PAT");
+                assertEquals("GET", stub.method.get());
+                assertNull(stub.query.get());
+                assertEquals("Bearer " + credential, stub.authorization.get());
+                assertEquals("application/json", stub.accept.get());
+            }
         }
     }
 
@@ -158,13 +159,36 @@ class IdentityCoordinatorVerifierHttpTest {
     }
 
     @Test
+    void untimedServiceCredentialStillUsesTheOriginalRequestAndObservationClocks() throws Exception {
+        try (Stub stub = new Stub()) {
+            Instant observed = Instant.now().minusSeconds(1);
+            Map<String, Object> response = body();
+            response.put("observed_at", observed.toString());
+            response.put("expires_at", null);
+            stub.response(response);
+            IdentityCoordinatorVerifier verifier = stub.verifier();
+            long deadline = System.nanoTime() + Duration.ofSeconds(6).toNanos();
+            Window window = verifier.verify("Bearer " + PAT, request(ISSUER), deadline);
+            assertEquals(observed.plusSeconds(9), window.expiresAt());
+            assertEquals(deadline, window.deadlineNanos());
+            window.requireCurrent();
+
+            response.put("observed_at", Instant.now().minusSeconds(10).toString());
+            stub.response(response);
+            failure(401, "identity_authority_expired",
+                () -> verifier.verify("Bearer " + PAT, request(ISSUER), originalDeadline()));
+        }
+    }
+
+    @Test
     void missingWrongSchemeJwtAndOversizeTokenAreRejectedBeforeAnyUpstreamRequest() throws Exception {
         try (Stub stub = new Stub()) {
             IdentityCoordinatorVerifier verifier = stub.verifier();
             for (String authorization : new String[] {null, "", "Basic fixture", "bearer " + PAT}) {
                 failure(401, "identity_coordinator_required", () -> verifier.verify(authorization, request(ISSUER), originalDeadline()));
             }
-            for (String authorization : List.of("Bearer eyJhbGci.fixture", "Bearer sdlc_pat_" + "x".repeat(16384))) {
+            for (String authorization : List.of("Bearer eyJhbGci.fixture", "Bearer invalid credential",
+                    "Bearer pdlc_pat_" + "x".repeat(16384))) {
                 failure(403, "identity_coordinator_capability_required", () -> verifier.verify(authorization, request(ISSUER), originalDeadline()));
             }
             assertEquals(0, stub.calls.get());
@@ -214,16 +238,15 @@ class IdentityCoordinatorVerifierHttpTest {
     }
 
     @Test
-    void humanRoleUnregisteredServiceAndMissingLifecycleScopeAreDenied() throws Exception {
+    void humanAgentUnregisteredServiceAndMissingLifecycleScopeAreDenied() throws Exception {
         try (Stub stub = new Stub()) {
             IdentityCoordinatorVerifier verifier = stub.verifier();
-            for (String key : List.of("subject_role", "sub", "scopes")) {
+            for (Map<String, Object> variation : List.<Map<String, Object>>of(
+                    Map.of("subject_kind", "human", "subject_role", "admin", "email", "human@example.test"),
+                    Map.of("subject_kind", "agent", "subject_role", "service_account", "email", "agent@example.test"),
+                    Map.of("sub", OTHER), Map.of("scopes", List.of("application-access:read")))) {
                 Map<String, Object> response = body();
-                response.put(key, switch (key) {
-                    case "subject_role" -> "admin";
-                    case "sub" -> OTHER;
-                    default -> List.of("application-access:read");
-                });
+                response.putAll(variation);
                 stub.response(response);
                 failure(403, "identity_coordinator_capability_required", () -> verifier.verify("Bearer " + PAT, request(ISSUER), originalDeadline()));
             }
@@ -243,19 +266,21 @@ class IdentityCoordinatorVerifierHttpTest {
     }
 
     @Test
-    void malformedSubjectBlankEmailMissingFieldsAndMalformedJsonFailClosed() throws Exception {
+    void malformedSubjectProfileMetadataMissingFieldsAndMalformedJsonFailClosed() throws Exception {
         try (Stub stub = new Stub()) {
             IdentityCoordinatorVerifier verifier = stub.verifier();
             for (String subject : List.of("not-a-uuid", "00000000-0000-0000-0000-000000000000", "00000000-0000-4000-8000-1")) {
                 Map<String, Object> response = body(); response.put("sub", subject); stub.response(response);
                 failure(503, "identity_owner_confirmation_unavailable", () -> verifier.verify("Bearer " + PAT, request(ISSUER), originalDeadline()));
             }
-            for (String field : List.of("sub", "email", "subject_role", "observed_at", "expires_at")) {
+            for (String field : List.of("sub", "subject_kind", "observed_at", "expires_at")) {
                 Map<String, Object> response = body(); response.remove(field); stub.response(response);
                 failure(503, "identity_owner_confirmation_unavailable", () -> verifier.verify("Bearer " + PAT, request(ISSUER), originalDeadline()));
             }
-            Map<String, Object> response = body(); response.put("email", "  "); stub.response(response);
-            failure(503, "identity_owner_confirmation_unavailable", () -> verifier.verify("Bearer " + PAT, request(ISSUER), originalDeadline()));
+            for (String field : List.of("email", "display_name", "subject_role", "application_access")) {
+                Map<String, Object> response = body(); response.put(field, null); stub.response(response);
+                failure(503, "identity_owner_confirmation_unavailable", () -> verifier.verify("Bearer " + PAT, request(ISSUER), originalDeadline()));
+            }
             for (String invalid : List.of("{", "null", "[]")) {
                 stub.response.set(invalid);
                 failure(503, "identity_owner_confirmation_unavailable", () -> verifier.verify("Bearer " + PAT, request(ISSUER), originalDeadline()));

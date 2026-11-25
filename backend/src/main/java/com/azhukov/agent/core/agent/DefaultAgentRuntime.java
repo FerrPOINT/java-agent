@@ -105,7 +105,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
     private final ErrorClassifier errorClassifier;
     private final ContextCompressor contextCompressor;
     private final com.azhukov.agent.core.security.ApprovalQueue approvalQueue;
-    private final com.azhukov.agent.core.security.ToolGuardrails toolGuardrails;
+    private final com.azhukov.agent.core.security.ToolApprovalPolicy approvalPolicy;
     private final MemoryManager memoryManager;
     private final TokenEstimator tokenEstimator;
     private final ToolResultFormatter toolResultFormatter;
@@ -184,7 +184,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
             te = new TurnExecutor(
                 properties, contextCompressor, contextEngine,
                 toolExecutionService, toolResultFormatter, tokenEstimator,
-                interruptToken, approvalQueue, toolGuardrails,
+                interruptToken, approvalQueue, approvalPolicy,
                 memoryNudgeManagerOrNull(), steerBuffer);
             turnExecutor = te;
         }
@@ -299,12 +299,11 @@ public class DefaultAgentRuntime implements AgentRuntime {
         if (backgroundReviewService != null) {
             backgroundReviewService.cancelForNewForegroundTurn(sessionIdUuid);
         }
-        guardrail.reset(sessionIdUuid);
         // Clear stale cancellation from an earlier child turn before this new turn starts.
         if (interruptToken != null) {
             interruptToken.reset(sessionIdUuid);
         }
-        toolExecutionService.resetLoopGuardrailForTurn();
+        toolExecutionService.resetForTurn(sessionIdUuid);
         turnStateManager.clear(sessionIdUuid);
         // Clear any pending steer from a previous turn (parity with Hermes
         // _drain_pending_steer clearing on turn start).
@@ -1471,9 +1470,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
         }
         // rev-63: guardrail per-session state (history, halted, consecutive
         // failures) was never removed — unbounded leak on long-running service.
-        if (toolGuardrails != null) {
-            toolGuardrails.removeSession(sessionId);
-        }
+        guardrail.removeSession(sessionId);
         log.debug("Cleaned up runtime state maps for session {}", sessionId);
     }
 

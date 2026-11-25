@@ -66,6 +66,12 @@ class HeartbeatCommandTest {
         assertThat(HeartbeatCommand.parseIntervalToken(token)).isNull();
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"2147483648s", "2147483648h", "1193047h", "999999999999999999999999m"})
+    void oversizedIntervalIsRejectedWithoutOverflow(String interval) {
+        assertThat(HeartbeatCommand.parseIntervalToken(interval)).isNull();
+    }
+
     @Test
     void set_withEveryForm_postsHeartbeatAndWatchesPoller() throws Exception {
         UUID sid = UUID.randomUUID();
@@ -169,6 +175,16 @@ class HeartbeatCommandTest {
 
         String out = cmd.handle(event("resume"), session(sid));
         assertThat(out).contains("Heartbeat resumed");
+        verify(poller).watch(sid, 7L);
+    }
+
+    @Test
+    void failedResumeDoesNotRegisterWatch() throws Exception {
+        UUID sid = UUID.randomUUID();
+        when(client.suggestionPost("/api/v1/agent/cron/heartbeat/" + sid + "/resume"))
+            .thenReturn(json("{\"ok\":false}"));
+        assertThat(cmd.handle(event("resume"), session(sid))).contains("No heartbeat");
+        org.mockito.Mockito.verifyNoInteractions(poller);
     }
 
     @Test

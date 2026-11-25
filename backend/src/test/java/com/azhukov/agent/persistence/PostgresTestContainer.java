@@ -23,6 +23,7 @@ import org.testcontainers.utility.DockerImageName;
 @AutoConfigureMockMvc
 @TestPropertySource(properties = {
     "spring.datasource.driver-class-name=org.postgresql.Driver",
+    "spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.PostgreSQLDialect",
     "spring.jpa.hibernate.ddl-auto=none",
     "spring.flyway.enabled=true",
     "spring.flyway.baseline-on-migrate=true",

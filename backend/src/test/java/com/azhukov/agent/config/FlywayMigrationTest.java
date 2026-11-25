@@ -67,31 +67,6 @@ class FlywayMigrationTest extends PostgresTestContainer {
     }
 
     @Test
-    void upgradePreservesLegacyRowsAndAssignsOrderOnlyToNewMessages() throws Exception {
-        String schema = "message_upgrade_" + java.util.UUID.randomUUID().toString().replace("-", "");
-        jdbcTemplate.execute("CREATE SCHEMA " + schema);
-        try {
-            var old = Flyway.configure().dataSource(dataSource).schemas(schema).defaultSchema(schema)
-                .locations("classpath:db/migration", "classpath:db/postgresql").target("78").load();
-            old.migrate();
-            var session = java.util.UUID.randomUUID();
-            var legacy = java.util.UUID.randomUUID();
-            jdbcTemplate.update("INSERT INTO " + schema + ".sessions(id,user_id,model_provider,model_name) VALUES (?,?,?,?)", session, "migration-fixture", "noop", "noop");
-            jdbcTemplate.update("INSERT INTO " + schema + ".messages(id,session_id,role,content) VALUES (?,?,?,?)", legacy, session, "user", "legacy-fixture");
-            var upgraded = Flyway.configure().dataSource(dataSource).schemas(schema).defaultSchema(schema)
-                .locations("classpath:db/migration", "classpath:db/postgresql").load();
-            assertThat(upgraded.migrate().migrationsExecuted).isEqualTo(1);
-            upgraded.validate();
-            var oldRow = jdbcTemplate.queryForMap("SELECT content,insert_order FROM " + schema + ".messages WHERE id=?", legacy);
-            assertThat(oldRow.get("content")).isEqualTo("legacy-fixture");
-            assertThat(oldRow.get("insert_order")).isNull();
-            var fresh = java.util.UUID.randomUUID();
-            jdbcTemplate.update("INSERT INTO " + schema + ".messages(id,session_id,role,content) VALUES (?,?,?,?)", fresh, session, "assistant", "new-fixture");
-            assertThat(jdbcTemplate.queryForObject("SELECT insert_order FROM " + schema + ".messages WHERE id=?", Long.class, fresh)).isNotNull();
-        } finally { jdbcTemplate.execute("DROP SCHEMA " + schema + " CASCADE"); }
-    }
-
-    @Test
     void keyTablesAreCreated() throws Exception {
         Set<String> tables = new HashSet<>();
         DatabaseMetaData metaData = dataSource.getConnection().getMetaData();

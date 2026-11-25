@@ -43,6 +43,9 @@ public class InboundMediaHandler {
     @Value("${agent.transcription.enabled:false}")
     private boolean transcriptionEnabled;
 
+    /** Confirmed media references kept separate from untrusted message text. */
+    public record AdmittedMedia(String description, java.util.List<String> artifactIds) {}
+
     /**
      * Handles an UpdateEvent that contains media. If the event does not
      * contain media, returns an empty Optional.
@@ -53,10 +56,9 @@ public class InboundMediaHandler {
      * resulting descriptions are concatenated with newlines.
      *
      * @param event the UpdateEvent to process
-     * @return Optional with a description string for LLM context, or empty
-     *         if the event has no media
+     * @return confirmed references and description, or empty if the event has no media
      */
-    public Optional<String> handle(UpdateEvent event) {
+    public Optional<AdmittedMedia> handle(UpdateEvent event) {
         if (event == null) return Optional.empty();
 
         String fileType = event.fileType();
@@ -69,18 +71,21 @@ public class InboundMediaHandler {
         // Photo album fix: PhotoBatchDebouncer may merge multiple file IDs
         // into a single comma-separated string. Split and process each.
         if (fileId.contains(",")) {
-            String[] ids = fileId.split(",");
+            String[] ids = fileId.split(",", -1);
+            if (java.util.Arrays.stream(ids).anyMatch(String::isBlank)) {
+                throw new AttachmentApiClient.AdmissionFailure(false, "Missing album attachment identifier");
+            }
             StringBuilder combined = new StringBuilder();
+            java.util.List<String> artifactIds = new java.util.ArrayList<>();
             for (String id : ids) {
-                String trimmed = id.trim();
-                if (trimmed.isEmpty()) continue;
-                Optional<String> desc = handleSingle(event, fileType, trimmed);
-                if (desc.isPresent()) {
+                Optional<AdmittedMedia> admitted = handleSingle(event, fileType, id.trim());
+                if (admitted.isPresent()) {
                     if (combined.length() > 0) combined.append("\n");
-                    combined.append(desc.get());
+                    combined.append(admitted.get().description());
+                    artifactIds.addAll(admitted.get().artifactIds());
                 }
             }
-            return combined.length() > 0 ? Optional.of(combined.toString()) : Optional.empty();
+            return combined.length() > 0 ? Optional.of(new AdmittedMedia(combined.toString(), java.util.List.copyOf(artifactIds))) : Optional.empty();
         }
 
         return handleSingle(event, fileType, fileId);
@@ -89,17 +94,7 @@ public class InboundMediaHandler {
     /**
      * Handle a single (non-comma-separated) file ID.
      */
-    private Optional<String> handleSingle(UpdateEvent event, String fileType, String fileId) {
-
-        // For voice messages with transcription enabled, transcribe and return the text
-        if ("voice".equals(fileType) && transcriptionEnabled) {
-            Optional<String> transcribed = transcribeVoice(fileId);
-            if (transcribed.isPresent()) {
-                log.debug("Voice message transcribed: {} chars", transcribed.get().length());
-                return transcribed;
-            }
-            // Fallback to placeholder if transcription fails
-        }
+    private Optional<AdmittedMedia> handleSingle(UpdateEvent event, String fileType, String fileId) {
 
         // Skip location — it's not a downloadable file
         if ("location".equals(fileType)) {
@@ -110,57 +105,30 @@ public class InboundMediaHandler {
         Optional<byte[]> downloaded = mediaDownloader.downloadToFileId(fileId);
 
         if (downloaded.isEmpty()) {
-            log.warn("Failed to download media: type={}, fileId={}", fileType, fileId);
-            String desc = describe(event, fileType, fileId, 0, null);
-            return Optional.of(desc);
+            throw new AttachmentApiClient.AdmissionFailure(false, "Attachment download failed");
         }
-
         byte[] data = downloaded.get();
-        int sizeBytes = data.length;
-
-        // Enforce file size limit (20 MB)
-        if (sizeBytes > MAX_FILE_SIZE_BYTES) {
-            log.warn("Media too large ({} bytes > {} max): type={}, fileId={}, skipping download",
-                sizeBytes, MAX_FILE_SIZE_BYTES, fileType, fileId);
-            String desc = describe(event, fileType, fileId, sizeBytes, null);
-            return Optional.of(desc);
+        if (data.length == 0 || data.length > MAX_FILE_SIZE_BYTES) {
+            throw new AttachmentApiClient.AdmissionFailure(false, "Attachment is empty or exceeds 20 MB");
         }
-
-        // Save to the shared agent media temp directory.
+        // The local copy expires independently; no automatic upload reconciliation is available.
         Path savedPath = saveMedia(fileId, fileType, data);
-        String description = describe(event, fileType, fileId, sizeBytes, savedPath);
-        // WP-11: register the downloaded media as a backend artifact so the
-        // turn references a durable, deduped id instead of only a temp path.
-        String artifactId = registerArtifact(event, fileType, data, savedPath);
-        if (artifactId != null) {
-            description = description + " (artifact=" + artifactId + ")";
+        if (savedPath == null) {
+            throw new AttachmentApiClient.AdmissionFailure(false, "Attachment could not be retained locally");
         }
-        log.debug("Handled media: type={}, fileId={}, size={}bytes, saved={}, artifact={}",
-            fileType, fileId, sizeBytes, savedPath, artifactId);
-        return Optional.of(description);
-    }
-
-    /**
-     * WP-11: register downloaded media as a backend attachment artifact.
-     * Best-effort — on any failure returns null and the caller keeps the
-     * legacy local-path description (media handling never hard-fails).
-     */
-    private String registerArtifact(UpdateEvent event, String fileType, byte[] data, Path savedPath) {
-        try {
-            String ownerId = event.userId() > 0 ? String.valueOf(event.userId()) : null;
-            String messageId = event.messageId() > 0 ? String.valueOf(event.messageId()) : null;
-            String fileName = savedPath != null ? savedPath.getFileName().toString()
-                : (fileType + ".bin");
-            String mime = mimeFor(fileType, fileName);
-            return attachmentApiClient
-                .register(data, fileName, mime, dispositionFor(fileType), "telegram",
-                    ownerId, null, messageId)
-                .map(AttachmentApiClient.Registered::id)
-                .orElse(null);
-        } catch (Exception e) {
-            log.debug("artifact registration skipped: {}", e.getMessage());
-            return null;
+        String fileName = savedPath.getFileName().toString();
+        var artifact = attachmentApiClient.register(data, fileName, mimeFor(fileType, fileName),
+                dispositionFor(fileType), "telegram", event.userId() > 0 ? String.valueOf(event.userId()) : null,
+                null, event.messageId() > 0 ? String.valueOf(event.messageId()) : null);
+        String description = describe(fileType, fileId, data.length, fileName);
+        if ("voice".equals(fileType) && transcriptionEnabled) {
+            String transcript = backendClient.transcribe(data);
+            if (transcript == null || transcript.isBlank()) {
+                throw new AttachmentApiClient.AdmissionFailure(false, "Voice transcription failed");
+            }
+            description += "\n" + transcript;
         }
+        return Optional.of(new AdmittedMedia(description, java.util.List.of(artifact.id())));
     }
 
     private static String dispositionFor(String fileType) {
@@ -248,53 +216,22 @@ public class InboundMediaHandler {
         };
     }
 
-    /**
-     * Transcribe a voice message by downloading it and sending to the backend for transcription.
-     *
-     * @param fileId the Telegram file_id of the voice message
-     * @return Optional with transcribed text, or empty if transcription failed
-     */
-    private Optional<String> transcribeVoice(String fileId) {
-        try {
-            Optional<byte[]> audioBytes = mediaDownloader.downloadToFileId(fileId);
-            if (audioBytes.isEmpty()) {
-                log.warn("Failed to download voice message for transcription: {}", fileId);
-                return Optional.empty();
-            }
-            String text = backendClient.transcribe(audioBytes.get());
-            if (text != null && !text.isBlank()) {
-                return Optional.of(text);
-            }
-            return Optional.empty();
-        } catch (Exception e) {
-            log.warn("Voice transcription failed for {}: {}", fileId, e.getMessage());
-            return Optional.empty();
-        }
-    }
-
-    private String describe(UpdateEvent event, String fileType, String fileId, int sizeBytes, Path savedPath) {
-        String caption = event.caption();
-        String captionPart = (caption != null && !caption.isBlank())
-            ? ", caption=\"" + caption + "\""
-            : "";
-
-        String pathPart = savedPath != null ? ", path=" + savedPath : "";
-
+    private String describe(String fileType, String fileId, int sizeBytes, String fileName) {
         return switch (fileType) {
-            case "photo" -> "[Photo: " + (savedPath != null ? savedPath : "download failed") + captionPart + "]";
-            case "document" -> "[Document: " + (savedPath != null ? savedPath : "download failed") + ", size=" + sizeBytes + " bytes" + captionPart + "]";
-            case "voice" -> "[Voice message: file_id=" + fileId + ", size=" + sizeBytes + " bytes" + captionPart + "]";
+            case "photo" -> "[Photo: " + fileName + "]";
+            case "document" -> "[Document: " + fileName + ", size=" + sizeBytes + " bytes]";
+            case "voice" -> "[Voice message: file_id=" + fileId + ", size=" + sizeBytes + " bytes]";
             case "sticker" -> {
                 // B2.1: Check sticker cache first
                 Optional<String> cached = stickerCache.get(fileId);
                 if (cached.isPresent()) {
                     yield "[Sticker: " + cached.get() + "]";
                 }
-                // Cache miss — return description with saved path if available
-                yield "[Sticker: " + (savedPath != null ? savedPath : "file_id=" + fileId) + "]";
+                // The backend resolves the confirmed artifact; this text is display metadata.
+                yield "[Sticker: " + fileName + "]";
             }
             case "animation" -> "[Animation/GIF: file_id=" + fileId + "]";
-            default -> "[Media: type=" + fileType + ", file_id=" + fileId + pathPart + "]";
+            default -> "[Media: type=" + fileType + ", file_id=" + fileId + "]";
         };
     }
 }

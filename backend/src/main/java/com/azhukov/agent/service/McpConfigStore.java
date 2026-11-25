@@ -17,6 +17,7 @@ import java.time.Instant;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -54,7 +55,7 @@ public class McpConfigStore {
     public McpServerConfigEntity upsert(String profile, ServerConfigInput input) {
         validate(profile, input);
         McpServerConfigRepository repository = configs();
-        String canonProfile = normalizeProfile(profile);
+        String canonProfile = profileKey(profile);
         McpServerConfigEntity entity = repository.lockByProfileAndName(canonProfile, input.name())
             .orElseGet(() -> {
                 McpServerConfigEntity created = new McpServerConfigEntity();
@@ -86,7 +87,7 @@ public class McpConfigStore {
     @Transactional
     public boolean delete(String profile, String name) {
         McpServerConfigRepository repository = configs();
-        String canonProfile = normalizeProfile(profile);
+        String canonProfile = profileKey(profile);
         Optional<McpServerConfigEntity> existing =
             repository.lockByProfileAndName(canonProfile, name);
         if (existing.isEmpty()) {
@@ -100,7 +101,7 @@ public class McpConfigStore {
     @Transactional
     public Optional<McpServerConfigEntity> setEnabled(String profile, String name, boolean enabled) {
         McpServerConfigRepository repository = configs();
-        return repository.lockByProfileAndName(normalizeProfile(profile), name)
+        return repository.lockByProfileAndName(profileKey(profile), name)
             .map(entity -> {
                 entity.setEnabled(enabled);
                 entity.setConfigRevision(entity.getConfigRevision() + 1);
@@ -111,12 +112,12 @@ public class McpConfigStore {
 
     @Transactional(readOnly = true)
     public List<McpServerConfigEntity> list(String profile) {
-        return configs().findByProfileOrderByNameAsc(normalizeProfile(profile));
+        return configs().findByProfileOrderByNameAsc(profileKey(profile));
     }
 
     @Transactional(readOnly = true)
     public Optional<McpServerConfigEntity> find(String profile, String name) {
-        return configs().findByProfileAndName(normalizeProfile(profile), name);
+        return configs().findByProfileAndName(profileKey(profile), name);
     }
 
     // ── schema cache (revision, TTL, stale-keep) ────────────────────
@@ -223,8 +224,8 @@ public class McpConfigStore {
         }
     }
 
-    private String normalizeProfile(String profile) {
-        return isBlank(profile) ? "default" : profile.trim().toLowerCase();
+    public static String profileKey(String profile) {
+        return isBlank(profile) ? "default" : profile.trim().toLowerCase(Locale.ROOT);
     }
 
     private static boolean isBlank(String value) {

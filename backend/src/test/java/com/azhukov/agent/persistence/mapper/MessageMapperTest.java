@@ -43,14 +43,6 @@ class MessageMapperTest {
     }
 
     @Test
-    void imageCountSurvivesEntityRoundTrip() {
-        Message original = Message.userWithImages("photo", 2);
-        MessageEntity entity = mapper.toEntity(original);
-        assertThat(entity.getImageCount()).isEqualTo(2);
-        assertThat(mapper.toDomain(entity).imageCount()).isEqualTo(2);
-    }
-
-    @Test
     void toDomainHandlesToolResult() {
         MessageEntity entity = new MessageEntity();
         entity.setRole("tool");

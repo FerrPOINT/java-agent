@@ -58,7 +58,10 @@ class CronJobServiceReEnableTest {
         properties = new AgentProperties();
         properties.getCron().setEnabled(true);
         lenient().when(agentRuntimeServiceProvider.getIfAvailable()).thenReturn(agentRuntimeService);
-        service = new CronJobService(cronJobRepository, agentRuntimeServiceProvider, properties, skillManager, cronExecutionLogRepository, messageRepository, CronJobServiceTest.unitTransaction(), new CronScheduleParser());
+        service = new CronJobService(
+            cronJobRepository, agentRuntimeServiceProvider, properties, skillManager,
+            cronExecutionLogRepository, messageRepository, CronJobServiceTest.unitTransaction(), new CronScheduleParser(),
+            org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class));
     }
 
     @org.junit.jupiter.params.ParameterizedTest
@@ -119,7 +122,12 @@ class CronJobServiceReEnableTest {
             org.assertj.core.api.Assertions.assertThatIllegalArgumentException()
                 .isThrownBy(() -> service.resume(invalid.getId()));
             org.assertj.core.api.Assertions.assertThatIllegalArgumentException()
-                .isThrownBy(() -> service.update(valid.getId(), "bad edit", schedule, null, null, null));
+                .isThrownBy(() -> service.update(
+            valid.getId(), "bad edit", schedule, null,
+            null, null, null, null,
+            null, null, null, null,
+            null, null, null, null,
+            null, null, null, null));
             assertThat(valid.getSchedule()).isEqualTo("0 9 * * *");
             assertThat(valid.getName()).isNull();
         } finally {
@@ -187,7 +195,12 @@ class CronJobServiceReEnableTest {
         });
 
         // Re-enable via update
-        CronJobEntity result = service.update(id, null, null, null, null, true);
+        CronJobEntity result = service.update(
+            id, null, null, null,
+            null, true, null, null,
+            null, null, null, null,
+            null, null, null, null,
+            null, null, null, null);
 
         assertThat(result.isEnabled()).isTrue();
         // The job should have been saved (with nextRunAt set by scheduleJob)

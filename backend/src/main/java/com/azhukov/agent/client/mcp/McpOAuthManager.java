@@ -1,6 +1,6 @@
 package com.azhukov.agent.client.mcp;
 
-import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.config.AgentProperties.McpProperties.ServerProperties;
 import com.azhukov.agent.persistence.entity.McpOAuthEntity;
 import com.azhukov.agent.persistence.repository.McpOAuthRepository;
 import lombok.RequiredArgsConstructor;
@@ -15,7 +15,6 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
-import java.util.regex.Pattern;
 
 @Component
 @Slf4j
@@ -23,49 +22,27 @@ import java.util.regex.Pattern;
 public class McpOAuthManager {
 
     private final McpOAuthRepository mcpOAuthRepository;
-    private final AgentProperties properties;
 
     private final HttpClient httpClient = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(10))
         .build();
 
-    // Credential stripping pattern for error logging
-    private static final Pattern CREDENTIAL_PATTERN = Pattern.compile(
-        "(?:"
-        + "ghp_[A-Za-z0-9_]{1,255}"
-        + "|sk-[A-Za-z0-9_]{1,255}"
-        + "|Bearer\\s+\\S+"
-        + "|token=[^\\s&,;\"']{1,255}"
-        + "|key=[^\\s&,;\"']{1,255}"
-        + "|API_KEY=[^\\s&,;\"']{1,255}"
-        + "|password=[^\\s&,;\"']{1,255}"
-        + "|secret=[^\\s&,;\"']{1,255}"
-        + ")",
-        Pattern.CASE_INSENSITIVE
-    );
-
-    /** Legacy default-profile path (kept for existing callers). */
-    public Optional<String> getToken(String serverName) {
-        return getToken("default", serverName);
-    }
-
-    /**
-     * Profile-scoped token resolution (upstream 399238f2c2 parity): one
-     * profile's stored OAuth must never authorize another profile's MCP
-     * requests. V63 enforces uniqueness per (profile, server_name).
-     */
-    public Optional<String> getToken(String profile, String serverName) {
-        String scope = profile == null || profile.isBlank() ? "default" : profile;
+    public Optional<String> getToken(String profile, ServerProperties server) {
+        String serverName = server.getName();
         Optional<McpOAuthEntity> entity =
-            mcpOAuthRepository.findByProfileAndServerName(scope, serverName);
+            mcpOAuthRepository.findByProfileAndServerName(profile, serverName);
         if (entity.isEmpty()) {
             return Optional.empty();
         }
         McpOAuthEntity token = entity.get();
+        if (!issuerMatches(token, server.getOauthTokenUrl())) {
+            log.warn("Stored OAuth issuer no longer matches MCP server {}; re-authorization required", serverName);
+            return Optional.empty();
+        }
         if (token.getExpiresAt() != null && token.getExpiresAt().isBefore(Instant.now())) {
             // Token expired — attempt refresh automatically
             try {
-                refreshToken(scope, serverName);
+                refreshToken(profile, server);
             } catch (InterruptedException e) {
                 // P2-17: Restore interrupt status rather than silently swallowing
                 Thread.currentThread().interrupt();
@@ -75,47 +52,37 @@ public class McpOAuthManager {
             }
             // Re-read after refresh attempt
             Optional<McpOAuthEntity> refreshed =
-                mcpOAuthRepository.findByProfileAndServerName(scope, serverName);
-            if (refreshed.isPresent() && refreshed.get().getExpiresAt() != null
-                && refreshed.get().getExpiresAt().isAfter(Instant.now())) {
-                return Optional.of(refreshed.get().getAccessToken());
+                mcpOAuthRepository.findByProfileAndServerName(profile, serverName);
+            if (refreshed.isPresent() && issuerMatches(refreshed.get(), server.getOauthTokenUrl())
+                && refreshed.get().getExpiresAt() != null && refreshed.get().getExpiresAt().isAfter(Instant.now())) {
+                return Optional.ofNullable(refreshed.get().getAccessToken()).filter(value -> !value.isBlank());
             }
             return Optional.empty();
         }
-        return Optional.of(token.getAccessToken());
+        return Optional.ofNullable(token.getAccessToken()).filter(value -> !value.isBlank());
     }
 
-    /**
-     * Refresh the OAuth token for the given MCP server using the stored refresh token.
-     * Makes a POST request to the server's configured OAuth token URL with grant_type=refresh_token.
-     *
-     * @param serverName the MCP server name
-     * @throws IllegalStateException if no stored token or no refresh token exists
-     * @throws IOException if the token refresh HTTP request fails
-     */
-    /** Legacy default-profile path (kept for existing callers). */
-    public void refreshToken(String serverName) throws IOException, InterruptedException {
-        refreshToken("default", serverName);
+    private static boolean issuerMatches(McpOAuthEntity token, String tokenUrl) {
+        String storedIssuer = token.getTokenIssuer();
+        if (storedIssuer == null || storedIssuer.isBlank() || tokenUrl == null || tokenUrl.isBlank()) return false;
+        try {
+            return issuerOf(storedIssuer).equals(issuerOf(tokenUrl));
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
     }
 
-    /** Profile-scoped refresh (upstream 399238f2c2 parity). */
-    public void refreshToken(String profile, String serverName) throws IOException, InterruptedException {
-        // Find the server config to get OAuth endpoint details
-        AgentProperties.McpProperties.ServerProperties serverConfig = properties.getMcp().getServers().stream()
-            .filter(s -> s.getName().equals(serverName))
-            .findFirst()
-            .orElseThrow(() -> new IllegalStateException(
-                "No MCP server config found for: " + serverName));
-
+    /** Refresh the stored credential using the selected MCP server configuration. */
+    public void refreshToken(String profile, ServerProperties serverConfig) throws IOException, InterruptedException {
+        String serverName = serverConfig.getName();
         String tokenUrl = serverConfig.getOauthTokenUrl();
         if (tokenUrl == null || tokenUrl.isBlank()) {
             throw new IllegalStateException(
                 "No OAuth token URL configured for MCP server: " + serverName);
         }
-        String currentIssuer = issuerOf(tokenUrl);
 
-        String scope = profile == null || profile.isBlank() ? "default" : profile;
-        McpOAuthEntity entity = mcpOAuthRepository.findByProfileAndServerName(scope, serverName)
+        issuerOf(tokenUrl); // Validate configuration before any credential mutation.
+        McpOAuthEntity entity = mcpOAuthRepository.findByProfileAndServerName(profile, serverName)
             .orElseThrow(() -> new IllegalStateException(
                 "No stored OAuth token for MCP server: " + serverName));
 
@@ -124,16 +91,10 @@ public class McpOAuthManager {
                 "No refresh token stored for MCP server: " + serverName);
         }
 
-        // WP-e (V67): a refresh token minted by issuer A must never be replayed
-        // at issuer B (protected-resource metadata edit, server migration). A
-        // mismatched issuer invalidates the stored token instead of leaking it.
-        String storedIssuer = entity.getTokenIssuer();
-        if (storedIssuer != null && !storedIssuer.isBlank() && !storedIssuer.equals(currentIssuer)) {
-            mcpOAuthRepository.delete(entity);
+        if (!issuerMatches(entity, tokenUrl)) {
             throw new IllegalStateException(
                 "Stored OAuth token for MCP server " + serverName
-                + " was issued by " + storedIssuer + " but the server now points at "
-                + currentIssuer + " — token discarded; re-authorization required");
+                + " has no matching issuer; re-authorization required");
         }
 
         // Build form-encoded POST body per RFC 6749 §6
@@ -158,21 +119,25 @@ public class McpOAuthManager {
             .timeout(Duration.ofSeconds(30))
             .build();
 
-        log.info("Refreshing OAuth token for MCP server {} from {}", serverName, tokenUrl);
+        log.info("Refreshing OAuth token for MCP server {}", serverName);
 
         HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
         if (response.statusCode() != 200) {
-            String sanitized = sanitizeError(response.body());
             throw new IOException("OAuth token refresh failed for " + serverName
-                + " with status " + response.statusCode() + ": " + sanitized);
+                + " with status " + response.statusCode());
         }
 
-        // Parse JSON response manually (avoid pulling in Jackson dependency here for a simple parse)
         String responseBody = response.body();
-        String newAccessToken = extractJsonField(responseBody, "access_token");
-        String newRefreshToken = extractJsonField(responseBody, "refresh_token");
-        String expiresInStr = extractJsonField(responseBody, "expires_in");
+        var responseJson = JSON.readTree(responseBody);
+        var refreshField = responseJson == null ? null : responseJson.get("refresh_token");
+        if (refreshField != null && !refreshField.isNull()
+                && (!refreshField.isTextual() || refreshField.asText().isBlank())) {
+            throw new IOException("OAuth token refresh response has invalid refresh_token for " + serverName);
+        }
+        String newAccessToken = extractJsonField(responseJson, "access_token");
+        String newRefreshToken = extractJsonField(responseJson, "refresh_token");
+        String expiresInStr = extractJsonField(responseJson, "expires_in");
 
         if (newAccessToken == null || newAccessToken.isBlank()) {
             throw new IOException("OAuth token refresh response missing access_token for " + serverName);
@@ -187,131 +152,71 @@ public class McpOAuthManager {
         if (expiresInStr != null && !expiresInStr.isBlank()) {
             try {
                 expiresAt = Instant.now().plusSeconds(Long.parseLong(expiresInStr.trim()));
-            } catch (NumberFormatException e) {
-                log.warn("Invalid expires_in value '{}' for MCP server {}, using default", expiresInStr, serverName);
+            } catch (NumberFormatException | ArithmeticException | java.time.DateTimeException e) {
+                log.warn("Invalid expires_in for MCP server {}, using default", serverName);
             }
         }
 
-        storeToken(scope, serverName, newAccessToken, newRefreshToken, expiresAt, currentIssuer);
+        storeToken(profile, serverName, newAccessToken, newRefreshToken, expiresAt, tokenUrl);
         log.info("Successfully refreshed OAuth token for MCP server {}", serverName);
     }
 
-    /** V67: issuer identity = token endpoint origin (scheme + host + port). */
+    /** Issuer identity is the token endpoint origin (scheme, host and port). */
     static String issuerOf(String tokenUrl) {
+        URI uri;
         try {
-            java.net.URL url = new java.net.URI(tokenUrl).toURL();
-            String port = url.getPort() == -1 ? "" : ":" + url.getPort();
-            return url.getProtocol() + "://" + url.getHost() + port;
-        } catch (Exception e) {
-            return tokenUrl; // opaque fallback: compare raw strings
+            uri = URI.create(tokenUrl);
+        } catch (IllegalArgumentException | NullPointerException e) {
+            throw new IllegalArgumentException("OAuth token URL must be an absolute HTTP(S) URL");
         }
-    }
-
-    public void storeToken(String serverName, String accessToken, String refreshToken, Instant expiresAt) {
-        storeToken("default", serverName, accessToken, refreshToken, expiresAt);
-    }
-
-    /** V67: profile-scoped storage that binds the token to its issuer. */
-    public void storeToken(String profile, String serverName, String accessToken,
-                           String refreshToken, Instant expiresAt, String issuer) {
-        storeToken(profile, serverName, accessToken, refreshToken, expiresAt);
-        McpOAuthEntity entity = mcpOAuthRepository
-            .findByProfileAndServerName(profile == null || profile.isBlank() ? "default" : profile, serverName)
-            .orElse(null);
-        if (entity != null) {
-            entity.setTokenIssuer(issuer);
-            mcpOAuthRepository.save(entity);
+        if (!("http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme()))
+                || uri.getHost() == null || uri.getUserInfo() != null) {
+            throw new IllegalArgumentException("OAuth token URL must be an absolute HTTP(S) URL without userinfo");
         }
+        String scheme = uri.getScheme().toLowerCase(java.util.Locale.ROOT);
+        int portNumber = uri.getPort();
+        String port = portNumber == -1 || (scheme.equals("https") && portNumber == 443)
+            || (scheme.equals("http") && portNumber == 80) ? "" : ":" + portNumber;
+        return scheme + "://" + uri.getHost().toLowerCase(java.util.Locale.ROOT) + port;
     }
 
-    /** Profile-scoped token storage (upstream 399238f2c2 parity, V63 unique (profile, server_name)). */
+    /** Store the token and its issuer under the same profile-scoped connection. */
     public void storeToken(String profile, String serverName, String accessToken,
-                           String refreshToken, Instant expiresAt) {
-        String scope = profile == null || profile.isBlank() ? "default" : profile;
-        McpOAuthEntity entity = mcpOAuthRepository.findByProfileAndServerName(scope, serverName)
+                           String refreshToken, Instant expiresAt, String tokenUrl) {
+        String issuer = issuerOf(tokenUrl);
+        McpOAuthEntity entity = mcpOAuthRepository.findByProfileAndServerName(profile, serverName)
             .orElseGet(McpOAuthEntity::new);
-        entity.setProfile(scope);
+        entity.setProfile(profile);
         entity.setServerName(serverName);
         entity.setAccessToken(accessToken);
         entity.setRefreshToken(refreshToken);
         entity.setExpiresAt(expiresAt);
+        entity.setTokenIssuer(issuer);
+        Instant now = Instant.now();
         if (entity.getCreatedAt() == null) {
-            entity.setCreatedAt(Instant.now());
+            entity.setCreatedAt(now);
         }
-        entity.setUpdatedAt(Instant.now());
+        entity.setUpdatedAt(now);
         mcpOAuthRepository.save(entity);
     }
 
-    /** Extract a string field value from a JSON response body (simple parser, no Jackson needed). */
+    private static final com.fasterxml.jackson.databind.ObjectMapper JSON = new com.fasterxml.jackson.databind.ObjectMapper()
+        .enable(com.fasterxml.jackson.core.JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
+        .enable(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
+
+    /** Read a top-level OAuth response scalar; malformed or structured values are rejected. */
     public static String extractJsonField(String json, String fieldName) {
-        if (json == null || json.isEmpty()) {
+        if (json == null || fieldName == null) return null;
+        try {
+            return extractJsonField(JSON.readTree(json), fieldName);
+        } catch (java.io.IOException e) {
             return null;
-        }
-        // Search for "fieldName":"value" pattern
-        String needle = "\"" + fieldName + "\"";
-        int idx = json.indexOf(needle);
-        if (idx < 0) {
-            return null;
-        }
-        int colonIdx = json.indexOf(":", idx + needle.length());
-        if (colonIdx < 0) {
-            return null;
-        }
-        // Skip whitespace after colon
-        int valueStart = colonIdx + 1;
-        while (valueStart < json.length() && Character.isWhitespace(json.charAt(valueStart))) {
-            valueStart++;
-        }
-        if (valueStart >= json.length()) {
-            return null;
-        }
-        char firstChar = json.charAt(valueStart);
-        if (firstChar == '"') {
-            // String value
-            int valueEnd = valueStart + 1;
-            StringBuilder sb = new StringBuilder();
-            while (valueEnd < json.length()) {
-                char c = json.charAt(valueEnd);
-                if (c == '\\' && valueEnd + 1 < json.length()) {
-                    char next = json.charAt(valueEnd + 1);
-                    // M36 fix: decode JSON unicode escapes instead of
-                    // dropping the backslash and keeping literal "uXXXX".
-                    if (next == 'u' && valueEnd + 5 < json.length()) {
-                        String hex = json.substring(valueEnd + 2, valueEnd + 6);
-                        try {
-                            sb.append((char) Integer.parseInt(hex, 16));
-                            valueEnd += 6;
-                        } catch (NumberFormatException nfe) {
-                            // Not a valid escape — keep as-is.
-                            sb.append(next);
-                            valueEnd += 2;
-                        }
-                    } else {
-                        sb.append(next);
-                        valueEnd += 2;
-                    }
-                } else if (c == '"') {
-                    break;
-                } else {
-                    sb.append(c);
-                    valueEnd++;
-                }
-            }
-            return sb.toString();
-        } else {
-            // Numeric or other value — read until comma or closing brace
-            int valueEnd = valueStart;
-            while (valueEnd < json.length() && json.charAt(valueEnd) != ',' && json.charAt(valueEnd) != '}') {
-                valueEnd++;
-            }
-            return json.substring(valueStart, valueEnd).trim();
         }
     }
 
-    public static String sanitizeError(String text) {
-        if (text == null || text.isEmpty()) {
-            return text;
-        }
-        return CREDENTIAL_PATTERN.matcher(text).replaceAll("[REDACTED]");
+    private static String extractJsonField(com.fasterxml.jackson.databind.JsonNode root, String fieldName) {
+        var value = root != null && root.isObject() ? root.get(fieldName) : null;
+        boolean tokenField = "access_token".equals(fieldName) || "refresh_token".equals(fieldName);
+        return value != null && (value.isTextual() || (!tokenField && value.isNumber())) ? value.asText() : null;
     }
 }
