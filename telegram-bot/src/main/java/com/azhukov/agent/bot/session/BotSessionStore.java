@@ -165,16 +165,17 @@ public class BotSessionStore {
 
     @Transactional
     public BotSessionEntity resumeSession(UUID sessionId, String userId) {
-        // Deactivate current active session
-        BotSessionEntity current = repository.findByUserIdAndActiveTrue(userId).orElse(null);
-        if (current != null) {
+        BotSessionEntity target = repository.findById(sessionId).orElse(null);
+        if (target == null || !java.util.Objects.equals(target.getUserId(), userId)) return null;
+        // Deactivate current active session only after validating the target owner.
+        BotSessionEntity current = findActive(userId, target.getThreadId()).orElse(null);
+        if (current != null && !java.util.Objects.equals(current.getId(), target.getId())) {
             current.setActive(false);
             current.setUpdatedAt(Instant.now());
-            repository.save(current);
+            // The partial unique index is immediate; release the active lane before claiming it.
+            repository.saveAndFlush(current);
         }
         // Activate requested session
-        BotSessionEntity target = repository.findById(sessionId).orElse(null);
-        if (target == null) return null;
         target.setActive(true);
         target.setUpdatedAt(Instant.now());
         return repository.save(target);
