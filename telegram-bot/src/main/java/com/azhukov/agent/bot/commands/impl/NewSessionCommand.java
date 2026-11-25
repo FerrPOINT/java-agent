@@ -2,6 +2,7 @@ package com.azhukov.agent.bot.commands.impl;
 
 import com.azhukov.agent.bot.commands.CommandHandler;
 import com.azhukov.agent.bot.core.AgentBackendClient;
+import com.azhukov.agent.bot.core.SessionApiClient.CleanupResult;
 import com.azhukov.agent.bot.polling.UpdateEvent;
 import com.azhukov.agent.bot.session.BotSessionEntity;
 import com.azhukov.agent.bot.session.BotSessionStore;
@@ -38,7 +39,7 @@ public class NewSessionCommand implements CommandHandler {
         boolean cleanupFailed = false;
         if (backendId != null) {
             try {
-                cleanupFailed = !backendClient.cleanupSession(backendId);
+                cleanupFailed = backendClient.cleanupSession(backendId) != CleanupResult.CLEANED;
             } catch (Exception e) {
                 cleanupFailed = true;
             }

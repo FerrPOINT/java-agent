@@ -291,7 +291,8 @@ public class AgentRuntimeService {
     public void cleanupSessionState(UUID sessionId) {
         requireSessionOwnership(sessionId);
         if (!sessionTurnLockManager.tryAcquire(sessionId, 0)) {
-            throw new IllegalStateException("Session is busy; runtime cleanup must be retried");
+            throw new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.CONFLICT, "Session is busy");
         }
         try {
             cleanupRuntimeState(sessionId, true);

@@ -50,7 +50,8 @@ class SessionCleanupPostgresTest extends PostgresTestContainer {
         try {
             assertThat(acquired.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
             org.assertj.core.api.Assertions.assertThatThrownBy(() -> runtime.cleanupSessionState(id))
-                .isInstanceOf(IllegalStateException.class).hasMessageContaining("busy");
+                .isInstanceOfSatisfying(org.springframework.web.server.ResponseStatusException.class,
+                    error -> assertThat(error.getStatusCode()).isEqualTo(org.springframework.http.HttpStatus.CONFLICT));
         } finally { release.countDown(); streaming.join(5000); }
         runtime.cleanupSessionState(id);
     }

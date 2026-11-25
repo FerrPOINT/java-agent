@@ -6,6 +6,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 
 import java.util.Map;
@@ -40,14 +41,18 @@ public class SessionApiClient extends BaseBackendClient {
         }
     }
 
-    public boolean cleanupSession(String sessionId) {
+    public enum CleanupResult { CLEANED, BUSY, FAILED }
+
+    public CleanupResult cleanupSession(String sessionId) {
         try {
             restClient.post().uri("/api/v1/agent/session/{sessionId}/cleanup", sessionId)
                 .retrieve().toBodilessEntity();
-            return true;
+            return CleanupResult.CLEANED;
+        } catch (HttpClientErrorException.Conflict e) {
+            return CleanupResult.BUSY;
         } catch (Exception e) {
             log.warn("cleanupSession failed for sessionId={}: {}", sessionId, e.getMessage());
-            return false;
+            return CleanupResult.FAILED;
         }
     }
 

@@ -7,6 +7,7 @@ import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 
 import com.azhukov.agent.bot.core.AgentBackendClient;
+import com.azhukov.agent.bot.core.SessionApiClient.CleanupResult;
 
 import jakarta.annotation.PreDestroy;
 import java.time.Instant;
@@ -99,8 +100,6 @@ public class SessionExpiryWatcher {
                 }
                 String reason = resetPolicy.shouldReset(session.getCreatedAt(), session.getUpdatedAt(), now);
                 if (reason != null) {
-                    log.info("Finalizing expired session {} (reason={}, userId={})",
-                        session.getId(), reason, session.getUserId());
                     // rev-69: notify backend to clean up per-session state
                     // (context engine, guardrails, nudge counters, prompt cache,
                     // interrupt tokens, steer buffer). Without this, expired bot
@@ -108,14 +107,18 @@ public class SessionExpiryWatcher {
                     // its own row but the backend never knows.
                     try {
                         if (session.getBackendSessionId() != null) {
-                            if (!backendClient.cleanupSession(session.getBackendSessionId().toString())) {
-                                log.warn("Runtime cleanup failed for expired session {}; retry is required", session.getId());
+                            var result = backendClient.cleanupSession(session.getBackendSessionId().toString());
+                            if (result == CleanupResult.BUSY) {
+                                log.debug("Session {} remains active because the backend is running a turn", session.getId());
+                                continue;
                             }
                         }
                     } catch (Exception e) {
                         log.warn("Backend cleanup for expired session {} failed: {}",
                             session.getId(), e.getMessage());
                     }
+                    log.info("Finalizing expired session {} (reason={}, userId={})",
+                        session.getId(), reason, session.getUserId());
                     sessionStore.finalizeSession(session.getId());
                 }
             }

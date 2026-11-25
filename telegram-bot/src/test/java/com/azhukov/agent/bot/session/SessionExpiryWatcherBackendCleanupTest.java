@@ -1,6 +1,7 @@
 package com.azhukov.agent.bot.session;
 
 import com.azhukov.agent.bot.core.AgentBackendClient;
+import com.azhukov.agent.bot.core.SessionApiClient.CleanupResult;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -49,6 +50,7 @@ class SessionExpiryWatcherBackendCleanupTest {
         session.setUpdatedAt(Instant.now().minusSeconds(3600));
 
         when(sessionStore.listActiveSessions()).thenReturn(List.of(session));
+        when(backendClient.cleanupSession(sessionId.toString())).thenReturn(CleanupResult.CLEANED);
 
         watcher.checkExpiredSessions();
 
@@ -58,7 +60,7 @@ class SessionExpiryWatcherBackendCleanupTest {
     }
 
     @Test
-    void falseCleanupResultStillFinalizesAndWillNotBeRetriedAsActiveSession() {
+    void failedCleanupStillFinalizesAndWillNotBeRetriedAsActiveSession() {
         UUID sessionId = UUID.randomUUID();
         BotSessionEntity session = new BotSessionEntity();
         session.setId(sessionId);
@@ -68,11 +70,51 @@ class SessionExpiryWatcherBackendCleanupTest {
         session.setCreatedAt(Instant.now().minusSeconds(3600));
         session.setUpdatedAt(Instant.now().minusSeconds(3600));
         when(sessionStore.listActiveSessions()).thenReturn(List.of(session), List.of());
-        when(backendClient.cleanupSession(sessionId.toString())).thenReturn(false);
+        when(backendClient.cleanupSession(sessionId.toString())).thenReturn(CleanupResult.FAILED);
         watcher.checkExpiredSessions();
         watcher.checkExpiredSessions();
         verify(sessionStore).finalizeSession(sessionId);
         verify(backendClient, times(1)).cleanupSession(sessionId.toString());
+    }
+
+    @Test
+    void backendBusyDefersExpiryUntilTheNextNormalCheck() {
+        var session = new BotSessionEntity();
+        var id = UUID.randomUUID();
+        session.setId(id);
+        session.setBackendSessionId(id);
+        session.setCreatedAt(Instant.now().minusSeconds(3600));
+        session.setUpdatedAt(session.getCreatedAt());
+        when(sessionStore.listActiveSessions()).thenReturn(List.of(session));
+        when(backendClient.cleanupSession(id.toString()))
+            .thenReturn(CleanupResult.BUSY, CleanupResult.CLEANED);
+
+        watcher.checkExpiredSessions();
+        verify(sessionStore, never()).finalizeSession(id);
+
+        watcher.checkExpiredSessions();
+        verify(sessionStore).finalizeSession(id);
+        verify(backendClient, times(2)).cleanupSession(id.toString());
+        verify(backendClient, never()).resetSession(anyString());
+    }
+
+    @Test
+    void newActivityAfterBusyCancelsExpiry() {
+        var session = new BotSessionEntity();
+        var id = UUID.randomUUID();
+        session.setId(id);
+        session.setBackendSessionId(id);
+        session.setCreatedAt(Instant.now().minusSeconds(3600));
+        session.setUpdatedAt(session.getCreatedAt());
+        when(sessionStore.listActiveSessions()).thenReturn(List.of(session));
+        when(backendClient.cleanupSession(id.toString())).thenReturn(CleanupResult.BUSY);
+
+        watcher.checkExpiredSessions();
+        session.setUpdatedAt(Instant.now());
+        watcher.checkExpiredSessions();
+
+        verify(backendClient).cleanupSession(id.toString());
+        verify(sessionStore, never()).finalizeSession(id);
     }
 
     @Test

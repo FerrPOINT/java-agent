@@ -2,6 +2,7 @@ package com.azhukov.agent.bot.commands;
 
 import com.azhukov.agent.bot.commands.impl.NewSessionCommand;
 import com.azhukov.agent.bot.core.AgentBackendClient;
+import com.azhukov.agent.bot.core.SessionApiClient.CleanupResult;
 import com.azhukov.agent.bot.polling.UpdateEvent;
 import com.azhukov.agent.bot.polling.UpdateEvent.Type;
 import com.azhukov.agent.bot.session.BotSessionEntity;
@@ -38,7 +39,8 @@ class NewSessionCommandTest {
         session.setId(UUID.randomUUID());
         session.setBackendSessionId(UUID.randomUUID());
         session.setUserId("owner");
-        when(backend.cleanupSession(session.getBackendSessionId().toString())).thenReturn(true);
+        when(backend.cleanupSession(session.getBackendSessionId().toString()))
+            .thenReturn(CleanupResult.CLEANED);
         assertThat(new NewSessionCommand(store, backend).handle(null, session)).contains("cleared");
         org.mockito.Mockito.verify(backend).cleanupSession(session.getBackendSessionId().toString());
         org.mockito.Mockito.verify(backend, org.mockito.Mockito.never()).resetSession(anyString());
@@ -53,7 +55,8 @@ class NewSessionCommandTest {
         session.setId(UUID.randomUUID());
         session.setBackendSessionId(UUID.randomUUID());
         session.setUserId("owner");
-        when(backend.cleanupSession(anyString())).thenReturn(false);
+        when(backend.cleanupSession(anyString()))
+            .thenReturn(CleanupResult.FAILED);
         String result = new NewSessionCommand(store, backend).handle(null, session);
         assertThat(result).contains("cleanup failed");
         org.mockito.Mockito.verify(store).deactivateAll("owner");

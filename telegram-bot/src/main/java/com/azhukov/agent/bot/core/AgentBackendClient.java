@@ -213,7 +213,7 @@ public class AgentBackendClient {
     // Sessions (SessionApiClient)
     // ------------------------------------------------------------------
 
-    public boolean cleanupSession(String sessionId) {
+    public SessionApiClient.CleanupResult cleanupSession(String sessionId) {
         return sessions.cleanupSession(sessionId);
     }
 
