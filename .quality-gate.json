@@ -4,7 +4,8 @@
   "components": {
     "docs": [
       "docs/**",
-      "*.md"
+      "*.md",
+      "readme-requirements.json"
     ],
     "tooling": [
       "Makefile",
@@ -24,13 +25,11 @@
       "scripts/tests/test_make_epoch.py",
       "scripts/gradle-context.py",
       "scripts/check_docs_standard.py",
-      "scripts/verify_readme.py",
       "scripts/check_default_settings_reference.py",
       "scripts/release_verify.py",
       "scripts/endpoint_coverage_report.py",
       "scripts/check_test_lanes.py",
       "scripts/deploy-dev-systemd.sh",
-      "scripts/deploy-dev-docker.sh",
       "scripts/parity-dashboard.py",
       "scripts/vendor/base_quality_selection.py",
       "scripts/vendor/base-quality-tooling.json",
@@ -38,11 +37,9 @@
       "scripts/tests/test_test_lanes.py",
       "scripts/tests/test_source_sets_native.py",
       "scripts/tests/test_check_docs_standard.py",
-      "scripts/tests/test_verify_readme.py",
       "scripts/tests/test_check_default_settings_reference.py",
       "scripts/tests/test_release_verify.py",
       "scripts/tests/test_deploy_dev_systemd.py",
-      "scripts/tests/test_deploy_dev_docker.py",
       "scripts/tests/test_parity_dashboard.py"
     ],
     "backend": [
@@ -80,7 +77,6 @@
         "unittest",
         "scripts.tests.test_release_verify",
         "scripts.tests.test_check_docs_standard",
-        "scripts.tests.test_verify_readme",
         "scripts.tests.test_check_default_settings_reference",
         "-q"
       ],
@@ -103,13 +99,11 @@
         "scripts/select_java_modules.py",
         "scripts/tests/test_java_selection.py",
         "scripts/check_docs_standard.py",
-        "scripts/verify_readme.py",
         "scripts/check_default_settings_reference.py",
         "scripts/release_verify.py",
         "scripts/tests/test_test_lanes.py",
         "scripts/tests/test_release_verify.py",
         "scripts/tests/test_check_docs_standard.py",
-        "scripts/tests/test_verify_readme.py",
         "scripts/tests/test_check_default_settings_reference.py",
         "backend/src/test/**",
         "telegram-bot/src/test/**",
@@ -132,7 +126,9 @@
       "argv": [
         "{python}",
         "-B",
-        "scripts/verify_readme.py"
+        "../services-base/scripts/verify_readme.py",
+        "--root",
+        "."
       ],
       "cwd": ".",
       "inputs": [
@@ -535,7 +531,6 @@
         "-m",
         "unittest",
         "scripts.tests.test_deploy_dev_systemd",
-        "scripts.tests.test_deploy_dev_docker",
         "scripts.tests.test_parity_dashboard",
         "-q"
       ],

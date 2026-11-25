@@ -1,5 +1,6 @@
 package com.azhukov.agent.api;
 
+import com.azhukov.agent.shared.dto.ToolApprovalDecision;
 import com.azhukov.agent.api.dto.BackgroundRequest;
 import com.azhukov.agent.api.dto.ChatRequest;
 import com.azhukov.agent.api.dto.ContextInfoDto;
@@ -453,10 +454,11 @@ class AgentControllerBranchCoverageTest {
     @Test
     void approveAllPendingReturnsMessage() throws Exception {
         mockMvc = chatMockMvc();
-        mockMvc.perform(post("/api/v1/agent/approve")
+        mockMvc.perform(post("/api/v1" + ToolApprovalDecision.PATH)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                     {
+                      "action": "APPROVE",
                       "all": true
                     }
                     """))
@@ -466,10 +468,11 @@ class AgentControllerBranchCoverageTest {
     @Test
     void approveWithNoPendingReturnsMessage() throws Exception {
         mockMvc = chatMockMvc();
-        mockMvc.perform(post("/api/v1/agent/approve")
+        mockMvc.perform(post("/api/v1" + ToolApprovalDecision.PATH)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                     {
+                      "action": "APPROVE",
                       "all": false
                     }
                     """))
@@ -477,40 +480,43 @@ class AgentControllerBranchCoverageTest {
     }
 
     @Test
-    void approveWithInvalidSessionIdReturnsMessage() throws Exception {
+    void approvesOnlyThroughTheCurrentRequestIdContract() throws Exception {
         mockMvc = chatMockMvc();
-        mockMvc.perform(post("/api/v1/agent/approve")
+        mockMvc.perform(post("/api/v1" + ToolApprovalDecision.PATH)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                     {
+                      "action": "APPROVE",
                       "scope": "not-a-uuid",
                       "all": false
                     }
                     """))
-            .andExpect(status().isOk());
+            .andExpect(status().isBadRequest());
     }
 
     @Test
-    void approveWithValidSessionIdNoPendingReturnsMessage() throws Exception {
+    void approveWithUnknownRequestIdReturnsNotFound() throws Exception {
         mockMvc = chatMockMvc();
-        mockMvc.perform(post("/api/v1/agent/approve")
+        mockMvc.perform(post("/api/v1" + ToolApprovalDecision.PATH)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                     {
-                      "scope": "550e8400-e29b-41d4-a716-446655440000",
+                      "action": "APPROVE",
+                      "requestId": "550e8400-e29b-41d4-a716-446655440000",
                       "all": false
                     }
                     """))
-            .andExpect(status().isOk());
+            .andExpect(status().isNotFound());
     }
 
     @Test
     void denyAllPendingReturnsMessage() throws Exception {
         mockMvc = chatMockMvc();
-        mockMvc.perform(post("/api/v1/agent/deny")
+        mockMvc.perform(post("/api/v1" + ToolApprovalDecision.PATH)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                     {
+                      "action": "DENY",
                       "all": true
                     }
                     """))
@@ -520,10 +526,11 @@ class AgentControllerBranchCoverageTest {
     @Test
     void denyWithNoPendingReturnsMessage() throws Exception {
         mockMvc = chatMockMvc();
-        mockMvc.perform(post("/api/v1/agent/deny")
+        mockMvc.perform(post("/api/v1" + ToolApprovalDecision.PATH)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                     {
+                      "action": "DENY",
                       "all": false
                     }
                     """))
@@ -543,17 +550,20 @@ class AgentControllerBranchCoverageTest {
     @Test
     void approveToolReturnsOk() throws Exception {
         mockMvc = chatMockMvc();
-        mockMvc.perform(post("/api/v1/agent/approvals/" + SESSION_ID + "/approve")
+        var request = approvalQueue.request(SESSION_ID, new com.azhukov.agent.core.model.ToolCall("id", "terminal", "{}"), "test");
+        mockMvc.perform(post("/api/v1" + ToolApprovalDecision.PATH)
                 .contentType(MediaType.APPLICATION_JSON)
-                .param("decision", "approve"))
+                .content("{\"action\":\"APPROVE\",\"requestId\":\"" + request.requestId() + "\"}"))
             .andExpect(status().isOk());
     }
 
     @Test
     void denyToolReturnsOk() throws Exception {
         mockMvc = chatMockMvc();
-        mockMvc.perform(post("/api/v1/agent/approvals/" + SESSION_ID + "/deny")
-                .contentType(MediaType.APPLICATION_JSON))
+        var request = approvalQueue.request(SESSION_ID, new com.azhukov.agent.core.model.ToolCall("id", "terminal", "{}"), "test");
+        mockMvc.perform(post("/api/v1" + ToolApprovalDecision.PATH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"action\":\"DENY\",\"requestId\":\"" + request.requestId() + "\"}"))
             .andExpect(status().isOk());
     }
 
@@ -791,16 +801,6 @@ class AgentControllerBranchCoverageTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$").isArray())
             .andExpect(jsonPath("$.length()").value(2));
-    }
-
-    @Test
-    void bundlesAliasReturnsSameList() throws Exception {
-        mockMvc = skillMockMvc();
-        when(agentRuntimeService.listBundles()).thenReturn(List.of("bundle-1"));
-
-        mockMvc.perform(get("/api/v1/agent/skills/bundles"))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$[0]").value("bundle-1"));
     }
 
     // ── Checkpoint endpoints ──

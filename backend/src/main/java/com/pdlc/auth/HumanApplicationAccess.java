@@ -28,18 +28,29 @@ public record HumanApplicationAccess(String subject, String role, Set<String> ap
                 && ("admin".equals(role) || !enforced || applications.containsAll(required));
     }
 
-    /** Uses the original request start and expiry; a receiving cache cannot add another minute. */
+    /** Current role and source clocks, resolved once from the credential's Auth response. */
+    public record Credential(String role, Instant observedAt, Instant expiresAt) {}
+
+    /** Uses original credential and grant clocks; a receiving cache cannot renew either. */
     public static HumanApplicationAccess confirm(Map<String, ?> identity, String issuer, String subject,
-            long startedNanos, Instant wallStarted, Instant tokenExpiresAt, boolean requireProof) {
-        if ("service_account".equals(identity.get("role"))) {
+            long startedNanos, Instant wallStarted, Credential credential, boolean requireProof) {
+        if ("service_account".equals(credential.role())) {
             throw new AdmissionDeniedException();
         }
         Instant now = Instant.now();
-        String role = "admin".equals(identity.get("role")) ? "admin" : "user";
+        String role = credential.role();
+        if (!("user".equals(role) || "admin".equals(role))) {
+            throw new IllegalArgumentException("Invalid current human role");
+        }
         Set<String> applications = Set.of();
         long revision = 0;
         boolean enforced = false;
-        Instant expires = wallStarted.plus(WINDOW);
+        Instant expires = credential.expiresAt();
+        long credentialRemaining = Math.min(
+                Duration.between(wallStarted, expires).toNanos(),
+                Duration.between(credential.observedAt(), expires).toNanos());
+        if (credentialRemaining <= 0) throw new AdmissionDeniedException();
+        long deadline = startedNanos + credentialRemaining;
         Object value = identity.get("application_access");
         if (value != null) {
             if (!(value instanceof Map<?, ?> proof) || !proof.keySet().equals(FIELDS)
@@ -55,8 +66,8 @@ public record HumanApplicationAccess(String subject, String role, Set<String> ap
             revision = number(proof.get("revision"));
             enforced = enabled;
             Instant observed = timestamp(proof.get("observed_at"));
-            expires = timestamp(proof.get("expires_at"));
-            Duration lifetime = Duration.between(observed, expires);
+            Instant grantExpires = timestamp(proof.get("expires_at"));
+            Duration lifetime = Duration.between(observed, grantExpires);
             HashSet<String> unique = new HashSet<>();
             if (keys.size() > 128) throw new IllegalArgumentException("Invalid application catalog");
             for (Object key : keys) {
@@ -65,20 +76,19 @@ public record HumanApplicationAccess(String subject, String role, Set<String> ap
                 }
             }
             applications = unique;
+            expires = credential.expiresAt().isBefore(grantExpires) ? credential.expiresAt() : grantExpires;
+            long grantRemaining = Math.min(lifetime.toNanos(),
+                    Duration.between(wallStarted, grantExpires).toNanos());
+            deadline = Math.min(deadline, startedNanos + grantRemaining);
             if (revision <= 0 || lifetime.isNegative() || lifetime.isZero() || lifetime.compareTo(WINDOW) > 0
                     || observed.isBefore(wallStarted.minusSeconds(5)) || observed.isAfter(now.plusSeconds(5))) {
                 throw new IllegalArgumentException("Invalid human admission decision");
             }
         }
         if (requireProof && !enforced) throw new AdmissionDeniedException();
-        if (tokenExpiresAt != null && tokenExpiresAt.isBefore(expires)) expires = tokenExpiresAt;
-        Duration remaining = Duration.between(now, expires);
-        if (remaining.isNegative() || remaining.isZero() || System.nanoTime() - startedNanos < 0) {
-            throw new AdmissionDeniedException();
-        }
-        long lifetimeNanos = remaining.compareTo(WINDOW) < 0 ? remaining.toNanos() : WINDOW.toNanos();
+        if (System.nanoTime() - startedNanos < 0) throw new AdmissionDeniedException();
         HumanApplicationAccess result = new HumanApplicationAccess(subject, role, applications, revision,
-                enforced, expires, startedNanos + lifetimeNanos);
+                enforced, expires, deadline);
         if (!result.isCurrent()) throw new AdmissionDeniedException();
         return result;
     }

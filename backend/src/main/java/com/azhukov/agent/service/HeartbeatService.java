@@ -165,8 +165,17 @@ public class HeartbeatService {
                 UUID sid = java.util.UUID.fromString(String.valueOf(row.get("session_id")));
                 String raw = String.valueOf(row.get("state_value"));
                 if (raw == null || raw.isBlank()) continue;
-                String[] parts = raw.split(Pattern.quote(SEP), -1);
-                if (parts.length < 5) continue;
+                String[] parts = new String[5];
+                int end = raw.length();
+                boolean valid = true;
+                for (int i = 4; i > 0; i--) {
+                    int separator = raw.lastIndexOf(SEP, end - 1);
+                    if (separator < 0) { valid = false; break; }
+                    parts[i] = raw.substring(separator + SEP.length(), end);
+                    end = separator;
+                }
+                if (!valid) continue;
+                parts[0] = raw.substring(0, end);
                 try {
                     HeartbeatState st = new HeartbeatState(parts[0],
                         Integer.parseInt(parts[1]), parts[2], Instant.now(), null,
@@ -242,6 +251,7 @@ public class HeartbeatService {
         st = new HeartbeatState(st.prompt(), st.intervalSeconds(), "active",
             st.createdAt(), Instant.now(), st.fireCount(), st.maxTicks());  // anchor reset — Hermes resume restarts the clock
         states.put(sessionId, st);
+        persist(sessionId, st);
         ensureWatchdog();
         return st;
     }
@@ -317,7 +327,10 @@ public class HeartbeatService {
         // Mark fired FIRST so a slow target can't double-fire
         HeartbeatState fired = new HeartbeatState(st.prompt(), st.intervalSeconds(),
             st.status(), st.createdAt(), Instant.now(), st.fireCount() + 1, st.maxTicks());
-        states.put(sessionId, fired);
+        synchronized (this) {
+            if (states.get(sessionId) != st) return;
+            states.put(sessionId, fired);
+        }
         String prompt = buildFirePrompt(fired);
         log.info("Heartbeat firing for session {} (fire #{}): {}",
             sessionId, fired.fireCount(), st.prompt());
@@ -329,21 +342,24 @@ public class HeartbeatService {
         } catch (Exception ex) {
             log.warn("Heartbeat turn failed for session {}: {}", sessionId, ex.getMessage());
         }
-        if (response != null && !response.isBlank()) {
-            lastFireResults.put(sessionId, response);
-            deliveryAttempts.put(sessionId, new java.util.concurrent.atomic.AtomicInteger());
-        }
         // /loop contract: LOOP_COMPLETE in the response stops the loop.
-        if (responseSignalsComplete(response)) {
-            log.info("Heartbeat/loop for session {} signalled LOOP_COMPLETE — clearing", sessionId);
-            states.remove(sessionId);
-            persist(sessionId, null);
-        } else if (fired.maxTicks() > 0 && fired.fireCount() >= fired.maxTicks()) {
-            log.info("Heartbeat/loop for session {} reached --times cap ({}); clearing", sessionId, fired.maxTicks());
-            states.remove(sessionId);
-            persist(sessionId, null);
-        } else {
-            persist(sessionId, fired);   // keep fireCount durable
+        synchronized (this) {
+            if (states.get(sessionId) != fired) return;
+            if (response != null && !response.isBlank()) {
+                lastFireResults.put(sessionId, response);
+                deliveryAttempts.put(sessionId, new java.util.concurrent.atomic.AtomicInteger());
+            }
+            if (responseSignalsComplete(response)) {
+                log.info("Heartbeat/loop for session {} signalled LOOP_COMPLETE — clearing", sessionId);
+                states.remove(sessionId);
+                persist(sessionId, null);
+            } else if (fired.maxTicks() > 0 && fired.fireCount() >= fired.maxTicks()) {
+                log.info("Heartbeat/loop for session {} reached --times cap ({}); clearing", sessionId, fired.maxTicks());
+                states.remove(sessionId);
+                persist(sessionId, null);
+            } else {
+                persist(sessionId, fired);
+            }
         }
     }
 

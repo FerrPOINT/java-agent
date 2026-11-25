@@ -38,9 +38,10 @@ class CronJobOwnershipTest {
     void setUp() {
         var properties = new AgentProperties();
         properties.getCron().setEnabled(false);
-        service = new CronJobService(jobs, mock(ObjectProvider.class), properties,
-            mock(SkillManager.class), executions, messages,
-            CronJobServiceTest.unitTransaction(), new CronScheduleParser());
+        service = new CronJobService(
+            jobs, mock(ObjectProvider.class), properties, mock(SkillManager.class),
+            executions, messages, CronJobServiceTest.unitTransaction(), new CronScheduleParser(),
+            org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class));
         ObjectProvider<SessionRepository> provider = mock(ObjectProvider.class);
         when(provider.getIfAvailable()).thenReturn(sessions);
         ReflectionTestUtils.setField(service, "sessionRepositoryProvider", provider);
@@ -68,7 +69,12 @@ class CronJobOwnershipTest {
             switch (operation) {
                 case "pause" -> service.pause(job.getId());
                 case "resume" -> service.resume(job.getId());
-                case "update" -> service.update(job.getId(), "changed", null, null, null, null);
+                case "update" -> service.update(
+            job.getId(), "changed", null, null,
+            null, null, null, null,
+            null, null, null, null,
+            null, null, null, null,
+            null, null, null, null);
                 case "remove" -> service.remove(job.getId());
                 case "run" -> service.runNow(job.getId());
                 case "background" -> service.runNowBackground(job.getId(), null);
@@ -81,6 +87,25 @@ class CronJobOwnershipTest {
         verify(jobs, never()).delete(any());
         verify(jobs, never()).recordRun(any());
         verifyNoInteractions(executions, messages);
+    }
+
+    @Test
+    void queuedManualRunRejectsJobWhoseOwnerChangedBeforeExecution() {
+        UserContext.set("owner", UserContext.ROLE_USER);
+        var owned = job("owner");
+        var reassigned = job("foreign");
+        reassigned.setId(owned.getId());
+        when(jobs.findById(owned.getId())).thenReturn(Optional.of(owned), Optional.of(reassigned));
+        var scheduler = mock(java.util.concurrent.ScheduledExecutorService.class);
+        var callback = org.mockito.ArgumentCaptor.forClass(Runnable.class);
+        ReflectionTestUtils.setField(service, "scheduler", scheduler);
+
+        service.runNowBackground(owned.getId(), null);
+        verify(scheduler).execute(callback.capture());
+        callback.getValue().run();
+
+        verifyNoInteractions(executions, messages);
+        verify(jobs, never()).recordRun(any());
     }
 
     @ParameterizedTest
@@ -157,14 +182,45 @@ class CronJobOwnershipTest {
     }
 
     private CronJobEntity create(String owner, UUID session) {
-        return service.create(owner, "owned", "0 * * * *", "work", null, null, null,
-            null, null, false, null, null, null, null, null, null, false, session);
+        return service.create(
+            owner, "default", "owned", "0 * * * *",
+            "work", null, null, null,
+            null, null, false, null,
+            null, null, null, null,
+            null, false, session);
     }
 
     private CronJobEntity update(CronJobEntity job, UUID session) {
         return service.update(job.getId(), "changed", null, null, null, null,
             null, null, null, null, null, null, null, null, null, null,
             null, null, true, session);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {UserContext.ROLE_USER, UserContext.ROLE_ADMIN})
+    void explicitCreatorRemainsTheOwnerEvenWhenQueryScopeIsGlobal(String role) {
+        UserContext.set("owner-a", role);
+        assertThat(create("owner-a").getUserId()).isEqualTo("owner-a");
+    }
+
+    @Test
+    void ordinaryUserCannotCreateGlobalOrForeignOwnedJob() {
+        UserContext.set("owner-a", UserContext.ROLE_USER);
+        assertThatThrownBy(() -> create(null)).isInstanceOf(SecurityException.class);
+        assertThatThrownBy(() -> create("owner-b")).isInstanceOf(SecurityException.class);
+        verify(jobs, never()).save(any(CronJobEntity.class));
+        assertThat(create("owner-a").getUserId()).isEqualTo("owner-a");
+    }
+
+    @Test
+    void systemCanExplicitlyCreateAGlobalJob() {
+        UserContext.clear();
+        assertThat(create(null).getUserId()).isNull();
+    }
+
+    private CronJobEntity create(String owner) {
+        return service.create(owner, "default", "owned", "0 * * * *", "work",
+            null, null, null, null, null, false, null, null, null, null, null, null, false, null);
     }
 
     private static CronJobEntity job(String owner) {

@@ -32,10 +32,10 @@ import org.springframework.web.servlet.config.annotation.EnableWebMvc;
 /** Real servlet/filter/controller HTTP and an isolated Auth server, without product bootstrap/JIT. */
 final class IdentityOwnerHttpFixture implements AutoCloseable {
     static final String ISSUER="https://auth.example.test";
-    static final String PAT="sdlc_pat_public_synthetic_owner_test";
+    static final String PAT="pdlc_pat_public_synthetic_owner_test";
     final UUID coordinator=UUID.randomUUID();
     final AtomicInteger status=new AtomicInteger(200);
-    final AtomicReference<String> role=new AtomicReference<>("service_account");
+    final AtomicReference<String> subjectKind=new AtomicReference<>("service");
     final AtomicReference<String> subject=new AtomicReference<>();
     final AtomicReference<List<String>> scopes=new AtomicReference<>(List.of("java-agent:identity-lifecycle"));
     final AtomicReference<Instant> expiry=new AtomicReference<>();
@@ -63,8 +63,8 @@ final class IdentityOwnerHttpFixture implements AutoCloseable {
                 try {
                     if(authDelayMillis.get()>0)Thread.sleep(authDelayMillis.get());
                     Instant observed=Instant.now(),expires=expiry.get();
-                    byte[] payload=mapper.writeValueAsBytes(Map.of("sub",subject.get(),"email","coordinator@example.test",
-                        "subject_role",role.get(),"scopes",scopes.get(),"observed_at",observed.toString(),
+                    byte[] payload=mapper.writeValueAsBytes(Map.of("sub",subject.get(),"subject_kind",subjectKind.get(),
+                        "scopes",scopes.get(),"observed_at",observed.toString(),
                         "expires_at",(expires==null?observed.plusSeconds(60):expires).toString()));
                     exchange.getResponseHeaders().set("Content-Type","application/json");
                     exchange.sendResponseHeaders(status.get(),payload.length);

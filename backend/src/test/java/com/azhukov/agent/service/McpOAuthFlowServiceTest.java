@@ -180,7 +180,7 @@ class McpOAuthFlowServiceTest {
 
         assertThat(result).containsEntry("ok", false);
         assertThat(String.valueOf(result.get("detail"))).contains("already used");
-        verify(oauthManager, never()).storeToken(any(), any(), any(), any());
+        verify(oauthManager, never()).storeToken(any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -216,7 +216,7 @@ class McpOAuthFlowServiceTest {
     }
 
     @ParameterizedTest
-    @CsvSource(value = {"1200,1200", "invalid,3600", "NULL,3600"}, nullValues = "NULL")
+    @CsvSource(value = {"1200,1200", "invalid,3600", "NULL,3600", "9223372036854775807,3600"}, nullValues = "NULL")
     void completeExchangesBoundPkceCodeAndConsumesState(String expiresIn, long expectedTtl) throws Exception {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         AtomicReference<String> requestBody = new AtomicReference<>();
@@ -235,8 +235,10 @@ class McpOAuthFlowServiceTest {
             McpServerConfigEntity config = config("srv");
             config.setOauthTokenUrl("http://127.0.0.1:" + server.getAddress().getPort() + "/token");
             McpOAuthFlowEntity flow = pendingFlow("srv");
+            flow.setProfile("research");
+            config.setProfile("research");
             when(flowRepository.findByStateHash(any(String.class))).thenReturn(Optional.of(flow));
-            when(configStore.find("default", "srv")).thenReturn(Optional.of(config));
+            when(configStore.find("research", "srv")).thenReturn(Optional.of(config));
             McpOAuthFlowService service = service();
             Instant before = Instant.now();
 
@@ -249,12 +251,58 @@ class McpOAuthFlowServiceTest {
                 "redirect_uri=https%3A%2F%2Flocal%2Fapi%2Fmcp%2Foauth%2Fcallback%2Fsrv");
             assertThat(flow.getStatus()).isEqualTo("completed");
             ArgumentCaptor<Instant> expiry = ArgumentCaptor.forClass(Instant.class);
-            verify(oauthManager).storeToken(eq("srv"), eq("qa-access"), eq("qa-refresh"), expiry.capture());
+            verify(oauthManager).storeToken(eq("research"), eq("srv"), eq("qa-access"), eq("qa-refresh"),
+                expiry.capture(), eq(config.getOauthTokenUrl()));
             assertThat(expiry.getValue()).isBetween(before.plusSeconds(expectedTtl), Instant.now().plusSeconds(expectedTtl));
             verify(flowRepository).save(flow);
 
             assertThat(service.complete("srv", "another-code", "state")).containsEntry("ok", false);
             assertThat(exchanges.get()).isEqualTo(1);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void tokenExchangeErrorDoesNotLeakProviderResponse() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/token", exchange -> {
+            byte[] bytes = "{\"error\":\"invalid_grant\",\"access_token\":\"sensitive-canary\"}".getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(400, bytes.length);
+            try (var output = exchange.getResponseBody()) { output.write(bytes); }
+        });
+        server.start();
+        try {
+            var config = config("srv");
+            config.setOauthTokenUrl("http://127.0.0.1:" + server.getAddress().getPort() + "/token");
+            when(flowRepository.findByStateHash(any(String.class))).thenReturn(Optional.of(pendingFlow("srv")));
+            when(configStore.find("default", "srv")).thenReturn(Optional.of(config));
+            assertThatThrownBy(() -> service().complete("srv", "code", "state"))
+                .hasMessageContaining("400").hasMessageNotContaining("sensitive-canary");
+            verify(oauthManager, never()).storeToken(any(), any(), any(), any(), any(), any());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void completeRejectsNestedTokenResponseWithoutStoringCredentials() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/token", exchange -> {
+            byte[] bytes = "{\"nested\":{\"access_token\":\"not-a-token\"}}".getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, bytes.length);
+            try (var output = exchange.getResponseBody()) { output.write(bytes); }
+        });
+        server.start();
+        try {
+            var config = config("srv");
+            config.setOauthTokenUrl("http://127.0.0.1:" + server.getAddress().getPort() + "/token");
+            var flow = pendingFlow("srv");
+            when(flowRepository.findByStateHash(any(String.class))).thenReturn(Optional.of(flow));
+            when(configStore.find("default", "srv")).thenReturn(Optional.of(config));
+            assertThat(service().complete("srv", "code", "state")).containsEntry("ok", false);
+            verify(oauthManager, never()).storeToken(any(), any(), any(), any(), any(), any());
+            assertThat(flow.getStatus()).isEqualTo("failed");
         } finally {
             server.stop(0);
         }
@@ -270,6 +318,6 @@ class McpOAuthFlowServiceTest {
             .containsEntry("ok", false).containsEntry("detail", "server OAuth configuration disappeared");
         assertThat(flow.getStatus()).isEqualTo("failed");
         verify(flowRepository).save(flow);
-        verify(oauthManager, never()).storeToken(any(), any(), any(), any());
+        verify(oauthManager, never()).storeToken(any(), any(), any(), any(), any(), any());
     }
 }

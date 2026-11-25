@@ -33,7 +33,7 @@ import static org.mockito.Mockito.*;
 class CentralJwtVerifierBoundaryTest {
     private static final String SUBJECT = "8c5ddf41-ae6d-4dc9-a7ec-15835dd6303e";
     private static final String ISSUER = "https://auth.fixture.invalid";
-    private static final String PAT = "sdlc_pat_synthetic_fixture";
+    private static final String PAT = "pdlc_pat_synthetic_fixture";
     private static final String PERSONAL = "https://auth.fixture.invalid/introspect";
 
     @ParameterizedTest
@@ -85,11 +85,11 @@ class CentralJwtVerifierBoundaryTest {
         verifier.init();
         var decoder = mock(JwtDecoder.class);
         var client = mock(HttpClient.class);
-        when(decoder.decode("synthetic-jwt")).thenThrow(new JwtException("synthetic key service failure"));
+        when(decoder.decode("synthetic.jwt.fixture")).thenThrow(new JwtException("synthetic key service failure"));
         ReflectionTestUtils.setField(verifier, "decoder", decoder);
         ReflectionTestUtils.setField(verifier, "sessionClient", client);
 
-        assertThatThrownBy(() -> verifier.verifyAccess("synthetic-jwt", "GET"))
+        assertThatThrownBy(() -> verifier.verifyAccess("synthetic.jwt.fixture", "GET"))
                 .isInstanceOf(CentralJwtVerifier.CentralAuthUnavailableException.class);
         verifyNoInteractions(client);
     }
@@ -118,7 +118,7 @@ class CentralJwtVerifierBoundaryTest {
     }
 
     @Test
-    void writeScopeIsConfirmedAtThePersonalEndpointWithOriginalLifetimeRequested() throws Exception {
+    void writeScopeIsConfirmedAtThePersonalEndpointWithOriginalLifetime() throws Exception {
         var identity = identity();
         identity.put("scopes", List.of("java-agent:write"));
         var fixture = fixture(json(identity));
@@ -129,7 +129,7 @@ class CentralJwtVerifierBoundaryTest {
         assertThat(proof.access().subject()).isEqualTo(SUBJECT);
         assertThat(proof.window().current()).isTrue();
         assertThat(proof.window().deadlineNanos()).isEqualTo(proof.access().deadlineNanos());
-        verify(fixture.client()).sendAsync(argThat((HttpRequest request) -> request.uri().equals(URI.create(PERSONAL + "?include_lifetime=true"))
+        verify(fixture.client()).sendAsync(argThat((HttpRequest request) -> request.uri().equals(URI.create(PERSONAL))
                 && request.method().equals("GET")
                 && request.headers().firstValue("Authorization").orElse("").equals("Bearer " + PAT)
                 && request.timeout().orElseThrow().equals(java.time.Duration.ofSeconds(5))),
@@ -190,7 +190,7 @@ class CentralJwtVerifierBoundaryTest {
     private static MockEnvironment environment() {
         return new MockEnvironment().withProperty("agent.central-auth.issuer", ISSUER)
                 .withProperty("agent.central-auth.jwks-uri", "https://auth.fixture.invalid/jwks")
-                .withProperty("agent.central-auth.audience", "sdlc")
+                .withProperty("agent.central-auth.audience", "pdlc")
                 .withProperty("agent.central-auth.session-uri", "https://auth.fixture.invalid/me")
                 .withProperty("agent.central-auth.personal-token-uri", PERSONAL);
     }
@@ -198,7 +198,10 @@ class CentralJwtVerifierBoundaryTest {
     private static Map<String, Object> identity() {
         var result = new java.util.LinkedHashMap<String, Object>();
         result.put("sub", SUBJECT);
-        result.put("status", "active");
+        result.put("email", "fixture@example.test");
+        result.put("display_name", "Fixture");
+        result.put("subject_role", "user");
+        result.put("observed_at", Instant.now().toString());
         result.put("scopes", List.of("java-agent:read"));
         result.put("expires_at", Instant.now().plusSeconds(60).toString());
         return result;

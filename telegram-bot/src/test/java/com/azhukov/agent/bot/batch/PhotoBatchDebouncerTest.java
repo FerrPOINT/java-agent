@@ -42,6 +42,17 @@ class PhotoBatchDebouncerTest {
     }
 
     @Test
+    void missingAlbumMemberIdIsNotSilentlyDiscarded() {
+        var dispatched = new java.util.ArrayList<UpdateEvent>();
+        debouncer.onDispatch(dispatched::add);
+        debouncer.offer(makePhotoEvent(1L, 100L, "valid", "group1", "caption"));
+        debouncer.offer(makePhotoEvent(2L, 100L, null, "group1", null));
+        debouncer.flushAll();
+        assertThat(dispatched).hasSize(1);
+        assertThat(dispatched.getFirst().fileId()).isNull();
+    }
+
+    @Test
     void offer_multiplePhotosSameGroup_dispatchesMerged() throws Exception {
         CountDownLatch latch = new CountDownLatch(1);
         AtomicInteger count = new AtomicInteger(0);
@@ -87,15 +98,98 @@ class PhotoBatchDebouncerTest {
     }
 
     @Test
+    void sameGroupIdAcrossChatsDoesNotMerge() {
+        var dispatched = new java.util.ArrayList<UpdateEvent>();
+        debouncer.onDispatch(dispatched::add);
+        debouncer.offer(makePhotoEvent(1, 100, "file1", "same-id", "one"));
+        debouncer.offer(makePhotoEvent(2, 101, "file2", "same-id", "two"));
+        debouncer.flushAll();
+        assertThat(dispatched).hasSize(2);
+        assertThat(dispatched).extracting(UpdateEvent::fileId).containsExactlyInAnyOrder("file1", "file2");
+    }
+
+    @Test
+    void concurrentOffersAndFlushDoNotLosePhotos() throws Exception {
+        var delivered = new java.util.concurrent.LinkedBlockingQueue<UpdateEvent>();
+        debouncer.onDispatch(delivered::add);
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            for (int i = 0; i < 300; i++) {
+                debouncer.offer(makePhotoEvent(2L * i, 100, "first", "album", null));
+                var barrier = new java.util.concurrent.CyclicBarrier(2);
+                var offer = pool.submit(() -> {
+                    barrier.await();
+                    debouncer.offer(makePhotoEvent(2, 100, "second", "album", null));
+                    return null;
+                });
+                var flush = pool.submit(() -> { barrier.await(); debouncer.flushAll(); return null; });
+                offer.get();
+                flush.get();
+                debouncer.flushAll();
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+        assertThat(delivered.stream().flatMap(event -> java.util.Arrays.stream(event.fileId().split(",")))
+            .filter("first"::equals).count()).isEqualTo(300);
+        assertThat(delivered.stream().flatMap(event -> java.util.Arrays.stream(event.fileId().split(",")))
+            .filter("second"::equals).count()).isEqualTo(300);
+    }
+
+    @Test
+    void flushClaimsEachAlbumExactlyOnce() {
+        var dispatched = new java.util.ArrayList<UpdateEvent>();
+        debouncer.onDispatch(dispatched::add);
+        debouncer.offer(makePhotoEvent(1, 100, "file1", "group1", "one"));
+        debouncer.offer(makePhotoEvent(2, 100, "file2", "group1", "two"));
+        debouncer.flushAll();
+        debouncer.flushAll();
+        assertThat(dispatched).hasSize(1);
+        assertThat(dispatched.getFirst().fileId()).isEqualTo("file1,file2");
+    }
+
+    @Test
+    void albumUsesTelegramMessageOrderWhenEventsArriveOutOfOrder() {
+        var dispatched = new java.util.ArrayList<UpdateEvent>();
+        debouncer.onDispatch(dispatched::add);
+        debouncer.offer(makePhotoEvent(3, 100, "file3", "group1", "third"));
+        debouncer.offer(makePhotoEvent(1, 100, "file1", "group1", "first"));
+        debouncer.offer(makePhotoEvent(2, 100, "file2", "group1", "second"));
+        debouncer.flushAll();
+        assertThat(dispatched).hasSize(1);
+        assertThat(dispatched.getFirst().fileId()).isEqualTo("file1,file2,file3");
+        assertThat(dispatched.getFirst().caption()).isEqualTo("first\n\nsecond\n\nthird");
+    }
+
+    @Test
+    void preservesCaptionMatchingPartOfEarlierMultilineCaption() {
+        var dispatched = new java.util.ArrayList<UpdateEvent>();
+        debouncer.onDispatch(dispatched::add);
+        debouncer.offer(makePhotoEvent(1, 100, "file1", "group1", "first\n\nsecond"));
+        debouncer.offer(makePhotoEvent(2, 100, "file2", "group1", "first"));
+        debouncer.flushAll();
+        assertThat(dispatched).hasSize(1);
+        assertThat(dispatched.getFirst().caption()).isEqualTo("first\n\nsecond\n\nfirst");
+    }
+
+    @Test
     void mergeCaptionDeduplicatesExactTrimmedRepeatsLikeHermes() {
-        assertThat(PhotoBatchDebouncer.mergeCaption("Revenue", "Revenue  "))
-            .isEqualTo("Revenue");
+        var dispatched = new java.util.ArrayList<UpdateEvent>();
+        debouncer.onDispatch(dispatched::add);
+        debouncer.offer(makePhotoEvent(1, 100, "file1", "group1", "Revenue"));
+        debouncer.offer(makePhotoEvent(2, 100, "file2", "group1", "Revenue  "));
+        debouncer.flushAll();
+        assertThat(dispatched.getFirst().caption()).isEqualTo("Revenue");
     }
 
     @Test
     void mergeCaptionKeepsShorterSubstringCaptionLikeHermes() {
-        assertThat(PhotoBatchDebouncer.mergeCaption("Meeting agenda", "Meeting"))
-            .isEqualTo("Meeting agenda\n\nMeeting");
+        var dispatched = new java.util.ArrayList<UpdateEvent>();
+        debouncer.onDispatch(dispatched::add);
+        debouncer.offer(makePhotoEvent(1, 100, "file1", "group1", "Meeting agenda"));
+        debouncer.offer(makePhotoEvent(2, 100, "file2", "group1", "Meeting"));
+        debouncer.flushAll();
+        assertThat(dispatched.getFirst().caption()).isEqualTo("Meeting agenda\n\nMeeting");
     }
 
     private UpdateEvent makePhotoEvent(long updateId, long chatId, String fileId,

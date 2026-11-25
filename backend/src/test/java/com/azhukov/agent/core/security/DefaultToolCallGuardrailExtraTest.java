@@ -1,7 +1,6 @@
 package com.azhukov.agent.core.security;
 
 import com.azhukov.agent.core.model.ToolResult;
-import com.azhukov.agent.core.state.TurnState;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -10,6 +9,12 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Extra branch-coverage tests for DefaultToolCallGuardrail.
  */
 class DefaultToolCallGuardrailExtraTest {
+    private static final java.util.UUID SESSION = java.util.UUID.randomUUID();
+    @org.junit.jupiter.api.BeforeEach
+    void bindSession() { com.azhukov.agent.core.agent.InterruptToken.setCurrentSessionId(SESSION); }
+    @org.junit.jupiter.api.AfterEach
+    void clearSession() { com.azhukov.agent.core.agent.InterruptToken.clearCurrentSessionId(); }
+
 
     private GuardrailConfig cfg() {
         GuardrailConfig c = new GuardrailConfig();
@@ -18,9 +23,9 @@ class DefaultToolCallGuardrailExtraTest {
         c.setWarnAfterExactFailure(2);
         c.setHardStopAfterExactFailure(10);
         c.setWarnAfterSameToolFailure(100);
-        c.setHardStopAfterSameToolFailure(100);
+
         c.setWarnAfterIdempotentNoProgress(100);
-        c.setHardStopAfterIdempotentNoProgress(100);
+
         return c;
     }
 
@@ -28,12 +33,12 @@ class DefaultToolCallGuardrailExtraTest {
     void successResetsConsecutiveFailures() {
         DefaultToolCallGuardrail g = new DefaultToolCallGuardrail(cfg());
         // Two failures
-        g.afterCall("tool", "{}", ToolResult.fail("err"), true, null);
-        g.afterCall("tool", "{}", ToolResult.fail("err"), true, null);
+        g.afterCall("tool", "{}", ToolResult.fail("err"), true);
+        g.afterCall("tool", "{}", ToolResult.fail("err"), true);
         // One success — should reset consecutiveFailures to 0
-        g.afterCall("tool", "{}", ToolResult.ok("ok"), false, null);
+        g.afterCall("tool", "{}", ToolResult.ok("ok"), false);
         // One failure — consecutiveFailures should be 1, not 3
-        GuardrailDecision d = g.afterCall("tool", "{}", ToolResult.fail("err"), true, null);
+        GuardrailDecision d = g.afterCall("tool", "{}", ToolResult.fail("err"), true);
         // consecutiveFailures=1, warnAfterExactFailure=2 → no warn yet
         assertThat(d.action()).isEqualTo(GuardrailAction.ALLOW);
     }
@@ -42,9 +47,9 @@ class DefaultToolCallGuardrailExtraTest {
     void afterCallWithNullResultUsesUnknownError() {
         DefaultToolCallGuardrail g = new DefaultToolCallGuardrail(cfg());
         // null result, failed=true — should use "unknown" for error message
-        g.afterCall("tool", "{}", null, true, null);
+        g.afterCall("tool", "{}", null, true);
         // Should still track failure
-        GuardrailDecision warn = g.afterCall("tool", "{}", null, true, null);
+        GuardrailDecision warn = g.afterCall("tool", "{}", null, true);
         assertThat(warn.action()).isEqualTo(GuardrailAction.WARN);
     }
 
@@ -57,18 +62,18 @@ class DefaultToolCallGuardrailExtraTest {
         c.setHardStopAfterExactFailure(4);
         DefaultToolCallGuardrail g = new DefaultToolCallGuardrail(c);
 
-        g.afterCall("browser_snapshot", "{}", ToolResult.fail("ConnectException"), true, null);
-        g.afterCall("image_generate", "{}", ToolResult.fail("provider disabled"), true, null);
-        g.afterCall("text_to_speech", "{}", ToolResult.fail("edge-tts unavailable"), true, null);
-        assertThat(g.isHalted()).isFalse();
+        g.afterCall("browser_snapshot", "{}", ToolResult.fail("ConnectException"), true);
+        g.afterCall("image_generate", "{}", ToolResult.fail("provider disabled"), true);
+        g.afterCall("text_to_speech", "{}", ToolResult.fail("edge-tts unavailable"), true);
+        assertThat(g.isHalted(SESSION)).isFalse();
 
-        g.afterCall("browser_snapshot", "{}", ToolResult.fail("ConnectException"), true, null);
-        GuardrailDecision warn = g.afterCall("browser_snapshot", "{}", ToolResult.fail("ConnectException"), true, null);
+        g.afterCall("browser_snapshot", "{}", ToolResult.fail("ConnectException"), true);
+        GuardrailDecision warn = g.afterCall("browser_snapshot", "{}", ToolResult.fail("ConnectException"), true);
         assertThat(warn.action()).isEqualTo(GuardrailAction.WARN);
-        GuardrailDecision halt = g.afterCall("browser_snapshot", "{}", ToolResult.fail("ConnectException"), true, null);
+        GuardrailDecision halt = g.afterCall("browser_snapshot", "{}", ToolResult.fail("ConnectException"), true);
         assertThat(halt.action()).isEqualTo(GuardrailAction.HALT);
-        assertThat(g.isHalted()).isTrue();
-        assertThat(g.haltMessage(null)).contains("browser_snapshot").contains("same reason");
+        assertThat(g.isHalted(SESSION)).isTrue();
+        assertThat(g.haltMessage(SESSION)).contains("browser_snapshot").contains("same reason");
     }
 
     @Test
@@ -78,10 +83,10 @@ class DefaultToolCallGuardrailExtraTest {
         DefaultToolCallGuardrail g = new DefaultToolCallGuardrail(c);
 
         for (int i = 0; i < 20; i++) {
-            g.afterCall("tool", "{}", ToolResult.fail("err" + i), true, null);
+            g.afterCall("tool", "{}", ToolResult.fail("err" + i), true);
         }
         // Should never halt because hardStop is disabled
-        assertThat(g.isHalted()).isFalse();
+        assertThat(g.isHalted(SESSION)).isFalse();
     }
 
     @Test
@@ -91,10 +96,10 @@ class DefaultToolCallGuardrailExtraTest {
         c.setHardStopAfterExactFailure(3);
         DefaultToolCallGuardrail g = new DefaultToolCallGuardrail(c);
 
-        g.afterCall("tool", "{}", ToolResult.fail("err"), true, null);
-        g.afterCall("tool", "{}", ToolResult.fail("err"), true, null);
+        g.afterCall("tool", "{}", ToolResult.fail("err"), true);
+        g.afterCall("tool", "{}", ToolResult.fail("err"), true);
         // Same failure twice, warnings disabled → no warning yet.
-        GuardrailDecision d = g.afterCall("tool", "{}", ToolResult.fail("err"), true, null);
+        GuardrailDecision d = g.afterCall("tool", "{}", ToolResult.fail("err"), true);
         // Same failure three times, hardStopAfterExactFailure=3 → HALT.
         assertThat(d.action()).isEqualTo(GuardrailAction.HALT);
     }
@@ -113,12 +118,12 @@ class DefaultToolCallGuardrailExtraTest {
         c.setWarnAfterExactFailure(100);
         c.setHardStopAfterExactFailure(100);
         c.setWarnAfterSameToolFailure(100);
-        c.setHardStopAfterSameToolFailure(100);
+
         DefaultToolCallGuardrail g = new DefaultToolCallGuardrail(c);
 
         // Call 25 times with success — history should trim to 20
         for (int i = 0; i < 25; i++) {
-            g.afterCall("tool" + i, "{}", ToolResult.ok("ok"), false, null);
+            g.afterCall("tool" + i, "{}", ToolResult.ok("ok"), false);
         }
         // Should still function correctly
         GuardrailDecision d = g.beforeCall("read_file", "{}");

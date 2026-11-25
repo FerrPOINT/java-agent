@@ -8,7 +8,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Branch coverage tests for {@link SecretRedactor}, {@link CommandApprovalManager},
+ * Branch coverage tests for {@link SecretRedactor},
  * {@link UserInputSanitizer}, and {@link SsrfSafeHttpClient}.
  */
 class SecurityMiscBranchTest {
@@ -102,103 +102,6 @@ class SecurityMiscBranchTest {
         SecretRedactor r = new SecretRedactor(p);
         assertThat(r.redact("mysecret: abc123")).contains("[REDACTED:");
         assertThat(r.redact("valid=123")).contains("[REDACTED:");
-    }
-
-    // ── CommandApprovalManager ──
-
-    @Test
-    void requireApproval_nullCommand_returnsYolo() {
-        AgentProperties p = new AgentProperties();
-        p.getSecurity().setApprovalsEnabled(true);
-        CommandApprovalManager m = new CommandApprovalManager(p);
-        assertThat(m.requireApproval(null)).isEqualTo(CommandApprovalManager.ApprovalStatus.YOLO);
-    }
-
-    @Test
-    void requireApproval_blankCommand_returnsYolo() {
-        AgentProperties p = new AgentProperties();
-        p.getSecurity().setApprovalsEnabled(true);
-        CommandApprovalManager m = new CommandApprovalManager(p);
-        assertThat(m.requireApproval("  ")).isEqualTo(CommandApprovalManager.ApprovalStatus.YOLO);
-    }
-
-    @Test
-    void requireApproval_commandMatchingBlocked_isBlocked() {
-        AgentProperties p = new AgentProperties();
-        p.getSecurity().setApprovalsEnabled(true);
-        p.getSecurity().setBlockedCommands(List.of("curl", "wget"));
-        CommandApprovalManager m = new CommandApprovalManager(p);
-        assertThat(m.requireApproval("curl http://example.com")).isEqualTo(CommandApprovalManager.ApprovalStatus.BLOCKED);
-        assertThat(m.requireApproval("wget http://example.com")).isEqualTo(CommandApprovalManager.ApprovalStatus.BLOCKED);
-    }
-
-    @Test
-    void requireApproval_commandMatchingSessionAllowlist_isAllowed() {
-        AgentProperties p = new AgentProperties();
-        p.getSecurity().setApprovalsEnabled(true);
-        CommandApprovalManager m = new CommandApprovalManager(p);
-        m.allowForSession("rm -rf /tmp/safe");
-        assertThat(m.requireApproval("rm -rf /tmp/safe")).isEqualTo(CommandApprovalManager.ApprovalStatus.ALLOWED);
-    }
-
-    @Test
-    void allowForSession_nullOrBlank_doesNotAdd() {
-        AgentProperties p = new AgentProperties();
-        p.getSecurity().setApprovalsEnabled(true);
-        CommandApprovalManager m = new CommandApprovalManager(p);
-        m.allowForSession(null);
-        m.allowForSession("");
-        m.allowForSession("  ");
-        assertThat(m.requireApproval("some command")).isEqualTo(CommandApprovalManager.ApprovalStatus.YOLO);
-    }
-
-    @Test
-    void requireApproval_readOnlyCommand_isYolo() {
-        AgentProperties p = new AgentProperties();
-        p.getSecurity().setApprovalsEnabled(true);
-        CommandApprovalManager m = new CommandApprovalManager(p);
-        assertThat(m.requireApproval("ls")).isEqualTo(CommandApprovalManager.ApprovalStatus.YOLO);
-        assertThat(m.requireApproval("cat /etc/hosts")).isEqualTo(CommandApprovalManager.ApprovalStatus.YOLO);
-        assertThat(m.requireApproval("pwd")).isEqualTo(CommandApprovalManager.ApprovalStatus.YOLO);
-        assertThat(m.requireApproval("whoami")).isEqualTo(CommandApprovalManager.ApprovalStatus.YOLO);
-        assertThat(m.requireApproval("echo hello")).isEqualTo(CommandApprovalManager.ApprovalStatus.YOLO);
-        assertThat(m.requireApproval("grep pattern file")).isEqualTo(CommandApprovalManager.ApprovalStatus.YOLO);
-        assertThat(m.requireApproval("find . -name x")).isEqualTo(CommandApprovalManager.ApprovalStatus.YOLO);
-        assertThat(m.requireApproval("env")).isEqualTo(CommandApprovalManager.ApprovalStatus.YOLO);
-    }
-
-    @Test
-    void requireApproval_dangerousPatterns_requireApproval() {
-        AgentProperties p = new AgentProperties();
-        p.getSecurity().setApprovalsEnabled(true);
-        CommandApprovalManager m = new CommandApprovalManager(p);
-        assertThat(m.requireApproval("mkfs.ext4 /dev/sda")).isEqualTo(CommandApprovalManager.ApprovalStatus.REQUIRED);
-        assertThat(m.requireApproval("dd if=/dev/zero of=/dev/sda")).isEqualTo(CommandApprovalManager.ApprovalStatus.REQUIRED);
-        assertThat(m.requireApproval(":(){ :|: & };:")).isEqualTo(CommandApprovalManager.ApprovalStatus.REQUIRED);
-        assertThat(m.requireApproval("reboot")).isEqualTo(CommandApprovalManager.ApprovalStatus.REQUIRED);
-        assertThat(m.requireApproval("halt")).isEqualTo(CommandApprovalManager.ApprovalStatus.REQUIRED);
-        assertThat(m.requireApproval("init 0")).isEqualTo(CommandApprovalManager.ApprovalStatus.REQUIRED);
-    }
-
-    @Test
-    void requireApproval_nonReadOnlyCommand_isYolo() {
-        AgentProperties p = new AgentProperties();
-        p.getSecurity().setApprovalsEnabled(true);
-        CommandApprovalManager m = new CommandApprovalManager(p);
-        // Non-readonly, non-dangerous commands without approval-required config → YOLO
-        assertThat(m.requireApproval("npm install")).isEqualTo(CommandApprovalManager.ApprovalStatus.YOLO);
-        assertThat(m.requireApproval("python script.py")).isEqualTo(CommandApprovalManager.ApprovalStatus.YOLO);
-    }
-
-    @Test
-    void clearSessionAllowlist_afterClear_removesEntries() {
-        AgentProperties p = new AgentProperties();
-        p.getSecurity().setApprovalsEnabled(true);
-        CommandApprovalManager m = new CommandApprovalManager(p);
-        m.allowForSession("rm -rf /tmp/test");
-        assertThat(m.requireApproval("rm -rf /tmp/test")).isEqualTo(CommandApprovalManager.ApprovalStatus.ALLOWED);
-        m.clearSessionAllowlist();
-        assertThat(m.requireApproval("rm -rf /tmp/test")).isEqualTo(CommandApprovalManager.ApprovalStatus.REQUIRED);
     }
 
     // ── UserInputSanitizer ──

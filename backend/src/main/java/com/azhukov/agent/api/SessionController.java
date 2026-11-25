@@ -4,7 +4,6 @@ import com.azhukov.agent.api.dto.CompressRequest;
 import com.azhukov.agent.api.dto.ContextInfoDto;
 import com.azhukov.agent.api.dto.SessionSummaryDto;
 import com.azhukov.agent.api.dto.SnapshotRequest;
-import com.azhukov.agent.api.dto.UndoRequest;
 import com.azhukov.agent.api.dto.UsageDto;
 import jakarta.validation.Valid;
 import com.azhukov.agent.api.mapper.DomainDtoMapper;
@@ -96,6 +95,11 @@ public class SessionController {
         agentRuntimeService.resetSession(sessionId);
     }
 
+    @PostMapping("/agent/session/{sessionId}/cleanup")
+    public void cleanupSession(@PathVariable UUID sessionId) {
+        agentRuntimeService.cleanupSessionState(sessionId);
+    }
+
     @GetMapping("/agent/session/{sessionId}/usage")
     public UsageDto getUsage(@PathVariable UUID sessionId) {
         agentRuntimeService.requireSessionOwnership(sessionId);
@@ -112,10 +116,6 @@ public class SessionController {
     public String compressSession(@PathVariable UUID sessionId, @RequestBody(required = false) CompressRequest request) {
         String focusTopic = request != null ? request.focusTopic() : null;
         Integer keepLastN = request != null ? request.keepLastN() : null;
-        // If focusTopic is null, fall back to focus() for backward compatibility
-        if (focusTopic == null && request != null) {
-            focusTopic = request.focus();
-        }
         agentRuntimeService.requireSessionOwnership(sessionId);
         agentRuntimeService.compressSession(sessionId, focusTopic, keepLastN);
         return "Context compressed." + (focusTopic != null ? " Focus: " + focusTopic : "")
@@ -126,31 +126,6 @@ public class SessionController {
     @PostMapping("/agent/session/{sessionId}/undo")
     public int undoTurns(@PathVariable UUID sessionId, @RequestParam(defaultValue = "1") int turns) {
         agentRuntimeService.requireSessionOwnership(sessionId);
-        return agentRuntimeService.undoTurns(sessionId, turns);
-    }
-
-    // Convenience endpoints without sessionId path variable (for E2E / CLI usage)
-
-    @PostMapping("/agent/compress")
-    public String compressSessionBody(@RequestBody(required = false) CompressRequest request) {
-        UUID sessionId = request != null ? request.sessionId() : null;
-        if (sessionId == null) {
-            throw new IllegalArgumentException("sessionId is required");
-        }
-        String focusTopic = request.focusTopic();
-        if (focusTopic == null) {
-            focusTopic = request.focus();
-        }
-        Integer keepLastN = request.keepLastN();
-        agentRuntimeService.compressSession(sessionId, focusTopic, keepLastN);
-        return "Context compressed." + (focusTopic != null ? " Focus: " + focusTopic : "")
-            + (keepLastN != null ? " Kept last " + keepLastN : "");
-    }
-
-    @PostMapping("/agent/undo")
-    public int undoTurnsBody(@Valid @RequestBody UndoRequest request) {
-        UUID sessionId = request.sessionId();
-        int turns = request.effectiveTurns();
         return agentRuntimeService.undoTurns(sessionId, turns);
     }
 

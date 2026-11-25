@@ -5,7 +5,6 @@ import com.azhukov.agent.api.dto.ContextInfoDto;
 import com.azhukov.agent.api.dto.SessionSummaryDto;
 import com.azhukov.agent.api.dto.SnapshotRequest;
 import com.azhukov.agent.api.dto.TodoDto;
-import com.azhukov.agent.api.dto.UndoRequest;
 import com.azhukov.agent.api.dto.UsageDto;
 import com.azhukov.agent.api.mapper.DomainDtoMapper;
 import com.azhukov.agent.config.AgentProperties;
@@ -51,9 +50,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * T1 phase A — focused NEW unit tests for {@link SessionController}.
+ * Focused HTTP tests for {@link SessionController}.
  * Covers success, bad input, error, and edge paths via MockMvc + Mockito services.
- * Does NOT modify any existing tests.
  */
 @ExtendWith(MockitoExtension.class)
 class SessionControllerT1Test {
@@ -290,13 +288,16 @@ class SessionControllerT1Test {
     void compressSession_withFocusTopicAndKeepLastN() throws Exception {
         doNothing().when(agentRuntimeService).compressSession(eq(SESSION_ID), eq("topic"), eq(5));
 
-        String body = objectMapper.writeValueAsString(new CompressRequest(SESSION_ID, "topic", 5));
+        String body = objectMapper.writeValueAsString(new CompressRequest("topic", 5));
         mockMvc.perform(post("/api/v1/agent/session/{sessionId}/compress", SESSION_ID)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body))
             .andExpect(status().isOk())
             .andExpect(content().string(org.hamcrest.Matchers.containsString("Focus: topic")))
             .andExpect(content().string(org.hamcrest.Matchers.containsString("Kept last 5")));
+        var order = org.mockito.Mockito.inOrder(agentRuntimeService);
+        order.verify(agentRuntimeService).requireSessionOwnership(SESSION_ID);
+        order.verify(agentRuntimeService).compressSession(SESSION_ID, "topic", 5);
     }
 
     @Test
@@ -309,17 +310,26 @@ class SessionControllerT1Test {
     }
 
     @Test
-    void compressSession_focusFallbackToFocusAlias() throws Exception {
-        // focusTopic null but request present -> controller uses request.focus() which returns focusTopic (null)
-        // Test the path where request is non-null but focusTopic is null: focus stays null, no "Focus:" in output
-        lenient().doNothing().when(agentRuntimeService).compressSession(eq(SESSION_ID), isNull(), isNull());
-
-        String body = "{\"sessionId\":\"" + SESSION_ID + "\"}";
+    void compressSession_emptyBodyUsesOptionalDefaults() throws Exception {
         mockMvc.perform(post("/api/v1/agent/session/{sessionId}/compress", SESSION_ID)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(body))
+                .content("{}"))
             .andExpect(status().isOk())
             .andExpect(content().string("Context compressed."));
+        verify(agentRuntimeService).requireSessionOwnership(SESSION_ID);
+        verify(agentRuntimeService).compressSession(SESSION_ID, null, null);
+    }
+
+    @Test
+    void compressSession_rejectsRetiredAndUnknownFieldsWithoutEffect() throws Exception {
+        for (String field : List.of("focus", "sessionId", "unexpected")) {
+            String body = objectMapper.writeValueAsString(Map.of(field, SESSION_ID.toString()));
+            mockMvc.perform(post("/api/v1/agent/session/{sessionId}/compress", SESSION_ID)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(body))
+                .andExpect(status().isBadRequest());
+        }
+        verify(agentRuntimeService, never()).compressSession(any(), any(), any());
     }
 
     @Test
@@ -327,7 +337,7 @@ class SessionControllerT1Test {
         doThrow(new IllegalArgumentException("bad")).when(agentRuntimeService)
             .compressSession(any(), any(), any());
 
-        String body = objectMapper.writeValueAsString(new CompressRequest(SESSION_ID, "topic", 5));
+        String body = objectMapper.writeValueAsString(new CompressRequest("topic", 5));
         mockMvc.perform(post("/api/v1/agent/session/{sessionId}/compress", SESSION_ID)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body))
@@ -355,71 +365,40 @@ class SessionControllerT1Test {
             .andExpect(content().string("3"));
     }
 
-    // ── compressSessionBody() (convenience form) ──
-
     @Test
-    void compressSessionBody_noSessionId_returns400() throws Exception {
-        // body with null sessionId -> IllegalArgumentException -> 400
-        mockMvc.perform(post("/api/v1/agent/compress")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("{}"))
-            .andExpect(status().isBadRequest());
+    void retiredCompressionRouteDoesNotAcceptAnyBodyShape() throws Exception {
+        for (String body : new String[] {
+            "",
+            "{}",
+            "{\"sessionId\":\"" + SESSION_ID + "\",\"focusTopic\":\"topic\",\"keepLastN\":2}",
+            "{\"sessionId\":\"550e8400-e29b-41d4-a716-446655440000\"}"
+        }) {
+            mockMvc.perform(post("/api/v1/agent/compress")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(body))
+                .andExpect(status().isNotFound());
+        }
+        verify(agentRuntimeService, never()).compressSession(any(UUID.class), any(), any());
     }
 
     @Test
-    void compressSessionBody_success() throws Exception {
-        doNothing().when(agentRuntimeService).compressSession(eq(SESSION_ID), eq("topic"), eq(2));
-
-        String body = objectMapper.writeValueAsString(new CompressRequest(SESSION_ID, "topic", 2));
-        mockMvc.perform(post("/api/v1/agent/compress")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(body))
-            .andExpect(status().isOk())
-            .andExpect(content().string(org.hamcrest.Matchers.containsString("Focus: topic")));
-    }
-
-    @Test
-    void compressSessionBody_nullBody_returns400() throws Exception {
-        mockMvc.perform(post("/api/v1/agent/compress"))
-            .andExpect(status().isBadRequest());
-    }
-
-    // ── undoTurnsBody() ──
-
-    @Test
-    void undoTurnsBody_success() throws Exception {
-        when(agentRuntimeService.undoTurns(SESSION_ID, 2)).thenReturn(2);
-
-        String body = objectMapper.writeValueAsString(new UndoRequest(SESSION_ID, 2));
+    void retiredUndoRouteIsNotAvailable() throws Exception {
         mockMvc.perform(post("/api/v1/agent/undo")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(body))
-            .andExpect(status().isOk())
-            .andExpect(content().string("2"));
+                .content("{\"sessionId\":\"" + SESSION_ID + "\",\"turns\":1}"))
+            .andExpect(status().isNotFound());
+        verify(agentRuntimeService, never()).undoTurns(any(UUID.class), any(Integer.class));
     }
 
     @Test
-    void undoTurnsBody_nullTurns_defaultsToOne() throws Exception {
-        when(agentRuntimeService.undoTurns(SESSION_ID, 1)).thenReturn(1);
+    void undoTurns_zeroIsPassedWithoutLegacyDefault() throws Exception {
+        when(agentRuntimeService.undoTurns(SESSION_ID, 0)).thenReturn(0);
 
-        String body = "{\"sessionId\":\"" + SESSION_ID + "\"}";
-        mockMvc.perform(post("/api/v1/agent/undo")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(body))
+        mockMvc.perform(post("/api/v1/agent/session/{sessionId}/undo", SESSION_ID)
+                .param("turns", "0"))
             .andExpect(status().isOk())
-            .andExpect(content().string("1"));
-    }
-
-    @Test
-    void undoTurnsBody_zeroTurns_defaultsToOne() throws Exception {
-        when(agentRuntimeService.undoTurns(SESSION_ID, 1)).thenReturn(1);
-
-        String body = "{\"sessionId\":\"" + SESSION_ID + "\",\"turns\":0}";
-        mockMvc.perform(post("/api/v1/agent/undo")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(body))
-            .andExpect(status().isOk())
-            .andExpect(content().string("1"));
+            .andExpect(content().string("0"));
+        verify(agentRuntimeService).undoTurns(SESSION_ID, 0);
     }
 
     // ── switchModel() ──

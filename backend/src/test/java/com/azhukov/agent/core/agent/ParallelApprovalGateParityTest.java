@@ -9,7 +9,7 @@ import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.state.TurnState;
 import com.azhukov.agent.core.tool.ToolExecutionService;
 import com.azhukov.agent.core.security.ApprovalQueue;
-import com.azhukov.agent.core.security.ToolGuardrails;
+import com.azhukov.agent.core.security.ToolApprovalPolicy;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -40,7 +40,7 @@ class ParallelApprovalGateParityTest {
         return p;
     }
 
-    private TurnExecutor executor(AgentProperties props, ToolGuardrails guardrails,
+    private TurnExecutor executor(AgentProperties props, ToolApprovalPolicy guardrails,
                                   ApprovalQueue queue, ToolExecutionService svc) {
         return new TurnExecutor(
             props, null, null, svc,
@@ -56,15 +56,17 @@ class ParallelApprovalGateParityTest {
         ApprovalQueue queue = mock(ApprovalQueue.class);
         // Make the gate fire: requiresApproval returns true, requestApproval
         // creates a pending entry, then awaitDecision times out (fail-closed).
-        when(queue.getPending(any())).thenReturn(new ApprovalQueue.PendingApproval(
+        var pending = new ApprovalQueue.PendingApproval(
             java.util.UUID.randomUUID(), java.util.UUID.randomUUID(),
             new ToolCall("pending", "web_search", "{}"), "test", java.time.Instant.now(),
-            false, false, null, java.time.Instant.now().plusSeconds(60)));
-        when(queue.isPending(any())).thenReturn(true);
+            false, false, null, java.time.Instant.now().plusSeconds(60));
+        when(queue.request(any(), any(), any())).thenReturn(pending);
         when(queue.awaitDecision(any(), org.mockito.ArgumentMatchers.anyLong())).thenReturn(false);
-        // A decision observed after the deadline must not unblock execution.
-        when(queue.isApproved(any())).thenReturn(true);
-        ToolGuardrails guardrails = new com.azhukov.agent.core.security.DefaultToolGuardrails(props, queue);
+        // A decision seen after the wait deadline cannot unblock execution.
+        when(queue.consumeDecision(any())).thenReturn(new ApprovalQueue.PendingApproval(
+            pending.requestId(), pending.sessionId(), pending.call(), pending.reason(), pending.requestedAt(),
+            true, false, null, pending.expiresAt()));
+        ToolApprovalPolicy guardrails = new com.azhukov.agent.core.security.DefaultToolApprovalPolicy(props, queue);
         AtomicInteger executions = new AtomicInteger();
         ToolExecutionService svc = mock(ToolExecutionService.class);
         when(svc.execute(anyString(), anyString(), anyString(), any(), any(), any()))
@@ -111,7 +113,7 @@ class ParallelApprovalGateParityTest {
             new ToolCall("b", "write_file", mapper.writeValueAsString(java.util.Map.of("path", workdir.resolve("file").toString()))));
         var session = Session.create("user", "noop", "noop")
             .withMetadata(com.azhukov.agent.tools.terminal.TerminalTool.META_WORKDIR, workdir.toString());
-        executor(new AgentProperties(), null, null, svc).executeToolBatch(calls, Set.of("write_file"),
+        executor(new AgentProperties(), mock(ToolApprovalPolicy.class), new ApprovalQueue(), svc).executeToolBatch(calls, Set.of("write_file"),
             session, mock(TurnState.class), 1, false, null);
         assertThat(maxActive.get()).isEqualTo(1);
     }
@@ -123,7 +125,7 @@ class ParallelApprovalGateParityTest {
         props.getSecurity().setApprovalsEnabled(true);
         props.getSecurity().getAlwaysRequireApprovalTools().clear();
         ApprovalQueue queue = new ApprovalQueue();
-        ToolGuardrails guardrails = new com.azhukov.agent.core.security.DefaultToolGuardrails(props, queue);
+        ToolApprovalPolicy guardrails = new com.azhukov.agent.core.security.DefaultToolApprovalPolicy(props, queue);
         AtomicInteger executions = new AtomicInteger();
         ToolExecutionService svc = mock(ToolExecutionService.class);
         when(svc.execute(anyString(), anyString(), anyString(), any(), any(), any()))

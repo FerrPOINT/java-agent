@@ -23,13 +23,14 @@ import org.springframework.stereotype.Component;
 
 /**
  * Private machine capability verification. Human JWT, native gateway keys and
- * an unconfirmed role hint cannot enter the identity deletion owner boundary.
+ * agent credentials cannot enter the identity deletion owner boundary.
  */
 @Component
 @RequiredArgsConstructor
 @Slf4j
 @ConditionalOnProperty(prefix="agent.identity-deletion",name="enabled",havingValue="true")
 public class IdentityCoordinatorVerifier {
+    private static final Duration MAX_AUTHORITY_WINDOW = Duration.ofSeconds(9);
     private final Environment environment;
     private final ObjectMapper mapper;
     private HttpClient client;
@@ -43,7 +44,7 @@ public class IdentityCoordinatorVerifier {
         URI session=URI.create(environment.getRequiredProperty("agent.central-auth.session-uri"));
         if(session.getHost()==null || session.getUserInfo()!=null || session.getQuery()!=null || session.getFragment()!=null
             || !("http".equals(session.getScheme()) || "https".equals(session.getScheme()))) throw unavailable();
-        introspection=session.resolve("/auth/tokens/introspect?include_lifetime=true");
+        introspection=session.resolve("/auth/tokens/introspect");
         client=HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).followRedirects(HttpClient.Redirect.NEVER).build();
         coordinators=Arrays.stream(environment.getProperty("agent.identity-deletion.coordinator-subjects","").split(","))
             .map(String::trim).filter(v->!v.isEmpty()).collect(Collectors.toUnmodifiableSet());
@@ -52,7 +53,9 @@ public class IdentityCoordinatorVerifier {
     public Window verify(String authorization,Request request,long originalDeadline) {
         if(authorization==null || !authorization.startsWith("Bearer ")) throw new Failure(401,"identity_coordinator_required");
         String token=authorization.substring(7);
-        if(token.length()>16384 || !(token.startsWith("sdlc_pat_") || token.startsWith("pdlc_pat_"))) throw new Failure(403,"identity_coordinator_capability_required");
+        if (token.length() > 16384 || !CentralJwtVerifier.isPersonalToken(token)) {
+            throw new Failure(403, "identity_coordinator_capability_required");
+        }
         long started=System.nanoTime();
         if(originalDeadline-started<=0) throw new Failure(401,"identity_authority_expired");
         HttpRequest query=HttpRequest.newBuilder(introspection).timeout(Duration.ofSeconds(5))
@@ -63,18 +66,28 @@ public class IdentityCoordinatorVerifier {
             if(response.statusCode()!=200) throw unavailable();
             JsonNode body=mapper.readTree(response.body());
             String subject=text(body,"sub");
-            if(text(body,"email").isBlank())throw unavailable();
-            try {if(!UUID.fromString(subject).toString().equals(subject) || UUID.fromString(subject).equals(new UUID(0,0))) throw unavailable();}
-            catch(IllegalArgumentException invalid){throw unavailable();}
-            if(!"service_account".equals(text(body,"subject_role")) || !coordinators.contains(subject)
+            try {
+                UUID id = UUID.fromString(subject);
+                if (!id.toString().equals(subject) || id.equals(new UUID(0, 0))) throw unavailable();
+            } catch (IllegalArgumentException invalid) {
+                throw unavailable();
+            }
+            if(!"service".equals(text(body,"subject_kind")) || !coordinators.contains(subject)
                 || !issuer.equals(request.identity().issuer())) throw new Failure(403,"identity_coordinator_capability_required");
+            if (body.has("email") || body.has("display_name") || body.has("subject_role")
+                || body.has("application_access")) throw unavailable();
             JsonNode scopes=body.get("scopes");if(scopes==null || !scopes.isArray()) throw unavailable();
             boolean allowed=false;for(JsonNode scope:scopes){if(!scope.isTextual())throw unavailable();if("java-agent:identity-lifecycle".equals(scope.asText()))allowed=true;}
             if(!allowed)throw new Failure(403,"identity_coordinator_capability_required");
-            Instant observed=Instant.parse(text(body,"observed_at")),expires=Instant.parse(text(body,"expires_at"));
+            Instant observed=Instant.parse(text(body,"observed_at"));
+            JsonNode expiry = body.get("expires_at");
+            if (expiry == null) throw unavailable();
+            // An untimed credential still has a short, fixed owner confirmation.
+            Instant expires = expiry.isNull() ? observed.plus(MAX_AUTHORITY_WINDOW)
+                : Instant.parse(text(body,"expires_at"));
             if(!expires.isAfter(observed) || observed.isAfter(Instant.now().plusSeconds(1)))throw new Failure(401,"identity_authority_expired");
             long lifetime=Duration.between(observed,expires).toNanos();
-            long deadline=started+Math.min(lifetime,Duration.ofSeconds(9).toNanos());
+            long deadline=started+Math.min(lifetime,MAX_AUTHORITY_WINDOW.toNanos());
             Window window=new Window(Math.min(originalDeadline,deadline),expires);window.requireCurrent();return window;
         } catch(InterruptedException interrupted){Thread.currentThread().interrupt();throw unavailable();}
         catch(IOException|java.time.DateTimeException|ArithmeticException malformed){throw unavailable();}

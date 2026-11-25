@@ -12,9 +12,7 @@ import java.util.UUID;
 import static org.mockito.Mockito.*;
 
 /**
- * rev-69: verify that SessionExpiryWatcher calls backendClient.resetSession
- * when finalizing an expired session — without this, backend per-session
- * state (context engine, guardrails, nudge counters, prompt cache) leaks.
+ * Verify that expiry releases backend runtime state without resetting the transcript.
  */
 class SessionExpiryWatcherBackendCleanupTest {
 
@@ -54,8 +52,27 @@ class SessionExpiryWatcherBackendCleanupTest {
 
         watcher.checkExpiredSessions();
 
-        verify(backendClient).resetSession(sessionId.toString());
+        verify(backendClient).cleanupSession(sessionId.toString());
+        verify(backendClient, never()).resetSession(anyString());
         verify(sessionStore).finalizeSession(sessionId);
+    }
+
+    @Test
+    void falseCleanupResultStillFinalizesAndWillNotBeRetriedAsActiveSession() {
+        UUID sessionId = UUID.randomUUID();
+        BotSessionEntity session = new BotSessionEntity();
+        session.setId(sessionId);
+        session.setBackendSessionId(sessionId);
+        session.setUserId("user-1");
+        session.setActive(true);
+        session.setCreatedAt(Instant.now().minusSeconds(3600));
+        session.setUpdatedAt(Instant.now().minusSeconds(3600));
+        when(sessionStore.listActiveSessions()).thenReturn(List.of(session), List.of());
+        when(backendClient.cleanupSession(sessionId.toString())).thenReturn(false);
+        watcher.checkExpiredSessions();
+        watcher.checkExpiredSessions();
+        verify(sessionStore).finalizeSession(sessionId);
+        verify(backendClient, times(1)).cleanupSession(sessionId.toString());
     }
 
     @Test
@@ -63,16 +80,19 @@ class SessionExpiryWatcherBackendCleanupTest {
         UUID sessionId = UUID.randomUUID();
         BotSessionEntity session = new BotSessionEntity();
         session.setId(sessionId);
+        session.setBackendSessionId(sessionId);
         session.setUserId("user-1");
         session.setActive(true);
         session.setCreatedAt(Instant.now().minusSeconds(3600));
         session.setUpdatedAt(Instant.now().minusSeconds(3600));
 
         when(sessionStore.listActiveSessions()).thenReturn(List.of(session));
-        when(backendClient.resetSession(anyString())).thenThrow(new RuntimeException("backend down"));
+        doThrow(new RuntimeException("backend down")).when(backendClient).cleanupSession(anyString());
 
         watcher.checkExpiredSessions();
 
+        verify(backendClient).cleanupSession(sessionId.toString());
+        verify(backendClient, never()).resetSession(anyString());
         // finalize must still happen even if backend cleanup failed
         verify(sessionStore).finalizeSession(sessionId);
     }

@@ -27,7 +27,7 @@ and a registered coordinator subject:
 | `AGENT_IDENTITY_DELETION_ENABLED` | Enables the owner and provenance registration |
 | `AGENT_IDENTITY_DELETION_LEGACY_ISSUER` | Explicit immutable database issuer binding; must equal `AGENT_CENTRAL_AUTH_ISSUER` |
 | `AGENT_IDENTITY_DELETION_COORDINATOR_SUBJECTS` | Comma separated approved service-account UUIDs |
-| `AGENT_CENTRAL_AUTH_SESSION_URI` | Live Auth endpoint used to derive `/auth/tokens/introspect?include_lifetime=true` |
+| `AGENT_CENTRAL_AUTH_SESSION_URI` | Live Auth endpoint used to derive `/auth/tokens/introspect` |
 
 Only a freshly introspected service-account PAT with the exact
 `java-agent:identity-lifecycle` scope and registered subject enters the boundary.

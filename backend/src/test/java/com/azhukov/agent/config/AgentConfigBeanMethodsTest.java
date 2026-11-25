@@ -152,23 +152,18 @@ class AgentConfigBeanMethodsTest {
     }
 
     @Test
-    void commandApprovalManager_bean() {
-        assertThat(securityConfig.commandApprovalManager(properties)).isNotNull();
-    }
-
-    @Test
     void turnStateManager_bean() {
         assertThat(config.turnStateManager()).isNotNull();
     }
 
     @Test
     void toolCallGuardrail_bean() {
-        assertThat(securityConfig.toolCallGuardrail(properties)).isNotNull();
+        assertThat(securityConfig.toolCallGuardrail()).isNotNull();
     }
 
     @Test
     void toolGuardrails_bean() {
-        assertThat(securityConfig.toolGuardrails(properties, mock(com.azhukov.agent.core.security.ApprovalQueue.class))).isNotNull();
+        assertThat(securityConfig.toolApprovalPolicy(properties, mock(com.azhukov.agent.core.security.ApprovalQueue.class))).isNotNull();
     }
 
     @Test

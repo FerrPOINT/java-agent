@@ -33,10 +33,14 @@ public class HeartbeatDeliveryPoller {
     private final BotProperties properties;
 
     /** Sessions we know have an active heartbeat — populated on /heartbeat set. */
-    private final Map<UUID, Long> watched = new ConcurrentHashMap<>();
+    private static final class Watch {
+        private final long chatId;
+        private Watch(long chatId) { this.chatId = chatId; }
+    }
+    private final Map<UUID, Watch> watched = new ConcurrentHashMap<>();
 
     public void watch(UUID sessionId, long chatId) {
-        watched.put(sessionId, chatId);
+        watched.put(sessionId, new Watch(chatId));
     }
 
     public void unwatch(UUID sessionId) {
@@ -48,52 +52,62 @@ public class HeartbeatDeliveryPoller {
         if (!properties.isCronDeliveryEnabled() || watched.isEmpty()) {
             return;
         }
-        for (Map.Entry<UUID, Long> e : watched.entrySet()) {
+        for (Map.Entry<UUID, Watch> e : watched.entrySet()) {
             try {
                 JsonNode r = backendClient.suggestionGet(
                     "/api/v1/agent/cron/heartbeat/" + e.getKey() + "/result");
-                if (r == null || !r.path("hasResult").asBoolean(false)) {
+                if (r == null || !r.path("hasResult").isBoolean()) continue;
+                if (!r.path("hasResult").asBoolean()) {
+                    JsonNode st = backendClient.suggestionGet(
+                        "/api/v1/agent/cron/heartbeat/" + e.getKey());
+                    if (st != null && st.path("set").isBoolean() && !st.path("set").asBoolean()) watched.remove(e.getKey(), e.getValue());
                     continue;
                 }
-                String text = r.path("result").asText("");
+                if (!r.path("result").isTextual()) continue;
+                String text = r.path("result").asText();
                 if (!text.isBlank()) {
-                    var sent = telegramClient.sendMessage(e.getValue(),
+                    var sent = telegramClient.sendMessage(e.getValue().chatId,
                         "♥ Heartbeat:\n\n" + truncate(text));
                     if (sent.isPresent()) {
                         // Delivery succeeded — ACK so the result is dropped server-side
                         log.info("HEARTBEAT_DELIVERED chatId={} sessionId={} msgId={} chars={}",
-                            e.getValue(), e.getKey(), sent.get(), text.length());
+                            e.getValue().chatId, e.getKey(), sent.get(), text.length());
                         log.info("HEARTBEAT_DELIVERY_TOTAL delivered={}", delivered.incrementAndGet());
-                        backendClient.suggestionPost(
-                            "/api/v1/agent/cron/heartbeat/" + e.getKey() + "/result/ack");
+                        if (!ackResult(e.getKey())) continue;
                     } else {
                         // Send failed — NACK; after 5 attempts the backend drops
                         // the poisoned result instead of retrying forever
                         log.warn("HEARTBEAT_DELIVERY_FAILED chatId={} sessionId={} — nacking for retry",
-                            e.getValue(), e.getKey());
+                            e.getValue().chatId, e.getKey());
                         log.warn("HEARTBEAT_DELIVERY_TOTAL failed={}", failed.incrementAndGet());
                         JsonNode nack = backendClient.suggestionPost(
                             "/api/v1/agent/cron/heartbeat/" + e.getKey() + "/result/nack");
                         if (nack != null && nack.path("drop").asBoolean(false)) {
-                            backendClient.suggestionPost(
-                                "/api/v1/agent/cron/heartbeat/" + e.getKey() + "/result/ack");
+                            if (!ackResult(e.getKey())) continue;
+                        } else {
+                            continue;
                         }
                     }
                 } else {
                     // Empty result (e.g. model said nothing) — ACK to clear it
-                    backendClient.suggestionPost(
-                        "/api/v1/agent/cron/heartbeat/" + e.getKey() + "/result/ack");
+                    if (!ackResult(e.getKey())) continue;
                 }
                 // Stop watching cleared/finished loops
                 JsonNode st = backendClient.suggestionGet(
                     "/api/v1/agent/cron/heartbeat/" + e.getKey());
-                if (st == null || !st.path("set").asBoolean(false)) {
-                    unwatch(e.getKey());
+                if (st != null && st.path("set").isBoolean() && !st.path("set").asBoolean()) {
+                    watched.remove(e.getKey(), e.getValue());
                 }
             } catch (Exception ex) {
                 log.debug("Heartbeat delivery poll failed for {}: {}", e.getKey(), ex.getMessage());
             }
         }
+    }
+
+    private boolean ackResult(UUID sessionId) {
+        JsonNode response = backendClient.suggestionPost(
+            "/api/v1/agent/cron/heartbeat/" + sessionId + "/result/ack");
+        return response != null && response.path("acked").isBoolean() && response.path("acked").asBoolean();
     }
 
     private static String truncate(String s) {

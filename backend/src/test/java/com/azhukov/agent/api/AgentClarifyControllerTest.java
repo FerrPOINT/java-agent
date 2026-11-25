@@ -32,6 +32,16 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 class AgentClarifyControllerTest {
 
+    @Test
+    void nonUuidStoreKeyCannotBypassHttpSessionOwnership() throws Exception {
+        var pending = store.register("unscoped-key", "Deploy where?", List.of("dev", "prod"), false);
+        mockMvc.perform(post("/api/v1/agent/session/unscoped-key/clarify/{id}/custom", pending.clarifyId())
+                .contentType(MediaType.APPLICATION_JSON).content("{}"))
+            .andExpect(status().isBadRequest());
+        assertThat(pending.future()).isNotDone();
+        Mockito.verifyNoInteractions(sessionRepository);
+    }
+
     private ClarifyGatewayStore store;
     private com.azhukov.agent.persistence.repository.SessionRepository sessionRepository;
     private MockMvc mockMvc;
@@ -54,33 +64,33 @@ class AgentClarifyControllerTest {
 
     @Test
     void otherThenTypedCustomResponseResolvesTheSamePendingEntry() throws Exception {
-        var pending = store.register("session-1", "Deploy where?", List.of("dev", "prod"), false);
+        var pending = store.register("10000000-0000-4000-8000-000000000001", "Deploy where?", List.of("dev", "prod"), false);
 
-        mockMvc.perform(post("/api/v1/agent/session/session-1/clarify/{id}/custom", pending.clarifyId())
+        mockMvc.perform(post("/api/v1/agent/session/10000000-0000-4000-8000-000000000001/clarify/{id}/custom", pending.clarifyId())
                 .contentType(MediaType.APPLICATION_JSON).content("{}"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.armed").value(true));
 
-        mockMvc.perform(post("/api/v1/agent/session/session-1/clarify/text")
+        mockMvc.perform(post("/api/v1/agent/session/10000000-0000-4000-8000-000000000001/clarify/text")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"text\":\"a bespoke environment\"}"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.outcome").value("resolved"));
 
         assertThat(pending.future()).isCompletedWithValue("a bespoke environment");
-        assertThat(store.pendingForSession("session-1")).isNull();
+        assertThat(store.pendingForSession("10000000-0000-4000-8000-000000000001")).isNull();
     }
 
     @Test
     void customResponseCannotBeArmedForAnotherSession() throws Exception {
-        var pending = store.register("session-1", "Deploy where?", List.of("dev", "prod"), false);
+        var pending = store.register("10000000-0000-4000-8000-000000000001", "Deploy where?", List.of("dev", "prod"), false);
 
-        mockMvc.perform(post("/api/v1/agent/session/session-2/clarify/{id}/custom", pending.clarifyId())
+        mockMvc.perform(post("/api/v1/agent/session/20000000-0000-4000-8000-000000000002/clarify/{id}/custom", pending.clarifyId())
                 .contentType(MediaType.APPLICATION_JSON).content("{}"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.armed").value(false));
 
-        mockMvc.perform(post("/api/v1/agent/session/session-1/clarify/text")
+        mockMvc.perform(post("/api/v1/agent/session/10000000-0000-4000-8000-000000000001/clarify/text")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"text\":\"a bespoke environment\"}"))
             .andExpect(status().isOk())
@@ -89,16 +99,16 @@ class AgentClarifyControllerTest {
 
     @Test
     void resolveCannotCompleteAnotherSessionsPendingClarify() throws Exception {
-        var pending = store.register("session-1", "Deploy where?", List.of("dev", "prod"), false);
+        var pending = store.register("10000000-0000-4000-8000-000000000001", "Deploy where?", List.of("dev", "prod"), false);
 
-        mockMvc.perform(post("/api/v1/agent/session/session-2/clarify/resolve")
+        mockMvc.perform(post("/api/v1/agent/session/20000000-0000-4000-8000-000000000002/clarify/resolve")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"clarifyId\":\"" + pending.clarifyId() + "\",\"response\":\"prod\"}"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.resolved").value(false));
 
         assertThat(pending.future()).isNotDone();
-        mockMvc.perform(post("/api/v1/agent/session/session-1/clarify/resolve")
+        mockMvc.perform(post("/api/v1/agent/session/10000000-0000-4000-8000-000000000001/clarify/resolve")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"clarifyId\":\"" + pending.clarifyId() + "\",\"response\":\"prod\"}"))
             .andExpect(status().isOk())
@@ -108,16 +118,16 @@ class AgentClarifyControllerTest {
 
     @Test
     void invalidNumericTextKeepsTheChoicePromptArmedForRetry() throws Exception {
-        var pending = store.register("session-1", "Deploy where?", List.of("dev", "prod"), false);
+        var pending = store.register("10000000-0000-4000-8000-000000000001", "Deploy where?", List.of("dev", "prod"), false);
 
-        mockMvc.perform(post("/api/v1/agent/session/session-1/clarify/text")
+        mockMvc.perform(post("/api/v1/agent/session/10000000-0000-4000-8000-000000000001/clarify/text")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"text\":\"3\"}"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.outcome").value("rejected_selection"));
 
         assertThat(pending.future()).isNotDone();
-        assertThat(store.pendingForSession("session-1").clarifyId()).isEqualTo(pending.clarifyId());
+        assertThat(store.pendingForSession("10000000-0000-4000-8000-000000000001").clarifyId()).isEqualTo(pending.clarifyId());
     }
 
     @Test
@@ -170,11 +180,11 @@ class AgentClarifyControllerTest {
 
     @Test
     void explicitClarifyIdSelectsItsOwnPendingEntryInsteadOfTheOldestBatchQuestion() throws Exception {
-        var first = store.register("session-1", "First?", List.of("one", "two"), false);
-        var second = store.register("session-1", "Second?", List.of("dev", "prod"), false);
-        assertThat(store.armCustomResponse("session-1", second.clarifyId())).isTrue();
+        var first = store.register("10000000-0000-4000-8000-000000000001", "First?", List.of("one", "two"), false);
+        var second = store.register("10000000-0000-4000-8000-000000000001", "Second?", List.of("dev", "prod"), false);
+        assertThat(store.armCustomResponse("10000000-0000-4000-8000-000000000001", second.clarifyId())).isTrue();
 
-        mockMvc.perform(post("/api/v1/agent/session/session-1/clarify/text")
+        mockMvc.perform(post("/api/v1/agent/session/10000000-0000-4000-8000-000000000001/clarify/text")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"clarifyId\":\"" + second.clarifyId() + "\",\"text\":\"a bespoke environment\"}"))
             .andExpect(status().isOk())

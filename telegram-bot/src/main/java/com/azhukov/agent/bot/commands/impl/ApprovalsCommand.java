@@ -4,7 +4,6 @@ import com.azhukov.agent.bot.commands.CommandHandler;
 import com.azhukov.agent.bot.core.AgentBackendClient;
 import com.azhukov.agent.bot.polling.UpdateEvent;
 import com.azhukov.agent.bot.session.BotSessionEntity;
-import com.fasterxml.jackson.databind.JsonNode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -33,9 +32,12 @@ public class ApprovalsCommand implements CommandHandler {
     @Override
     public String handle(UpdateEvent event, BotSessionEntity session) {
         // Read the effective state from the backend's capabilities endpoint.
-        JsonNode caps = backendClient.suggestionGet("/v1/capabilities");
-        boolean approvalsEnabled = caps != null
-            && caps.path("features").path("approval_events").asBoolean(false);
+        var caps = backendClient.suggestionGet("/v1/capabilities");
+        var approvalEvents = caps == null ? null : caps.path("features").path("approval_events");
+        if (approvalEvents == null || !approvalEvents.isBoolean()) {
+            return "Error: approval mode is unavailable.";
+        }
+        boolean approvalsEnabled = approvalEvents.booleanValue();
         String mode = approvalsEnabled ? "manual" : "off";
         return "Approval mode: " + mode
             + " (persistent backend setting: agent.security.approvals-enabled)."

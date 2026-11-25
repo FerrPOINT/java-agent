@@ -10,7 +10,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * F16: the approval flow was dead code — DefaultToolGuardrails.requiresApproval /
+ * F16: the approval flow was dead code — DefaultToolApprovalPolicy.requiresApproval /
  * requestApproval had zero callers, so no request was ever created and
  * ApprovalQueue.isPending() was always false in both runtimes. These tests pin
  * the producer path the runtimes now call.
@@ -26,15 +26,15 @@ class ApprovalProducerWiringTest {
 
     @Test
     void guardrailFlagsDestructiveTool() {
-        DefaultToolGuardrails g = new DefaultToolGuardrails(propsWith("terminal"), new ApprovalQueue());
-        assertTrue(g.requiresApproval(new ToolCall("c1", "terminal", "{\"command\":\"rm -rf /\"}")));
-        assertFalse(g.requiresApproval(new ToolCall("c2", "read_file", "{}")));
+        DefaultToolApprovalPolicy g = new DefaultToolApprovalPolicy(propsWith("terminal"), new ApprovalQueue());
+        assertTrue(g.requiresApproval(new ToolCall("c1", "terminal", "{\"command\":\"rm -rf /\"}"), null));
+        assertFalse(g.requiresApproval(new ToolCall("c2", "read_file", "{}"), null));
     }
 
     @Test
     void requestApprovalEnqueuesPending() {
         ApprovalQueue queue = new ApprovalQueue();
-        DefaultToolGuardrails g = new DefaultToolGuardrails(propsWith("terminal"), queue);
+        DefaultToolApprovalPolicy g = new DefaultToolApprovalPolicy(propsWith("terminal"), queue);
         UUID session = UUID.randomUUID();
         ToolCall call = new ToolCall("c1", "terminal", "{\"command\":\"reboot\"}");
 
@@ -48,31 +48,30 @@ class ApprovalProducerWiringTest {
     void approvalsDisabledMeansNoGate() {
         AgentProperties p = new AgentProperties();
         p.getSecurity().setApprovalsEnabled(false);
-        DefaultToolGuardrails g = new DefaultToolGuardrails(p, new ApprovalQueue());
-        assertFalse(g.requiresApproval(new ToolCall("c1", "terminal", "{}")));
+        DefaultToolApprovalPolicy g = new DefaultToolApprovalPolicy(p, new ApprovalQueue());
+        assertFalse(g.requiresApproval(new ToolCall("c1", "terminal", "{}"), null));
     }
 
     @Test
     void fullCycleRequestWaitApproveExecute() throws Exception {
         ApprovalQueue queue = new ApprovalQueue();
-        DefaultToolGuardrails g = new DefaultToolGuardrails(propsWith("terminal"), queue);
+        DefaultToolApprovalPolicy g = new DefaultToolApprovalPolicy(propsWith("terminal"), queue);
         UUID session = UUID.randomUUID();
 
         // Runtime-side gate sequence (as wired in TurnExecutor/DefaultAgentRuntime):
         ToolCall call = new ToolCall("c1", "terminal", "{\"command\":\"shutdown now\"}");
-        boolean approvalRequired = queue.isPending(session)
-            || (g.requiresApproval(call) && queue.getPending(session) == null && g.requestApproval(session, call) != null);
-        assertTrue(approvalRequired, "gate must engage for a destructive tool");
+        assertTrue(g.requiresApproval(call, g.mcpAdmission(call)));
+        var request = g.requestApproval(session, call);
 
         // Approve from the user side — awaitDecision will either block until
         // this signals the latch, or see isPending=false and return immediately.
         Thread approver = new Thread(() -> {
-            queue.approve(session, "approve", null);
+            queue.approve(request.requestId(), null);
         });
         approver.start();
 
         long t0 = System.currentTimeMillis();
-        boolean decided = queue.awaitDecision(session, 5000);
+        boolean decided = queue.awaitDecision(request, 5000);
         long waited = System.currentTimeMillis() - t0;
         assertTrue(decided, "latch must release on approve");
         assertTrue(waited < 3000, "waiter released promptly, not by timeout");

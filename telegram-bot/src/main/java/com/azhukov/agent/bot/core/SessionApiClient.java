@@ -40,6 +40,17 @@ public class SessionApiClient extends BaseBackendClient {
         }
     }
 
+    public boolean cleanupSession(String sessionId) {
+        try {
+            restClient.post().uri("/api/v1/agent/session/{sessionId}/cleanup", sessionId)
+                .retrieve().toBodilessEntity();
+            return true;
+        } catch (Exception e) {
+            log.warn("cleanupSession failed for sessionId={}: {}", sessionId, e.getMessage());
+            return false;
+        }
+    }
+
     public JsonNode getContext(String sessionId) {
         try {
             String json = restClient.get()
@@ -138,7 +149,7 @@ public class SessionApiClient extends BaseBackendClient {
     public String compressSession(String sessionId, String focus) {
         Map<String, Object> body = body();
         if (focus != null && !focus.isBlank()) {
-            body.put("focus", focus);
+            body.put("focusTopic", focus);
         }
         try {
             restClient.post()

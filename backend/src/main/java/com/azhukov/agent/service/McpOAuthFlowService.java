@@ -77,7 +77,7 @@ public class McpOAuthFlowService {
         String stateHash = sha256Hex(state);
 
         McpOAuthFlowEntity flow = new McpOAuthFlowEntity();
-        flow.setProfile(normalize(profile));
+        flow.setProfile(config.getProfile());
         flow.setServerName(serverName);
         flow.setStateHash(stateHash);
         flow.setCodeChallenge(challenge);
@@ -135,16 +135,21 @@ public class McpOAuthFlowService {
             return failure("authorization server returned no access_token");
         }
         long ttl = 3600;
+        Instant now = Instant.now();
+        Instant expiresAt = now.plusSeconds(ttl);
         try {
             if (expiresIn != null && !expiresIn.isBlank()) {
-                ttl = Long.parseLong(expiresIn.trim());
+                long requestedTtl = Long.parseLong(expiresIn.trim());
+                expiresAt = now.plusSeconds(requestedTtl);
+                ttl = requestedTtl;
             }
-        } catch (NumberFormatException ignored) {
+        } catch (NumberFormatException | ArithmeticException | java.time.DateTimeException ignored) {
             // default 1h
         }
 
         McpOAuthManager oauth = oauth();
-        oauth.storeToken(flow.getServerName(), accessToken, refreshToken, Instant.now().plusSeconds(ttl));
+        oauth.storeToken(flow.getProfile(), flow.getServerName(), accessToken, refreshToken,
+            expiresAt, config.getOauthTokenUrl());
 
         flow.setStatus("completed");
         flows().save(flow);
@@ -196,9 +201,7 @@ public class McpOAuthFlowService {
                 .build();
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() != 200) {
-                throw new IllegalStateException("token exchange failed with status "
-                    + response.statusCode() + ": "
-                    + McpOAuthManager.sanitizeError(response.body()));
+                throw new IllegalStateException("token exchange failed with status " + response.statusCode());
             }
             return response.body();
         } catch (InterruptedException e) {
@@ -271,10 +274,6 @@ public class McpOAuthFlowService {
 
     private static Map<String, Object> failure(String detail) {
         return Map.of("ok", false, "status", "failed", "detail", detail);
-    }
-
-    private static String normalize(String profile) {
-        return profile == null || profile.isBlank() ? "default" : profile.trim().toLowerCase();
     }
 
     private McpOAuthFlowRepository flows() {

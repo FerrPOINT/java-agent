@@ -192,6 +192,20 @@ class BotMessageProcessorTest {
             editCaptureService, updateDispatcher, streamingOrchestrator);
     }
 
+    @Test
+    void unmentionedGroupTextIsNotBufferedWithMentionedMessage() {
+        var unmentioned = textEvent(1, -100, "private group conversation");
+        var mentioned = textEvent(2, -100, "@bot answer this");
+        when(groupMessageFilter.shouldProcess(unmentioned)).thenReturn(false);
+        when(textBatchDebouncer.offer(mentioned)).thenReturn(true);
+
+        processor.accept(unmentioned);
+        processor.accept(mentioned);
+
+        verify(textBatchDebouncer, never()).offer(unmentioned);
+        verify(textBatchDebouncer).offer(mentioned);
+    }
+
     // ─── Helper methods ──────────────────────────────────────────
 
     private UpdateEvent textEvent(long updateId, long chatId, String text) {
@@ -785,7 +799,7 @@ class BotMessageProcessorTest {
     @org.junit.jupiter.params.provider.ValueSource(strings = {"queue", "steer", "interrupt"})
     void floodWaitAllowsAnotherChatAndPreservesBusyInputMode(String mode) {
         properties.setStreamingTransport("draft");
-        properties.setBusyMode(mode);
+        properties.setBusyInputMode(mode);
         properties.getDisplay().setToolProgress("off");
         when(telegramClient.supportsDraftStreaming(anyString())).thenReturn(true);
         when(telegramClient.sendDraft(anyLong(), anyString(), anyInt())).thenReturn(true);
@@ -1213,7 +1227,7 @@ class BotMessageProcessorTest {
     void photoWithoutMediaGroupIdProcessedImmediately() {
         when(photoBatchDebouncer.offer(any())).thenReturn(false);
         stubStreamingResult("desc", true);
-        when(inboundMediaHandler.handle(any())).thenReturn(Optional.of("[Photo: test]"));
+        when(inboundMediaHandler.handle(any())).thenReturn(Optional.of(new com.azhukov.agent.bot.media.InboundMediaHandler.AdmittedMedia("[Photo: test]", List.of())));
         processor.accept(photoEvent(1, 100L, "file123", "caption", null));
         verify(backendClient).chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
@@ -1222,7 +1236,7 @@ class BotMessageProcessorTest {
     void photoWithBlankMediaGroupIdProcessedImmediately() {
         when(photoBatchDebouncer.offer(any())).thenReturn(false);
         stubStreamingResult("desc", true);
-        when(inboundMediaHandler.handle(any())).thenReturn(Optional.of("[Photo: test]"));
+        when(inboundMediaHandler.handle(any())).thenReturn(Optional.of(new com.azhukov.agent.bot.media.InboundMediaHandler.AdmittedMedia("[Photo: test]", List.of())));
         processor.accept(photoEvent(1, 100L, "file123", "caption", "  "));
         verify(backendClient).chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
@@ -1232,7 +1246,7 @@ class BotMessageProcessorTest {
     @Test
     void documentEventProcessed() {
         stubStreamingResult("doc response", true);
-        when(inboundMediaHandler.handle(any())).thenReturn(Optional.of("[Document: test]"));
+        when(inboundMediaHandler.handle(any())).thenReturn(Optional.of(new com.azhukov.agent.bot.media.InboundMediaHandler.AdmittedMedia("[Document: test]", List.of())));
         processor.accept(documentEvent(1, 100L, "file123", "caption"));
         verify(backendClient).chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
@@ -1240,7 +1254,7 @@ class BotMessageProcessorTest {
     @Test
     void voiceEventProcessed() {
         stubStreamingResult("voice response", true);
-        when(inboundMediaHandler.handle(any())).thenReturn(Optional.of("[Voice: test]"));
+        when(inboundMediaHandler.handle(any())).thenReturn(Optional.of(new com.azhukov.agent.bot.media.InboundMediaHandler.AdmittedMedia("[Voice: test]", List.of())));
         processor.accept(voiceEvent(1, 100L, "file123"));
         verify(backendClient).chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
@@ -1248,7 +1262,7 @@ class BotMessageProcessorTest {
     @Test
     void stickerEventProcessed() {
         stubStreamingResult("sticker response", true);
-        when(inboundMediaHandler.handle(any())).thenReturn(Optional.of("[Sticker: test]"));
+        when(inboundMediaHandler.handle(any())).thenReturn(Optional.of(new com.azhukov.agent.bot.media.InboundMediaHandler.AdmittedMedia("[Sticker: test]", List.of())));
         processor.accept(stickerEvent(1, 100L, "file123"));
         verify(backendClient).chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
@@ -1256,7 +1270,7 @@ class BotMessageProcessorTest {
     @Test
     void animationEventProcessed() {
         stubStreamingResult("animation response", true);
-        when(inboundMediaHandler.handle(any())).thenReturn(Optional.of("[Animation: test]"));
+        when(inboundMediaHandler.handle(any())).thenReturn(Optional.of(new com.azhukov.agent.bot.media.InboundMediaHandler.AdmittedMedia("[Animation: test]", List.of())));
         processor.accept(animationEvent(1, 100L, "file123"));
         verify(backendClient).chatStream(anyString(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
@@ -1337,6 +1351,23 @@ class BotMessageProcessorTest {
         verifyNoInteractions(backendClient);
     }
 
+    @Test
+    void photoWithoutFileIdDoesNotSendCaptionAsPlainText() {
+        processor.accept(photoEvent(1, 100L, null, "explain this photo", null));
+        verify(backendClient, never()).chatStream(any(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(telegramClient).sendMessage(eq(100L), contains("Вложение не принято"), any(), isNull(), isNull());
+    }
+
+    @Test
+    void unknownOrRejectedArtifactDoesNotStartChatOrRetryUpload() {
+        when(inboundMediaHandler.handle(any())).thenThrow(
+                new AttachmentApiClient.AdmissionFailure(true, "Unknown"));
+        processor.accept(photoEvent(1, 100L, "file123", "caption", null));
+        verify(backendClient, never()).chatStream(any(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(inboundMediaHandler).handle(any());
+        assertThat(busyHandler.isBusy(100L)).isFalse();
+    }
+
     // ─── Media extraction ────────────────────────────────────────
 
     @Test
@@ -1345,71 +1376,181 @@ class BotMessageProcessorTest {
         UpdateEvent event = new UpdateEvent(1, UpdateEvent.Type.TEXT, 100L, 200L,
             "testuser", "What is this?", null, "file123", "photo",
             null, null, null, false, null, null, 101L, null, 0);
-        when(inboundMediaHandler.handle(any())).thenReturn(Optional.of("[Photo: /tmp/test.jpg]"));
+        when(inboundMediaHandler.handle(any())).thenReturn(Optional.of(new com.azhukov.agent.bot.media.InboundMediaHandler.AdmittedMedia("[Photo: test.jpg]", List.of())));
         processor.accept(event);
         ArgumentCaptor<String> msgCaptor = ArgumentCaptor.forClass(String.class);
         verify(backendClient).chatStream(msgCaptor.capture(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
         assertThat(msgCaptor.getValue()).contains("What is this?");
-        assertThat(msgCaptor.getValue()).contains("[Photo: /tmp/test.jpg]");
+        assertThat(msgCaptor.getValue()).contains("[Photo: test.jpg]");
     }
 
     @Test
     void captionWithMediaDescriptionUsesEnrichedText() {
         stubStreamingResult("response", true);
-        when(inboundMediaHandler.handle(any())).thenReturn(Optional.of("[Photo: /tmp/test.jpg]"));
+        when(inboundMediaHandler.handle(any())).thenReturn(Optional.of(new com.azhukov.agent.bot.media.InboundMediaHandler.AdmittedMedia("[Photo: test.jpg]", List.of())));
         processor.accept(photoEvent(1, 100L, "file123", "Look at this", null));
         ArgumentCaptor<String> msgCaptor = ArgumentCaptor.forClass(String.class);
         verify(backendClient).chatStream(msgCaptor.capture(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
-        assertThat(msgCaptor.getValue()).contains("Look at this");
-        assertThat(msgCaptor.getValue()).contains("[Photo: /tmp/test.jpg]");
+        assertThat(msgCaptor.getValue()).containsOnlyOnce("Look at this");
+        assertThat(msgCaptor.getValue()).contains("[Photo: test.jpg]");
     }
 
     @Test
-    void captionOnlyWithoutMediaDescriptionUsesCaption() {
-        stubStreamingResult("response", true);
+    void unconfirmedMediaDoesNotDispatchCaption() {
         when(inboundMediaHandler.handle(any())).thenReturn(Optional.empty());
         processor.accept(photoEvent(1, 100L, "file123", "Just caption", null));
-        ArgumentCaptor<String> msgCaptor = ArgumentCaptor.forClass(String.class);
-        verify(backendClient).chatStream(msgCaptor.capture(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
-        assertThat(msgCaptor.getValue()).contains("Just caption");
+        verify(backendClient, never()).chatStream(any(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(inboundMediaHandler).handle(any());
     }
 
     @Test
     void mediaOnlyWithDescriptionUsesDescription() {
         stubStreamingResult("response", true);
-        when(inboundMediaHandler.handle(any())).thenReturn(Optional.of("[Photo: /tmp/test.jpg]"));
+        when(inboundMediaHandler.handle(any())).thenReturn(Optional.of(new com.azhukov.agent.bot.media.InboundMediaHandler.AdmittedMedia("[Photo: test.jpg]", List.of())));
         UpdateEvent event = photoEvent(1, 100L, "file123", null, null);
         processor.accept(event);
         ArgumentCaptor<String> msgCaptor = ArgumentCaptor.forClass(String.class);
         verify(backendClient).chatStream(msgCaptor.capture(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
-        assertThat(msgCaptor.getValue()).contains("[Photo: /tmp/test.jpg]");
+        assertThat(msgCaptor.getValue()).contains("[Photo: test.jpg]");
     }
 
     @Test
-    void mediaOnlyWithoutDescriptionUsesPlaceholder() {
-        stubStreamingResult("response", true);
+    void unconfirmedMediaDoesNotDispatchPlaceholder() {
         when(inboundMediaHandler.handle(any())).thenReturn(Optional.empty());
         UpdateEvent event = photoEvent(1, 100L, "file123", null, null);
         processor.accept(event);
-        ArgumentCaptor<String> msgCaptor = ArgumentCaptor.forClass(String.class);
-        verify(backendClient).chatStream(msgCaptor.capture(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
-        assertThat(msgCaptor.getValue()).contains("[Media attachment: photo]");
+        verify(backendClient, never()).chatStream(any(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(inboundMediaHandler).handle(any());
     }
 
     @Test
-    void mediaOnlyWithoutDescriptionAndNullFileTypeUsesUnknown() {
-        stubStreamingResult("response", true);
+    void unsupportedMediaDoesNotDispatchPlaceholder() {
         when(inboundMediaHandler.handle(any())).thenReturn(Optional.empty());
         UpdateEvent event = new UpdateEvent(1, UpdateEvent.Type.DOCUMENT, 100L, 200L,
             "testuser", null, null, "file123", null,
             null, null, null, false, null, null, 101L, null, 0);
         processor.accept(event);
-        ArgumentCaptor<String> msgCaptor = ArgumentCaptor.forClass(String.class);
-        verify(backendClient).chatStream(msgCaptor.capture(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
-        assertThat(msgCaptor.getValue()).contains("[Media attachment: unknown]");
+        verify(backendClient, never()).chatStream(any(), nullable(String.class), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(inboundMediaHandler).handle(any());
     }
 
     // ─── Busy session — queue mode ─────────────────────────────
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"queue", "steer", "interrupt"})
+    void busyMediaIsQueuedWithoutRegisteringOrSteering(String mode) {
+        properties.setBusyInputMode(mode);
+        busyHandler.markBusy(100L);
+        UpdateEvent event = photoEvent(2, 100L, "photo-fixture", "caption", null);
+        when(inboundMediaHandler.handle(event)).thenReturn(Optional.of(new com.azhukov.agent.bot.media.InboundMediaHandler.AdmittedMedia("photo", List.of("att_0123456789abcdef0123456789abcdef"))));
+
+        processor.accept(event);
+
+        assertThat(busyHandler.hasQueued(100L)).isTrue();
+        verify(inboundMediaHandler, never()).handle(event);
+        verify(backendClient, never()).steer(anyString(), anyString());
+    }
+
+    @Test
+    void unauthorizedTextCannotJoinAnAuthorizedUsersBatch() {
+        var batch = new TextBatchDebouncer(properties);
+        var dispatched = new java.util.ArrayList<UpdateEvent>();
+        batch.onDispatch(dispatched::add);
+        var dispatcher = new UpdateDispatcher(properties, editCaptureService, batch, photoBatchDebouncer);
+        var allowed = textEvent(10, 100L, "allowed");
+        var denied = new UpdateEvent(11, UpdateEvent.Type.TEXT, 100L, 999L, "denied", "forbidden",
+            null, null, null, null, null, null, false, null, null, 111, null, 0);
+        when(authorizationService.isAuthorized(denied)).thenReturn(false);
+
+        dispatcher.dispatch(allowed, processor);
+        dispatcher.dispatch(denied, processor);
+        batch.flushAll();
+
+        assertThat(dispatched).hasSize(1);
+        assertThat(dispatched.getFirst().text()).isEqualTo("allowed");
+    }
+
+    @Test
+    void unauthorizedPhotoCannotJoinAnAuthorizedUsersAlbum() {
+        var batch = new PhotoBatchDebouncer();
+        var dispatched = new java.util.ArrayList<UpdateEvent>();
+        batch.onDispatch(dispatched::add);
+        var dispatcher = new UpdateDispatcher(properties, editCaptureService, textBatchDebouncer, batch);
+        var allowed = photoEvent(10, 100L, "allowed-photo", "", "album");
+        var denied = new UpdateEvent(11, UpdateEvent.Type.PHOTO, 100L, 999L, "denied", null,
+            null, "forbidden-photo", "photo", null, null, null, false, null, null, 111, "album", 0);
+        when(authorizationService.isAuthorized(denied)).thenReturn(false);
+
+        dispatcher.dispatch(allowed, processor);
+        dispatcher.dispatch(denied, processor);
+        batch.flushAll();
+
+        assertThat(dispatched).hasSize(1);
+        assertThat(dispatched.getFirst().fileId()).isEqualTo("allowed-photo");
+    }
+
+    @Test
+    void busyMediaFromUnauthorizedUserIsNotQueuedOrInterrupted() {
+        properties.setBusyInputMode("interrupt");
+        busyHandler.markBusy(100L);
+        UpdateEvent event = photoEvent(2, 100L, "untrusted-photo", "caption", null);
+        when(authorizationService.isAuthorized(event)).thenReturn(false);
+
+        processor.accept(event);
+
+        assertThat(busyHandler.hasQueued(100L)).isFalse();
+        assertThat(busyHandler.isInterrupted(100L)).isFalse();
+        verify(inboundMediaHandler, never()).handle(event);
+        verify(backendClient, never()).stop(anyString());
+    }
+
+    @Test
+    void ordinaryTextContainingArtifactSyntaxRemainsTextNotAttachment() {
+        String text = "Explain (artifact=att_0123456789abcdef0123456789abcdef) literally";
+        stubStreamingResult("response", true);
+
+        processor.accept(textEvent(3, 100L, text));
+
+        verify(backendClient).chatStream(contains(text), nullable(String.class), any(),
+            argThat(refs -> refs == null || refs.isEmpty()),
+            any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void captionMarkerIsPreservedAndOnlyConfirmedMediaIsAttached() {
+        String caption = "Look (artifact=att_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)";
+        String actualId = "att_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        UpdateEvent event = photoEvent(2, 100L, "photo-fixture", caption, null);
+        when(inboundMediaHandler.handle(event)).thenReturn(Optional.of(
+            new com.azhukov.agent.bot.media.InboundMediaHandler.AdmittedMedia("[Photo]", List.of(actualId))));
+        stubStreamingResult("response", true);
+
+        processor.accept(event);
+
+        verify(backendClient).chatStream(contains(caption), nullable(String.class), any(),
+            argThat(refs -> refs != null && refs.equals(List.of(java.util.Map.of("artifactId", actualId)))),
+            any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void queuedMediaIsAdmittedOnceAndSentAsStructuredAttachment() {
+        properties.setBusyInputMode("steer");
+        busyHandler.markBusy(100L);
+        UpdateEvent event = photoEvent(2, 100L, "photo-fixture", "caption", null);
+        String id = "att_0123456789abcdef0123456789abcdef";
+        when(inboundMediaHandler.handle(event)).thenReturn(Optional.of(new com.azhukov.agent.bot.media.InboundMediaHandler.AdmittedMedia("[Photo]", List.of(id))));
+        stubStreamingResult("response", true);
+
+        processor.accept(event);
+        busyHandler.markFree(100L);
+        processor.accept(textEvent(3, 100L, "next"));
+
+        verify(inboundMediaHandler, times(1)).handle(event);
+        verify(backendClient).chatStream(contains("caption"), nullable(String.class), any(),
+            argThat(refs -> refs != null && refs.equals(List.of(java.util.Map.of("artifactId", id)))),
+            any(), any(), any(), any(), any(), any(), any(), any());
+        verify(backendClient, never()).steer(anyString(), anyString());
+    }
 
     @Test
     void busyQueueModeQueuesMessage() {

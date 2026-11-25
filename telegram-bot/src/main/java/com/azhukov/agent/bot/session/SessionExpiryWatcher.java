@@ -108,10 +108,12 @@ public class SessionExpiryWatcher {
                     // its own row but the backend never knows.
                     try {
                         if (session.getBackendSessionId() != null) {
-                            backendClient.resetSession(session.getBackendSessionId().toString());
+                            if (!backendClient.cleanupSession(session.getBackendSessionId().toString())) {
+                                log.warn("Runtime cleanup failed for expired session {}; retry is required", session.getId());
+                            }
                         }
                     } catch (Exception e) {
-                        log.debug("Backend cleanup for expired session {} failed: {}",
+                        log.warn("Backend cleanup for expired session {} failed: {}",
                             session.getId(), e.getMessage());
                     }
                     sessionStore.finalizeSession(session.getId());

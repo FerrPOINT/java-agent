@@ -139,9 +139,11 @@ public class CronSuggestionService {
  }
 
  CronJobEntity entity = cronJobService.create(
- userId, suggestion.getJobName(), suggestion.getJobSchedule(), suggestion.getJobPrompt(),
- suggestion.getDeliverTo(), suggestion.getSkills(), null, null, null, false,
- null, null, null, null, null);
+            userId, "default", suggestion.getJobName(), suggestion.getJobSchedule(),
+            suggestion.getJobPrompt(), suggestion.getDeliverTo(), suggestion.getSkills(), null,
+            null, null, false, null,
+            null, null, null, null,
+            null, false, null);
  suggestion.setStatus(STATUS_ACCEPTED);
  suggestion.setResolvedAt(Instant.now());
  cronSuggestionRepository.save(suggestion);
