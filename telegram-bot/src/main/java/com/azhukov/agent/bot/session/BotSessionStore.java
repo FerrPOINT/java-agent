@@ -85,10 +85,9 @@ public class BotSessionStore {
      */
     @Transactional
     public BotSessionEntity createFreshSession(String userId, String chatId, String username) {
-        List<BotSessionEntity> owned = repository.findAllLockedByUserId(userId);
+        repository.deactivateAllForUser(userId);
         BotSessionEntity session = new BotSessionEntity();
         session.setUserId(userId);
-        deactivateCurrentLane(owned, session);
         session.setChatId(chatId);
         session.setUsername(username);
         session.setActive(true);
@@ -103,15 +102,12 @@ public class BotSessionStore {
      */
     @Transactional
     public boolean activateSessionById(String userId, UUID sessionId) {
-        List<BotSessionEntity> owned = repository.findAllLockedByUserId(userId);
-        Optional<BotSessionEntity> target = owned.stream().filter(s -> s.getId().equals(sessionId)).findFirst();
-        if (target.isEmpty()) {
+        Optional<BotSessionEntity> target = repository.findById(sessionId);
+        if (target.isEmpty() || !target.get().getUserId().equals(userId)) {
             return false;
         }
+        repository.deactivateAllForUser(userId);
         BotSessionEntity entity = target.get();
-        deactivateCurrentLane(owned, entity);
-        entity.setCleanupPending(false);
-        entity.setCleanupOnBackendBinding(false);
         entity.setActive(true);
         entity.setUpdatedAt(Instant.now());
         repository.save(entity);
@@ -169,28 +165,19 @@ public class BotSessionStore {
 
     @Transactional
     public BotSessionEntity resumeSession(UUID sessionId, String userId) {
-        List<BotSessionEntity> owned = repository.findAllLockedByUserId(userId);
-        BotSessionEntity target = owned.stream().filter(s -> s.getId().equals(sessionId)).findFirst().orElse(null);
+        // Deactivate current active session
+        BotSessionEntity current = repository.findByUserIdAndActiveTrue(userId).orElse(null);
+        if (current != null) {
+            current.setActive(false);
+            current.setUpdatedAt(Instant.now());
+            repository.save(current);
+        }
+        // Activate requested session
+        BotSessionEntity target = repository.findById(sessionId).orElse(null);
         if (target == null) return null;
-        deactivateCurrentLane(owned, target);
-        // Activate requested session and cancel stale cleanup while holding the row lock.
-        target.setCleanupPending(false);
-        target.setCleanupOnBackendBinding(false);
         target.setActive(true);
         target.setUpdatedAt(Instant.now());
         return repository.save(target);
-    }
-
-    private void deactivateCurrentLane(List<BotSessionEntity> owned, BotSessionEntity target) {
-        owned.stream()
-            .filter(s -> s.isActive() && java.util.Objects.equals(s.getThreadId(), target.getThreadId())
-                && !java.util.Objects.equals(s.getId(), target.getId()))
-            .findFirst().ifPresent(current -> {
-                current.setActive(false);
-                current.setUpdatedAt(Instant.now());
-                // Release the unique active lane before activating the target in this transaction.
-                repository.saveAndFlush(current);
-            });
     }
 
     @Transactional
@@ -250,6 +237,11 @@ public class BotSessionStore {
         return repository.findByUserIdOrderByUpdatedAtDesc(userId);
     }
 
+    @Transactional
+    public int deactivateAll(String userId) {
+        return repository.deactivateAllForUser(userId);
+    }
+
     // ─── P0: Session Reset Policy ──────────────────────────────────
 
     /**
@@ -262,36 +254,18 @@ public class BotSessionStore {
         return repository.findByActiveTrue();
     }
 
-    @Transactional(readOnly = true)
-    public List<BotSessionEntity> pendingCleanups() {
-        return repository.findByCleanupPendingTrueAndActiveFalse();
-    }
-
+    /**
+     * Finalize an expired session — deactivate it and update timestamp.
+     *
+     * @param sessionId the session UUID
+     */
     @Transactional
-    public boolean finalizeWithCleanupPending(UUID sessionId, Instant expectedUpdatedAt) {
-        var session = repository.findLockedById(sessionId).orElse(null);
-        if (session == null || !session.isActive() || !java.util.Objects.equals(session.getUpdatedAt(), expectedUpdatedAt)) {
-            return false;
-        }
-        session.setActive(false);
-        session.setCleanupOnBackendBinding(true);
-        session.setCleanupPending(session.getBackendSessionId() != null);
-        session.setUpdatedAt(Instant.now());
-        repository.save(session);
-        return true;
-    }
-
-    @Transactional
-    public boolean retryCleanup(UUID sessionId, java.util.function.Function<UUID, Boolean> cleanup) {
-        var session = repository.findLockedById(sessionId).orElse(null);
-        if (session == null || session.isActive() || !session.isCleanupPending()) return false;
-        UUID backendId = session.getBackendSessionId();
-        if (backendId == null || Boolean.TRUE.equals(cleanup.apply(backendId))) {
-            session.setCleanupPending(false);
+    public void finalizeSession(UUID sessionId) {
+        repository.findById(sessionId).ifPresent(session -> {
+            session.setActive(false);
+            session.setUpdatedAt(Instant.now());
             repository.save(session);
-            return true;
-        }
-        return false;
+        });
     }
 
     /**
@@ -355,12 +329,8 @@ public class BotSessionStore {
      */
     @Transactional
     public void updateBackendSessionId(UUID botSessionId, UUID backendSessionId) {
-        repository.findLockedById(botSessionId).ifPresent(session -> {
-            boolean changed = !java.util.Objects.equals(session.getBackendSessionId(), backendSessionId);
+        repository.findById(botSessionId).ifPresent(session -> {
             session.setBackendSessionId(backendSessionId);
-            if (!session.isActive() && session.isCleanupOnBackendBinding() && changed && backendSessionId != null) {
-                session.setCleanupPending(true);
-            }
             session.setUpdatedAt(Instant.now());
             repository.save(session);
         });

@@ -15,7 +15,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.Map;
 
 @Entity
-@org.hibernate.annotations.DynamicUpdate
 @Table(name = "bot_sessions")
 @Data
 public class BotSessionEntity {
@@ -53,12 +52,6 @@ public class BotSessionEntity {
      */
     @Column(name = "backend_session_id")
     private UUID backendSessionId;
-
-    @Column(name = "cleanup_pending", nullable = false)
-    private boolean cleanupPending;
-
-    @Column(name = "cleanup_on_backend_binding", nullable = false)
-    private boolean cleanupOnBackendBinding;
 
     // P0: Session lifecycle states — suspend / resume-pending (persisted)
     @Column(name = "suspended")

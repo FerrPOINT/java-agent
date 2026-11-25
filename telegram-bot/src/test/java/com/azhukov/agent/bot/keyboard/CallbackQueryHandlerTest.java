@@ -28,7 +28,6 @@ class CallbackQueryHandlerTest {
     private BotProperties properties;
     private AuthorizationService authorizationService;
     private AgentBackendClient backendClient;
-    private ApprovalStateStore approvalStateStore;
     private CallbackQueryHandler handler;
 
     @BeforeEach
@@ -41,12 +40,10 @@ class CallbackQueryHandlerTest {
         properties = new BotProperties();
         authorizationService = mock(AuthorizationService.class);
         backendClient = mock(AgentBackendClient.class);
-        approvalStateStore = new ApprovalStateStore();
         // By default, allow all users (allow-by-default = true)
         when(authorizationService.isAuthorized(anyLong(), anyString(), anyLong())).thenReturn(true);
         handler = new CallbackQueryHandler(client, providerKeyboardBuilder, modelKeyboardBuilder,
             inlineKeyboardBuilder, sessionStore, properties, authorizationService,
-            backendClient, approvalStateStore,
             mock(ClarifyInteractionRenderer.class));
 
         when(client.answerCallbackQuery(anyString(), anyString(), anyBoolean())).thenReturn(true);
@@ -59,40 +56,15 @@ class CallbackQueryHandlerTest {
     void handle_mpCallback_setsModel() {
         BotSessionEntity session = new BotSessionEntity();
         session.setId(UUID.randomUUID());
-        when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), isNull())).thenReturn(session);
+        when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
+        org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(session);
 
         UpdateEvent event = callbackEvent("cq-1", "mp:kimi-k2");
         String result = handler.handle(event);
 
         assertThat(result).isEqualTo("Model set to: kimi-k2");
         verify(sessionStore).setModelOverride(session.getId(), "kimi-k2");
-    }
-
-    @Test
-    void modelCallbackUsesForumTopicLane() {
-        var session = new BotSessionEntity();
-        session.setId(UUID.randomUUID());
-        when(sessionStore.resolveOrCreate("456", "123", "", 42L)).thenReturn(session);
-        var event = new UpdateEvent(1, UpdateEvent.Type.CALLBACK_QUERY, 123L, 456L,
-            "user", null, null, null, null, "cq-topic", "mp:kimi-k2", null,
-            false, null, null, 100L, null, 42L);
-
-        assertThat(handler.handle(event)).isEqualTo("Model set to: kimi-k2");
-        verify(sessionStore).setModelOverride(session.getId(), "kimi-k2");
-        verify(sessionStore, never()).resolveOrCreate(anyString(), anyString(), anyString());
-    }
-
-    @Test
-    void modelNavigationKeepsForumTopic() {
-        properties.getAvailableModels().add("kimi-k2");
-        var event = new UpdateEvent(1, UpdateEvent.Type.CALLBACK_QUERY, 123L, 456L,
-            "user", null, null, null, null, "cq-topic", "mpp:1", null,
-            false, null, null, 100L, null, 42L);
-
-        handler.handle(event);
-
-        verify(client).sendMessage(eq(123L), contains("Select a model"), isNull(), isNull(),
-            eq(42), anyString(), eq(false));
     }
 
     @Test
@@ -106,7 +78,7 @@ class CallbackQueryHandlerTest {
 
     @Test
     void handle_mpCallback_noSession_returnsError() {
-        when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), isNull())).thenReturn(null);
+        when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(null);
 
         UpdateEvent event = callbackEvent("cq-2", "mp:gpt-4");
         String result = handler.handle(event);
@@ -123,20 +95,10 @@ class CallbackQueryHandlerTest {
         String result = handler.handle(event);
 
         // Should send a message with inline keyboard
-        verify(client).sendMessage(eq(123L), eq("Models for openai:"), isNull(), isNull(), isNull(), anyString(), eq(false));
+        verify(client).sendMessage(eq(123L), eq("Models for openai:"), any(), any(), any());
     }
 
     // ─── P2-19: Provider keyboard filtering tests ──────────────────
-
-    @Test
-    void providerKeyboardPreservesConfiguredModelIdentifier() {
-        properties.getAvailableModels().add("openai:gpt-4");
-        handler.handle(callbackEvent("cq-provider", "pp:openai"));
-        var markup = org.mockito.ArgumentCaptor.forClass(String.class);
-        verify(client).sendMessage(eq(123L), eq("Models for openai:"), isNull(), isNull(),
-            isNull(), markup.capture(), eq(false));
-        assertThat(markup.getValue()).contains("mp:openai:gpt-4");
-    }
 
     @Test
     void handle_ppCallback_filtersModelsByProviderPrefix() {
@@ -148,7 +110,7 @@ class CallbackQueryHandlerTest {
         handler.handle(event);
 
         // Should send "Models for openai:" with filtered models
-        verify(client).sendMessage(eq(123L), eq("Models for openai:"), isNull(), isNull(), isNull(), anyString(), eq(false));
+        verify(client).sendMessage(eq(123L), eq("Models for openai:"), any(), any(), any());
     }
 
     @Test
@@ -161,7 +123,7 @@ class CallbackQueryHandlerTest {
         UpdateEvent event = callbackEvent("cq-pp-2", "pp:openai");
         handler.handle(event);
 
-        verify(client).sendMessage(eq(123L), eq("Models for openai:"), isNull(), isNull(), isNull(), anyString(), eq(false));
+        verify(client).sendMessage(eq(123L), eq("Models for openai:"), any(), any(), any());
     }
 
     @Test
@@ -173,7 +135,7 @@ class CallbackQueryHandlerTest {
         UpdateEvent event = callbackEvent("cq-pp-3", "pp:anthropic");
         handler.handle(event);
 
-        verify(client).sendMessage(eq(123L), eq("Models for anthropic:"), isNull(), isNull(), isNull(), anyString(), eq(false));
+        verify(client).sendMessage(eq(123L), eq("Models for anthropic:"), any(), any(), any());
     }
 
     @Test
@@ -185,7 +147,7 @@ class CallbackQueryHandlerTest {
         handler.handle(event);
 
         // Should still send the message — fallback to all models
-        verify(client).sendMessage(eq(123L), eq("Models for unknown-provider:"), isNull(), isNull(), isNull(), anyString(), eq(false));
+        verify(client).sendMessage(eq(123L), eq("Models for unknown-provider:"), any(), any(), any());
     }
 
     @Test
@@ -193,7 +155,7 @@ class CallbackQueryHandlerTest {
         UpdateEvent event = callbackEvent("cq-4", "pp:back");
         String result = handler.handle(event);
 
-        verify(client).sendMessage(eq(123L), eq("Select a provider:"), isNull(), isNull(), isNull(), anyString(), eq(false));
+        verify(client).sendMessage(eq(123L), eq("Select a provider:"), any(), any(), any());
     }
 
     @Test
@@ -204,7 +166,7 @@ class CallbackQueryHandlerTest {
         UpdateEvent event = callbackEvent("cq-5", "mpp:0");
         String result = handler.handle(event);
 
-        verify(client).sendMessage(eq(123L), contains("Select a model"), isNull(), isNull(), isNull(), anyString(), eq(false));
+        verify(client).sendMessage(eq(123L), contains("Select a model"), any(), any(), any());
     }
 
     @Test
@@ -263,7 +225,9 @@ class CallbackQueryHandlerTest {
         when(authorizationService.isAuthorized(456L, "jdoe", 123L)).thenReturn(true);
         BotSessionEntity session = new BotSessionEntity();
         session.setId(UUID.randomUUID());
-        when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), isNull())).thenReturn(session);
+        when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString())).thenReturn(session);
+        org.mockito.Mockito.lenient().when(sessionStore.resolveOrCreate(anyString(), anyString(), anyString(), org.mockito.ArgumentMatchers.any()))
+            .thenReturn(session);
 
         UpdateEvent event = callbackEvent("cq-auth-2", "mp:gpt-4");
         String result = handler.handle(event);
@@ -277,7 +241,7 @@ class CallbackQueryHandlerTest {
         ClarifyInteractionRenderer renderer = mock(ClarifyInteractionRenderer.class);
         CallbackQueryHandler clarifyHandler = new CallbackQueryHandler(client, providerKeyboardBuilder,
             modelKeyboardBuilder, inlineKeyboardBuilder, sessionStore, properties, authorizationService,
-            backendClient, approvalStateStore, renderer);
+            renderer);
         when(renderer.handleCallback(123L, 456L, "prompt-1:0"))
             .thenReturn(new ClarifyInteractionRenderer.CallbackResult("Selected", true));
 
@@ -294,7 +258,7 @@ class CallbackQueryHandlerTest {
         ClarifyInteractionRenderer renderer = mock(ClarifyInteractionRenderer.class);
         CallbackQueryHandler clarifyHandler = new CallbackQueryHandler(client, providerKeyboardBuilder,
             modelKeyboardBuilder, inlineKeyboardBuilder, sessionStore, properties, authorizationService,
-            backendClient, approvalStateStore, renderer);
+            renderer);
         when(renderer.handleCallback(123L, 456L, "prompt-1:other"))
             .thenReturn(new ClarifyInteractionRenderer.CallbackResult("Type your answer", false));
 
@@ -312,151 +276,10 @@ class CallbackQueryHandlerTest {
             456L, null, 0L);
     }
 
-    // ─── P1-12: Exec approval (ea:) callback tests ──────────────────
-
     @Test
-    void handle_eaOnce_approvesAndReturnsLabel() {
-        int id = approvalStateStore.registerExecApproval("session-abc");
-        when(backendClient.resolveApproval("session-abc", "once")).thenReturn("Approved");
-
-        UpdateEvent event = callbackEvent("cq-ea-1", "ea:once:" + id);
-        String result = handler.handle(event);
-
-        assertThat(result).isEqualTo("✅ Approved once");
-        verify(backendClient).resolveApproval("session-abc", "once");
-        verify(client).editMessageReplyMarkup(eq(123L), eq(456L), eq(null));
-    }
-
-    @Test
-    void handle_eaDeny_deniesAndReturnsLabel() {
-        int id = approvalStateStore.registerExecApproval("session-xyz");
-        when(backendClient.resolveApproval("session-xyz", "deny")).thenReturn("Denied");
-
-        UpdateEvent event = callbackEvent("cq-ea-2", "ea:deny:" + id);
-        String result = handler.handle(event);
-
-        assertThat(result).isEqualTo("❌ Denied");
-        verify(backendClient).resolveApproval("session-xyz", "deny");
-        verify(client).editMessageReplyMarkup(eq(123L), eq(456L), eq(null));
-    }
-
-    @Test
-    void handle_eaAlreadyResolved_returnsAlreadyResolvedMessage() {
-        // Register and consume the approval
-        int id = approvalStateStore.registerExecApproval("session-gone");
-        approvalStateStore.popExecApproval(id);
-
-        UpdateEvent event = callbackEvent("cq-ea-3", "ea:once:" + id);
-        String result = handler.handle(event);
-
-        assertThat(result).isEqualTo("This approval has already been resolved.");
-        verifyNoInteractions(backendClient);
-        // Should not edit message reply markup for already-resolved
-        verify(client, never()).editMessageReplyMarkup(anyLong(), anyLong(), any());
-    }
-
-    @Test
-    void handle_eaInvalidId_returnsInvalidMessage() {
-        UpdateEvent event = callbackEvent("cq-ea-4", "ea:once:notanumber");
-        String result = handler.handle(event);
-
-        assertThat(result).isEqualTo("Invalid approval ID");
-        verifyNoInteractions(backendClient);
-        verify(client, never()).editMessageReplyMarkup(anyLong(), anyLong(), any());
-    }
-
-    @Test
-    void handle_eaMissingColon_returnsInvalidMessage() {
-        UpdateEvent event = callbackEvent("cq-ea-5", "ea:once");
-        String result = handler.handle(event);
-
-        assertThat(result).isEqualTo("Invalid approval data");
-        verifyNoInteractions(backendClient);
-        verify(client, never()).editMessageReplyMarkup(anyLong(), anyLong(), any());
-    }
-
-    @Test
-    void handle_eaSession_approvesForSession() {
-        int id = approvalStateStore.registerExecApproval("session-789");
-        when(backendClient.resolveApproval("session-789", "session")).thenReturn("Approved for session");
-
-        UpdateEvent event = callbackEvent("cq-ea-6", "ea:session:" + id);
-        String result = handler.handle(event);
-
-        assertThat(result).isEqualTo("✅ Approved for session");
-        verify(backendClient).resolveApproval("session-789", "session");
-        verify(client).editMessageReplyMarkup(eq(123L), eq(456L), eq(null));
-    }
-
-    @Test
-    void handle_eaAlways_approvesPermanently() {
-        int id = approvalStateStore.registerExecApproval("session-perm");
-        when(backendClient.resolveApproval("session-perm", "always")).thenReturn("Approved always");
-
-        UpdateEvent event = callbackEvent("cq-ea-7", "ea:always:" + id);
-        String result = handler.handle(event);
-
-        assertThat(result).isEqualTo("✅ Approved permanently");
-        verify(backendClient).resolveApproval("session-perm", "always");
-        verify(client).editMessageReplyMarkup(eq(123L), eq(456L), eq(null));
-    }
-
-    // ─── P1-13: Slash-confirm (sc:) callback tests ──────────────────
-
-    @Test
-    void handle_scOnce_approvesAndReturnsLabel() {
-        approvalStateStore.registerSlashConfirm("confirm-1", "session-sc-1");
-        when(backendClient.resolveSlashConfirm("session-sc-1", "confirm-1", "once")).thenReturn("Approved");
-
-        UpdateEvent event = callbackEvent("cq-sc-1", "sc:once:confirm-1");
-        String result = handler.handle(event);
-
-        assertThat(result).isEqualTo("✅ Approved once");
-        verify(backendClient).resolveSlashConfirm("session-sc-1", "confirm-1", "once");
-    }
-
-    @Test
-    void handle_scAlways_approvesAndReturnsLabel() {
-        approvalStateStore.registerSlashConfirm("confirm-2", "session-sc-2");
-        when(backendClient.resolveSlashConfirm("session-sc-2", "confirm-2", "always")).thenReturn("Approved always");
-
-        UpdateEvent event = callbackEvent("cq-sc-2", "sc:always:confirm-2");
-        String result = handler.handle(event);
-
-        assertThat(result).isEqualTo("🔒 Always approve");
-        verify(backendClient).resolveSlashConfirm("session-sc-2", "confirm-2", "always");
-    }
-
-    @Test
-    void handle_scCancel_deniesAndReturnsLabel() {
-        approvalStateStore.registerSlashConfirm("confirm-3", "session-sc-3");
-        when(backendClient.resolveSlashConfirm("session-sc-3", "confirm-3", "cancel")).thenReturn("Denied");
-
-        UpdateEvent event = callbackEvent("cq-sc-3", "sc:cancel:confirm-3");
-        String result = handler.handle(event);
-
-        assertThat(result).isEqualTo("❌ Cancelled");
-        verify(backendClient).resolveSlashConfirm("session-sc-3", "confirm-3", "cancel");
-    }
-
-    @Test
-    void handle_scAlreadyResolved_returnsAlreadyResolvedMessage() {
-        approvalStateStore.registerSlashConfirm("confirm-gone", "session-gone");
-        approvalStateStore.popSlashConfirm("confirm-gone");
-
-        UpdateEvent event = callbackEvent("cq-sc-4", "sc:once:confirm-gone");
-        String result = handler.handle(event);
-
-        assertThat(result).isEqualTo("This prompt has already been resolved.");
-        verifyNoInteractions(backendClient);
-    }
-
-    @Test
-    void handle_scMissingColon_returnsInvalidMessage() {
-        UpdateEvent event = callbackEvent("cq-sc-5", "sc:once");
-        String result = handler.handle(event);
-
-        assertThat(result).isEqualTo("Invalid confirm data");
+    void unproducedApprovalCallbackProtocolsCannotResolveCurrentApprovals() {
+        assertThat(handler.handle(callbackEvent("old-ea", "ea:once:1"))).isEqualTo("Unknown action: ea");
+        assertThat(handler.handle(callbackEvent("old-sc", "sc:once:1"))).isEqualTo("Unknown action: sc");
         verifyNoInteractions(backendClient);
     }
 }

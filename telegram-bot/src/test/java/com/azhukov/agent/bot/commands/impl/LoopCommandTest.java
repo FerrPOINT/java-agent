@@ -94,6 +94,39 @@ class LoopCommandTest {
         assertThat(prompt).doesNotContain("--until");
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"0", "-1", "invalid", "999999999999999999999"})
+    void invalidTimesNeverStartsUnlimitedLoop(String times) {
+        String out = cmd.handle(event("5m inspect --times " + times), sessionWithBackend(UUID.randomUUID()));
+        assertThat(out).contains("--times");
+        org.mockito.Mockito.verifyNoInteractions(client, poller);
+    }
+
+    @Test
+    void timesAfterUntilStillLimitsTheLoop() throws Exception {
+        UUID sid = UUID.randomUUID();
+        when(client.suggestionPostJson(eq("/api/v1/agent/cron/heartbeat"), any())).thenReturn(json("{\"ok\":true}"));
+        cmd.handle(event("5m inspect --until green --times 3"), sessionWithBackend(sid));
+        var captor = org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+        verify(client).suggestionPostJson(anyString(), captor.capture());
+        assertThat(captor.getValue()).containsEntry("maxTicks", 3);
+        assertThat((String) captor.getValue().get("prompt")).contains("Stop condition: green\n").doesNotContain("--times");
+    }
+
+    @Test
+    void explicitlyTooShortIntervalIsRejectedRatherThanSilentlyChanged() {
+        String out = cmd.handle(event("10s inspect"), sessionWithBackend(UUID.randomUUID()));
+        assertThat(out).contains("minimum");
+        org.mockito.Mockito.verifyNoInteractions(client, poller);
+    }
+
+    @Test
+    void oversizedIntervalDoesNotStartDefaultFiveMinuteLoop() {
+        String out = cmd.handle(event("2147483648s inspect"), sessionWithBackend(UUID.randomUUID()));
+        assertThat(out).contains("interval");
+        org.mockito.Mockito.verifyNoInteractions(client, poller);
+    }
+
     @Test
     void setLoop_noPromptLeft_showsUsage() {
         String out = cmd.handle(event("10m"), sessionWithBackend(UUID.randomUUID()));
@@ -132,14 +165,30 @@ class LoopCommandTest {
     }
 
     @Test
-    void stop_clearsHeartbeatAndUnwatchesPoller() throws Exception {
+    void stopClearsHeartbeatButRetainsWatchForPendingResult() throws Exception {
         UUID sid = UUID.randomUUID();
         when(client.suggestionPost("/api/v1/agent/cron/heartbeat/" + sid + "/clear"))
             .thenReturn(json("{\"ok\":true,\"message\":\"cleared\"}"));
 
         String out = cmd.handle(event("stop"), sessionWithBackend(sid));
         assertThat(out).contains("cleared");
-        verify(poller).unwatch(sid);
+        org.mockito.Mockito.verifyNoInteractions(poller);
+    }
+
+    @Test
+    void failedStopRetainsDeliveryWatch() throws Exception {
+        UUID sid = UUID.randomUUID();
+        when(client.suggestionPost(anyString())).thenReturn(null);
+        assertThat(cmd.handle(event("stop"), sessionWithBackend(sid))).contains("No loop set");
+        org.mockito.Mockito.verifyNoInteractions(poller);
+    }
+
+    @Test
+    void resumeRestoresDeliveryWatch() throws Exception {
+        UUID sid = UUID.randomUUID();
+        when(client.suggestionPost(anyString())).thenReturn(json("{\"ok\":true}"));
+        cmd.handle(event("resume"), sessionWithBackend(sid));
+        verify(poller).watch(sid, 42L);
     }
 
     @Test

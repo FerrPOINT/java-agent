@@ -14,7 +14,6 @@ import com.azhukov.agent.core.model.ChatResponse;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolCall;
-import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.prompt.DefaultPromptBuilder;
 import com.azhukov.agent.core.state.TurnState;
@@ -27,7 +26,6 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -52,10 +50,6 @@ import java.util.concurrent.ThreadLocalRandom;
  *   <li>{@link #computeBackoffMs} — error classification + backoff calculation
  *       shared by the streaming path (which cannot reuse the synchronous
  *       retry loop directly)</li>
- *   <li>Static helpers: {@link #interruptibleSleep}, {@link #detectRefusalPattern},
- *       {@link #estimateResponseTokens(ChatResponse)},
- *       {@link #estimateResponseTokens(String, List)}, plus think/image/multimodal
- *       content helpers</li>
  * </ul>
  * <p>
  * The synchronous model-call retry loop lives in {@link FallbackModelCaller}.
@@ -73,7 +67,7 @@ public class TurnExecutor {
     private final TokenEstimator tokenEstimator;
     private final InterruptToken interruptToken;
     private final com.azhukov.agent.core.security.ApprovalQueue approvalQueue;
-    private final com.azhukov.agent.core.security.ToolGuardrails toolGuardrails;
+    private final com.azhukov.agent.core.security.ToolApprovalPolicy approvalPolicy;
     private final MemoryNudgeManager memoryNudgeManager;
     private final SteerBuffer steerBuffer;
 
@@ -106,7 +100,7 @@ public class TurnExecutor {
                          TokenEstimator tokenEstimator,
                          InterruptToken interruptToken,
                          com.azhukov.agent.core.security.ApprovalQueue approvalQueue,
-                         com.azhukov.agent.core.security.ToolGuardrails toolGuardrails,
+                         com.azhukov.agent.core.security.ToolApprovalPolicy approvalPolicy,
                          MemoryNudgeManager memoryNudgeManager,
                          SteerBuffer steerBuffer) {
         this.properties = properties;
@@ -117,7 +111,7 @@ public class TurnExecutor {
         this.tokenEstimator = tokenEstimator;
         this.interruptToken = interruptToken;
         this.approvalQueue = approvalQueue;
-        this.toolGuardrails = toolGuardrails;
+        this.approvalPolicy = approvalPolicy;
         this.memoryNudgeManager = memoryNudgeManager;
         this.steerBuffer = steerBuffer;
     }
@@ -200,7 +194,7 @@ public class TurnExecutor {
     public long computeBackoffMs(ErrorClassifier.ErrorType errorType, int attempt, Exception e) {
         long delayMs;
         if (errorType == ErrorClassifier.ErrorType.RATE_LIMIT) {
-            long retryAfterMs = extractRetryAfterMs(e);
+            long retryAfterMs = TurnExecutorUtils.extractRetryAfterMs(e);
             if (retryAfterMs > 0) {
                 // CUSTOM OPERATOR SETTING: providers here can vanish for minutes
                 // to half an hour (LiteLLM "Try again in 600 seconds" cooldowns).
@@ -288,6 +282,11 @@ public class TurnExecutor {
     public ToolBatchResult executeToolBatch(List<ToolCall> toolCalls, Set<String> registeredToolNames,
                                              Session session, TurnState turnState, int currentTurnIndex,
                                              boolean skipApproval, ToolBatchEvents events) {
+        if (!toolCalls.isEmpty()) {
+            if (approvalPolicy == null || approvalQueue == null) {
+                throw new IllegalStateException("Tool approval policy and queue are required");
+            }
+        }
         // P9 parity (tool_executor.py:661,726): EVERY dispatched tool — including
         // concurrent-segment members — traverses the authorization gate before
         // execution. If any call in the batch requires approval, force the
@@ -295,9 +294,9 @@ public class TurnExecutor {
         boolean allExecuteCode = !toolCalls.isEmpty()
             && toolCalls.stream().allMatch(tc -> "execute_code".equals(tc.name()));
         boolean anyApprovalRequired = false;
-        if (!skipApproval && approvalQueue != null && toolGuardrails != null) {
+        if (!skipApproval) {
             for (ToolCall call : toolCalls) {
-                if (toolGuardrails.requiresApproval(call)) {
+                if (approvalPolicy.requiresApproval(call, approvalPolicy.mcpAdmission(call))) {
                     anyApprovalRequired = true;
                     break;
                 }
@@ -342,10 +341,9 @@ public class TurnExecutor {
                 // Calculate this once before the subagent policy check. Only
                 // approval-gated calls are dangerous: a child must still be able
                 // to use ordinary read-only tools to finish its delegated work.
-                var mcpAdmission = toolGuardrails != null ? toolGuardrails.mcpAdmission(call) : null;
-                boolean flagRequiresApproval = !skipApproval && toolGuardrails != null
-                    && (mcpAdmission != null ? toolGuardrails.requiresApproval(call, mcpAdmission)
-                        : toolGuardrails.requiresApproval(call));
+                var mcpAdmission = approvalPolicy.mcpAdmission(call);
+                boolean flagRequiresApproval = !skipApproval
+                    && approvalPolicy.requiresApproval(call, mcpAdmission);
                 boolean isSubagentChild = !skipApproval && session.getMetadata("delegation_parent_session") != null;
                 if (isSubagentChild && flagRequiresApproval) {
                     log.warn("Subagent session {} auto-denied dangerous tool {} (delegation.subagent_auto-approve=false)", session.id(), call.name());
@@ -358,23 +356,17 @@ public class TurnExecutor {
                     if (events != null) events.onToolResult(call, deniedResult, formatted);
                     continue;
                 }
-                // Fail-closed (tools/approval.py:2984): when the guardrail flags
-                // the tool, gate the call even if the approval request could not
-                // be created (null producer) — nobody can approve a request that
-                // doesn't exist, so the post-wait re-validation denies. The old
-                // `requestApproval(...) != null` conjunct EXECUTED the call when
-                // creation failed (fail-open).
-                if (flagRequiresApproval && approvalQueue != null
-                        && approvalQueue.getPending(session.id()) == null) {
-                    requestApproval(session.id(), call);
-                }
-                boolean approvalRequired = !skipApproval && approvalQueue != null
-                    && (approvalQueue.isPending(session.id()) || flagRequiresApproval);
+                // Each gated call owns one request. Another request in the same
+                // session cannot authorize it or be cleared by this waiter.
+                boolean approvalRequired = flagRequiresApproval;
+                var approvalRequest = approvalRequired
+                    ? approvalPolicy.requestApproval(session.id(), call) : null;
                 boolean decisionReceived = false;
                 if (approvalRequired) {
                     log.info("Tool {} requires approval for session {}, waiting...", call.name(), session.id());
                     long approvalTimeoutMs = java.time.Duration.ofMinutes(5).toMillis();
-                    decisionReceived = approvalQueue.awaitDecision(session.id(), approvalTimeoutMs);
+                    decisionReceived = approvalRequest != null
+                        && approvalQueue.awaitDecision(approvalRequest, approvalTimeoutMs);
                     if (!decisionReceived) {
                         log.warn("Approval wait timed out for session {} after {} ms", session.id(), approvalTimeoutMs);
                     }
@@ -383,7 +375,7 @@ public class TurnExecutor {
                         ToolResult deniedResult = ToolResult.fail("Approval wait interrupted");
                         String formatted = toolResultFormatter.formatResult(deniedResult);
                         toolResults.add(Message.toolResult(call.pairingId(), formatted, currentTurnIndex));
-                        approvalQueue.clear(session.id());
+                        if (approvalRequest != null) approvalQueue.consumeDecision(approvalRequest);
                         if (events != null) events.onToolResult(call, deniedResult, formatted);
                         return new ToolBatchResult(toolResults, true, executions);
                     }
@@ -392,7 +384,7 @@ public class TurnExecutor {
                         ToolResult deniedResult = ToolResult.fail("Approval wait interrupted");
                         String formatted = toolResultFormatter.formatResult(deniedResult);
                         toolResults.add(Message.toolResult(call.pairingId(), formatted, currentTurnIndex));
-                        approvalQueue.clear(session.id());
+                        if (approvalRequest != null) approvalQueue.consumeDecision(approvalRequest);
                         if (events != null) events.onToolResult(call, deniedResult, formatted);
                         return new ToolBatchResult(toolResults, true, executions);
                     }
@@ -402,8 +394,9 @@ public class TurnExecutor {
                 // a user response still blocks the action ("no response" is not a
                 // denial, but it is not a consent either); the old gate (isDenied →
                 // else execute) let pending/timed-out approvals through (fail-open).
-                if (approvalRequired && (!decisionReceived || !approvalQueue.isApproved(session.id()))) {
-                    boolean denied = decisionReceived && approvalQueue.isDenied(session.id());
+                var decision = approvalRequest != null ? approvalQueue.consumeDecision(approvalRequest) : null;
+                if (approvalRequired && (!decisionReceived || decision == null || !decision.approved())) {
+                    boolean denied = decision != null && decision.denied();
                     String why = denied
                         ? "Tool execution denied by user approval"
                         : "Approval wait timed out without a user decision — tool blocked (fail-closed). "
@@ -413,18 +406,8 @@ public class TurnExecutor {
                     ToolResult deniedResult = ToolResult.fail(why);
                     String formatted = toolResultFormatter.formatResult(deniedResult);
                     toolResults.add(Message.toolResult(call.pairingId(), formatted, currentTurnIndex));
-                    approvalQueue.clear(session.id());
                     if (events != null) events.onToolResult(call, deniedResult, formatted);
                 } else {
-                    // rev-131 Hermes parity ('once' semantics, approval.py:4368):
-                    // a user approval is SINGLE-USE. The approved entry must be
-                    // consumed by the execution it authorized — otherwise it
-                    // stays in the map forever and every later dangerous call
-                    // (any tool) skips the prompt via getPending()!=null and
-                    // executes without consent. Fail-open lived here.
-                    if (approvalRequired) {
-                        approvalQueue.clear(session.id());
-                    }
                     // Reset skill/memory counters before execution
                     resetNudgeCounters(call, session.id());
                     if (events != null) events.onToolStart(call);
@@ -689,156 +672,6 @@ public class TurnExecutor {
             return true;
         }
         return false;
-    }
-
-    // ──────────────────────────────────────────────────────────────────
-    //  Shared static helpers
-    // ──────────────────────────────────────────────────────────────────
-
-    // ──────────────────────────────────────────────────────────────────
-    //  Static utility helpers — delegated to TurnExecutorUtils
-    //  (kept here as thin delegates for backward API compatibility)
-    // ──────────────────────────────────────────────────────────────────
-
-    /**
-     * Sleep for the given delay in 200ms increments, checking for thread
-     * interrupts between each chunk. Mirrors Hermes backoff sleep.
-     *
-     * @param delayMs total sleep time in milliseconds
-     * @throws InterruptedException if the thread was interrupted during sleep
-     * @see TurnExecutorUtils#interruptibleSleep(long)
-     */
-    public static void interruptibleSleep(long delayMs) throws InterruptedException {
-        TurnExecutorUtils.interruptibleSleep(delayMs);
-    }
-
-    /**
-     * Detect refusal patterns in the error message that indicate a content
-     * policy violation. Returns a user-friendly message if a refusal pattern
-     * is found, null otherwise.
-     *
-     * @see TurnExecutorUtils#detectRefusalPattern(String)
-     */
-    public static String detectRefusalPattern(String message) {
-        return TurnExecutorUtils.detectRefusalPattern(message);
-    }
-
-    /**
-     * Estimate output tokens from a {@link ChatResponse}.
-     *
-     * @see TurnExecutorUtils#estimateResponseTokens(ChatResponse)
-     */
-    public static int estimateResponseTokens(ChatResponse response) {
-        return TurnExecutorUtils.estimateResponseTokens(response);
-    }
-
-    /**
-     * Estimate output tokens from raw content + tool calls (streaming path).
-     *
-     * @see TurnExecutorUtils#estimateResponseTokens(String, List)
-     */
-    public static int estimateResponseTokens(String content, List<ToolCall> toolCalls) {
-        return TurnExecutorUtils.estimateResponseTokens(content, toolCalls);
-    }
-
-    /**
-     * Strip {@code pattern} and {@code format} JSON Schema keywords from tool schemas.
-     *
-     * @see TurnExecutorUtils#stripGrammarPatternsFromTools(List)
-     */
-    public static List<ToolDefinition> stripGrammarPatternsFromTools(List<ToolDefinition> tools) {
-        return TurnExecutorUtils.stripGrammarPatternsFromTools(tools);
-    }
-
-    /**
-     * Strip {@code pattern} and {@code format} JSON Schema keywords from a
-     * schema map, recursively. Returns the number of keywords stripped.
-     *
-     * @see TurnExecutorUtils#stripPatternAndFormat(Map)
-     */
-    public static int stripPatternAndFormat(Map<String, Object> schema) {
-        return TurnExecutorUtils.stripPatternAndFormat(schema);
-    }
-
-    /**
-     * Check if any message in the context contains thinking/reasoning blocks.
-     *
-     * @see TurnExecutorUtils#containsThinkingBlocks(List)
-     */
-    public static boolean containsThinkingBlocks(List<Message> context) {
-        return TurnExecutorUtils.containsThinkingBlocks(context);
-    }
-
-    /**
-     * Check if any message in the context contains image content (imageCount > 0).
-     *
-     * @see TurnExecutorUtils#containsImageContent(List)
-     */
-    public static boolean containsImageContent(List<Message> context) {
-        return TurnExecutorUtils.containsImageContent(context);
-    }
-
-    /**
-     * Strip image content from all messages (sets imageCount to 0).
-     *
-     * @see TurnExecutorUtils#stripImageContent(List)
-     */
-    public static List<Message> stripImageContent(List<Message> context) {
-        return TurnExecutorUtils.stripImageContent(context);
-    }
-
-    /**
-     * Check if any message in the context contains multimodal tool content
-     * (data: URIs with image/ or base64 content).
-     *
-     * @see TurnExecutorUtils#containsMultimodalToolContent(List)
-     */
-    public static boolean containsMultimodalToolContent(List<Message> context) {
-        return TurnExecutorUtils.containsMultimodalToolContent(context);
-    }
-
-    /**
-     * Strip multimodal tool content from all messages (replaces data: URIs
-     * with a placeholder).
-     *
-     * @see TurnExecutorUtils#stripMultimodalToolContent(List)
-     */
-    public static List<Message> stripMultimodalToolContent(List<Message> context) {
-        return TurnExecutorUtils.stripMultimodalToolContent(context);
-    }
-
-    /**
-     * Extract Retry-After header value from an HTTP exception, if available.
-     *
-     * @param e the exception from the model call
-     * @return retry-after value in milliseconds, or -1 if not found
-     * @see TurnExecutorUtils#extractRetryAfterMs(Exception)
-     */
-    public static long extractRetryAfterMs(Exception e) {
-        return TurnExecutorUtils.extractRetryAfterMs(e);
-    }
-
-    /**
-     * Check if an exception's message contains a substring (case-insensitive).
-     *
-     * @see TurnExecutorUtils#lowerMessageContains(Exception, String)
-     */
-    public static boolean lowerMessageContains(Exception e, String substring) {
-        return TurnExecutorUtils.lowerMessageContains(e, substring);
-    }
-
-    /** F16: create an approval request via the guardrail-owned queue path. */
-    private com.azhukov.agent.core.security.ApprovalQueue.PendingApproval requestApproval(
-            UUID sessionId, ToolCall call) {
-        try {
-            return toolGuardrails != null
-                ? toolGuardrails.requestApproval(sessionId, call)
-                : null;
-        } catch (Exception e) {
-            log.warn("Failed to create approval request for {} in session {}: {}",
-                call.name(), sessionId, e.getMessage());
-            return null;
-        }
     }
 
     // ──────────────────────────────────────────────────────────────────

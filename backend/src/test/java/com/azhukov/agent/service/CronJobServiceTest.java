@@ -62,7 +62,10 @@ class CronJobServiceTest {
         properties = new AgentProperties();
         properties.getCron().setEnabled(false); // Disable scheduling for tests
         lenient().when(agentRuntimeServiceProvider.getIfAvailable()).thenReturn(agentRuntimeService);
-        service = new CronJobService(cronJobRepository, agentRuntimeServiceProvider, properties, skillManager, cronExecutionLogRepository, messageRepository, CronJobServiceTest.unitTransaction(), new CronScheduleParser());
+        service = new CronJobService(
+            cronJobRepository, agentRuntimeServiceProvider, properties, skillManager,
+            cronExecutionLogRepository, messageRepository, CronJobServiceTest.unitTransaction(), new CronScheduleParser(),
+            org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class));
     }
 
     @Test
@@ -115,7 +118,12 @@ class CronJobServiceTest {
         com.azhukov.agent.core.security.UserContext.set("user-a",
             com.azhukov.agent.core.security.UserContext.ROLE_USER);
         try {
-            service.create("owned", "0 * * * *", "Run task", null);
+            service.create(
+            com.azhukov.agent.core.security.UserContext.scopeUserId(), "default", "owned", "0 * * * *",
+            "Run task", null, null, null,
+            null, null, false, null,
+            null, null, null, null,
+            null, false, null);
         } finally {
             com.azhukov.agent.core.security.UserContext.clear();
         }
@@ -134,8 +142,12 @@ class CronJobServiceTest {
             return job;
         });
 
-        service.create("session-owner", "owned", "0 * * * *", "Run task", null,
-            null, null, null, null, false, null, null, null, null, null);
+        service.create(
+            "session-owner", "default", "owned", "0 * * * *",
+            "Run task", null, null, null,
+            null, null, false, null,
+            null, null, null, null,
+            null, false, null);
 
         assertThat(saves).hasSize(1);
         assertThat(saves.getFirst().getUserId()).isEqualTo("session-owner");
@@ -148,7 +160,12 @@ class CronJobServiceTest {
             e.setId(UUID.randomUUID());
             return e;
         });
-        CronJobEntity job = service.create("test-job", "0 * * * *", "Run task", null);
+        CronJobEntity job = service.create(
+            com.azhukov.agent.core.security.UserContext.scopeUserId(), "default", "test-job", "0 * * * *",
+            "Run task", null, null, null,
+            null, null, false, null,
+            null, null, null, null,
+            null, false, null);
         assertThat(job.getName()).isEqualTo("test-job");
         assertThat(job.getSchedule()).isEqualTo("0 * * * *");
         assertThat(job.getPrompt()).isEqualTo("Run task");
@@ -374,6 +391,73 @@ class CronJobServiceTest {
         verify(cronJobRepository).deleteById(id);
     }
 
+    @Test
+    void manualBackgroundRunRetainsCallerIdentityOnSchedulerThread() throws Exception {
+        var job = new CronJobEntity();
+        job.setId(UUID.randomUUID());
+        job.setUserId("owner-a");
+        job.setName("identity test");
+        job.setPrompt("test");
+        job.setEnabled(true);
+        when(cronJobRepository.findById(job.getId())).thenReturn(Optional.of(job));
+        var scheduler = mock(java.util.concurrent.ScheduledExecutorService.class);
+        var callback = org.mockito.ArgumentCaptor.forClass(Runnable.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "scheduler", scheduler);
+        var observed = new java.util.concurrent.atomic.AtomicReference<com.pdlc.auth.HumanApplicationAccess>();
+        var proof = new com.pdlc.auth.HumanApplicationAccess("owner-a", "user", java.util.Set.of("java-agent"), 1, true,
+            Instant.now().plusSeconds(60), System.nanoTime() + 60_000_000_000L);
+        when(agentRuntimeService.runBackground(any(), eq(true), eq("owner-a"), any()))
+            .thenAnswer(inv -> { observed.set(com.azhukov.agent.core.security.UserContext.centralAccess()); return UUID.randomUUID().toString(); });
+        com.azhukov.agent.core.security.UserContext.setCentral(proof);
+        try {
+            service.runNowBackground(job.getId(), null);
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+        }
+        verify(scheduler).execute(callback.capture());
+        var executor = java.util.concurrent.Executors.newSingleThreadExecutor();
+        try {
+            executor.submit(callback.getValue()).get();
+        } finally {
+            executor.shutdownNow();
+        }
+        assertThat(observed.get()).isSameAs(proof);
+    }
+
+    @Test
+    void manualBackgroundRunFailsClosedWhenQueuedProofHasExpired() throws Exception {
+        var job = new CronJobEntity();
+        job.setId(UUID.randomUUID());
+        job.setUserId("owner-a");
+        when(cronJobRepository.findById(job.getId())).thenReturn(Optional.of(job));
+        var scheduler = mock(java.util.concurrent.ScheduledExecutorService.class);
+        var callback = org.mockito.ArgumentCaptor.forClass(Runnable.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "scheduler", scheduler);
+        // The access decision is valid at enqueue, then revoked before the queued callback runs.
+        var proof = mock(com.pdlc.auth.HumanApplicationAccess.class);
+        when(proof.subject()).thenReturn("owner-a");
+        when(proof.role()).thenReturn("user");
+        var allowed = new java.util.concurrent.atomic.AtomicBoolean(true);
+        when(proof.permits(any(), eq(false))).thenAnswer(inv -> allowed.get());
+        com.azhukov.agent.core.security.UserContext.setCentral(proof);
+        try {
+            service.runNowBackground(job.getId(), null);
+        } finally {
+            com.azhukov.agent.core.security.UserContext.clear();
+        }
+        verify(scheduler).execute(callback.capture());
+        allowed.set(false);
+        var executor = java.util.concurrent.Executors.newSingleThreadExecutor();
+        try {
+            executor.submit(callback.getValue()).get();
+            assertThat(executor.submit(com.azhukov.agent.core.security.UserContext::getUserId).get()).isNull();
+        } finally {
+            executor.shutdownNow();
+        }
+        verify(cronJobRepository, times(1)).findById(job.getId());
+        verifyNoInteractions(agentRuntimeService);
+    }
+
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.NullSource
     @org.junit.jupiter.params.provider.ValueSource(strings = {"owner-a", "456"})
@@ -389,7 +473,7 @@ class CronJobServiceTest {
         service.runNow(id);
         verify(agentRuntimeService).runBackground(org.mockito.AdditionalMatchers.and(
             org.mockito.ArgumentMatchers.startsWith("[IMPORTANT: You are running as a scheduled cron job."),
-            org.mockito.ArgumentMatchers.contains("Do something")), eq(true), eq(storedOwner != null ? storedOwner : AgentProperties.DEFAULT_USER_ID), eq(java.util.Map.of()));
+            org.mockito.ArgumentMatchers.contains("Do something")), eq(true), eq(storedOwner != null ? storedOwner : AgentProperties.DEFAULT_USER_ID), eq(java.util.Map.of(com.azhukov.agent.tools.cron.CronJobTool.CRON_RUN_METADATA, "true")));
     }
 
     @Test
@@ -401,7 +485,12 @@ class CronJobServiceTest {
         job.setSchedule("0 * * * *");
         when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
         when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        CronJobEntity updated = service.update(id, "new-name", "0 0 * * *", "New prompt", null, true);
+        CronJobEntity updated = service.update(
+            id, "new-name", "0 0 * * *", "New prompt",
+            null, true, null, null,
+            null, null, null, null,
+            null, null, null, null,
+            null, null, null, null);
         assertThat(updated.getName()).isEqualTo("new-name");
         assertThat(updated.getSchedule()).isEqualTo("0 0 * * *");
         assertThat(updated.getPrompt()).isEqualTo("New prompt");
@@ -426,7 +515,12 @@ class CronJobServiceTest {
             e.setId(UUID.randomUUID());
             return e;
         });
-        CronJobEntity job = service.create("skill-job", "0 * * * *", "Run task", null, "hermes-agent,backend-dev");
+        CronJobEntity job = service.create(
+            com.azhukov.agent.core.security.UserContext.scopeUserId(), "default", "skill-job", "0 * * * *",
+            "Run task", null, "hermes-agent,backend-dev", null,
+            null, null, false, null,
+            null, null, null, null,
+            null, false, null);
         assertThat(job.getSkills()).isEqualTo("hermes-agent,backend-dev");
     }
 
@@ -449,7 +543,7 @@ class CronJobServiceTest {
         verify(skillManager).getSkill("hermes-agent");
         verify(skillManager).getSkill("backend-dev");
         // Verify the enhanced prompt (with skills injected) was passed to runtime
-        verify(agentRuntimeService).runBackground(org.mockito.ArgumentMatchers.contains("Use this skill"), eq(true), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(java.util.Map.of()));
+        verify(agentRuntimeService).runBackground(org.mockito.ArgumentMatchers.contains("Use this skill"), eq(true), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(java.util.Map.of(com.azhukov.agent.tools.cron.CronJobTool.CRON_RUN_METADATA, "true")));
     }
 
     @Test
@@ -467,7 +561,7 @@ class CronJobServiceTest {
 
         verify(agentRuntimeService).runBackground(org.mockito.AdditionalMatchers.and(
             org.mockito.ArgumentMatchers.startsWith("[IMPORTANT: You are running as a scheduled cron job."),
-            org.mockito.ArgumentMatchers.contains("Do something plain")), eq(true), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(java.util.Map.of()));
+            org.mockito.ArgumentMatchers.contains("Do something plain")), eq(true), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(java.util.Map.of(com.azhukov.agent.tools.cron.CronJobTool.CRON_RUN_METADATA, "true")));
         verifyNoInteractions(skillManager);
     }
 
@@ -480,7 +574,12 @@ class CronJobServiceTest {
             e.setId(UUID.randomUUID());
             return e;
         });
-        CronJobEntity job = service.create("interval-job", "5m", "Run task", null);
+        CronJobEntity job = service.create(
+            com.azhukov.agent.core.security.UserContext.scopeUserId(), "default", "interval-job", "5m",
+            "Run task", null, null, null,
+            null, null, false, null,
+            null, null, null, null,
+            null, false, null);
         assertThat(job.getSchedule()).isEqualTo("5m");
         assertThat(job.isEnabled()).isTrue();
     }
@@ -492,7 +591,12 @@ class CronJobServiceTest {
             e.setId(UUID.randomUUID());
             return e;
         });
-        CronJobEntity job = service.create("interval-job", "every 2h", "Run task", null);
+        CronJobEntity job = service.create(
+            com.azhukov.agent.core.security.UserContext.scopeUserId(), "default", "interval-job", "every 2h",
+            "Run task", null, null, null,
+            null, null, false, null,
+            null, null, null, null,
+            null, false, null);
         assertThat(job.getSchedule()).isEqualTo("every 2h");
     }
 
@@ -503,7 +607,12 @@ class CronJobServiceTest {
             e.setId(UUID.randomUUID());
             return e;
         });
-        CronJobEntity job = service.create("interval-job", "30s", "Run task", null);
+        CronJobEntity job = service.create(
+            com.azhukov.agent.core.security.UserContext.scopeUserId(), "default", "interval-job", "30s",
+            "Run task", null, null, null,
+            null, null, false, null,
+            null, null, null, null,
+            null, false, null);
         assertThat(job.getSchedule()).isEqualTo("30s");
     }
 
@@ -514,14 +623,24 @@ class CronJobServiceTest {
             e.setId(UUID.randomUUID());
             return e;
         });
-        CronJobEntity job = service.create("interval-job", "1d", "Run task", null);
+        CronJobEntity job = service.create(
+            com.azhukov.agent.core.security.UserContext.scopeUserId(), "default", "interval-job", "1d",
+            "Run task", null, null, null,
+            null, null, false, null,
+            null, null, null, null,
+            null, false, null);
         assertThat(job.getSchedule()).isEqualTo("1d");
     }
 
     @Test
     void createWithInvalidSchedule_throwsException() {
         org.assertj.core.api.Assertions.assertThatThrownBy(() ->
-            service.create("bad-job", "not-a-schedule", "Run task", null))
+            service.create(
+            com.azhukov.agent.core.security.UserContext.scopeUserId(), "default", "bad-job", "not-a-schedule",
+            "Run task", null, null, null,
+            null, null, false, null,
+            null, null, null, null,
+            null, false, null))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessageContaining("Invalid");
     }
@@ -529,14 +648,24 @@ class CronJobServiceTest {
     @Test
     void createWithNullSchedule_throwsException() {
         org.assertj.core.api.Assertions.assertThatThrownBy(() ->
-            service.create("null-schedule", null, "Run task", null))
+            service.create(
+            com.azhukov.agent.core.security.UserContext.scopeUserId(), "default", "null-schedule", null,
+            "Run task", null, null, null,
+            null, null, false, null,
+            null, null, null, null,
+            null, false, null))
             .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void createWithBlankSchedule_throwsException() {
         org.assertj.core.api.Assertions.assertThatThrownBy(() ->
-            service.create("blank-schedule", "  ", "Run task", null))
+            service.create(
+            com.azhukov.agent.core.security.UserContext.scopeUserId(), "default", "blank-schedule", "  ",
+            "Run task", null, null, null,
+            null, null, false, null,
+            null, null, null, null,
+            null, false, null))
             .isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -549,7 +678,12 @@ class CronJobServiceTest {
         job.setSchedule("0 * * * *");
         when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
         when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        CronJobEntity updated = service.update(id, "new-name", "10m", "New prompt", null, true);
+        CronJobEntity updated = service.update(
+            id, "new-name", "10m", "New prompt",
+            null, true, null, null,
+            null, null, null, null,
+            null, null, null, null,
+            null, null, null, null);
         assertThat(updated.getSchedule()).isEqualTo("10m");
     }
 
@@ -566,13 +700,11 @@ class CronJobServiceTest {
         when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         CronJobEntity updated = service.update(
-            id, "new-name", "every 1h", "New prompt", "telegram", true,
-            "skill1,skill2", "ctx-job-1",
-            5,
-            "check.sh", true,
-            "web,terminal", "/tmp/workdir",
-            "openai", "gpt-4", "https://api.openai.com"
-        );
+            id, "new-name", "every 1h", "New prompt",
+            "telegram", true, "skill1,skill2", "ctx-job-1",
+            5, "check.sh", true, "web,terminal",
+            "/tmp/workdir", "openai", "gpt-4", "https://api.openai.com",
+            null, null, null, null);
 
         assertThat(updated.getName()).isEqualTo("new-name");
         assertThat(updated.getSchedule()).isEqualTo("every 1h");
@@ -600,8 +732,12 @@ class CronJobServiceTest {
         when(cronJobRepository.findById(id)).thenReturn(Optional.of(job));
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() ->
-            service.update(id, null, null, null, null, null,
-                null, null, null, null, true, null, null, null, null, null))
+            service.update(
+            id, null, null, null,
+            null, null, null, null,
+            null, null, true, null,
+            null, null, null, null,
+            null, null, null, null))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessageContaining("script");
     }
@@ -617,9 +753,11 @@ class CronJobServiceTest {
         when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         CronJobEntity updated = service.update(
-            id, null, null, null, null, null,
-            null, null, null, "monitor.sh", true,
-            null, null, null, null, null);
+            id, null, null, null,
+            null, null, null, null,
+            null, "monitor.sh", true, null,
+            null, null, null, null,
+            null, null, null, null);
 
         assertThat(updated.isNoAgent()).isTrue();
         assertThat(updated.getScript()).isEqualTo("monitor.sh");
@@ -642,9 +780,11 @@ class CronJobServiceTest {
         when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         CronJobEntity updated = service.update(
-            id, null, null, null, null, null,
-            null, null, null, "", null,
-            "", "", "", "", "");
+            id, null, null, null,
+            null, null, null, null,
+            null, "", null, "",
+            "", "", "", "",
+            null, null, null, null);
 
         assertThat(updated.getScript()).isNull();
         assertThat(updated.getEnabledToolsets()).isNull();
@@ -664,8 +804,11 @@ class CronJobServiceTest {
             return e;
         });
         CronJobEntity job = service.create(
-            "repeat-job", "every 1h", "Run task", null, null, null,
-            3, null, false, null, null, null, null, null);
+            com.azhukov.agent.core.security.UserContext.scopeUserId(), "default", "repeat-job", "every 1h",
+            "Run task", null, null, null,
+            3, null, false, null,
+            null, null, null, null,
+            null, false, null);
         assertThat(job.getRepeatCount()).isEqualTo(3);
         assertThat(job.getRepeatCompleted()).isEqualTo(0);
     }
@@ -678,8 +821,11 @@ class CronJobServiceTest {
             return e;
         });
         CronJobEntity job = service.create(
-            "repeat-job", "every 1h", "Run task", null, null, null,
-            0, null, false, null, null, null, null, null);
+            com.azhukov.agent.core.security.UserContext.scopeUserId(), "default", "repeat-job", "every 1h",
+            "Run task", null, null, null,
+            0, null, false, null,
+            null, null, null, null,
+            null, false, null);
         assertThat(job.getRepeatCount()).isNull();
     }
 
@@ -694,8 +840,11 @@ class CronJobServiceTest {
         when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         CronJobEntity updated = service.update(
-            id, null, null, null, null, null,
-            null, null, 10, null, null, null, null, null, null, null);
+            id, null, null, null,
+            null, null, null, null,
+            10, null, null, null,
+            null, null, null, null,
+            null, null, null, null);
 
         assertThat(updated.getRepeatCount()).isEqualTo(10);
     }
@@ -711,8 +860,11 @@ class CronJobServiceTest {
         when(cronJobRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         CronJobEntity updated = service.update(
-            id, null, null, null, null, null,
-            null, null, 0, null, null, null, null, null, null, null);
+            id, null, null, null,
+            null, null, null, null,
+            0, null, null, null,
+            null, null, null, null,
+            null, null, null, null);
 
         assertThat(updated.getRepeatCount()).isNull();
     }
@@ -727,7 +879,12 @@ class CronJobServiceTest {
             return e;
         });
         // "30m" without "every" → one-shot, repeatCount auto-set to 1
-        CronJobEntity job = service.create("oneshot", "30m", "Run once", null);
+        CronJobEntity job = service.create(
+            com.azhukov.agent.core.security.UserContext.scopeUserId(), "default", "oneshot", "30m",
+            "Run once", null, null, null,
+            null, null, false, null,
+            null, null, null, null,
+            null, false, null);
         assertThat(job.getRepeatCount()).isEqualTo(1);
     }
 
@@ -739,7 +896,12 @@ class CronJobServiceTest {
             return e;
         });
         // ISO timestamp → one-shot, repeatCount auto-set to 1
-        CronJobEntity job = service.create("oneshot-iso", "2099-12-31T23:59:00", "Run once", null);
+        CronJobEntity job = service.create(
+            com.azhukov.agent.core.security.UserContext.scopeUserId(), "default", "oneshot-iso", "2099-12-31T23:59:00",
+            "Run once", null, null, null,
+            null, null, false, null,
+            null, null, null, null,
+            null, false, null);
         assertThat(job.getRepeatCount()).isEqualTo(1);
     }
 
@@ -751,7 +913,12 @@ class CronJobServiceTest {
             return e;
         });
         // "every 30m" → recurring, repeatCount stays null (forever)
-        CronJobEntity job = service.create("recurring", "every 30m", "Run forever", null);
+        CronJobEntity job = service.create(
+            com.azhukov.agent.core.security.UserContext.scopeUserId(), "default", "recurring", "every 30m",
+            "Run forever", null, null, null,
+            null, null, false, null,
+            null, null, null, null,
+            null, false, null);
         assertThat(job.getRepeatCount()).isNull();
     }
 
@@ -763,7 +930,12 @@ class CronJobServiceTest {
             return e;
         });
         // "0 9 * * *" → recurring cron, repeatCount stays null
-        CronJobEntity job = service.create("cron-job", "0 9 * * *", "Run daily", null);
+        CronJobEntity job = service.create(
+            com.azhukov.agent.core.security.UserContext.scopeUserId(), "default", "cron-job", "0 9 * * *",
+            "Run daily", null, null, null,
+            null, null, false, null,
+            null, null, null, null,
+            null, false, null);
         assertThat(job.getRepeatCount()).isNull();
     }
 
@@ -776,8 +948,11 @@ class CronJobServiceTest {
         });
         // one-shot with explicit repeat=3 → use 3, not auto-1
         CronJobEntity job = service.create(
-            "oneshot-3x", "30m", "Run 3 times", null, null, null,
-            3, null, false, null, null, null, null, null);
+            com.azhukov.agent.core.security.UserContext.scopeUserId(), "default", "oneshot-3x", "30m",
+            "Run 3 times", null, null, null,
+            3, null, false, null,
+            null, null, null, null,
+            null, false, null);
         assertThat(job.getRepeatCount()).isEqualTo(3);
     }
 
@@ -789,7 +964,12 @@ class CronJobServiceTest {
             e.setId(UUID.randomUUID());
             return e;
         });
-        service.create("iso-job", "2099-06-01T09:00:00", "Run at time", null);
+        service.create(
+            com.azhukov.agent.core.security.UserContext.scopeUserId(), "default", "iso-job", "2099-06-01T09:00:00",
+            "Run at time", null, null, null,
+            null, null, false, null,
+            null, null, null, null,
+            null, false, null);
     }
 
     @Test
@@ -799,7 +979,12 @@ class CronJobServiceTest {
             e.setId(UUID.randomUUID());
             return e;
         });
-        service.create("iso-job", "2099-06-01T09:00", "Run at time", null);
+        service.create(
+            com.azhukov.agent.core.security.UserContext.scopeUserId(), "default", "iso-job", "2099-06-01T09:00",
+            "Run at time", null, null, null,
+            null, null, false, null,
+            null, null, null, null,
+            null, false, null);
     }
 
     // ── Fix 4: no_agent mode tests ──
@@ -808,8 +993,11 @@ class CronJobServiceTest {
     void createNoAgentWithoutScript_throwsException() {
         org.assertj.core.api.Assertions.assertThatThrownBy(() ->
             service.create(
-                "noagent-job", "every 5m", null, null, null, null,
-                null, null, true, null, null, null, null, null))
+            com.azhukov.agent.core.security.UserContext.scopeUserId(), "default", "noagent-job", "every 5m",
+            null, null, null, null,
+            null, null, true, null,
+            null, null, null, null,
+            null, false, null))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessageContaining("no_agent");
     }
@@ -822,8 +1010,11 @@ class CronJobServiceTest {
             return e;
         });
         CronJobEntity job = service.create(
-            "watchdog", "every 5m", null, null, null, null,
-            null, "monitor.sh", true, null, null, null, null, null);
+            com.azhukov.agent.core.security.UserContext.scopeUserId(), "default", "watchdog", "every 5m",
+            null, null, null, null,
+            null, "monitor.sh", true, null,
+            null, null, null, null,
+            null, false, null);
         assertThat(job.isNoAgent()).isTrue();
         assertThat(job.getScript()).isEqualTo("monitor.sh");
     }
@@ -844,7 +1035,7 @@ class CronJobServiceTest {
         service.runNow(id);
 
         // Verify LLM was NOT called
-        verify(agentRuntimeService, never()).runBackground(any(), org.mockito.ArgumentMatchers.anyBoolean(), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(java.util.Map.of()));
+        verify(agentRuntimeService, never()).runBackground(any(), org.mockito.ArgumentMatchers.anyBoolean(), org.mockito.ArgumentMatchers.anyString(), any());
     }
 
     // ── Fix 5/6/7: Override field tests ──
@@ -857,8 +1048,11 @@ class CronJobServiceTest {
             return e;
         });
         CronJobEntity job = service.create(
-            "restricted", "every 1h", "Run task", null, null, null,
-            null, null, false, "web,terminal", null, null, null, null);
+            com.azhukov.agent.core.security.UserContext.scopeUserId(), "default", "restricted", "every 1h",
+            "Run task", null, null, null,
+            null, null, false, "web,terminal",
+            null, null, null, null,
+            null, false, null);
         assertThat(job.getEnabledToolsets()).isEqualTo("web,terminal");
     }
 
@@ -870,8 +1064,11 @@ class CronJobServiceTest {
             return e;
         });
         CronJobEntity job = service.create(
-            "workdir-job", "every 1h", "Run task", null, null, null,
-            null, null, false, null, "/opt/dev", null, null, null);
+            com.azhukov.agent.core.security.UserContext.scopeUserId(), "default", "workdir-job", "every 1h",
+            "Run task", null, null, null,
+            null, null, false, null,
+            "/opt/dev", null, null, null,
+            null, false, null);
         assertThat(job.getWorkdir()).isEqualTo("/opt/dev");
     }
 
@@ -883,8 +1080,11 @@ class CronJobServiceTest {
             return e;
         });
         CronJobEntity job = service.create(
-            "override-job", "every 1h", "Run task", null, null, null,
-            null, null, false, null, null, "anthropic", "claude-sonnet-4", "https://api.anthropic.com");
+            com.azhukov.agent.core.security.UserContext.scopeUserId(), "default", "override-job", "every 1h",
+            "Run task", null, null, null,
+            null, null, false, null,
+            null, "anthropic", "claude-sonnet-4", "https://api.anthropic.com",
+            null, false, null);
         assertThat(job.getModelProvider()).isEqualTo("anthropic");
         assertThat(job.getModelName()).isEqualTo("claude-sonnet-4");
         assertThat(job.getBaseUrl()).isEqualTo("https://api.anthropic.com");
@@ -909,6 +1109,7 @@ class CronJobServiceTest {
 
         verify(agentRuntimeService).runBackground(org.mockito.AdditionalMatchers.and(
             org.mockito.ArgumentMatchers.startsWith("[IMPORTANT: You are running as a scheduled cron job."),
-            org.mockito.ArgumentMatchers.contains("Do something")), eq(true), org.mockito.ArgumentMatchers.anyString(), eq(java.util.Map.of("delegation_toolsets", "web,terminal", "cron_workdir", "/opt/dev")));
+            org.mockito.ArgumentMatchers.contains("Do something")), eq(true), org.mockito.ArgumentMatchers.anyString(), eq(java.util.Map.of("delegation_toolsets", "web,terminal", "cron_workdir", "/opt/dev",
+                com.azhukov.agent.tools.cron.CronJobTool.CRON_RUN_METADATA, "true")));
     }
 }

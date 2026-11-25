@@ -55,19 +55,6 @@ class ResumeCommandTest {
     }
 
     @Test
-    void resumeAndListAreScopedToCurrentTopic() {
-        BotSessionStore store = mock(BotSessionStore.class);
-        var other = new BotSessionEntity(); other.setId(UUID.randomUUID()); other.setTitle("Project other"); other.setThreadId(7L);
-        var own = new BotSessionEntity(); own.setId(UUID.randomUUID()); own.setTitle("Project own"); own.setThreadId(42L);
-        when(store.listByUserId("456")).thenReturn(List.of(other, own));
-        when(store.resumeSession(own.getId(), "456")).thenReturn(own);
-        var event = new UpdateEvent(1, Type.COMMAND, -123, 456, "user", "/resume Project",
-            null, null, null, null, null, null, true, "resume", "Project", 1L, null, 42L);
-        assertThat(new ResumeCommand(store).handle(event, null)).contains("Project own");
-        verify(store, never()).resumeSession(other.getId(), "456");
-    }
-
-    @Test
     void nameAndDescription() {
         var cmd = new ResumeCommand(mock(BotSessionStore.class));
         assertThat(cmd.name()).isEqualTo("resume");

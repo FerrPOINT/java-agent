@@ -2,6 +2,7 @@ package com.azhukov.agent.bot.commands.impl;
 
 import com.azhukov.agent.bot.commands.CommandHandler;
 import com.azhukov.agent.bot.core.AgentBackendClient;
+import com.azhukov.agent.bot.core.SessionApiClient.CleanupResult;
 import com.azhukov.agent.bot.polling.UpdateEvent;
 import com.azhukov.agent.bot.session.BotSessionEntity;
 import com.azhukov.agent.bot.session.BotSessionStore;
@@ -31,17 +32,19 @@ public class NewSessionCommand implements CommandHandler {
         if (session == null || session.getId() == null) {
             return "No active session.";
         }
-        if (!store.finalizeWithCleanupPending(session.getId(), session.getUpdatedAt())) {
-            return "Session changed; please retry /new.";
-        }
+        // Release runtime state without deleting the transcript; deactivation
+        // binds the next message to a new backend session.
+        String backendId = session.getBackendSessionId() != null
+            ? session.getBackendSessionId().toString() : null;
         boolean cleanupFailed = false;
-        if (session.getBackendSessionId() != null) {
+        if (backendId != null) {
             try {
-                cleanupFailed = !store.retryCleanup(session.getId(), id -> backendClient.cleanupSession(id.toString()));
+                cleanupFailed = backendClient.cleanupSession(backendId) != CleanupResult.CLEANED;
             } catch (Exception e) {
                 cleanupFailed = true;
             }
         }
+        store.deactivateAll(session.getUserId());
         if (cleanupFailed) {
             return "Started a new session. Previous history is preserved, but runtime cleanup failed.";
         }

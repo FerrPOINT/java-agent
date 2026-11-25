@@ -27,7 +27,6 @@ class SessionExpiryWatcherTest {
         resetPolicy.setIdleMinutes(1);
         backendClientRef = mock(
             com.azhukov.agent.bot.core.AgentBackendClient.class);
-        when(sessionStore.finalizeWithCleanupPending(any(), any())).thenReturn(true);
         watcher = new SessionExpiryWatcher(sessionStore, resetPolicy, backendClientRef,
             mock(com.azhukov.agent.bot.session.BusySessionHandler.class));
     }
@@ -60,8 +59,8 @@ class SessionExpiryWatcherTest {
         watcher.checkExpiredSessions();
 
         // Only the expired session should be finalized
-        verify(sessionStore).finalizeWithCleanupPending(expiredSession.getId(), expiredSession.getUpdatedAt());
-        verify(sessionStore, never()).finalizeWithCleanupPending(freshSession.getId(), freshSession.getUpdatedAt());
+        verify(sessionStore).finalizeSession(expiredSession.getId());
+        verify(sessionStore, never()).finalizeSession(freshSession.getId());
     }
 
     @Test
@@ -72,12 +71,10 @@ class SessionExpiryWatcherTest {
         expired.setCreatedAt(Instant.now().minusSeconds(3600));
         expired.setUpdatedAt(Instant.now().minusSeconds(3600));
         when(sessionStore.listActiveSessions()).thenReturn(List.of(expired));
-        when(sessionStore.retryCleanup(eq(expired.getId()), any())).thenAnswer(invocation ->
-            ((java.util.function.Function<UUID, Boolean>) invocation.getArgument(1)).apply(expired.getBackendSessionId()));
 
         watcher.checkExpiredSessions();
 
-        verify(sessionStore).finalizeWithCleanupPending(expired.getId(), expired.getUpdatedAt());
+        verify(sessionStore).finalizeSession(expired.getId());
         verify(backendClientRef, never()).resetSession(any());
         verify(backendClientRef).cleanupSession(expired.getBackendSessionId().toString());
     }
@@ -97,14 +94,13 @@ class SessionExpiryWatcherTest {
         com.azhukov.agent.bot.session.BusySessionHandler busy =
             mock(com.azhukov.agent.bot.session.BusySessionHandler.class);
         when(busy.isBusy(111222333L)).thenReturn(true);
-        when(sessionStore.finalizeWithCleanupPending(any(), any())).thenReturn(true);
         watcher = new SessionExpiryWatcher(sessionStore, resetPolicy, backendClientRef, busy);
 
         when(sessionStore.listActiveSessions()).thenReturn(List.of(expiredBusy));
 
         watcher.checkExpiredSessions();
 
-        verify(sessionStore, never()).finalizeWithCleanupPending(any(), any());
+        verify(sessionStore, never()).finalizeSession(any());
     }
 
     @Test
@@ -113,7 +109,7 @@ class SessionExpiryWatcherTest {
 
         watcher.checkExpiredSessions();
 
-        verify(sessionStore, never()).finalizeWithCleanupPending(any(), any());
+        verify(sessionStore, never()).finalizeSession(any());
     }
 
     @Test
@@ -130,7 +126,7 @@ class SessionExpiryWatcherTest {
 
         watcher.checkExpiredSessions();
 
-        verify(sessionStore, never()).finalizeWithCleanupPending(any(), any());
+        verify(sessionStore, never()).finalizeSession(any());
     }
 
     @Test

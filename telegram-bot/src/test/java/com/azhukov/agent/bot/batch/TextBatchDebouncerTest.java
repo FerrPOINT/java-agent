@@ -25,6 +25,66 @@ class TextBatchDebouncerTest {
     }
 
     @Test
+    void concurrentOffersAndFlushDoNotLoseMessages() throws Exception {
+        properties.getTextBatch().setFastDelayMs(10_000);
+        var delivered = new java.util.concurrent.LinkedBlockingQueue<UpdateEvent>();
+        debouncer.onDispatch(delivered::add);
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            for (int i = 0; i < 300; i++) {
+                debouncer.offer(textEvent(2L * i, 100L, "first"));
+                var barrier = new java.util.concurrent.CyclicBarrier(2);
+                var offer = pool.submit(() -> { barrier.await(); debouncer.offer(textEvent(2, 100L, "second")); return null; });
+                var flush = pool.submit(() -> { barrier.await(); debouncer.flushAll(); return null; });
+                offer.get();
+                flush.get();
+                debouncer.flushAll();
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+        long first = delivered.stream().map(UpdateEvent::text).mapToLong(s -> s.split("first", -1).length - 1).sum();
+        long second = delivered.stream().map(UpdateEvent::text).mapToLong(s -> s.split("second", -1).length - 1).sum();
+        assertThat(first).isEqualTo(300);
+        assertThat(second).isEqualTo(300);
+    }
+
+    @Test
+    void distinctUsersAndTopicsNeverShareOneBatch() {
+        var dispatched = new java.util.ArrayList<UpdateEvent>();
+        debouncer.onDispatch(dispatched::add);
+        var a = new UpdateEvent(1, UpdateEvent.Type.TEXT, -100L, 1L, "a", "first",
+            null, null, null, null, null, null, false, null, null, 101, null, 11);
+        var b = new UpdateEvent(2, UpdateEvent.Type.TEXT, -100L, 2L, "b", "second",
+            null, null, null, null, null, null, false, null, null, 102, null, 11);
+        var c = new UpdateEvent(3, UpdateEvent.Type.TEXT, -100L, 1L, "a", "third",
+            null, null, null, null, null, null, false, null, null, 103, null, 22);
+
+        debouncer.offer(a);
+        debouncer.offer(b);
+        debouncer.offer(c);
+        debouncer.flushAll();
+
+        assertThat(dispatched).extracting(UpdateEvent::text).containsExactlyInAnyOrder("first", "second", "third");
+        assertThat(dispatched).extracting(UpdateEvent::userId).containsExactlyInAnyOrder(1L, 2L, 1L);
+        assertThat(dispatched).extracting(UpdateEvent::messageThreadId).containsExactlyInAnyOrder(11L, 11L, 22L);
+    }
+
+    @Test
+    void textBatchKeepsTelegramUpdateOrder() {
+        properties.getTextBatch().setFastDelayMs(10_000);
+        var dispatched = new java.util.ArrayList<UpdateEvent>();
+        debouncer.onDispatch(dispatched::add);
+        debouncer.offer(textEvent(3, 100, "third"));
+        debouncer.offer(textEvent(1, 100, "first"));
+        debouncer.offer(textEvent(2, 100, "second"));
+        debouncer.flushAll();
+        assertThat(dispatched).hasSize(1);
+        assertThat(dispatched.getFirst().text()).isEqualTo("first second third");
+        assertThat(dispatched.getFirst().updateId()).isEqualTo(1);
+    }
+
+    @Test
     void shortMessagesJoinedWithSpace() {
         long chatId = 100L;
         debouncer.offer(textEvent(1, chatId, "what is"));

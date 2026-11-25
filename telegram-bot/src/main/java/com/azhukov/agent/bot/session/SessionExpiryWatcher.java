@@ -7,6 +7,7 @@ import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 
 import com.azhukov.agent.bot.core.AgentBackendClient;
+import com.azhukov.agent.bot.core.SessionApiClient.CleanupResult;
 
 import jakarta.annotation.PreDestroy;
 import java.time.Instant;
@@ -78,15 +79,8 @@ public class SessionExpiryWatcher {
      */
     void checkExpiredSessions() {
         try {
-            var cleanupIds = new java.util.LinkedHashSet<java.util.UUID>();
             Instant now = Instant.now();
-            List<BotSessionEntity> activeSessions;
-            try {
-                activeSessions = sessionStore.listActiveSessions();
-            } catch (Exception e) {
-                log.warn("Could not load active sessions; will retry expiry on the next check");
-                activeSessions = List.of();
-            }
+            List<BotSessionEntity> activeSessions = sessionStore.listActiveSessions();
             for (BotSessionEntity session : activeSessions) {
                 // rev-123: never finalize a session whose chat is mid-turn
                 // (Hermes _has_active_processes_safe).
@@ -104,36 +98,28 @@ public class SessionExpiryWatcher {
                         session.getId(), busyEx.getMessage());
                     continue;
                 }
-                String reason;
-                try {
-                    reason = resetPolicy.shouldReset(session.getCreatedAt(), session.getUpdatedAt(), now);
-                } catch (Exception e) {
-                    log.warn("Could not evaluate expiry for session {}; keeping it active", session.getId());
-                    continue;
-                }
+                String reason = resetPolicy.shouldReset(session.getCreatedAt(), session.getUpdatedAt(), now);
                 if (reason != null) {
-                    log.info("Finalizing expired session {} (reason={}, userId={})",
-                        session.getId(), reason, session.getUserId());
-                    // Persist the cleanup intent atomically with deactivation before the HTTP call.
+                    // rev-69: notify backend to clean up per-session state
+                    // (context engine, guardrails, nudge counters, prompt cache,
+                    // interrupt tokens, steer buffer). Without this, expired bot
+                    // sessions leak backend state forever — the bot deactivates
+                    // its own row but the backend never knows.
                     try {
-                        if (sessionStore.finalizeWithCleanupPending(session.getId(), session.getUpdatedAt())) {
-                            cleanupIds.add(session.getId());
+                        if (session.getBackendSessionId() != null) {
+                            var result = backendClient.cleanupSession(session.getBackendSessionId().toString());
+                            if (result == CleanupResult.BUSY) {
+                                log.debug("Session {} remains active because the backend is running a turn", session.getId());
+                                continue;
+                            }
                         }
                     } catch (Exception e) {
-                        log.warn("Could not finalize expired session {}; will retry on the next check", session.getId());
+                        log.warn("Backend cleanup for expired session {} failed: {}",
+                            session.getId(), e.getMessage());
                     }
-                }
-            }
-            try {
-                sessionStore.pendingCleanups().stream().map(BotSessionEntity::getId).forEach(cleanupIds::add);
-            } catch (Exception e) {
-                log.warn("Could not load pending session cleanups; will retry on the next check");
-            }
-            for (var id : cleanupIds) {
-                try {
-                    sessionStore.retryCleanup(id, backendId -> backendClient.cleanupSession(backendId.toString()));
-                } catch (Exception e) {
-                    log.warn("Retrying session cleanup failed for {}", id);
+                    log.info("Finalizing expired session {} (reason={}, userId={})",
+                        session.getId(), reason, session.getUserId());
+                    sessionStore.finalizeSession(session.getId());
                 }
             }
         } catch (Exception e) {

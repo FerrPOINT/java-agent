@@ -32,12 +32,9 @@ public class ResumeCommand implements CommandHandler {
     public String handle(UpdateEvent event, BotSessionEntity session) {
         String userId = String.valueOf(event.userId());
         String args = event.commandArgs();
-        Long threadId = event.messageThreadId() > 0 ? event.messageThreadId() : null;
-        List<BotSessionEntity> sessions = store.listByUserId(userId).stream()
-            .filter(s -> java.util.Objects.equals(s.getThreadId(), threadId))
-            .toList();
 
         if (args == null || args.isBlank() || "list".equalsIgnoreCase(args.trim())) {
+            List<BotSessionEntity> sessions = store.listByUserId(userId);
             if (sessions.isEmpty()) return "No previous sessions found.";
             StringBuilder sb = new StringBuilder("Recent sessions:\n");
             int count = 0;
@@ -53,6 +50,7 @@ public class ResumeCommand implements CommandHandler {
         }
 
         String titlePrefix = args.trim().toLowerCase();
+        List<BotSessionEntity> sessions = store.listByUserId(userId);
         for (BotSessionEntity s : sessions) {
             if (s.getTitle() != null && s.getTitle().toLowerCase().startsWith(titlePrefix)) {
                 BotSessionEntity resumed = store.resumeSession(s.getId(), userId);

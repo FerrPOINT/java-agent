@@ -33,6 +33,8 @@ class HeartbeatDeliveryPollerTest {
         telegram = mock(TelegramClient.class);
         BotProperties props = mock(BotProperties.class);
         when(props.isCronDeliveryEnabled()).thenReturn(true);
+        lenient().when(backend.suggestionPost(contains("/result/ack")))
+            .thenReturn(mapper.createObjectNode().put("acked", true));
         poller = new HeartbeatDeliveryPoller(backend, telegram, props);
     }
 
@@ -80,6 +82,115 @@ class HeartbeatDeliveryPollerTest {
         // NO ack — the result stays server-side for the next tick
         verify(backend, never()).suggestionPost(contains("/result/ack"));
         verify(backend).suggestionPost(contains("/result/nack"));
+    }
+
+    @Test
+    void finishedHeartbeatKeepsWatchingAfterFailedDelivery() {
+        UUID sid = UUID.randomUUID();
+        poller.watch(sid, 42L);
+        stubResult(sid, "final result");
+        stubStatus(sid, false);
+        when(telegram.sendMessage(anyLong(), anyString())).thenReturn(Optional.empty(), Optional.of(7L));
+        ObjectNode nack = mapper.createObjectNode();
+        nack.put("drop", false);
+        when(backend.suggestionPost(contains("/result/nack"))).thenReturn(nack);
+
+        poller.poll();
+        poller.poll();
+
+        verify(telegram, times(2)).sendMessage(eq(42L), contains("final result"));
+        verify(backend).suggestionPost(contains("/result/ack"));
+    }
+
+    @Test
+    void finishedHeartbeatRemainsWatchedWhenAckIsUnconfirmed() {
+        UUID sid = UUID.randomUUID();
+        poller.watch(sid, 42L);
+        stubResult(sid, "final result");
+        stubStatus(sid, false);
+        when(telegram.sendMessage(eq(42L), anyString())).thenReturn(Optional.of(7L));
+        when(backend.suggestionPost(contains("/result/ack"))).thenReturn(null);
+
+        poller.poll();
+        poller.poll();
+
+        verify(backend, times(2)).suggestionPost(contains("/result/ack"));
+    }
+
+    @Test
+    void replacedWatchIsNotRemovedByOldPollResult() {
+        UUID sid = UUID.randomUUID();
+        poller.watch(sid, 42L);
+        stubResult(sid, null);
+        when(backend.suggestionGet("/api/v1/agent/cron/heartbeat/" + sid)).thenAnswer(invocation -> {
+            poller.watch(sid, 42L);
+            return mapper.createObjectNode().put("set", false);
+        });
+
+        poller.poll();
+        poller.poll();
+
+        verify(backend, times(2)).suggestionGet("/api/v1/agent/cron/heartbeat/" + sid + "/result");
+    }
+
+    @Test
+    void malformedResultDoesNotDiscardWatch() {
+        UUID sid = UUID.randomUUID();
+        poller.watch(sid, 42L);
+        when(backend.suggestionGet("/api/v1/agent/cron/heartbeat/" + sid + "/result"))
+            .thenReturn(mapper.createObjectNode());
+        stubStatus(sid, false);
+
+        poller.poll();
+        poller.poll();
+
+        verify(backend, times(2)).suggestionGet("/api/v1/agent/cron/heartbeat/" + sid + "/result");
+        verify(backend, never()).suggestionPost(contains("/result/ack"));
+    }
+
+    @Test
+    void rejectedAckDoesNotStopWatchingFinishedHeartbeat() {
+        UUID sid = UUID.randomUUID();
+        poller.watch(sid, 42L);
+        stubResult(sid, "final result");
+        stubStatus(sid, false);
+        when(telegram.sendMessage(eq(42L), anyString())).thenReturn(Optional.of(7L));
+        when(backend.suggestionPost(contains("/result/ack")))
+            .thenReturn(mapper.createObjectNode().put("acked", false));
+
+        poller.poll();
+        poller.poll();
+
+        verify(backend, times(2)).suggestionPost(contains("/result/ack"));
+    }
+
+    @Test
+    void malformedAckDoesNotStopWatchingFinishedHeartbeat() {
+        UUID sid = UUID.randomUUID();
+        poller.watch(sid, 42L);
+        stubResult(sid, "final result");
+        stubStatus(sid, false);
+        when(telegram.sendMessage(eq(42L), anyString())).thenReturn(Optional.of(7L));
+        when(backend.suggestionPost(contains("/result/ack"))).thenReturn(mapper.createObjectNode());
+
+        poller.poll();
+        poller.poll();
+
+        verify(backend, times(2)).suggestionPost(contains("/result/ack"));
+    }
+
+    @Test
+    void unavailableStatusDoesNotStopWatchingAfterDelivery() {
+        UUID sid = UUID.randomUUID();
+        poller.watch(sid, 42L);
+        stubResult(sid, "result");
+        when(telegram.sendMessage(eq(42L), anyString())).thenReturn(Optional.of(7L));
+        when(backend.suggestionGet("/api/v1/agent/cron/heartbeat/" + sid)).thenReturn(null);
+
+        poller.poll();
+        poller.poll();
+
+        verify(backend, times(2)).suggestionGet("/api/v1/agent/cron/heartbeat/" + sid + "/result");
     }
 
     @Test

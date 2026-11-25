@@ -43,19 +43,6 @@ class TopicCommandTest {
     }
 
     @Test
-    void forumTopicCannotMutateDmTopicSessions() {
-        BotSessionStore store = mock(BotSessionStore.class);
-        BotSettingsService settings = mock(BotSettingsService.class);
-        var event = new UpdateEvent(1, Type.COMMAND, 123, 456, "user", "/topic create x",
-            null, null, null, null, null, null, true, "topic", "create x", 1, null, 99);
-
-        String result = new TopicCommand(store, settings).handle(event, null);
-
-        assertThat(result).containsIgnoringCase("direct message");
-        verifyNoInteractions(store, settings);
-    }
-
-    @Test
     void handle_create_thenList() {
         BotSessionStore sessionStore = mock(BotSessionStore.class);
         BotSettingsService settingsService = mock(BotSettingsService.class);

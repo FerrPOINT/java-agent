@@ -1,7 +1,6 @@
 package com.azhukov.agent.tools.mcp;
 
 import com.azhukov.agent.client.mcp.McpLifecycleManager;
-import com.azhukov.agent.client.mcp.McpOAuthManager;
 import com.azhukov.agent.core.model.ToolResult;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -72,8 +71,6 @@ class McpMetaFilterTest {
     @Test
     void executeReturnsFailureForProtocolErrorResult() throws Exception {
         McpLifecycleManager lifecycleManager = mock(McpLifecycleManager.class);
-        McpOAuthManager oauthManager = mock(McpOAuthManager.class);
-        when(oauthManager.getToken("srv")).thenReturn(Optional.empty());
         when(lifecycleManager.executeModelTool("srv", "tool", "{}", null)).thenReturn(
             new McpSchema.CallToolResult(
                 List.of(new McpSchema.TextContent(null, "remote error")),
@@ -81,7 +78,7 @@ class McpMetaFilterTest {
                 null,
                 null));
 
-        ToolResult result = new McpTool(lifecycleManager, oauthManager).execute(
+        ToolResult result = new McpTool(lifecycleManager).execute(
             "{\"server_name\":\"srv\",\"tool_name\":\"tool\"}", null, null);
 
         assertFalse(result.success());
@@ -95,9 +92,8 @@ class McpMetaFilterTest {
     @Test
     void executeReturnsStructuredFailureForInvalidJson() throws Exception {
         McpLifecycleManager lifecycleManager = mock(McpLifecycleManager.class);
-        McpOAuthManager oauthManager = mock(McpOAuthManager.class);
 
-        ToolResult result = new McpTool(lifecycleManager, oauthManager).execute("not-json", null, null);
+        ToolResult result = new McpTool(lifecycleManager).execute("not-json", null, null);
 
         assertFalse(result.success());
         JsonNode json = errorPayload(result);
