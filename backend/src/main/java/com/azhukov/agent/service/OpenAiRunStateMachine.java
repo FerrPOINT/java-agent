@@ -7,6 +7,8 @@ import com.azhukov.agent.persistence.entity.OpenAiRunStateEntity;
 import com.azhukov.agent.persistence.repository.OpenAiRunEventRepository;
 import com.azhukov.agent.persistence.repository.OpenAiRunStateRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
@@ -15,6 +17,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.sql.SQLException;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -58,6 +61,9 @@ public class OpenAiRunStateMachine {
     private final ObjectProvider<OpenAiRunEventRepository> eventRepositoryProvider;
     private final ObjectMapper objectMapper;
 
+    @PersistenceContext
+    private EntityManager entityManager;
+
     public static boolean isTerminal(String state) {
         return COMPLETED.equals(state) || FAILED.equals(state)
             || CANCELLED.equals(state) || EXPIRED.equals(state);
@@ -77,6 +83,7 @@ public class OpenAiRunStateMachine {
                                        Supplier<OpenAiSessionContext> resolveSession) {
         OpenAiSessionContext context = resolveSession.get();
         Session session = context.session();
+        bindProfile(session.profile());
         var repository = states();
         String revision = ProfileExecutionConfiguration.currentRevision(session.profile());
         if (repository.insertAcceptance(runId, session.id(), session.userId(), session.profile(), model,
@@ -98,8 +105,9 @@ public class OpenAiRunStateMachine {
     static final class AlreadyAccepted extends RuntimeException {}
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public long recordEvent(String runId, String nextState, Map<String, Object> event) {
-        OpenAiRunStateEntity row = states().lockRun(runId)
+    public long recordEvent(String runId, String profile, String nextState, Map<String, Object> event) {
+        bindProfile(profile);
+        OpenAiRunStateEntity row = states().lockRun(runId, profile)
             .orElseThrow(() -> new IllegalStateException("Run state is unavailable: " + runId));
         if (isTerminal(row.getState())) {
             throw new IllegalStateException("Run is already terminal: " + runId);
@@ -140,21 +148,49 @@ public class OpenAiRunStateMachine {
     }
 
     @Transactional(readOnly = true)
-    public Optional<OpenAiRunStateEntity> state(String runId) {
-        return states().findById(runId);
-    }
-
-    @Transactional(readOnly = true)
-    public List<OpenAiRunEventEntity> replay(String runId, long afterSeq, int limit) {
-        return eventLog().replayAfter(runId, afterSeq, PageRequest.of(0, Math.max(1, limit)));
+    public Optional<OpenAiRunStateEntity> state(String runId, String profile) {
+        bindProfile(profile);
+        return states().findByRunIdAndProfile(runId, profile);
     }
 
     public record ParsedEvent(long seq, Map<String, Object> payload) {}
 
-    public List<ParsedEvent> replayParsed(String runId, long afterSeq, int limit) {
-        return replay(runId, afterSeq, limit).stream()
+    @Transactional(readOnly = true)
+    public List<ParsedEvent> replayParsed(String runId, String profile, long afterSeq, int limit) {
+        bindProfile(profile);
+        return eventLog().replayAfter(runId, profile, afterSeq, PageRequest.of(0, Math.max(1, limit))).stream()
             .map(entity -> new ParsedEvent(entity.getSeq(), parse(entity.getEventJson())))
             .toList();
+    }
+
+    private void bindProfile(String profile) {
+        if (profile == null || profile.isBlank()) {
+            throw new IllegalArgumentException("Profile is required for native run persistence");
+        }
+        if (entityManager == null) {
+            return;
+        }
+        entityManager.unwrap(org.hibernate.Session.class).doWork(connection -> {
+            if ("H2".equals(connection.getMetaData().getDatabaseProductName())) {
+                return;
+            }
+            if (connection.getAutoCommit()) {
+                throw new SQLException("Native run persistence requires a transaction");
+            }
+            try (var bind = connection.prepareStatement("""
+                SELECT set_config('pdlc.java.profile', ?, true)
+                WHERE COALESCE(NULLIF(current_setting('pdlc.java.profile', true), ''), ?) = ?
+                """)) {
+                for (int parameter = 1; parameter <= 3; parameter++) {
+                    bind.setString(parameter, profile);
+                }
+                try (var result = bind.executeQuery()) {
+                    if (!result.next()) {
+                        throw new SQLException("A native run transaction cannot change its profile");
+                    }
+                }
+            }
+        });
     }
 
     private Map<String, Object> parse(String json) {

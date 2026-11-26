@@ -92,10 +92,10 @@ class OpenAiRunStateMachineTest {
 
     @Test
     void invalidTransitionRejectedWithoutAppending() {
-        when(stateRepository.lockRun("r1")).thenReturn(Optional.of(row("r1", "queued")));
+        when(stateRepository.lockRun("r1", "default")).thenReturn(Optional.of(row("r1", "queued")));
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() ->
-            machine().recordEvent("r1", "completed", Map.of("event", "run.completed")))
+            machine().recordEvent("r1", "default", "completed", Map.of("event", "run.completed")))
             .hasMessageContaining("Invalid run transition");
         verify(eventRepository, never()).save(any());
     }
@@ -104,9 +104,9 @@ class OpenAiRunStateMachineTest {
     void recordEventMovesStateAndAssignsMonotonicSeq() {
         var entity = row("r1", "in_progress");
         entity.setLastSeq(4);
-        when(stateRepository.lockRun("r1")).thenReturn(Optional.of(entity));
+        when(stateRepository.lockRun("r1", "default")).thenReturn(Optional.of(entity));
 
-        long seq = machine().recordEvent("r1", "requires_action", Map.of("event", "approval.request"));
+        long seq = machine().recordEvent("r1", "default", "requires_action", Map.of("event", "approval.request"));
 
         assertThat(seq).isEqualTo(5);
         assertThat(entity.getLastSeq()).isEqualTo(5);

@@ -311,7 +311,7 @@ public class OpenAiRunsController {
         if (machine == null) {
             return durableAcceptanceUnavailable();
         }
-        var state = machine.state(runId)
+        var state = machine.state(runId, selectedProfile(profile))
             .filter(owner -> isAccessible(owner.getUserId(), owner.getProfile(), profile));
         if (state.isEmpty()) {
             return openAiError(HttpStatus.NOT_FOUND, "Run not found: " + runId, "invalid_request_error", "run_not_found");
@@ -328,7 +328,7 @@ public class OpenAiRunsController {
         if (cursor > state.get().getLastSeq()) {
             return invalidEventCursor();
         }
-        SseEmitter emitter = runService.events(runId, cursor);
+        SseEmitter emitter = runService.events(runId, selectedProfile(profile), cursor);
         return ResponseEntity.ok()
             .headers(sseHeaders())
             .contentType(MediaType.TEXT_EVENT_STREAM)
@@ -354,14 +354,14 @@ public class OpenAiRunsController {
                 "run event persistence is not available in this deployment",
                 "invalid_request_error", "run_persistence_unavailable");
         }
-        var state = stateMachine.state(runId)
+        var state = stateMachine.state(runId, selectedProfile(profile))
             .filter(owner -> isAccessible(owner.getUserId(), owner.getProfile(), profile));
         if (state.isEmpty()) {
             return openAiError(HttpStatus.NOT_FOUND, "Run not found: " + runId,
                 "invalid_request_error", "run_not_found");
         }
         int cappedLimit = Math.min(Math.max(limit, 1), 500);
-        List<Map<String, Object>> events = stateMachine.replayParsed(runId, after, cappedLimit)
+        List<Map<String, Object>> events = stateMachine.replayParsed(runId, selectedProfile(profile), after, cappedLimit)
             .stream()
             .map(parsed -> {
                 Map<String, Object> payload = new LinkedHashMap<>(parsed.payload());
@@ -460,7 +460,7 @@ public class OpenAiRunsController {
         if (stateMachine == null) {
             return null;
         }
-        return stateMachine.state(runId)
+        return stateMachine.state(runId, selectedProfile(profile))
             .filter(state -> isAccessible(state.getUserId(), state.getProfile(), profile))
             .map(state -> persistedRunRecord(stateMachine, state))
             .orElse(null);
@@ -478,7 +478,7 @@ public class OpenAiRunsController {
 
     private RunRecord persistedRunRecord(com.azhukov.agent.service.OpenAiRunStateMachine stateMachine,
                                          com.azhukov.agent.persistence.entity.OpenAiRunStateEntity state) {
-        Map<String, Object> lastEvent = stateMachine.replayParsed(state.getRunId(), Math.max(0, state.getLastSeq() - 1), 1)
+        Map<String, Object> lastEvent = stateMachine.replayParsed(state.getRunId(), state.getProfile(), Math.max(0, state.getLastSeq() - 1), 1)
             .stream().findFirst().map(event -> event.payload()).orElseGet(Map::of);
         return OpenAiRunService.restoredRun(
             state.getRunId(), state.getSessionId(), state.getUserId(), state.getProfile(), state.getModel(),

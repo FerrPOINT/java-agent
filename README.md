@@ -334,6 +334,23 @@ tests finish; a missing required LINE report fails the gate.
 
 Docker images используют `eclipse-temurin:25-jre-noble`; slim-образы ставят Chromium at runtime.
 
+### Роли PostgreSQL для журнала запусков
+
+Миграция V84 включает политики доступа по профилю на `openai_run_states` и
+`openai_run_events`. Применяйте цепочку Flyway под владельцем схемы
+отдельно от работы приложения. Для запуска backend укажите рабочую роль
+в `DB_USER` и выключите Flyway через `SPRING_FLYWAY_ENABLED=false`.
+
+Рабочей роли нужны доступ к схеме, операции с данными и права на используемые
+последовательности. Владение таблицами, создание объектов в схеме, доступ к
+истории Flyway и права `BYPASSRLS` остаются за пределами рабочей роли.
+Разрешите ей `EXECUTE` на `java_identity_run_reference_count(text, text, text)`.
+Функция возвращает счётчик ссылок и признак неразрешённой ссылки для служебной
+проверки идентичности.
+
+Под рабочей ролью `row_security_active` должна вернуть `true` для обеих таблиц.
+Транзакция без выбранного профиля должна получать пустой журнал.
+
 <a name="boundaries"></a>
 
 ## 🧱 Boundaries

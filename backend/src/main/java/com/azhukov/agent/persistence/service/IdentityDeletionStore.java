@@ -159,6 +159,19 @@ public class IdentityDeletionStore implements IdentityDeletionOwner, IdentityRef
         long total=0;
         for(String source:sources) {
             window.requireCurrent();if(!source.matches("[a-z_]+")) throw unknown();
+            if ("openai_run_states".equals(source) || "openai_run_events".equals(source)) {
+                try (PreparedStatement q = c.prepareStatement(
+                        "SELECT unresolved,reference_count FROM java_identity_run_reference_count(?,?,?)")) {
+                    q.setString(1, source);
+                    q.setString(2, request.identity().issuer());
+                    q.setString(3, request.identity().subject());
+                    try (ResultSet r = q.executeQuery()) {
+                        if (!r.next() || r.getBoolean("unresolved")) throw unknown();
+                        total = Math.addExact(total, r.getLong("reference_count"));
+                    }
+                }
+                continue;
+            }
             try(PreparedStatement q=c.prepareStatement("SELECT EXISTS(SELECT 1 FROM "+source+" t CROSS JOIN LATERAL java_identity_row_refs('"+source+"',to_jsonb(t)) r WHERE r.resolved IS NOT TRUE OR NULLIF(btrim(r.issuer),'') IS NULL OR NULLIF(btrim(r.subject),'') IS NULL)");ResultSet r=q.executeQuery()) {r.next();if(r.getBoolean(1)) throw unknown();}
             try(PreparedStatement q=c.prepareStatement("SELECT count(*) FROM "+source+" t WHERE EXISTS(SELECT 1 FROM java_identity_row_refs('"+source+"',to_jsonb(t)) r WHERE r.issuer=? AND r.subject=?)")) {
                 q.setString(1,request.identity().issuer());q.setString(2,request.identity().subject());

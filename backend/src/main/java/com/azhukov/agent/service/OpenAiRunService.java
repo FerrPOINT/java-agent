@@ -101,7 +101,7 @@ public class OpenAiRunService {
         if (machine == null) {
             throw new DurableAcceptanceUnavailable();
         }
-        return machine.state(key.runId()).map(state -> {
+        return machine.state(key.runId(), key.profile()).map(state -> {
             String scopedUser = UserContext.scopeUserId();
             if (!Objects.equals(state.getRequestFingerprint(), key.fingerprint())
                 || !key.profile().equals(state.getProfile())
@@ -303,13 +303,13 @@ public class OpenAiRunService {
     }
 
     /** Stream ordered committed events after the client's last observed sequence. */
-    public SseEmitter events(String runId, long after) {
+    public SseEmitter events(String runId, String profile, long after) {
         var machine = stateMachine();
         if (machine == null) {
             throw new DurableAcceptanceUnavailable();
         }
         SseEmitter emitter = new SseEmitter(RUN_EVENT_STREAM_TIMEOUT_MS);
-        var worker = executor.submit(UserContext.wrap(() -> streamEvents(machine, runId, after, emitter)));
+        var worker = executor.submit(UserContext.wrap(() -> streamEvents(machine, runId, profile, after, emitter)));
         emitter.onTimeout(() -> worker.cancel(true));
         emitter.onError(error -> worker.cancel(true));
         emitter.onCompletion(() -> worker.cancel(true));
@@ -439,13 +439,13 @@ public class OpenAiRunService {
         return payload;
     }
 
-    private void streamEvents(OpenAiRunStateMachine machine, String runId, long cursor, SseEmitter emitter) {
+    private void streamEvents(OpenAiRunStateMachine machine, String runId, String profile, long cursor, SseEmitter emitter) {
         long lastWrite = System.nanoTime();
         try {
             while (true) {
                 UserContext.requireCurrentAccess();
-                var state = machine.state(runId).orElseThrow();
-                var events = machine.replayParsed(runId, cursor, EVENT_BATCH_SIZE);
+                var state = machine.state(runId, profile).orElseThrow();
+                var events = machine.replayParsed(runId, profile, cursor, EVENT_BATCH_SIZE);
                 if (events.isEmpty() && cursor < state.getLastSeq()) {
                     throw new IllegalStateException("Run event history is incomplete");
                 }
@@ -639,7 +639,7 @@ public class OpenAiRunService {
                     case "completed", "failed", "cancelled" -> nextStatus;
                     default -> null;
                 };
-                stateMachine.recordEvent(runId, durableState, payload);
+                stateMachine.recordEvent(runId, profile, durableState, payload);
             }
             if (nextStatus != null) status = nextStatus;
             updatedAt = epochSeconds();

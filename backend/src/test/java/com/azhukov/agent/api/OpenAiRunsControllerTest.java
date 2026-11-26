@@ -162,7 +162,7 @@ class OpenAiRunsControllerTest {
     void foreignUserCannotReadPersistedRunAfterRestart() throws Exception {
         OpenAiRunStateMachine stateMachine = mock(OpenAiRunStateMachine.class);
         OpenAiRunStateEntity state = persistedRun("user-b");
-        lenient().when(stateMachine.state("run_persisted")).thenReturn(java.util.Optional.of(state));
+        lenient().when(stateMachine.state("run_persisted", "default")).thenReturn(java.util.Optional.of(state));
         UserContext.set("user-a", UserContext.ROLE_USER);
 
         durableRunsController(stateMachine).perform(get("/v1/runs/run_persisted"))
@@ -174,7 +174,8 @@ class OpenAiRunsControllerTest {
         OpenAiRunStateMachine stateMachine = mock(OpenAiRunStateMachine.class);
         OpenAiRunStateEntity state = persistedRun("user-a");
         state.setProfile("alpha");
-        when(stateMachine.state("run_persisted")).thenReturn(java.util.Optional.of(state));
+        when(stateMachine.state(eq("run_persisted"), anyString())).thenAnswer(call ->
+            "alpha".equals(call.getArgument(1)) ? java.util.Optional.of(state) : java.util.Optional.empty());
         UserContext.set("user-a", UserContext.ROLE_ADMIN);
         MockMvc persistedMvc = durableRunsController(stateMachine);
 
@@ -210,8 +211,8 @@ class OpenAiRunsControllerTest {
     void getRunUsesPersistedStateAfterRestart() throws Exception {
         OpenAiRunStateMachine stateMachine = mock(OpenAiRunStateMachine.class);
         OpenAiRunStateEntity state = persistedRun("user-a");
-        lenient().when(stateMachine.state("run_persisted")).thenReturn(java.util.Optional.of(state));
-        when(stateMachine.replayParsed("run_persisted", 3L, 1)).thenReturn(List.of(
+        lenient().when(stateMachine.state("run_persisted", "default")).thenReturn(java.util.Optional.of(state));
+        when(stateMachine.replayParsed("run_persisted", "default", 3L, 1)).thenReturn(List.of(
             new OpenAiRunStateMachine.ParsedEvent(4L, Map.of(
                 "event", "run.completed", "run_id", "run_persisted", "output", "done",
                 "completed", true, "partial", false, "interrupted", false))));
@@ -232,7 +233,7 @@ class OpenAiRunsControllerTest {
     void keyedRunReplayUsesTheOriginalAcceptanceAfterServiceRecreation() throws Exception {
         OpenAiRunStateMachine stateMachine = mock(OpenAiRunStateMachine.class);
         var accepted = new java.util.concurrent.ConcurrentHashMap<String, OpenAiRunStateEntity>();
-        when(stateMachine.state(anyString())).thenAnswer(call -> java.util.Optional.ofNullable(accepted.get(call.getArgument(0))));
+        when(stateMachine.state(anyString(), anyString())).thenAnswer(call -> java.util.Optional.ofNullable(accepted.get(call.getArgument(0))));
         when(stateMachine.accept(anyString(), anyString(), anyString(), any())).thenAnswer(call -> {
             java.util.function.Supplier<OpenAiSessionContext> resolver = call.getArgument(3);
             OpenAiSessionContext resolved = resolver.get();
@@ -1035,7 +1036,7 @@ class OpenAiRunsControllerTest {
             assertThat(enteredRuntime.await(2, TimeUnit.SECONDS)).isTrue();
             var record = runService.get(runId);
             var stateMachine = mock(OpenAiRunStateMachine.class);
-            when(stateMachine.recordEvent(eq(runId), isNull(), any()))
+            when(stateMachine.recordEvent(eq(runId), eq("default"), isNull(), any()))
                 .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("fixture storage failure"))
                 .thenReturn(1L);
             org.springframework.test.util.ReflectionTestUtils.setField(record, "stateMachine", stateMachine);
@@ -1080,7 +1081,7 @@ class OpenAiRunsControllerTest {
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, Object>> event = ArgumentCaptor.forClass(Map.class);
-        verify(machine).recordEvent(eq(runId), eq("failed"), event.capture());
+        verify(machine).recordEvent(eq(runId), eq("default"), eq("failed"), event.capture());
         assertThat(event.getValue()).containsEntry("event", "run.failed");
         assertThat((String) event.getValue().get("error"))
             .contains("OPENAI_API_KEY=[REDACTED]")
@@ -1235,9 +1236,9 @@ class OpenAiRunsControllerTest {
         waitForStatus(runId, "waiting_for_approval");
         var stateMachine = mock(OpenAiRunStateMachine.class);
         var attempts = new java.util.concurrent.atomic.AtomicInteger();
-        when(stateMachine.recordEvent(eq(runId), org.mockito.ArgumentMatchers.nullable(String.class), any()))
+        when(stateMachine.recordEvent(eq(runId), eq("default"), org.mockito.ArgumentMatchers.nullable(String.class), any()))
             .thenAnswer(call -> {
-                Map<String, Object> event = call.getArgument(2);
+                Map<String, Object> event = call.getArgument(3);
                 if ("approval.cleared".equals(event.get("event")) && attempts.incrementAndGet() == 1) {
                     throw new org.springframework.dao.DataAccessResourceFailureException("fixture transient failure");
                 }
@@ -1265,9 +1266,9 @@ class OpenAiRunsControllerTest {
         waitForStatus(runId, "waiting_for_approval");
         var stateMachine = mock(OpenAiRunStateMachine.class);
         var responseEvent = new java.util.concurrent.atomic.AtomicReference<Map<String, Object>>();
-        when(stateMachine.recordEvent(eq(runId), org.mockito.ArgumentMatchers.isNull(), any()))
+        when(stateMachine.recordEvent(eq(runId), eq("default"), org.mockito.ArgumentMatchers.isNull(), any()))
             .thenAnswer(call -> {
-                Map<String, Object> event = call.getArgument(2);
+                Map<String, Object> event = call.getArgument(3);
                 if ("approval.responded".equals(event.get("event"))) {
                     approvalQueue.clear(record.controlSessionId());
                     responseEvent.set(event);
@@ -1298,7 +1299,7 @@ class OpenAiRunsControllerTest {
             new ToolCall("approval-call", "fixture_tool", "{}"), "fixture approval");
         waitForStatus(runId, "waiting_for_approval");
         var stateMachine = mock(OpenAiRunStateMachine.class);
-        when(stateMachine.recordEvent(eq(runId), org.mockito.ArgumentMatchers.isNull(), any()))
+        when(stateMachine.recordEvent(eq(runId), eq("default"), org.mockito.ArgumentMatchers.isNull(), any()))
             .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("fixture storage failure"))
             .thenReturn(1L);
         org.springframework.test.util.ReflectionTestUtils.setField(record, "stateMachine", stateMachine);
@@ -1408,7 +1409,7 @@ class OpenAiRunsControllerTest {
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, Object>> event = ArgumentCaptor.forClass(Map.class);
-        verify(machine).recordEvent(eq(runId), eq("requires_action"), event.capture());
+        verify(machine).recordEvent(eq(runId), eq("default"), eq("requires_action"), event.capture());
         assertThat(objectMapper.writeValueAsString(event.getValue()))
             .contains("approval.request")
             .contains("\"choices\":[\"once\",\"deny\"]")
@@ -1476,8 +1477,9 @@ class OpenAiRunsControllerTest {
         OpenAiRunStateMachine machine = mock(OpenAiRunStateMachine.class);
         var state = persistedRun("user-a");
         state.setProfile("alpha");
-        when(machine.state("run_persisted")).thenReturn(java.util.Optional.of(state));
-        when(machine.replayParsed(eq("run_persisted"), eq(2L), org.mockito.ArgumentMatchers.anyInt())).thenReturn(List.of(
+        when(machine.state(eq("run_persisted"), anyString())).thenAnswer(call ->
+            "alpha".equals(call.getArgument(1)) ? java.util.Optional.of(state) : java.util.Optional.empty());
+        when(machine.replayParsed(eq("run_persisted"), eq("alpha"), eq(2L), org.mockito.ArgumentMatchers.anyInt())).thenReturn(List.of(
             new OpenAiRunStateMachine.ParsedEvent(3, Map.of("event", "message.delta", "delta", "remaining")),
             new OpenAiRunStateMachine.ParsedEvent(4, Map.of("event", "run.completed"))
         ));
@@ -1507,7 +1509,8 @@ class OpenAiRunsControllerTest {
         OpenAiRunStateMachine machine = mock(OpenAiRunStateMachine.class);
         var state = persistedRun("user-a");
         state.setProfile("alpha");
-        when(machine.state("run_persisted")).thenReturn(java.util.Optional.of(state));
+        when(machine.state(eq("run_persisted"), anyString())).thenAnswer(call ->
+            "alpha".equals(call.getArgument(1)) ? java.util.Optional.of(state) : java.util.Optional.empty());
         UserContext.set("user-a", UserContext.ROLE_USER);
         MockMvc restarted = durableRunsController(machine);
 
@@ -1520,7 +1523,7 @@ class OpenAiRunsControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error.code").value("invalid_event_cursor"));
         }
-        verify(machine, never()).replayParsed(anyString(), org.mockito.ArgumentMatchers.anyLong(),
+        verify(machine, never()).replayParsed(anyString(), anyString(), org.mockito.ArgumentMatchers.anyLong(),
             org.mockito.ArgumentMatchers.anyInt());
     }
 
