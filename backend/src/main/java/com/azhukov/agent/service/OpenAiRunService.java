@@ -424,7 +424,8 @@ public class OpenAiRunService {
     private Map<String, Object> approvalPayload(ApprovalQueue.PendingApproval approval) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("request_id", approval.requestId().toString());
-        payload.put("reason", apiErrorText(approval.reason()));
+        String description = apiErrorText(approval.reason());
+        payload.put("description", description == null || description.isBlank() ? "Tool approval required" : description);
         payload.put("choices", APPROVAL_CHOICES);
         if (approval.call() != null) {
             payload.put("tool", approval.call().name());
@@ -637,6 +638,11 @@ public class OpenAiRunService {
             if (nextStatus != null) status = nextStatus;
             updatedAt = epochSeconds();
             extra.put("last_event", event);
+            if ("approval.request".equals(event)) {
+                extra.put("approval", java.util.Collections.unmodifiableMap(payload));
+            } else if (!"waiting_for_approval".equals(status)) {
+                extra.remove("approval");
+            }
             for (String key : STATUS_EVENT_FIELDS) {
                 if (fields.containsKey(key)) extra.put(key, fields.get(key));
             }

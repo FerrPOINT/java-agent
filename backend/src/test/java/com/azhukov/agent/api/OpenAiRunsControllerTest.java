@@ -1341,6 +1341,11 @@ class OpenAiRunsControllerTest {
             .andExpect(jsonPath("$.error.code").value("approval_not_pending"));
         assertThat(approvalQueue.isPending(controlSessionId)).isTrue();
 
+        JsonNode waiting = waitForStatus(runId, "waiting_for_approval");
+        assertThat(waiting.path("approval").path("request_id").asText()).isEqualTo(pending.requestId().toString());
+        assertThat(waiting.path("approval").path("run_id").asText()).isEqualTo(runId);
+        assertThat(waiting.path("approval").path("event").asText()).isEqualTo("approval.request");
+
         // The exact request_id resolves and is echoed back.
         mockMvc.perform(post("/v1/runs/{runId}/approval", runId)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -1351,8 +1356,9 @@ class OpenAiRunsControllerTest {
             .andExpect(jsonPath("$.resolved").value(1));
         assertThat(approvalQueue.isApproved(controlSessionId)).isTrue();
 
+        assertThat(waitForStatus(runId, "running").has("approval")).isFalse();
         blockingRun.complete();
-        waitForStatus(runId, "completed");
+        assertThat(waitForStatus(runId, "completed").has("approval")).isFalse();
     }
 
     @Test
