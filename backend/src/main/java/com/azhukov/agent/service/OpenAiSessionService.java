@@ -171,9 +171,8 @@ public class OpenAiSessionService {
             throw new IllegalArgumentException("Session not found: " + id);
         }
         Session session = sessionResolver.loadSession(id);
-        String ownerProfile = session.getMetadata("profile");
         String scopedUserId = UserContext.scopeUserId();
-        if (!profile.equals(ownerProfile == null ? "default" : ownerProfile)
+        if (!profile.equals(session.profile())
             || (scopedUserId != null && !scopedUserId.equals(session.userId()))) {
             throw new IllegalArgumentException("Session not found: " + id);
         }

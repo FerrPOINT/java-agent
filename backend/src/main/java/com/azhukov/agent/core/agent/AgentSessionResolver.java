@@ -136,22 +136,10 @@ public class AgentSessionResolver {
             if (existing != null) {
                 return hydrateInProfile(existing, profile);
             }
-            // Deterministic external session ids must be created WITHOUT the
-            // Hibernate merge() path: Spring Data treats an assigned id as
-            // "not new", and merge() on OSIV-bound persistence contexts can
-            // throw bogus StaleObjectState for rows we verified are absent.
-            // A plain INSERT (duplicate → load winner) sidesteps the issue and
-            // is race-safe under concurrent first-turn requests.
-            try {
-                sessionRepository.insertSessionRow(sessionId, userId, "New chat",
-                    provider, modelName, source, profile, Instant.now());
-            } catch (org.springframework.dao.DataIntegrityViolationException duplicate) {
-                SessionEntity winner = sessionRepository.findById(sessionId).orElse(null);
-                if (winner != null) {
-                    return hydrateInProfile(winner, profile);
-                }
-                throw duplicate;
-            }
+            // An assigned id must use INSERT, and a concurrent winner must
+            // leave this transaction usable for an ownership check and readback.
+            sessionRepository.insertSessionRow(sessionId, userId, "New chat",
+                provider, modelName, source, profile, Instant.now());
             SessionEntity saved = sessionRepository.findById(sessionId).orElseThrow();
             return hydrateInProfile(saved, profile);
         });

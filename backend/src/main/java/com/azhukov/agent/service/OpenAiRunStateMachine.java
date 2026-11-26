@@ -1,6 +1,8 @@
 package com.azhukov.agent.service;
 
+import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.persistence.entity.OpenAiRunEventEntity;
+import com.azhukov.agent.service.OpenAiSessionService.OpenAiSessionContext;
 import com.azhukov.agent.persistence.entity.OpenAiRunStateEntity;
 import com.azhukov.agent.persistence.repository.OpenAiRunEventRepository;
 import com.azhukov.agent.persistence.repository.OpenAiRunStateRepository;
@@ -18,7 +20,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.UUID;
+import java.util.function.Supplier;
 
 /**
  * WP-6 (docs/35): durable OpenAI Runs state machine + append-only event log.
@@ -66,26 +68,27 @@ public class OpenAiRunStateMachine {
         return allowed != null && allowed.contains(to);
     }
 
+    /**
+     * Commit the new session, run and initial event together. A concurrent loser
+     * rolls its transaction back before the caller reads the original receipt.
+     */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void createRun(String runId, UUID sessionId, String userId, String profile,
-                          String model, String externalRunId) {
-        OpenAiRunStateRepository repository = states();
-        if (repository.existsById(runId)) {
-            return; // idempotent create
+    public OpenAiSessionContext accept(String runId, String model, String fingerprint,
+                                       Supplier<OpenAiSessionContext> resolveSession) {
+        OpenAiSessionContext context = resolveSession.get();
+        Session session = context.session();
+        var repository = states();
+        if (repository.insertAcceptance(runId, session.id(), session.userId(), session.profile(), model,
+                fingerprint, context.responseSessionId()) == 0) {
+            throw new AlreadyAccepted();
         }
-        OpenAiRunStateEntity entity = new OpenAiRunStateEntity();
-        entity.setRunId(runId);
-        entity.setSessionId(sessionId);
-        entity.setUserId(userId);
-        entity.setProfile(profile == null || profile.isBlank() ? "default" : profile);
-        entity.setModel(model);
-        entity.setExternalRunId(externalRunId);
-        entity.setState(QUEUED);
-        entity.setCreatedAt(Instant.now());
-        entity.setUpdatedAt(Instant.now());
-        appendTo(repository.save(entity), Map.of("event", "run.created", "run_id", runId,
-            "timestamp", entity.getCreatedAt().toEpochMilli() / 1000.0));
+        OpenAiRunStateEntity state = repository.findById(runId).orElseThrow();
+        appendTo(state, Map.of("event", "run.created", "run_id", runId,
+            "timestamp", state.getCreatedAt().toEpochMilli() / 1000.0));
+        return context;
     }
+
+    static final class AlreadyAccepted extends RuntimeException {}
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public long recordEvent(String runId, String nextState, Map<String, Object> event) {

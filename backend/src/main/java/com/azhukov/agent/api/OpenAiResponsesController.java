@@ -152,7 +152,7 @@ public class OpenAiResponsesController {
             return idempotencyCache.getOrCompute(
                 scope,
                 idempotencyKey,
-                () -> idempotencyCache.fingerprint(objectMapper, request, sessionIdHeader, sessionKeyHeader),
+                () -> OpenAiIdempotencyCache.fingerprint(objectMapper, request, sessionIdHeader, sessionKeyHeader),
                 () -> syncResponse(request, sessionIdHeader, sessionKeyHeader, inputMessages,
                     storedPriorHistory, storedInstructions, requestedModel, storedPrevious),
                 replay -> {

@@ -7,17 +7,20 @@ import com.azhukov.agent.core.client.ModelRequestOptions;
 import com.azhukov.agent.api.OpenAiInputParser.ParseResult;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.security.ApiErrorTextRedactor;
+import com.azhukov.agent.core.security.NativeIdentityOrigin;
 import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.security.Redactor;
 import com.azhukov.agent.service.ApiRunAdmissionService;
+import com.azhukov.agent.service.OpenAiIdempotencyCache;
 import com.azhukov.agent.service.OpenAiResponseStore;
 import com.azhukov.agent.service.OpenAiResponseStore.StoredResponse;
 import com.azhukov.agent.service.OpenAiRunService;
+import com.azhukov.agent.service.OpenAiRunService.Acceptance;
 import com.azhukov.agent.service.OpenAiRunService.ControlResult;
+import com.azhukov.agent.service.OpenAiRunService.SubmissionKey;
 import com.azhukov.agent.service.OpenAiRunService.RunRecord;
 import com.azhukov.agent.service.OpenAiSessionService;
 import com.azhukov.agent.service.ProfileService;
-import com.azhukov.agent.service.OpenAiSessionService.OpenAiSessionContext;
 import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -40,6 +43,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 @RestController
 @RequestMapping({"/v1/runs", "/p/{profile}/v1/runs"})
@@ -66,7 +70,8 @@ public class OpenAiRunsController {
     public ResponseEntity<Map<String, Object>> createRun(
             @PathVariable(name = "profile", required = false) String pathProfile,
             @RequestBody OpenAiRunRequest request,
-            @RequestHeader(value = OpenAiSessionService.SESSION_KEY_HEADER, required = false) String sessionKeyHeader) {
+            @RequestHeader(value = OpenAiSessionService.SESSION_KEY_HEADER, required = false) String sessionKeyHeader,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
         String profile = selectedProfile(pathProfile);
         if (!"default".equals(profile)
             && (!profileService.isValidProfileName(profile) || !profileService.knownProfile(profile))) {
@@ -74,6 +79,34 @@ public class OpenAiRunsController {
         }
         if (request == null || !runsInputTruthy(request.input())) {
             return openAiError(HttpStatus.BAD_REQUEST, "Missing 'input' field", "invalid_request_error");
+        }
+
+        SubmissionKey key = null;
+        if (idempotencyKey != null) {
+            if (!idempotencyKey.matches("[!-~]{1,128}")) {
+                return openAiError(HttpStatus.BAD_REQUEST, "Invalid Idempotency-Key",
+                    "invalid_request_error", "invalid_idempotency_key");
+            }
+            String principal = UserContext.getUserId();
+            if (principal == null) {
+                return openAiError(HttpStatus.UNAUTHORIZED, "Authenticated run identity required",
+                    "invalid_request_error");
+            }
+            var origin = NativeIdentityOrigin.current();
+            String digest = OpenAiIdempotencyCache.fingerprint(objectMapper, "openai-runs",
+                origin == null ? "central" : origin.kind().name(), principal, profile, idempotencyKey);
+            String fingerprint = OpenAiIdempotencyCache.fingerprint(objectMapper, request, sessionKeyHeader);
+            key = new SubmissionKey("run_" + digest.substring(0, 60), profile, fingerprint);
+            try {
+                var replay = runService.replay(key);
+                if (replay.isPresent()) {
+                    return accepted(replay.get(), sessionKeyHeader);
+                }
+            } catch (OpenAiRunService.IdempotencyConflict e) {
+                return idempotencyConflict();
+            } catch (OpenAiRunService.DurableAcceptanceUnavailable e) {
+                return durableAcceptanceUnavailable();
+            }
         }
 
         RunInput input = parseInput(request.input());
@@ -112,53 +145,52 @@ public class OpenAiRunsController {
             return openAiError(HttpStatus.BAD_REQUEST, parsedHistory.error(), "invalid_request_error",
                 parsedHistory.code(), parsedHistory.param());
         }
-        List<Message> historyToPersist = parsedHistory.messages();
-        OpenAiSessionContext sessionContext;
+        String requestSessionId = request.sessionId();
+        UUID previousSessionId = previous == null ? null : previous.sessionId();
+        String sessionId = hasText(requestSessionId) || previousSessionId == null
+            ? requestSessionId : previousSessionId.toString();
+        ModelRequestOptions options = requestOptions(request, requestedModel);
+        var reservation = runAdmissionService.tryAcquire();
+        if (reservation.isEmpty()) {
+            return concurrencyLimitedResponse();
+        }
         try {
-            String sessionId = request.sessionId();
-            if (!hasText(sessionId) && previous != null && previous.sessionId() != null) {
-                sessionId = previous.sessionId().toString();
-            }
-            sessionContext = openAiSessionService.resolveRunSession(sessionId, sessionKeyHeader, requestedModel, profile);
+            Acceptance result = runService.submit(
+                () -> openAiSessionService.resolveRunSession(sessionId, sessionKeyHeader, requestedModel, profile),
+                input.userMessage(), requestedModel, options, instructions, parsedHistory.messages(),
+                hasExplicitConversationHistory(request) ? null : previousSessionId,
+                reservation.get(), key);
+            return accepted(result, sessionKeyHeader);
+        } catch (OpenAiRunService.IdempotencyConflict e) {
+            return idempotencyConflict();
+        } catch (OpenAiRunService.DurableAcceptanceUnavailable e) {
+            return durableAcceptanceUnavailable();
         } catch (IllegalArgumentException e) {
             if (e.getMessage() != null && e.getMessage().startsWith("Session not found:")) {
                 return openAiError(HttpStatus.NOT_FOUND, e.getMessage(), "invalid_request_error", "session_not_found");
             }
             return openAiError(HttpStatus.BAD_REQUEST, e.getMessage(), "invalid_request_error");
         }
+    }
 
-        boolean previousHistoryAlreadyPersisted = previous != null
-            && previous.sessionId() != null
-            && previous.sessionId().equals(sessionContext.session().id())
-            && !hasExplicitConversationHistory(request);
-        var reservation = runAdmissionService.tryAcquire();
-        if (reservation.isEmpty()) {
-            return concurrencyLimitedResponse();
-        }
-        ApiRunAdmissionService.Reservation acquiredReservation = reservation.get();
-        RunRecord run;
-        try {
-            run = runService.submit(
-                sessionContext,
-                input.userMessage(),
-                requestedModel,
-                requestOptions(request, requestedModel),
-                instructions,
-                previousHistoryAlreadyPersisted ? List.of() : historyToPersist,
-                acquiredReservation
-            );
-        } catch (RuntimeException e) {
-            acquiredReservation.close();
-            throw e;
-        }
-
+    private ResponseEntity<Map<String, Object>> accepted(Acceptance result, String sessionKeyHeader) {
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("run_id", run.runId());
+        body.put("run_id", result.runId());
         body.put("status", "started");
         return ResponseEntity.status(HttpStatus.ACCEPTED)
-            .headers(responseHeaders(sessionContext))
+            .headers(responseHeaders(result.sessionId(), sessionKeyHeader))
             .contentType(MediaType.APPLICATION_JSON)
             .body(body);
+    }
+
+    private ResponseEntity<Map<String, Object>> idempotencyConflict() {
+        return openAiError(HttpStatus.CONFLICT, "Idempotency-Key already belongs to a different request",
+            "invalid_request_error", "idempotency_conflict");
+    }
+
+    private ResponseEntity<Map<String, Object>> durableAcceptanceUnavailable() {
+        return openAiError(HttpStatus.SERVICE_UNAVAILABLE, "Run acceptance storage is unavailable",
+            "server_error", "run_persistence_unavailable");
     }
 
     @GetMapping("/{runId}")
@@ -410,11 +442,11 @@ public class OpenAiRunsController {
         );
     }
 
-    private HttpHeaders responseHeaders(OpenAiSessionContext sessionContext) {
+    private HttpHeaders responseHeaders(String sessionId, String sessionKeyHeader) {
         HttpHeaders headers = new HttpHeaders();
-        headers.add(OpenAiSessionService.SESSION_ID_HEADER, sessionContext.responseSessionId());
-        if (hasText(sessionContext.sessionKey())) {
-            headers.add(OpenAiSessionService.SESSION_KEY_HEADER, sessionContext.sessionKey());
+        headers.add(OpenAiSessionService.SESSION_ID_HEADER, sessionId);
+        if (hasText(sessionKeyHeader)) {
+            headers.add(OpenAiSessionService.SESSION_KEY_HEADER, sessionKeyHeader.trim());
         }
         return headers;
     }

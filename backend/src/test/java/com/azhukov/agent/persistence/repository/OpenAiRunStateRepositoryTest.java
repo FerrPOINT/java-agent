@@ -1,8 +1,12 @@
 package com.azhukov.agent.persistence.repository;
 
+import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.persistence.PostgresTestContainer;
+import com.azhukov.agent.service.OpenAiSessionService.OpenAiSessionContext;
 import com.azhukov.agent.persistence.entity.OpenAiRunEventEntity;
 import com.azhukov.agent.persistence.entity.OpenAiRunStateEntity;
+import com.azhukov.agent.persistence.entity.SessionEntity;
+import com.azhukov.agent.service.OpenAiRunStateMachine;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -11,6 +15,12 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -31,6 +41,13 @@ class OpenAiRunStateRepositoryTest extends PostgresTestContainer {
     @Autowired
     private TransactionTemplate transactionTemplate;
 
+    @Autowired
+    private SessionRepository sessions;
+
+    private OpenAiSessionContext sessionContext() {
+        return new OpenAiSessionContext(Session.create("user-a", "noop", "model"), false, null);
+    }
+
     private OpenAiRunStateEntity row(String runId, String state) {
         OpenAiRunStateEntity entity = new OpenAiRunStateEntity();
         entity.setRunId(runId);
@@ -42,12 +59,66 @@ class OpenAiRunStateRepositoryTest extends PostgresTestContainer {
     }
 
     @Autowired
-    private com.azhukov.agent.service.OpenAiRunStateMachine stateMachine;
+    private OpenAiRunStateMachine stateMachine;
+
+    @Test
+    void concurrentAcceptanceCommitsOneRunOneSessionAndOneInitialEvent() throws Exception {
+        String runId = "run-" + UUID.randomUUID();
+        String fingerprint = "a".repeat(64);
+        var barrier = new CyclicBarrier(2);
+        var created = new ConcurrentLinkedQueue<UUID>();
+        Supplier<OpenAiSessionContext> resolve = () -> {
+            var row = new SessionEntity();
+            row.setUserId("fixture-acceptance");
+            row.setModelProvider("noop");
+            row.setModelName("test-model");
+            row.setProfile("alpha");
+            row.setCreatedAt(Instant.now());
+            row.setUpdatedAt(Instant.now());
+            var id = sessions.saveAndFlush(row).getId();
+            created.add(id);
+            try {
+                barrier.await(5, TimeUnit.SECONDS);
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
+            return new OpenAiSessionContext(new Session(id, row.getUserId(), null, "noop",
+                "test-model", null, java.util.Map.of("profile", "alpha")), false, null, "external-chat");
+        };
+        try (var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+            var first = workers.submit(() -> stateMachine.accept(runId, "test-model", fingerprint, resolve));
+            var second = workers.submit(() -> stateMachine.accept(runId, "test-model", fingerprint, resolve));
+            int winners = 0;
+            for (var future : List.of(first, second)) {
+                try {
+                    future.get(10, TimeUnit.SECONDS);
+                    winners++;
+                } catch (ExecutionException e) {
+                    assertThat(e.getCause().getClass().getSimpleName()).isEqualTo("AlreadyAccepted");
+                }
+            }
+            assertThat(winners).isEqualTo(1);
+            assertThat(created).hasSize(2);
+            var receipt = stateMachine.state(runId).orElseThrow();
+            assertThat(receipt.getRequestFingerprint()).isEqualTo(fingerprint);
+            assertThat(receipt.getAcceptedSessionId()).isEqualTo("external-chat");
+            assertThat(receipt.getProfile()).isEqualTo("alpha");
+            assertThat(sessions.findAllById(created)).extracting(SessionEntity::getId)
+                .containsExactly(receipt.getSessionId());
+            assertThat(stateMachine.replayParsed(runId, 0, 10)).hasSize(1);
+        } finally {
+            transactionTemplate.executeWithoutResult(tx -> {
+                eventRepository.deleteByRunId(runId);
+                stateRepository.deleteById(runId);
+                sessions.deleteAllById(created);
+            });
+        }
+    }
 
     @Test
     void durableLifecycleReplaysCommittedOutcomeAndRejectsLateEvents() {
         String id = "run-" + UUID.randomUUID();
-        stateMachine.createRun(id, UUID.randomUUID(), null, "default", "model", null);
+        stateMachine.accept(id, "model", null, this::sessionContext);
         try {
             stateMachine.recordEvent(id, "in_progress", java.util.Map.of("event", "run.started"));
             stateMachine.recordEvent(id, null, java.util.Map.of("event", "run.stopping"));
@@ -67,7 +138,7 @@ class OpenAiRunStateRepositoryTest extends PostgresTestContainer {
     @Test
     void concurrentTerminalEventsHaveOneWinner() throws Exception {
         String id = "run-" + UUID.randomUUID();
-        stateMachine.createRun(id, UUID.randomUUID(), null, "default", "model", null);
+        stateMachine.accept(id, "model", null, this::sessionContext);
         stateMachine.recordEvent(id, "in_progress", java.util.Map.of("event", "run.started"));
         try (var workers = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
             var complete = workers.submit(() -> recordTerminal(id, "completed"));

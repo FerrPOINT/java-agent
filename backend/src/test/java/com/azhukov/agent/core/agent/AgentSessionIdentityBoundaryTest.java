@@ -97,7 +97,6 @@ class AgentSessionIdentityBoundaryTest {
         stored.setSubgoal("owned task");
         stored.setCliState(Map.of("theme", "dark", "userDisplayName", "chosen name"));
         when(sessions.findById(SESSION)).thenReturn(Optional.empty(), Optional.of(stored));
-        duplicateInsert(new DataIntegrityViolationException("synthetic duplicate"), "work");
 
         var result = resolver.loadOrCreateSession(SESSION, OWNER, "fixture", "model", "api_server", "work");
 
@@ -112,7 +111,6 @@ class AgentSessionIdentityBoundaryTest {
     @Test
     void aForeignDuplicateWinnerCannotBeHydratedOrReplaced() {
         when(sessions.findById(SESSION)).thenReturn(Optional.empty(), Optional.of(owned("foreign-owner")));
-        duplicateInsert(new DataIntegrityViolationException("synthetic duplicate"), "default");
 
         assertThatThrownBy(() -> resolver.loadOrCreateSession(SESSION, OWNER, "fixture", "model", "api_server", "default"))
                 .isInstanceOf(SecurityException.class);
@@ -124,7 +122,8 @@ class AgentSessionIdentityBoundaryTest {
     void anUnexplainedInsertFailureIsNotConvertedIntoAnOwnedSession() {
         var failure = new DataIntegrityViolationException("synthetic constraint failure");
         when(sessions.findById(SESSION)).thenReturn(Optional.empty());
-        duplicateInsert(failure, "default");
+        doThrow(failure).when(sessions).insertSessionRow(eq(SESSION), eq(OWNER), eq("New chat"),
+                eq("fixture"), eq("model"), eq("api_server"), eq("default"), any(Instant.class));
 
         assertThatThrownBy(() -> resolver.loadOrCreateSession(SESSION, OWNER, "fixture", "model", "api_server", "default"))
                 .isSameAs(failure);
@@ -172,11 +171,6 @@ class AgentSessionIdentityBoundaryTest {
         order.verify(sessions).save(argThat(entity -> "telegram".equals(entity.getSource())
                 && OWNER.equals(entity.getUserId())));
         verify(sessions, never()).findById(any());
-    }
-
-    private void duplicateInsert(DataIntegrityViolationException failure, String profile) {
-        doThrow(failure).when(sessions).insertSessionRow(eq(SESSION), eq(OWNER), eq("New chat"),
-                eq("fixture"), eq("model"), eq("api_server"), eq(profile), any(Instant.class));
     }
 
     private static SessionEntity owned(String owner) {

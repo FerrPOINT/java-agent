@@ -216,6 +216,61 @@ class OpenAiRunsControllerTest {
             .andExpect(jsonPath("$.model").value(MODEL));
     }
 
+    @Test
+    void keyedRunReplayUsesTheOriginalAcceptanceAfterServiceRecreation() throws Exception {
+        OpenAiRunStateMachine stateMachine = mock(OpenAiRunStateMachine.class);
+        var accepted = new java.util.concurrent.ConcurrentHashMap<String, OpenAiRunStateEntity>();
+        when(stateMachine.state(anyString())).thenAnswer(call -> java.util.Optional.ofNullable(accepted.get(call.getArgument(0))));
+        when(stateMachine.accept(anyString(), anyString(), anyString(), any())).thenAnswer(call -> {
+            java.util.function.Supplier<OpenAiSessionContext> resolver = call.getArgument(3);
+            OpenAiSessionContext resolved = resolver.get();
+            var row = persistedRun("user-1");
+            row.setRunId(call.getArgument(0));
+            row.setRequestFingerprint(call.getArgument(2));
+            row.setAcceptedSessionId(resolved.responseSessionId());
+            accepted.put(row.getRunId(), row);
+            return resolved;
+        });
+        when(agentRuntimeService.runApiTurn(any(Session.class), anyString(), any(ModelRequestOptions.class)))
+            .thenReturn(new ChatResponseDto(SESSION_ID, "done", List.of(), true));
+        UserContext.set("user-1", UserContext.ROLE_USER);
+
+        String body = "{\"input\":\"original dispatch\"}";
+        MockMvc first = durableRunsController(stateMachine);
+        MvcResult created = first.perform(post("/v1/runs").header("Idempotency-Key", "dispatch-31")
+                .contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isAccepted()).andReturn();
+        String runId = readRunId(created);
+
+        MockMvc restarted = durableRunsController(stateMachine);
+        restarted.perform(post("/v1/runs").header("Idempotency-Key", "dispatch-31")
+                .contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isAccepted())
+            .andExpect(jsonPath("$.run_id").value(runId))
+            .andExpect(header().string(OpenAiSessionService.SESSION_ID_HEADER, SESSION_ID.toString()));
+        restarted.perform(post("/v1/runs").header("Idempotency-Key", "dispatch-31")
+                .contentType(MediaType.APPLICATION_JSON).content("{\"input\":\"a different dispatch\"}"))
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.error.code").value("idempotency_conflict"));
+        verify(stateMachine).accept(eq(runId), anyString(), anyString(), any());
+        verify(openAiSessionService).resolveRunSession(isNull(String.class), isNull(), anyString(), eq("default"));
+    }
+
+    private MockMvc durableRunsController(OpenAiRunStateMachine stateMachine) {
+        var beans = new org.springframework.beans.factory.support.StaticListableBeanFactory();
+        beans.addBean("runStateMachine", stateMachine);
+        var provider = beans.getBeanProvider(OpenAiRunStateMachine.class);
+        var service = new OpenAiRunService(agentRuntimeService, openAiSessionService,
+            steerBuffer, interruptToken, approvalQueue, new DefaultRedactor(properties),
+            objectMapper, processTool, provider);
+        var controller = new OpenAiRunsController(
+            service, openAiSessionService, responseStore, Mappers.getMapper(OpenAiMapper.class),
+            objectMapper, properties, new DefaultRedactor(properties), runAdmissionService, profileService, provider);
+        return MockMvcBuilders.standaloneSetup(controller)
+            .setControllerAdvice(new GlobalExceptionHandler())
+            .build();
+    }
+
     private MockMvc persistedRunsController(OpenAiRunStateMachine stateMachine) {
         @SuppressWarnings("unchecked")
         ObjectProvider<OpenAiRunStateMachine> provider = mock(ObjectProvider.class);

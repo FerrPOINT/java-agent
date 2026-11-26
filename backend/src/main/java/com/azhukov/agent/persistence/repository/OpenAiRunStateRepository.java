@@ -8,8 +8,19 @@ import org.springframework.data.repository.query.Param;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 public interface OpenAiRunStateRepository extends JpaRepository<OpenAiRunStateEntity, String> {
+
+    @org.springframework.data.jpa.repository.Modifying
+    @Query(value = """
+        INSERT INTO openai_run_states
+            (run_id, session_id, user_id, profile, model, request_fingerprint, accepted_session_id, state)
+        VALUES (:id, :sessionId, :userId, :profile, :model, :fingerprint, :acceptedSessionId, 'queued')
+        ON CONFLICT DO NOTHING
+        """, nativeQuery = true)
+    int insertAcceptance(String id, UUID sessionId, String userId, String profile, String model,
+                         String fingerprint, String acceptedSessionId);
 
     @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT r FROM OpenAiRunStateEntity r WHERE r.runId = :id")

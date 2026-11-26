@@ -30,6 +30,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
@@ -37,8 +39,10 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 
 /**
  * Durable OpenAI Runs API surface (WP-6): run state machine persistence and
@@ -77,61 +81,91 @@ public class OpenAiRunService {
         this.turnLocks = turnLocks;
     }
 
-    public RunRecord submit(OpenAiSessionContext sessionContext,
-                            String userMessage,
-                            String requestedModel,
-                            ModelRequestOptions options,
-                            String instructions,
-                            List<Message> historyToPersist) {
-        return submit(sessionContext, Message.user(userMessage), requestedModel, options, instructions, historyToPersist, null);
+    public record SubmissionKey(String runId, String profile, String fingerprint) {}
+
+    public record Acceptance(String runId, String sessionId) {}
+
+    public static final class IdempotencyConflict extends RuntimeException {}
+
+    public static final class DurableAcceptanceUnavailable extends RuntimeException {}
+
+    /** Read a previously committed acceptance without opening a session or dispatching again. */
+    public Optional<Acceptance> replay(SubmissionKey key) {
+        OpenAiRunStateMachine machine = stateMachine();
+        if (machine == null) {
+            throw new DurableAcceptanceUnavailable();
+        }
+        return machine.state(key.runId()).map(state -> {
+            String scopedUser = UserContext.scopeUserId();
+            if (!Objects.equals(state.getRequestFingerprint(), key.fingerprint())
+                || !key.profile().equals(state.getProfile())
+                || (scopedUser != null && !scopedUser.equals(state.getUserId()))
+                || state.getAcceptedSessionId() == null) {
+                throw new IdempotencyConflict();
+            }
+            return new Acceptance(state.getRunId(), state.getAcceptedSessionId());
+        });
     }
 
-    public RunRecord submit(OpenAiSessionContext sessionContext,
-                            Message userMessage,
-                            String requestedModel,
-                            ModelRequestOptions options,
-                            String instructions,
-                            List<Message> historyToPersist) {
-        return submit(sessionContext, userMessage, requestedModel, options, instructions, historyToPersist, null);
-    }
-
-    public RunRecord submit(OpenAiSessionContext sessionContext,
-                            Message userMessage,
-                            String requestedModel,
-                            ModelRequestOptions options,
-                            String instructions,
-                            List<Message> historyToPersist,
-                            ApiRunAdmissionService.Reservation reservation) {
+    public Acceptance submit(Supplier<OpenAiSessionContext> resolveSession,
+                             Message userMessage,
+                             String requestedModel,
+                             ModelRequestOptions options,
+                             String instructions,
+                             List<Message> historyToPersist,
+                             UUID previousSessionId,
+                             ApiRunAdmissionService.Reservation reservation,
+                             SubmissionKey key) {
         sweepTerminalRuns();
-        UUID sessionId = sessionContext.session().id();
-        String runId = "run_" + UUID.randomUUID().toString().replace("-", "");
-        UUID controlSessionId = UUID.randomUUID();
-        String userId = sessionContext.session().userId();
-        String profile = sessionContext.session().getMetadata("profile");
-        if (profile == null) {
-            profile = "default";
-        }
-        RunRecord record = new RunRecord(runId, sessionId, controlSessionId, userId, profile, requestedModel);
-        var stateMachine = stateMachine();
-        if (stateMachine != null) {
-            stateMachine.createRun(runId, sessionId, userId, profile, requestedModel, null);
-            record.stateMachine = stateMachine;
-        }
-        runs.put(runId, record);
-
-        Session runSession = RunControlScope.withControlSessionId(sessionContext.session(), controlSessionId);
-        if (instructions != null && !instructions.isBlank()) {
-            runSession = runSession.withMetadata("system_prompt_override", instructions);
-        }
-        Session effectiveSession = runSession;
+        String runId = key == null ? "run_" + UUID.randomUUID().toString().replace("-", "") : key.runId();
+        OpenAiRunStateMachine machine = stateMachine();
+        OpenAiSessionContext context;
         try {
-            executor.submit(UserContext.wrap(() -> run(record, effectiveSession, userMessage, options, historyToPersist, reservation)));
-            executor.submit(() -> monitorApprovals(record));
-            return record;
+            if (machine == null) {
+                if (key != null) {
+                    throw new DurableAcceptanceUnavailable();
+                }
+                context = resolveSession.get();
+            } else {
+                context = machine.accept(runId, requestedModel, key == null ? null : key.fingerprint(), resolveSession);
+            }
+        } catch (OpenAiRunStateMachine.AlreadyAccepted e) {
+            closeReservation(reservation);
+            if (key == null) {
+                throw e;
+            }
+            return replay(key).orElseThrow(DurableAcceptanceUnavailable::new);
         } catch (RuntimeException e) {
             closeReservation(reservation);
             throw e;
         }
+
+        Session session = context.session();
+        UUID controlSessionId = UUID.randomUUID();
+        RunRecord record = new RunRecord(runId, session.id(), controlSessionId, session.userId(),
+            session.profile(), requestedModel);
+        record.stateMachine = machine;
+        runs.put(runId, record);
+        Session runSession = RunControlScope.withControlSessionId(session, controlSessionId);
+        if (instructions != null && !instructions.isBlank()) {
+            runSession = runSession.withMetadata("system_prompt_override", instructions);
+        }
+        Session effectiveSession = runSession;
+        List<Message> history = session.id().equals(previousSessionId) ? List.of() : historyToPersist;
+        try {
+            executor.submit(UserContext.wrap(() -> run(record, effectiveSession, userMessage, options, history, reservation)));
+        } catch (RejectedExecutionException e) {
+            closeReservation(reservation);
+            record.finishFailed("Run execution could not start");
+            record.closeEvents();
+            return new Acceptance(runId, context.responseSessionId());
+        }
+        try {
+            executor.submit(() -> monitorApprovals(record));
+        } catch (RejectedExecutionException e) {
+            log.debug("Run approval monitor is stopping for {}", runId);
+        }
+        return new Acceptance(runId, context.responseSessionId());
     }
 
     public RunRecord get(String runId) {
