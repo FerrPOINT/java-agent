@@ -62,8 +62,8 @@ class McpToolHandlerTest {
         var nativeCall = new com.azhukov.agent.core.model.ToolCall("native", fullName, "{}");
         String aliasArgs = "{\"server_name\":\"srv\",\"tool_name\":\"tool\"}";
         var aliasCall = new com.azhukov.agent.core.model.ToolCall("alias", "mcp_tool", aliasArgs);
-        var expected = guard.mcpAdmission(nativeCall);
-        assertThat(expected).isNotNull().isSameAs(guard.mcpAdmission(aliasCall));
+        var expected = guard.mcpAdmission(nativeCall, null);
+        assertThat(expected).isNotNull().isSameAs(guard.mcpAdmission(aliasCall, null));
         assertThat(guard.requiresApproval(nativeCall, expected)).isFalse();
 
         manager.getClientsForTest().put("srv", new McpLifecycleManager.McpServerState(server, client, List.of(current)));
@@ -76,7 +76,7 @@ class McpToolHandlerTest {
         verify(client, times(0)).callTool(any());
 
         trust.recordServerTools("srv", "untrusted", List.of(current));
-        var approved = guard.mcpAdmission(aliasCall);
+        var approved = guard.mcpAdmission(aliasCall, null);
         assertThat(guard.requiresApproval(aliasCall, approved)).isTrue();
         assertThat(aliasHandler.execute(aliasArgs, null, null, approved).success()).isTrue();
         verify(client, times(1)).callTool(any());
@@ -107,7 +107,7 @@ class McpToolHandlerTest {
         var handler = new com.azhukov.agent.tools.mcp.McpTool(manager);
         String args = "{\"server_name\":\"srv\",\"tool_name\":\"fixture-a\"}";
         var call = new com.azhukov.agent.core.model.ToolCall("alias", "mcp_tool", args);
-        var admission = guard.mcpAdmission(call);
+        var admission = guard.mcpAdmission(call, null);
         assertThat(admission.definition()).isEqualTo(requested);
         assertThat(trust.metadata(aliasName).definition()).isEqualTo(other);
         var result = handler.execute(args, null, null, admission);

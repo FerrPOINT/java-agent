@@ -1,6 +1,8 @@
 package com.azhukov.agent.core.security;
 
+import com.azhukov.agent.client.mcp.McpLifecycleManager;
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.mcp.McpTool;
@@ -16,10 +18,23 @@ public class DefaultToolApprovalPolicy implements ToolApprovalPolicy {
     private final ApprovalQueue approvalQueue;
     @Autowired(required = false)
     private McpToolTrustService mcpToolTrustService;
+    @Autowired
+    private org.springframework.beans.factory.ObjectProvider<McpLifecycleManager> mcpLifecycle;
 
     @Override
-    public McpToolTrustService.ToolTrustMetadata mcpAdmission(ToolCall call) {
+    public McpToolTrustService.ToolTrustMetadata mcpAdmission(ToolCall call, Session session) {
         Objects.requireNonNull(call, "Tool call is required");
+        if (session != null && !"default".equals(session.profile())) {
+            if (!"mcp_tool".equals(call.name())) {
+                return null;
+            }
+            try {
+                var args = ToolHandler.parseJson(call.arguments(), McpTool.McpArgs.class);
+                return mcpLifecycle.getObject().admitProfileTool(session.profile(), args.serverName(), args.toolName());
+            } catch (RuntimeException e) {
+                return null;
+            }
+        }
         if ("mcp_tool".equals(call.name())) {
             if (mcpToolTrustService == null) throw new IllegalStateException("MCP trust service is unavailable");
             var args = ToolHandler.parseJson(call.arguments(), McpTool.McpArgs.class);

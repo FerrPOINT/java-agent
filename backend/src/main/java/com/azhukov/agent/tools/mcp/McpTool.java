@@ -54,9 +54,15 @@ public class McpTool implements ToolHandler {
         if (args.toolName() == null || args.toolName().isBlank()) {
             return jsonError("mcp_tool requires 'tool_name'.");
         }
+        boolean named = session != null && !"default".equals(session.profile());
+        if (named && admission == null) {
+            return jsonError("MCP tool is unavailable in the selected profile");
+        }
         try {
             String argumentsJson = args.arguments() == null || args.arguments().isBlank() ? "{}" : args.arguments();
-            var result = mcpLifecycleManager.executeModelTool(args.serverName(), args.toolName(), argumentsJson, admission);
+            var result = named
+                ? mcpLifecycleManager.executeProfileTool(session.profile(), args.serverName(), args.toolName(), argumentsJson, admission)
+                : mcpLifecycleManager.executeModelTool(args.serverName(), args.toolName(), argumentsJson, admission);
             String text = result.content().stream()
                 .map(c -> c instanceof io.modelcontextprotocol.spec.McpSchema.TextContent tc ? tc.text() : c.toString())
                 .collect(Collectors.joining("\n"));
@@ -72,7 +78,7 @@ public class McpTool implements ToolHandler {
             }
             return ToolResult.ok(output);
         } catch (Exception e) {
-            return jsonError("MCP tool failed: " + e.getMessage());
+            return jsonError(named ? "MCP tool failed in the selected profile" : "MCP tool failed: " + e.getMessage());
         }
     }
 

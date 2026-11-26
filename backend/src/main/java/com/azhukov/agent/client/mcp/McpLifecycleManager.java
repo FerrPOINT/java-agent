@@ -681,7 +681,70 @@ public class McpLifecycleManager {
     }
 
     public List<DiscoveredTool> inspectProfileServer(String profile, String name) {
-        var store = configStoreProvider.getIfAvailable();
+        var configured = profileServer(profile, name);
+        return withProfileClient(profile, configured, Duration.ofSeconds(10), client -> profileTools(configured, client).stream()
+            .map(tool -> new DiscoveredTool(name, tool.name(),
+                convertToolDefinition(mcpPrefixedToolName(name, tool.name()), tool)))
+            .toList());
+    }
+
+    public ToolTrustMetadata admitProfileTool(String profile, String serverName, String toolName) {
+        var configured = profileServer(profile, serverName);
+        return withProfileClient(profile, configured, Duration.ofSeconds(10), client -> profileTool(profile, configured, client, toolName));
+    }
+
+    public McpSchema.CallToolResult executeProfileTool(String profile, String serverName, String toolName,
+                                                       String arguments, ToolTrustMetadata admission) {
+        var configured = profileServer(profile, serverName);
+        if (admission == null || !profileBinding(profile, configured).equals(admission.profileBinding())) {
+            throw new IllegalStateException("MCP configuration changed after admission");
+        }
+        final Map<String, Object> params;
+        try {
+            params = objectMapper.readValue(arguments, new TypeReference<>() {});
+        } catch (Exception e) {
+            throw new IllegalArgumentException("Invalid MCP tool arguments");
+        }
+        if (params == null || (argumentScanner != null && argumentScanner.scan(params).isBlocked())) {
+            throw new IllegalArgumentException("MCP tool arguments were rejected");
+        }
+        if (rateLimiter != null && !rateLimiter.tryAcquire(profile + ":" + serverName + ":" + toolName,
+                properties.getMcp().getRateLimitMaxCalls(), properties.getMcp().getRateLimitWindowSeconds())) {
+            throw new IllegalStateException("MCP tool rate limit exceeded");
+        }
+
+        return withProfileClient(profile, configured, resolveMcpToolTimeout(configured.properties()), client -> {
+            var observed = profileTool(profile, configured, client, toolName);
+            if (!admission.equals(observed)
+                || !admission.profileBinding().equals(profileBinding(profile, profileServer(profile, serverName)))) {
+                throw new IllegalStateException("MCP definition or configuration changed before dispatch");
+            }
+            return client.callTool(new McpSchema.CallToolRequest(toolName, params));
+        });
+    }
+
+    private ToolTrustMetadata profileTool(String profile, ConfiguredServer server, McpSyncClient client, String name) {
+        var definition = profileTools(server, client).stream().filter(tool -> tool.name().equals(name)).findFirst()
+            .orElseThrow(() -> new IllegalStateException("MCP tool is unavailable in the selected profile"));
+        return ToolTrustMetadata.nativeTool(server.properties().getName(), server.properties().getTrust(), definition,
+            profileBinding(profile, server));
+    }
+
+    private static McpToolTrustService.ProfileBinding profileBinding(String profile, ConfiguredServer server) {
+        var config = server.schemaConfig();
+        return new McpToolTrustService.ProfileBinding(profile, config.getId(), config.getConfigRevision());
+    }
+
+    private List<McpSchema.Tool> profileTools(ConfiguredServer configured, McpSyncClient client) {
+        var capabilities = client.getServerCapabilities();
+        if (capabilities != null && capabilities.tools() == null) {
+            return List.of();
+        }
+        return admittedMcpTools(configured.properties(), listToolsWithPagination(client));
+    }
+
+    private ConfiguredServer profileServer(String profile, String name) {
+        var store = configStoreProvider == null ? null : configStoreProvider.getIfAvailable();
         if (store == null) {
             throw new IllegalStateException("MCP config store is unavailable");
         }
@@ -692,18 +755,17 @@ public class McpLifecycleManager {
             throw new IllegalArgumentException("The selected profile MCP server requires HTTP or SSE transport");
         }
         McpConfigStore.requireRemoteEndpoint(server.getBaseUrl());
-        try (var client = createRemoteClient(server, profile, Duration.ofSeconds(10))) {
+        return new ConfiguredServer(server, config);
+    }
+
+    private <T> T withProfileClient(String profile, ConfiguredServer configured, Duration timeout,
+                                    java.util.function.Function<McpSyncClient, T> operation) {
+        var server = configured.properties();
+        try (var client = createRemoteClient(server, profile, timeout)) {
             client.initialize();
-            var capabilities = client.getServerCapabilities();
-            if (capabilities != null && capabilities.tools() == null) {
-                return List.of();
-            }
-            return admittedMcpTools(server, listToolsWithPagination(client)).stream()
-                .map(tool -> new DiscoveredTool(name, tool.name(),
-                    convertToolDefinition(mcpPrefixedToolName(name, tool.name()), tool)))
-                .toList();
+            return operation.apply(client);
         } catch (Exception e) {
-            throw new IllegalStateException("Unable to inspect MCP for the selected profile");
+            throw new IllegalStateException("Unable to access MCP for the selected profile");
         }
     }
 

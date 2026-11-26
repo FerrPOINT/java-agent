@@ -32,16 +32,16 @@ class DefaultToolApprovalPolicyTest {
         var queue = new ApprovalQueue();
         var policy = new DefaultToolApprovalPolicy(properties(), queue);
         var call = new ToolCall("1", "mcp_tool", "{\"server_name\":\"srv\",\"tool_name\":\"tool\"}");
-        assertThatThrownBy(() -> policy.mcpAdmission(call)).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> policy.mcpAdmission(call, null)).isInstanceOf(IllegalStateException.class);
         var trust = mock(McpToolTrustService.class);
         policy.setMcpToolTrustService(trust);
-        assertThatThrownBy(() -> policy.mcpAdmission(new ToolCall("2", "mcp_tool", "{}")))
+        assertThatThrownBy(() -> policy.mcpAdmission(new ToolCall("2", "mcp_tool", "{}"), null))
             .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> policy.mcpAdmission(call)).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> policy.mcpAdmission(call, null)).isInstanceOf(IllegalArgumentException.class);
         var admission = mock(McpToolTrustService.ToolTrustMetadata.class);
         when(trust.metadata("srv", "tool")).thenReturn(admission);
         when(admission.requiresApproval()).thenReturn(true);
-        assertThat(policy.mcpAdmission(call)).isSameAs(admission);
+        assertThat(policy.mcpAdmission(call, null)).isSameAs(admission);
         assertThat(policy.requiresApproval(call, admission)).isTrue();
     }
 

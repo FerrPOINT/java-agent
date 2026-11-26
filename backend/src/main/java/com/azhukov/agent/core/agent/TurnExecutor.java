@@ -294,15 +294,18 @@ public class TurnExecutor {
         boolean allExecuteCode = !toolCalls.isEmpty()
             && toolCalls.stream().allMatch(tc -> "execute_code".equals(tc.name()));
         boolean anyApprovalRequired = false;
-        if (!skipApproval) {
+        boolean named = !"default".equals(session.profile());
+        boolean scopedMcpCall = named && toolCalls.stream().anyMatch(call -> "mcp_tool".equals(call.name()));
+        if (!skipApproval && !scopedMcpCall) {
             for (ToolCall call : toolCalls) {
-                if (approvalPolicy.requiresApproval(call, approvalPolicy.mcpAdmission(call))) {
+                if (approvalPolicy.requiresApproval(call, approvalPolicy.mcpAdmission(call, session))) {
                     anyApprovalRequired = true;
                     break;
                 }
             }
         }
         boolean shouldParallel = !anyApprovalRequired
+            && !scopedMcpCall
             && ToolParallelSafety.shouldParallelize(toolCalls, registeredToolNames, session);
 
         if (!shouldParallel) {
@@ -341,7 +344,8 @@ public class TurnExecutor {
                 // Calculate this once before the subagent policy check. Only
                 // approval-gated calls are dangerous: a child must still be able
                 // to use ordinary read-only tools to finish its delegated work.
-                var mcpAdmission = approvalPolicy.mcpAdmission(call);
+                var mcpAdmission = named && !registeredToolNames.contains(call.name())
+                    ? null : approvalPolicy.mcpAdmission(call, session);
                 boolean flagRequiresApproval = !skipApproval
                     && approvalPolicy.requiresApproval(call, mcpAdmission);
                 boolean isSubagentChild = !skipApproval && session.getMetadata("delegation_parent_session") != null;

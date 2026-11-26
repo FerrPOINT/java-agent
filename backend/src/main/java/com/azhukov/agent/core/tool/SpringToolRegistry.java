@@ -64,7 +64,7 @@ public class SpringToolRegistry implements ToolRegistry {
     private static final List<String> SKILL_TOOLS = List.of("skills_list", "skill_view", "skill_manage");
     private static final Set<String> PROFILE_TOOLS = Set.of(
         "read_file", "write_file", "patch", "search_files", "publish_file", "delete_file",
-        "skills_list", "skill_view", "skill_manage", "memory"
+        "skills_list", "skill_view", "skill_manage", "memory", "mcp_tool"
     );
     private static final List<String> HERMES_CORE_TOOLS = List.of(
         "web_search", "web_extract",
@@ -1102,7 +1102,7 @@ public class SpringToolRegistry implements ToolRegistry {
         }
         var filter = resolveToolsets(configured);
         return adaptToolDefinitions(entries.values().stream()
-            .filter(entry -> admittedProfileTool(entry, filter))
+            .filter(entry -> admittedProfileTool(entry, filter, configured))
             .map(ToolEntry::definition)
             .toList());
     }
@@ -1114,10 +1114,13 @@ public class SpringToolRegistry implements ToolRegistry {
             return false;
         }
         var configured = profileToolsets(session);
-        return !configured.isEmpty() && admittedProfileTool(entry, resolveToolsets(configured));
+        return !configured.isEmpty() && admittedProfileTool(entry, resolveToolsets(configured), configured);
     }
 
-    private boolean admittedProfileTool(ToolEntry entry, ResolvedToolsetFilter filter) {
+    private boolean admittedProfileTool(ToolEntry entry, ResolvedToolsetFilter filter, Set<String> configured) {
+        if ("mcp_tool".equals(entry.definition().name())) {
+            return entry.annotation() != null && configured.contains("mcp_tool");
+        }
         return entry.annotation() != null && PROFILE_TOOLS.contains(entry.definition().name())
             && (filter.allTools() || filter.toolsets().contains(entry.toolset())
                 || filter.toolNames().contains(entry.definition().name()));

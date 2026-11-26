@@ -7,6 +7,7 @@ import org.springframework.stereotype.Component;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * Captures operator-side MCP server trust and discovery-time readOnlyHint metadata.
@@ -53,11 +54,19 @@ public class McpToolTrustService {
         return tools.get(new ToolName(serverName, toolName));
     }
 
-    public record ToolTrustMetadata(String serverName, String trust, boolean readOnlyHint, McpSchema.Tool definition) {
+    public record ProfileBinding(String profile, UUID configId, long revision) {}
+
+    public record ToolTrustMetadata(String serverName, String trust, boolean readOnlyHint, McpSchema.Tool definition,
+                                    ProfileBinding profileBinding) {
         public static ToolTrustMetadata nativeTool(String serverName, String trust, McpSchema.Tool definition) {
+            return nativeTool(serverName, trust, definition, null);
+        }
+
+        public static ToolTrustMetadata nativeTool(String serverName, String trust, McpSchema.Tool definition,
+                                                   ProfileBinding profileBinding) {
             boolean readOnly = definition.annotations() != null
                 && Boolean.TRUE.equals(definition.annotations().readOnlyHint());
-            return new ToolTrustMetadata(serverName, normalizeServerTrust(trust), readOnly, definition);
+            return new ToolTrustMetadata(serverName, normalizeServerTrust(trust), readOnly, definition, profileBinding);
         }
 
         public boolean requiresApproval() {
