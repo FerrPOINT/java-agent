@@ -460,15 +460,19 @@ public class DefaultPromptBuilder implements PromptBuilder {
      * absent from its API tool definitions (P-04).
      */
     public Message buildSystemMessageForTools(Session session, Set<String> effectiveToolNames) {
+        return buildSystemMessageForTools(session, effectiveToolNames, null);
+    }
+
+    public Message buildSystemMessageForTools(Session session, Set<String> effectiveToolNames, String override) {
         if (effectiveToolNames == null) {
-            return buildSystemMessage(session, null);
+            return buildSystemMessage(session, override);
         }
         Set<String> scopedNames = Set.copyOf(effectiveToolNames);
         Session scopedSession = session == null ? null
             : session.withMetadata("effectiveToolNames", String.join(",", new java.util.TreeSet<>(scopedNames)));
         requestToolNames.set(scopedNames);
         try {
-            return buildSystemMessage(scopedSession, null);
+            return buildSystemMessage(scopedSession, override);
         } finally {
             requestToolNames.remove();
         }
@@ -1332,7 +1336,7 @@ public class DefaultPromptBuilder implements PromptBuilder {
         // Hermes injects model guidance only when tools are available (if agent.valid_tool_names:).
         // Without tools, the execution-discipline guidance is wasteful and confusing.
         String modelGuidance = getModelGuidance();
-        boolean hasTools = !toolRegistry.getDefinitions().isEmpty();
+        boolean hasTools = !getAvailableToolNames().isEmpty();
         if (!modelGuidance.isEmpty() && hasTools) {
             stable.append("\n").append(modelGuidance);
         }
@@ -1473,8 +1477,12 @@ public class DefaultPromptBuilder implements PromptBuilder {
         // stable/context prefix; placed before the turn-varying memory/
         // timestamp tail so an unchanged index still falls inside the reused
         // prefix on implicit longest-prefix backends.
-        String skillsIndex = named == null ? buildSkillsIndex()
-            : buildSkillsIndex(profileSkills.list(session.profile(), named), true);
+        String skillsIndex = "";
+        if (named == null) {
+            skillsIndex = buildSkillsIndex();
+        } else if (getAvailableToolNames().contains("skill_view")) {
+            skillsIndex = buildSkillsIndex(profileSkills.list(session.profile(), named), true);
+        }
         if (!skillsIndex.isEmpty()) {
             volatileTier.append(skillsIndex).append("\n\n");
         }

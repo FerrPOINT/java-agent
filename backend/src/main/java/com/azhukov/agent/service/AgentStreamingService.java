@@ -502,7 +502,7 @@ public class AgentStreamingService {
 
         // Tools: select before building the prompt so system guidance matches
         // the exact tool definitions this request exposes (P-04).
-        List<ToolDefinition> tools = selectTools(request);
+        List<ToolDefinition> tools = selectTools(request, session);
 
         // Per-request model override must be resolved before context preparation:
         // the context window controls preflight compression. Applying it later
@@ -1665,9 +1665,10 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
     }
 
 
-    private List<ToolDefinition> selectTools(ChatRequest request) {
+    private List<ToolDefinition> selectTools(ChatRequest request, Session session) {
         Set<String> defaultToolsets = new HashSet<>(properties.getSkills().getDefaultToolsets());
-        List<ToolDefinition> all = toolRegistry.getDefinitions(defaultToolsets);
+        List<ToolDefinition> all = "default".equals(session.profile()) ? toolRegistry.getDefinitions(defaultToolsets)
+            : toolRegistry.getProfileDefinitions(session);
         if (request == null) {
             return all;
         }

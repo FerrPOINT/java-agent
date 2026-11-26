@@ -337,13 +337,28 @@ public class DefaultAgentRuntime implements AgentRuntime {
             effectiveToolsets = new HashSet<>(properties.getSkills().getDefaultToolsets());
         }
 
+        boolean named = !"default".equals(session.profile());
+        List<ToolDefinition> tools = named ? toolRegistry.getProfileDefinitions(session)
+            : toolRegistry.getDefinitions(effectiveToolsets);
+        // Delegation deny-list: subtract blocked TOOL names after composite
+        // expansion (Hermes parity — mixed bundles like hermes-cli must not leak
+        // delegate_task/clarify/memory/send_message/cronjob to child sessions).
+        String blockedMeta = session.getMetadata("delegation_blocked_tools");
+        if (blockedMeta != null && !blockedMeta.isBlank()) {
+            Set<String> denied = new HashSet<>(Arrays.asList(blockedMeta.split(",")));
+            tools = tools.stream()
+                .filter(td -> !denied.contains(td.name()))
+                .collect(java.util.stream.Collectors.toList());
+        }
+
         // Nudge: increment per-session memory turn counter
         // H6: Only increment if the memory toolset is actually available to the session.
         // M8: On first turn for a session (restart), hydrate the counter from prior
         // user turns in the conversation history so the nudge interval is preserved
         // across restarts. Mirrors Hermes which initializes _turns_since_memory from
         // the persisted conversation length on session load.
-        if (effectiveToolsets.contains("memory")) {
+        if (named ? tools.stream().anyMatch(tool -> "memory".equals(tool.name()))
+            : effectiveToolsets.contains("memory")) {
             int memNudge = properties.getMemory().getNudgeInterval();
             AtomicInteger memCounter = turnsSinceMemory.computeIfAbsent(sessionIdUuid, k -> {
                 // M8: Hydrate from history — count prior user turns and initialize
@@ -387,7 +402,10 @@ public class DefaultAgentRuntime implements AgentRuntime {
         String effectiveOverride = (systemPromptOverride != null && !systemPromptOverride.isBlank())
             ? systemPromptOverride
             : (persistedPrompt != null && !persistedPrompt.isBlank() ? persistedPrompt : null);
-        if (effectiveOverride != null
+        if (named && promptBuilder instanceof DefaultPromptBuilder dpb) {
+            turnMessages.add(dpb.buildSystemMessageForTools(session, tools.stream().map(ToolDefinition::name)
+                .collect(java.util.stream.Collectors.toSet()), effectiveOverride));
+        } else if (effectiveOverride != null
                 && promptBuilder instanceof DefaultPromptBuilder dpb) {
             turnMessages.add(dpb.buildSystemMessage(session, effectiveOverride));
         } else {
@@ -414,19 +432,6 @@ public class DefaultAgentRuntime implements AgentRuntime {
             }
         } else {
             turnMessages.add(Message.user(safeInput));
-        }
-
-        // Toolsets already resolved above (before memory nudge counter).
-        List<ToolDefinition> tools = toolRegistry.getDefinitions(effectiveToolsets);
-        // Delegation deny-list: subtract blocked TOOL names after composite
-        // expansion (Hermes parity — mixed bundles like hermes-cli must not leak
-        // delegate_task/clarify/memory/send_message/cronjob to child sessions).
-        String blockedMeta = session.getMetadata("delegation_blocked_tools");
-        if (blockedMeta != null && !blockedMeta.isBlank()) {
-            Set<String> denied = new HashSet<>(Arrays.asList(blockedMeta.split(",")));
-            tools = tools.stream()
-                .filter(td -> !denied.contains(td.name()))
-                .collect(java.util.stream.Collectors.toList());
         }
 
         // Resolve effective max turns: session metadata override (from DelegateTaskTool)
@@ -553,7 +558,8 @@ public class DefaultAgentRuntime implements AgentRuntime {
             // tool-calling iterations. Mirrors Hermes _iters_since_skill which
             // is incremented at the start of each loop iteration.
             // H6: Only increment if the skills toolset is actually available.
-            if (effectiveToolsets.contains("skills")) {
+            if ("default".equals(session.profile()) ? effectiveToolsets.contains("skills")
+                : tools.stream().anyMatch(tool -> "skill_manage".equals(tool.name()))) {
                 itersSinceSkill.computeIfAbsent(session.id(), k -> new AtomicInteger(0)).incrementAndGet();
             }
 

@@ -105,6 +105,16 @@ public class ToolExecutionService {
         UserContext.requireCurrentAccess();
         java.util.Objects.requireNonNull(session, "Tool execution requires a session");
         java.util.Objects.requireNonNull(session.id(), "Tool execution requires a session ID");
+        boolean named = !"default".equals(session.profile());
+        if (named) {
+            try {
+                if (!toolRegistry.isProfileToolEnabled(toolName, session)) {
+                    return failureResult("Tool is unavailable in the selected profile: " + toolName);
+                }
+            } catch (IllegalStateException e) {
+                return failureResult(e.getMessage());
+            }
+        }
         // PR-3 parity: guardrails must observe the executing session (scope
         // guardrail callbacks to the session so InterruptToken.currentSessionId()
         // resolves inside before/afterCall).
@@ -125,7 +135,9 @@ public class ToolExecutionService {
         // Hermes parity (tool_executor.py:1025-1033): checkpoint the workspace
         // before file-mutating tools and destructive terminal commands. This
         // enables /undo rollback to the state before the mutation.
-        ensureFileCheckpoint(toolName, arguments);
+        if (!named) {
+            ensureFileCheckpoint(toolName, arguments);
+        }
 
         long start = System.currentTimeMillis();
         log.info("tool_execution_started session={} callId={} tool={} argsBytes={}",
@@ -274,7 +286,7 @@ public class ToolExecutionService {
         // Preserve oversized successful output before the in-context limiter
         // truncates it. The replacement contains a preview + absolute temp
         // path so the model can call read_file for the complete result.
-        if (toolResultStorage != null && safeResult.success()) {
+        if (!named && toolResultStorage != null && safeResult.success()) {
             safeResult = toolResultStorage.maybePersist(safeResult, toolName, toolCallId);
         }
         // Classify result

@@ -503,6 +503,22 @@ public class ProfileService {
         return toStringKeyMap(config);
     }
 
+    public static List<String> configuredPlatformToolsets(Map<String, Object> config, String platform) {
+        if (!(config.get("platform_toolsets") instanceof Map<?, ?> platformToolsets)) {
+            return List.of();
+        }
+        Object value = platformToolsets.get(platform);
+        if (value instanceof List<?> list) {
+            return list.stream().filter(String.class::isInstance).map(String.class::cast)
+                .map(String::trim).filter(name -> !name.isEmpty()).distinct().toList();
+        }
+        if (value instanceof String text) {
+            return java.util.Arrays.stream(text.split(",")).map(String::trim)
+                .filter(name -> !name.isEmpty()).distinct().toList();
+        }
+        return List.of();
+    }
+
     public RuntimeConfigService.RuntimeModelSelection readNamedModel(String name) throws IOException {
         Map<String, Object> config = readExecutionConfig(name);
         Object modelNode = config.get("model");

@@ -866,8 +866,7 @@ public class ToolsetsController {
     }
 
     private List<String> configPlatformToolsets(Map<String, Object> config, String platform) {
-        Map<String, Object> platformToolsets = mapSection(config, "platform_toolsets");
-        return listValue(platformToolsets.get(platform));
+        return ProfileService.configuredPlatformToolsets(config, platform);
     }
 
     private void writePlatformToolsets(Map<String, Object> config, String platform, List<String> toolsets) {
