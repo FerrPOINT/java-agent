@@ -66,7 +66,7 @@ class McpDashboardControllerBranchTest {
         when(configStoreProvider.getIfAvailable()).thenReturn(configStore);
         when(oauthFlowProvider.getIfAvailable()).thenReturn(oauthFlows);
         mockMvc = MockMvcBuilders.standaloneSetup(new McpDashboardController(
-                mcpLifecycleManager, properties, new ObjectMapper(),
+                mcpLifecycleManager, properties, new ObjectMapper(), null,
                 configStoreProvider, oauthFlowProvider))
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();
@@ -127,8 +127,7 @@ class McpDashboardControllerBranchTest {
 
     @Test
     void replaceServersUpsertsEachEntryAndReturnsList() throws Exception {
-        when(configStore.upsert(any(), any(McpConfigStore.ServerConfigInput.class)))
-            .thenReturn(savedEntity());
+        when(configStore.upsertAll(any(), any())).thenReturn(List.of(savedEntity()));
         when(configStore.redactedView(any())).thenReturn(Map.of("name", "filesystem", "enabled", true));
 
         mockMvc.perform(put("/api/mcp/servers").contentType(MediaType.APPLICATION_JSON)
@@ -136,7 +135,7 @@ class McpDashboardControllerBranchTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.servers[0].name").value("filesystem"));
 
-        verify(configStore).upsert(any(), any(McpConfigStore.ServerConfigInput.class));
+        verify(configStore).upsertAll(any(), any());
     }
 
     @Test

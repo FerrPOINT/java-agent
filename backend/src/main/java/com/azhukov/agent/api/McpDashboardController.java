@@ -43,6 +43,7 @@ public class McpDashboardController {
     private final McpLifecycleManager mcpLifecycleManager;
     private final AgentProperties properties;
     private final ObjectMapper objectMapper;
+    private final com.azhukov.agent.service.ProfileService profiles;
     private final org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.service.McpConfigStore> configStoreProvider;
     private final org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.service.McpOAuthFlowService> oauthFlowProvider;
 
@@ -54,7 +55,15 @@ public class McpDashboardController {
     }
 
     private String profileOrRuntime(String profile) {
-        return profile == null ? mcpLifecycleManager.runtimeProfile() : profile;
+        if (profile == null) {
+            return mcpLifecycleManager.runtimeProfile();
+        }
+        String selected = profiles.normalizeProfileName(profile);
+        if (!profiles.isValidProfileName(selected) || !profiles.knownProfile(selected)) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.NOT_FOUND, "Unknown profile");
+        }
+        return selected;
     }
 
     private void requireRuntimeProfile(String profile) {
@@ -65,6 +74,15 @@ public class McpDashboardController {
 
     @GetMapping("/servers")
     public Map<String, Object> listServers(@RequestParam(name = "profile", required = false) String profile) {
+        if (profile != null && !"default".equals(McpConfigStore.profileKey(profile))) {
+            String selected = profileOrRuntime(profile);
+            var store = configStore();
+            if (store == null) {
+                throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE, "MCP config store is unavailable");
+            }
+            return Map.of("servers", store.list(selected).stream().map(store::redactedView).toList());
+        }
         requireRuntimeProfile(profile);
         Map<String, McpLifecycleManager.McpServerInfo> live = liveServers();
         List<Map<String, Object>> servers = properties.getMcp().getServers().stream()
@@ -88,6 +106,19 @@ public class McpDashboardController {
         @PathVariable String name,
         @RequestParam(name = "profile", required = false) String profile
     ) {
+        if (profile != null && !"default".equals(McpConfigStore.profileKey(profile))) {
+            String selected = profileOrRuntime(profile);
+            try {
+                var tools = mcpLifecycleManager.inspectProfileServer(selected, name).stream().map(this::toolSummary).toList();
+                return ResponseEntity.ok(Map.of("ok", !tools.isEmpty(), "tools", tools, "prompts", 0, "resources", 0));
+            } catch (java.util.NoSuchElementException e) {
+                return notFound(e.getMessage());
+            } catch (IllegalArgumentException e) {
+                return badRequest(e.getMessage());
+            } catch (IllegalStateException e) {
+                return ResponseEntity.status(503).body(errorBody(e.getMessage()));
+            }
+        }
         requireRuntimeProfile(profile);
         AgentProperties.McpProperties.ServerProperties configured = configuredServer(name);
         if (configured == null && !liveServers().containsKey(name)) {
@@ -176,7 +207,7 @@ public class McpDashboardController {
         if (store == null) {
             return notImplemented("MCP config store is not available in this deployment");
         }
-        List<Map<String, Object>> saved = new java.util.ArrayList<>();
+        List<McpConfigStore.ServerConfigInput> inputs = new java.util.ArrayList<>();
         try {
             for (Object entry : entries) {
                 if (!(entry instanceof Map<?, ?> entryMap)) {
@@ -184,12 +215,13 @@ public class McpDashboardController {
                 }
                 @SuppressWarnings("unchecked")
                 Map<String, Object> entryBody = (Map<String, Object>) entryMap;
-                saved.add(store.redactedView(store.upsert(profileOrRuntime(profile), parseServerInput(entryBody))));
+                inputs.add(parseServerInput(entryBody));
             }
+            var saved = store.upsertAll(profileOrRuntime(profile), inputs);
+            return ResponseEntity.ok(Map.of("servers", saved.stream().map(store::redactedView).toList()));
         } catch (IllegalArgumentException e) {
             return badRequest(e.getMessage());
         }
-        return ResponseEntity.ok(Map.of("servers", saved));
     }
 
     @DeleteMapping("/servers/{name}")

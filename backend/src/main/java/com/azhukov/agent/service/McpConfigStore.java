@@ -11,6 +11,7 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.net.URI;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.Instant;
@@ -36,6 +37,7 @@ public class McpConfigStore {
 
     private static final Set<String> ALLOWED_TRANSPORTS = Set.of("stdio", "http", "sse");
     private static final Set<String> ALLOWED_TRUST = Set.of("full", "untrusted");
+    private static final String MASKED_HEADER = "********";
     private static final Duration SCHEMA_TTL = Duration.ofHours(6);
 
     private final ObjectProvider<McpServerConfigRepository> configRepositoryProvider;
@@ -69,7 +71,7 @@ public class McpConfigStore {
         entity.setArgsJson(toJson(input.args()));
         entity.setBaseUrl(blankToNull(input.baseUrl()));
         entity.setEnvKeysJson(toJson(input.envKeys()));
-        entity.setHeadersJson(toJson(input.headers()));
+        entity.setHeadersJson(toJson(headersForWrite(entity, input.headers())));
         entity.setIncludeToolsJson(toJson(input.includeTools()));
         entity.setExcludeToolsJson(toJson(input.excludeTools()));
         entity.setTimeoutSeconds(input.timeoutSeconds());
@@ -82,6 +84,30 @@ public class McpConfigStore {
         McpServerConfigEntity saved = repository.save(entity);
         invalidateSchemaCache(saved.getId());
         return saved;
+    }
+
+    @Transactional
+    public List<McpServerConfigEntity> upsertAll(String profile, List<ServerConfigInput> servers) {
+        return servers.stream().map(server -> upsert(profile, server)).toList();
+    }
+
+    private Map<String, String> headersForWrite(McpServerConfigEntity entity, Map<String, String> headers) {
+        if (headers == null) {
+            return null;
+        }
+        Map<String, String> previous = fromJsonMap(entity.getHeadersJson());
+        Map<String, String> result = new LinkedHashMap<>();
+        headers.forEach((name, value) -> {
+            if (MASKED_HEADER.equals(value)) {
+                if (!previous.containsKey(name)) {
+                    throw new IllegalArgumentException("A new MCP header needs its value");
+                }
+                result.put(name, previous.get(name));
+            } else {
+                result.put(name, value);
+            }
+        });
+        return result;
     }
 
     @Transactional
@@ -215,13 +241,26 @@ public class McpConfigStore {
         if (!"stdio".equals(transport) && isBlank(input.baseUrl())) {
             throw new IllegalArgumentException(transport + " transport requires a base_url");
         }
-        if (input.timeoutSeconds() < 0) {
-            throw new IllegalArgumentException("timeout_seconds must be >= 0");
+        if (!Double.isFinite(input.timeoutSeconds()) || input.timeoutSeconds() < 0) {
+            throw new IllegalArgumentException("timeout_seconds must be finite and >= 0");
         }
-        if ("http".equals(transport) && !isBlank(input.baseUrl())
-            && !input.baseUrl().startsWith("https://") && !input.baseUrl().startsWith("http://")) {
-            throw new IllegalArgumentException("base_url must be an http(s) URL");
+        if (!"stdio".equals(transport)) {
+            requireRemoteEndpoint(input.baseUrl());
         }
+    }
+
+    public static URI requireRemoteEndpoint(String endpoint) {
+        try {
+            URI uri = URI.create(endpoint);
+            if (uri.getHost() != null && uri.getRawUserInfo() == null && uri.getRawFragment() == null
+                && ("http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme()))) {
+                return uri;
+            }
+        } catch (RuntimeException ignored) {
+            // Parse errors can embed the submitted endpoint.
+        }
+        throw new IllegalArgumentException("MCP base_url must be an HTTP(S) endpoint without embedded credentials");
+
     }
 
     public static String profileKey(String profile) {
@@ -256,7 +295,9 @@ public class McpConfigStore {
         view.put("args", fromJsonList(entity.getArgsJson()));
         view.put("base_url", entity.getBaseUrl());
         view.put("env_keys", fromJsonList(entity.getEnvKeysJson()));
-        view.put("headers", fromJsonMap(entity.getHeadersJson()));
+        Map<String, String> headers = new LinkedHashMap<>();
+        fromJsonMap(entity.getHeadersJson()).keySet().forEach(name -> headers.put(name, MASKED_HEADER));
+        view.put("headers", headers);
         view.put("include_tools", fromJsonList(entity.getIncludeToolsJson()));
         view.put("exclude_tools", fromJsonList(entity.getExcludeToolsJson()));
         view.put("timeout_seconds", entity.getTimeoutSeconds());

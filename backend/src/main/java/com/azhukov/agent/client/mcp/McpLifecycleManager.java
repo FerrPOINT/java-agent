@@ -670,15 +670,41 @@ public class McpLifecycleManager {
 
         return switch (transport) {
             case "stdio" -> createStdioClient(server);
-            case "sse" -> createSseClient(server);
-            case "http", "streamable", "streamablehttp" -> createStreamableHttpClient(server);
+            case "sse", "http", "streamable", "streamablehttp" -> createRemoteClient(server, runtimeProfile(), null);
             default -> {
                 if (!server.getBaseUrl().isBlank()) {
-                    yield createStreamableHttpClient(server);
+                    yield createRemoteClient(server, runtimeProfile(), null);
                 }
                 throw new IllegalArgumentException("MCP server " + server.getName() + " has no transport configured");
             }
         };
+    }
+
+    public List<DiscoveredTool> inspectProfileServer(String profile, String name) {
+        var store = configStoreProvider.getIfAvailable();
+        if (store == null) {
+            throw new IllegalStateException("MCP config store is unavailable");
+        }
+        var config = store.find(profile, name).filter(McpServerConfigEntity::isEnabled)
+            .orElseThrow(() -> new java.util.NoSuchElementException("MCP server is unavailable for the selected profile"));
+        var server = toServerProperties(config);
+        if (!("http".equals(server.getTransport()) || "sse".equals(server.getTransport()))) {
+            throw new IllegalArgumentException("The selected profile MCP server requires HTTP or SSE transport");
+        }
+        McpConfigStore.requireRemoteEndpoint(server.getBaseUrl());
+        try (var client = createRemoteClient(server, profile, Duration.ofSeconds(10))) {
+            client.initialize();
+            var capabilities = client.getServerCapabilities();
+            if (capabilities != null && capabilities.tools() == null) {
+                return List.of();
+            }
+            return admittedMcpTools(server, listToolsWithPagination(client)).stream()
+                .map(tool -> new DiscoveredTool(name, tool.name(),
+                    convertToolDefinition(mcpPrefixedToolName(name, tool.name()), tool)))
+                .toList();
+        } catch (Exception e) {
+            throw new IllegalStateException("Unable to inspect MCP for the selected profile");
+        }
     }
 
     private McpSyncClient createStdioClient(AgentProperties.McpProperties.ServerProperties server) {
@@ -774,31 +800,38 @@ public class McpLifecycleManager {
 
     private String watchdogScriptPath;
 
-    private McpSyncClient createSseClient(AgentProperties.McpProperties.ServerProperties server) {
-        var transport = HttpClientSseClientTransport.builder(server.getBaseUrl())
-            .httpRequestCustomizer(remoteHeaderCustomizer(server))
-            .build();
-        return McpClient.sync(transport).build();
-    }
-
-    private McpSyncClient createStreamableHttpClient(AgentProperties.McpProperties.ServerProperties server) {
-        var transport = HttpClientStreamableHttpTransport.builder(server.getBaseUrl())
-            .httpRequestCustomizer(remoteHeaderCustomizer(server))
-            .build();
-        return McpClient.sync(transport).build();
+    private McpSyncClient createRemoteClient(AgentProperties.McpProperties.ServerProperties server,
+                                               String profile, Duration timeout) {
+        var headers = remoteHeaderCustomizer(profile, server);
+        var transport = "sse".equalsIgnoreCase(server.getTransport())
+            ? HttpClientSseClientTransport.builder(server.getBaseUrl()).httpRequestCustomizer(headers).build()
+            : HttpClientStreamableHttpTransport.builder(server.getBaseUrl()).httpRequestCustomizer(headers).build();
+        var client = McpClient.sync(transport);
+        if (timeout != null) {
+            client.requestTimeout(timeout);
+        }
+        return client.build();
     }
 
     McpSyncHttpClientRequestCustomizer remoteHeaderCustomizer(AgentProperties.McpProperties.ServerProperties server) {
-        return (builder, method, uri, body, context) -> {
-            Map<String, String> headers = resolveRemoteHeaders(server);
-            headers.forEach(builder::setHeader);
-        };
+        return remoteHeaderCustomizer(runtimeProfile(), server);
+    }
+
+    private McpSyncHttpClientRequestCustomizer remoteHeaderCustomizer(
+            String profile, AgentProperties.McpProperties.ServerProperties server) {
+        return (builder, method, uri, body, context) ->
+            resolveRemoteHeaders(profile, server).forEach(builder::setHeader);
     }
 
     Map<String, String> resolveRemoteHeaders(AgentProperties.McpProperties.ServerProperties server) {
+        return resolveRemoteHeaders(runtimeProfile(), server);
+    }
+
+    private Map<String, String> resolveRemoteHeaders(
+            String profile, AgentProperties.McpProperties.ServerProperties server) {
         Map<String, String> headers = new LinkedHashMap<>(server.getHeaders());
         if (mcpOAuthManager != null && !containsHeader(headers, "Authorization")) {
-            mcpOAuthManager.getToken(runtimeProfile(), server)
+            mcpOAuthManager.getToken(profile, server)
                 .filter(token -> token != null && !token.isBlank())
                 .ifPresent(token -> headers.put("Authorization", "Bearer " + token));
         }
