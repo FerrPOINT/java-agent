@@ -23,14 +23,20 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
+import java.util.HexFormat;
 import java.util.Set;
 
 @AgentTool(
     name = TrackerTool.NAME,
     description = "Use the Tracker assignment in this Fleet run. Read context, lifecycle, current requirements "
         + "or discussion. Follow discussion next_after and snapshot together. Start the assigned stage with start, "
-        + "which uses a stable key. Use start_receipt to read the original receipt if the outcome is unknown.",
+        + "which uses a stable key. Use comment for a stage comment, propose_result for a delivery result, "
+        + "or complete_draft for PM completion after an accepted Workflow report. Use the corresponding "
+        + "receipt action and original key after an unknown write outcome.",
     toolset = TrackerTool.NAME
 )
 @Component
@@ -99,15 +105,41 @@ public class TrackerTool implements ToolHandler {
             }
             String route = "api/v1/issues/" + scope.taskId() + "/sdlc/";
             String key = "java-stage-start:" + scope.executionId();
+            Mutation mutation = Mutation.forAction(args.action());
+            if (mutation == null && (args.operationKey() != null || args.document() != null)) {
+                throw new IllegalArgumentException();
+            }
             if (!"discussion".equals(args.action()) && (args.after() != null || args.snapshot() != null)) {
                 throw new IllegalArgumentException();
             }
             if ("start_receipt".equals(args.action())) {
                 return startReceipt(read(route + "stage-starts/operations/" + key, token), scope, key, token);
             }
+            String operationKey = args.operationKey();
+            if (mutation == Mutation.PROPOSE_RESULT) {
+                String expected = "delivery-result:" + scope.assignmentId();
+                if (operationKey != null && !expected.equals(operationKey)) {
+                    throw new IllegalArgumentException();
+                }
+                operationKey = expected;
+            }
+            if (mutation != null) {
+                requireOperationKey(operationKey);
+                if (args.action().endsWith("_receipt")) {
+                    if (args.document() != null) {
+                        throw new IllegalArgumentException();
+                    }
+                    return readReceipt(mutation, route, token, scope, operationKey,
+                        session.getMetadata(ProjectWorkflowTool.TASK_METADATA));
+                }
+                requireDocument(mutation, args.document());
+            }
             var context = read(route + "context", token);
             if (!scope.matchesContext(context, session.getMetadata(ProjectWorkflowTool.TASK_METADATA))) {
                 return ToolResult.fail("Tracker returned a different task or current assignment");
+            }
+            if (mutation != null) {
+                return write(mutation, route, token, scope, operationKey, args.document(), context, session);
             }
             return switch (args.action()) {
                 case "context" -> result(context, token);
@@ -125,9 +157,9 @@ public class TrackerTool implements ToolHandler {
             return ToolResult.fail("Tracker identity or assignment is unavailable");
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            return ToolResult.fail("Tracker operation interrupted. Read the original start receipt before retrying");
+            return ToolResult.fail("Tracker operation interrupted. Read the original receipt before retrying");
         } catch (IOException e) {
-            return ToolResult.fail("Tracker connection failed. Read the original start receipt before retrying");
+            return ToolResult.fail("Tracker connection failed. Read the original receipt before retrying");
         }
     }
 
@@ -163,28 +195,160 @@ public class TrackerTool implements ToolHandler {
         if (!"Ready".equals(status) && !"InProgress".equals(status)) {
             return ToolResult.fail("Tracker stage cannot be started");
         }
-        ObjectNode fence = json.createObjectNode().put("assignment_id", scope.assignmentId())
-            .put("execution_id", scope.executionId());
-        if ("Draft".equals(context.path("stage").asText())) {
-            fence.put("kind", "pm").put("agent_id", scope.agentId()).put("assignment_version", scope.assignmentVersion());
-        } else {
-            JsonNode receipt = lifecycle(route, token, scope).path("receipt");
-            JsonNode assignment = receipt.path("assignment");
-            JsonNode lease = receipt.path("lease");
-            String leaseId = lease.path("lease_id").asText();
-            if (!TrackerRunScope.canonicalId(leaseId) || !leaseId.equals(assignment.path("lease_id").asText())
-                || !scope.machineSubject().equals(lease.path("holder_subject").asText())) {
-                throw new IllegalStateException();
-            }
-            fence.put("kind", "delivery").put("lease_id", leaseId)
-                .put("fencing_token", positive(assignment.path("fencing_token")))
-                .put("expected_lease_version", positive(lease.path("version")));
-        }
+        ObjectNode fence = "Draft".equals(context.path("stage").asText())
+            ? machineFence(scope).put("kind", "pm")
+            : deliveryFence(route, token, scope).put("kind", "delivery");
         ObjectNode body = json.createObjectNode().put("idempotency_key", key);
         body.set("fence", fence);
-        JsonNode response = send(request(collection, token).header("Content-Type", "application/json")
-            .POST(HttpRequest.BodyPublishers.ofByteArray(json.writeValueAsBytes(body))).build());
-        return startReceipt(response, scope, key, token);
+        return startReceipt(post(collection, token, body), scope, key, token);
+    }
+
+    private ObjectNode machineFence(TrackerRunScope scope) {
+        return json.createObjectNode().put("assignment_id", scope.assignmentId()).put("execution_id", scope.executionId())
+            .put("agent_id", scope.agentId()).put("assignment_version", scope.assignmentVersion());
+    }
+
+    private boolean matchesMachineFence(TrackerRunScope scope, JsonNode fence) {
+        return scope.assignmentId().equals(fence.path("assignment_id").asText())
+            && scope.executionId().equals(fence.path("execution_id").asText())
+            && scope.agentId().equals(fence.path("agent_id").asText())
+            && fence.path("assignment_version").isIntegralNumber()
+            && fence.path("assignment_version").canConvertToLong()
+            && scope.assignmentVersion() == fence.path("assignment_version").longValue();
+    }
+
+    private ObjectNode deliveryFence(String route, String token, TrackerRunScope scope)
+            throws IOException, InterruptedException {
+        JsonNode receipt = lifecycle(route, token, scope).path("receipt");
+        JsonNode assignment = receipt.path("assignment");
+        JsonNode lease = receipt.path("lease");
+        String leaseId = lease.path("lease_id").asText();
+        if (!TrackerRunScope.canonicalId(leaseId) || !leaseId.equals(assignment.path("lease_id").asText())
+            || !scope.machineSubject().equals(lease.path("holder_subject").asText())) {
+            throw new IllegalStateException();
+        }
+        return json.createObjectNode().put("assignment_id", scope.assignmentId()).put("execution_id", scope.executionId())
+            .put("lease_id", leaseId).put("fencing_token", positive(assignment.path("fencing_token")))
+            .put("expected_lease_version", positive(lease.path("version")));
+    }
+
+    private ToolResult write(Mutation operation, String route, String token, TrackerRunScope scope,
+                             String key, JsonNode document, JsonNode context, Session session)
+            throws IOException, InterruptedException {
+        ObjectNode body = ((ObjectNode) document).deepCopy();
+        String stage = context.path("stage").asText();
+        boolean draft = "Draft".equals(stage);
+        if ((operation == Mutation.COMPLETE_DRAFT && !draft) || (operation == Mutation.PROPOSE_RESULT && draft)
+            || !"InProgress".equals(context.path("status").asText())) {
+            return ToolResult.fail("Tracker operation requires the current InProgress stage");
+        }
+        if (operation == Mutation.COMPLETE_DRAFT) {
+            String hash = context.path("content_hash").asText();
+            if (!sha256(hash)) {
+                throw new IllegalStateException("Current requirements hash is absent");
+            }
+            String namespace = profileEnv.readAll(session.profile()).get("PROJECT_WORKFLOW_NAMESPACE_ID");
+            if (namespace == null || !namespace.matches("[1-9][0-9]{0,18}")) {
+                throw new IllegalStateException("Profile Workflow namespace is absent");
+            }
+            body.put("interaction_protocol", "configured-cli-v1")
+                .put("namespace_id", Long.parseLong(namespace))
+                .put("requirement_revision", positive(context.path("requirement_revision")))
+                .put("content_hash", hash);
+        }
+        body.put("idempotency_key", key);
+        body.set("fence", operation == Mutation.PROPOSE_RESULT
+            ? deliveryFence(route, token, scope) : machineFence(scope));
+        JsonNode receipt = post(route + operation.collection, token, body);
+        if (operation == Mutation.COMMENT
+            && !hashText(body.path("body").asText()).equals(receipt.path("body_sha256").asText())) {
+            return ToolResult.fail("Tracker comment receipt differs from the submitted text");
+        }
+        return mutationReceipt(operation, receipt, scope, key,
+            session.getMetadata(ProjectWorkflowTool.TASK_METADATA), token);
+    }
+
+    private ToolResult readReceipt(Mutation operation, String route, String token, TrackerRunScope scope,
+                                   String key, String workflowTask) throws IOException, InterruptedException {
+        JsonNode value = read(route + operation.collection + "/operations/" + key, token);
+        if (operation == Mutation.COMPLETE_DRAFT) {
+            if (!key.equals(value.path("idempotency_key").asText()) || !sha256(value.path("request_sha256").asText())) {
+                return ToolResult.fail("Tracker returned a different completion operation");
+            }
+            value = value.path("result");
+        }
+        return mutationReceipt(operation, value, scope, key, workflowTask, token);
+    }
+
+    private ToolResult mutationReceipt(Mutation operation, JsonNode value, TrackerRunScope scope, String key,
+                                       String workflowTask, String token) throws IOException {
+        if (!scope.taskId().equals(value.path("task_id").asText())) {
+            return ToolResult.fail("Tracker returned a different task receipt");
+        }
+        boolean matching = switch (operation) {
+            case COMMENT -> scope.machineSubject().equals(value.path("author_subject").asText())
+                && scope.agentId().equals(value.path("agent_id").asText())
+                && matchesMachineFence(scope, value.path("fence"))
+                && TrackerRunScope.canonicalId(value.path("comment_id").asText()) && sha256(value.path("body_sha256").asText());
+            case PROPOSE_RESULT -> scope.assignmentId().equals(value.path("assignment_id").asText())
+                && scope.executionId().equals(value.path("execution_id").asText())
+                && scope.agentId().equals(value.path("agent_id").asText())
+                && scope.machineSubject().equals(value.path("producer_subject").asText())
+                && TrackerRunScope.canonicalId(value.path("proposal_id").asText()) && sha256(value.path("output_sha256").asText());
+            case COMPLETE_DRAFT -> scope.projectId().equals(value.path("project_id").asText())
+                && scope.trackerInstanceId().equals(value.path("tracker_instance_id").asText())
+                && matchesMachineFence(scope, value.path("fence"))
+                && scope.machineSubject().equals(value.path("workflow_receipt").path("machine_subject").asText())
+                && workflowTask.equals(value.path("workflow_receipt").path("task").asText())
+                && "configured-cli-v1".equals(value.path("interaction_protocol").asText())
+                && "Draft".equals(value.path("stage").asText())
+                && "Completed".equals(value.path("status").asText())
+                && key.equals(value.path("idempotency_key").asText())
+                && TrackerRunScope.canonicalId(value.path("completion_id").asText());
+        };
+        return matching ? result(value, token) : ToolResult.fail("Tracker receipt differs from the assigned operation");
+    }
+
+    private static void requireDocument(Mutation operation, JsonNode value) {
+        if (value == null || !value.isObject()) {
+            throw new IllegalArgumentException();
+        }
+        boolean valid = switch (operation) {
+            case COMMENT -> value.size() == 1 && value.path("body").isTextual() && !value.path("body").asText().isBlank();
+            case PROPOSE_RESULT -> value.size() == 2 && value.path("workflow_receipt").isObject() && value.path("result").isObject();
+            case COMPLETE_DRAFT -> value.size() == 3
+                && TrackerRunScope.canonicalId(value.path("workflow_execution_ref").asText())
+                && validOperationKey(value.path("workflow_operation_key").asText())
+                && value.path("workflow_result_version").isIntegralNumber()
+                && value.path("workflow_result_version").canConvertToLong()
+                && value.path("workflow_result_version").longValue() >= 2;
+        };
+        if (!valid) {
+            throw new IllegalArgumentException();
+        }
+    }
+
+    private static boolean validOperationKey(String key) {
+        return key != null && key.matches("[A-Za-z0-9][A-Za-z0-9_:-]{0,127}");
+    }
+
+    private static void requireOperationKey(String key) {
+        if (!validOperationKey(key)) {
+            throw new IllegalArgumentException();
+        }
+    }
+
+    private static boolean sha256(String value) {
+        return value.matches("[a-f0-9]{64}");
+    }
+
+    private static String hashText(String text) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                .digest(text.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is unavailable");
+        }
     }
 
     private JsonNode lifecycle(String route, String token, TrackerRunScope scope) throws IOException, InterruptedException {
@@ -240,6 +404,11 @@ public class TrackerTool implements ToolHandler {
             .header("Cache-Control", "no-cache, no-store").header("Authorization", "Bearer " + token);
     }
 
+    private JsonNode post(String path, String token, ObjectNode body) throws IOException, InterruptedException {
+        return send(request(path, token).header("Content-Type", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofByteArray(json.writeValueAsBytes(body))).build());
+    }
+
     private JsonNode read(String path, String token) throws IOException, InterruptedException {
         return send(request(path, token).GET().build());
     }
@@ -269,14 +438,42 @@ public class TrackerTool implements ToolHandler {
         }
     }
 
+    private enum Mutation {
+        COMMENT("discussion"), PROPOSE_RESULT("delivery-proposals"), COMPLETE_DRAFT("pm-draft-completion");
+
+        private final String collection;
+
+        Mutation(String collection) {
+            this.collection = collection;
+        }
+
+        private static Mutation forAction(String action) {
+            return switch (action) {
+                case "comment", "comment_receipt" -> COMMENT;
+                case "propose_result", "result_receipt" -> PROPOSE_RESULT;
+                case "complete_draft", "completion_receipt" -> COMPLETE_DRAFT;
+                default -> null;
+            };
+        }
+    }
+
     public record TrackerArgs(
         @ToolParam(description = "Assigned Tracker operation",
-            enumValues = {"context", "lifecycle", "requirements", "discussion", "start", "start_receipt"})
+            enumValues = {"context", "lifecycle", "requirements", "discussion", "start", "start_receipt",
+                "comment", "comment_receipt", "propose_result", "result_receipt", "complete_draft", "completion_receipt"})
         String action,
         @ToolParam(description = "Discussion next_after UUID for the next page", required = false)
         String after,
         @JsonProperty("snapshot")
         @ToolParam(description = "Original discussion snapshot UUID on later pages", required = false)
-        String snapshot
+        String snapshot,
+        @JsonProperty("operation_key")
+        @ToolParam(description = "Original key for comment or PM completion. Result uses its assignment key.",
+            required = false)
+        String operationKey,
+        @ToolParam(description = "Tracker document. comment: body. propose_result: workflow_receipt and result. "
+            + "complete_draft: workflow_execution_ref, workflow_operation_key and workflow_result_version.",
+            required = false)
+        JsonNode document
     ) {}
 }

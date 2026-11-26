@@ -172,6 +172,14 @@ Workflow и проверенную ревизию профиля.
 и актуальный fence из Tracker. После потери ответа `start_receipt` читает
 квитанцию по тому же ключу.
 
+Операция `comment` публикует комментарий от текущего назначения.
+Операция `propose_result` передаёт принятый Workflow receipt и типизированный
+результат с ключом `delivery-result:<assignment_id>`. Tracker проверяет
+полномочия, квитанции и допустимость перехода. Для завершения PM Draft
+`complete_draft` использует подтверждённую редакцию требований из Tracker,
+namespace профиля и принятый результат Workflow. При потере ответа читать
+`comment_receipt`, `result_receipt` или `completion_receipt` для исходной операции.
+
 Для подключения роли Base укажи в `config.yaml` профиля:
 
 ```yaml
