@@ -227,7 +227,7 @@ public class ToolExecutionService {
             try {
                 java.util.Map<String, Object> argsMap = com.fasterxml.jackson.databind.json.JsonMapper.builder().build()
                     .readValue(arguments, new com.fasterxml.jackson.core.type.TypeReference<java.util.Map<String, Object>>() {});
-                String hints = subdirectoryHints.checkToolCall(toolName, argsMap);
+                String hints = subdirectoryHints.checkToolCall(toolName, argsMap, session);
                 if (hints != null && !hints.isBlank()) {
                     safeContent = safeContent + hints;
                 }

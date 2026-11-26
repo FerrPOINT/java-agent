@@ -794,5 +794,7 @@ public class AgentProperties {
         private String name = "default";
         /** Feature 10: Base directory for profiles (default ~/.java-agent/profiles/). */
         private String baseDir = "";
+        private String baseInstructionsDir = "";
+        private String baseInstructionsManifestSha256 = "";
     }
 }

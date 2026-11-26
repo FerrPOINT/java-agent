@@ -61,7 +61,7 @@ class SubdirectoryHintsWiringTest {
         when(redactor.redact("file content")).thenReturn("file content");
         when(guardrail.afterCall(eq("read_file"), eq(args), any(ToolResult.class), anyBoolean()))
             .thenReturn(GuardrailDecision.allow("read_file"));
-        when(hints.checkToolCall(eq("read_file"), any())).thenReturn("\n\n[AGENTS.md] lint before commit");
+        when(hints.checkToolCall(eq("read_file"), any(), eq(SESSION))).thenReturn("\n\n[AGENTS.md] lint before commit");
 
         ToolResult result = service.execute("read_file", "call-1", args, LAST_MSG, SESSION);
         assertThat(result.content()).contains("file content");
@@ -84,6 +84,6 @@ class SubdirectoryHintsWiringTest {
         ToolResult result = service.execute("read_file", "call-1", args, LAST_MSG, SESSION);
         assertThat(result.success()).isFalse();
         assertThat(result.error()).isEqualTo("ENOENT");
-        verify(hints, never()).checkToolCall(any(), any());
+        verify(hints, never()).checkToolCall(any(), any(), any());
     }
 }

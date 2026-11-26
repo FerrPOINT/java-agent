@@ -243,18 +243,22 @@ public class ProfileService {
         String canon = normalizeProfileName(name);
         validateProfileName(canon);
         requireKnownProfile(canon);
-        Path soul = soulPath(canon);
-        if (!Files.isRegularFile(soul)) {
+        try {
+            String content = com.azhukov.agent.core.security.SecureFileAccess.readUtf8(soulPath(canon));
+            return Map.of("exists", true, "content", content);
+        } catch (java.nio.file.NoSuchFileException e) {
             return Map.of("exists", false, "content", "");
         }
-        return Map.of("exists", true, "content", Files.readString(soul, StandardCharsets.UTF_8));
     }
 
     public Map<String, Object> writeSoul(String name, String content) throws IOException {
         String canon = normalizeProfileName(name);
         validateProfileName(canon);
         requireKnownProfile(canon);
-        atomicWriteString(soulPath(canon), content != null ? content : "");
+        Path path = soulPath(canon);
+        try (var directory = com.azhukov.agent.core.security.SecureFileAccess.openOrCreateDirectory(path.getParent())) {
+            directory.replaceFile(path.getFileName(), (content == null ? "" : content).getBytes(StandardCharsets.UTF_8));
+        }
         return Map.of("ok", true);
     }
 
@@ -480,25 +484,27 @@ public class ProfileService {
 
     public String readRawConfig(String name) throws IOException {
         Path path = configPath(name);
-        if (!Files.isRegularFile(path)) {
+        try {
+            return com.azhukov.agent.core.security.SecureFileAccess.readUtf8(path);
+        } catch (java.nio.file.NoSuchFileException e) {
             return "";
         }
-        return Files.readString(path, StandardCharsets.UTF_8);
     }
 
-    /** Read the model from this profile's own configuration without following file or directory links. */
-    public RuntimeConfigService.RuntimeModelSelection readNamedModel(String name) throws IOException {
-        Path path = configPath(name);
-        String raw;
-        try {
-            raw = com.azhukov.agent.core.security.SecureFileAccess.readUtf8(path);
-        } catch (java.nio.file.NoSuchFileException e) {
-            return new RuntimeConfigService.RuntimeModelSelection(null, null, null, null);
+    /** Read the profile YAML used for execution, preserving exact ownership on file access. */
+    public Map<String, Object> readExecutionConfig(String name) throws IOException {
+        Object loaded = new Yaml().load(readRawConfig(name));
+        if (loaded == null) {
+            return Map.of();
         }
-        Object loaded = new Yaml().load(raw);
         if (!(loaded instanceof Map<?, ?> config)) {
             throw new IllegalArgumentException("Profile configuration must be a mapping");
         }
+        return toStringKeyMap(config);
+    }
+
+    public RuntimeConfigService.RuntimeModelSelection readNamedModel(String name) throws IOException {
+        Map<String, Object> config = readExecutionConfig(name);
         Object modelNode = config.get("model");
         if (!(modelNode instanceof Map<?, ?> model)) {
             return new RuntimeConfigService.RuntimeModelSelection(null, nullableConfigText(modelNode), null, null);
@@ -601,6 +607,12 @@ public class ProfileService {
             return Path.of(env).toAbsolutePath().normalize();
         }
         return Path.of(System.getProperty("user.home", "."), ".hermes").toAbsolutePath().normalize();
+    }
+
+    public Path workspacePath(String profile) {
+        String canon = normalizeProfileName(profile);
+        validateProfileName(canon);
+        return profilePath(canon).resolve("workspace");
     }
 
     public Path soulPath(String profile) {
