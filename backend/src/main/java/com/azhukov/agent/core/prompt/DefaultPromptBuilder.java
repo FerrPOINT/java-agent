@@ -380,6 +380,8 @@ public class DefaultPromptBuilder implements PromptBuilder {
     private final EnvironmentProbe environmentProbe;
     @Autowired
     private com.azhukov.agent.service.ProfileInstructions profileInstructions;
+    @Autowired
+    private com.azhukov.agent.service.ProfileSkills profileSkills;
 
     // Request-scoped effective tool surface while composing/caching a prompt.
     private final ThreadLocal<Set<String>> requestToolNames = new ThreadLocal<>();
@@ -976,6 +978,10 @@ public class DefaultPromptBuilder implements PromptBuilder {
             return "";
         }
 
+        return buildSkillsIndex(skills, false);
+    }
+
+    private String buildSkillsIndex(List<SkillInfo> skills, boolean namedProfile) {
         if (skills == null || skills.isEmpty()) {
             return "";
         }
@@ -1020,7 +1026,11 @@ public class DefaultPromptBuilder implements PromptBuilder {
             .append("or troubleshoot this agent itself — its configuration, models, providers, tools, \n")
             .append("skills, or any feature — check the relevant bundled skill and the agent's own \n")
             .append("configuration first instead of guessing or inventing workarounds.\n");
-        sb.append("If a skill has issues, fix it with skill_manage(action='patch').\n");
+        if (namedProfile) {
+            sb.append("Shared Base skills are read-only. Fix issues in local skills with skill_manage(action='patch').\n");
+        } else {
+            sb.append("If a skill has issues, fix it with skill_manage(action='patch').\n");
+        }
         sb.append("After difficult/iterative tasks, offer to save as a skill. ");
         sb.append("If a skill you loaded was missing steps, had wrong commands, or needed ")
             .append("pitfalls you discovered, update it before finishing.\n");
@@ -1256,8 +1266,8 @@ public class DefaultPromptBuilder implements PromptBuilder {
                 .append("Project instructions specialize work inside that workspace. ")
                 .append("AGENTS.override.md takes priority over other project instructions. ")
                 .append("Apply request-specific instructions within these boundaries.\n\n");
-            if (!named.baseRole().isBlank()) {
-                stable.append("## Base role instructions\n\n").append(named.baseRole().strip()).append("\n\n");
+            if (!named.base().roleText().isBlank()) {
+                stable.append("## Base role instructions\n\n").append(named.base().roleText().strip()).append("\n\n");
             }
         }
         String soulContent = named == null ? loadSoulMd()
@@ -1463,7 +1473,8 @@ public class DefaultPromptBuilder implements PromptBuilder {
         // stable/context prefix; placed before the turn-varying memory/
         // timestamp tail so an unchanged index still falls inside the reused
         // prefix on implicit longest-prefix backends.
-        String skillsIndex = named == null ? buildSkillsIndex() : "";
+        String skillsIndex = named == null ? buildSkillsIndex()
+            : buildSkillsIndex(profileSkills.list(session.profile(), named), true);
         if (!skillsIndex.isEmpty()) {
             volatileTier.append(skillsIndex).append("\n\n");
         }

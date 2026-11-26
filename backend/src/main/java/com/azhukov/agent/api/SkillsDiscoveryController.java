@@ -1,13 +1,16 @@
 package com.azhukov.agent.api;
 
 import com.azhukov.agent.core.skill.SkillManager;
+import com.azhukov.agent.service.ProfileSkills;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -27,20 +30,24 @@ import java.util.Map;
 public class SkillsDiscoveryController {
 
     private final SkillManager skillManager;
+    @Autowired
+    private ProfileSkills profileSkills;
 
     @GetMapping
     @Operation(summary = "List installed skill metadata")
-    public ResponseEntity<Map<String, Object>> listSkills() {
+    public ResponseEntity<Map<String, Object>> listSkills(@PathVariable(name = "profile", required = false) String profile) {
         try {
-            return ResponseEntity.ok(listSkillsPayload());
+            SkillManager selected = profile == null || "default".equals(profile)
+                ? skillManager : profileSkills.forProfile(profile);
+            return ResponseEntity.ok(listSkillsPayload(selected));
         } catch (RuntimeException e) {
             log.warn("GET /v1/skills failed", e);
             return openAiError(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to enumerate skills", "server_error");
         }
     }
 
-    Map<String, Object> listSkillsPayload() {
-        List<Map<String, Object>> data = skillManager.listSkills().stream()
+    private Map<String, Object> listSkillsPayload(SkillManager selected) {
+        List<Map<String, Object>> data = selected.listSkills().stream()
             .filter(skill -> !skill.disabled())
             .sorted(Comparator.comparing(SkillsDiscoveryController::skillSortCategory)
                 .thenComparing(SkillManager.SkillInfo::name))

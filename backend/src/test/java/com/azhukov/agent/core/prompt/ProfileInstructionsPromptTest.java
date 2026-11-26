@@ -5,6 +5,7 @@ import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.tool.ToolRegistry;
 import com.azhukov.agent.service.ProfileInstructions;
 import com.azhukov.agent.service.ProfileService;
+import com.azhukov.agent.service.ProfileSkills;
 import com.azhukov.agent.service.RuntimeConfigService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -41,7 +42,9 @@ class ProfileInstructionsPromptTest {
         profiles = new ProfileService(properties, new RuntimeConfigService());
         builder = new DefaultPromptBuilder(properties, mock(ToolRegistry.class));
         var mapper = new ObjectMapper();
-        ReflectionTestUtils.setField(builder, "profileInstructions", new ProfileInstructions(properties, profiles, mapper));
+        var instructions = new ProfileInstructions(properties, profiles, mapper);
+        ReflectionTestUtils.setField(builder, "profileInstructions", instructions);
+        ReflectionTestUtils.setField(builder, "profileSkills", new ProfileSkills(profiles, instructions));
 
         base = tempDir.resolve("base");
         Files.createDirectories(base.resolve("roles"));

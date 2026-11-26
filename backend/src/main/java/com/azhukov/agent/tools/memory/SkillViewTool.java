@@ -8,6 +8,7 @@ import com.azhukov.agent.core.skill.SkillManager.SkillLookupResult;
 import com.azhukov.agent.core.skill.SkillPreprocessor;
 import com.azhukov.agent.core.skill.SkillSecurityScanner;
 import com.azhukov.agent.core.skill.SkillUtils;
+import com.azhukov.agent.service.ProfileSkills;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
@@ -57,6 +58,8 @@ import java.util.Map;
 public class SkillViewTool implements ToolHandler {
 
     private final SkillManager skillManager;
+    @Autowired
+    private ProfileSkills profileSkills;
     private SkillPreprocessor skillPreprocessor;
     private final AgentProperties agentProperties;
     private final com.azhukov.agent.core.skill.SkillViewDedupTracker dedupTracker;
@@ -89,15 +92,25 @@ public class SkillViewTool implements ToolHandler {
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
         SkillArgs args = ToolHandler.parseJson(arguments, SkillArgs.class);
+        boolean named = session != null && !"default".equals(session.profile());
+        try {
+            SkillManager selected = named ? profileSkills.forProfile(session.profile()) : skillManager;
+            return view(args, session, selected, named);
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            return ToolResult.fail(e.getMessage());
+        }
+    }
+
+    private ToolResult view(SkillArgs args, Session session, SkillManager selected, boolean named) {
 
         // S: If file_path is specified, read and return that specific support file
         if (args.file_path() != null && !args.file_path().isBlank()) {
-            String fileContent = skillManager.readSupportFile(args.name(), args.file_path());
+            String fileContent = selected.readSupportFile(args.name(), args.file_path());
             if (fileContent == null) {
                 return ToolResult.fail("File not found: " + args.file_path() + " in skill " + args.name());
             }
             // P0-8: Apply preprocessing to support files too (template vars only, no inline shell)
-            if (skillPreprocessor != null && skillPreprocessor.isEnabled()) {
+            if (!named && skillPreprocessor != null && skillPreprocessor.isEnabled()) {
                 String sessionId = session != null && session.id() != null ? session.id().toString() : null;
                 String skillDir = resolveSkillDir(args.name());
                 try {
@@ -110,7 +123,7 @@ public class SkillViewTool implements ToolHandler {
         }
 
         // Fix 6: Multi-strategy lookup — DB, filesystem by dir name, frontmatter name match, legacy flat .md
-        SkillLookupResult lookupResult = skillManager.getSkillInfoMultiStrategy(args.name());
+        SkillLookupResult lookupResult = selected.getSkillInfoMultiStrategy(args.name());
 
         // Collision detection — multiple skills matched
         if (lookupResult.error() != null) {
@@ -135,7 +148,7 @@ public class SkillViewTool implements ToolHandler {
         // Hermes parity (skills_tool.py:2078): repeat-view dedup — when this
         // exact skill file was already served to this session and is unchanged
         // on disk, return the short stub instead of re-sending full content.
-        String sessionIdStr = session != null && session.id() != null ? session.id().toString() : null;
+        String sessionIdStr = !named && session != null && session.id() != null ? session.id().toString() : null;
         if (dedupTracker != null && sessionIdStr != null) {
             var hit = dedupTracker.check(sessionIdStr, args.name(), args.file_path());
             if (hit != null) {
@@ -144,7 +157,7 @@ public class SkillViewTool implements ToolHandler {
         }
 
         // S7: Increment view count for telemetry
-        skillManager.incrementViewCount(args.name());
+        selected.incrementViewCount(args.name());
 
         // S9: Build progressive disclosure output
         StringBuilder sb = new StringBuilder();
@@ -175,7 +188,7 @@ public class SkillViewTool implements ToolHandler {
 
         // Content — apply preprocessing (template vars + inline shell) if available
         String content = info.content();
-        if (skillPreprocessor != null && skillPreprocessor.isEnabled()) {
+        if (!named && skillPreprocessor != null && skillPreprocessor.isEnabled()) {
             String sessionId = session != null && session.id() != null ? session.id().toString() : null;
             String skillDir = resolveSkillDir(args.name());
             try {
@@ -203,7 +216,7 @@ public class SkillViewTool implements ToolHandler {
         LinkedFiles linkedFiles = info.linkedFiles();
         if (linkedFiles == null) {
             // Fallback: use listSupportFilesByType from the manager
-            linkedFiles = skillManager.listSupportFilesByType(args.name());
+            linkedFiles = selected.listSupportFilesByType(args.name());
         }
 
         if (linkedFiles != null && !linkedFiles.isEmpty()) {
@@ -236,7 +249,7 @@ public class SkillViewTool implements ToolHandler {
         }
 
         // Fix 1: Required environment variable checks
-        if (content != null && content.startsWith("---")) {
+        if (!named && content != null && content.startsWith("---")) {
             SkillUtils.FrontmatterResult fr = SkillUtils.parseFrontmatter(content);
             Map<String, Object> frontmatter = fr.frontmatter();
             List<Map<String, Object>> requiredEnvVars =

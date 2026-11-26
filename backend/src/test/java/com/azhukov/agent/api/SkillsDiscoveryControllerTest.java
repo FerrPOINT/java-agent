@@ -47,14 +47,14 @@ class SkillsDiscoveryControllerTest {
     }
 
     @Test
-    void profilePrefixedSkillsRouteMirrorsHermesMultiplexAlias() throws Exception {
+    void defaultProfileUsesTheStandaloneSkillsCatalog() throws Exception {
         when(skillManager.listSkills()).thenReturn(List.of(
             new SkillManager.SkillInfo(
                 "core", "", "Core skill", "core", null,
                 0, 0, null, false, "AGENT_CREATED", List.of(), List.of(), false, null)
         ));
 
-        mockMvc.perform(get("/p/work/v1/skills"))
+        mockMvc.perform(get("/p/default/v1/skills"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.object").value("list"))
             .andExpect(jsonPath("$.data[0].name").value("core"));

@@ -7,6 +7,7 @@ import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.core.skill.WriteOrigin;
+import com.azhukov.agent.service.ProfileSkills;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
@@ -32,7 +33,7 @@ import static com.azhukov.agent.tools.ToolHandler.parseJson;
 @AgentTool(name = "skill_manage",
     description = "Manage skills (create, update, delete). Skills are your procedural "
         + "memory — reusable approaches for recurring task types. "
-        + "New skills go to ~/.hermes/skills/; existing skills can be modified wherever they live.\n\n"
+        + "Manage skills in the current agent. Shared Base skills are read-only.\n\n"
         + "Actions: create (full SKILL.md + optional category), "
         + "patch (old_string/new_string — preferred for fixes), "
         + "edit (full SKILL.md rewrite — major overhauls only), "
@@ -72,6 +73,8 @@ public class SkillManageTool implements ToolHandler {
     private static final int CHANGE_PREVIEW_CHARS = 200;
 
     private final SkillManager skillManager;
+    @Autowired
+    private ProfileSkills profileSkills;
     private final com.azhukov.agent.core.skill.SkillMutationLedger mutationLedger;
 
     /** Optional — cleared skills system-prompt cache after mutations (Hermes parity). */
@@ -89,7 +92,9 @@ public class SkillManageTool implements ToolHandler {
         // S3: Get the effective write origin from WriteContext (FOREGROUND by default,
         // BACKGROUND_REVIEW during review)
         WriteOrigin origin = WriteContext.effectiveOrigin();
+        boolean named = session != null && !"default".equals(session.profile());
         try {
+            SkillManager selected = named ? profileSkills.forProfile(session.profile()) : skillManager;
             String action = args.action() == null ? "" : args.action().toLowerCase();
             ToolResult result = switch (action) {
                 case "create" -> {
@@ -98,8 +103,12 @@ public class SkillManageTool implements ToolHandler {
                         yield jsonError("content is required for 'create'. Provide the full SKILL.md text (frontmatter + body).");
                     }
                     String content = args.content();
-                    skillManager.saveSkill(args.name(), content, origin);
-                    ledger("create", args.name(), null, content);
+                    if (selected instanceof ProfileSkills.View local) {
+                        local.create(args.name(), content);
+                    } else {
+                        selected.saveSkill(args.name(), content, origin);
+                    }
+                    ledger(named, "create", args.name(), null, content);
                     Map<String, Object> payload = successPayload(
                         "create", args.name(), "Skill '" + args.name() + "' created.");
                     payload.put("path", args.name());
@@ -117,11 +126,11 @@ public class SkillManageTool implements ToolHandler {
                     if (args.content() == null || args.content().isBlank()) {
                         yield jsonError("content is required for a full rewrite. Provide the full updated SKILL.md text.");
                     }
-                    String before = snapshotSkill(args.name());
+                    String before = snapshotSkill(selected, args.name());
                     // Finding 4.4: Pass absorbed_into to saveSkill in update action
                     // "edit" is the Hermes name for the same action (full SKILL.md rewrite)
-                    skillManager.saveSkill(args.name(), args.content(), origin, args.absorbed_into());
-                    ledger("update", args.name(), before, args.content());
+                    updateSkill(selected, args, origin);
+                    ledger(named, "update", args.name(), before, args.content());
                     Map<String, Object> payload = successPayload(
                         "edit", args.name(), "Skill '" + args.name() + "' updated (full rewrite).");
                     payload.put("_change", descriptionChange(args.content()));
@@ -129,15 +138,15 @@ public class SkillManageTool implements ToolHandler {
                 }
                 case "delete" -> {
                     validateSkillName(args.name());
-                    String before = snapshotSkill(args.name());
+                    String before = snapshotSkill(selected, args.name());
                     boolean deleted;
                     if (args.absorbed_into() != null && !args.absorbed_into().isBlank()) {
-                        deleted = skillManager.deleteSkill(args.name(), args.absorbed_into());
+                        deleted = selected.deleteSkill(args.name(), args.absorbed_into());
                     } else {
-                        deleted = skillManager.deleteSkill(args.name());
+                        deleted = selected.deleteSkill(args.name());
                     }
                     if (deleted) {
-                        ledger("delete", args.name(), before, null);
+                        ledger(named, "delete", args.name(), before, null);
                         String message = "Skill '" + args.name() + "' deleted.";
                         if (args.absorbed_into() != null && !args.absorbed_into().isBlank()) {
                             message += " Content absorbed into '" + args.absorbed_into() + "'.";
@@ -161,9 +170,9 @@ public class SkillManageTool implements ToolHandler {
                     }
                     if (hasContent) {
                         validateSkillName(args.name());
-                        String before = snapshotSkill(args.name());
-                        skillManager.saveSkill(args.name(), args.content(), origin, args.absorbed_into());
-                        ledger("patch", args.name(), before, args.content());
+                        String before = snapshotSkill(selected, args.name());
+                        updateSkill(selected, args, origin);
+                        ledger(named, "patch", args.name(), before, args.content());
                         Map<String, Object> payload = successPayload(
                             "patch", args.name(), "Skill '" + args.name() + "' updated (full rewrite).");
                         payload.put("_change", descriptionChange(args.content()));
@@ -179,32 +188,32 @@ public class SkillManageTool implements ToolHandler {
                     boolean replaceAll = args.replace_all() != null && args.replace_all();
                     if (args.file_path() != null && !args.file_path().isBlank()) {
                         // Patch a support file (references/, templates/, scripts/)
-                        String before = snapshotSupportFile(args.name(), args.file_path());
+                        String before = snapshotSupportFile(selected, args.name(), args.file_path());
                         boolean patched;
                         try {
-                            patched = skillManager.patchSupportFile(
+                            patched = selected.patchSupportFile(
                                 args.name(), args.file_path(), args.old_text(), args.new_text(), replaceAll);
                         } catch (IllegalArgumentException e) {
                             yield jsonError(e.getMessage());
                         }
                         if (patched) {
-                            ledger("patch", args.name(), before, snapshotSupportFile(args.name(), args.file_path()));
+                            ledger(named, "patch", args.name(), before, snapshotSupportFile(selected, args.name(), args.file_path()));
                             yield patchJson(args.name(), args.file_path(), args.old_text(), args.new_text(), replaceAll, before);
                         }
                         yield jsonError("Skill '" + args.name() + "' or file '" + args.file_path()
                             + "' not found, or old_string not found in file.");
                     } else {
                         // Patch SKILL.md
-                        String before = snapshotSkill(args.name());
+                        String before = snapshotSkill(selected, args.name());
                         boolean patched;
                         try {
-                            patched = skillManager.patchSkill(
+                            patched = selected.patchSkill(
                                 args.name(), args.old_text(), args.new_text(), replaceAll);
                         } catch (IllegalArgumentException e) {
                             yield jsonError(e.getMessage());
                         }
                         if (patched) {
-                            ledger("patch", args.name(), before, snapshotSkill(args.name()));
+                            ledger(named, "patch", args.name(), before, snapshotSkill(selected, args.name()));
                             yield patchJson(args.name(), null, args.old_text(), args.new_text(), replaceAll, before);
                         }
                         yield jsonError("Skill '" + args.name() + "' not found or old_string not found in content.");
@@ -219,9 +228,9 @@ public class SkillManageTool implements ToolHandler {
                         yield jsonError("file_content is required for 'write_file'.");
                     }
                     try {
-                        String before = snapshotSupportFile(args.name(), args.file_path());
-                        skillManager.writeSupportFile(args.name(), args.file_path(), args.content());
-                        ledger("write_file", args.name(), before, args.content());
+                        String before = snapshotSupportFile(selected, args.name(), args.file_path());
+                        selected.writeSupportFile(args.name(), args.file_path(), args.content());
+                        ledger(named, "write_file", args.name(), before, args.content());
                         Map<String, Object> payload = successPayload(
                             "write_file", args.name(), "File '" + args.file_path() + "' written to skill '" + args.name() + "'.");
                         payload.put("file_path", args.file_path());
@@ -239,10 +248,10 @@ public class SkillManageTool implements ToolHandler {
                     if (args.file_path() == null || args.file_path().isBlank()) {
                         yield jsonError("file_path is required for 'remove_file'.");
                     }
-                    String before = snapshotSupportFile(args.name(), args.file_path());
-                    boolean removed = skillManager.removeSupportFile(args.name(), args.file_path());
+                    String before = snapshotSupportFile(selected, args.name(), args.file_path());
+                    boolean removed = selected.removeSupportFile(args.name(), args.file_path());
                     if (removed) {
-                        ledger("remove_file", args.name(), before, null);
+                        ledger(named, "remove_file", args.name(), before, null);
                         Map<String, Object> payload = successPayload(
                             "remove_file", args.name(), "File '" + args.file_path() + "' removed from skill '" + args.name() + "'.");
                         payload.put("file_path", args.file_path());
@@ -256,7 +265,7 @@ public class SkillManageTool implements ToolHandler {
             // Hermes parity (skill_manager_tool.py:1654): every successful
             // skill mutation clears the cached skills system prompt so the
             // next turn's index reflects the change.
-            if (result.success()) {
+            if (result.success() && !named) {
                 afterSkillMutation(args.name());
             }
             return result;
@@ -403,7 +412,10 @@ public class SkillManageTool implements ToolHandler {
      * h77 ledger hook (Hermes skill_ledger.record_mutation): telemetry, not a gate —
      * ledger failures are swallowed by SkillMutationLedger and never block the tool result.
      */
-    private void ledger(String action, String skill, String oldValue, String newValue) {
+    private void ledger(boolean named, String action, String skill, String oldValue, String newValue) {
+        if (named) {
+            return;
+        }
         try {
             mutationLedger.record(action, skill, null, oldValue, newValue);
         } catch (Exception e) {
@@ -433,21 +445,29 @@ public class SkillManageTool implements ToolHandler {
         }
     }
 
+    private void updateSkill(SkillManager selected, SkillManageArgs args, WriteOrigin origin) {
+        if (selected instanceof ProfileSkills.View local) {
+            local.update(args.name(), args.content());
+        } else {
+            selected.saveSkill(args.name(), args.content(), origin, args.absorbed_into());
+        }
+    }
+
     /** Best-effort pre-mutation snapshot of SKILL.md content (null when absent). */
-    private String snapshotSkill(String name) {
+    private String snapshotSkill(SkillManager selected, String name) {
         try {
-            return skillManager.getSkill(name);
+            return selected.getSkill(name);
         } catch (Exception e) {
             return null;
         }
     }
 
     /** Best-effort pre-mutation snapshot of a support file (null when absent). */
-    private String snapshotSupportFile(String name, String filePath) {
+    private String snapshotSupportFile(SkillManager selected, String name, String filePath) {
         try {
-            var files = skillManager.listSupportFiles(name);
+            var files = selected.listSupportFiles(name);
             if (files != null && files.contains(filePath)) {
-                return skillManager.readSupportFile(name, filePath);
+                return selected.readSupportFile(name, filePath);
             }
             return null;
         } catch (Exception e) {

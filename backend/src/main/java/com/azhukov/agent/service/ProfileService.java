@@ -472,7 +472,7 @@ public class ProfileService {
         String canon = normalizeProfileName(name);
         validateProfileName(canon);
         requireKnownProfile(canon);
-        atomicWriteString(profilePath(canon).resolve("config.yaml"), dumpYaml(config));
+        writeConfigText(canon, dumpYaml(config));
     }
 
     public Path configPath(String name) throws IOException {
@@ -541,7 +541,18 @@ public class ProfileService {
         if (!(loaded instanceof Map<?, ?>)) {
             throw new IllegalArgumentException("YAML must be a mapping");
         }
-        atomicWriteString(configPath(name), yamlText);
+        writeConfigText(normalizeProfileName(name), yamlText);
+    }
+
+    private void writeConfigText(String profile, String content) throws IOException {
+        Path target = configPath(profile);
+        if ("default".equals(profile)) {
+            atomicWriteString(target, content);
+        } else {
+            try (var dir = com.azhukov.agent.core.security.SecureFileAccess.openOrCreateDirectory(target.getParent())) {
+                dir.replaceFile(target.getFileName(), content.getBytes(StandardCharsets.UTF_8));
+            }
+        }
     }
 
     public String normalizeProfileName(String value) {

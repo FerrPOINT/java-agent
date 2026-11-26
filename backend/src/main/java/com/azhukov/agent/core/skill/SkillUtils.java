@@ -573,7 +573,7 @@ public class SkillUtils {
  * Excludes .git, node_modules, venv, __pycache__, etc.
  */
  public static List<Path> iterSkillIndexFiles(Path skillsDir, String filename) {
- if (skillsDir == null || !Files.isDirectory(skillsDir)) {
+ if (skillsDir == null || !Files.isDirectory(skillsDir, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
  return List.of();
  }
  List<Path> matches = new ArrayList<>();
@@ -586,12 +586,13 @@ public class SkillUtils {
  try (var stream = Files.list(dir)) {
  List<Path> entries = stream.toList();
  for (Path entry : entries) {
- if (Files.isDirectory(entry)) {
+ if (Files.isDirectory(entry, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
  String dirName = entry.getFileName().toString();
  if (!EXCLUDED_SKILL_DIRS.contains(dirName)) {
  walkSkillDir(entry, filename, results);
  }
- } else if (entry.getFileName().toString().equals(filename)) {
+ } else if (entry.getFileName().toString().equals(filename)
+ && Files.isRegularFile(entry, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
  results.add(entry);
  }
  }

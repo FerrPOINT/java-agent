@@ -14,8 +14,11 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.regex.Pattern;
 
 /** Loads the named profile's persona, workspace rules and explicitly selected Base role. */
@@ -32,12 +35,24 @@ public class ProfileInstructions {
     private final ObjectMapper mapper;
 
     public record Text(String file, String content) {}
-    public record Snapshot(String baseRole, String persona, Text project, String projectOverride) {}
+    public record Snapshot(BasePackage base, String persona, Text project, String projectOverride, Set<String> disabledSkills) {}
+
+    public record BasePackage(Path root, String roleText, Map<String, String> skills) {
+        public String readSkill(String name) throws IOException {
+            String expected = skills.get(name);
+            if (expected == null) {
+                return null;
+            }
+            return checked(root.resolve("skills").resolve(name).resolve("SKILL.md"), expected);
+        }
+    }
+
+    private static final BasePackage NO_BASE = new BasePackage(null, "", Map.of());
 
     public Snapshot read(String profile) {
         try {
             Map<String, Object> config = profiles.readExecutionConfig(profile);
-            String baseRole = loadBaseRole(config.get("instructions"));
+            BasePackage base = loadBase(config.get("instructions"));
             Path workspace = profiles.workspacePath(profile);
             var persona = optional(profiles.soulPath(profile));
             Text project = null;
@@ -48,23 +63,24 @@ public class ProfileInstructions {
                     break;
                 }
             }
-            return new Snapshot(baseRole, persona, project, optional(workspace.resolve("AGENTS.override.md")));
+            return new Snapshot(base, persona, project, optional(workspace.resolve("AGENTS.override.md")),
+                disabledSkills(config));
         } catch (IOException | RuntimeException e) {
             // YAML parser errors can contain values from the rest of the profile config.
             throw new IllegalStateException("Unable to load instructions for the selected profile");
         }
     }
 
-    private String loadBaseRole(Object config) throws IOException {
+    public BasePackage loadBase(Object config) throws IOException {
         if (config == null) {
-            return "";
+            return NO_BASE;
         }
         if (!(config instanceof Map<?, ?> section)) {
             throw new IllegalArgumentException("Profile instructions must be a mapping");
         }
         Object value = section.get("base_role");
         if (value == null) {
-            return "";
+            return NO_BASE;
         }
         if (!(value instanceof String role) || !ROLE.matcher(role).matches()) {
             throw new IllegalArgumentException("Invalid Base role");
@@ -88,15 +104,52 @@ public class ProfileInstructions {
         if (!"base-hermes-role-skills/v1".equals(manifest.path("schema").asText())) {
             throw new IllegalArgumentException("Unsupported Base instructions manifest");
         }
-        JsonNode instruction = manifest.path("roles").path(role).path("roleInstruction");
+        JsonNode selected = manifest.path("roles").path(role);
+        JsonNode instruction = selected.path("roleInstruction");
         String file = "roles/" + role + ".md";
-        String expectedRole = instruction.path("sha256").asText();
-        if (!file.equals(instruction.path("path").asText()) || !SHA256.matcher(expectedRole).matches()) {
+        if (!file.equals(instruction.path("path").asText())) {
             throw new IllegalArgumentException("Base role is not in the pinned manifest");
         }
-        String content = normalize(SecureFileAccess.readUtf8(root.resolve(file)));
-        if (content.isBlank() || !expectedRole.equals(sha256(content))) {
-            throw new IllegalArgumentException("Base role instructions do not match their pin");
+        String roleText = checked(root.resolve(file), instruction.path("sha256").asText());
+        JsonNode hashes = manifest.path("sources").path("native").path("skills");
+        Map<String, String> skills = new LinkedHashMap<>();
+        for (JsonNode item : selected.path("physicalSkills")) {
+            String name = item.asText();
+            String digest = hashes.path(name).asText();
+            if (!ProfileSkills.validName(name) || !SHA256.matcher(digest).matches()) {
+                throw new IllegalArgumentException("Base skill is missing its pin");
+            }
+            skills.put(name, digest);
+        }
+        return new BasePackage(root, roleText, Map.copyOf(skills));
+    }
+
+    static Set<String> disabledSkills(Map<String, Object> config) {
+        if (!(config.get("skills") instanceof Map<?, ?> section)) {
+            return Set.of();
+        }
+        Object raw = section.get("disabled");
+        var disabled = new TreeSet<String>();
+        if (raw instanceof Iterable<?> names) {
+            for (Object name : names) {
+                if (name instanceof String text && !text.isBlank()) {
+                    disabled.add(text.trim());
+                }
+            }
+        } else if (raw instanceof String text) {
+            for (String name : text.split(",")) {
+                if (!name.isBlank()) {
+                    disabled.add(name.trim());
+                }
+            }
+        }
+        return Set.copyOf(disabled);
+    }
+
+    private static String checked(Path path, String expected) throws IOException {
+        String content = normalize(SecureFileAccess.readUtf8(path));
+        if (content.isBlank() || !expected.equals(sha256(content))) {
+            throw new IllegalArgumentException("Base file does not match its pin");
         }
         return content;
     }

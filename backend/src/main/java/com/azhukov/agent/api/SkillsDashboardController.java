@@ -3,10 +3,10 @@ package com.azhukov.agent.api;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.skill.SkillManager;
-import com.azhukov.agent.core.skill.SkillUtils;
 import com.azhukov.agent.core.skill.SkillsHubService;
 import com.azhukov.agent.core.skill.WriteOrigin;
 import com.azhukov.agent.service.ProfileService;
+import com.azhukov.agent.service.ProfileSkills;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -23,10 +23,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.io.IOException;
 import java.lang.management.ManagementFactory;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -36,9 +33,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
-import java.util.stream.Stream;
-import org.yaml.snakeyaml.DumperOptions;
-import org.yaml.snakeyaml.Yaml;
 
 @RestController
 @RequestMapping({"/api/skills", "/p/{profile}/api/skills"})
@@ -52,6 +46,7 @@ public class SkillsDashboardController {
     private final AgentProperties properties;
     private final SkillsHubService skillsHubService;
     private final ProfileService profileService;
+    private final ProfileSkills profileSkills;
     private final org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.service.SkillHubInstaller> hubInstallerProvider;
 
     @Autowired
@@ -60,17 +55,19 @@ public class SkillsDashboardController {
         AgentProperties properties,
         SkillsHubService skillsHubService,
         ProfileService profileService,
+        ProfileSkills profileSkills,
         org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.service.SkillHubInstaller> hubInstallerProvider
     ) {
         this.skillManager = skillManager;
         this.properties = properties;
         this.skillsHubService = skillsHubService;
         this.profileService = profileService;
+        this.profileSkills = profileSkills;
         this.hubInstallerProvider = hubInstallerProvider;
     }
 
     SkillsDashboardController(SkillManager skillManager, AgentProperties properties, SkillsHubService skillsHubService) {
-        this(skillManager, properties, skillsHubService, null, null);
+        this(skillManager, properties, skillsHubService, null, null, null);
     }
 
     private void requireAdminSkillsWriteAccess() {
@@ -89,10 +86,11 @@ public class SkillsDashboardController {
             return profile.error();
         }
         try {
-            Set<String> disabled = disabledSkillNames(profile.profile());
-            List<SkillManager.SkillInfo> source = isDefaultProfile(profile.profile())
+            boolean defaultProfile = isDefaultProfile(profile.profile());
+            Set<String> disabled = defaultProfile ? disabledSkillNames() : Set.of();
+            List<SkillManager.SkillInfo> source = defaultProfile
                 ? skillManager.listSkills()
-                : listProfileSkillInfos(profile.profile());
+                : profileSkills.forProfile(profile.profile()).listSkills();
             List<Map<String, Object>> skills = source.stream()
                 .filter(skill -> !skill.archived())
                 .sorted(Comparator.comparing(SkillsDashboardController::skillSortCategory)
@@ -100,7 +98,7 @@ public class SkillsDashboardController {
                 .map(skill -> skillPayload(skill, disabled))
                 .toList();
             return ResponseEntity.ok(skills);
-        } catch (IOException | RuntimeException e) {
+        } catch (RuntimeException e) {
             log.warn("GET /api/skills failed", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(Map.of("detail", "Failed to enumerate skills"));
@@ -133,10 +131,12 @@ public class SkillsDashboardController {
                     disabled.add(body.name());
                 }
             } else {
-                updateProfileDisabledSkill(profile.profile(), body.name(), body.enabled());
+                profileSkills.setEnabled(profile.profile(), body.name(), body.enabled());
             }
-        } catch (IOException e) {
-            log.warn("PUT /api/skills/toggle failed for profile {}", profile.profile(), e);
+        } catch (IllegalArgumentException e) {
+            return badRequest("Invalid profile skills configuration");
+        } catch (IOException | IllegalStateException e) {
+            log.warn("PUT /api/skills/toggle failed for profile {}", profile.profile());
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(Map.of("detail", "Failed to update profile skills config"));
         }
@@ -162,11 +162,8 @@ public class SkillsDashboardController {
         }
         if (!isDefaultProfile(profile.profile())) {
             try {
-                ProfileSkillLookup lookup = findProfileSkill(profile.profile(), name);
-                if (lookup.error() != null) {
-                    return badRequest(lookup.error());
-                }
-                if (lookup.info() == null) {
+                ProfileSkills.Entry lookup = profileSkills.forProfile(profile.profile()).find(name);
+                if (lookup == null) {
                     return ResponseEntity.status(HttpStatus.NOT_FOUND)
                         .body(Map.of("detail", "Skill '" + name + "' not found."));
                 }
@@ -175,7 +172,7 @@ public class SkillsDashboardController {
                     "content", lookup.info().content() != null ? lookup.info().content() : "",
                     "path", lookup.path().toString()
                 ));
-            } catch (IOException e) {
+            } catch (IllegalStateException e) {
                 log.warn("GET /api/skills/content failed for profile {}", profile.profile(), e);
                 return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("detail", "Failed to read profile skill"));
@@ -219,7 +216,7 @@ public class SkillsDashboardController {
             return profile.error();
         }
         if (!isDefaultProfile(profile.profile())) {
-            return createProfileSkill(profile.profile(), body);
+            return writeProfileSkill(profile.profile(), body, true);
         }
         SkillManager.SkillLookupResult lookup = skillManager.getSkillInfoMultiStrategy(body.name());
         if (lookup.error() != null) {
@@ -264,7 +261,7 @@ public class SkillsDashboardController {
             return profile.error();
         }
         if (!isDefaultProfile(profile.profile())) {
-            return updateProfileSkill(profile.profile(), body);
+            return writeProfileSkill(profile.profile(), body, false);
         }
         SkillManager.SkillLookupResult lookup = skillManager.getSkillInfoMultiStrategy(body.name());
         if (lookup.error() != null) {
@@ -460,234 +457,27 @@ public class SkillsDashboardController {
         return hubOpResponse(result);
     }
 
-    private List<SkillManager.SkillInfo> listProfileSkillInfos(String profile) throws IOException {
-        Path skillsDir = profileSkillsDir(profile);
-        if (!Files.isDirectory(skillsDir)) {
-            return List.of();
+    private ResponseEntity<Map<String, Object>> writeProfileSkill(String profile, SkillContentBody body, boolean create) {
+        ResponseEntity<Map<String, Object>> invalid = validateSkillContent(body.content());
+        if (invalid != null) {
+            return invalid;
         }
-        Map<String, SkillManager.SkillInfo> found = new LinkedHashMap<>();
-        List<Path> skillFiles = SkillUtils.iterSkillIndexFiles(skillsDir, "SKILL.md").stream()
-            .filter(path -> !SkillUtils.isExcludedSkillPath(path))
-            .sorted(Comparator.comparing(Path::toString))
-            .toList();
-        for (Path skillFile : skillFiles) {
-            SkillManager.SkillInfo info = readProfileSkill(skillFile);
-            if (info != null && !blank(info.name())) {
-                found.putIfAbsent(info.name(), info);
-            }
-        }
-        return new ArrayList<>(found.values());
-    }
-
-    private ProfileSkillLookup findProfileSkill(String profile, String name) throws IOException {
-        Path skillsDir = profileSkillsDir(profile);
-        if (!Files.isDirectory(skillsDir)) {
-            return ProfileSkillLookup.notFound();
-        }
-        List<Path> candidates = new ArrayList<>();
-        Path direct = profileSkillFile(profile, name);
-        if (Files.isRegularFile(direct)) {
-            candidates.add(direct);
-        }
-        for (Path skillFile : SkillUtils.iterSkillIndexFiles(skillsDir, "SKILL.md")) {
-            if (SkillUtils.isExcludedSkillPath(skillFile) || skillFile.equals(direct)) {
-                continue;
-            }
-            SkillManager.SkillInfo info = readProfileSkill(skillFile);
-            if (info != null && name.equals(info.name())) {
-                candidates.add(skillFile);
-            }
-        }
-        if (candidates.isEmpty()) {
-            return ProfileSkillLookup.notFound();
-        }
-        if (candidates.size() > 1) {
-            List<String> paths = candidates.stream().map(Path::toString).toList();
-            return ProfileSkillLookup.error("Ambiguous skill name '" + name + "': "
-                + candidates.size() + " skills match across the profile filesystem. Refusing to guess: "
-                + String.join("; ", paths));
-        }
-        Path path = candidates.get(0);
-        return new ProfileSkillLookup(readProfileSkill(path), path, null);
-    }
-
-    private ResponseEntity<Map<String, Object>> createProfileSkill(String profile, SkillContentBody body) {
         try {
-            ProfileSkillLookup lookup = findProfileSkill(profile, body.name());
-            if (lookup.error() != null) {
-                return badRequest(lookup.error());
-            }
-            if (lookup.info() != null) {
-                return badRequest("Skill '" + body.name() + "' already exists.");
-            }
-            ResponseEntity<Map<String, Object>> invalidContent = validateSkillContent(body.content());
-            if (invalidContent != null) {
-                return invalidContent;
-            }
-            Path skillFile = profileSkillFile(profile, body.name());
-            Files.createDirectories(skillFile.getParent());
-            Files.writeString(skillFile, body.content(), StandardCharsets.UTF_8, StandardOpenOption.CREATE_NEW);
-            return ResponseEntity.ok(editorSuccessPayload(
-                body.name(), body.content(), body.category(), true, skillFile.toString()));
-        } catch (IllegalArgumentException | SecurityException e) {
-            return badRequest(e.getMessage());
-        } catch (IOException e) {
-            log.warn("POST /api/skills failed for profile {}", profile, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(Map.of("detail", "Failed to write profile skill"));
-        }
-    }
-
-    private ResponseEntity<Map<String, Object>> updateProfileSkill(String profile, SkillContentBody body) {
-        try {
-            ProfileSkillLookup lookup = findProfileSkill(profile, body.name());
-            if (lookup.error() != null) {
-                return badRequest(lookup.error());
-            }
-            if (lookup.info() == null) {
+            var skills = profileSkills.forProfile(profile);
+            if (!create && skills.find(body.name()) == null) {
                 return ResponseEntity.status(HttpStatus.NOT_FOUND)
                     .body(Map.of("detail", "Skill '" + body.name() + "' not found."));
             }
-            ResponseEntity<Map<String, Object>> invalidContent = validateSkillContent(body.content());
-            if (invalidContent != null) {
-                return invalidContent;
-            }
-            Files.writeString(lookup.path(), body.content(), StandardCharsets.UTF_8, StandardOpenOption.TRUNCATE_EXISTING);
-            return ResponseEntity.ok(editorSuccessPayload(body.name(), body.content(), null, false, lookup.path().toString()));
+            Path file = create ? skills.create(body.name(), body.content()) : skills.update(body.name(), body.content());
+            return ResponseEntity.ok(editorSuccessPayload(
+                body.name(), body.content(), body.category(), create, file.toString()));
         } catch (IllegalArgumentException | SecurityException e) {
             return badRequest(e.getMessage());
-        } catch (IOException e) {
-            log.warn("PUT /api/skills/content failed for profile {}", profile, e);
+        } catch (IllegalStateException e) {
+            log.warn("Failed to write a dashboard skill for profile {}", profile, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(Map.of("detail", "Failed to write profile skill"));
         }
-    }
-
-    private SkillManager.SkillInfo readProfileSkill(Path skillFile) {
-        try {
-            String content = Files.readString(skillFile, StandardCharsets.UTF_8);
-            SkillUtils.FrontmatterResult frontmatter = SkillUtils.parseFrontmatter(content);
-            Map<String, Object> meta = frontmatter.frontmatter();
-            String name = firstNonBlank(stringValue(meta.get("name")), skillDirectoryName(skillFile));
-            if (name == null) {
-                return null;
-            }
-            boolean disabled = booleanValue(meta.get("disabled"));
-            return new SkillManager.SkillInfo(
-                name,
-                content,
-                stringValue(meta.get("description")),
-                stringValue(meta.get("category")),
-                null,
-                0,
-                0,
-                null,
-                false,
-                "AGENT_CREATED",
-                SkillUtils.parseTags(meta.get("tags")),
-                SkillUtils.parseTags(meta.get("related_skills")),
-                disabled,
-                SkillManager.LinkedFiles.fromFlatList(List.of())
-            );
-        } catch (IOException e) {
-            log.debug("Failed to read profile skill {}", skillFile, e);
-            return null;
-        }
-    }
-
-    private void updateProfileDisabledSkill(String profile, String name, boolean enabled) throws IOException {
-        Map<String, Object> config = readProfileConfig(profile);
-        Map<String, Object> skills = mapValue(config.get("skills"));
-        Set<String> disabled = disabledSkillNamesFromConfig(config);
-        if (enabled) {
-            disabled.remove(name);
-        } else {
-            disabled.add(name);
-        }
-        skills.put("disabled", disabled.stream().sorted().toList());
-        config.put("skills", skills);
-        writeProfileConfig(profile, config);
-    }
-
-    private Set<String> disabledSkillNames(String profile) throws IOException {
-        if (!isDefaultProfile(profile)) {
-            return disabledSkillNamesFromConfig(readProfileConfig(profile));
-        }
-        Set<String> disabled = new LinkedHashSet<>();
-        if (properties.getSkills() == null) {
-            return disabled;
-        }
-        for (String name : properties.getSkills().getDisabled()) {
-            if (name != null && !name.isBlank()) {
-                disabled.add(name.trim());
-            }
-        }
-        return disabled;
-    }
-
-    private Set<String> disabledSkillNamesFromConfig(Map<String, Object> config) {
-        Set<String> disabled = new LinkedHashSet<>();
-        Map<String, Object> skills = mapValue(config.get("skills"));
-        Object raw = skills.get("disabled");
-        if (raw instanceof Iterable<?> iterable) {
-            for (Object item : iterable) {
-                String name = stringValue(item);
-                if (!blank(name)) {
-                    disabled.add(name);
-                }
-            }
-        } else if (raw instanceof String text && !text.isBlank()) {
-            for (String item : text.split(",")) {
-                if (!item.isBlank()) {
-                    disabled.add(item.trim());
-                }
-            }
-        }
-        return disabled;
-    }
-
-    @SuppressWarnings("unchecked")
-    private Map<String, Object> readProfileConfig(String profile) throws IOException {
-        Path path = profileService.profilePath(profile).resolve("config.yaml");
-        if (!Files.isRegularFile(path)) {
-            return new LinkedHashMap<>();
-        }
-        Object loaded = new Yaml().load(Files.readString(path, StandardCharsets.UTF_8));
-        if (loaded instanceof Map<?, ?> map) {
-            return toStringKeyMap(map);
-        }
-        return new LinkedHashMap<>();
-    }
-
-    private void writeProfileConfig(String profile, Map<String, Object> config) throws IOException {
-        Path path = profileService.profilePath(profile).resolve("config.yaml");
-        Files.createDirectories(path.getParent());
-        DumperOptions options = new DumperOptions();
-        options.setDefaultFlowStyle(DumperOptions.FlowStyle.BLOCK);
-        options.setPrettyFlow(true);
-        options.setIndent(2);
-        options.setAllowUnicode(true);
-        String dumped = new Yaml(options).dump(config != null ? config : Map.of());
-        Files.writeString(path, dumped.endsWith("\n") ? dumped : dumped + "\n",
-            StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
-    }
-
-    private Path profileSkillsDir(String profile) {
-        Path skillsDir = profileService.profilePath(profile).resolve("skills").toAbsolutePath().normalize();
-        Path profileDir = profileService.profilePath(profile).toAbsolutePath().normalize();
-        if (!skillsDir.startsWith(profileDir)) {
-            throw new SecurityException("Invalid profile skills path");
-        }
-        return skillsDir;
-    }
-
-    private Path profileSkillFile(String profile, String name) {
-        Path skillsDir = profileSkillsDir(profile);
-        Path skillFile = skillsDir.resolve(name).resolve("SKILL.md").toAbsolutePath().normalize();
-        if (!skillFile.startsWith(skillsDir)) {
-            throw new SecurityException("Invalid skill path");
-        }
-        return skillFile;
     }
 
     private ProfileResolution resolveProfileScope(String pathProfile, String queryProfile, String bodyProfile) {
@@ -859,45 +649,6 @@ public class SkillsDashboardController {
         return profile == null || profile.isBlank() || "default".equals(profile);
     }
 
-    private static String skillDirectoryName(Path skillFile) {
-        Path parent = skillFile != null ? skillFile.getParent() : null;
-        return parent != null ? parent.getFileName().toString() : null;
-    }
-
-    private static boolean booleanValue(Object value) {
-        if (value instanceof Boolean bool) {
-            return bool;
-        }
-        return value != null && "true".equalsIgnoreCase(String.valueOf(value).trim());
-    }
-
-    private static Map<String, Object> mapValue(Object value) {
-        if (value instanceof Map<?, ?> map) {
-            return toStringKeyMap(map);
-        }
-        return new LinkedHashMap<>();
-    }
-
-    private static Map<String, Object> toStringKeyMap(Map<?, ?> raw) {
-        Map<String, Object> result = new LinkedHashMap<>();
-        raw.forEach((key, value) -> {
-            if (key != null) {
-                result.put(String.valueOf(key), yamlValue(value));
-            }
-        });
-        return result;
-    }
-
-    private static Object yamlValue(Object value) {
-        if (value instanceof Map<?, ?> map) {
-            return toStringKeyMap(map);
-        }
-        if (value instanceof List<?> list) {
-            return list.stream().map(SkillsDashboardController::yamlValue).toList();
-        }
-        return value;
-    }
-
     private String provenance(SkillManager.SkillInfo skill) {
         String trust = skill.trustLevel();
         if ("BUILTIN".equalsIgnoreCase(trust)) {
@@ -957,15 +708,6 @@ public class SkillsDashboardController {
         return value == null ? "" : String.valueOf(value).trim();
     }
 
-    private static String firstNonBlank(String... values) {
-        for (String value : values) {
-            if (value != null && !value.isBlank()) {
-                return value.trim();
-            }
-        }
-        return null;
-    }
-
     private static ResponseEntity<Map<String, Object>> badRequest(String detail) {
         return ResponseEntity.badRequest().body(Map.of("detail", detail));
     }
@@ -1019,16 +761,6 @@ public class SkillsDashboardController {
     }
 
     private record HubUninstallBody(String name, String profile) {
-    }
-
-    private record ProfileSkillLookup(SkillManager.SkillInfo info, Path path, String error) {
-        private static ProfileSkillLookup notFound() {
-            return new ProfileSkillLookup(null, null, null);
-        }
-
-        private static ProfileSkillLookup error(String error) {
-            return new ProfileSkillLookup(null, null, error);
-        }
     }
 
     private record ProfileResolution(String profile, ResponseEntity<Map<String, Object>> error) {
