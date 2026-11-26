@@ -96,6 +96,7 @@ private static final String CRON_EXECUTION_HINT = """
     private final ObjectProvider<GatewayHomeChannelService> gatewayHomeChannelProvider;
     private EventService eventService;
     private ProfileService profileService;
+    private ProfileSkills profileSkills;
 
     @Autowired
     public CronJobService(
@@ -185,6 +186,11 @@ private static final String CRON_EXECUTION_HINT = """
         this.profileService = profileService;
     }
 
+    @Autowired
+    void setProfileSkills(ProfileSkills profileSkills) {
+        this.profileSkills = profileSkills;
+    }
+
     @PreDestroy
     public void shutdown() {
         log.info("Shutting down cron scheduler...");
@@ -232,7 +238,7 @@ private static final String CRON_EXECUTION_HINT = """
         // Null explicitly denotes a global/system job, never an inferred caller.
         entity.setUserId(userId);
         requireOwnership(entity);
-        requireAttachedSessionOwnership(userId, attachedSessionId);
+        requireAttachedSessionOwnership(userId, normalizedProfile, attachedSessionId);
         String effectiveContextFrom = continuityEnabled ? applyContinuity(contextFrom, true) : contextFrom;
         entity.setProfile(normalizedProfile);
         entity.setName(name);
@@ -261,6 +267,8 @@ private static final String CRON_EXECUTION_HINT = """
         entity.setModelSnapshot(snapshot.model());
         entity.setEnabled(true);
         entity.setCreatedAt(Instant.now());
+        requireNamedJobResources(entity);
+        validateNamedJobContext(entity);
 
         // Repeat count: normalize 0/negative to null (forever).
         // Auto-set repeatCount=1 for one-shot schedules if not specified.
@@ -354,7 +362,7 @@ private static final String CRON_EXECUTION_HINT = """
             if (currentSessionId == null) {
                 throw new IllegalArgumentException("attach_to_session=true requires a current session");
             }
-            requireAttachedSessionOwnership(entity.getUserId(), currentSessionId);
+            requireAttachedSessionOwnership(entity.getUserId(), jobProfile(entity), currentSessionId);
         }
 
         boolean scriptUpdated = script != null;
@@ -423,6 +431,13 @@ private static final String CRON_EXECUTION_HINT = """
         if (modelProvider != null) entity.setModelProvider(modelProvider.isBlank() ? null : modelProvider);
         if (modelName != null) entity.setModelName(modelName.isBlank() ? null : modelName);
         if (baseUrl != null) entity.setBaseUrl(baseUrl.isBlank() ? null : baseUrl);
+
+        if (scriptUpdated || monitorUpdated || noAgent != null) {
+            requireNamedJobResources(entity);
+        }
+        if (contextFrom != null) {
+            validateNamedJobContext(entity);
+        }
 
         if (inferenceAxesChanged(
             previousModelProvider,
@@ -802,6 +817,7 @@ private static final String CRON_EXECUTION_HINT = """
         publishCronEvent("cron.started", job, startedAt, null);
 
         try {
+            requireNamedJobResources(job);
             if (job.isNoAgent() && !isBlank(job.getMonitor())) {
                 throw new IllegalStateException(
                     "monitor jobs cannot use no_agent=true; monitor gates an ordinary agent job.");
@@ -852,7 +868,7 @@ private static final String CRON_EXECUTION_HINT = """
                     ? extraPrompt
                     : enhancedPrompt + "\n\n---\n\n" + extraPrompt;
             }
-            String loadedSkills = loadJobSkills(job.getSkills());
+            String loadedSkills = loadJobSkills(job);
             if (loadedSkills != null && !loadedSkills.isBlank()) {
                 enhancedPrompt = loadedSkills + "\n\n---\n\n" + enhancedPrompt;
                 log.debug("Injected {} skills into cron job '{}'", job.getSkills(), job.getName());
@@ -888,6 +904,7 @@ private static final String CRON_EXECUTION_HINT = """
             String profile = jobProfile(job);
             if (!DEFAULT_PROFILE.equals(profile)) {
                 runtimeMetadata.put("profile", profile);
+                runtimeMetadata.put("platform", "cron");
             }
             // Model settings still require provider-transport support; do not claim
             // they are applied until a request-scoped client override exists.
@@ -939,6 +956,9 @@ private static final String CRON_EXECUTION_HINT = """
                 } catch (IllegalArgumentException ignored) {
                     log.warn("Cron job '{}' produced non-UUID session id: {}", job.getName(), lastRunSessionId);
                 }
+            }
+            if (!DEFAULT_PROFILE.equals(profile)) {
+                requireAttachedSessionOwnership(job.getUserId(), profile, job.getLastRunSessionId());
             }
             String executionOutput = loadLastRunOutput(job.getLastRunSessionId());
             if (!recordRunAndDelivery(job, startedAt, "success", null, executionOutput, false)) {
@@ -1217,8 +1237,12 @@ private static final String CRON_EXECUTION_HINT = """
             return Map.of();
         }
         try {
-            return profileService.readConfig(profile);
+            return DEFAULT_PROFILE.equals(profile)
+                ? profileService.readConfig(profile) : profileService.readExecutionConfig(profile);
         } catch (Exception e) {
+            if (!DEFAULT_PROFILE.equals(profile)) {
+                throw new IllegalArgumentException("Unable to read cron configuration for the selected profile");
+            }
             log.debug("Cron model snapshot config read skipped for profile {}", profile, e);
             return Map.of();
         }
@@ -1405,7 +1429,7 @@ private static final String CRON_EXECUTION_HINT = """
             UUID sessionId = job.getAttachedSessionId();
             SessionMutationLock.withLock(sessionId, () -> {
                 transactionTemplate.executeWithoutResult(status -> {
-                    requireAttachedSessionOwnership(job.getUserId(), sessionId);
+                    requireAttachedSessionOwnership(job.getUserId(), jobProfile(job), sessionId);
                     var sessions = sessionRepositoryProvider.getIfAvailable();
                     if (sessions.findMessageParentId(sessionId).isEmpty()) {
                         return;
@@ -1484,7 +1508,7 @@ private static final String CRON_EXECUTION_HINT = """
             // Bare platform names resolve to the persisted home channel
             // (WP-2/ADR-012); legacy first-allowed-user-id only when nothing
             // is persisted yet.
-            String ownerChat = ownerChatId();
+            String ownerChat = ownerChatId(jobProfile(job));
             return ownerChat == null ? null : "telegram:" + ownerChat;
         }
         return null;
@@ -1509,6 +1533,11 @@ private static final String CRON_EXECUTION_HINT = """
             if (session == null || session.getOriginThreadId() == null || session.getOriginThreadId().isBlank()) {
                 return target;
             }
+            if (!DEFAULT_PROFILE.equals(jobProfile(job))
+                && (!jobProfile(job).equals(normalizeProfileForStorage(session.getProfile()))
+                    || !Objects.equals(job.getUserId(), session.getUserId()))) {
+                return target;
+            }
             return target + ":" + session.getOriginThreadId().trim();
         } catch (Exception e) {
             log.debug("origin-thread resolution failed for job {}: {}", job.getName(), e.getMessage());
@@ -1521,15 +1550,18 @@ private static final String CRON_EXECUTION_HINT = """
      * home channel first (WP-2), legacy first-allowed-user-id fallback while
      * no home is persisted (old CronDeliveryPoller resolution).
      */
-    private String ownerChatId() {
+    private String ownerChatId(String profile) {
         if (gatewayHomeChannelProvider != null) {
             GatewayHomeChannelService homeChannels = gatewayHomeChannelProvider.getIfAvailable();
             if (homeChannels != null) {
-                var home = homeChannels.resolve("telegram", GatewayHomeChannelService.DEFAULT_PROFILE);
+                var home = homeChannels.resolve("telegram", profile);
                 if (home.isPresent() && home.get().persisted()) {
                     return home.get().chatId();
                 }
             }
+        }
+        if (!DEFAULT_PROFILE.equals(profile)) {
+            return null;
         }
         var allowed = properties.getGateway().getTelegram().getAllowedUserIds();
         if (allowed == null || allowed.isEmpty()) {
@@ -2036,15 +2068,20 @@ private static final String CRON_EXECUTION_HINT = """
     /**
      * S17: Load skills attached to a cron job and return their content for injection.
      *
-     * @param skillsCsv comma-separated skill names
      * @return combined skill content, or null if no skills attached
      */
-    private String loadJobSkills(String skillsCsv) {
+    private String loadJobSkills(CronJobEntity job) {
+        String skillsCsv = job.getSkills();
         if (skillsCsv == null || skillsCsv.isBlank()) {
             return null;
         }
-        if (skillManager == null) {
-            log.debug("SkillManager not available — cannot load cron job skills");
+        String profile = jobProfile(job);
+        boolean named = !DEFAULT_PROFILE.equals(profile);
+        if (named && profileSkills == null) {
+            throw new IllegalStateException("Profile skill storage is unavailable");
+        }
+        SkillManager selected = named ? profileSkills.forProfile(profile) : skillManager;
+        if (selected == null) {
             return null;
         }
         StringBuilder sb = new StringBuilder();
@@ -2052,12 +2089,24 @@ private static final String CRON_EXECUTION_HINT = """
             String trimmed = skillName.trim();
             if (trimmed.isEmpty()) continue;
             try {
-                String content = skillManager.getSkill(trimmed);
+                String content;
+                if (named) {
+                    var info = selected.getSkillInfo(trimmed);
+                    if (info == null || info.disabled()) {
+                        throw new IllegalArgumentException("Cron skill is unavailable for the selected profile");
+                    }
+                    content = info.content();
+                } else {
+                    content = selected.getSkill(trimmed);
+                }
                 if (content != null && !content.isBlank()) {
                     sb.append("=== Skill: ").append(trimmed).append(" ===\n");
                     sb.append(content).append("\n\n");
                 }
             } catch (Exception e) {
+                if (named) {
+                    throw new IllegalStateException("Unable to load cron skills for the selected profile");
+                }
                 log.warn("Failed to load skill '{}' for cron job: {}", trimmed, e.getMessage());
             }
         }
@@ -2090,8 +2139,11 @@ private static final String CRON_EXECUTION_HINT = """
             }
             try {
                 var sourceJob = cronJobRepository.findById(sourceJobId).orElse(null);
+                if (!sameJobScope(job, sourceJob)) {
+                    continue;
+                }
                 var latest = cronExecutionLogRepository.findFirstByJobIdOrderByStartedAtDesc(sourceJobId).orElse(null);
-                if (sourceJob == null || latest == null || latest.getOutputText() == null
+                if (latest == null || latest.getOutputText() == null
                     || latest.getOutputText().isBlank()) {
                     continue;
                 }
@@ -2165,7 +2217,7 @@ private static final String CRON_EXECUTION_HINT = """
         return entity != null && (scoped == null || Objects.equals(scoped, entity.getUserId()));
     }
 
-    private void requireAttachedSessionOwnership(String ownerId, UUID sessionId) {
+    private void requireAttachedSessionOwnership(String ownerId, String profile, UUID sessionId) {
         if (sessionId == null) return;
         var sessions = sessionRepositoryProvider == null ? null : sessionRepositoryProvider.getIfAvailable();
         if (sessions == null) {
@@ -2173,11 +2225,44 @@ private static final String CRON_EXECUTION_HINT = """
         }
         var session = sessions.findById(sessionId)
             .orElseThrow(() -> new IllegalArgumentException("Attached session not found: " + sessionId));
+        if (!profile.equals(normalizeProfileForStorage(session.getProfile()))) {
+            throw new SecurityException("Attached session does not belong to the cron job profile");
+        }
         // Historical global jobs retain administrator/internal scope.
         boolean globalJob = ownerId == null && UserContext.scopeUserId() == null;
         if (!globalJob && (ownerId == null || ownerId.isBlank() || !Objects.equals(ownerId, session.getUserId()))) {
             throw new SecurityException("Attached session does not belong to the cron job owner");
         }
+    }
+
+    private static void requireNamedJobResources(CronJobEntity job) {
+        if (DEFAULT_PROFILE.equals(jobProfile(job))) {
+            return;
+        }
+        if (job.isNoAgent() || !isBlank(job.getScript()) || (!isBlank(job.getMonitor()) && !isMonitorUrl(job.getMonitor()))) {
+            throw new IllegalArgumentException("Script execution is unavailable for this profile");
+        }
+    }
+
+    private void validateNamedJobContext(CronJobEntity job) {
+        if (DEFAULT_PROFILE.equals(jobProfile(job)) || isBlank(job.getContextFrom())) {
+            return;
+        }
+        for (String value : job.getContextFrom().split(",")) {
+            String reference = value.strip();
+            if (reference.isEmpty() || "self".equalsIgnoreCase(reference)) {
+                continue;
+            }
+            UUID referenced = UUID.fromString(reference);
+            if (!sameJobScope(job, cronJobRepository.findById(referenced).orElse(null))) {
+                throw new IllegalArgumentException("Cron context source is unavailable in the selected profile");
+            }
+        }
+    }
+
+    private static boolean sameJobScope(CronJobEntity job, CronJobEntity source) {
+        return source != null && jobProfile(job).equals(jobProfile(source))
+            && Objects.equals(job.getUserId(), source.getUserId());
     }
 
     private void requireOwnership(CronJobEntity entity) {

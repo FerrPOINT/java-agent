@@ -53,11 +53,11 @@ public class CronJobTool implements ToolHandler {
 
         return switch (action) {
             case "create" -> createJob(args, session);
-            case "list" -> listJobs();
-            case "pause" -> pauseJob(args);
-            case "resume" -> resumeJob(args);
-            case "remove" -> removeJob(args);
-            case "run" -> runJob(args);
+            case "list" -> listJobs(session);
+            case "pause" -> pauseJob(args, session);
+            case "resume" -> resumeJob(args, session);
+            case "remove" -> removeJob(args, session);
+            case "run" -> runJob(args, session);
             case "update" -> updateJob(args, session);
             default -> cronError("Unknown cron action '" + action + "'");
         };
@@ -117,9 +117,9 @@ public class CronJobTool implements ToolHandler {
         }
     }
 
-    private ToolResult listJobs() {
+    private ToolResult listJobs(Session session) {
         try {
-            List<CronJobEntity> jobs = cronJobService.list();
+            List<CronJobEntity> jobs = ownedJobs(session);
             List<Map<String, Object>> formatted = new ArrayList<>();
             for (CronJobEntity job : jobs) {
                 formatted.add(formatJob(job));
@@ -134,9 +134,9 @@ public class CronJobTool implements ToolHandler {
         }
     }
 
-    private ToolResult pauseJob(CronJobArgs args) {
+    private ToolResult pauseJob(CronJobArgs args, Session session) {
         if (missingJobRef(args)) return cronError("job_id is required for action 'pause'");
-        Optional<CronJobEntity> job = resolveJob(args);
+        Optional<CronJobEntity> job = resolveJob(args, session);
         if (job.isEmpty()) return cronError(jobNotFoundMsg(args));
         try {
             CronJobEntity entity = cronJobService.pause(job.get().getId());
@@ -146,9 +146,9 @@ public class CronJobTool implements ToolHandler {
         }
     }
 
-    private ToolResult resumeJob(CronJobArgs args) {
+    private ToolResult resumeJob(CronJobArgs args, Session session) {
         if (missingJobRef(args)) return cronError("job_id is required for action 'resume'");
-        Optional<CronJobEntity> job = resolveJob(args);
+        Optional<CronJobEntity> job = resolveJob(args, session);
         if (job.isEmpty()) return cronError(jobNotFoundMsg(args));
         try {
             CronJobEntity entity = cronJobService.resume(job.get().getId());
@@ -158,9 +158,9 @@ public class CronJobTool implements ToolHandler {
         }
     }
 
-    private ToolResult removeJob(CronJobArgs args) {
+    private ToolResult removeJob(CronJobArgs args, Session session) {
         if (missingJobRef(args)) return cronError("job_id is required for action 'remove'");
-        Optional<CronJobEntity> job = resolveJob(args);
+        Optional<CronJobEntity> job = resolveJob(args, session);
         if (job.isEmpty()) return cronError(jobNotFoundMsg(args));
         try {
             cronJobService.remove(job.get().getId());
@@ -180,9 +180,9 @@ public class CronJobTool implements ToolHandler {
         }
     }
 
-    private ToolResult runJob(CronJobArgs args) {
+    private ToolResult runJob(CronJobArgs args, Session session) {
         if (missingJobRef(args)) return cronError("job_id is required for action 'run'");
-        Optional<CronJobEntity> job = resolveJob(args);
+        Optional<CronJobEntity> job = resolveJob(args, session);
         if (job.isEmpty()) return cronError(jobNotFoundMsg(args));
         String scanError = CronPromptScanner.scan(args.prompt());
         if (!scanError.isBlank()) return cronError(scanError);
@@ -202,7 +202,7 @@ public class CronJobTool implements ToolHandler {
 
     private ToolResult updateJob(CronJobArgs args, Session session) {
         if (missingJobRef(args)) return cronError("job_id is required for action 'update'");
-        Optional<CronJobEntity> job = resolveJob(args);
+        Optional<CronJobEntity> job = resolveJob(args, session);
         if (job.isEmpty()) return cronError(jobNotFoundMsg(args));
         String scanError = CronPromptScanner.scan(args.prompt());
         if (!scanError.isBlank()) return cronError(scanError);
@@ -243,24 +243,39 @@ public class CronJobTool implements ToolHandler {
      * Hermes parity: resolve a job by job_id first (as the tool description says),
      * falling back to name if job_id is absent.
      */
-    private Optional<CronJobEntity> resolveJob(CronJobArgs args) {
+    private Optional<CronJobEntity> resolveJob(CronJobArgs args, Session session) {
+        String profile = profileOf(session);
         if (args.jobId() != null && !args.jobId().isBlank()) {
             String jobId = args.jobId().trim();
             try {
-                return cronJobService.findById(java.util.UUID.fromString(jobId));
+                return cronJobService.findById(java.util.UUID.fromString(jobId), profile)
+                    .filter(job -> ownedBySession(job, session));
             } catch (IllegalArgumentException e) {
                 if (!HERMES_JOB_ID_PATTERN.matcher(jobId).matches()) {
                     return Optional.empty();
                 }
             }
-            return cronJobService.list(true).stream()
+            return ownedJobs(session).stream()
                 .filter(job -> jobId.equals(hermesJobId(job.getId())))
                 .findFirst();
         }
         if (args.name() != null && !args.name().isBlank()) {
-            return cronJobService.findByName(args.name());
+            return cronJobService.findByName(args.name(), profile).filter(job -> ownedBySession(job, session));
         }
         return Optional.empty();
+    }
+
+    private List<CronJobEntity> ownedJobs(Session session) {
+        return cronJobService.listForProfile(profileOf(session), true).stream()
+            .filter(job -> ownedBySession(job, session)).toList();
+    }
+
+    private static String profileOf(Session session) {
+        return session == null ? "default" : session.profile();
+    }
+
+    private static boolean ownedBySession(CronJobEntity job, Session session) {
+        return "default".equals(profileOf(session)) || session.userId().equals(job.getUserId());
     }
 
     private static boolean missingJobRef(CronJobArgs args) {

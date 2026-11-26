@@ -600,7 +600,6 @@ public class AgentRuntimeService {
         if (ownerId == null || ownerId.isBlank()) {
             throw new IllegalArgumentException("Background job owner is required");
         }
-        Session baseSession = createSession(ownerId, "openai-compatible", "");
         java.util.Map<String, String> metadata = new java.util.HashMap<>();
         if (runtimeMetadata != null) {
             runtimeMetadata.forEach((key, value) -> {
@@ -612,6 +611,11 @@ public class AgentRuntimeService {
         if (skipBackgroundReview) {
             metadata.put("skip_background_review", "true");
         }
+        String profile = metadata.getOrDefault("profile", "default");
+        Session baseSession = "default".equals(profile)
+            ? createSession(ownerId, "openai-compatible", "")
+            : sessionResolver.createSession(ownerId, "openai-compatible", "",
+                metadata.getOrDefault("platform", "cron"), profile);
         final Session session = metadata.isEmpty() ? baseSession
             : new Session(baseSession.id(), baseSession.userId(), baseSession.title(),
                 baseSession.modelProvider(), baseSession.modelName(), baseSession.systemPrompt(),

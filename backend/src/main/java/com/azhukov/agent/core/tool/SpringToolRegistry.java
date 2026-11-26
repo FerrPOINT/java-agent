@@ -64,7 +64,7 @@ public class SpringToolRegistry implements ToolRegistry {
     private static final List<String> SKILL_TOOLS = List.of("skills_list", "skill_view", "skill_manage");
     private static final Set<String> PROFILE_TOOLS = Set.of(
         "read_file", "write_file", "patch", "search_files", "publish_file", "delete_file",
-        "skills_list", "skill_view", "skill_manage", "memory", "mcp_tool"
+        "skills_list", "skill_view", "skill_manage", "memory", "mcp_tool", "cronjob"
     );
     private static final List<String> HERMES_CORE_TOOLS = List.of(
         "web_search", "web_extract",
@@ -1118,8 +1118,9 @@ public class SpringToolRegistry implements ToolRegistry {
     }
 
     private boolean admittedProfileTool(ToolEntry entry, ResolvedToolsetFilter filter, Set<String> configured) {
-        if ("mcp_tool".equals(entry.definition().name())) {
-            return entry.annotation() != null && configured.contains("mcp_tool");
+        String name = entry.definition().name();
+        if ("mcp_tool".equals(name) || "cronjob".equals(name)) {
+            return entry.annotation() != null && configured.contains(name);
         }
         return entry.annotation() != null && PROFILE_TOOLS.contains(entry.definition().name())
             && (filter.allTools() || filter.toolsets().contains(entry.toolset())

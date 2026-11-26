@@ -131,6 +131,25 @@ class CronJobServiceOwnershipTest {
     }
 
     @Test
+    void cronContextUsesTheSameProfileEvenForTheSameOwner() {
+        loginAs("user-other");
+        foreignJob.setProfile("alpha");
+
+        assertThatThrownBy(() -> createWithContext("beta", foreignJob.getId()))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("unavailable in the selected profile");
+        verify(cronJobRepository, never()).save(any());
+
+        assertThatCode(() -> createWithContext("alpha", foreignJob.getId())).doesNotThrowAnyException();
+        verify(cronJobRepository).save(any());
+    }
+
+    private CronJobEntity createWithContext(String profile, UUID source) {
+        return service.create("user-other", profile, "chained", "0 9 * * *", "do stuff", null,
+            null, source.toString(), null, null, false, null, null, null, null, null, null, false, null);
+    }
+
+    @Test
     void administratorCanManageLegacyJobWithNullUserId() {
         foreignJob.setUserId(null);
         UserContext.set("administrator", UserContext.ROLE_ADMIN);

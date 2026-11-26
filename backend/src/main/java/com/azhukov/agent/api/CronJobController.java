@@ -4,6 +4,7 @@ import com.azhukov.agent.api.dto.CronExecutionLogDto;
 import com.azhukov.agent.api.dto.CronJobDto;
 import com.azhukov.agent.api.mapper.CronJobDtoMapper;
 import com.azhukov.agent.core.security.UserContext;
+import com.azhukov.agent.persistence.entity.CronJobEntity;
 import com.azhukov.agent.persistence.repository.CronExecutionLogRepository;
 import com.azhukov.agent.persistence.repository.SessionRepository;
 import com.azhukov.agent.service.CronJobService;
@@ -12,6 +13,8 @@ import com.azhukov.agent.service.HeartbeatService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -42,22 +45,25 @@ public class CronJobController {
     }
 
     @GetMapping
-    public List<CronJobDto> list(@RequestParam(required = false) String profile,
+    public List<CronJobDto> list(@RequestParam(defaultValue = "default") String profile,
                                  @RequestParam(defaultValue = "true") boolean includeDisabled) {
-        return cronJobDtoMapper.toDtoList(profile == null
-                ? cronJobService.list(includeDisabled)
-                : cronJobService.listForProfile(profile, includeDisabled));
+        return cronJobDtoMapper.toDtoList(cronJobService.listForProfile(profile, includeDisabled));
     }
 
     @GetMapping("/{id}")
-    public CronJobDto get(@PathVariable UUID id) {
-        return cronJobDtoMapper.toDto(cronJobService.findById(id).orElseThrow(() ->
-                new org.springframework.web.server.ResponseStatusException(
-                        org.springframework.http.HttpStatus.NOT_FOUND, "Cron job not found")));
+    public CronJobDto get(@PathVariable UUID id, @RequestParam(defaultValue = "default") String profile) {
+        return cronJobDtoMapper.toDto(requireCronJob(id, profile));
+    }
+
+    private CronJobEntity requireCronJob(UUID id, String profile) {
+        return cronJobService.findById(id, profile).orElseThrow(() ->
+            new ResponseStatusException(HttpStatus.NOT_FOUND, "Cron job not found in the selected profile"));
     }
 
     @PutMapping("/{id}")
-    public CronJobDto update(@PathVariable UUID id, @Valid @RequestBody UpdateCronRequest request) {
+    public CronJobDto update(@PathVariable UUID id, @RequestParam(defaultValue = "default") String profile,
+                             @Valid @RequestBody UpdateCronRequest request) {
+        requireCronJob(id, profile);
         return cronJobDtoMapper.toDto(cronJobService.update(id, request.name(), request.schedule(),
             request.prompt(), request.deliverTo(), request.enabled(),
             request.skills(), request.contextFrom(), request.repeatCount(), request.script(), request.noAgent(),
@@ -209,36 +215,36 @@ public class CronJobController {
     }
 
     @PostMapping("/{id}/pause")
-    public CronJobDto pause(@PathVariable UUID id) {
+    public CronJobDto pause(@PathVariable UUID id, @RequestParam(defaultValue = "default") String profile) {
+        requireCronJob(id, profile);
         return cronJobDtoMapper.toDto(cronJobService.pause(id));
     }
 
     @PostMapping("/{id}/resume")
-    public CronJobDto resume(@PathVariable UUID id) {
+    public CronJobDto resume(@PathVariable UUID id, @RequestParam(defaultValue = "default") String profile) {
+        requireCronJob(id, profile);
         return cronJobDtoMapper.toDto(cronJobService.resume(id));
     }
 
     @DeleteMapping("/{id}")
-    public org.springframework.http.ResponseEntity<Void> delete(@PathVariable UUID id) {
-        if (!cronJobService.exists(id)) {
-            return org.springframework.http.ResponseEntity.notFound().build();
-        }
+    public org.springframework.http.ResponseEntity<Void> delete(
+            @PathVariable UUID id, @RequestParam(defaultValue = "default") String profile) {
+        requireCronJob(id, profile);
         cronJobService.remove(id);
         return org.springframework.http.ResponseEntity.ok().build();
     }
 
     @PostMapping("/{id}/run")
-    public CronJobDto runNow(@PathVariable UUID id) {
+    public CronJobDto runNow(@PathVariable UUID id, @RequestParam(defaultValue = "default") String profile) {
+        requireCronJob(id, profile);
         return cronJobDtoMapper.toDto(cronJobService.runNow(id));
     }
 
     // h72: Cron execution ledger — list execution history for a job.
     @GetMapping("/{id}/executions")
-    public List<CronExecutionLogDto> listExecutions(@PathVariable UUID id) {
-        if (cronJobService.findById(id).isEmpty()) {
-            throw new org.springframework.web.server.ResponseStatusException(
-                org.springframework.http.HttpStatus.NOT_FOUND, "Cron job not found");
-        }
+    public List<CronExecutionLogDto> listExecutions(
+            @PathVariable UUID id, @RequestParam(defaultValue = "default") String profile) {
+        requireCronJob(id, profile);
         return cronJobDtoMapper.toExecutionLogDtoList(cronExecutionLogRepository.findByJobIdOrderByStartedAtDesc(id));
     }
 
