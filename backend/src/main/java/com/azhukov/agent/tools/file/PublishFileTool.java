@@ -6,12 +6,15 @@ import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.security.FileSafety;
+import com.azhukov.agent.core.security.SecureFileAccess;
 import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.service.AttachmentArtifactService;
+import com.azhukov.agent.service.ProfileService;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.http.MediaTypeFactory;
 import org.springframework.stereotype.Component;
@@ -35,6 +38,8 @@ public class PublishFileTool implements ToolHandler {
     private final AgentProperties properties;
     private final FileSafety fileSafety;
     private final AttachmentArtifactService artifacts;
+    @Autowired
+    private ProfileService profiles;
 
     /** Publishes the selected readable bytes, returning an artifact reference or an explicit failure. */
     @Override
@@ -48,13 +53,14 @@ public class PublishFileTool implements ToolHandler {
             if (session == null || session.id() == null) {
                 return ToolResult.fail("An active session is required to publish a file");
             }
-            var path = FileToolSafety.resolvePath(args.path(), session);
+            var path = FileToolSafety.resolveScopedPath(args.path(), session, profiles);
             String name = AttachmentArtifactService.sanitizeFileName(path.getFileName().toString());
             String mime = MediaTypeFactory.getMediaType(name)
                 .orElse(MediaType.APPLICATION_OCTET_STREAM).toString();
             String reference;
             long size;
-            try (var channel = FileToolSafety.openReadable(properties, fileSafety, path, args.path())) {
+            try (var channel = FileToolSafety.namedProfile(session) ? SecureFileAccess.openRead(path)
+                : FileToolSafety.openReadable(properties, fileSafety, path, args.path())) {
                 reference = artifacts.publishGenerated(session, "document", mime, name,
                     Channels.newInputStream(channel));
                 size = channel.position();

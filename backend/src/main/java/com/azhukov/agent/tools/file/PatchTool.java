@@ -4,6 +4,7 @@ import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.config.SharedObjectMapper;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
+import com.azhukov.agent.service.ProfileService;
 import com.azhukov.agent.tools.ToolParam;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
@@ -38,6 +39,8 @@ public class PatchTool implements ToolHandler {
     private static final ObjectMapper JSON = SharedObjectMapper.get();
 
     private final FileSafety fileSafety;
+    @org.springframework.beans.factory.annotation.Autowired
+    private ProfileService profiles;
 
     public PatchTool() {
         this(new AgentProperties());
@@ -65,25 +68,24 @@ public class PatchTool implements ToolHandler {
             return jsonFail("path is required");
         }
         String mode = args.mode() == null ? "replace" : args.mode().toLowerCase();
-        Path path = hasPath ? FileToolSafety.resolvePath(args.path(), session) : null;
-        if (path != null) {
-            ToolResult safetyCheck = FileToolSafety.ensureWritable(fileSafety, path, args.path(), args.crossProfile());
-            if (safetyCheck == null) {
-                safetyCheck = FileToolSafety.ensureNotProtectedInstruction(path, args.path(), args.crossProfile());
-            }
-            if (safetyCheck != null) {
-                return jsonFail(safetyCheck.error());
-            }
-        }
+        boolean named = FileToolSafety.namedProfile(session);
+        Boolean crossProfile = named ? null : args.crossProfile();
         try {
+            Path path = hasPath ? FileToolSafety.resolveScopedPath(args.path(), session, profiles) : null;
+            if (path != null) {
+                var errors = validateWritableTarget(path, args.path(), crossProfile, named);
+                if (!errors.isEmpty()) {
+                    return jsonFail(errors.getFirst());
+                }
+            }
             if ("replace".equals(mode)) {
                 if (args.oldString() == null || args.newString() == null) {
                     return jsonFail("old_string and new_string are required for replace mode");
                 }
-                if (path == null || !Files.exists(path)) {
+                if (path == null || !targetExists(path, named)) {
                     return jsonFail("File not found: " + args.path());
                 }
-                ToolResult textWriteCheck = FileToolSafety.ensurePlainTextWriteAllowed(path, args.path());
+                ToolResult textWriteCheck = FileToolSafety.ensurePlainTextWriteAllowed(path, args.path(), named);
                 if (textWriteCheck != null) {
                     return jsonFail(textWriteCheck.error());
                 }
@@ -93,10 +95,10 @@ public class PatchTool implements ToolHandler {
                 if (args.patch() == null || args.patch().isBlank()) {
                     return jsonFail("patch content is required for patch mode");
                 }
-                return applyV4a(args.patch(), args.crossProfile(), session);
+                return applyV4a(args.patch(), crossProfile, session);
             }
             return jsonFail("Unknown mode: " + args.mode());
-        } catch (IOException e) {
+        } catch (IOException | IllegalArgumentException e) {
             return jsonFail("Patch failed: " + e.getMessage());
         }
     }
@@ -294,7 +296,8 @@ public class PatchTool implements ToolHandler {
             return jsonFail("No V4A file operations found");
         }
         Map<V4aOperation, PreparedUpdate> updates = new LinkedHashMap<>();
-        errors.addAll(validateV4aOperations(patchText, operations, crossProfile, updates));
+        errors.addAll(validateV4aOperations(patchText, operations, crossProfile,
+            FileToolSafety.namedProfile(session), updates));
         if (!errors.isEmpty()) {
             return jsonFail(String.join("\n", errors));
         }
@@ -452,10 +455,11 @@ public class PatchTool implements ToolHandler {
             }
 
             try {
-                Path path = toPatchPath(rawPath, session);
-                Path destination = rawDestination == null ? null : toPatchPath(rawDestination, session);
+                Path path = FileToolSafety.resolveScopedPath(rawPath, session, profiles);
+                Path destination = rawDestination == null ? null
+                    : FileToolSafety.resolveScopedPath(rawDestination, session, profiles);
                 operations.add(new V4aOperation(op, rawPath, path, rawDestination, destination, m.end()));
-            } catch (IllegalArgumentException e) {
+            } catch (IOException | IllegalArgumentException e) {
                 errors.add("Invalid path in " + op.toLowerCase() + " operation '" + pathSpec + "': " + e.getMessage());
             }
         }
@@ -483,46 +487,50 @@ public class PatchTool implements ToolHandler {
         return false;
     }
 
-    private Path toPatchPath(String path, Session session) {
-        return FileToolSafety.resolvePath(path, session);
+    private boolean targetExists(Path path, boolean named) throws IOException {
+        return named ? FileToolSafety.workspaceFileExists(path) : Files.exists(path);
     }
 
     private List<String> validateV4aOperations(String patchText, List<V4aOperation> operations, Boolean crossProfile,
-                                               Map<V4aOperation, PreparedUpdate> updates) {
+                                               boolean named, Map<V4aOperation, PreparedUpdate> updates) throws IOException {
         List<String> errors = new ArrayList<>();
         for (V4aOperation operation : operations) {
-            errors.addAll(validateWritableTarget(operation.path(), operation.rawPath(), crossProfile));
+            errors.addAll(validateWritableTarget(operation.path(), operation.rawPath(), crossProfile, named));
             if ("Move".equals(operation.op()) && operation.destination() != null) {
-                errors.addAll(validateWritableTarget(operation.destination(), operation.rawDestination(), crossProfile));
+                errors.addAll(validateWritableTarget(operation.destination(), operation.rawDestination(), crossProfile, named));
             }
             if ("Add".equals(operation.op()) || "Update".equals(operation.op())) {
-                ToolResult textWriteCheck = FileToolSafety.ensurePlainTextWriteAllowed(operation.path(), operation.rawPath());
+                ToolResult textWriteCheck = FileToolSafety.ensurePlainTextWriteAllowed(operation.path(), operation.rawPath(), named);
                 if (textWriteCheck != null) {
                     errors.add(textWriteCheck.error());
                 }
             }
 
             if ("Add".equals(operation.op())) {
-                if (Files.exists(operation.path())) {
+                if (targetExists(operation.path(), named)) {
                     errors.add("File already exists for add: " + operation.rawPath());
                 } else {
                     validateAddOperation(patchText, operation, errors);
                 }
             } else if ("Delete".equals(operation.op())) {
-                if (!Files.exists(operation.path())) {
+                if (!targetExists(operation.path(), named)) {
                     errors.add("File not found for delete: " + operation.rawPath());
                 }
             } else if ("Update".equals(operation.op())) {
-                prepareUpdate(patchText, operation, errors, updates);
+                if (targetExists(operation.path(), named)) {
+                    prepareUpdate(patchText, operation, errors, updates);
+                } else {
+                    errors.add("File not found for update: " + operation.rawPath());
+                }
             } else if ("Move".equals(operation.op())) {
-                validateMoveOperation(operation, errors);
+                validateMoveOperation(operation, errors, named);
             }
         }
         return errors;
     }
 
-    private List<String> validateWritableTarget(Path path, String rawPath, Boolean crossProfile) {
-        ToolResult safetyCheck = FileToolSafety.ensureWritable(fileSafety, path, rawPath, crossProfile);
+    private List<String> validateWritableTarget(Path path, String rawPath, Boolean crossProfile, boolean named) {
+        ToolResult safetyCheck = named ? null : FileToolSafety.ensureWritable(fileSafety, path, rawPath, crossProfile);
         if (safetyCheck == null) {
             safetyCheck = FileToolSafety.ensureNotProtectedInstruction(path, rawPath, crossProfile);
         }
@@ -546,10 +554,6 @@ public class PatchTool implements ToolHandler {
 
     private void prepareUpdate(String patchText, V4aOperation operation, List<String> errors,
                                Map<V4aOperation, PreparedUpdate> updates) {
-        if (!Files.exists(operation.path())) {
-            errors.add("File not found for update: " + operation.rawPath());
-            return;
-        }
         try (var parent = SecureFileAccess.openDirectory(operation.path().getParent())) {
             String content = TextFileWriteSupport.read(parent, operation.path().getFileName());
             String updated = applyHunks(content, parseHunks(extractDiff(patchText, operation.contentStart())));
@@ -560,15 +564,15 @@ public class PatchTool implements ToolHandler {
         }
     }
 
-    private void validateMoveOperation(V4aOperation operation, List<String> errors) {
+    private void validateMoveOperation(V4aOperation operation, List<String> errors, boolean named) throws IOException {
         if (operation.destination() == null) {
             errors.add("Missing destination for move: " + operation.rawPath());
             return;
         }
-        if (!Files.exists(operation.path())) {
+        if (!targetExists(operation.path(), named)) {
             errors.add("File not found for move: " + operation.rawPath());
         }
-        if (Files.exists(operation.destination())) {
+        if (targetExists(operation.destination(), named)) {
             errors.add("Destination already exists for move: " + operation.rawDestination());
         }
     }

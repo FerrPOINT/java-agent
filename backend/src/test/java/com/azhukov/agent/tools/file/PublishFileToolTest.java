@@ -167,6 +167,31 @@ class PublishFileToolTest {
     }
 
     @Test
+    void namedProfilePublishesItsOwnBytesAndCannotPublishAnExactForeignPath() throws Exception {
+        properties.getProfile().setBaseDir(temporary.resolve("profiles").toString());
+        var profiles = new com.azhukov.agent.service.ProfileService(properties,
+            new com.azhukov.agent.service.RuntimeConfigService());
+        org.springframework.test.util.ReflectionTestUtils.setField(tool, "profiles", profiles);
+        var beta = session.withMetadata("profile", "beta");
+        Path alphaFile = Files.createDirectories(profiles.workspacePath("alpha")).resolve("report.txt");
+        Path betaFile = Files.createDirectories(profiles.workspacePath("beta")).resolve("report.txt");
+        Files.writeString(alphaFile, "alpha contents");
+        Files.writeString(betaFile, "beta contents");
+        assertThat(tool.execute(JSON.writeValueAsString(Map.of("path", alphaFile.toString())), null, beta)
+            .success()).isFalse();
+        verifyNoInteractions(artifacts);
+
+        when(artifacts.publishGenerated(eq(beta), eq("document"), any(String.class),
+                eq("report.txt"), any(java.io.InputStream.class))).thenAnswer(call -> {
+                    assertThat(new String(call.<java.io.InputStream>getArgument(4).readAllBytes(),
+                        java.nio.charset.StandardCharsets.UTF_8)).isEqualTo("beta contents");
+                    return REFERENCE;
+                });
+        assertThat(tool.execute(JSON.writeValueAsString(Map.of("path", "report.txt")), null, beta).success()).isTrue();
+        assertThat(Files.readString(alphaFile)).isEqualTo("alpha contents");
+    }
+
+    @Test
     void missingSessionAndExpiredOriginalAuthorityDoNotPublish() throws Exception {
         Files.writeString(workspace.resolve("report.zip"), "content");
         String arguments = JSON.writeValueAsString(Map.of("path", "report.zip"));

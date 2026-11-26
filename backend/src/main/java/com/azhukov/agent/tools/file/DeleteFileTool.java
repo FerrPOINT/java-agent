@@ -2,11 +2,14 @@ package com.azhukov.agent.tools.file;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.security.DefaultFileSafety;
+import com.azhukov.agent.core.security.SecureFileAccess;
+import com.azhukov.agent.service.ProfileService;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -29,6 +32,8 @@ public class DeleteFileTool implements ToolHandler {
 
     private final AgentProperties properties;
     private final DefaultFileSafety fileSafety;
+    @Autowired
+    private ProfileService profiles;
 
     public DeleteFileTool(AgentProperties properties, DefaultFileSafety fileSafety) {
         this.properties = properties;
@@ -42,26 +47,33 @@ public class DeleteFileTool implements ToolHandler {
             return ToolResult.fail("path is required");
         }
 
-        Path path = Path.of(args.path()).toAbsolutePath().normalize();
-        // Hermes parity: the sensitive-path denylist lives in DefaultFileSafety;
-        // the local BLOCKED_PATHS also guarded system dirs (kept below).
-        if (isBlocked(path) || !fileSafety.isWriteAllowed(path)) {
-            return ToolResult.fail("Deleting this path is not allowed: " + args.path());
-        }
-        if (!isPathAllowed(path)) {
-            return ToolResult.fail("Access denied: path is outside allowed directories: " + args.path());
-        }
-        if (!Files.exists(path)) {
-            return ToolResult.fail("File not found: " + path);
-        }
-        if (Files.isDirectory(path)) {
-            return ToolResult.fail("Refusing to delete directory: " + path);
-        }
-
-        try (var parent = com.azhukov.agent.core.security.SecureFileAccess.openDirectory(path.getParent())) {
-            parent.entries().deleteFile(path.getFileName());
+        try {
+            boolean named = FileToolSafety.namedProfile(session);
+            Path path = named ? FileToolSafety.resolveScopedPath(args.path(), session, profiles)
+                : Path.of(args.path()).toAbsolutePath().normalize();
+            if (!named) {
+                if (isBlocked(path) || !fileSafety.isWriteAllowed(path)) {
+                    return ToolResult.fail("Deleting this path is not allowed: " + args.path());
+                }
+                if (!isPathAllowed(path)) {
+                    return ToolResult.fail("Access denied: path is outside allowed directories: " + args.path());
+                }
+                if (!Files.exists(path)) {
+                    return ToolResult.fail("File not found: " + path);
+                }
+                if (Files.isDirectory(path)) {
+                    return ToolResult.fail("Refusing to delete directory: " + path);
+                }
+            }
+            try (var parent = SecureFileAccess.openDirectory(path.getParent())) {
+                Path filename = path.getFileName();
+                if (named && !parent.attributes(filename).isRegularFile()) {
+                    return ToolResult.fail("Expected a regular file in the selected profile workspace");
+                }
+                parent.entries().deleteFile(filename);
+            }
             return ToolResult.ok("Deleted file: " + path);
-        } catch (IOException e) {
+        } catch (IOException | IllegalArgumentException e) {
             return ToolResult.fail("Failed to delete file: " + e.getMessage());
         }
     }
