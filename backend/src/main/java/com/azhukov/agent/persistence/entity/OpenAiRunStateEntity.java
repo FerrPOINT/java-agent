@@ -36,6 +36,9 @@ public class OpenAiRunStateEntity {
     @Column(name = "accepted_session_id", length = 256)
     private String acceptedSessionId;
 
+    @Column(name = "profile_revision", length = 64)
+    private String profileRevision;
+
     @Column(name = "model", length = 128)
     private String model;
 

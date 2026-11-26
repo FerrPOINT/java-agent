@@ -41,7 +41,7 @@ public class ProfileConfigWriter {
         String canon = profiles.normalizeProfileName(profile);
         synchronized (runtime.lockFor(canon)) {
             prepareProfile(profiles, canon);
-            Map<String, Object> merged = profiles.readExecutionConfig(canon);
+            Map<String, Object> merged = profiles.readDiskExecutionConfig(canon);
             boolean hadModel = merged.containsKey("model");
             deepMerge(merged, incoming);
             return apply(profiles, canon, dumpYaml(merged), merged, hadModel, actor);
@@ -57,7 +57,7 @@ public class ProfileConfigWriter {
             Map<String, Object> candidate = ProfileService.parseExecutionConfig(yamlText);
             // An explicit model in the candidate can also repair an invalid prior file.
             boolean hadModel = !"default".equals(canon) && !candidate.containsKey("model")
-                && profiles.readExecutionConfig(canon).containsKey("model");
+                && profiles.readDiskExecutionConfig(canon).containsKey("model");
             return apply(profiles, canon, yamlText, candidate, hadModel, actor);
         }
     }

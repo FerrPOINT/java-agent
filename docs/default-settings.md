@@ -365,6 +365,12 @@ Authoritative source: `backend/src/main/resources/application.yml`. The value is
 | `agent.model.model-name` | `${AGENT_MODEL_NAME:gpt-4o-mini}` |
 | `logging.level.com.azhukov.agent` | `INFO` |
 
+## Named profile revision for native runs
+
+`GET /p/{profile}/v1/capabilities` reports `profile_revision` for the current named profile settings. A caller can send `X-Java-Agent-Profile-Revision` on `POST /p/{profile}/v1/runs`. An outdated revision receives `HTTP 412` before a new run is accepted.
+
+Accepted runs use the captured profile model settings, environment, instructions and skill entrypoints. Before calling an MCP server, the run checks that the server configuration still matches its accepted revision. The receipt and status report the accepted `profile_revision`. Read back an accepted request via `POST /p/{profile}/v1/runs/lookup` with the original body, idempotency key and revision header.
+
 ## Telegram webhooks for named agent profiles
 
 Enable the backend webhook listener with `AGENT_GATEWAY_TELEGRAM_WEBHOOK_ENABLED`. Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_WEBHOOK_SECRET` in the named profile's .env or save them with `PUT /api/messaging/platforms/telegram` using the `profile, bot_token and webhook_secret` fields.

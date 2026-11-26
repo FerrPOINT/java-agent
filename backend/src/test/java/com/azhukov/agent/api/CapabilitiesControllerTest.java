@@ -67,7 +67,7 @@ class CapabilitiesControllerTest {
         mockMvc = MockMvcBuilders.standaloneSetup(new CapabilitiesController(
             properties, toolRegistry, skillManager, runtimeConfigService,
             profiles, profileModels, profileSkills, runs, new com.azhukov.agent.service.ProfileRuntimeRegistry(null),
-            new org.springframework.mock.env.MockEnvironment())).build();
+            new org.springframework.mock.env.MockEnvironment(), ProfileExecutionConfigurationFixture.settings())).build();
     }
 
     @Test
@@ -232,7 +232,7 @@ class CapabilitiesControllerTest {
         var controller = new CapabilitiesController(
             properties, toolRegistry, skillManager, runtimeConfigService,
             profiles, profileModels, profileSkills, runs, new com.azhukov.agent.service.ProfileRuntimeRegistry(null),
-            new org.springframework.mock.env.MockEnvironment());
+            new org.springframework.mock.env.MockEnvironment(), ProfileExecutionConfigurationFixture.settings());
         var result = controller.capabilities(null);
         assertThat(result).containsEntry("platform", "java-agent");
         assertThat(result).containsKey("features");

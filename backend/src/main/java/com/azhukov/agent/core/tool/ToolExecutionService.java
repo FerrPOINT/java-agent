@@ -149,7 +149,8 @@ public class ToolExecutionService {
                 ? toolRegistry.execute(toolName, toolCallId, arguments, lastAssistant, session)
                 : toolRegistry.execute(toolName, toolCallId, arguments, lastAssistant, session, mcpAdmission);
         });
-        Callable<ToolResult> callable = executeTool::get;
+        var scopedTool = com.azhukov.agent.service.ProfileExecutionConfiguration.carrySupplier(executeTool);
+        Callable<ToolResult> callable = scopedTool::get;
         Supplier<ToolResult> decorated = Retry.decorateSupplier(
             NO_RETRY_TOOLS.contains(toolName) ? noRetry : retry, () -> {
             java.util.concurrent.Future<ToolResult> future = executor.submit(callable);

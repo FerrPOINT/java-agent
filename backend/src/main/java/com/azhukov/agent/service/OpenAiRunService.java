@@ -85,7 +85,7 @@ public class OpenAiRunService {
 
     public record SubmissionKey(String runId, String profile, String fingerprint) {}
 
-    public record Acceptance(String runId, String sessionId, boolean replayed) {}
+    public record Acceptance(String runId, String sessionId, boolean replayed, String profileRevision) {}
 
     public static final class IdempotencyConflict extends RuntimeException {}
 
@@ -109,7 +109,7 @@ public class OpenAiRunService {
                 || state.getAcceptedSessionId() == null) {
                 throw new IdempotencyConflict();
             }
-            return new Acceptance(state.getRunId(), state.getAcceptedSessionId(), true);
+            return new Acceptance(state.getRunId(), state.getAcceptedSessionId(), true, state.getProfileRevision());
         });
     }
 
@@ -147,9 +147,10 @@ public class OpenAiRunService {
         }
 
         Session session = context.session();
+        String revision = ProfileExecutionConfiguration.currentRevision(session.profile());
         UUID controlSessionId = UUID.randomUUID();
         RunRecord record = new RunRecord(runId, session.id(), controlSessionId, session.userId(),
-            session.profile(), requestedModel);
+            session.profile(), requestedModel, revision);
         record.stateMachine = machine;
         runs.put(runId, record);
         Session runSession = RunControlScope.withControlSessionId(session, controlSessionId);
@@ -159,18 +160,19 @@ public class OpenAiRunService {
         Session effectiveSession = runSession;
         List<Message> history = session.id().equals(previousSessionId) ? List.of() : historyToPersist;
         try {
-            executor.submit(UserContext.wrap(() -> run(record, effectiveSession, userMessage, options, history, reservation)));
+            executor.submit(ProfileExecutionConfiguration.carry(
+                UserContext.wrap(() -> run(record, effectiveSession, userMessage, options, history, reservation))));
         } catch (RejectedExecutionException e) {
             closeReservation(reservation);
             record.finishFailed("Run execution could not start");
-            return new Acceptance(runId, context.responseSessionId(), false);
+            return new Acceptance(runId, context.responseSessionId(), false, revision);
         }
         try {
             executor.submit(() -> monitorApprovals(record));
         } catch (RejectedExecutionException e) {
             log.debug("Run approval monitor is stopping for {}", runId);
         }
-        return new Acceptance(runId, context.responseSessionId(), false);
+        return new Acceptance(runId, context.responseSessionId(), false, revision);
     }
 
     public RunRecord get(String runId) {
@@ -525,9 +527,9 @@ public class OpenAiRunService {
     }
 
     public static RunRecord restoredRun(String runId, UUID sessionId, String userId, String profile, String model,
-                                        String status, java.time.Instant createdAt, java.time.Instant updatedAt,
+                                        String revision, String status, java.time.Instant createdAt, java.time.Instant updatedAt,
                                         Map<String, Object> lastEvent) {
-        RunRecord run = new RunRecord(runId, sessionId, sessionId, userId, profile, model);
+        RunRecord run = new RunRecord(runId, sessionId, sessionId, userId, profile, model, revision);
         run.restoreStatus(status, createdAt, updatedAt);
         run.executionAvailable = false;
         for (String field : STATUS_EVENT_FIELDS) {
@@ -544,6 +546,7 @@ public class OpenAiRunService {
         private final String userId;
         private final String profile;
         private final String model;
+        private final String profileRevision;
         private double createdAt;
         private final AtomicBoolean stopRequested = new AtomicBoolean(false);
         private final Map<String, Object> extra = new LinkedHashMap<>();
@@ -552,13 +555,15 @@ public class OpenAiRunService {
         private String status = "queued";
         private double updatedAt;
 
-        private RunRecord(String runId, UUID sessionId, UUID controlSessionId, String userId, String profile, String model) {
+        private RunRecord(String runId, UUID sessionId, UUID controlSessionId, String userId,
+                          String profile, String model, String profileRevision) {
             this.runId = runId;
             this.sessionId = sessionId;
             this.controlSessionId = controlSessionId;
             this.userId = userId;
             this.profile = profile;
             this.model = model;
+            this.profileRevision = profileRevision;
             this.createdAt = epochSeconds();
             this.updatedAt = this.createdAt;
         }
@@ -610,6 +615,7 @@ public class OpenAiRunService {
             payload.put("created_at", createdAt);
             payload.put("session_id", sessionId.toString());
             payload.put("model", model);
+            if (profileRevision != null) payload.put("profile_revision", profileRevision);
             if (!executionAvailable) payload.put("execution_available", false);
             payload.putAll(extra);
             return payload;

@@ -529,7 +529,7 @@ public class TurnExecutor {
                                                  TurnState turnState, int currentTurnIndex) {
         List<CompletableFuture<ToolResult>> futures = new ArrayList<>();
         for (ToolCall call : toolCalls) {
-            futures.add(CompletableFuture.supplyAsync(com.azhukov.agent.core.security.UserContext.wrapSupplier(() -> {
+            var execute = com.azhukov.agent.core.security.UserContext.wrapSupplier(() -> {
                 try {
                     return toolExecutionService.execute(call.name(), call.id(),
                         call.arguments(), null, session, turnState);
@@ -537,7 +537,9 @@ public class TurnExecutor {
                     log.warn("Tool {} failed in parallel execution: {}", call.name(), e.getMessage());
                     return ToolResult.fail("Tool execution failed: " + call.name() + " - " + e.getMessage());
                 }
-            }), parallelToolExecutor));
+            });
+            var scoped = com.azhukov.agent.service.ProfileExecutionConfiguration.carrySupplier(execute);
+            futures.add(CompletableFuture.supplyAsync(scoped, parallelToolExecutor));
         }
 
         CompletableFuture<Void> allOf = CompletableFuture.allOf(

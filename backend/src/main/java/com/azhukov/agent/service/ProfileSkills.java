@@ -33,22 +33,26 @@ public class ProfileSkills {
     }
 
     public View forProfile(String profile) {
-        try {
-            var config = profiles.readExecutionConfig(profile);
-            return new View(profiles.profilePath(profile).resolve("skills"), instructions.loadBase(config.get("instructions")),
-                ProfileInstructions.disabledSkills(config));
-        } catch (IOException | RuntimeException e) {
-            throw new IllegalStateException("Unable to load skills for the selected profile");
-        }
+        var accepted = ProfileExecutionConfiguration.current(profile);
+        return view(profile, instructions.read(profile), accepted == null ? null : accepted.skills());
     }
 
-    public List<SkillManager.SkillInfo> list(String profile, ProfileInstructions.Snapshot instructionsSnapshot) {
-        return new View(profiles.profilePath(profile).resolve("skills"), instructionsSnapshot.base(), instructionsSnapshot.disabledSkills()).listSkills();
+    public List<SkillManager.SkillInfo> list(String profile, ProfileInstructions.Snapshot prompt) {
+        var accepted = ProfileExecutionConfiguration.current(profile);
+        return view(profile, prompt, accepted == null ? null : accepted.skills()).listSkills();
+    }
+
+    Map<String, Entry> localEntries(String profile, ProfileInstructions.Snapshot prompt) {
+        return view(profile, prompt, null).locals();
+    }
+
+    private View view(String profile, ProfileInstructions.Snapshot prompt, Map<String, Entry> accepted) {
+        return new View(profiles.profilePath(profile).resolve("skills"), prompt.base(), prompt.disabledSkills(), accepted);
     }
 
     public void setEnabled(String profile, String name, boolean enabled) throws IOException {
         requireName(name);
-        var config = new LinkedHashMap<>(profiles.readExecutionConfig(profile));
+        var config = new LinkedHashMap<>(profiles.readDiskExecutionConfig(profile));
         var settings = new LinkedHashMap<String, Object>();
         if (config.get("skills") instanceof Map<?, ?> section) {
             section.forEach((key, value) -> settings.put(String.valueOf(key), value));
@@ -70,11 +74,13 @@ public class ProfileSkills {
         private final Path root;
         private final ProfileInstructions.BasePackage base;
         private final Set<String> disabled;
+        private final Map<String, Entry> accepted;
 
-        private View(Path root, ProfileInstructions.BasePackage base, Set<String> disabled) {
+        private View(Path root, ProfileInstructions.BasePackage base, Set<String> disabled, Map<String, Entry> accepted) {
             this.root = root;
             this.base = base;
             this.disabled = disabled;
+            this.accepted = accepted;
         }
 
         @Override
@@ -246,6 +252,9 @@ public class ProfileSkills {
         }
 
         private Map<String, Entry> locals() {
+            if (accepted != null) {
+                return accepted;
+            }
             Map<String, Entry> entries = new LinkedHashMap<>();
             for (Path path : SkillUtils.iterSkillIndexFiles(root, "SKILL.md")) {
                 if (SkillUtils.isExcludedSkillPath(path)) {

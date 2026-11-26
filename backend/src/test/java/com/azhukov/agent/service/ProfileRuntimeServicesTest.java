@@ -130,7 +130,7 @@ class ProfileRuntimeServicesTest {
                 throw new IOException("Test did not release the alpha profile read");
             }
             return invocation.callRealMethod();
-        }).when(profiles).readExecutionConfig("alpha");
+        }).when(profiles).readDiskExecutionConfig("alpha");
 
         try (var threads = Executors.newFixedThreadPool(2)) {
             var alpha = threads.submit(() -> writer.write("alpha", Map.of("max_concurrent_runs", 1), "test"));

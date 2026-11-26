@@ -493,6 +493,14 @@ public class ProfileService {
 
     /** Read the profile YAML used for execution, preserving exact ownership on file access. */
     public Map<String, Object> readExecutionConfig(String name) throws IOException {
+        var accepted = ProfileExecutionConfiguration.current(name);
+        if (accepted != null) {
+            return accepted.settings();
+        }
+        return readDiskExecutionConfig(name);
+    }
+
+    Map<String, Object> readDiskExecutionConfig(String name) throws IOException {
         String yaml = readRawConfig(name);
         return yaml.isBlank() ? new LinkedHashMap<>() : parseExecutionConfig(yaml);
     }

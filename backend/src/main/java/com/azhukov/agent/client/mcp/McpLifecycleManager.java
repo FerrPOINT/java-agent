@@ -750,6 +750,7 @@ public class McpLifecycleManager {
         }
         var config = store.find(profile, name).filter(McpServerConfigEntity::isEnabled)
             .orElseThrow(() -> new java.util.NoSuchElementException("MCP server is unavailable for the selected profile"));
+        com.azhukov.agent.service.ProfileExecutionConfiguration.requireAcceptedMcpVersion(profile, config);
         var server = toServerProperties(config);
         if (!("http".equals(server.getTransport()) || "sse".equals(server.getTransport()))) {
             throw new IllegalArgumentException("The selected profile MCP server requires HTTP or SSE transport");

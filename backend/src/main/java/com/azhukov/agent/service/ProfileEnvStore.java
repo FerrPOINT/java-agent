@@ -82,7 +82,7 @@ public class ProfileEnvStore {
     <T> T mutate(String profile, Function<Map<String, String>, T> edit) throws IOException {
         String canon = profiles().normalizeProfileName(profile);
         synchronized (runtime.lockFor(canon)) {
-            Map<String, String> original = readAll(canon);
+            Map<String, String> original = readDisk(canon);
             Map<String, String> changed = new LinkedHashMap<>(original);
             T result = edit.apply(changed);
             for (var entry : changed.entrySet()) {
@@ -112,6 +112,11 @@ public class ProfileEnvStore {
 
     /** Raw values for internal readers (binder/bootstrap), never for API responses. */
     public Map<String, String> readAll(String profile) throws IOException {
+        var accepted = ProfileExecutionConfiguration.current(profile);
+        return accepted == null ? readDisk(profile) : accepted.environment();
+    }
+
+    Map<String, String> readDisk(String profile) throws IOException {
         ProfileService profiles = profiles();
         String canon = profiles.normalizeProfileName(profile);
         Path envPath = envPath(canon);

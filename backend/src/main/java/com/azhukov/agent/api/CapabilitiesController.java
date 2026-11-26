@@ -5,6 +5,7 @@ import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.core.tool.ToolRegistry;
 import com.azhukov.agent.service.OpenAiRunService;
+import com.azhukov.agent.service.ProfileExecutionConfiguration;
 import com.azhukov.agent.service.ProfileModelRouting;
 import com.azhukov.agent.service.ProfileService;
 import com.azhukov.agent.service.ProfileSkills;
@@ -49,6 +50,7 @@ public class CapabilitiesController {
     private final OpenAiRunService runs;
     private final com.azhukov.agent.service.ProfileRuntimeRegistry profileRuntime;
     private final Environment environment;
+    private final ProfileExecutionConfiguration settings;
 
     private static final List<String> BROWSER_CONTROL_CAPABILITIES = List.of(
         "browser_back",
@@ -169,38 +171,47 @@ public class CapabilitiesController {
         if (!profiles.isValidNamedProfileName(profile) || !profiles.knownProfile(profile)) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Unknown profile");
         }
-        if (!profileRuntime.acceptsRuns(profile)) {
-            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Profile is stopped");
-        }
-        try {
-            var model = models.bind(profile, null).modelName();
-            var session = Session.create("capabilities", "openai-compatible", model)
-                .withMetadata("profile", profile).withMetadata("platform", "api_server");
-            var definitions = toolRegistry.getProfileDefinitions(session);
-            var skills = profileSkills.forProfile(profile).listSkills();
-            Map<String, Object> features = new LinkedHashMap<>();
-            addRunFeatures(features);
-            features.put("skills_api", true);
-            features.put("approval_events", properties.getSecurity().isApprovalsEnabled());
-            Map<String, Object> endpoints = new LinkedHashMap<>();
-            addRunEndpoints(endpoints);
-            endpoints.put("capabilities", Map.of("method", "GET", "path", "/v1/capabilities"));
-            endpoints.put("skills", Map.of("method", "GET", "path", "/v1/skills"));
-            return Map.of(
-                "object", "java-agent.api_server.capabilities",
-                "platform", "java-agent",
-                "profile", profile,
-                "model", model,
-                "auth", auth(),
-                "runtime", Map.of("mode", "server_agent", "tool_execution", "server", "split_runtime", false),
-                "features", features,
-                "endpoints", endpoints,
-                "skills_count", skills.stream().filter(skill -> !skill.disabled()).count(),
-                "tools_count", definitions.size()
-            );
-        } catch (ProfileModelRouting.ProfileModelUnavailable | IllegalStateException e) {
-            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Profile configuration is unavailable");
-        }
+        return profileRuntime.locked(profile, () -> {
+            if (!profileRuntime.acceptsRuns(profile)) {
+                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Profile is stopped");
+            }
+            try {
+                var accepted = settings.capture(profile);
+                return accepted.use(() -> namedCapabilities(profile, accepted.revision()));
+            } catch (ProfileModelRouting.ProfileModelUnavailable | IllegalStateException e) {
+                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Profile configuration is unavailable");
+            }
+        });
+    }
+
+    private Map<String, Object> namedCapabilities(String profile, String revision) {
+        var model = models.bind(profile, null).modelName();
+        var session = Session.create("capabilities", "openai-compatible", model)
+            .withMetadata("profile", profile).withMetadata("platform", "api_server");
+        var definitions = toolRegistry.getProfileDefinitions(session);
+        var skills = profileSkills.forProfile(profile).listSkills();
+        Map<String, Object> features = new LinkedHashMap<>();
+        addRunFeatures(features);
+        features.put("skills_api", true);
+        features.put("approval_events", properties.getSecurity().isApprovalsEnabled());
+        Map<String, Object> endpoints = new LinkedHashMap<>();
+        addRunEndpoints(endpoints);
+        endpoints.put("capabilities", Map.of("method", "GET", "path", "/v1/capabilities"));
+        endpoints.put("skills", Map.of("method", "GET", "path", "/v1/skills"));
+        var payload = new LinkedHashMap<String, Object>(Map.of(
+            "object", "java-agent.api_server.capabilities",
+            "platform", "java-agent",
+            "profile", profile,
+            "model", model,
+            "auth", auth(),
+            "runtime", Map.of("mode", "server_agent", "tool_execution", "server", "split_runtime", false),
+            "features", features,
+            "endpoints", endpoints,
+            "skills_count", skills.stream().filter(skill -> !skill.disabled()).count(),
+            "tools_count", definitions.size()
+        ));
+        payload.put("profile_revision", revision);
+        return payload;
     }
 
     private Map<String, Object> auth() {

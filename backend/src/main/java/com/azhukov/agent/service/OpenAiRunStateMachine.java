@@ -78,13 +78,20 @@ public class OpenAiRunStateMachine {
         OpenAiSessionContext context = resolveSession.get();
         Session session = context.session();
         var repository = states();
+        String revision = ProfileExecutionConfiguration.currentRevision(session.profile());
         if (repository.insertAcceptance(runId, session.id(), session.userId(), session.profile(), model,
-                fingerprint, context.responseSessionId()) == 0) {
+                fingerprint, context.responseSessionId(), revision) == 0) {
             throw new AlreadyAccepted();
         }
         OpenAiRunStateEntity state = repository.findById(runId).orElseThrow();
-        appendTo(state, Map.of("event", "run.created", "run_id", runId,
-            "timestamp", state.getCreatedAt().toEpochMilli() / 1000.0));
+        var created = new java.util.LinkedHashMap<String, Object>();
+        created.put("event", "run.created");
+        created.put("run_id", runId);
+        created.put("timestamp", state.getCreatedAt().toEpochMilli() / 1000.0);
+        if (revision != null) {
+            created.put("profile_revision", revision);
+        }
+        appendTo(state, created);
         return context;
     }
 

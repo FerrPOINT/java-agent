@@ -50,25 +50,32 @@ public class ProfileInstructions {
     private static final BasePackage NO_BASE = new BasePackage(null, "", Map.of());
 
     public Snapshot read(String profile) {
+        var accepted = ProfileExecutionConfiguration.current(profile);
+        if (accepted != null) {
+            return accepted.instructions();
+        }
         try {
-            Map<String, Object> config = profiles.readExecutionConfig(profile);
-            BasePackage base = loadBase(config.get("instructions"));
-            Path workspace = profiles.workspacePath(profile);
-            var persona = optional(profiles.soulPath(profile));
-            Text project = null;
-            for (String file : PROJECT_FILES) {
-                String content = optional(workspace.resolve(file));
-                if (!content.isBlank()) {
-                    project = new Text(file, content);
-                    break;
-                }
-            }
-            return new Snapshot(base, persona, project, optional(workspace.resolve("AGENTS.override.md")),
-                disabledSkills(config));
+            return read(profile, profiles.readExecutionConfig(profile));
         } catch (IOException | RuntimeException e) {
             // YAML parser errors can contain values from the rest of the profile config.
             throw new IllegalStateException("Unable to load instructions for the selected profile");
         }
+    }
+
+    Snapshot read(String profile, Map<String, Object> config) throws IOException {
+        BasePackage base = loadBase(config.get("instructions"));
+        Path workspace = profiles.workspacePath(profile);
+        String persona = optional(profiles.soulPath(profile));
+        Text project = null;
+        for (String file : PROJECT_FILES) {
+            String content = optional(workspace.resolve(file));
+            if (!content.isBlank()) {
+                project = new Text(file, content);
+                break;
+            }
+        }
+        return new Snapshot(base, persona, project, optional(workspace.resolve("AGENTS.override.md")),
+            disabledSkills(config));
     }
 
     public BasePackage loadBase(Object config) throws IOException {
