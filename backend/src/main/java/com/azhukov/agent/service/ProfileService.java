@@ -493,12 +493,21 @@ public class ProfileService {
 
     /** Read the profile YAML used for execution, preserving exact ownership on file access. */
     public Map<String, Object> readExecutionConfig(String name) throws IOException {
-        Object loaded = new Yaml().load(readRawConfig(name));
-        if (loaded == null) {
-            return Map.of();
+        String yaml = readRawConfig(name);
+        return yaml.isBlank() ? new LinkedHashMap<>() : parseExecutionConfig(yaml);
+    }
+
+    static Map<String, Object> parseExecutionConfig(String yaml) {
+        Object loaded;
+        try {
+            var options = new org.yaml.snakeyaml.LoaderOptions();
+            options.setAllowDuplicateKeys(false);
+            loaded = new Yaml(new org.yaml.snakeyaml.constructor.SafeConstructor(options)).load(yaml);
+        } catch (org.yaml.snakeyaml.error.YAMLException e) {
+            throw new IllegalArgumentException("Invalid profile YAML");
         }
         if (!(loaded instanceof Map<?, ?> config)) {
-            throw new IllegalArgumentException("Profile configuration must be a mapping");
+            throw new IllegalArgumentException("YAML must be a mapping");
         }
         return toStringKeyMap(config);
     }
@@ -520,7 +529,10 @@ public class ProfileService {
     }
 
     public RuntimeConfigService.RuntimeModelSelection readNamedModel(String name) throws IOException {
-        Map<String, Object> config = readExecutionConfig(name);
+        return modelSelection(readExecutionConfig(name));
+    }
+
+    static RuntimeConfigService.RuntimeModelSelection modelSelection(Map<String, Object> config) {
         Object modelNode = config.get("model");
         if (!(modelNode instanceof Map<?, ?> model)) {
             return new RuntimeConfigService.RuntimeModelSelection(null, nullableConfigText(modelNode), null, null);
@@ -1183,7 +1195,7 @@ public class ProfileService {
         return new LinkedHashMap<>();
     }
 
-    private Map<String, Object> toStringKeyMap(Map<?, ?> raw) {
+    private static Map<String, Object> toStringKeyMap(Map<?, ?> raw) {
         Map<String, Object> result = new LinkedHashMap<>();
         raw.forEach((key, value) -> {
             if (key != null) {
@@ -1193,12 +1205,12 @@ public class ProfileService {
         return result;
     }
 
-    private Object yamlValue(Object value) {
+    private static Object yamlValue(Object value) {
         if (value instanceof Map<?, ?> map) {
             return toStringKeyMap(map);
         }
         if (value instanceof List<?> list) {
-            return list.stream().map(this::yamlValue).toList();
+            return list.stream().map(ProfileService::yamlValue).toList();
         }
         return value;
     }

@@ -53,7 +53,7 @@ class ProfileRuntimeServicesTest {
     @Test
     void defaultConfigWriteBootstrapsAndMerges() throws IOException {
         ProfileService profiles = profileService();
-        ProfileConfigWriter writer = new ProfileConfigWriter(prov(profiles), null, new com.fasterxml.jackson.databind.ObjectMapper());
+        ProfileConfigWriter writer = new ProfileConfigWriter(prov(profiles), null, null, null);
 
         writer.write("default", Map.of("dashboard", Map.of("theme", "dark")), "test");
 
@@ -64,13 +64,47 @@ class ProfileRuntimeServicesTest {
     @Test
     void invalidYamlIsRejectedAndNeverWritten() throws IOException {
         ProfileService profiles = profileService();
-        ProfileConfigWriter writer = new ProfileConfigWriter(prov(profiles), null, new com.fasterxml.jackson.databind.ObjectMapper());
+        ProfileConfigWriter writer = new ProfileConfigWriter(prov(profiles), null, null, null);
 
         assertThatThrownBy(() -> writer.writeRaw("default", "[]", "test"))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessageContaining("mapping");
         // no config file was created by the failed write
         assertThat(profiles.configPath("default")).doesNotExist();
+    }
+
+    @Test
+    void invalidProfileEditPreservesCurrentRoutingAndValidEditOnlyChangesItsProfile() throws Exception {
+        var profiles = profileService();
+        Files.createDirectories(profiles.profilePath("alpha"));
+        Files.createDirectories(profiles.profilePath("beta"));
+        var modelRouting = new ProfileModelRouting(profiles, new ProfileEnvStore(prov(profiles)));
+        var instructions = new ProfileInstructions(new AgentProperties(), profiles,
+            new com.fasterxml.jackson.databind.ObjectMapper());
+        var writer = new ProfileConfigWriter(prov(profiles), null, modelRouting, instructions);
+        profiles.writeModel("alpha", "openai", "alpha-v1", "https://alpha.example.test/v1", "alpha-fixture");
+        profiles.writeModel("beta", "openai", "beta", "https://beta.example.test/v1", "beta-fixture");
+        var acceptedAlpha = modelRouting.bind("alpha", null);
+        var beforeBeta = modelRouting.bind("beta", null);
+        String before = profiles.readRawConfig("alpha");
+
+        assertThatThrownBy(() -> writer.writeRaw("alpha", "model: {provider: openai}", "test"))
+            .isInstanceOf(ProfileModelRouting.ProfileModelUnavailable.class);
+        assertThatThrownBy(() -> writer.writeRaw("alpha", "dashboard: {}", "test"))
+            .isInstanceOf(ProfileModelRouting.ProfileModelUnavailable.class);
+        assertThatThrownBy(() -> writer.write("alpha", Map.of("instructions", Map.of("base_role", "designer")), "test"))
+            .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> writer.writeRaw("alpha", "model: {}\nmodel: [fixture-secret]\n", "test"))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("Invalid profile YAML");
+        assertThat(profiles.readRawConfig("alpha")).isEqualTo(before);
+        assertThat(modelRouting.bind("alpha", null)).isEqualTo(acceptedAlpha);
+
+        writer.write("alpha", Map.of("model", Map.of("default", "alpha-v2", "api_key", "alpha-replacement")), "test");
+        assertThat(modelRouting.bind("alpha", null).modelName()).isEqualTo("alpha-v2");
+        assertThat(modelRouting.bind("alpha", null).apiKey()).isEqualTo("alpha-replacement");
+        assertThat(modelRouting.bind("alpha", acceptedAlpha)).isSameAs(acceptedAlpha);
+        assertThat(modelRouting.bind("beta", null)).isEqualTo(beforeBeta);
     }
 
     // ── ProfileEnvStore ──────────────────────────────────────────────────
@@ -113,6 +147,36 @@ class ProfileRuntimeServicesTest {
         var perms = Files.getPosixFilePermissions(envPath);
         assertThat(perms.stream().noneMatch(p -> p.name().startsWith("GROUP_")
             || p.name().startsWith("OTHERS_"))).isTrue();
+    }
+
+    @Test
+    void envStoreRejectsAnotherProfilesLinkedCredentials() throws Exception {
+        var profiles = profileService();
+        Files.createDirectories(profiles.profilePath("alpha"));
+        Files.createDirectories(profiles.profilePath("beta"));
+        var store = new ProfileEnvStore(prov(profiles));
+        store.set("alpha", "AGENT_MODEL_API_KEY", "alpha-fixture");
+        Files.createSymbolicLink(profiles.profilePath("beta").resolve(".env"),
+            profiles.profilePath("alpha").resolve(".env"));
+
+        assertThatThrownBy(() -> store.set("beta", "AGENT_MODEL_API_KEY", "beta-fixture"))
+            .isInstanceOf(IOException.class);
+        assertThatThrownBy(() -> store.delete("beta", "AGENT_MODEL_API_KEY"))
+            .isInstanceOf(IOException.class);
+        assertThat(store.readAll("alpha")).containsEntry("AGENT_MODEL_API_KEY", "alpha-fixture");
+    }
+
+    @Test
+    void envStoreRejectsMultiLineCredentialsBeforeWriting() throws Exception {
+        var profiles = profileService();
+        Files.createDirectories(profiles.profilePath("alpha"));
+        var store = new ProfileEnvStore(prov(profiles));
+        store.set("alpha", "AGENT_MODEL_API_KEY", "alpha-fixture");
+
+        assertThatThrownBy(() -> store.set("alpha", "AGENT_MODEL_API_KEY",
+            "replacement\rAGENT_MODEL_BASE_URL=https://injected.example.test"))
+            .isInstanceOf(IllegalArgumentException.class);
+        assertThat(store.readAll("alpha")).containsExactlyEntriesOf(Map.of("AGENT_MODEL_API_KEY", "alpha-fixture"));
     }
 
     @Test

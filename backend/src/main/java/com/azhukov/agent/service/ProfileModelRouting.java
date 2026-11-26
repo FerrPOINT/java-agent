@@ -33,20 +33,31 @@ public class ProfileModelRouting {
 
     private RuntimeModelSelection configured(String profile) {
         try {
-            var route = profiles.readNamedModel(profile);
-            Map<String, String> env = route.baseUrl() == null || route.apiKey() == null
-                ? envStore.readAll(profile) : Map.of();
-            String endpoint = first(route.baseUrl(), env.get("AGENT_MODEL_BASE_URL"));
-            String key = first(route.apiKey(), env.get("AGENT_MODEL_API_KEY"));
-            if (route.provider() == null || route.model() == null || endpoint == null || key == null) {
-                throw new IllegalArgumentException("Incomplete profile model configuration");
-            }
-            validateEndpoint(endpoint);
-            return new RuntimeModelSelection(route.provider(), route.model(), endpoint, key);
+            return resolve(profile, profiles.readNamedModel(profile));
         } catch (IOException | RuntimeException e) {
             // YAML parser and transport exceptions may contain credentials.
             throw new ProfileModelUnavailable();
         }
+    }
+
+    void validateCandidate(String profile, Map<String, Object> config) {
+        try {
+            resolve(profile, ProfileService.modelSelection(config));
+        } catch (IOException | RuntimeException e) {
+            throw new ProfileModelUnavailable();
+        }
+    }
+
+    private RuntimeModelSelection resolve(String profile, RuntimeModelSelection route) throws IOException {
+        Map<String, String> env = route.baseUrl() == null || route.apiKey() == null
+            ? envStore.readAll(profile) : Map.of();
+        String endpoint = first(route.baseUrl(), env.get("AGENT_MODEL_BASE_URL"));
+        String key = first(route.apiKey(), env.get("AGENT_MODEL_API_KEY"));
+        if (route.provider() == null || route.model() == null || endpoint == null || key == null) {
+            throw new IllegalArgumentException("Incomplete profile model configuration");
+        }
+        validateEndpoint(endpoint);
+        return new RuntimeModelSelection(route.provider(), route.model(), endpoint, key);
     }
 
     private static void validateEndpoint(String endpoint) {

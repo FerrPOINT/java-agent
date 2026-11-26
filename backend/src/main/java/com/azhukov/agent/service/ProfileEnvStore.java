@@ -1,17 +1,14 @@
 package com.azhukov.agent.service;
 
+import com.azhukov.agent.core.security.SecureFileAccess;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.attribute.PosixFilePermission;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -25,7 +22,6 @@ import java.util.Set;
  */
 @Service
 @RequiredArgsConstructor
-@Slf4j
 public class ProfileEnvStore {
 
     /** Keys the dashboard may write — mirrors the envRows() catalog. */
@@ -63,21 +59,24 @@ public class ProfileEnvStore {
     }
 
     /** Set one allowlisted key. Non-allowlisted keys are rejected. */
-    public void set(String profile, String key, String value) throws IOException {
+    public synchronized void set(String profile, String key, String value) throws IOException {
         requireAllowlisted(key);
-        Path envPath = secureEnvPath(profile);
         Map<String, String> values = readAll(profile);
-        values.put(key, value == null ? "" : value);
-        writeAll(envPath, values);
+        String clean = value == null ? "" : value;
+        if (java.util.regex.Pattern.compile("\\R").matcher(clean).find()) {
+            throw new IllegalArgumentException("Environment values must fit on one line");
+        }
+        values.put(key, clean);
+        writeAll(envPath(profiles().normalizeProfileName(profile)), values);
     }
 
     /** Delete one allowlisted key (missing key is a no-op). */
-    public boolean delete(String profile, String key) throws IOException {
+    public synchronized boolean delete(String profile, String key) throws IOException {
         requireAllowlisted(key);
         Map<String, String> values = readAll(profile);
         boolean removed = values.remove(key) != null;
         if (removed) {
-            writeAll(secureEnvPath(profile), values);
+            writeAll(envPath(profiles().normalizeProfileName(profile)), values);
         }
         return removed;
     }
@@ -89,7 +88,7 @@ public class ProfileEnvStore {
         Path envPath = envPath(canon);
         String raw;
         try {
-            raw = com.azhukov.agent.core.security.SecureFileAccess.readUtf8(envPath);
+            raw = SecureFileAccess.readUtf8(envPath);
         } catch (java.nio.file.NoSuchFileException e) {
             return new LinkedHashMap<>();
         }
@@ -113,52 +112,20 @@ public class ProfileEnvStore {
     private Path envPath(String canon) throws IOException {
         var profiles = profiles();
         profiles.validateProfileName(canon);
+        profiles.requireKnownProfile(canon);
         return profiles.profilesRoot().resolve(canon).resolve(".env");
-    }
-
-    /**
-     * The secure-store contract: the .env file must live under the profile dir
-     * with owner-only permissions. If we cannot guarantee that, fail closed.
-     */
-    private Path secureEnvPath(String profile) throws IOException {
-        ProfileService profiles = profiles();
-        String canon = profiles.normalizeProfileName(profile);
-        Path envPath = envPath(canon);
-        Files.createDirectories(envPath.getParent());
-        if (!Files.isRegularFile(envPath)) {
-            Files.writeString(envPath, "# managed by dashboard\n", StandardCharsets.UTF_8);
-        }
-        try {
-            Files.setPosixFilePermissions(envPath, PosixFilePermissionsFromString("rw-------"));
-        } catch (UnsupportedOperationException e) {
-            throw new IOException("secure env store unavailable: POSIX permissions not supported");
-        }
-        return envPath;
-    }
-
-    static Set<PosixFilePermission> PosixFilePermissionsFromString(String value) {
-        Set<PosixFilePermission> result = new java.util.LinkedHashSet<>();
-        int idx = 0;
-        for (PosixFilePermission permission : List.of(
-            PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE, PosixFilePermission.OWNER_EXECUTE,
-            PosixFilePermission.GROUP_READ, PosixFilePermission.GROUP_WRITE, PosixFilePermission.GROUP_EXECUTE,
-            PosixFilePermission.OTHERS_READ, PosixFilePermission.OTHERS_WRITE, PosixFilePermission.OTHERS_EXECUTE)) {
-            char flag = value.charAt(idx++);
-            if (flag != '-') {
-                result.add(permission);
-            }
-        }
-        return result;
     }
 
     private void writeAll(Path envPath, Map<String, String> values) throws IOException {
         StringBuilder sb = new StringBuilder("# managed by dashboard\n");
         for (Map.Entry<String, String> entry : values.entrySet()) {
             sb.append(entry.getKey()).append('=')
-                .append(entry.getValue() == null ? "" : entry.getValue().replace("\n", ""))
+                .append(entry.getValue())
                 .append('\n');
         }
-        Files.writeString(envPath, sb.toString(), StandardCharsets.UTF_8);
+        try (var directory = SecureFileAccess.openOrCreateDirectory(envPath.getParent())) {
+            directory.replacePrivateFile(envPath.getFileName(), sb.toString().getBytes(StandardCharsets.UTF_8));
+        }
     }
 
     private ProfileService profiles() throws IOException {

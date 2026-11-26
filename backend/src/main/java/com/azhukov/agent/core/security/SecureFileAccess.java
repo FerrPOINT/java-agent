@@ -147,14 +147,19 @@ public final class SecureFileAccess {
         }
 
         public void replaceFile(Path name, byte[] bytes, BeforeReplace check) throws IOException {
-            publishFile(name, bytes, check, false);
+            publishFile(name, bytes, check, false, false);
+        }
+
+        public void replacePrivateFile(Path name, byte[] bytes) throws IOException {
+            publishFile(name, bytes, () -> {}, false, true);
         }
 
         public void createFile(Path name, byte[] bytes) throws IOException {
-            publishFile(name, bytes, () -> {}, true);
+            publishFile(name, bytes, () -> {}, true, true);
         }
 
-        private void publishFile(Path name, byte[] bytes, BeforeReplace check, boolean create) throws IOException {
+        private void publishFile(Path name, byte[] bytes, BeforeReplace check, boolean create,
+                                 boolean privatePermissions) throws IOException {
             componentName(name);
             var permissions = PosixFilePermissions.fromString("rw-------");
             try {
@@ -162,7 +167,9 @@ public final class SecureFileAccess {
                     .readAttributes();
                 if (create) throw new FileAlreadyExistsException(name.toString());
                 if (!original.isRegularFile()) throw new IOException("Not a regular file: " + name);
-                permissions = original.permissions();
+                if (!privatePermissions) {
+                    permissions = original.permissions();
+                }
             } catch (NoSuchFileException missing) {
                 // A new file starts private.
             }
