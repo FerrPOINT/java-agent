@@ -58,7 +58,8 @@ class DashboardSystemControllerTest {
             new com.fasterxml.jackson.databind.ObjectMapper());
         com.azhukov.agent.service.ProfileConfigWriter configWriter =
             new com.azhukov.agent.service.ProfileConfigWriter(
-                providerOf(profileService), null, modelRouting, instructions);
+                providerOf(profileService), null, modelRouting, instructions,
+                new com.azhukov.agent.service.ProfileRuntimeRegistry(null));
         com.azhukov.agent.service.DashboardActionService actionService =
             new com.azhukov.agent.service.DashboardActionService(
                 providerOf(profileService), null, null, null, null, properties);

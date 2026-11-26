@@ -35,9 +35,13 @@ public class ProfileRuntimeRegistry {
         if ("default".equals(profile)) {
             return operation.get();
         }
-        synchronized (locks.computeIfAbsent(profile, name -> new Object())) {
+        synchronized (lockFor(profile)) {
             return operation.get();
         }
+    }
+
+    Object lockFor(String profile) {
+        return locks.computeIfAbsent(profile, ignored -> new Object());
     }
 
     public String namedWorkerState(String profile) {

@@ -12,12 +12,17 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
 
 /**
@@ -53,7 +58,7 @@ class ProfileRuntimeServicesTest {
     @Test
     void defaultConfigWriteBootstrapsAndMerges() throws IOException {
         ProfileService profiles = profileService();
-        ProfileConfigWriter writer = new ProfileConfigWriter(prov(profiles), null, null, null);
+        ProfileConfigWriter writer = new ProfileConfigWriter(prov(profiles), null, null, null, new ProfileRuntimeRegistry(null));
 
         writer.write("default", Map.of("dashboard", Map.of("theme", "dark")), "test");
 
@@ -64,7 +69,7 @@ class ProfileRuntimeServicesTest {
     @Test
     void invalidYamlIsRejectedAndNeverWritten() throws IOException {
         ProfileService profiles = profileService();
-        ProfileConfigWriter writer = new ProfileConfigWriter(prov(profiles), null, null, null);
+        ProfileConfigWriter writer = new ProfileConfigWriter(prov(profiles), null, null, null, new ProfileRuntimeRegistry(null));
 
         assertThatThrownBy(() -> writer.writeRaw("default", "[]", "test"))
             .isInstanceOf(IllegalArgumentException.class)
@@ -81,7 +86,7 @@ class ProfileRuntimeServicesTest {
         var modelRouting = new ProfileModelRouting(profiles, new ProfileEnvStore(prov(profiles)));
         var instructions = new ProfileInstructions(new AgentProperties(), profiles,
             new com.fasterxml.jackson.databind.ObjectMapper());
-        var writer = new ProfileConfigWriter(prov(profiles), null, modelRouting, instructions);
+        var writer = new ProfileConfigWriter(prov(profiles), null, modelRouting, instructions, new ProfileRuntimeRegistry(null));
         profiles.writeModel("alpha", "openai", "alpha-v1", "https://alpha.example.test/v1", "alpha-fixture");
         profiles.writeModel("beta", "openai", "beta", "https://beta.example.test/v1", "beta-fixture");
         var acceptedAlpha = modelRouting.bind("alpha", null);
@@ -105,6 +110,42 @@ class ProfileRuntimeServicesTest {
         assertThat(modelRouting.bind("alpha", null).apiKey()).isEqualTo("alpha-replacement");
         assertThat(modelRouting.bind("alpha", acceptedAlpha)).isSameAs(acceptedAlpha);
         assertThat(modelRouting.bind("beta", null)).isEqualTo(beforeBeta);
+    }
+
+    @Test
+    void aBlockedConfigWriteDoesNotDelayAnotherProfile() throws Exception {
+        var profiles = spy(profileService());
+        Files.createDirectories(profiles.profilePath("alpha"));
+        Files.createDirectories(profiles.profilePath("beta"));
+        var routing = new ProfileModelRouting(profiles, new ProfileEnvStore(prov(profiles)));
+        var instructions = new ProfileInstructions(new AgentProperties(), profiles,
+            new com.fasterxml.jackson.databind.ObjectMapper());
+        var writer = new ProfileConfigWriter(prov(profiles), null, routing, instructions,
+            new ProfileRuntimeRegistry(null));
+        var readEntered = new CountDownLatch(1);
+        var releaseRead = new CountDownLatch(1);
+        doAnswer(invocation -> {
+            readEntered.countDown();
+            if (!releaseRead.await(5, TimeUnit.SECONDS)) {
+                throw new IOException("Test did not release the alpha profile read");
+            }
+            return invocation.callRealMethod();
+        }).when(profiles).readExecutionConfig("alpha");
+
+        try (var threads = Executors.newFixedThreadPool(2)) {
+            var alpha = threads.submit(() -> writer.write("alpha", Map.of("max_concurrent_runs", 1), "test"));
+            try {
+                assertThat(readEntered.await(2, TimeUnit.SECONDS)).isTrue();
+                var beta = threads.submit(() -> writer.write("beta", Map.of("max_concurrent_runs", 2), "test"));
+                assertThat(beta.get(2, TimeUnit.SECONDS)).isPositive();
+                assertThat(alpha.isDone()).isFalse();
+                assertThat(profiles.readExecutionConfig("beta")).containsEntry("max_concurrent_runs", 2);
+            } finally {
+                releaseRead.countDown();
+            }
+            assertThat(alpha.get(2, TimeUnit.SECONDS)).isPositive();
+            assertThat(profiles.readExecutionConfig("alpha")).containsEntry("max_concurrent_runs", 1);
+        }
     }
 
     // ── ProfileEnvStore ──────────────────────────────────────────────────

@@ -22,35 +22,44 @@ public class ProfileConfigWriter {
     private final ObjectProvider<ProfileConfigRevisionRepository> revisionProvider;
     private final ProfileModelRouting modelRouting;
     private final ProfileInstructions instructions;
+    private final ProfileRuntimeRegistry runtime;
 
     public ProfileConfigWriter(ObjectProvider<ProfileService> profileServiceProvider,
                                ObjectProvider<ProfileConfigRevisionRepository> revisionProvider,
-                               ProfileModelRouting modelRouting, ProfileInstructions instructions) {
+                               ProfileModelRouting modelRouting, ProfileInstructions instructions,
+                               ProfileRuntimeRegistry runtime) {
         this.profileServiceProvider = profileServiceProvider;
         this.revisionProvider = revisionProvider;
         this.modelRouting = modelRouting;
         this.instructions = instructions;
+        this.runtime = runtime;
     }
 
     /** Merge and apply a profile config update. Returns the applied revision. */
-    public synchronized long write(String profile, Map<String, Object> incoming, String actor) throws IOException {
+    public long write(String profile, Map<String, Object> incoming, String actor) throws IOException {
         ProfileService profiles = profiles();
-        String canon = prepareProfile(profiles, profile);
-        Map<String, Object> merged = profiles.readExecutionConfig(canon);
-        boolean hadModel = merged.containsKey("model");
-        deepMerge(merged, incoming);
-        return apply(profiles, canon, dumpYaml(merged), merged, hadModel, actor);
+        String canon = profiles.normalizeProfileName(profile);
+        synchronized (runtime.lockFor(canon)) {
+            prepareProfile(profiles, canon);
+            Map<String, Object> merged = profiles.readExecutionConfig(canon);
+            boolean hadModel = merged.containsKey("model");
+            deepMerge(merged, incoming);
+            return apply(profiles, canon, dumpYaml(merged), merged, hadModel, actor);
+        }
     }
 
     /** Replace the dashboard editor YAML after validating the candidate. */
-    public synchronized long writeRaw(String profile, String yamlText, String actor) throws IOException {
+    public long writeRaw(String profile, String yamlText, String actor) throws IOException {
         ProfileService profiles = profiles();
-        String canon = prepareProfile(profiles, profile);
-        Map<String, Object> candidate = ProfileService.parseExecutionConfig(yamlText);
-        // An explicit model in the candidate can also repair an invalid prior file.
-        boolean hadModel = !"default".equals(canon) && !candidate.containsKey("model")
-            && profiles.readExecutionConfig(canon).containsKey("model");
-        return apply(profiles, canon, yamlText, candidate, hadModel, actor);
+        String canon = profiles.normalizeProfileName(profile);
+        synchronized (runtime.lockFor(canon)) {
+            prepareProfile(profiles, canon);
+            Map<String, Object> candidate = ProfileService.parseExecutionConfig(yamlText);
+            // An explicit model in the candidate can also repair an invalid prior file.
+            boolean hadModel = !"default".equals(canon) && !candidate.containsKey("model")
+                && profiles.readExecutionConfig(canon).containsKey("model");
+            return apply(profiles, canon, yamlText, candidate, hadModel, actor);
+        }
     }
 
     private ProfileService profiles() {
@@ -61,13 +70,11 @@ public class ProfileConfigWriter {
         return profiles;
     }
 
-    private static String prepareProfile(ProfileService profiles, String profile) throws IOException {
-        String canon = profiles.normalizeProfileName(profile);
-        if ("default".equals(canon)) {
+    private static void prepareProfile(ProfileService profiles, String profile) throws IOException {
+        if ("default".equals(profile)) {
             profiles.ensureDefaultProfile();
         }
-        profiles.requireKnownProfile(canon);
-        return canon;
+        profiles.requireKnownProfile(profile);
     }
 
     private long apply(ProfileService profiles, String profile, String yaml, Map<String, Object> candidate,

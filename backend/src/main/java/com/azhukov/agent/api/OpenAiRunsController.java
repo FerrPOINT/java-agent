@@ -148,14 +148,6 @@ public class OpenAiRunsController {
         UUID previousSessionId = previous == null ? null : previous.sessionId();
         String sessionId = hasText(requestSessionId) || previousSessionId == null
             ? requestSessionId : previousSessionId.toString();
-        ModelRequestOptions options;
-        try {
-            options = profileModelRouting.bind(profile, requestOptions(request, modelAlias));
-        } catch (ProfileModelRouting.ProfileModelUnavailable e) {
-            return openAiError(HttpStatus.SERVICE_UNAVAILABLE, e.getMessage(),
-                "server_error", "profile_model_unavailable");
-        }
-        String requestedModel = options.boundProfile() == null ? modelAlias : options.modelName();
         final var submissionKey = key;
         final var submissionInstructions = instructions;
         try {
@@ -164,6 +156,8 @@ public class OpenAiRunsController {
                     return openAiError(HttpStatus.SERVICE_UNAVAILABLE, "Profile is stopped",
                         "server_error", "profile_stopped");
                 }
+                var options = profileModelRouting.bind(profile, requestOptions(request, modelAlias));
+                String requestedModel = options.boundProfile() == null ? modelAlias : options.modelName();
                 int limit = runAdmissionService.maxConcurrentRuns(profile);
                 var reservation = runAdmissionService.tryAcquire(profile, limit);
                 if (reservation.isEmpty()) {
@@ -176,6 +170,9 @@ public class OpenAiRunsController {
                     reservation.get(), submissionKey);
                 return accepted(result, sessionKeyHeader);
             });
+        } catch (ProfileModelRouting.ProfileModelUnavailable e) {
+            return openAiError(HttpStatus.SERVICE_UNAVAILABLE, e.getMessage(),
+                "server_error", "profile_model_unavailable");
         } catch (ApiRunAdmissionService.ProfileLimitUnavailable e) {
             return openAiError(HttpStatus.SERVICE_UNAVAILABLE, e.getMessage(), "server_error");
         } catch (OpenAiRunService.IdempotencyConflict e) {
