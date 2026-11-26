@@ -683,7 +683,7 @@ class AgentRuntimeServiceTest {
         when(sessionRepository.findById(EXISTING_SESSION_ID)).thenReturn(Optional.of(otherUserSession));
         UserContext.set(USER_ID, UserContext.ROLE_USER);
         try {
-            assertThatThrownBy(() -> agentRuntimeService.runHeartbeatTurn(EXISTING_SESSION_ID, "heartbeat"))
+            assertThatThrownBy(() -> agentRuntimeService.runHeartbeatTurn(EXISTING_SESSION_ID, "heartbeat", "default"))
                 .isInstanceOf(SecurityException.class);
             verify(agentRuntime, never()).runTurn(any(Session.class), eq("heartbeat"));
         } finally {

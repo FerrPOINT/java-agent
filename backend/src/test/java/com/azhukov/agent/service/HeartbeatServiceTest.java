@@ -46,7 +46,7 @@ class HeartbeatServiceTest {
     @Test
     @DisplayName("state machine: set → due after interval → pause blocks → resume re-anchors")
     void stateMachine() {
-        HeartbeatService svc = new HeartbeatService();
+        HeartbeatService svc = new HeartbeatService(defaultSessions(), new ProfileRuntimeRegistry(null));
         UUID sid = UUID.randomUUID();
         HeartbeatService.HeartbeatState st = svc.set(sid, "Check CI", 60);
 
@@ -68,7 +68,7 @@ class HeartbeatServiceTest {
 
     @Test
     void staleDueSnapshotCannotResurrectClearedHeartbeat() {
-        HeartbeatService svc = new HeartbeatService();
+        HeartbeatService svc = new HeartbeatService(defaultSessions(), new ProfileRuntimeRegistry(null));
         UUID sid = UUID.randomUUID();
         var snapshot = svc.set(sid, "old", 60);
         assertThat(svc.clear(sid)).isTrue();
@@ -80,7 +80,7 @@ class HeartbeatServiceTest {
 
     @Test
     void staleDueSnapshotCannotOverridePausedHeartbeat() {
-        HeartbeatService svc = new HeartbeatService();
+        HeartbeatService svc = new HeartbeatService(defaultSessions(), new ProfileRuntimeRegistry(null));
         UUID sid = UUID.randomUUID();
         var snapshot = svc.set(sid, "old", 60);
         svc.pause(sid);
@@ -92,14 +92,15 @@ class HeartbeatServiceTest {
 
     @Test
     void replacementDuringTurnSurvivesCompletionOfOldTurn() throws Exception {
-        HeartbeatService svc = new HeartbeatService();
+        HeartbeatService svc = new HeartbeatService(defaultSessions(), new ProfileRuntimeRegistry(null));
         var runtime = org.mockito.Mockito.mock(AgentRuntimeService.class);
         var field = HeartbeatService.class.getDeclaredField("agentRuntimeService");
         field.setAccessible(true);
         field.set(svc, runtime);
         UUID sid = UUID.randomUUID();
         var old = svc.set(sid, "old", 60);
-        org.mockito.Mockito.when(runtime.runHeartbeatTurn(org.mockito.ArgumentMatchers.eq(sid), org.mockito.ArgumentMatchers.anyString()))
+        org.mockito.Mockito.when(runtime.runHeartbeatTurn(org.mockito.ArgumentMatchers.eq(sid),
+            org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq("default")))
             .thenAnswer(invocation -> {
                 svc.set(sid, "replacement", 120);
                 return "LOOP_COMPLETE";
@@ -114,14 +115,11 @@ class HeartbeatServiceTest {
 
     @Test
     void resumePersistsActiveStateAndClearDuringTurnRemovesPersistedState() throws Exception {
-        HeartbeatService svc = new HeartbeatService();
         var repository = org.mockito.Mockito.mock(com.azhukov.agent.persistence.repository.SessionRepository.class);
+        var svc = new HeartbeatService(repository, new ProfileRuntimeRegistry(null));
         var entity = new com.azhukov.agent.persistence.entity.SessionEntity();
         UUID sid = UUID.randomUUID();
         org.mockito.Mockito.when(repository.findById(sid)).thenReturn(java.util.Optional.of(entity));
-        var repositoryField = HeartbeatService.class.getDeclaredField("sessionRepository");
-        repositoryField.setAccessible(true);
-        repositoryField.set(svc, repository);
         svc.set(sid, "old", 60);
         svc.pause(sid);
         svc.resume(sid);
@@ -131,7 +129,8 @@ class HeartbeatServiceTest {
         var runtimeField = HeartbeatService.class.getDeclaredField("agentRuntimeService");
         runtimeField.setAccessible(true);
         runtimeField.set(svc, runtime);
-        org.mockito.Mockito.when(runtime.runHeartbeatTurn(org.mockito.ArgumentMatchers.eq(sid), org.mockito.ArgumentMatchers.anyString()))
+        org.mockito.Mockito.when(runtime.runHeartbeatTurn(org.mockito.ArgumentMatchers.eq(sid),
+            org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq("default")))
             .thenAnswer(invocation -> { svc.clear(sid); return "done"; });
         var active = svc.get(sid);
         svc.tick(sid, active, Instant.now().plusSeconds(120));
@@ -147,16 +146,13 @@ class HeartbeatServiceTest {
         var entity = new com.azhukov.agent.persistence.entity.SessionEntity();
         var repository = org.mockito.Mockito.mock(com.azhukov.agent.persistence.repository.SessionRepository.class);
         org.mockito.Mockito.when(repository.findById(sid)).thenReturn(java.util.Optional.of(entity));
-        var original = new HeartbeatService();
-        var repositoryField = HeartbeatService.class.getDeclaredField("sessionRepository");
-        repositoryField.setAccessible(true);
-        repositoryField.set(original, repository);
+        var original = new HeartbeatService(repository, new ProfileRuntimeRegistry(null));
         original.set(sid, prompt, 60);
 
         var jdbc = org.mockito.Mockito.mock(org.springframework.jdbc.core.JdbcTemplate.class);
         org.mockito.Mockito.when(jdbc.queryForList(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.<Object>any()))
             .thenReturn(java.util.List.of(java.util.Map.of("session_id", sid, "state_value", entity.getCliState().get("heartbeat"))));
-        var restored = new HeartbeatService();
+        var restored = new HeartbeatService(defaultSessions(), new ProfileRuntimeRegistry(null));
         var jdbcField = HeartbeatService.class.getDeclaredField("jdbcTemplate");
         jdbcField.setAccessible(true);
         jdbcField.set(restored, jdbc);
@@ -169,7 +165,7 @@ class HeartbeatServiceTest {
     @Test
     @DisplayName("fire prompt carries the Hermes HEARTBEAT_PROMPT_TEMPLATE contract")
     void firePromptTemplate() {
-        HeartbeatService svc = new HeartbeatService();
+        HeartbeatService svc = new HeartbeatService(defaultSessions(), new ProfileRuntimeRegistry(null));
         HeartbeatService.HeartbeatState st = new HeartbeatService.HeartbeatState(
             "Check the deployment", 600, "active", Instant.now(), null, 0);
         String prompt = svc.buildFirePrompt(st);
@@ -207,7 +203,7 @@ class HeartbeatServiceTest {
     @Test
     @DisplayName("tick(): busy session coalesces — anchor NOT advanced, no fire")
     void busySessionCoalesces() {
-        HeartbeatService svc = new HeartbeatService() {
+        HeartbeatService svc = new HeartbeatService(defaultSessions(), new ProfileRuntimeRegistry(null)) {
             @Override
             boolean isBusy(UUID sessionId) { return true; }
         };
@@ -225,7 +221,7 @@ class HeartbeatServiceTest {
     @Test
     @DisplayName("tick(): idle session fires exactly once (anchor advanced)")
     void idleSessionFires() {
-        HeartbeatService svc = new HeartbeatService() {
+        HeartbeatService svc = new HeartbeatService(defaultSessions(), new ProfileRuntimeRegistry(null)) {
             @Override
             boolean isBusy(UUID sessionId) { return false; }
         };
@@ -242,10 +238,9 @@ class HeartbeatServiceTest {
     @Test
     @DisplayName("persistence: set/clear write through to session_cli_state")
     void persistenceWriteThrough() {
-        HeartbeatService svc = new HeartbeatService();
+        HeartbeatService svc = new HeartbeatService(defaultSessions(), new ProfileRuntimeRegistry(null));
         UUID sid = UUID.randomUUID();
         svc.set(sid, "Check CI", 120, 3);
-        // sessionRepository is null in this unit context — persist() must be a no-op
         assertThat(svc.get(sid)).isNotNull();
         assertThat(svc.get(sid).maxTicks()).isEqualTo(3);
     }
@@ -253,14 +248,20 @@ class HeartbeatServiceTest {
     @Test
     @DisplayName("restore: persisted active heartbeat is reloaded")
     void restorePersistedHeartbeat() {
-        HeartbeatService svc = new HeartbeatService() {
+        HeartbeatService svc = new HeartbeatService(defaultSessions(), new ProfileRuntimeRegistry(null)) {
             @Override
             boolean isBusy(UUID sessionId) { return false; }
         };
         UUID sid = UUID.randomUUID();
         svc.set(sid, "Watch deploy", 60);
-        // In-memory set with null repo: restorePersisted must not blow up
         svc.restorePersisted();
         assertThat(svc.get(sid)).isNotNull();
+    }
+
+    private com.azhukov.agent.persistence.repository.SessionRepository defaultSessions() {
+        var repository = org.mockito.Mockito.mock(com.azhukov.agent.persistence.repository.SessionRepository.class);
+        org.mockito.Mockito.when(repository.findById(org.mockito.ArgumentMatchers.any(UUID.class)))
+            .thenAnswer(invocation -> java.util.Optional.of(new com.azhukov.agent.persistence.entity.SessionEntity()));
+        return repository;
     }
 }

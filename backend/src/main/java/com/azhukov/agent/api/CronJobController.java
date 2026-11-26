@@ -3,6 +3,7 @@ package com.azhukov.agent.api;
 import com.azhukov.agent.api.dto.CronExecutionLogDto;
 import com.azhukov.agent.api.dto.CronJobDto;
 import com.azhukov.agent.api.mapper.CronJobDtoMapper;
+import com.azhukov.agent.core.agent.AgentSessionResolver;
 import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.persistence.entity.CronJobEntity;
 import com.azhukov.agent.persistence.repository.CronExecutionLogRepository;
@@ -123,19 +124,15 @@ public class CronJobController {
         return org.springframework.http.ResponseEntity.status(403).body(java.util.Map.of("error", exception.getMessage()));
     }
 
-    private void requireSessionOwnership(UUID sessionId) {
-        String scopedUserId = UserContext.scopeUserId();
-        var session = sessionRepository.findById(sessionId).orElseThrow(() ->
-            new org.springframework.web.server.ResponseStatusException(
-                org.springframework.http.HttpStatus.NOT_FOUND, "Session not found"));
-        if (scopedUserId != null && !scopedUserId.equals(session.getUserId())) {
-            throw new SecurityException("Session does not belong to the current user");
-        }
+    private void requireHeartbeatSession(UUID sessionId, String profile) {
+        var session = sessionRepository.findById(sessionId)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Session not found"));
+        AgentSessionResolver.requireAccessible(session, profile);
     }
 
     @GetMapping("/heartbeat/{sessionId}")
-    public java.util.Map<String, Object> heartbeatStatus(@PathVariable UUID sessionId) {
-        requireSessionOwnership(sessionId);
+    public java.util.Map<String, Object> heartbeatStatus(@PathVariable UUID sessionId, @RequestParam(defaultValue = "default") String profile) {
+        requireHeartbeatSession(sessionId, profile);
         HeartbeatService.HeartbeatState st = heartbeatService.get(sessionId);
         if (st == null) return java.util.Map.of("set", false);
         return java.util.Map.of(
@@ -148,7 +145,8 @@ public class CronJobController {
     }
 
     @PostMapping("/heartbeat")
-    public java.util.Map<String, Object> heartbeatSet(@org.springframework.web.bind.annotation.RequestBody HeartbeatSetRequest request) {
+    public java.util.Map<String, Object> heartbeatSet(@RequestBody HeartbeatSetRequest request,
+                                                      @RequestParam(defaultValue = "default") String profile) {
         // /loop --times N reaches here with maxTicks
         if (request.sessionId() == null || request.prompt() == null || request.prompt().isBlank()
             || request.intervalSeconds() == null || request.intervalSeconds() < HeartbeatService.MIN_INTERVAL_SECONDS
@@ -157,7 +155,7 @@ public class CronJobController {
                 "reason", "sessionId, prompt, intervalSeconds >= " + HeartbeatService.MIN_INTERVAL_SECONDS
                     + " and maxTicks >= 0 required");
         }
-        requireSessionOwnership(request.sessionId());
+        requireHeartbeatSession(request.sessionId(), profile);
         HeartbeatService.HeartbeatState st = heartbeatService.set(request.sessionId(), request.prompt(), request.intervalSeconds(),
             request.maxTicks() != null ? request.maxTicks() : 0);
         return java.util.Map.of("ok", true, "message",
@@ -165,8 +163,8 @@ public class CronJobController {
     }
 
     @PostMapping("/heartbeat/{sessionId}/pause")
-    public java.util.Map<String, Object> heartbeatPause(@PathVariable UUID sessionId) {
-        requireSessionOwnership(sessionId);
+    public java.util.Map<String, Object> heartbeatPause(@PathVariable UUID sessionId, @RequestParam(defaultValue = "default") String profile) {
+        requireHeartbeatSession(sessionId, profile);
         HeartbeatService.HeartbeatState st = heartbeatService.pause(sessionId);
         return st == null
             ? java.util.Map.of("ok", false, "reason", "no active heartbeat")
@@ -174,8 +172,8 @@ public class CronJobController {
     }
 
     @PostMapping("/heartbeat/{sessionId}/resume")
-    public java.util.Map<String, Object> heartbeatResume(@PathVariable UUID sessionId) {
-        requireSessionOwnership(sessionId);
+    public java.util.Map<String, Object> heartbeatResume(@PathVariable UUID sessionId, @RequestParam(defaultValue = "default") String profile) {
+        requireHeartbeatSession(sessionId, profile);
         HeartbeatService.HeartbeatState st = heartbeatService.resume(sessionId);
         return st == null
             ? java.util.Map.of("ok", false, "reason", "no paused heartbeat")
@@ -185,8 +183,8 @@ public class CronJobController {
 
     /** Bot polls this to deliver heartbeat/loop results to the chat (PEEK — not destructive). */
     @GetMapping("/heartbeat/{sessionId}/result")
-    public java.util.Map<String, Object> heartbeatResult(@PathVariable UUID sessionId) {
-        requireSessionOwnership(sessionId);
+    public java.util.Map<String, Object> heartbeatResult(@PathVariable UUID sessionId, @RequestParam(defaultValue = "default") String profile) {
+        requireHeartbeatSession(sessionId, profile);
         String result = heartbeatService.peekLastFireResult(sessionId);
         return result == null
             ? java.util.Map.of("hasResult", false)
@@ -195,22 +193,22 @@ public class CronJobController {
 
     /** ACK after a successful chat send — drops the delivered result. */
     @PostMapping("/heartbeat/{sessionId}/result/ack")
-    public java.util.Map<String, Object> heartbeatResultAck(@PathVariable UUID sessionId) {
-        requireSessionOwnership(sessionId);
+    public java.util.Map<String, Object> heartbeatResultAck(@PathVariable UUID sessionId, @RequestParam(defaultValue = "default") String profile) {
+        requireHeartbeatSession(sessionId, profile);
         return java.util.Map.of("acked", heartbeatService.ackFireResult(sessionId));
     }
 
     /** Report a failed send attempt; after 5 the result is dropped as poison. */
     @PostMapping("/heartbeat/{sessionId}/result/nack")
-    public java.util.Map<String, Object> heartbeatResultNack(@PathVariable UUID sessionId) {
-        requireSessionOwnership(sessionId);
+    public java.util.Map<String, Object> heartbeatResultNack(@PathVariable UUID sessionId, @RequestParam(defaultValue = "default") String profile) {
+        requireHeartbeatSession(sessionId, profile);
         return java.util.Map.of("drop", heartbeatService.shouldDropUndeliverable(sessionId));
         // drop=true → caller must call ack to remove the poisoned result
     }
 
     @PostMapping("/heartbeat/{sessionId}/clear")
-    public java.util.Map<String, Object> heartbeatClear(@PathVariable UUID sessionId) {
-        requireSessionOwnership(sessionId);
+    public java.util.Map<String, Object> heartbeatClear(@PathVariable UUID sessionId, @RequestParam(defaultValue = "default") String profile) {
+        requireHeartbeatSession(sessionId, profile);
         return java.util.Map.of("ok", heartbeatService.clear(sessionId));
     }
 

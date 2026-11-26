@@ -191,6 +191,35 @@ class CronJobControllerTest {
     }
 
     @Test
+    void exactHeartbeatSessionRequiresItsProfileEvenForTheSameOwner() throws Exception {
+        UUID sessionId = UUID.randomUUID();
+        var session = new com.azhukov.agent.persistence.entity.SessionEntity();
+        session.setId(sessionId);
+        session.setUserId("same-owner");
+        session.setProfile("alpha");
+        when(sessionRepository.findById(sessionId)).thenReturn(java.util.Optional.of(session));
+        when(heartbeatService.get(sessionId)).thenReturn(new HeartbeatService.HeartbeatState(
+            "private alpha reminder", 60, "active", java.time.Instant.now(), null, 0, 0));
+
+        UserContext.set("same-owner", UserContext.ROLE_USER);
+        try {
+            mockMvc.perform(get("/api/v1/agent/cron/heartbeat/{id}", sessionId))
+                .andExpect(status().isNotFound());
+            mockMvc.perform(get("/api/v1/agent/cron/heartbeat/{id}", sessionId).param("profile", "beta"))
+                .andExpect(status().isNotFound());
+            mockMvc.perform(post("/api/v1/agent/cron/heartbeat/{id}/clear", sessionId).param("profile", "beta"))
+                .andExpect(status().isNotFound());
+            mockMvc.perform(get("/api/v1/agent/cron/heartbeat/{id}", sessionId).param("profile", "alpha"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.prompt").value("private alpha reminder"));
+            verify(heartbeatService).get(sessionId);
+            verify(heartbeatService, never()).clear(any());
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
     void heartbeatSetRejectsNegativeMaxTicksWithoutStartingUnlimitedLoop() throws Exception {
         UUID sessionId = UUID.randomUUID();
         UserContext.set("user-a", UserContext.ROLE_USER);

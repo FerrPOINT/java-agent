@@ -159,7 +159,7 @@ public class AgentSessionResolver {
             && sessionProfile(first).equals(sessionProfile(second));
     }
 
-    private static String sessionProfile(SessionEntity session) {
+    public static String sessionProfile(SessionEntity session) {
         String saved = session.getProfile();
         return saved == null || saved.isBlank() ? "default" : saved;
     }
@@ -214,6 +214,10 @@ public class AgentSessionResolver {
      * @throws IllegalArgumentException if the session is not found
      */
     public Session loadSession(UUID id) {
+        return loadSession(id, null);
+    }
+
+    public Session loadSession(UUID id, String profile) {
         // Wrap the load + cliState access in a read-only transaction so the
         // lazy ElementCollection is initialized while the Hibernate session
         // is still open. Without this, getCliState() triggers a
@@ -222,6 +226,9 @@ public class AgentSessionResolver {
         return transactionTemplate.execute(status -> {
             SessionEntity e = sessionRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Session not found: " + id));
+            if (profile != null) {
+                requireAccessible(e, profile);
+            }
             return hydrateSession(e);
         });
     }

@@ -513,15 +513,8 @@ public class AgentRuntimeService {
      * instruction as a NORMAL USER TURN in the SAME session — session-scoped,
      * unlike {@link #runBackground} which always creates a fresh session.
      */
-    public String runHeartbeatTurn(UUID sessionId, String prompt) {
-        requireSessionOwnership(sessionId);
-        SessionEntity entity = sessionRepository.findById(sessionId).orElse(null);
-        Session session;
-        if (entity != null) {
-            session = sessionMapper.toDomain(entity);
-        } else {
-            session = createSession(AgentProperties.DEFAULT_USER_ID, "openai-compatible", "");
-        }
+    public String runHeartbeatTurn(UUID sessionId, String prompt, String profile) {
+        Session session = sessionResolver.loadSession(sessionId, profile);
         TurnResult result = sessionTurnLockManager.withTurn(session.id(), () -> {
             TurnResult turn = agentRuntime.runTurn(session, prompt);
             persistMessages(session.id(), turn.messages());

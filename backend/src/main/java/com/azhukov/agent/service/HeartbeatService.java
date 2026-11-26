@@ -1,7 +1,9 @@
 package com.azhukov.agent.service;
 
 import com.azhukov.agent.core.agent.AgentRuntime;
-import com.azhukov.agent.core.model.Message;
+import com.azhukov.agent.core.agent.AgentSessionResolver;
+import com.azhukov.agent.persistence.repository.SessionRepository;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
@@ -9,6 +11,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
@@ -29,6 +32,7 @@ import java.util.regex.Pattern;
  * (active/paused/cleared) and the prompt template mirror Hermes exactly.
  */
 @Service
+@RequiredArgsConstructor
 @Slf4j
 public class HeartbeatService {
 
@@ -107,8 +111,9 @@ public class HeartbeatService {
     @Lazy
     private AgentRuntimeService agentRuntimeService;
 
-    @Autowired(required = false)
-    private com.azhukov.agent.persistence.repository.SessionRepository sessionRepository;
+    private final SessionRepository sessionRepository;
+    private final ProfileRuntimeRegistry profileRuntime;
+    private final Set<UUID> inFlight = ConcurrentHashMap.newKeySet();
 
     @Autowired(required = false)
     private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
@@ -131,7 +136,6 @@ public class HeartbeatService {
      * LLM calls inside — pool-safe.
      */
     private void persist(UUID sessionId, HeartbeatState st) {
-        if (sessionRepository == null) return;
         Runnable write = () -> sessionRepository.findById(sessionId).ifPresent(e -> {
             if (st == null) {
                 e.getCliState().remove(STATE_KEY);
@@ -297,13 +301,19 @@ public class HeartbeatService {
             try {
                 Thread.sleep((long) (POLL_SECONDS * 1000));
                 Instant now = Instant.now();
-                for (Map.Entry<UUID, HeartbeatState> e : states.entrySet()) {
-                    try {
-                        tick(e.getKey(), e.getValue(), now);
-                    } catch (Exception ex) {
-                        log.warn("Heartbeat tick failed for session {}: {}", e.getKey(), ex.getMessage());
+                states.forEach((sessionId, state) -> {
+                    if (state.isDue(now) && inFlight.add(sessionId)) {
+                        Thread.startVirtualThread(() -> {
+                            try {
+                                tick(sessionId, state, now);
+                            } catch (Exception ex) {
+                                log.warn("Heartbeat tick failed for session {}: {}", sessionId, ex.getMessage());
+                            } finally {
+                                inFlight.remove(sessionId);
+                            }
+                        });
                     }
-                }
+                });
             } catch (InterruptedException ie) {
                 Thread.currentThread().interrupt();
                 return;
@@ -324,20 +334,23 @@ public class HeartbeatService {
             return;
         }
 
-        // Mark fired FIRST so a slow target can't double-fire
-        HeartbeatState fired = new HeartbeatState(st.prompt(), st.intervalSeconds(),
-            st.status(), st.createdAt(), Instant.now(), st.fireCount() + 1, st.maxTicks());
-        synchronized (this) {
-            if (states.get(sessionId) != st) return;
-            states.put(sessionId, fired);
+        var session = sessionRepository.findById(sessionId).orElse(null);
+        if (session == null) {
+            states.remove(sessionId, st);
+            return;
         }
+        String profile = AgentSessionResolver.sessionProfile(session);
+        var fired = profileRuntime.locked(profile, () -> {
+            if (!profileRuntime.acceptsRuns(profile)) return null;
+            return claimTick(sessionId, st);
+        });
+        if (fired == null) return;
         String prompt = buildFirePrompt(fired);
-        log.info("Heartbeat firing for session {} (fire #{}): {}",
-            sessionId, fired.fireCount(), st.prompt());
+        log.info("Heartbeat firing for session {} (fire #{})", sessionId, fired.fireCount());
         String response = null;
         try {
             response = agentRuntimeService != null
-                ? agentRuntimeService.runHeartbeatTurn(sessionId, prompt)
+                ? agentRuntimeService.runHeartbeatTurn(sessionId, prompt, profile)
                 : null;
         } catch (Exception ex) {
             log.warn("Heartbeat turn failed for session {}: {}", sessionId, ex.getMessage());
@@ -361,6 +374,14 @@ public class HeartbeatService {
                 persist(sessionId, fired);
             }
         }
+    }
+
+    private synchronized HeartbeatState claimTick(UUID sessionId, HeartbeatState previous) {
+        if (states.get(sessionId) != previous) return null;
+        var fired = new HeartbeatState(previous.prompt(), previous.intervalSeconds(),
+            previous.status(), previous.createdAt(), Instant.now(), previous.fireCount() + 1, previous.maxTicks());
+        states.put(sessionId, fired);
+        return fired;
     }
 
     /**
