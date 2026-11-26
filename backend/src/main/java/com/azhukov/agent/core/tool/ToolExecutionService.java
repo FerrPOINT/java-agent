@@ -81,7 +81,8 @@ public class ToolExecutionService {
         "delete_file", "execute_code", "process", "skill_manage",
         "send_message", "image_generate", "todo", "mcp_tool",
         "browser_click", "browser_type", "browser_press", "browser_dialog",
-        "clarify", com.azhukov.agent.tools.workflow.ProjectWorkflowTool.NAME);
+        "clarify", com.azhukov.agent.tools.workflow.ProjectWorkflowTool.NAME,
+        com.azhukov.agent.tools.tracker.TrackerTool.NAME);
     /** Hermes parity (clarify_gateway TIMEOUT): the blocking clarify tool waits
      *  for the user's reply (default 3600s), far beyond the generic tool
      *  timeout — it must not be killed by the tool-output timeout. */

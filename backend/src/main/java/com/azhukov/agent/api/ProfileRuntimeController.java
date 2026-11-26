@@ -11,6 +11,7 @@ import com.azhukov.agent.service.ProfileModelRouting;
 import com.azhukov.agent.service.ProfileRuntimeRegistry;
 import com.azhukov.agent.service.ProfileService;
 import com.azhukov.agent.tools.workflow.ProjectWorkflowTool;
+import com.azhukov.agent.tools.tracker.TrackerTool;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpStatus;
@@ -23,6 +24,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 @RestController
@@ -37,6 +39,7 @@ public class ProfileRuntimeController {
     private final ProfileExecutionConfiguration settings;
     private final ToolRegistry toolRegistry;
     private final ProjectWorkflowTool workflow;
+    private final TrackerTool tracker;
 
     @GetMapping
     public Map<String, Object> state(@PathVariable String profile) {
@@ -61,12 +64,17 @@ public class ProfileRuntimeController {
                 if (!toolRegistry.isProfileToolEnabled(ProjectWorkflowTool.NAME, selected)) {
                     throw new IllegalStateException("Workflow tool is unavailable");
                 }
-                return workflow.verifyIdentity(profile);
+                var proof = workflow.verifyIdentity(profile);
+                var result = new LinkedHashMap<String, Object>(Map.of(
+                    "profile", profile, "profile_revision", accepted.revision(),
+                    "protocol", "configured-cli-v1", "namespace_id", proof.namespaceId(),
+                    "machine_subject", proof.machineSubject(), "workflow_base_url", proof.workflowBaseUrl()));
+                if (toolRegistry.isProfileToolEnabled(TrackerTool.NAME, selected)) {
+                    result.put("tracker_base_url", tracker.verifyIdentity(profile, proof.machineSubject()));
+                }
+                return result;
             });
-            return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(Map.of(
-                "profile", profile, "profile_revision", accepted.revision(),
-                "protocol", "configured-cli-v1", "namespace_id", identity.namespaceId(),
-                "machine_subject", identity.machineSubject(), "workflow_base_url", identity.workflowBaseUrl()));
+            return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(identity);
         } catch (IllegalStateException e) {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Workflow identity is unavailable");
         }

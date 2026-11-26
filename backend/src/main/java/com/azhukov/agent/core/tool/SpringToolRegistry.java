@@ -13,6 +13,7 @@ import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
 import com.azhukov.agent.tools.workflow.ProjectWorkflowTool;
+import com.azhukov.agent.tools.tracker.TrackerTool;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.RequiredArgsConstructor;
@@ -65,7 +66,8 @@ public class SpringToolRegistry implements ToolRegistry {
     private static final List<String> SKILL_TOOLS = List.of("skills_list", "skill_view", "skill_manage");
     private static final Set<String> PROFILE_TOOLS = Set.of(
         "read_file", "write_file", "patch", "search_files", "publish_file", "delete_file",
-        "skills_list", "skill_view", "skill_manage", "memory", "mcp_tool", "cronjob", ProjectWorkflowTool.NAME
+        "skills_list", "skill_view", "skill_manage", "memory", "mcp_tool", "cronjob",
+        ProjectWorkflowTool.NAME, TrackerTool.NAME
     );
     private static final List<String> HERMES_CORE_TOOLS = List.of(
         "web_search", "web_extract",
@@ -1077,7 +1079,7 @@ public class SpringToolRegistry implements ToolRegistry {
     @Override
     public List<ToolDefinition> getDefinitions() {
         return adaptToolDefinitions(new ArrayList<>(entries.values().stream()
-            .filter(entry -> !(entry.handler() instanceof ProjectWorkflowTool))
+            .filter(entry -> !(entry.handler() instanceof ProjectWorkflowTool) && !(entry.handler() instanceof TrackerTool))
             .map(ToolEntry::definition).toList()));
     }
 
@@ -1088,7 +1090,7 @@ public class SpringToolRegistry implements ToolRegistry {
         }
         ResolvedToolsetFilter filter = resolveToolsets(toolsets);
         List<ToolDefinition> selected = entries.values().stream()
-            .filter(entry -> !(entry.handler() instanceof ProjectWorkflowTool))
+            .filter(entry -> !(entry.handler() instanceof ProjectWorkflowTool) && !(entry.handler() instanceof TrackerTool))
             .filter(e -> filter.allTools()
                 || e.isUnscopedDynamic()
                 || (e.toolset() != null && filter.toolsets().contains(e.toolset()))
@@ -1126,6 +1128,9 @@ public class SpringToolRegistry implements ToolRegistry {
         String name = entry.definition().name();
         if (entry.handler() instanceof ProjectWorkflowTool workflow) {
             return configured.contains(name) && workflow.configured(profile);
+        }
+        if (entry.handler() instanceof TrackerTool tracker) {
+            return configured.contains(name) && tracker.configured(profile);
         }
         if ("mcp_tool".equals(name) || "cronjob".equals(name)) {
             return entry.annotation() != null && configured.contains(name);
@@ -1312,7 +1317,8 @@ public class SpringToolRegistry implements ToolRegistry {
         Set<String> result = new HashSet<>();
         for (ToolEntry e : entries.values()) {
             String toolset = e.toolset();
-            if (toolset != null && !(e.handler() instanceof ProjectWorkflowTool)) {
+            if (toolset != null && !(e.handler() instanceof ProjectWorkflowTool)
+                && !(e.handler() instanceof TrackerTool)) {
                 result.add(toolset);
             }
         }

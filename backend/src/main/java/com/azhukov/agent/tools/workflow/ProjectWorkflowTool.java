@@ -4,6 +4,7 @@ import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.service.ProfileEnvStore;
+import com.azhukov.agent.service.ProfileServiceAccountVerifier;
 import com.azhukov.agent.service.ProfileExecutionConfiguration;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
@@ -22,11 +23,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.time.Instant;
-import java.time.format.DateTimeParseException;
-import java.util.HashSet;
 import java.util.Set;
-import java.util.UUID;
 
 @AgentTool(
     name = ProjectWorkflowTool.NAME,
@@ -47,7 +44,7 @@ public class ProjectWorkflowTool implements ToolHandler {
     private final ProfileEnvStore profileEnv;
     private final ObjectMapper json;
     private final URI base;
-    private final String introspectionEndpoint;
+    private final ProfileServiceAccountVerifier serviceAccounts;
     private final HttpClient http = HttpClient.newBuilder()
         .proxy(HttpClient.Builder.NO_PROXY)
         .followRedirects(HttpClient.Redirect.NEVER)
@@ -56,11 +53,11 @@ public class ProjectWorkflowTool implements ToolHandler {
 
     public ProjectWorkflowTool(ProfileEnvStore profileEnv, ObjectMapper json,
                                @Value("${agent.workflow.base-url:}") String baseUrl,
-                               @Value("${agent.central-auth.personal-token-uri:}") String introspectionEndpoint) {
+                               ProfileServiceAccountVerifier serviceAccounts) {
         this.profileEnv = profileEnv;
         this.json = json;
         this.base = baseUrl.isBlank() ? null : workflowBase(baseUrl);
-        this.introspectionEndpoint = introspectionEndpoint;
+        this.serviceAccounts = serviceAccounts;
     }
 
     public boolean configured(String profile) {
@@ -75,62 +72,12 @@ public class ProjectWorkflowTool implements ToolHandler {
         try {
             var credentials = credentials(profile);
             if (base == null || credentials == null) {
-                throw new IllegalStateException();
+                throw new IllegalStateException("Workflow identity is unavailable");
             }
-            URI endpoint = URI.create(introspectionEndpoint);
-            if (!trustedHttpEndpoint(endpoint) || !"/auth/tokens/introspect".equals(endpoint.getRawPath())
-                || !credentials.token().matches("(?:pdlc_pat_|sdlc_pat_)[a-zA-Z0-9_-]+")) {
-                throw new IllegalStateException();
-            }
-            var request = HttpRequest.newBuilder(endpoint).timeout(Duration.ofSeconds(5))
-                .header("Accept", "application/json").header("Accept-Encoding", "identity")
-                .header("Cache-Control", "no-cache, no-store")
-                .header("Authorization", "Bearer " + credentials.token()).GET().build();
-            Instant started = Instant.now();
-            var response = http.send(request, HttpResponse.BodyHandlers.limiting(
-                HttpResponse.BodyHandlers.ofByteArray(), 16_384));
-            if (response.statusCode() != 200
-                || !"identity".equals(response.headers().firstValue("Content-Encoding").orElse("identity"))) {
-                throw new IllegalStateException();
-            }
-            var proof = json.reader()
-                .with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
-                .with(DeserializationFeature.FAIL_ON_READING_DUP_TREE_KEY)
-                .readTree(response.body());
-            if (proof == null || !proof.isObject() || !"agent".equals(proof.path("subject_kind").asText())
-                || !"service_account".equals(proof.path("subject_role").asText())
-                || !proof.path("email").isTextual() || proof.path("email").asText().isBlank()
-                || !proof.path("display_name").isTextual()
-                || !proof.path("scopes").isArray() || !proof.path("observed_at").isTextual()
-                || !proof.has("expires_at")) {
-                throw new IllegalStateException();
-            }
-            var scopes = new HashSet<String>();
-            for (var scope : proof.path("scopes")) {
-                if (!scope.isTextual() || !scopes.add(scope.asText())) {
-                    throw new IllegalStateException();
-                }
-            }
-            if (!Set.of("project-workflow:read", "project-workflow:write").equals(scopes)) {
-                throw new IllegalStateException();
-            }
-            String subject = proof.path("sub").asText();
-            UUID uuid = UUID.fromString(subject);
-            if (!uuid.toString().equals(subject) || uuid.equals(new UUID(0, 0))) {
-                throw new IllegalStateException();
-            }
-            Instant now = Instant.now();
-            Instant observed = Instant.parse(proof.path("observed_at").asText());
-            if (observed.isBefore(started.minusSeconds(1)) || observed.isAfter(now.plusSeconds(1))
-                || (!proof.path("expires_at").isNull()
-                    && !Instant.parse(proof.path("expires_at").asText()).isAfter(now))) {
-                throw new IllegalStateException();
-            }
+            String subject = serviceAccounts.verify(credentials.token(),
+                Set.of("project-workflow:read", "project-workflow:write"));
             return new WorkflowIdentity(credentials.namespace(), subject, base.toString());
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException("Workflow identity is unavailable");
-        } catch (IOException | IllegalArgumentException | DateTimeParseException | IllegalStateException e) {
+        } catch (IOException | IllegalArgumentException e) {
             throw new IllegalStateException("Workflow identity is unavailable");
         }
     }
@@ -260,16 +207,10 @@ public class ProjectWorkflowTool implements ToolHandler {
 
     private static URI workflowBase(String value) {
         URI uri = URI.create(value.endsWith("/") ? value : value + "/");
-        if (!trustedHttpEndpoint(uri)) {
+        if (!ProfileServiceAccountVerifier.trustedHttpEndpoint(uri)) {
             throw new IllegalArgumentException("Invalid Workflow base URL");
         }
         return uri;
-    }
-
-    private static boolean trustedHttpEndpoint(URI uri) {
-        return ("https".equals(uri.getScheme()) || "http".equals(uri.getScheme()))
-            && uri.getHost() != null && uri.getRawUserInfo() == null && uri.getRawQuery() == null
-            && uri.getRawFragment() == null && uri.equals(uri.normalize());
     }
 
     private static String formValue(String value) {

@@ -27,6 +27,8 @@ import com.azhukov.agent.service.ProfileExecutionConfiguration;
 import com.azhukov.agent.service.ProfileModelRouting;
 import com.azhukov.agent.service.ProfileRuntimeRegistry;
 import com.azhukov.agent.tools.workflow.ProjectWorkflowTool;
+import com.azhukov.agent.tools.tracker.TrackerRunScope;
+import com.azhukov.agent.tools.tracker.TrackerTool;
 import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -211,6 +213,10 @@ public class OpenAiRunsController {
         if (request.workflowTask() != null) {
             Session selected = Session.create(UserContext.getUserId(), "openai-compatible", model)
                 .withMetadata("profile", profile).withMetadata("platform", "api_server");
+            if (request.trackerTask() != null && !toolRegistry.isProfileToolEnabled(TrackerTool.NAME, selected)) {
+                return openAiError(HttpStatus.SERVICE_UNAVAILABLE, "Tracker is unavailable for this profile",
+                    "server_error", "tracker_unavailable");
+            }
             if (!toolRegistry.isProfileToolEnabled(ProjectWorkflowTool.NAME, selected)) {
                 return openAiError(HttpStatus.SERVICE_UNAVAILABLE, "Workflow is unavailable for this profile",
                     "server_error", "workflow_unavailable");
@@ -225,7 +231,7 @@ public class OpenAiRunsController {
             () -> openAiSessionService.resolveRunSession(sessionId, sessionKeyHeader, model, profile),
             userMessage, model, options, instructions, history,
             hasExplicitConversationHistory(request) ? null : previousSession,
-            reservation.get(), key, request.workflowTask());
+            reservation.get(), key, request.workflowTask(), request.trackerTask());
         return accepted(result, sessionKeyHeader);
     }
 
@@ -269,8 +275,11 @@ public class OpenAiRunsController {
 
     private static boolean validWorkflowAssignment(OpenAiRunRequest request, String profile,
                                                    String revision, String idempotencyKey) {
-        if (request == null || request.workflowTask() == null) {
+        if (request == null) {
             return true;
+        }
+        if (request.workflowTask() == null) {
+            return request.trackerTask() == null;
         }
         var origin = NativeIdentityOrigin.current();
         return origin != null && origin.kind() == NativeIdentityOrigin.Kind.FLEET_PROFILE
@@ -768,6 +777,7 @@ public class OpenAiRunsController {
         @JsonProperty("max_output_tokens")
         @JsonAlias({"maxOutputTokens", "max_tokens", "maxTokens"})
         Integer maxOutputTokens,
-        @JsonProperty("workflow_task") @JsonInclude(JsonInclude.Include.NON_NULL) String workflowTask
+        @JsonProperty("workflow_task") @JsonInclude(JsonInclude.Include.NON_NULL) String workflowTask,
+        @JsonProperty("tracker_task") @JsonInclude(JsonInclude.Include.NON_NULL) TrackerRunScope trackerTask
     ) {}
 }

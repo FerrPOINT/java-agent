@@ -31,6 +31,7 @@ public class ProfileEnvStore {
         "AGENT_FLEET_PROFILE_TOKEN_SHA256",
         "PROJECT_WORKFLOW_API_TOKEN",
         "PROJECT_WORKFLOW_NAMESPACE_ID",
+        "TASKTRACKER_TOKEN",
         "AGENT_MODEL_BASE_URL",
         "AGENT_WEB_SEARXNG_URL",
         "AGENT_TTS_API_KEY",

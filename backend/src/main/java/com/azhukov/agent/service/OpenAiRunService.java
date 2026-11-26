@@ -14,6 +14,7 @@ import com.azhukov.agent.core.security.ApprovalQueue;
 import com.azhukov.agent.core.security.Redactor;
 import com.azhukov.agent.service.OpenAiSessionService.OpenAiSessionContext;
 import com.azhukov.agent.tools.terminal.ProcessTool;
+import com.azhukov.agent.tools.tracker.TrackerRunScope;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
@@ -123,7 +124,8 @@ public class OpenAiRunService {
                              UUID previousSessionId,
                              ApiRunAdmissionService.Reservation reservation,
                              SubmissionKey key,
-                             String workflowTask) {
+                             String workflowTask,
+                             TrackerRunScope trackerTask) {
         sweepTerminalRuns();
         String runId = key == null ? "run_" + UUID.randomUUID().toString().replace("-", "") : key.runId();
         OpenAiRunStateMachine machine = stateMachine();
@@ -159,6 +161,9 @@ public class OpenAiRunService {
         if (workflowTask != null) {
             runSession = runSession.withMetadata(com.azhukov.agent.tools.workflow.ProjectWorkflowTool.TASK_METADATA,
                 workflowTask);
+        }
+        if (trackerTask != null) {
+            runSession = runSession.withMetadata(TrackerRunScope.METADATA, objectMapper.valueToTree(trackerTask).toString());
         }
         if (instructions != null && !instructions.isBlank()) {
             runSession = runSession.withMetadata("system_prompt_override", instructions);
