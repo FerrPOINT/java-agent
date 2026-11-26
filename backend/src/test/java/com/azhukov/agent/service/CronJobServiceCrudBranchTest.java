@@ -57,7 +57,7 @@ class CronJobServiceCrudBranchTest {
         service = new CronJobService(
             cronJobRepository, agentRuntimeServiceProvider, properties, skillManager,
             cronExecutionLogRepository, messageRepository, CronJobServiceTest.unitTransaction(), new CronScheduleParser(),
-            org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class));
+            org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), new ProfileRuntimeRegistry(null));
         lenient().when(cronJobRepository.save(any(CronJobEntity.class))).thenAnswer(inv -> {
             CronJobEntity e = inv.getArgument(0);
             if (e.getId() == null) {

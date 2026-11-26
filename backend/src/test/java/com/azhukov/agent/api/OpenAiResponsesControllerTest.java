@@ -119,7 +119,8 @@ class OpenAiResponsesControllerTest {
             new DefaultRedactor(properties),
             runAdmissionService,
             profiles,
-            profileModels
+            profileModels,
+            new com.azhukov.agent.service.ProfileRuntimeRegistry(null)
         );
 
         mockMvc = MockMvcBuilders.standaloneSetup(controller)

@@ -237,7 +237,12 @@ public class CronJobController {
     @PostMapping("/{id}/run")
     public CronJobDto runNow(@PathVariable UUID id, @RequestParam(defaultValue = "default") String profile) {
         requireCronJob(id, profile);
-        return cronJobDtoMapper.toDto(cronJobService.runNow(id));
+        try {
+            return cronJobDtoMapper.toDto(cronJobService.runNow(id));
+        } catch (com.azhukov.agent.service.ProfileRuntimeRegistry.ProfileStopped stopped) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE, stopped.getMessage());
+        }
     }
 
     // h72: Cron execution ledger — list execution history for a job.

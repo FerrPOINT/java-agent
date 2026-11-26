@@ -52,6 +52,18 @@ public class ProfileRuntimeRegistry {
         return "default".equals(profile) || WORKER_RUNNING.equals(namedWorkerState(profile));
     }
 
+    public void requireRunning(String profile) {
+        if (!acceptsRuns(profile)) {
+            throw new ProfileStopped();
+        }
+    }
+
+    public static final class ProfileStopped extends IllegalStateException {
+        public ProfileStopped() {
+            super("Profile is stopped");
+        }
+    }
+
     /** Fetch the runtime row without creating it (read-only health/status calls). */
     public Optional<ProfileRuntimeStateEntity> find(String profile) {
         ProfileRuntimeStateRepository repository = repository();

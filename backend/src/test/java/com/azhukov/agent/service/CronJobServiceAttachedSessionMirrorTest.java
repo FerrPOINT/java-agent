@@ -59,7 +59,7 @@ class CronJobServiceAttachedSessionMirrorTest {
         return new CronJobService(cronJobRepository, agentRuntimeServiceProvider, properties(),
             skillManager, cronExecutionLogRepository, messageRepository,
             new TransactionTemplate(transactions), new CronScheduleParser(),
-            deliveryProvider, sessionRepositoryProvider, null);
+            deliveryProvider, sessionRepositoryProvider, null, new ProfileRuntimeRegistry(null));
     }
 
     private AgentProperties properties() {

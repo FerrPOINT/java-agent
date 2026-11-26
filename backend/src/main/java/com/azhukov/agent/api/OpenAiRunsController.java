@@ -152,10 +152,7 @@ public class OpenAiRunsController {
         final var submissionInstructions = instructions;
         try {
             return profileRuntime.locked(profile, () -> {
-                if (!profileRuntime.acceptsRuns(profile)) {
-                    return openAiError(HttpStatus.SERVICE_UNAVAILABLE, "Profile is stopped",
-                        "server_error", "profile_stopped");
-                }
+                profileRuntime.requireRunning(profile);
                 var options = profileModelRouting.bind(profile, requestOptions(request, modelAlias));
                 String requestedModel = options.boundProfile() == null ? modelAlias : options.modelName();
                 int limit = runAdmissionService.maxConcurrentRuns(profile);
@@ -170,6 +167,8 @@ public class OpenAiRunsController {
                     reservation.get(), submissionKey);
                 return accepted(result, sessionKeyHeader);
             });
+        } catch (ProfileRuntimeRegistry.ProfileStopped e) {
+            return openAiError(HttpStatus.SERVICE_UNAVAILABLE, e.getMessage(), "server_error", "profile_stopped");
         } catch (ProfileModelRouting.ProfileModelUnavailable e) {
             return openAiError(HttpStatus.SERVICE_UNAVAILABLE, e.getMessage(),
                 "server_error", "profile_model_unavailable");

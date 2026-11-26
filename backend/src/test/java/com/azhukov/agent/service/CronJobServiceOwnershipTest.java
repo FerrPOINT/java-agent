@@ -52,7 +52,7 @@ class CronJobServiceOwnershipTest {
         service = new CronJobService(
             cronJobRepository, agentRuntimeServiceProvider, properties, skillManager,
             cronExecutionLogRepository, messageRepository, CronJobServiceTest.unitTransaction(), new com.azhukov.agent.service.CronScheduleParser(),
-            org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class));
+            org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), new ProfileRuntimeRegistry(null));
 
         foreignJob = new CronJobEntity();
         foreignJob.setId(UUID.randomUUID());

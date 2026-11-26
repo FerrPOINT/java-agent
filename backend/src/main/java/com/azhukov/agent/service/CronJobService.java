@@ -94,6 +94,7 @@ private static final String CRON_EXECUTION_HINT = """
     private final ObjectProvider<DeliveryWorkItemService> deliveryWorkItemServiceProvider;
     private final ObjectProvider<com.azhukov.agent.persistence.repository.SessionRepository> sessionRepositoryProvider;
     private final ObjectProvider<GatewayHomeChannelService> gatewayHomeChannelProvider;
+    private final ProfileRuntimeRegistry profileRuntime;
     private EventService eventService;
     private ProfileService profileService;
     private ProfileSkills profileSkills;
@@ -110,7 +111,8 @@ private static final String CRON_EXECUTION_HINT = """
         CronScheduleParser scheduleParser,
         ObjectProvider<DeliveryWorkItemService> deliveryWorkItemServiceProvider,
         ObjectProvider<com.azhukov.agent.persistence.repository.SessionRepository> sessionRepositoryProvider,
-        ObjectProvider<GatewayHomeChannelService> gatewayHomeChannelProvider
+        ObjectProvider<GatewayHomeChannelService> gatewayHomeChannelProvider,
+        ProfileRuntimeRegistry profileRuntime
     ) {
         this.cronJobRepository = cronJobRepository;
         this.agentRuntimeServiceProvider = agentRuntimeServiceProvider;
@@ -123,6 +125,7 @@ private static final String CRON_EXECUTION_HINT = """
         this.deliveryWorkItemServiceProvider = deliveryWorkItemServiceProvider;
         this.sessionRepositoryProvider = sessionRepositoryProvider;
         this.gatewayHomeChannelProvider = gatewayHomeChannelProvider;
+        this.profileRuntime = profileRuntime;
     }
 
     // Daemon thread factory so cron threads don't prevent JVM shutdown
@@ -141,6 +144,7 @@ private static final String CRON_EXECUTION_HINT = """
 
     // h74: Maximum consecutive failures before backing off significantly.
     private static final int MAX_CONSECUTIVE_FAILURES = 5;
+    private static final Duration STOPPED_PROFILE_RETRY = Duration.ofSeconds(5);
     // h74: Base backoff seconds for backend unavailability.
     private static final long BACKEND_UNAVAILABLE_BACKOFF_SECONDS = 300; // 5 minutes
 
@@ -527,6 +531,7 @@ private static final String CRON_EXECUTION_HINT = """
         CronJobEntity entity = cronJobRepository.findById(id)
             .orElseThrow(() -> new IllegalArgumentException("Cron job not found: " + id));
         requireOwnership(entity);
+        requireRunningProfile(entity);
         var origin = com.azhukov.agent.core.security.NativeIdentityOrigin.current();
         scheduler.execute(UserContext.wrap(() -> {
             var previousOrigin = com.azhukov.agent.core.security.NativeIdentityOrigin.current();
@@ -553,6 +558,7 @@ private static final String CRON_EXECUTION_HINT = """
                 throw new IllegalArgumentException("Cron job not found: " + id);
             }
             requireOwnership(entity);
+            requireRunningProfile(entity);
             if (executeJob(entity, extraPrompt) == CronExecutionOutcome.RESULT_NOT_COMMITTED) {
                 throw new IllegalStateException("Cron execution result could not be committed");
             }
@@ -644,8 +650,12 @@ private static final String CRON_EXECUTION_HINT = """
     }
 
     private void scheduleJob(CronJobEntity job, Instant due) {
-        // A missed one-shot that has not been claimed runs when the service comes back.
-        Duration delay = Duration.between(Instant.now(), due);
+        scheduleJob(job, due, due);
+    }
+
+    private void scheduleJob(CronJobEntity job, Instant due, Instant triggerAt) {
+        // Keep the original deadline when a firing is waiting for a stopped profile.
+        Duration delay = Duration.between(Instant.now(), triggerAt);
         long delayMillis = delay.isNegative() ? 0
             : delay.toMillis() + (delay.getNano() % 1_000_000 == 0 ? 0 : 1);
         UUID id = job.getId();
@@ -738,15 +748,24 @@ private static final String CRON_EXECUTION_HINT = """
             if (scheduledTasks.get(jobId) != expected) return;
             CronJobEntity job = cronJobRepository.findById(jobId).orElse(null);
             if (job == null || !job.isEnabled() || job.getConfigurationRevision() != revision || !due.equals(job.getNextRunAt()) || scheduledTasks.get(jobId) != expected) return;
+            requireRunningProfile(job);
             if (job.getConsecutiveFailures() >= MAX_CONSECUTIVE_FAILURES) {
                 finishScheduledRun(jobId, expected, due, revision, CronExecutionOutcome.failure("backoff"));
                 return;
             }
             if (Integer.valueOf(1).equals(job.getRepeatCount())) {
-                executeOneShot(jobId, due, revision);
+                executeOneShot(job, due, revision);
                 return;
             }
             finishScheduledRun(jobId, expected, due, revision, executeJob(job));
+        } catch (ProfileRuntimeRegistry.ProfileStopped stopped) {
+            transactionTemplate.executeWithoutResult(status -> {
+                var job = cronJobRepository.findByIdForUpdate(jobId).orElse(null);
+                if (job != null && job.isEnabled() && job.getConfigurationRevision() == revision
+                    && due.equals(job.getNextRunAt()) && scheduledTasks.get(jobId) == expected) {
+                    scheduleJob(job, due, Instant.now().plus(STOPPED_PROFILE_RETRY));
+                }
+            });
         } catch (Exception e) {
             log.error("Error executing cron job {}", jobId, e);
             finishScheduledRun(jobId, expected, due, revision, null);
@@ -755,8 +774,35 @@ private static final String CRON_EXECUTION_HINT = """
         }
     }
 
-    private void executeOneShot(UUID id, Instant due, long revision) {
-        var claimed = transactionTemplate.execute(status -> {
+    private void requireRunningProfile(CronJobEntity job) {
+        String profile = jobProfile(job);
+        profileRuntime.locked(profile, () -> {
+            profileRuntime.requireRunning(profile);
+            return null;
+        });
+    }
+
+    private void executeOneShot(CronJobEntity scheduled, Instant due, long revision) {
+        UUID id = scheduled.getId();
+        String profile = jobProfile(scheduled);
+        var claimed = profileRuntime.locked(profile, () -> {
+            profileRuntime.requireRunning(profile);
+            return claimOneShot(id, due, revision);
+        });
+        if (claimed == null || !executeJob(claimed).countsTowardRepeat()) {
+            return;
+        }
+        transactionTemplate.executeWithoutResult(status ->
+            cronJobRepository.findByIdForUpdate(id)
+                .filter(job -> !job.isEnabled() && job.getConfigurationRevision() == revision)
+                .ifPresent(job -> {
+                    cronJobRepository.delete(job);
+                    cancelAfterCommit(id);
+                }));
+    }
+
+    private CronJobEntity claimOneShot(UUID id, Instant due, long revision) {
+        return transactionTemplate.execute(status -> {
             var job = cronJobRepository.findByIdForUpdate(id).orElse(null);
             if (job == null || !job.isEnabled() || job.getConfigurationRevision() != revision
                     || !due.equals(job.getNextRunAt())) {
@@ -770,16 +816,6 @@ private static final String CRON_EXECUTION_HINT = """
             updateSchedule(job, null);
             return job;
         });
-        if (claimed == null || !executeJob(claimed).countsTowardRepeat()) {
-            return;
-        }
-        transactionTemplate.executeWithoutResult(status ->
-            cronJobRepository.findByIdForUpdate(id)
-                .filter(job -> !job.isEnabled() && job.getConfigurationRevision() == revision)
-                .ifPresent(job -> {
-                    cronJobRepository.delete(job);
-                    cancelAfterCommit(id);
-                }));
     }
 
     private void finishScheduledRun(UUID id, ScheduledFuture<?> expected, Instant due, long revision, CronExecutionOutcome outcome) {

@@ -24,6 +24,7 @@ import com.azhukov.agent.service.OpenAiResponseStore;
 import com.azhukov.agent.service.OpenAiResponseStore.StoredResponse;
 import com.azhukov.agent.service.OpenAiSessionService;
 import com.azhukov.agent.service.ProfileModelRouting;
+import com.azhukov.agent.service.ProfileRuntimeRegistry;
 import com.azhukov.agent.service.ProfileService;
 import com.azhukov.agent.service.OpenAiSessionService.OpenAiSessionContext;
 import com.fasterxml.jackson.annotation.JsonAlias;
@@ -52,6 +53,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -86,6 +88,7 @@ public class OpenAiResponsesController {
     private final ApiRunAdmissionService runAdmissionService;
     private final ProfileService profiles;
     private final ProfileModelRouting profileModels;
+    private final ProfileRuntimeRegistry profileRuntime;
 
     @PostMapping
     public ResponseEntity<?> createResponse(
@@ -158,52 +161,64 @@ public class OpenAiResponsesController {
         if (routeConflict != null) {
             return openAiError(HttpStatus.BAD_REQUEST, routeConflict, "invalid_request_error");
         }
-        final ModelRequestOptions options;
-        final int limit;
         try {
-            limit = runAdmissionService.maxConcurrentRuns(profile);
-            options = standalone ? requestOptions(request, alias)
-                : profileModels.bind(profile, requestOptions(request, alias));
+            if (!OpenAiRequestBooleans.coerce(request.stream(), false)) {
+                StoredResponse storedPrevious = previous;
+                List<Message> storedPriorHistory = priorHistory;
+                String storedInstructions = instructions;
+                var scope = hasText(idempotencyKey)
+                    ? openAiSessionService.idempotencyScope(standalone ? "responses" : "responses/" + profile, sessionKeyHeader) : null;
+                return idempotencyCache.getOrCompute(
+                    scope,
+                    idempotencyKey,
+                    () -> OpenAiIdempotencyCache.fingerprint(objectMapper, request, sessionIdHeader, sessionKeyHeader),
+                    () -> syncResponse(request, sessionIdHeader, sessionKeyHeader, inputMessages,
+                        storedPriorHistory, storedInstructions, alias, storedPrevious, profile),
+                    replay -> {
+                        UserContext.requireCurrentAccess();
+                        if (replay.sessionId() != null) {
+                            resolveStoredSession(replay.sessionId(), sessionKeyHeader, profile);
+                        }
+                    }
+                ).response();
+            }
+            var admission = admitResponse(profile, request, alias);
+            if (admission.permit().isEmpty()) {
+                return concurrencyLimitedResponse(admission.limit());
+            }
+            var permit = admission.permit().get();
+            try {
+                var sessionContext = resolveSession(sessionIdHeader, sessionKeyHeader,
+                    admission.model(), previous, profile);
+                List<ToolDefinition> tools = buildTools(request, sessionContext.session());
+                List<Message> messages = buildMessages(sessionContext, instructions, priorHistory, inputMessages, request.truncation(), tools);
+                return streamResponse(request, sessionContext, inputMessages, messages, tools,
+                    admission.options(), priorHistory, instructions, admission.model(), permit);
+            } catch (RuntimeException | Error failure) {
+                permit.close();
+                throw failure;
+            }
+        } catch (ProfileRuntimeRegistry.ProfileStopped e) {
+            return openAiError(HttpStatus.SERVICE_UNAVAILABLE, e.getMessage(), "server_error", "profile_stopped", null);
         } catch (ProfileModelRouting.ProfileModelUnavailable | ApiRunAdmissionService.ProfileLimitUnavailable e) {
             return openAiError(HttpStatus.SERVICE_UNAVAILABLE, e.getMessage(), "server_error");
         }
-        String requestedModel = standalone ? alias : options.modelName();
-        if (!OpenAiRequestBooleans.coerce(request.stream(), false)) {
-            StoredResponse storedPrevious = previous;
-            List<Message> storedPriorHistory = priorHistory;
-            String storedInstructions = instructions;
-            var scope = hasText(idempotencyKey)
-                ? openAiSessionService.idempotencyScope(standalone ? "responses" : "responses/" + profile, sessionKeyHeader) : null;
-            return idempotencyCache.getOrCompute(
-                scope,
-                idempotencyKey,
-                () -> OpenAiIdempotencyCache.fingerprint(objectMapper, request, sessionIdHeader, sessionKeyHeader),
-                () -> syncResponse(request, sessionIdHeader, sessionKeyHeader, inputMessages,
-                    storedPriorHistory, storedInstructions, requestedModel, storedPrevious, profile, options, limit),
-                replay -> {
-                    UserContext.requireCurrentAccess();
-                    if (replay.sessionId() != null) {
-                        resolveStoredSession(replay.sessionId(), sessionKeyHeader, profile);
-                    }
-                }
-            ).response();
-        }
-        var reservation = runAdmissionService.tryAcquire(profile, limit);
-        if (reservation.isEmpty()) {
-            return concurrencyLimitedResponse(limit);
-        }
-        var permit = reservation.get();
-        try {
-            OpenAiSessionContext sessionContext = resolveSession(sessionIdHeader, sessionKeyHeader, requestedModel, previous, profile);
-            List<ToolDefinition> tools = buildTools(request, sessionContext.session());
-            List<Message> messages = buildMessages(sessionContext, instructions, priorHistory, inputMessages, request.truncation(), tools);
-            return streamResponse(request, sessionContext, inputMessages, messages, tools,
-                options, priorHistory, instructions, requestedModel, permit);
-        } catch (RuntimeException | Error failure) {
-            permit.close();
-            throw failure;
-        }
     }
+
+    private ResponseAdmission admitResponse(String profile, OpenAiResponsesRequest request, String alias) {
+        return profileRuntime.locked(profile, () -> {
+            profileRuntime.requireRunning(profile);
+            boolean standalone = "default".equals(profile);
+            int limit = runAdmissionService.maxConcurrentRuns(profile);
+            var requested = requestOptions(request, alias);
+            var options = standalone ? requested : profileModels.bind(profile, requested);
+            return new ResponseAdmission(standalone ? alias : options.modelName(), options, limit,
+                runAdmissionService.tryAcquire(profile, limit));
+        });
+    }
+
+    private record ResponseAdmission(String model, ModelRequestOptions options, int limit,
+                                     Optional<ApiRunAdmissionService.Reservation> permit) {}
 
     private OpenAiIdempotencyCache.Result syncResponse(OpenAiResponsesRequest request,
                                            String sessionIdHeader,
@@ -211,22 +226,21 @@ public class OpenAiResponsesController {
                                            List<Message> inputMessages,
                                            List<Message> priorHistory,
                                            String instructions,
-                                           String requestedModel,
+                                           String alias,
                                            StoredResponse previous,
-                                           String profile,
-                                           ModelRequestOptions requestOptions,
-                                           int limit) {
-        var reservation = runAdmissionService.tryAcquire(profile, limit);
-        if (reservation.isEmpty()) {
-            return new OpenAiIdempotencyCache.Result(concurrencyLimitedResponse(limit), null);
+                                           String profile) {
+        var admission = admitResponse(profile, request, alias);
+        if (admission.permit().isEmpty()) {
+            return new OpenAiIdempotencyCache.Result(concurrencyLimitedResponse(admission.limit()), null);
         }
+        String requestedModel = admission.model();
         OpenAiSessionContext sessionContext;
         AgentCallResult result;
-        try (ApiRunAdmissionService.Reservation ignored = reservation.get()) {
+        try (var ignored = admission.permit().get()) {
             sessionContext = resolveSession(sessionIdHeader, sessionKeyHeader, requestedModel, previous, profile);
             List<ToolDefinition> tools = buildTools(request, sessionContext.session());
             List<Message> messages = buildMessages(sessionContext, instructions, priorHistory, inputMessages, request.truncation(), tools);
-            result = runAgent(sessionContext.session(), messages, tools, requestOptions);
+            result = runAgent(sessionContext.session(), messages, tools, admission.options());
         }
         ChatResponse response = result.response();
         openAiSessionService.persistTurn(sessionContext, inputMessages, response, result.generatedMessages());
