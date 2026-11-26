@@ -75,9 +75,9 @@ class CliStateApplierAttachmentsTest {
         Files.writeString(textFile, "hello attachment");
 
         AttachmentArtifactService service = Mockito.mock(AttachmentArtifactService.class);
-        Mockito.when(service.find("att_text", "user-1")).thenReturn(
+        Mockito.when(service.find("att_text", "user-1", "default")).thenReturn(
             Optional.of(artifact("att_text", "text/plain", "notes.txt")));
-        Mockito.when(service.contentPath("att_text", "user-1")).thenReturn(Optional.of(textFile));
+        Mockito.when(service.contentPath("att_text", "user-1", "default")).thenReturn(Optional.of(textFile));
 
         CliStateApplier applier = new CliStateApplier(prov(service));
         ChatRequest out = applier.applyCliState(
@@ -96,9 +96,9 @@ class CliStateApplierAttachmentsTest {
         Files.write(image, new byte[] {1, 2, 3});
 
         AttachmentArtifactService service = Mockito.mock(AttachmentArtifactService.class);
-        Mockito.when(service.find("att_img", "user-1")).thenReturn(
+        Mockito.when(service.find("att_img", "user-1", "default")).thenReturn(
             Optional.of(artifact("att_img", "image/png", "cat.png")));
-        Mockito.when(service.contentPath("att_img", "user-1")).thenReturn(Optional.of(image));
+        Mockito.when(service.contentPath("att_img", "user-1", "default")).thenReturn(Optional.of(image));
 
         CliStateApplier applier = new CliStateApplier(prov(service));
         ChatRequest out = applier.applyCliState(
@@ -114,7 +114,6 @@ class CliStateApplierAttachmentsTest {
     @Test
     void unknownArtifactIdDegradesHonestly() {
         AttachmentArtifactService service = Mockito.mock(AttachmentArtifactService.class);
-        Mockito.when(service.find(anyString())).thenReturn(Optional.empty());
 
         CliStateApplier applier = new CliStateApplier(prov(service));
         ChatRequest out = applier.applyCliState(
@@ -126,7 +125,7 @@ class CliStateApplierAttachmentsTest {
     @Test
     void authenticatedUserCannotInjectAnotherUsersArtifact() {
         AttachmentArtifactService service = Mockito.mock(AttachmentArtifactService.class);
-        Mockito.when(service.find("att_private", "user-a")).thenReturn(Optional.empty());
+        Mockito.when(service.find("att_private", "user-a", "default")).thenReturn(Optional.empty());
         com.azhukov.agent.core.security.UserContext.set("user-a",
             com.azhukov.agent.core.security.UserContext.ROLE_USER);
         try {
@@ -135,8 +134,8 @@ class CliStateApplierAttachmentsTest {
                 requestWith(List.of(AttachmentRef.of("att_private"))), session());
 
             assertThat(out.message()).contains("[unavailable: att_private]");
-            Mockito.verify(service).find("att_private", "user-a");
-            Mockito.verify(service, Mockito.never()).contentPath("att_private", "user-a");
+            Mockito.verify(service).find("att_private", "user-a", "default");
+            Mockito.verify(service, Mockito.never()).contentPath("att_private", "user-a", "default");
         } finally {
             com.azhukov.agent.core.security.UserContext.clear();
         }
@@ -150,11 +149,11 @@ class CliStateApplierAttachmentsTest {
         try {
             com.azhukov.agent.core.security.UserContext.set("gateway", com.azhukov.agent.core.security.UserContext.ROLE_ADMIN);
             applier.applyCliState(request, null);
-            Mockito.verify(service).find("att_private", "sender");
+            Mockito.verify(service).find("att_private", "sender", "default");
             com.azhukov.agent.core.security.UserContext.set("ordinary", com.azhukov.agent.core.security.UserContext.ROLE_USER);
             applier.applyCliState(request, null);
-            Mockito.verify(service).find("att_private", "ordinary");
-            Mockito.verify(service, Mockito.never()).find("att_private");
+            Mockito.verify(service).find("att_private", "ordinary", "default");
+            Mockito.verify(service, Mockito.never()).find("att_private", null, "default");
         } finally {
             com.azhukov.agent.core.security.UserContext.clear();
         }
@@ -171,9 +170,9 @@ class CliStateApplierAttachmentsTest {
             var applier = new CliStateApplier(prov(service));
             applier.applyCliState(request, session);
             applier.applyCliState(request, session);
-            Mockito.verify(service, Mockito.times(2)).find("att_private", "session-owner");
-            Mockito.verify(service, Mockito.never()).find("att_private");
-            Mockito.verify(service, Mockito.never()).contentPath(Mockito.anyString(), Mockito.anyString());
+            Mockito.verify(service, Mockito.times(2)).find("att_private", "session-owner", "default");
+            Mockito.verify(service, Mockito.never()).find("att_private", null, "default");
+            Mockito.verify(service, Mockito.never()).contentPath(Mockito.anyString(), Mockito.anyString(), org.mockito.ArgumentMatchers.eq("default"));
         } finally {
             com.azhukov.agent.core.security.UserContext.clear();
         }
@@ -196,9 +195,9 @@ class CliStateApplierAttachmentsTest {
         Files.writeString(textFile, "x".repeat(10_000));
 
         AttachmentArtifactService service = Mockito.mock(AttachmentArtifactService.class);
-        Mockito.when(service.find("att_big", "user-1")).thenReturn(
+        Mockito.when(service.find("att_big", "user-1", "default")).thenReturn(
             Optional.of(artifact("att_big", "text/plain", "big.txt")));
-        Mockito.when(service.contentPath("att_big", "user-1")).thenReturn(Optional.of(textFile));
+        Mockito.when(service.contentPath("att_big", "user-1", "default")).thenReturn(Optional.of(textFile));
 
         CliStateApplier applier = new CliStateApplier(prov(service));
         ChatRequest out = applier.applyCliState(

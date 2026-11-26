@@ -302,7 +302,7 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
                     ? att.fileName() : "gateway-file.bin";
                 var registration = artifacts.register(
                     source.userId() != null ? source.userId() : "gateway",
-                    "default",
+                    session != null ? session.profile() : "default",
                     session != null ? session.id() : null,
                     event.eventId(),
                     source.platform().name().toLowerCase(java.util.Locale.ROOT),
