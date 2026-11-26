@@ -34,6 +34,10 @@ public class ProfileServiceAccountVerifier {
     }
 
     public String verify(String token, Set<String> expectedScopes) {
+        return verify(token, expectedScopes, Set.of());
+    }
+
+    public String verify(String token, Set<String> requiredScopes, Set<String> optionalScopes) {
         try {
             URI endpoint = URI.create(introspectionEndpoint);
             if (!trustedHttpEndpoint(endpoint) || !"/auth/tokens/introspect".equals(endpoint.getRawPath())
@@ -69,7 +73,8 @@ public class ProfileServiceAccountVerifier {
                     throw new IllegalStateException();
                 }
             }
-            if (!expectedScopes.equals(scopes)) {
+            if (!scopes.containsAll(requiredScopes)
+                || scopes.stream().anyMatch(scope -> !requiredScopes.contains(scope) && !optionalScopes.contains(scope))) {
                 throw new IllegalStateException();
             }
             String subject = proof.path("sub").asText();

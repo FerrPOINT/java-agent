@@ -12,6 +12,7 @@ import com.azhukov.agent.service.ProfileRuntimeRegistry;
 import com.azhukov.agent.service.ProfileService;
 import com.azhukov.agent.tools.workflow.ProjectWorkflowTool;
 import com.azhukov.agent.tools.tracker.TrackerTool;
+import com.azhukov.agent.tools.forge.ForgeTool;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpStatus;
@@ -40,6 +41,7 @@ public class ProfileRuntimeController {
     private final ToolRegistry toolRegistry;
     private final ProjectWorkflowTool workflow;
     private final TrackerTool tracker;
+    private final ForgeTool forge;
 
     @GetMapping
     public Map<String, Object> state(@PathVariable String profile) {
@@ -71,6 +73,9 @@ public class ProfileRuntimeController {
                     "machine_subject", proof.machineSubject(), "workflow_base_url", proof.workflowBaseUrl()));
                 if (toolRegistry.isProfileToolEnabled(TrackerTool.NAME, selected)) {
                     result.put("tracker_base_url", tracker.verifyIdentity(profile, proof.machineSubject()));
+                }
+                if (toolRegistry.isProfileToolEnabled(ForgeTool.NAME, selected)) {
+                    result.put("forge_base_url", forge.verifyIdentity(profile, proof.machineSubject()));
                 }
                 return result;
             });

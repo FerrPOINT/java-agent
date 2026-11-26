@@ -1,5 +1,6 @@
 package com.azhukov.agent.tools.tracker;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.JsonNode;
 
@@ -13,7 +14,8 @@ public record TrackerRunScope(
     @JsonProperty("assignment_id") String assignmentId,
     @JsonProperty("execution_id") String executionId,
     @JsonProperty("machine_subject") String machineSubject,
-    @JsonProperty("assignment_version") long assignmentVersion
+    @JsonProperty("assignment_version") long assignmentVersion,
+    @JsonProperty("forge_session_id") @JsonInclude(JsonInclude.Include.NON_NULL) String forgeSessionId
 ) {
     public static final String METADATA = "fleet_tracker_scope";
 
@@ -23,12 +25,13 @@ public record TrackerRunScope(
             || trackerInstanceId == null || trackerInstanceId.isBlank() || trackerInstanceId.length() > 128
             || !trackerInstanceId.equals(trackerInstanceId.strip())
             || trackerInstanceId.chars().anyMatch(Character::isISOControl)
+            || (forgeSessionId != null && !canonicalId(forgeSessionId))
             || assignmentVersion < 1 || assignmentVersion > 9_007_199_254_740_991L) {
             throw new IllegalArgumentException("Invalid Fleet Tracker assignment");
         }
     }
 
-    static boolean canonicalId(String value) {
+    public static boolean canonicalId(String value) {
         if (value == null || value.length() != 36) {
             return false;
         }

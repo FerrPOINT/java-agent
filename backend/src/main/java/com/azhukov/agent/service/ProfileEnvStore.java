@@ -32,6 +32,7 @@ public class ProfileEnvStore {
         "PROJECT_WORKFLOW_API_TOKEN",
         "PROJECT_WORKFLOW_NAMESPACE_ID",
         "TASKTRACKER_TOKEN",
+        "CICD_API_TOKEN",
         "AGENT_MODEL_BASE_URL",
         "AGENT_WEB_SEARXNG_URL",
         "AGENT_TTS_API_KEY",

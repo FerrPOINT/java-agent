@@ -14,6 +14,7 @@ import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
 import com.azhukov.agent.tools.workflow.ProjectWorkflowTool;
 import com.azhukov.agent.tools.tracker.TrackerTool;
+import com.azhukov.agent.tools.forge.ForgeTool;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.RequiredArgsConstructor;
@@ -67,7 +68,7 @@ public class SpringToolRegistry implements ToolRegistry {
     private static final Set<String> PROFILE_TOOLS = Set.of(
         "read_file", "write_file", "patch", "search_files", "publish_file", "delete_file",
         "skills_list", "skill_view", "skill_manage", "memory", "mcp_tool", "cronjob",
-        ProjectWorkflowTool.NAME, TrackerTool.NAME
+        ProjectWorkflowTool.NAME, TrackerTool.NAME, ForgeTool.NAME
     );
     private static final List<String> HERMES_CORE_TOOLS = List.of(
         "web_search", "web_extract",
@@ -1079,7 +1080,7 @@ public class SpringToolRegistry implements ToolRegistry {
     @Override
     public List<ToolDefinition> getDefinitions() {
         return adaptToolDefinitions(new ArrayList<>(entries.values().stream()
-            .filter(entry -> !(entry.handler() instanceof ProjectWorkflowTool) && !(entry.handler() instanceof TrackerTool))
+            .filter(entry -> !namedProfileOnly(entry))
             .map(ToolEntry::definition).toList()));
     }
 
@@ -1090,7 +1091,7 @@ public class SpringToolRegistry implements ToolRegistry {
         }
         ResolvedToolsetFilter filter = resolveToolsets(toolsets);
         List<ToolDefinition> selected = entries.values().stream()
-            .filter(entry -> !(entry.handler() instanceof ProjectWorkflowTool) && !(entry.handler() instanceof TrackerTool))
+            .filter(entry -> !namedProfileOnly(entry))
             .filter(e -> filter.allTools()
                 || e.isUnscopedDynamic()
                 || (e.toolset() != null && filter.toolsets().contains(e.toolset()))
@@ -1123,6 +1124,11 @@ public class SpringToolRegistry implements ToolRegistry {
         return !configured.isEmpty() && admittedProfileTool(entry, resolveToolsets(configured), configured, session.profile());
     }
 
+    private static boolean namedProfileOnly(ToolEntry entry) {
+        return entry.handler() instanceof ProjectWorkflowTool || entry.handler() instanceof TrackerTool
+            || entry.handler() instanceof ForgeTool;
+    }
+
     private boolean admittedProfileTool(ToolEntry entry, ResolvedToolsetFilter filter, Set<String> configured,
                                         String profile) {
         String name = entry.definition().name();
@@ -1131,6 +1137,9 @@ public class SpringToolRegistry implements ToolRegistry {
         }
         if (entry.handler() instanceof TrackerTool tracker) {
             return configured.contains(name) && tracker.configured(profile);
+        }
+        if (entry.handler() instanceof ForgeTool forge) {
+            return configured.contains(name) && configured.contains(TrackerTool.NAME) && forge.configured(profile);
         }
         if ("mcp_tool".equals(name) || "cronjob".equals(name)) {
             return entry.annotation() != null && configured.contains(name);
@@ -1317,8 +1326,7 @@ public class SpringToolRegistry implements ToolRegistry {
         Set<String> result = new HashSet<>();
         for (ToolEntry e : entries.values()) {
             String toolset = e.toolset();
-            if (toolset != null && !(e.handler() instanceof ProjectWorkflowTool)
-                && !(e.handler() instanceof TrackerTool)) {
+            if (toolset != null && !namedProfileOnly(e)) {
                 result.add(toolset);
             }
         }

@@ -89,21 +89,12 @@ public class TrackerTool implements ToolHandler {
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
-        if (origin == null || session == null || "default".equals(session.profile())
-            || !session.userId().equals("fleet-profile:" + session.profile())
-            || ProfileExecutionConfiguration.current(session.profile()) == null
-            || session.getMetadata(TrackerRunScope.METADATA) == null
-            || !ProjectWorkflowTool.validKey(session.getMetadata(ProjectWorkflowTool.TASK_METADATA))) {
-            return ToolResult.fail("Tracker requires an assignment bound to this Java profile");
-        }
         try {
-            var scope = decode(TrackerRunScope.class, session.getMetadata(TrackerRunScope.METADATA));
             var args = decode(TrackerArgs.class, arguments);
-            String token = credential(session.profile());
-            if (token == null || !scope.machineSubject().equals(serviceAccounts.verify(token, SCOPES))) {
-                return ToolResult.fail("Tracker credential does not belong to this assignment");
-            }
-            String route = "api/v1/issues/" + scope.taskId() + "/sdlc/";
+            var authority = authorize(session);
+            var scope = authority.scope();
+            String token = authority.token();
+            String route = authority.route();
             String key = "java-stage-start:" + scope.executionId();
             Mutation mutation = Mutation.forAction(args.action());
             if (mutation == null && (args.operationKey() != null || args.document() != null)) {
@@ -153,6 +144,8 @@ public class TrackerTool implements ToolHandler {
             return ToolResult.fail("Tracker refused the operation (HTTP " + e.status + ")");
         } catch (com.fasterxml.jackson.core.JsonProcessingException | IllegalArgumentException e) {
             return ToolResult.fail("Invalid Tracker arguments or response");
+        } catch (AssignmentUnavailable e) {
+            return ToolResult.fail(e.getMessage());
         } catch (IllegalStateException e) {
             return ToolResult.fail("Tracker identity or assignment is unavailable");
         } catch (InterruptedException e) {
@@ -160,6 +153,60 @@ public class TrackerTool implements ToolHandler {
             return ToolResult.fail("Tracker operation interrupted. Read the original receipt before retrying");
         } catch (IOException e) {
             return ToolResult.fail("Tracker connection failed. Read the original receipt before retrying");
+        }
+    }
+
+    public BoundSource boundSource(Session session) throws IOException, InterruptedException {
+        var authority = authorize(session);
+        var scope = authority.scope();
+        JsonNode context = read(authority.route() + "context", authority.token());
+        if (!scope.matchesContext(context, session.getMetadata(ProjectWorkflowTool.TASK_METADATA))) {
+            throw new IllegalStateException("Tracker assignment differs");
+        }
+        JsonNode source = read(authority.route() + "source-binding", authority.token()).path("binding");
+        long requirement = context.path("requirement_revision").asLong(0);
+        if (source.path("contract_version").asInt(0) != 1
+            || requirement < 1 || !source.path("requirement_revision").equals(context.path("requirement_revision"))
+            || !scope.taskId().equals(source.path("task_id").asText())
+            || !scope.taskId().equals(source.path("root_task_id").asText())
+            || !scope.projectId().equals(source.path("project_id").asText())
+            || !scope.trackerInstanceId().equals(source.path("tracker_instance_id").asText())
+            || !source.path("namespace").isObject()
+            || !TrackerRunScope.canonicalId(source.path("repository_id").asText())
+            || !TrackerRunScope.canonicalId(source.path("forge_instance_id").asText())) {
+            throw new IllegalStateException("Tracker source scope differs");
+        }
+        return new BoundSource(scope, source, context.path("stage").asText());
+    }
+
+    private RunAuthority authorize(Session session) throws IOException {
+        if (origin == null || session == null || "default".equals(session.profile())
+            || !session.userId().equals("fleet-profile:" + session.profile())
+            || ProfileExecutionConfiguration.current(session.profile()) == null
+            || session.getMetadata(TrackerRunScope.METADATA) == null
+            || !ProjectWorkflowTool.validKey(session.getMetadata(ProjectWorkflowTool.TASK_METADATA))) {
+            throw new AssignmentUnavailable("Tracker requires an assignment bound to this Java profile");
+        }
+        var scope = decode(TrackerRunScope.class, session.getMetadata(TrackerRunScope.METADATA));
+        String token = credential(session.profile());
+        if (token == null || !scope.machineSubject().equals(serviceAccounts.verify(token, SCOPES))) {
+            throw new AssignmentUnavailable("Tracker credential does not belong to this assignment");
+        }
+        return new RunAuthority(scope, token, "api/v1/issues/" + scope.taskId() + "/sdlc/");
+    }
+
+    public record BoundSource(TrackerRunScope scope, JsonNode binding, String stage) {}
+
+    private record RunAuthority(TrackerRunScope scope, String token, String route) {
+        @Override
+        public String toString() {
+            return "Tracker run authority";
+        }
+    }
+
+    private static class AssignmentUnavailable extends IllegalStateException {
+        AssignmentUnavailable(String message) {
+            super(message);
         }
     }
 
