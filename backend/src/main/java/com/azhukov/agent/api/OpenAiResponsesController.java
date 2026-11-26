@@ -159,10 +159,12 @@ public class OpenAiResponsesController {
             return openAiError(HttpStatus.BAD_REQUEST, routeConflict, "invalid_request_error");
         }
         final ModelRequestOptions options;
+        final int limit;
         try {
+            limit = runAdmissionService.maxConcurrentRuns(profile);
             options = standalone ? requestOptions(request, alias)
                 : profileModels.bind(profile, requestOptions(request, alias));
-        } catch (ProfileModelRouting.ProfileModelUnavailable e) {
+        } catch (ProfileModelRouting.ProfileModelUnavailable | ApiRunAdmissionService.ProfileLimitUnavailable e) {
             return openAiError(HttpStatus.SERVICE_UNAVAILABLE, e.getMessage(), "server_error");
         }
         String requestedModel = standalone ? alias : options.modelName();
@@ -177,7 +179,7 @@ public class OpenAiResponsesController {
                 idempotencyKey,
                 () -> OpenAiIdempotencyCache.fingerprint(objectMapper, request, sessionIdHeader, sessionKeyHeader),
                 () -> syncResponse(request, sessionIdHeader, sessionKeyHeader, inputMessages,
-                    storedPriorHistory, storedInstructions, requestedModel, storedPrevious, profile, options),
+                    storedPriorHistory, storedInstructions, requestedModel, storedPrevious, profile, options, limit),
                 replay -> {
                     UserContext.requireCurrentAccess();
                     if (replay.sessionId() != null) {
@@ -186,9 +188,9 @@ public class OpenAiResponsesController {
                 }
             ).response();
         }
-        var reservation = runAdmissionService.tryAcquire();
+        var reservation = runAdmissionService.tryAcquire(profile, limit);
         if (reservation.isEmpty()) {
-            return concurrencyLimitedResponse();
+            return concurrencyLimitedResponse(limit);
         }
         var permit = reservation.get();
         try {
@@ -212,10 +214,11 @@ public class OpenAiResponsesController {
                                            String requestedModel,
                                            StoredResponse previous,
                                            String profile,
-                                           ModelRequestOptions requestOptions) {
-        var reservation = runAdmissionService.tryAcquire();
+                                           ModelRequestOptions requestOptions,
+                                           int limit) {
+        var reservation = runAdmissionService.tryAcquire(profile, limit);
         if (reservation.isEmpty()) {
-            return new OpenAiIdempotencyCache.Result(concurrencyLimitedResponse(), null);
+            return new OpenAiIdempotencyCache.Result(concurrencyLimitedResponse(limit), null);
         }
         OpenAiSessionContext sessionContext;
         AgentCallResult result;
@@ -1236,8 +1239,7 @@ public class OpenAiResponsesController {
         return openAiError(status, message, type, null, null);
     }
 
-    private ResponseEntity<Map<String, Object>> concurrencyLimitedResponse() {
-        int limit = runAdmissionService.maxConcurrentRuns();
+    private ResponseEntity<Map<String, Object>> concurrencyLimitedResponse(int limit) {
         Map<String, Object> error = new LinkedHashMap<>();
         error.put("message", apiErrorText("Too many concurrent runs (max " + limit + ")"));
         error.put("type", "rate_limit_error");

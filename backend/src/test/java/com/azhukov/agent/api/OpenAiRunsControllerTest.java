@@ -108,8 +108,8 @@ class OpenAiRunsControllerTest {
         processTool = mock(ProcessTool.class);
         properties = new AgentProperties();
         properties.getModel().setModelName(MODEL);
-        runAdmissionService = new ApiRunAdmissionService(properties);
         profileService = mock(ProfileService.class);
+        runAdmissionService = new ApiRunAdmissionService(properties, profileService);
         profileModelRouting = new ProfileModelRouting(profileService, null);
 
         runService = new OpenAiRunService(

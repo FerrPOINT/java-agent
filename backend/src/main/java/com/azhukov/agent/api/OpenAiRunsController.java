@@ -164,9 +164,10 @@ public class OpenAiRunsController {
                     return openAiError(HttpStatus.SERVICE_UNAVAILABLE, "Profile is stopped",
                         "server_error", "profile_stopped");
                 }
-                var reservation = runAdmissionService.tryAcquire();
+                int limit = runAdmissionService.maxConcurrentRuns(profile);
+                var reservation = runAdmissionService.tryAcquire(profile, limit);
                 if (reservation.isEmpty()) {
-                    return concurrencyLimitedResponse();
+                    return concurrencyLimitedResponse(limit);
                 }
                 Acceptance result = runService.submit(
                     () -> openAiSessionService.resolveRunSession(sessionId, sessionKeyHeader, requestedModel, profile),
@@ -175,6 +176,8 @@ public class OpenAiRunsController {
                     reservation.get(), submissionKey);
                 return accepted(result, sessionKeyHeader);
             });
+        } catch (ApiRunAdmissionService.ProfileLimitUnavailable e) {
+            return openAiError(HttpStatus.SERVICE_UNAVAILABLE, e.getMessage(), "server_error");
         } catch (OpenAiRunService.IdempotencyConflict e) {
             return idempotencyConflict();
         } catch (OpenAiRunService.DurableAcceptanceUnavailable e) {
@@ -550,8 +553,7 @@ public class OpenAiRunsController {
         return openAiError(status, message, type, null, null);
     }
 
-    private ResponseEntity<Map<String, Object>> concurrencyLimitedResponse() {
-        int limit = runAdmissionService.maxConcurrentRuns();
+    private ResponseEntity<Map<String, Object>> concurrencyLimitedResponse(int limit) {
         Map<String, Object> error = new LinkedHashMap<>();
         error.put("message", apiErrorText("Too many concurrent runs (max " + limit + ")"));
         error.put("type", "rate_limit_error");

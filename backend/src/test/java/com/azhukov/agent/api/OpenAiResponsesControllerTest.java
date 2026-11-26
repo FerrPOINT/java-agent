@@ -103,7 +103,7 @@ class OpenAiResponsesControllerTest {
         objectMapper = new ObjectMapper();
         properties = new AgentProperties();
         properties.getModel().setModelName(MODEL);
-        runAdmissionService = new ApiRunAdmissionService(properties);
+        runAdmissionService = new ApiRunAdmissionService(properties, profiles);
 
         responseStore = new OpenAiResponseStore(objectMapper, null, null);
         OpenAiResponsesController controller = new OpenAiResponsesController(

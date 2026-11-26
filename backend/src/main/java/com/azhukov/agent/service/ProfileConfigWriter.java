@@ -91,6 +91,7 @@ public class ProfileConfigWriter {
         if ("default".equals(profile)) {
             return;
         }
+        ApiRunAdmissionService.configuredLimit(candidate, ApiRunAdmissionService.DEFAULT_MAX_CONCURRENT_RUNS);
         if (hadModel || candidate.containsKey("model")) {
             modelRouting.validateCandidate(profile, candidate);
         }
