@@ -211,12 +211,19 @@ class OpenAiRunsControllerTest {
         OpenAiRunStateMachine stateMachine = mock(OpenAiRunStateMachine.class);
         OpenAiRunStateEntity state = persistedRun("user-a");
         lenient().when(stateMachine.state("run_persisted")).thenReturn(java.util.Optional.of(state));
+        when(stateMachine.replayParsed("run_persisted", 3L, 1)).thenReturn(List.of(
+            new OpenAiRunStateMachine.ParsedEvent(4L, Map.of(
+                "event", "run.completed", "run_id", "run_persisted", "output", "done",
+                "completed", true, "partial", false, "interrupted", false))));
         UserContext.set("user-a", UserContext.ROLE_USER);
 
         durableRunsController(stateMachine).perform(get("/v1/runs/run_persisted"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.run_id").value("run_persisted"))
             .andExpect(jsonPath("$.status").value("completed"))
+            .andExpect(jsonPath("$.completed").value(true))
+            .andExpect(jsonPath("$.partial").value(false))
+            .andExpect(jsonPath("$.interrupted").value(false))
             .andExpect(jsonPath("$.session_id").value(SESSION_ID.toString()))
             .andExpect(jsonPath("$.model").value(MODEL));
     }
@@ -350,6 +357,9 @@ class OpenAiRunsControllerTest {
         JsonNode status = waitForStatus(runId, "completed");
         assertThat(status.path("object").asText()).isEqualTo("hermes.run");
         assertThat(status.path("output").asText()).isEqualTo("done");
+        assertThat(status.path("completed").booleanValue()).isTrue();
+        assertThat(status.path("partial").booleanValue()).isFalse();
+        assertThat(status.path("interrupted").booleanValue()).isFalse();
         assertThat(status.path("usage").path("input_tokens").asInt()).isEqualTo(12);
 
         ArgumentCaptor<Session> sessionCaptor = ArgumentCaptor.forClass(Session.class);

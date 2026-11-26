@@ -57,6 +57,8 @@ public class OpenAiRunService {
     private static final long EVENT_POLL_MS = 500L;
     private static final long EVENT_KEEPALIVE_MS = 15_000L;
     private static final List<String> APPROVAL_CHOICES = List.of("once", "deny");
+    private static final List<String> STATUS_EVENT_FIELDS = List.of(
+        "output", "usage", "error", "pending_steer", "completed", "partial", "interrupted");
 
     private final AgentRuntimeService agentRuntimeService;
     private final OpenAiSessionService openAiSessionService;
@@ -346,6 +348,9 @@ public class OpenAiRunService {
                 Map<String, Object> event = new LinkedHashMap<>();
                 event.put("output", output);
                 event.put("usage", usage);
+                event.put("completed", true);
+                event.put("partial", false);
+                event.put("interrupted", false);
                 synchronized (record) {
                     String pendingSteer = steerBuffer.consume(record.controlSessionId());
                     if (pendingSteer != null && !pendingSteer.isBlank()) event.put("pending_steer", pendingSteer);
@@ -524,7 +529,7 @@ public class OpenAiRunService {
         RunRecord run = new RunRecord(runId, sessionId, sessionId, userId, profile, model);
         run.restoreStatus(status, createdAt, updatedAt);
         run.executionAvailable = false;
-        for (String field : List.of("output", "usage", "error", "pending_steer")) {
+        for (String field : STATUS_EVENT_FIELDS) {
             if (lastEvent.containsKey(field)) run.extra.put(field, lastEvent.get(field));
         }
         if (lastEvent.containsKey("event")) run.extra.put("last_event", lastEvent.get("event"));
@@ -632,7 +637,7 @@ public class OpenAiRunService {
             if (nextStatus != null) status = nextStatus;
             updatedAt = epochSeconds();
             extra.put("last_event", event);
-            for (String key : List.of("output", "usage", "pending_steer", "error")) {
+            for (String key : STATUS_EVENT_FIELDS) {
                 if (fields.containsKey(key)) extra.put(key, fields.get(key));
             }
         }
