@@ -42,7 +42,8 @@ public class IdentityDeletionStore implements IdentityDeletionOwner, IdentityRef
     private final ObjectMapper mapper;
     private static final String OWNER="java-agent";
     private static final Set<String> PROFILE_REFERENCE_SOURCES =
-        Set.of("sessions", "messages", "session_cli_state", "openai_run_states", "openai_run_events");
+        Set.of("sessions", "messages", "session_cli_state", "openai_run_states", "openai_run_events",
+            "memory", "memory_pending", "memory_write_audit", "pending_review_summaries", "attachment_artifacts");
 
     private static final String LOCK="SELECT pg_advisory_xact_lock(714402216006::bigint)";
 

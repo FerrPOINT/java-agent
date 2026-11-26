@@ -1,5 +1,8 @@
 package com.azhukov.agent.service;
 
+import com.azhukov.agent.core.security.ProfileDatabaseScope;
+import org.springframework.transaction.support.TransactionTemplate;
+
 import com.azhukov.agent.persistence.entity.AttachmentArtifactEntity;
 import com.azhukov.agent.persistence.repository.AttachmentArtifactRepository;
 import lombok.RequiredArgsConstructor;
@@ -41,6 +44,7 @@ public class AttachmentArtifactService {
 
     private final ObjectProvider<AttachmentArtifactRepository> repositoryProvider;
     private final ArtifactProcessIsolation artifactProcessIsolation;
+    private final TransactionTemplate transactions;
     private final com.azhukov.agent.persistence.repository.SessionRepository sessions;
 
     @Value("${agent.attachments.cache-root:}")
@@ -365,11 +369,10 @@ public class AttachmentArtifactService {
 
     /** Scheduled wrapper so the TTL sweep actually runs (WP-4 tail: the method existed with zero callers). */
     @org.springframework.scheduling.annotation.Scheduled(fixedDelay = 300_000L, initialDelay = 60_000L)
-    @org.springframework.transaction.annotation.Transactional
     public void scheduledSweep() {
-        try {
-            int removed = sweepExpiredWithinTransaction();
-            if (removed > 0) {
+        try (var scope = ProfileDatabaseScope.enterAttachmentExpiry()) {
+            Integer removed = transactions.execute(status -> sweepExpiredWithinTransaction());
+            if (removed != null && removed > 0) {
                 log.info("Attachment TTL sweep removed {} expired artifact(s)", removed);
             }
         } catch (Exception e) {

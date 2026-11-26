@@ -34,11 +34,10 @@ class McpOAuthFlowRepositoryTest extends PostgresTestContainer {
     @Test
     void flowStateIsUniqueAndLookedUpByHash() {
         McpOAuthFlowEntity flow = transactionTemplate.execute(tx -> {
-            flowRepository.deleteAll();
             McpOAuthFlowEntity entity = new McpOAuthFlowEntity();
             entity.setProfile("default");
             entity.setServerName("srv");
-            entity.setStateHash("hash-" + UUID.randomUUID());
+            entity.setStateHash(UUID.randomUUID().toString().replace("-", "").repeat(2));
             entity.setCodeChallenge("challenge");
             entity.setVerifierEncrypted("enc");
             entity.setRedirectUri("https://local/cb");
@@ -47,7 +46,11 @@ class McpOAuthFlowRepositoryTest extends PostgresTestContainer {
             return flowRepository.save(entity);
         });
 
-        Optional<McpOAuthFlowEntity> found = flowRepository.findByStateHash(flow.getStateHash());
+        Optional<McpOAuthFlowEntity> found = transactionTemplate.execute(tx ->
+            flowRepository.findByStateHashAndProfile(flow.getStateHash(), "default"));
+        assertThat(flowRepository.callbackProfile(flow.getStateHash(), "srv")).contains("default");
+        assertThat(flowRepository.callbackProfile(flow.getStateHash(), "other")).isEmpty();
+        assertThat(flowRepository.findByIdAndProfile(flow.getId(), "alpha")).isEmpty();
         assertThat(found).isPresent();
         assertThat(found.get().getStatus()).isEqualTo("pending");
 

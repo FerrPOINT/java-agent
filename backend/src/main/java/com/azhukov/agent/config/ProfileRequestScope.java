@@ -1,5 +1,6 @@
 package com.azhukov.agent.config;
 
+import com.azhukov.agent.api.McpDashboardController;
 import com.azhukov.agent.api.ProfilesDashboardController;
 import com.azhukov.agent.api.SessionCrudController;
 import com.azhukov.agent.core.security.ProfileDatabaseScope;
@@ -18,14 +19,27 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 @Configuration(proxyBeanMethods = false)
 public class ProfileRequestScope implements WebMvcConfigurer {
 
+    private final AgentProperties properties;
+
+    public ProfileRequestScope(AgentProperties properties) {
+        this.properties = properties;
+    }
+
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
-        registry.addInterceptor(new ProfileInterceptor());
+        registry.addInterceptor(new ProfileInterceptor(
+            com.azhukov.agent.service.McpConfigStore.profileKey(properties.getProfile().getName())));
     }
 
     private static final class ProfileInterceptor implements AsyncHandlerInterceptor {
 
         private static final String BINDING = ProfileInterceptor.class.getName() + ".scope";
+
+        private final String mcpProfile;
+
+        private ProfileInterceptor(String mcpProfile) {
+            this.mcpProfile = mcpProfile;
+        }
 
         @Override
         public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
@@ -43,6 +57,13 @@ public class ProfileRequestScope implements WebMvcConfigurer {
         }
 
         private ProfileDatabaseScope.Binding selectHttpScope(HttpServletRequest request, HandlerMethod method) {
+            if (McpDashboardController.class.isAssignableFrom(method.getBeanType())) {
+                if ("oauthCallback".equals(method.getMethod().getName())) {
+                    // The callback resolves its profile from the persisted state proof.
+                    return null;
+                }
+                return directScope(java.util.Objects.requireNonNullElse(request.getParameter("profile"), mcpProfile));
+            }
             if ("GET".equals(request.getMethod())
                 && ProfilesDashboardController.class.isAssignableFrom(method.getBeanType())) {
                 return switch (method.getMethod().getName()) {

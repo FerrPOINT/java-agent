@@ -289,12 +289,13 @@ public class McpDashboardController {
 
     @GetMapping("/oauth/flows/{flowId}")
     @io.swagger.v3.oas.annotations.Operation(summary = "OAuth flow status (no token values are ever returned)")
-    public ResponseEntity<Map<String, Object>> oauthFlow(@PathVariable String flowId) {
+    public ResponseEntity<Map<String, Object>> oauthFlow(@PathVariable String flowId,
+            @RequestParam(name = "profile", required = false) String profile) {
         com.azhukov.agent.service.McpOAuthFlowService flows = oauthFlows();
         if (flows == null) {
             return notFound("OAuth flow not found or expired");
         }
-        return flows.status(flowId)
+        return flows.status(profileOrRuntime(profile), flowId)
             .<ResponseEntity<Map<String, Object>>>map(flow -> ResponseEntity.ok(Map.of(
                 "flow_id", flowId,
                 "server", flow.getServerName(),
@@ -305,9 +306,10 @@ public class McpDashboardController {
 
     @DeleteMapping("/oauth/flows/{flowId}")
     @io.swagger.v3.oas.annotations.Operation(summary = "Cancel a pending OAuth flow")
-    public Map<String, Object> cancelOAuthFlow(@PathVariable String flowId) {
+    public Map<String, Object> cancelOAuthFlow(@PathVariable String flowId,
+            @RequestParam(name = "profile", required = false) String profile) {
         com.azhukov.agent.service.McpOAuthFlowService flows = oauthFlows();
-        boolean cancelled = flows != null && flows.cancel(flowId);
+        boolean cancelled = flows != null && flows.cancel(profileOrRuntime(profile), flowId);
         return Map.of("ok", true, "status", cancelled ? "cancelled" : "expired");
     }
 
@@ -329,7 +331,10 @@ public class McpDashboardController {
             return html(ResponseEntity.ok(),
                 "<h1>Authorization failed</h1><p>" + escapeHtml(error) + "</p>");
         }
-        Map<String, Object> result = flows.complete(cleanName, code, state);
+        Map<String, Object> result = flows.callbackProfile(cleanName, state)
+            .map(profile -> com.azhukov.agent.core.security.ProfileDatabaseScope.call(profile,
+                () -> flows.complete(profile, cleanName, code, state)))
+            .orElseGet(() -> Map.of("ok", false, "detail", "unknown or already used state"));
         boolean ok = Boolean.TRUE.equals(result.get("ok"));
         String detail = String.valueOf(result.getOrDefault("detail", result.get("status")));
         return html(ResponseEntity.ok(),

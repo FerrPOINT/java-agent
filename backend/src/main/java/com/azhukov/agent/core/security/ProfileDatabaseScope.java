@@ -33,6 +33,10 @@ public final class ProfileDatabaseScope {
         return enterScope(HISTORY_OVERVIEW);
     }
 
+    public static Binding enterAttachmentExpiry() {
+        return enterScope("!attachment_expiry");
+    }
+
     public static <T> T call(String profile, Supplier<T> work) {
         try (var scope = enter(profile)) {
             return work.get();

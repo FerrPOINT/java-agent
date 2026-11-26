@@ -23,6 +23,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -63,7 +64,13 @@ class AttachmentArtifactServiceTest {
     }
 
     private AttachmentArtifactService service() {
-        AttachmentArtifactService service = new AttachmentArtifactService(prov(repository), new ArtifactProcessIsolation(), sessions);
+        var transactions = mock(org.springframework.transaction.support.TransactionTemplate.class);
+        lenient().when(transactions.execute(any())).thenAnswer(call -> {
+            org.springframework.transaction.support.TransactionCallback<?> callback = call.getArgument(0);
+            return callback.doInTransaction(mock(org.springframework.transaction.TransactionStatus.class));
+        });
+        AttachmentArtifactService service = new AttachmentArtifactService(
+            prov(repository), new ArtifactProcessIsolation(), transactions, sessions);
         ReflectionTestUtils.setField(service, "cacheRootConfig", tempDir.toString());
         lenient().when(repository.save(any(AttachmentArtifactEntity.class)))
             .thenAnswer(inv -> inv.getArgument(0));

@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import com.azhukov.agent.core.security.ProfileDatabaseScope;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -547,13 +548,13 @@ public class MemoryManager {
  }
  }
  }
- syncExecutor.submit(() -> {
+ syncExecutor.submit(ProfileDatabaseScope.carry(() -> {
  try {
  task.run();
  } catch (Exception e) {
      log.warn("Memory background task failed: {}", e.getMessage());
  }
- });
+ }));
  }
 
  /**

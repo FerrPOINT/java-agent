@@ -24,6 +24,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import com.azhukov.agent.core.security.ProfileDatabaseScope;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -210,7 +211,7 @@ public class BackgroundReviewService {
          log.debug("Skipping background review because one is already active for session {}", sessionId);
          return;
      }
-     executor.schedule(() -> {
+     executor.schedule(ProfileDatabaseScope.carry(() -> {
          try {
              if (isCancelled(run)) {
                  log.debug("Background review cancelled before start for session {}", sessionId);
@@ -222,7 +223,7 @@ public class BackgroundReviewService {
          } finally {
              endReview(sessionId, run);
          }
-     }, delayMs, TimeUnit.MILLISECONDS);
+     }), delayMs, TimeUnit.MILLISECONDS);
  }
 
  /**

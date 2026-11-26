@@ -2,6 +2,7 @@ package com.azhukov.agent.client.mcp;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.service.McpConfigStore;
+import com.azhukov.agent.core.security.ProfileDatabaseScope;
 import com.azhukov.agent.persistence.entity.McpServerConfigEntity;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
@@ -258,7 +259,8 @@ public class McpLifecycleManager {
         var store = configStoreProvider == null ? null : configStoreProvider.getIfAvailable();
         if (store != null) {
             try {
-                for (var entity : store.list(runtimeProfile())) {
+                String profile = runtimeProfile();
+                for (var entity : ProfileDatabaseScope.call(profile, () -> store.list(profile))) {
                     if (entity.getName() != null && names.add(entity.getName())) {
                         merged.add(new ConfiguredServer(toServerProperties(entity), entity));
                     }
@@ -382,6 +384,11 @@ public class McpLifecycleManager {
     }
 
     private void connectAttempt(ConfiguredServer server, ConnectionAttempt owner, CompletableFuture<Void> handshake,
+                                boolean allowLazy, int nextRetry, boolean initial) {
+        ProfileDatabaseScope.run(runtimeProfile(), () -> connectScoped(server, owner, handshake, allowLazy, nextRetry, initial));
+    }
+
+    private void connectScoped(ConfiguredServer server, ConnectionAttempt owner, CompletableFuture<Void> handshake,
                                 boolean allowLazy, int nextRetry, boolean initial) {
         String name = server.properties().getName();
         try {
@@ -1144,7 +1151,8 @@ public class McpLifecycleManager {
         if (store == null) {
             return null;
         }
-        return store.find(runtimeProfile(), name).filter(McpServerConfigEntity::isEnabled)
+        String profile = runtimeProfile();
+        return ProfileDatabaseScope.call(profile, () -> store.find(profile, name)).filter(McpServerConfigEntity::isEnabled)
             .map(config -> new ConfiguredServer(toServerProperties(config), config))
             .orElse(null);
     }
@@ -1245,6 +1253,10 @@ public class McpLifecycleManager {
     }
 
     private void refreshTools(String serverName, McpServerState state) {
+        ProfileDatabaseScope.run(runtimeProfile(), () -> refreshScopedTools(serverName, state));
+    }
+
+    private void refreshScopedTools(String serverName, McpServerState state) {
         if (state == null) {
             return;
         }
@@ -1842,7 +1854,12 @@ public class McpLifecycleManager {
         if (remaining <= 0) {
             throw new TimeoutException("MCP deadline expired before " + operation);
         }
-        Future<T> future = toolCallExecutor.submit(action);
+        String profile = java.util.Objects.requireNonNullElse(ProfileDatabaseScope.current(), runtimeProfile());
+        Future<T> future = toolCallExecutor.submit(() -> {
+            try (var ignored = ProfileDatabaseScope.enter(profile)) {
+                return action.call();
+            }
+        });
         try {
             return future.get(remainingNanos(timeout, startedAt), TimeUnit.NANOSECONDS);
         } catch (TimeoutException e) {

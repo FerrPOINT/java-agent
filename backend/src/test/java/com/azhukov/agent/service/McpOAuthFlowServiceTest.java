@@ -131,14 +131,14 @@ class McpOAuthFlowServiceTest {
 
     @Test
     void completeRejectsUnknownState() {
-        Map<String, Object> result = service().complete("srv", "code", "unknown-state");
+        Map<String, Object> result = service().complete("default", "srv", "code", "unknown-state");
         assertThat(result).containsEntry("ok", false);
         assertThat(String.valueOf(result.get("detail"))).contains("unknown or already used");
     }
 
     @Test
     void completeRejectsMissingParams() {
-        Map<String, Object> result = service().complete("srv", null, null);
+        Map<String, Object> result = service().complete("default", "srv", null, null);
         assertThat(result).containsEntry("ok", false);
         assertThat(String.valueOf(result.get("detail"))).contains("missing state or code");
     }
@@ -147,10 +147,10 @@ class McpOAuthFlowServiceTest {
     void completeRejectsExpiredFlow() {
         McpOAuthFlowEntity flow = pendingFlow("srv");
         flow.setExpiresAt(Instant.now().minusSeconds(1));
-        when(flowRepository.findByStateHash(any(String.class))).thenReturn(Optional.of(flow));
+        when(flowRepository.findByStateHashAndProfile(any(String.class), eq("default"))).thenReturn(Optional.of(flow));
         when(flowRepository.save(any(McpOAuthFlowEntity.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        Map<String, Object> result = service().complete("srv", "code", "state");
+        Map<String, Object> result = service().complete("default", "srv", "code", "state");
 
         assertThat(result).containsEntry("ok", false);
         assertThat(String.valueOf(result.get("detail"))).contains("expired");
@@ -160,10 +160,10 @@ class McpOAuthFlowServiceTest {
     @Test
     void completeRejectsWrongServer() {
         McpOAuthFlowEntity flow = pendingFlow("other");
-        when(flowRepository.findByStateHash(any(String.class))).thenReturn(Optional.of(flow));
+        when(flowRepository.findByStateHashAndProfile(any(String.class), eq("default"))).thenReturn(Optional.of(flow));
         when(flowRepository.save(any(McpOAuthFlowEntity.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        Map<String, Object> result = service().complete("srv", "code", "state");
+        Map<String, Object> result = service().complete("default", "srv", "code", "state");
 
         assertThat(result).containsEntry("ok", false);
         assertThat(String.valueOf(result.get("detail"))).contains("does not match");
@@ -174,9 +174,9 @@ class McpOAuthFlowServiceTest {
     void completeRejectsNonPendingFlow() {
         McpOAuthFlowEntity flow = pendingFlow("srv");
         flow.setStatus("completed");
-        when(flowRepository.findByStateHash(any(String.class))).thenReturn(Optional.of(flow));
+        when(flowRepository.findByStateHashAndProfile(any(String.class), eq("default"))).thenReturn(Optional.of(flow));
 
-        Map<String, Object> result = service().complete("srv", "code", "state");
+        Map<String, Object> result = service().complete("default", "srv", "code", "state");
 
         assertThat(result).containsEntry("ok", false);
         assertThat(String.valueOf(result.get("detail"))).contains("already used");
@@ -186,13 +186,13 @@ class McpOAuthFlowServiceTest {
     @Test
     void cancelOnlyPendingFlows() {
         McpOAuthFlowEntity flow = pendingFlow("srv");
-        when(flowRepository.findById(flow.getId())).thenReturn(Optional.of(flow));
+        when(flowRepository.lockByIdAndProfile(flow.getId(), "default")).thenReturn(Optional.of(flow));
         when(flowRepository.save(any(McpOAuthFlowEntity.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        assertThat(service().cancel(flow.getId().toString())).isTrue();
+        assertThat(service().cancel("default", flow.getId().toString())).isTrue();
         assertThat(flow.getStatus()).isEqualTo("cancelled");
 
-        assertThat(service().cancel(flow.getId().toString())).isFalse(); // no longer pending
+        assertThat(service().cancel("default", flow.getId().toString())).isFalse(); // no longer pending
     }
 
     @Test
@@ -237,12 +237,12 @@ class McpOAuthFlowServiceTest {
             McpOAuthFlowEntity flow = pendingFlow("srv");
             flow.setProfile("research");
             config.setProfile("research");
-            when(flowRepository.findByStateHash(any(String.class))).thenReturn(Optional.of(flow));
+            when(flowRepository.findByStateHashAndProfile(any(String.class), eq("default"))).thenReturn(Optional.of(flow));
             when(configStore.find("research", "srv")).thenReturn(Optional.of(config));
             McpOAuthFlowService service = service();
             Instant before = Instant.now();
 
-            Map<String, Object> result = service.complete("srv", "code +/&", "state");
+            Map<String, Object> result = service.complete("default", "srv", "code +/&", "state");
 
             assertThat(result).containsEntry("ok", true).containsEntry("expires_in", expectedTtl)
                 .doesNotContainKeys("access_token", "refresh_token", "code_verifier");
@@ -256,7 +256,7 @@ class McpOAuthFlowServiceTest {
             assertThat(expiry.getValue()).isBetween(before.plusSeconds(expectedTtl), Instant.now().plusSeconds(expectedTtl));
             verify(flowRepository).save(flow);
 
-            assertThat(service.complete("srv", "another-code", "state")).containsEntry("ok", false);
+            assertThat(service.complete("default", "srv", "another-code", "state")).containsEntry("ok", false);
             assertThat(exchanges.get()).isEqualTo(1);
         } finally {
             server.stop(0);
@@ -275,9 +275,9 @@ class McpOAuthFlowServiceTest {
         try {
             var config = config("srv");
             config.setOauthTokenUrl("http://127.0.0.1:" + server.getAddress().getPort() + "/token");
-            when(flowRepository.findByStateHash(any(String.class))).thenReturn(Optional.of(pendingFlow("srv")));
+            when(flowRepository.findByStateHashAndProfile(any(String.class), eq("default"))).thenReturn(Optional.of(pendingFlow("srv")));
             when(configStore.find("default", "srv")).thenReturn(Optional.of(config));
-            assertThatThrownBy(() -> service().complete("srv", "code", "state"))
+            assertThatThrownBy(() -> service().complete("default", "srv", "code", "state"))
                 .hasMessageContaining("400").hasMessageNotContaining("sensitive-canary");
             verify(oauthManager, never()).storeToken(any(), any(), any(), any(), any(), any());
         } finally {
@@ -298,9 +298,9 @@ class McpOAuthFlowServiceTest {
             var config = config("srv");
             config.setOauthTokenUrl("http://127.0.0.1:" + server.getAddress().getPort() + "/token");
             var flow = pendingFlow("srv");
-            when(flowRepository.findByStateHash(any(String.class))).thenReturn(Optional.of(flow));
+            when(flowRepository.findByStateHashAndProfile(any(String.class), eq("default"))).thenReturn(Optional.of(flow));
             when(configStore.find("default", "srv")).thenReturn(Optional.of(config));
-            assertThat(service().complete("srv", "code", "state")).containsEntry("ok", false);
+            assertThat(service().complete("default", "srv", "code", "state")).containsEntry("ok", false);
             verify(oauthManager, never()).storeToken(any(), any(), any(), any(), any(), any());
             assertThat(flow.getStatus()).isEqualTo("failed");
         } finally {
@@ -311,10 +311,10 @@ class McpOAuthFlowServiceTest {
     @Test
     void completeRejectsDisappearedConfigurationWithoutStoringToken() {
         McpOAuthFlowEntity flow = pendingFlow("srv");
-        when(flowRepository.findByStateHash(any(String.class))).thenReturn(Optional.of(flow));
+        when(flowRepository.findByStateHashAndProfile(any(String.class), eq("default"))).thenReturn(Optional.of(flow));
         when(configStore.find("default", "srv")).thenReturn(Optional.empty());
 
-        assertThat(service().complete("srv", "code", "state"))
+        assertThat(service().complete("default", "srv", "code", "state"))
             .containsEntry("ok", false).containsEntry("detail", "server OAuth configuration disappeared");
         assertThat(flow.getStatus()).isEqualTo("failed");
         verify(flowRepository).save(flow);

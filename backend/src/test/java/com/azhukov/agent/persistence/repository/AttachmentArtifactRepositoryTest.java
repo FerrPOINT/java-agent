@@ -137,7 +137,7 @@ class AttachmentArtifactRepositoryTest extends PostgresTestContainer {
             new org.springframework.beans.factory.ObjectProvider<>() {
                 @Override public AttachmentArtifactRepository getObject() { return repository; }
                 @Override public AttachmentArtifactRepository getIfAvailable() { return repository; }
-            }, new com.azhukov.agent.service.ArtifactProcessIsolation(), sessions);
+            }, new com.azhukov.agent.service.ArtifactProcessIsolation(), transactionTemplate, sessions);
         org.springframework.test.util.ReflectionTestUtils.setField(service, "cacheRootConfig", cache.toString());
 
         var rejected = service.register("user-1", "default", foreign.getId(), null, "cli", "document",
@@ -352,7 +352,7 @@ class AttachmentArtifactRepositoryTest extends PostgresTestContainer {
             new org.springframework.beans.factory.ObjectProvider<>() {
                 @Override public AttachmentArtifactRepository getObject() { return repository; }
                 @Override public AttachmentArtifactRepository getIfAvailable() { return repository; }
-            }, null, sessions);
+            }, null, transactionTemplate, sessions);
         org.springframework.test.util.ReflectionTestUtils.setField(service, "cacheRootConfig", cache.toString());
 
         assertThat(transactionTemplate.<Integer>execute(tx -> service.sweepExpired())).isEqualTo(2);
