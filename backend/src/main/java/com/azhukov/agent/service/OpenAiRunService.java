@@ -89,6 +89,10 @@ public class OpenAiRunService {
 
     public static final class DurableAcceptanceUnavailable extends RuntimeException {}
 
+    public boolean durableAcceptanceConfigured() {
+        return stateMachine() != null;
+    }
+
     /** Read a previously committed acceptance without opening a session or dispatching again. */
     public Optional<Acceptance> replay(SubmissionKey key) {
         OpenAiRunStateMachine machine = stateMachine();

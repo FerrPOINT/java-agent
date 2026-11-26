@@ -1,16 +1,25 @@
 package com.azhukov.agent.api;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.core.tool.ToolRegistry;
+import com.azhukov.agent.service.OpenAiRunService;
+import com.azhukov.agent.service.ProfileModelRouting;
+import com.azhukov.agent.service.ProfileService;
+import com.azhukov.agent.service.ProfileSkills;
 import com.azhukov.agent.service.RuntimeConfigService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.env.Environment;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -34,6 +43,11 @@ public class CapabilitiesController {
     private final ToolRegistry toolRegistry;
     private final SkillManager skillManager;
     private final RuntimeConfigService runtimeConfigService;
+    private final ProfileService profiles;
+    private final ProfileModelRouting models;
+    private final ProfileSkills profileSkills;
+    private final OpenAiRunService runs;
+    private final Environment environment;
 
     private static final List<String> BROWSER_CONTROL_CAPABILITIES = List.of(
         "browser_back",
@@ -68,7 +82,10 @@ public class CapabilitiesController {
 
     @GetMapping
     @Operation(summary = "List agent capabilities, features, and available endpoints")
-    public Map<String, Object> capabilities() {
+    public Map<String, Object> capabilities(@PathVariable(name = "profile", required = false) String profile) {
+        if (profile != null && !"default".equals(profile)) {
+            return profileCapabilities(profile);
+        }
         String model = resolveModel();
 
         Map<String, Object> features = new LinkedHashMap<>();
@@ -76,12 +93,7 @@ public class CapabilitiesController {
         features.put("chat_completions_streaming", true);
         features.put("responses_api", true);
         features.put("responses_streaming", true);
-        features.put("run_submission", true);
-        features.put("run_status", true);
-        features.put("run_events_sse", true);
-        features.put("run_stop", true);
-        features.put("run_steer", true);
-        features.put("run_approval_response", true);
+        addRunFeatures(features);
         features.put("tool_progress_events", true);
         // Real configured state — /approvals in clients (e.g. Telegram bot)
         // derives manual/off from this flag (agent.security.approvals-enabled).
@@ -112,12 +124,7 @@ public class CapabilitiesController {
         endpoints.put("toolsets", Map.of("method", "GET", "path", "/v1/toolsets"));
         endpoints.put("chat_completions", Map.of("method", "POST", "path", "/v1/chat/completions"));
         endpoints.put("responses", Map.of("method", "POST", "path", "/v1/responses"));
-        endpoints.put("runs", Map.of("method", "POST", "path", "/v1/runs"));
-        endpoints.put("run_status", Map.of("method", "GET", "path", "/v1/runs/{run_id}"));
-        endpoints.put("run_events", Map.of("method", "GET", "path", "/v1/runs/{run_id}/events"));
-        endpoints.put("run_approval", Map.of("method", "POST", "path", "/v1/runs/{run_id}/approval"));
-        endpoints.put("run_steer", Map.of("method", "POST", "path", "/v1/runs/{run_id}/steer"));
-        endpoints.put("run_stop", Map.of("method", "POST", "path", "/v1/runs/{run_id}/stop"));
+        addRunEndpoints(endpoints);
         endpoints.put("sessions", Map.of("method", "GET", "path", "/api/sessions"));
         endpoints.put("session_create", Map.of("method", "POST", "path", "/api/sessions"));
         endpoints.put("session", Map.of("method", "GET", "path", "/api/sessions/{session_id}"));
@@ -134,12 +141,6 @@ public class CapabilitiesController {
         endpoints.put("artifact_download", Map.of("method", "GET", "path", "/v1/artifacts/download/{artifact_id}"));
         endpoints.put("skills", Map.of("method", "GET", "path", "/v1/skills"));
 
-        Map<String, Object> auth = new LinkedHashMap<>();
-        auth.put("type", "bearer");
-        auth.put("required", properties.getSecurity() != null
-            && properties.getSecurity().getApiKey() != null
-            && !properties.getSecurity().getApiKey().isBlank());
-
         Map<String, Object> runtime = new LinkedHashMap<>();
         runtime.put("mode", "server_agent");
         runtime.put("tool_execution", "server");
@@ -153,7 +154,7 @@ public class CapabilitiesController {
             "object", "java-agent.api_server.capabilities",
             "platform", "java-agent",
             "model", model,
-            "auth", auth,
+            "auth", auth(),
             "runtime", runtime,
             "features", features,
             "endpoints", endpoints,
@@ -161,6 +162,72 @@ public class CapabilitiesController {
             "skills_count", skillManager.listSkillNames().size(),
             "tools_count", toolRegistry.getDefinitions().size()
         );
+    }
+
+    private Map<String, Object> profileCapabilities(String profile) {
+        if (!profiles.isValidNamedProfileName(profile) || !profiles.knownProfile(profile)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Unknown profile");
+        }
+        try {
+            var model = models.bind(profile, null).modelName();
+            var session = Session.create("capabilities", "openai-compatible", model)
+                .withMetadata("profile", profile).withMetadata("platform", "api_server");
+            var definitions = toolRegistry.getProfileDefinitions(session);
+            var skills = profileSkills.forProfile(profile).listSkills();
+            Map<String, Object> features = new LinkedHashMap<>();
+            addRunFeatures(features);
+            features.put("skills_api", true);
+            features.put("approval_events", properties.getSecurity().isApprovalsEnabled());
+            Map<String, Object> endpoints = new LinkedHashMap<>();
+            addRunEndpoints(endpoints);
+            endpoints.put("capabilities", Map.of("method", "GET", "path", "/v1/capabilities"));
+            endpoints.put("skills", Map.of("method", "GET", "path", "/v1/skills"));
+            return Map.of(
+                "object", "java-agent.api_server.capabilities",
+                "platform", "java-agent",
+                "profile", profile,
+                "model", model,
+                "auth", auth(),
+                "runtime", Map.of("mode", "server_agent", "tool_execution", "server", "split_runtime", false),
+                "features", features,
+                "endpoints", endpoints,
+                "skills_count", skills.stream().filter(skill -> !skill.disabled()).count(),
+                "tools_count", definitions.size()
+            );
+        } catch (ProfileModelRouting.ProfileModelUnavailable | IllegalStateException e) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Profile configuration is unavailable");
+        }
+    }
+
+    private Map<String, Object> auth() {
+        boolean required = environment.getProperty("agent.central-auth.enabled", Boolean.class, false)
+            || (properties.getSecurity() != null && properties.getSecurity().getApiKey() != null
+                && !properties.getSecurity().getApiKey().isBlank());
+        return Map.of("type", "bearer", "required", required);
+    }
+
+    private void addRunFeatures(Map<String, Object> features) {
+        features.put("run_submission", true);
+        features.put("run_status", true);
+        features.put("run_events_sse", true);
+        features.put("run_stop", true);
+        features.put("run_steer", true);
+        features.put("run_approval_response", true);
+        boolean configured = runs.durableAcceptanceConfigured();
+        Map<String, Object> idempotency = new LinkedHashMap<>();
+        idempotency.put("supported", configured);
+        idempotency.put("durable", configured);
+        idempotency.put("retention_seconds", null);
+        features.put("runs_idempotency", idempotency);
+    }
+
+    private void addRunEndpoints(Map<String, Object> endpoints) {
+        endpoints.put("runs", Map.of("method", "POST", "path", "/v1/runs"));
+        endpoints.put("run_status", Map.of("method", "GET", "path", "/v1/runs/{run_id}"));
+        endpoints.put("run_events", Map.of("method", "GET", "path", "/v1/runs/{run_id}/events"));
+        endpoints.put("run_approval", Map.of("method", "POST", "path", "/v1/runs/{run_id}/approval"));
+        endpoints.put("run_steer", Map.of("method", "POST", "path", "/v1/runs/{run_id}/steer"));
+        endpoints.put("run_stop", Map.of("method", "POST", "path", "/v1/runs/{run_id}/stop"));
     }
 
     private Map<String, Object> browserExtensionControl() {
