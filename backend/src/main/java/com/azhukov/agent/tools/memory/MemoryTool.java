@@ -369,7 +369,7 @@ public class MemoryTool implements ToolHandler {
         response.put("success", false);
         String entries;
         try {
-            entries = memoryProvider.read(session.userId(), target);
+            entries = memoryProvider.read(memoryUserId, target);
         } catch (Exception e) {
             entries = "";
         }
