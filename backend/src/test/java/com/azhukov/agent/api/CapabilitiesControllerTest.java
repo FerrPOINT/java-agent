@@ -66,7 +66,8 @@ class CapabilitiesControllerTest {
         runs = mock(OpenAiRunService.class);
         mockMvc = MockMvcBuilders.standaloneSetup(new CapabilitiesController(
             properties, toolRegistry, skillManager, runtimeConfigService,
-            profiles, profileModels, profileSkills, runs, new org.springframework.mock.env.MockEnvironment())).build();
+            profiles, profileModels, profileSkills, runs, new com.azhukov.agent.service.ProfileRuntimeRegistry(null),
+            new org.springframework.mock.env.MockEnvironment())).build();
     }
 
     @Test
@@ -230,7 +231,8 @@ class CapabilitiesControllerTest {
 
         var controller = new CapabilitiesController(
             properties, toolRegistry, skillManager, runtimeConfigService,
-            profiles, profileModels, profileSkills, runs, new org.springframework.mock.env.MockEnvironment());
+            profiles, profileModels, profileSkills, runs, new com.azhukov.agent.service.ProfileRuntimeRegistry(null),
+            new org.springframework.mock.env.MockEnvironment());
         var result = controller.capabilities(null);
         assertThat(result).containsEntry("platform", "java-agent");
         assertThat(result).containsKey("features");

@@ -47,6 +47,7 @@ public class CapabilitiesController {
     private final ProfileModelRouting models;
     private final ProfileSkills profileSkills;
     private final OpenAiRunService runs;
+    private final com.azhukov.agent.service.ProfileRuntimeRegistry profileRuntime;
     private final Environment environment;
 
     private static final List<String> BROWSER_CONTROL_CAPABILITIES = List.of(
@@ -167,6 +168,9 @@ public class CapabilitiesController {
     private Map<String, Object> profileCapabilities(String profile) {
         if (!profiles.isValidNamedProfileName(profile) || !profiles.knownProfile(profile)) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Unknown profile");
+        }
+        if (!profileRuntime.acceptsRuns(profile)) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Profile is stopped");
         }
         try {
             var model = models.bind(profile, null).modelName();

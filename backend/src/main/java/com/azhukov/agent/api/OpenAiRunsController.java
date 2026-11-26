@@ -22,6 +22,7 @@ import com.azhukov.agent.service.OpenAiRunService.RunRecord;
 import com.azhukov.agent.service.OpenAiSessionService;
 import com.azhukov.agent.service.ProfileService;
 import com.azhukov.agent.service.ProfileModelRouting;
+import com.azhukov.agent.service.ProfileRuntimeRegistry;
 import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -66,6 +67,7 @@ public class OpenAiRunsController {
     private final ApiRunAdmissionService runAdmissionService;
     private final ProfileService profileService;
     private final ProfileModelRouting profileModelRouting;
+    private final ProfileRuntimeRegistry profileRuntime;
     private final org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.service.OpenAiRunStateMachine> runStateMachineProvider;
 
     @PostMapping
@@ -154,17 +156,25 @@ public class OpenAiRunsController {
                 "server_error", "profile_model_unavailable");
         }
         String requestedModel = options.boundProfile() == null ? modelAlias : options.modelName();
-        var reservation = runAdmissionService.tryAcquire();
-        if (reservation.isEmpty()) {
-            return concurrencyLimitedResponse();
-        }
+        final var submissionKey = key;
+        final var submissionInstructions = instructions;
         try {
-            Acceptance result = runService.submit(
-                () -> openAiSessionService.resolveRunSession(sessionId, sessionKeyHeader, requestedModel, profile),
-                input.userMessage(), requestedModel, options, instructions, parsedHistory.messages(),
-                hasExplicitConversationHistory(request) ? null : previousSessionId,
-                reservation.get(), key);
-            return accepted(result, sessionKeyHeader);
+            return profileRuntime.locked(profile, () -> {
+                if (!profileRuntime.acceptsRuns(profile)) {
+                    return openAiError(HttpStatus.SERVICE_UNAVAILABLE, "Profile is stopped",
+                        "server_error", "profile_stopped");
+                }
+                var reservation = runAdmissionService.tryAcquire();
+                if (reservation.isEmpty()) {
+                    return concurrencyLimitedResponse();
+                }
+                Acceptance result = runService.submit(
+                    () -> openAiSessionService.resolveRunSession(sessionId, sessionKeyHeader, requestedModel, profile),
+                    input.userMessage(), requestedModel, options, submissionInstructions, parsedHistory.messages(),
+                    hasExplicitConversationHistory(request) ? null : previousSessionId,
+                    reservation.get(), submissionKey);
+                return accepted(result, sessionKeyHeader);
+            });
         } catch (OpenAiRunService.IdempotencyConflict e) {
             return idempotencyConflict();
         } catch (OpenAiRunService.DurableAcceptanceUnavailable e) {

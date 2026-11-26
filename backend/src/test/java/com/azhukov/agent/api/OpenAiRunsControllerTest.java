@@ -136,6 +136,7 @@ class OpenAiRunsControllerTest {
             runAdmissionService,
             profileService,
             profileModelRouting,
+            new com.azhukov.agent.service.ProfileRuntimeRegistry(null),
             null
         );
 
@@ -287,7 +288,7 @@ class OpenAiRunsControllerTest {
             objectMapper, processTool, provider);
         var controller = new OpenAiRunsController(
             runService, openAiSessionService, responseStore, Mappers.getMapper(OpenAiMapper.class),
-            objectMapper, properties, new DefaultRedactor(properties), runAdmissionService, profileService, profileModelRouting, provider);
+            objectMapper, properties, new DefaultRedactor(properties), runAdmissionService, profileService, profileModelRouting, new com.azhukov.agent.service.ProfileRuntimeRegistry(null), provider);
         return MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();

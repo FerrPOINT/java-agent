@@ -185,6 +185,16 @@ public class OpenAiRunService {
         return count;
     }
 
+    public int requestProfileStop(String profile) {
+        int stopping = 0;
+        for (var record : runs.values()) {
+            if (profile.equals(record.profile()) && stop(record.runId()).status() == 200) {
+                stopping++;
+            }
+        }
+        return stopping;
+    }
+
     public ControlResult stop(String runId) {
         RunRecord record = runs.get(runId);
         if (record == null || record.isTerminal()) {
