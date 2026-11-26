@@ -23,8 +23,33 @@ public record ModelRequestOptions(
     String apiKey,
     String serviceTier,
     Boolean yoloMode,
-    Boolean verboseMode
+    Boolean verboseMode,
+    String boundProfile
 ) {
+    public ModelRequestOptions {
+        if (boundProfile != null && (!hasText(boundProfile) || !hasText(modelName) || !hasText(provider)
+            || !hasText(baseUrl) || !hasText(apiKey))) {
+            throw new IllegalArgumentException("A profile model route requires its own complete transport");
+        }
+    }
+
+    public ModelRequestOptions(String modelName,
+                               String reasoningEffort,
+                               Boolean fastMode,
+                               Boolean voiceMode,
+                               String personality,
+                               String subgoal,
+                               Integer maxCompletionTokens,
+                               String provider,
+                               String baseUrl,
+                               String apiKey,
+                               String serviceTier,
+                               Boolean yoloMode,
+                               Boolean verboseMode) {
+        this(modelName, reasoningEffort, fastMode, voiceMode, personality, subgoal,
+            maxCompletionTokens, provider, baseUrl, apiKey, serviceTier, yoloMode, verboseMode, null);
+    }
+
     public ModelRequestOptions(String modelName,
                                String reasoningEffort,
                                Boolean fastMode,
@@ -69,6 +94,11 @@ public record ModelRequestOptions(
         return new ModelRequestOptions(null, null, null, null, null, null, null);
     }
 
+    public ModelRequestOptions bindProfile(String profile, String model, String provider, String baseUrl, String apiKey) {
+        return new ModelRequestOptions(model, reasoningEffort, fastMode, voiceMode, personality, subgoal,
+            maxCompletionTokens, provider, baseUrl, apiKey, serviceTier, yoloMode, verboseMode, profile);
+    }
+
     public boolean hasTransportOverride() {
         return hasText(baseUrl) || hasText(apiKey);
     }
@@ -89,6 +119,7 @@ public record ModelRequestOptions(
             ", serviceTier=" + serviceTier +
             ", yoloMode=" + yoloMode +
             ", verboseMode=" + verboseMode +
+            ", boundProfile=" + boundProfile +
             ']';
     }
 

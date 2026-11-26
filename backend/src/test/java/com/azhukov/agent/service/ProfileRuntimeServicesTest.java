@@ -115,6 +115,53 @@ class ProfileRuntimeServicesTest {
             || p.name().startsWith("OTHERS_"))).isTrue();
     }
 
+    @Test
+    void preparedModelRoutesKeepEachProfilesCredentialsAcrossUpdates() throws Exception {
+        var profiles = profileService();
+        Files.createDirectories(profiles.profilePath("alpha"));
+        Files.createDirectories(profiles.profilePath("beta"));
+        var env = new ProfileEnvStore(prov(profiles));
+        var routing = new ProfileModelRouting(profiles, env);
+        profiles.writeModel("alpha", "openai", "alpha-v1", "https://alpha.example.test/v1");
+        env.set("alpha", "AGENT_MODEL_API_KEY", "fixture-alpha");
+        profiles.writeModel("beta", "deepseek", "beta-v1", "https://beta.example.test/v1", "fixture-beta");
+
+        var request = new com.azhukov.agent.core.client.ModelRequestOptions("global", null, false, null,
+            null, null, null, "global", "https://global.example.test/v1", "fixture-global");
+        var alpha = routing.bind("alpha", request);
+        var beta = routing.bind("beta", request);
+        assertThat(alpha.modelName()).isEqualTo("alpha-v1");
+        assertThat(alpha.baseUrl()).isEqualTo("https://alpha.example.test/v1");
+        assertThat(alpha.apiKey()).isEqualTo("fixture-alpha");
+        assertThat(beta.modelName()).isEqualTo("beta-v1");
+        assertThat(beta.baseUrl()).isEqualTo("https://beta.example.test/v1");
+        assertThat(beta.apiKey()).isEqualTo("fixture-beta");
+
+        profiles.writeModel("alpha", "openai", "alpha-v2", "https://alpha.example.test/v1", "fixture-new");
+        assertThat(routing.bind("alpha", alpha)).isSameAs(alpha);
+        assertThat(routing.bind("alpha", request).modelName()).isEqualTo("alpha-v2");
+        assertThat(routing.bind("alpha", request).apiKey()).isEqualTo("fixture-new");
+        assertThat(routing.bind("beta", request)).isEqualTo(beta);
+        assertThatThrownBy(() -> routing.bind("beta", alpha)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void missingProfileCredentialsAndLinkedConfigCannotSelectAnotherModel() throws Exception {
+        var profiles = profileService();
+        var routing = new ProfileModelRouting(profiles, new ProfileEnvStore(prov(profiles)));
+        Files.createDirectories(profiles.profilePath("alpha"));
+        Files.createDirectories(profiles.profilePath("beta"));
+        profiles.writeModel("alpha", "openai", "alpha", "https://alpha.example.test/v1", "fixture-alpha");
+        profiles.writeModel("beta", "openai", "beta", "https://beta.example.test/v1");
+        assertThatThrownBy(() -> routing.bind("beta", null))
+            .isInstanceOf(ProfileModelRouting.ProfileModelUnavailable.class);
+        Files.delete(profiles.configPath("beta"));
+        Files.createSymbolicLink(profiles.configPath("beta"), profiles.configPath("alpha"));
+        assertThatThrownBy(() -> routing.bind("beta", null))
+            .isInstanceOf(ProfileModelRouting.ProfileModelUnavailable.class);
+        assertThat(routing.bind("alpha", null).modelName()).isEqualTo("alpha");
+    }
+
     // ── ProfileRuntimeRegistry ───────────────────────────────────────────
 
     @Test

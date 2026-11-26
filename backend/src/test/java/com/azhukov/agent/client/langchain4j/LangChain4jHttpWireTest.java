@@ -1,5 +1,12 @@
 package com.azhukov.agent.client.langchain4j;
 
+import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.client.ModelRequestOptions;
+import com.azhukov.agent.core.model.Message;
+import com.azhukov.agent.service.ProfileEnvStore;
+import com.azhukov.agent.service.ProfileModelRouting;
+import com.azhukov.agent.service.ProfileService;
+import com.azhukov.agent.service.RuntimeConfigService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
@@ -20,13 +27,19 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.io.TempDir;
+import org.springframework.beans.factory.support.StaticListableBeanFactory;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
@@ -64,6 +77,57 @@ class LangChain4jHttpWireTest {
     @AfterEach
     void stopServer() {
         if (server != null) server.stop(0);
+    }
+
+    @Test
+    void twoProfilesUseTheirOwnWireEndpointModelAndAuthorization(@TempDir Path directory) throws Exception {
+        record Observed(String path, String model, String authorization) {}
+        var seen = new ConcurrentHashMap<String, Observed>();
+        String response = """
+            {"id":"wire-profile","object":"chat.completion","created":1,"model":"fixture",
+             "choices":[{"index":0,"message":{"role":"assistant","content":"profile reply"},
+                         "finish_reason":"stop"}]}
+            """;
+        for (String profile : List.of("alpha", "beta")) {
+            server.createContext("/" + profile + "/v1/chat/completions", exchange -> {
+                try (exchange) {
+                    var body = mapper.readTree(exchange.getRequestBody());
+                    seen.put(profile, new Observed(exchange.getRequestURI().getPath(),
+                        body.path("model").asText(), exchange.getRequestHeaders().getFirst("Authorization")));
+                    byte[] bytes = response.getBytes(StandardCharsets.UTF_8);
+                    exchange.getResponseHeaders().set("Content-Type", "application/json");
+                    exchange.sendResponseHeaders(200, bytes.length);
+                    exchange.getResponseBody().write(bytes);
+                }
+            });
+        }
+        String endpoint = "http://127.0.0.1:" + server.getAddress().getPort();
+        var properties = new AgentProperties();
+        properties.getProfile().setBaseDir(directory.resolve("profiles").toString());
+        properties.getModel().setBaseUrl(endpoint + "/unselected/v1");
+        properties.getModel().setModelName("installation-model");
+        properties.getModel().setApiKey("fixture-installation-key");
+        properties.getModel().setTimeoutSeconds(5);
+        var profiles = new ProfileService(properties, new RuntimeConfigService());
+        var registry = new StaticListableBeanFactory();
+        registry.addBean("profiles", profiles);
+        var routing = new ProfileModelRouting(profiles, new ProfileEnvStore(registry.getBeanProvider(ProfileService.class)));
+        for (String profile : List.of("alpha", "beta")) {
+            Files.createDirectories(profiles.profilePath(profile));
+            profiles.writeModel(profile, "openai", profile + "-model", endpoint + "/" + profile + "/v1", "fixture-" + profile);
+        }
+
+        var client = new LangChain4jModelClient(properties, null, new ErrorClassifier(), new RateLimitTracker());
+        var input = List.of(Message.user("profile routing"));
+        try (var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+            var a = workers.submit(() -> client.complete(input, List.of(), routing.bind("alpha", ModelRequestOptions.empty())));
+            var b = workers.submit(() -> client.complete(input, List.of(), routing.bind("beta", ModelRequestOptions.empty())));
+            a.get(6, TimeUnit.SECONDS);
+            b.get(6, TimeUnit.SECONDS);
+        }
+        assertThat(seen).hasSize(2);
+        assertThat(seen.get("alpha")).isEqualTo(new Observed("/alpha/v1/chat/completions", "alpha-model", "Bearer fixture-alpha"));
+        assertThat(seen.get("beta")).isEqualTo(new Observed("/beta/v1/chat/completions", "beta-model", "Bearer fixture-beta"));
     }
 
     @ParameterizedTest

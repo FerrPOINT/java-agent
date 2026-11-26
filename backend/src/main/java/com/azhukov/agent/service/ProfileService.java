@@ -486,6 +486,50 @@ public class ProfileService {
         return Files.readString(path, StandardCharsets.UTF_8);
     }
 
+    /** Read the model from this profile's own configuration without following file or directory links. */
+    public RuntimeConfigService.RuntimeModelSelection readNamedModel(String name) throws IOException {
+        Path path = configPath(name);
+        String raw;
+        try {
+            raw = com.azhukov.agent.core.security.SecureFileAccess.readUtf8(path);
+        } catch (java.nio.file.NoSuchFileException e) {
+            return new RuntimeConfigService.RuntimeModelSelection(null, null, null, null);
+        }
+        Object loaded = new Yaml().load(raw);
+        if (!(loaded instanceof Map<?, ?> config)) {
+            throw new IllegalArgumentException("Profile configuration must be a mapping");
+        }
+        Object modelNode = config.get("model");
+        if (!(modelNode instanceof Map<?, ?> model)) {
+            return new RuntimeConfigService.RuntimeModelSelection(null, nullableConfigText(modelNode), null, null);
+        }
+        String provider = nullableConfigText(model.get("provider"));
+        Object configuredModel = model.get("default");
+        String nameValue = firstConfigText(configuredModel, model.get("model"), model.get("name"));
+        if (configuredModel instanceof Map<?, ?> nested) {
+            if (provider == null) {
+                provider = nullableConfigText(nested.get("provider"));
+            }
+            nameValue = firstConfigText(nested.get("model"), nested.get("name"), nested.get("id"), nameValue);
+        }
+        return new RuntimeConfigService.RuntimeModelSelection(provider, nameValue,
+            nullableConfigText(model.get("base_url")), nullableConfigText(model.get("api_key")));
+    }
+
+    private static String firstConfigText(Object... values) {
+        for (Object value : values) {
+            String text = nullableConfigText(value);
+            if (text != null) {
+                return text;
+            }
+        }
+        return null;
+    }
+
+    private static String nullableConfigText(Object value) {
+        return value instanceof String text ? clean(text) : null;
+    }
+
     public void writeRawConfig(String name, String yamlText) throws IOException {
         Object loaded = new Yaml().load(yamlText != null ? yamlText : "");
         if (!(loaded instanceof Map<?, ?>)) {

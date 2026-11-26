@@ -87,11 +87,14 @@ public class ProfileEnvStore {
         ProfileService profiles = profiles();
         String canon = profiles.normalizeProfileName(profile);
         Path envPath = envPath(canon);
-        if (!Files.isRegularFile(envPath)) {
+        String raw;
+        try {
+            raw = com.azhukov.agent.core.security.SecureFileAccess.readUtf8(envPath);
+        } catch (java.nio.file.NoSuchFileException e) {
             return new LinkedHashMap<>();
         }
         Map<String, String> values = new LinkedHashMap<>();
-        for (String line : Files.readAllLines(envPath, StandardCharsets.UTF_8)) {
+        for (String line : raw.split("\\R")) {
             int eq = line.indexOf('=');
             if (eq <= 0 || line.startsWith("#")) {
                 continue;
@@ -108,7 +111,9 @@ public class ProfileEnvStore {
     }
 
     private Path envPath(String canon) throws IOException {
-        return profiles().profilesRoot().resolve(canon).resolve(".env");
+        var profiles = profiles();
+        profiles.validateProfileName(canon);
+        return profiles.profilesRoot().resolve(canon).resolve(".env");
     }
 
     /**

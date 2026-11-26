@@ -23,6 +23,8 @@ import com.azhukov.agent.service.OpenAiRunService;
 import com.azhukov.agent.service.OpenAiRunStateMachine;
 import com.azhukov.agent.service.OpenAiSessionService;
 import com.azhukov.agent.service.ProfileService;
+import com.azhukov.agent.service.ProfileModelRouting;
+import com.azhukov.agent.service.RuntimeConfigService.RuntimeModelSelection;
 import com.azhukov.agent.service.OpenAiSessionService.OpenAiSessionContext;
 import com.azhukov.agent.tools.terminal.ProcessTool;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -88,6 +90,7 @@ class OpenAiRunsControllerTest {
     private OpenAiSessionContext sessionContext;
     private ApiRunAdmissionService runAdmissionService;
     private ProfileService profileService;
+    private ProfileModelRouting profileModelRouting;
 
     @Mock
     private AgentRuntimeService agentRuntimeService;
@@ -107,6 +110,7 @@ class OpenAiRunsControllerTest {
         properties.getModel().setModelName(MODEL);
         runAdmissionService = new ApiRunAdmissionService(properties);
         profileService = mock(ProfileService.class);
+        profileModelRouting = new ProfileModelRouting(profileService, null);
 
         runService = new OpenAiRunService(
             agentRuntimeService,
@@ -131,6 +135,7 @@ class OpenAiRunsControllerTest {
             new DefaultRedactor(properties),
             runAdmissionService,
             profileService,
+            profileModelRouting,
             null
         );
 
@@ -264,7 +269,7 @@ class OpenAiRunsControllerTest {
             objectMapper, processTool, provider);
         var controller = new OpenAiRunsController(
             runService, openAiSessionService, responseStore, Mappers.getMapper(OpenAiMapper.class),
-            objectMapper, properties, new DefaultRedactor(properties), runAdmissionService, profileService, provider);
+            objectMapper, properties, new DefaultRedactor(properties), runAdmissionService, profileService, profileModelRouting, provider);
         return MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();
@@ -377,7 +382,9 @@ class OpenAiRunsControllerTest {
     void namedRunUsesTheSelectedProfile() throws Exception {
         when(profileService.isValidProfileName("work")).thenReturn(true);
         when(profileService.knownProfile("work")).thenReturn(true);
-        when(openAiSessionService.resolveRunSession(isNull(String.class), isNull(), eq(MODEL), eq("work")))
+        when(profileService.readNamedModel("work")).thenReturn(
+            new RuntimeModelSelection("fixture-profile", "work-model", "http://127.0.0.1:12345/v1", "fixture-work"));
+        when(openAiSessionService.resolveRunSession(isNull(String.class), isNull(), eq("work-model"), eq("work")))
             .thenReturn(new OpenAiSessionContext(sessionContext.session().withMetadata("profile", "work"), false, null));
         when(agentRuntimeService.runApiTurn(any(Session.class), anyString(), any(ModelRequestOptions.class)))
             .thenReturn(new ChatResponseDto(SESSION_ID, "profile done", List.of(), true));
@@ -399,6 +406,12 @@ class OpenAiRunsControllerTest {
         JsonNode status = waitForProfileStatus(runId, "completed");
         assertThat(status.path("object").asText()).isEqualTo("hermes.run");
         assertThat(status.path("output").asText()).isEqualTo("profile done");
+        assertThat(status.path("model").asText()).isEqualTo("work-model");
+        ArgumentCaptor<ModelRequestOptions> options = ArgumentCaptor.forClass(ModelRequestOptions.class);
+        verify(agentRuntimeService).runApiTurn(any(Session.class), anyString(), options.capture());
+        assertThat(options.getValue().boundProfile()).isEqualTo("work");
+        assertThat(options.getValue().modelName()).isEqualTo("work-model");
+        assertThat(options.getValue().apiKey()).isEqualTo("fixture-work");
         mockMvc.perform(get("/p/other/v1/runs/{runId}", runId)).andExpect(status().isNotFound());
         mockMvc.perform(get("/v1/runs/{runId}", runId)).andExpect(status().isNotFound());
     }

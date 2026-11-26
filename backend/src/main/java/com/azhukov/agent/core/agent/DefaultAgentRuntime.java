@@ -79,6 +79,8 @@ import java.util.concurrent.locks.ReentrantLock;
 public class DefaultAgentRuntime implements AgentRuntime {
 
     private final ModelClient modelClient;
+    @Autowired
+    private com.azhukov.agent.service.ProfileModelRouting profileModelRouting;
     private final ToolRegistry toolRegistry;
     private final ToolExecutionService toolExecutionService;
     // Verify-on-stop guard (Hermes parity: verification_stop.py)
@@ -277,10 +279,15 @@ public class DefaultAgentRuntime implements AgentRuntime {
     public TurnResult runTurn(Session session, String userInput, List<String> references,
                               ModelRequestOptions options) {
         ModelRequestOptions effectiveOptions = options != null ? options : ModelRequestOptions.empty();
+        String profile = session.profile();
+        if (!"default".equals(profile) || effectiveOptions.boundProfile() != null) {
+            effectiveOptions = profileModelRouting.bind(profile, effectiveOptions);
+        }
+        ModelRequestOptions turnOptions = effectiveOptions;
         UUID sid = session.id();
         return turnLocks.withTurn(sid, () -> {
             try {
-                return runTurnInternal(session, userInput, references, effectiveOptions);
+                return runTurnInternal(session, userInput, references, turnOptions);
             } finally {
                 turnModelState.remove();
                 if (contextEngine instanceof com.azhukov.agent.core.context.DefaultContextEngine dce) {
@@ -318,14 +325,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
         // activated during the previous turn. Then initialize the fallback manager
         // with the current primary config and the configured fallback chain.
         // M2 fix: this state is per-turn and never shared across sessions.
-        turnModelState.set(new TurnModelState(
-            new FallbackManager(
-                properties.getFallbackChain(),
-                properties.getModel().getProvider(),
-                properties.getModel().getModelName(),
-                properties.getModel().getBaseUrl(),
-                properties.getModel().getApiKey()),
-            modelClient));
+        turnModelState.set(new TurnModelState(FallbackManager.forTurn(properties, options), modelClient));
 
         // Resolve effective toolsets: session metadata override (from DelegateTaskTool)
         // takes priority, then the configured default toolsets.

@@ -96,6 +96,8 @@ public class AgentRuntimeService {
     private final McpLifecycleManager mcpLifecycleManager;
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
     private final RuntimeConfigService runtimeConfigService;
+    @org.springframework.beans.factory.annotation.Autowired
+    private ProfileModelRouting profileModelRouting;
     private final TransactionTemplate transactionTemplate;
     private final AgentSessionResolver sessionResolver;
     private final CliStateApplier cliStateApplier;
@@ -796,6 +798,9 @@ public class AgentRuntimeService {
 
     private ChatResponseDto runApiTurnLocked(Session session, Message message, ModelRequestOptions options) {
         ModelRequestOptions effectiveOptions = options != null ? options : ModelRequestOptions.empty();
+        if (!"default".equals(session.profile()) || effectiveOptions.boundProfile() != null) {
+            effectiveOptions = profileModelRouting.bind(session.profile(), effectiveOptions);
+        }
         Session runtimeSession = RuntimeModelOptionsResolver.applyEffectiveRuntime(session, properties, effectiveOptions);
         Message userMessage = apiUserMessage(message);
         if (midTurnPersistenceCallback != null) {

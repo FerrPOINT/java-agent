@@ -311,37 +311,14 @@ public class ModelOptionsController {
         if (isDefaultProfile(profile)) {
             return currentModelSelection(properties.getModel());
         }
-        Map<String, Object> config = readProfileConfig(profile);
-        Object modelConfig = config.get("model");
-        if (modelConfig instanceof Map<?, ?> modelMap) {
-            Map<String, Object> model = toStringKeyMap(modelMap);
-            String provider = clean(stringValue(model.get("provider")));
-            String modelName = clean(stringValue(model.get("default")));
-            if (modelName == null) {
-                modelName = clean(stringValue(model.get("model")));
-            }
-            if (modelName == null) {
-                modelName = clean(stringValue(model.get("name")));
-            }
-            Object nestedDefault = model.get("default");
-            if (nestedDefault instanceof Map<?, ?> defaultMap) {
-                Map<String, Object> defaultData = toStringKeyMap(defaultMap);
-                if (provider == null) {
-                    provider = clean(stringValue(defaultData.get("provider")));
-                }
-                modelName = firstNonBlank(
-                    stringValue(defaultData.get("model")),
-                    stringValue(defaultData.get("name")),
-                    stringValue(defaultData.get("id")),
-                    modelName);
-            }
-            return new CurrentModelSelection(
-                defaultIfBlank(provider, ""),
-                defaultIfBlank(modelName, ""),
-                defaultIfBlank(stringValue(model.get("base_url")), ""),
-                defaultIfBlank(stringValue(model.get("api_key")), ""));
+        try {
+            var selection = profileService.readNamedModel(profile);
+            return new CurrentModelSelection(defaultIfBlank(selection.provider(), ""),
+                defaultIfBlank(selection.model(), ""), defaultIfBlank(selection.baseUrl(), ""),
+                defaultIfBlank(selection.apiKey(), ""));
+        } catch (IOException e) {
+            throw serverError("Failed to read profile model configuration", e);
         }
-        return new CurrentModelSelection("", defaultIfBlank(stringValue(modelConfig), ""), "", "");
     }
 
     private CurrentModelSelection currentModelSelection(AgentProperties.ModelProperties model) {

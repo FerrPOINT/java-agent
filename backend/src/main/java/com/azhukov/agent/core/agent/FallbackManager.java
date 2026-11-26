@@ -1,6 +1,8 @@
 package com.azhukov.agent.core.agent;
 
+import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.config.FallbackConfig;
+import com.azhukov.agent.core.client.ModelRequestOptions;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.ArrayList;
@@ -53,6 +55,15 @@ public class FallbackManager {
     // the failure was NOT a rate-limit/billing event — prevents the cross-turn
     // replay storm (#24996) from re-marshaling the whole context every turn.
     private static final long FALLBACK_EXHAUSTED_COOLDOWN_MS = 120_000; // 2 min
+
+    public static FallbackManager forTurn(AgentProperties properties, ModelRequestOptions options) {
+        if (options.boundProfile() != null) {
+            return new FallbackManager(List.of(), options.provider(), options.modelName(), options.baseUrl(), options.apiKey());
+        }
+        var model = properties.getModel();
+        return new FallbackManager(properties.getFallbackChain(), model.getProvider(), model.getModelName(),
+            model.getBaseUrl(), model.getApiKey());
+    }
 
     public FallbackManager(List<FallbackConfig> chain,
                            String primaryProvider, String primaryModel,

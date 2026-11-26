@@ -7,7 +7,9 @@ import java.lang.foreign.FunctionDescriptor;
 import java.lang.foreign.Linker;
 import java.lang.foreign.MemorySegment;
 import java.lang.invoke.MethodHandle;
+import java.nio.channels.Channels;
 import java.nio.channels.SeekableByteChannel;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
@@ -84,6 +86,12 @@ public final class SecureFileAccess {
         } catch (IOException | RuntimeException failure) {
             current.close();
             throw failure;
+        }
+    }
+
+    public static String readUtf8(Path path) throws IOException {
+        try (var input = Channels.newInputStream(openRead(path))) {
+            return new String(input.readAllBytes(), StandardCharsets.UTF_8);
         }
     }
 

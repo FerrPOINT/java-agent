@@ -21,6 +21,7 @@ import com.azhukov.agent.service.OpenAiRunService.SubmissionKey;
 import com.azhukov.agent.service.OpenAiRunService.RunRecord;
 import com.azhukov.agent.service.OpenAiSessionService;
 import com.azhukov.agent.service.ProfileService;
+import com.azhukov.agent.service.ProfileModelRouting;
 import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -64,6 +65,7 @@ public class OpenAiRunsController {
     private final Redactor redactor;
     private final ApiRunAdmissionService runAdmissionService;
     private final ProfileService profileService;
+    private final ProfileModelRouting profileModelRouting;
     private final org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.service.OpenAiRunStateMachine> runStateMachineProvider;
 
     @PostMapping
@@ -120,13 +122,13 @@ public class OpenAiRunsController {
             return openAiError(HttpStatus.BAD_REQUEST, "No user message found in input", "invalid_request_error");
         }
 
-        String requestedModel = requestedModel(request.model());
-        String routeConflict = OpenAiRouteSelection.routeProviderConflict(
+        String modelAlias = requestedModel(request.model());
+        String routeConflict = "default".equals(profile) ? OpenAiRouteSelection.routeProviderConflict(
             properties.getApi(),
             request.model(),
             request.provider(),
             false
-        );
+        ) : null;
         if (routeConflict != null) {
             return openAiError(HttpStatus.BAD_REQUEST, routeConflict, "invalid_request_error");
         }
@@ -149,7 +151,14 @@ public class OpenAiRunsController {
         UUID previousSessionId = previous == null ? null : previous.sessionId();
         String sessionId = hasText(requestSessionId) || previousSessionId == null
             ? requestSessionId : previousSessionId.toString();
-        ModelRequestOptions options = requestOptions(request, requestedModel);
+        ModelRequestOptions options;
+        try {
+            options = profileModelRouting.bind(profile, requestOptions(request, modelAlias));
+        } catch (ProfileModelRouting.ProfileModelUnavailable e) {
+            return openAiError(HttpStatus.SERVICE_UNAVAILABLE, e.getMessage(),
+                "server_error", "profile_model_unavailable");
+        }
+        String requestedModel = options.boundProfile() == null ? modelAlias : options.modelName();
         var reservation = runAdmissionService.tryAcquire();
         if (reservation.isEmpty()) {
             return concurrencyLimitedResponse();

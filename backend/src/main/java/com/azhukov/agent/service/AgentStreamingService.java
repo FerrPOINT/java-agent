@@ -88,6 +88,8 @@ import lombok.RequiredArgsConstructor;
 public class AgentStreamingService {
 
     private final ModelClient modelClient;
+    @org.springframework.beans.factory.annotation.Autowired
+    private ProfileModelRouting profileModelRouting;
     private final ToolRegistry toolRegistry;
     private final ToolExecutionService toolExecutionService;
     private final com.azhukov.agent.core.agent.ToolBatchPipeline toolBatchPipeline;
@@ -577,9 +579,9 @@ public class AgentStreamingService {
         // Per-request model override (/model command or API "model" field):
         // the model was already resolved before context preparation above; record
         // it in session metadata for the footer and metadata event.
-        com.azhukov.agent.core.client.ModelRequestOptions streamOptions =
-            com.azhukov.agent.service.RuntimeModelOptionsResolver.resolve(
-                properties, request, session, runtimeConfigService);
+        var requestedOptions = RuntimeModelOptionsResolver.resolve(properties, request, session, runtimeConfigService);
+        var streamOptions = "default".equals(session.profile()) ? requestedOptions
+            : profileModelRouting.bind(session.profile(), requestedOptions);
         // Record the RESOLVED model (request override or stored session route
         // expanded to its target model) so the metadata event and the bot
         // footer show what actually serves the turn — a stored route alias
@@ -594,9 +596,7 @@ public class AgentStreamingService {
         // P-08 (Hermes #92450): bound escaped outer-loop exceptions per turn.
         com.azhukov.agent.core.agent.OuterErrorBudget outerErrors =
             new com.azhukov.agent.core.agent.OuterErrorBudget(maxTurns);
-        var streamFallbackManager = new com.azhukov.agent.core.agent.FallbackManager(
-            properties.getFallbackChain(), properties.getModel().getProvider(), properties.getModel().getModelName(),
-            properties.getModel().getBaseUrl(), properties.getModel().getApiKey());
+        var streamFallbackManager = com.azhukov.agent.core.agent.FallbackManager.forTurn(properties, streamOptions);
         var streamFallbackCaller = new com.azhukov.agent.core.agent.FallbackModelCaller(
             errorClassifier, properties, null, contextEngine);
         var streamModel = new com.azhukov.agent.core.agent.FallbackModelCaller.ModelCallContext(
