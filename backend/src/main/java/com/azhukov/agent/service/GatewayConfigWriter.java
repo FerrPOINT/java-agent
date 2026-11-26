@@ -1,164 +1,152 @@
 package com.azhukov.agent.service;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.config.AgentProperties.TelegramProperties;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 
-/**
- * Narrow persisted config-write boundary for gateway settings (WP-2, ADR-012).
- *
- * <p>Until WP-4 delivers the full profile config runtime, Telegram pairing
- * (allowlist) and messaging config writes go through this writer: mutate the
- * runtime {@code AgentProperties} AND persist the same values into
- * {@code profiles/<name>/config.yaml} under {@code gateway.telegram} via the
- * existing atomic {@link ProfileService#writeConfig} writer. Reads stay on
- * {@code AgentProperties} (env/yml precedence is unchanged); the persisted
- * section is the durable record for future profile-scoped runtimes.
- *
- * <p>Secrets (bot token) are persisted to the profile config only when
- * explicitly written through this boundary; they are never returned in
- * dashboard read payloads (masked upstream in the controller).
- */
 @Service
 @RequiredArgsConstructor
-@Slf4j
 public class GatewayConfigWriter {
 
+    static final String TOKEN = "TELEGRAM_BOT_TOKEN";
+    static final String USER_IDS = "TELEGRAM_ALLOWED_USERS";
+    static final String USERNAMES = "TELEGRAM_ALLOWED_USERNAMES";
+    static final String ALLOW_BY_DEFAULT = "TELEGRAM_ALLOW_BY_DEFAULT";
+
     private final AgentProperties agentProperties;
-    private final ObjectProvider<ProfileService> profileServiceProvider;
+    private final ProfileEnvStore env;
+    private final ProfileRuntimeRegistry runtime;
 
-    /** Approve = add user id (or @username) to the Telegram allowlist. */
+    public TelegramAccess telegramAccess(String profile) throws IOException {
+        if (isDefault(profile)) {
+            synchronized (runtime.lockFor("default")) {
+                return access(agentProperties.getGateway().getTelegram());
+            }
+        }
+        return access(namedSettings(env.readAll(profile)));
+    }
+
     public ApproveResult approveTelegramUser(String profile, String userValue) throws IOException {
-        String clean = requireUserValue(userValue);
-        var telegram = agentProperties.getGateway().getTelegram();
-        boolean added = false;
-        if (clean.startsWith("@")) {
-            String normalized = clean.substring(1);
-            if (telegram.getAllowedUsernames().stream().noneMatch(normalized::equals)) {
-                telegram.getAllowedUsernames().add(normalized);
-                added = true;
+        String user = requireUserValue(userValue);
+        return update(profile, telegram -> {
+            var users = allowlist(telegram, user);
+            String value = pairValue(user);
+            boolean added = !users.contains(value) && users.add(value);
+            return new ApproveResult(user, added, access(telegram));
+        });
+    }
+
+    public ApproveResult revokeTelegramUser(String profile, String userValue) throws IOException {
+        String user = requireUserValue(userValue);
+        return update(profile, telegram -> {
+            boolean removed = allowlist(telegram, user).remove(pairValue(user));
+            return new ApproveResult(user, removed, access(telegram));
+        });
+    }
+
+    public TelegramAccess updateTelegramConfig(String profile, String botToken,
+                                               List<String> allowedUserIds, List<String> allowedUsernames,
+                                               Boolean allowByDefault) throws IOException {
+        List<String> ids = allowedUserIds == null ? null : allowedUserIds.stream()
+            .filter(GatewayConfigWriter::hasText).map(GatewayConfigWriter::requireUserValue).distinct().toList();
+        List<String> usernames = allowedUsernames == null ? null : allowedUsernames.stream()
+            .filter(GatewayConfigWriter::hasText).map(GatewayConfigWriter::requireUserValue)
+            .map(GatewayConfigWriter::pairValue).distinct().toList();
+        return update(profile, telegram -> {
+            if (hasText(botToken)) {
+                telegram.setBotToken(botToken.trim());
             }
-        } else {
-            if (telegram.getAllowedUserIds().stream().noneMatch(clean::equals)) {
-                telegram.getAllowedUserIds().add(clean);
-                added = true;
+            replaceAllowlist(telegram.getAllowedUserIds(), ids);
+            replaceAllowlist(telegram.getAllowedUsernames(), usernames);
+            if (allowByDefault != null) {
+                telegram.setAllowByDefault(allowByDefault);
+            }
+            return access(telegram);
+        });
+    }
+
+    public static boolean isDefault(String profile) {
+        return profile == null || profile.isBlank() || "default".equalsIgnoreCase(profile.trim());
+    }
+
+    private <T> T update(String profile, Function<TelegramProperties, T> edit) throws IOException {
+        if (isDefault(profile)) {
+            synchronized (runtime.lockFor("default")) {
+                return edit.apply(agentProperties.getGateway().getTelegram());
             }
         }
-        persistTelegramAllowlist(profile);
-        log.info("Telegram pairing approved for {} (added={})", clean, added);
-        return new ApproveResult(clean, added);
-    }
-
-    /** Revoke = remove user id (or @username) from the Telegram allowlist. */
-    public boolean revokeTelegramUser(String profile, String userValue) throws IOException {
-        String clean = requireUserValue(userValue);
-        var telegram = agentProperties.getGateway().getTelegram();
-        boolean removed;
-        if (clean.startsWith("@")) {
-            String normalized = clean.substring(1);
-            removed = telegram.getAllowedUsernames().removeIf(normalized::equals);
-        } else {
-            removed = telegram.getAllowedUserIds().removeIf(clean::equals);
-        }
-        if (removed) {
-            persistTelegramAllowlist(profile);
-            log.info("Telegram pairing revoked for {}", clean);
-        }
-        return removed;
-    }
-
-    /** Write Telegram runtime settings (token/allowlist/webhook secrets stay masked in reads). */
-    public Map<String, Object> updateTelegramConfig(String profile, String botToken,
-                                                    List<String> allowedUserIds,
-                                                    List<String> allowedUsernames,
-                                                    Boolean allowByDefault) throws IOException {
-        var telegram = agentProperties.getGateway().getTelegram();
-        if (botToken != null && !botToken.isBlank()) {
-            telegram.setBotToken(botToken.trim());
-        }
-        if (allowedUserIds != null) {
-            telegram.getAllowedUserIds().clear();
-            allowedUserIds.stream().filter(v -> v != null && !v.isBlank()).map(String::trim)
-                .forEach(telegram.getAllowedUserIds()::add);
-        }
-        if (allowedUsernames != null) {
-            telegram.getAllowedUsernames().clear();
-            allowedUsernames.stream().filter(v -> v != null && !v.isBlank()).map(String::trim)
-                .forEach(telegram.getAllowedUsernames()::add);
-        }
-        if (allowByDefault != null) {
-            telegram.setAllowByDefault(allowByDefault);
-        }
-        persistTelegramSection(profile);
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("ok", true);
-        result.put("platform", "telegram");
-        result.put("bot_token_set", hasText(telegram.getBotToken()));
-        result.put("allowed_user_ids", List.copyOf(telegram.getAllowedUserIds()));
-        result.put("allowed_usernames", List.copyOf(telegram.getAllowedUsernames()));
-        result.put("allow_by_default", telegram.isAllowByDefault());
-        return result;
-    }
-
-    public record ApproveResult(String user, boolean added) {}
-
-    // ---- persistence ----
-
-    private void persistTelegramAllowlist(String profile) throws IOException {
-        persistTelegramSection(profile);
-    }
-
-    @SuppressWarnings("unchecked")
-    private void persistTelegramSection(String profile) throws IOException {
-        if (profileServiceProvider == null) {
-            log.debug("ProfileService provider unavailable; gateway config change stays runtime-only");
-            return;
-        }
-        ProfileService profiles = profileServiceProvider.getIfAvailable();
-        if (profiles == null) {
-            log.debug("ProfileService unavailable; gateway config change stays runtime-only");
-            return;
-        }
-        String canon = profiles.normalizeProfileName(profile == null || profile.isBlank() ? "default" : profile);
-        Map<String, Object> config = profiles.readConfig(canon);
-        Map<String, Object> gateway = asMutableMap(config.computeIfAbsent("gateway", k -> new LinkedHashMap<>()));
-        var telegram = agentProperties.getGateway().getTelegram();
-        Map<String, Object> telegramSection =
-            asMutableMap(gateway.computeIfAbsent("telegram", k -> new LinkedHashMap<>()));
-        telegramSection.put("allowed-user-ids", new ArrayList<>(telegram.getAllowedUserIds()));
-        telegramSection.put("allowed-usernames", new ArrayList<>(telegram.getAllowedUsernames()));
-        telegramSection.put("allow-by-default", telegram.isAllowByDefault());
-        if (hasText(telegram.getBotToken())) {
-            telegramSection.put("bot-token", telegram.getBotToken());
-        }
-        profiles.writeConfig(canon, config);
-    }
-
-    private static Map<String, Object> asMutableMap(Object raw) {
-        if (raw instanceof Map<?, ?> map) {
-            Map<String, Object> result = new LinkedHashMap<>();
-            map.forEach((k, v) -> result.put(String.valueOf(k), v));
+        return env.mutate(profile, values -> {
+            var telegram = namedSettings(values);
+            T result = edit.apply(telegram);
+            if (hasText(telegram.getBotToken())) {
+                values.put(TOKEN, telegram.getBotToken());
+            }
+            values.put(USER_IDS, String.join(",", telegram.getAllowedUserIds()));
+            values.put(USERNAMES, String.join(",", telegram.getAllowedUsernames()));
+            values.put(ALLOW_BY_DEFAULT, Boolean.toString(telegram.isAllowByDefault()));
             return result;
+        });
+    }
+
+    private static TelegramProperties namedSettings(Map<String, String> values) {
+        var config = new TelegramProperties();
+        config.setBotToken(values.getOrDefault(TOKEN, ""));
+        config.getAllowedUserIds().addAll(parseList(values.get(USER_IDS)));
+        config.getAllowedUsernames().addAll(parseList(values.get(USERNAMES)));
+        config.setAllowByDefault("true".equals(values.get(ALLOW_BY_DEFAULT)));
+        return config;
+    }
+
+    private static List<String> parseList(String value) {
+        return hasText(value)
+            ? Arrays.stream(value.split(",")).map(String::trim).filter(GatewayConfigWriter::hasText).distinct().toList()
+            : List.of();
+    }
+
+    private static TelegramAccess access(TelegramProperties telegram) {
+        return new TelegramAccess(hasText(telegram.getBotToken()), List.copyOf(telegram.getAllowedUserIds()),
+            List.copyOf(telegram.getAllowedUsernames()), telegram.isAllowByDefault());
+    }
+
+    private static List<String> allowlist(TelegramProperties telegram, String user) {
+        return user.startsWith("@") ? telegram.getAllowedUsernames() : telegram.getAllowedUserIds();
+    }
+
+    private static void replaceAllowlist(List<String> target, List<String> value) {
+        if (value != null) {
+            target.clear();
+            target.addAll(value);
         }
-        return new LinkedHashMap<>();
+    }
+
+    private static String pairValue(String user) {
+        return user.startsWith("@") ? user.substring(1) : user;
     }
 
     private static String requireUserValue(String value) {
-        if (value == null || value.isBlank()) {
+        if (!hasText(value)) {
             throw new IllegalArgumentException("user_id is required");
         }
-        return value.trim();
+        String user = value.trim();
+        if (user.equals("@") || user.indexOf(',') >= 0 || user.chars().anyMatch(Character::isISOControl)) {
+            throw new IllegalArgumentException("Invalid Telegram user or username");
+        }
+        return user;
     }
 
     private static boolean hasText(String value) {
         return value != null && !value.isBlank();
     }
+
+    public record TelegramAccess(boolean botTokenSet, List<String> userIds, List<String> usernames,
+                                 boolean allowByDefault) {}
+
+    public record ApproveResult(String user, boolean changed, TelegramAccess access) {}
 }

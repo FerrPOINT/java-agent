@@ -111,7 +111,7 @@ class LangChain4jHttpWireTest {
         var profiles = new ProfileService(properties, new RuntimeConfigService());
         var registry = new StaticListableBeanFactory();
         registry.addBean("profiles", profiles);
-        var routing = new ProfileModelRouting(profiles, new ProfileEnvStore(registry.getBeanProvider(ProfileService.class)));
+        var routing = new ProfileModelRouting(profiles, new ProfileEnvStore(registry.getBeanProvider(ProfileService.class), new com.azhukov.agent.service.ProfileRuntimeRegistry(null)));
         for (String profile : List.of("alpha", "beta")) {
             Files.createDirectories(profiles.profilePath(profile));
             profiles.writeModel(profile, "openai", profile + "-model", endpoint + "/" + profile + "/v1", "fixture-" + profile);

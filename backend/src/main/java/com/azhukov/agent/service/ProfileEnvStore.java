@@ -11,6 +11,7 @@ import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 
 /**
  * Profile {@code .env} store (ADR-013, WP-4). Allowlisted keys only, values
@@ -33,11 +34,16 @@ public class ProfileEnvStore {
         "AGENT_TTS_API_KEY",
         "AGENT_IMAGE_GEN_API_KEY",
         "AGENT_VISION_API_KEY",
-        "AGENT_TRANSCRIPTION_API_KEY");
+        "AGENT_TRANSCRIPTION_API_KEY",
+        GatewayConfigWriter.TOKEN,
+        GatewayConfigWriter.USER_IDS,
+        GatewayConfigWriter.USERNAMES,
+        GatewayConfigWriter.ALLOW_BY_DEFAULT);
 
     private static final String REDACTED = "********";
 
     private final ObjectProvider<ProfileService> profileServiceProvider;
+    private final ProfileRuntimeRegistry runtime;
 
     /** Masked status rows for the whole allowlist. */
     public Map<String, Map<String, Object>> maskedRows(String profile) throws IOException {
@@ -48,7 +54,7 @@ public class ProfileEnvStore {
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("is_set", value != null && !value.isBlank());
             row.put("redacted_value", value == null || value.isBlank() ? null : REDACTED);
-            row.put("is_password", key.endsWith("_API_KEY") || key.endsWith("_KEY") || key.endsWith("_SHA256"));
+            row.put("is_password", key.endsWith("_KEY") || key.endsWith("_SHA256") || key.endsWith("_TOKEN"));
             rows.put(key, row);
         }
         return rows;
@@ -60,29 +66,44 @@ public class ProfileEnvStore {
     }
 
     /** Set one allowlisted key. Non-allowlisted keys are rejected. */
-    public synchronized void set(String profile, String key, String value) throws IOException {
+    public void set(String profile, String key, String value) throws IOException {
         requireAllowlisted(key);
-        Map<String, String> values = readAll(profile);
         String clean = value == null ? "" : value;
-        if ("AGENT_FLEET_PROFILE_TOKEN_SHA256".equals(key) && !clean.matches("[0-9a-f]{64}")) {
-            throw new IllegalArgumentException("Fleet profile token fingerprint must be a SHA-256 digest");
-        }
-        if (java.util.regex.Pattern.compile("\\R").matcher(clean).find()) {
-            throw new IllegalArgumentException("Environment values must fit on one line");
-        }
-        values.put(key, clean);
-        writeAll(envPath(profiles().normalizeProfileName(profile)), values);
+        mutate(profile, values -> values.put(key, clean));
     }
 
     /** Delete one allowlisted key (missing key is a no-op). */
-    public synchronized boolean delete(String profile, String key) throws IOException {
+    public boolean delete(String profile, String key) throws IOException {
         requireAllowlisted(key);
-        Map<String, String> values = readAll(profile);
-        boolean removed = values.remove(key) != null;
-        if (removed) {
-            writeAll(envPath(profiles().normalizeProfileName(profile)), values);
+        return mutate(profile, values -> values.remove(key) != null);
+    }
+
+    <T> T mutate(String profile, Function<Map<String, String>, T> edit) throws IOException {
+        String canon = profiles().normalizeProfileName(profile);
+        synchronized (runtime.lockFor(canon)) {
+            Map<String, String> original = readAll(canon);
+            Map<String, String> changed = new LinkedHashMap<>(original);
+            T result = edit.apply(changed);
+            for (var entry : changed.entrySet()) {
+                if (!java.util.Objects.equals(original.get(entry.getKey()), entry.getValue())) {
+                    requireAllowlisted(entry.getKey());
+                    validateValue(entry.getKey(), entry.getValue());
+                }
+            }
+            if (!original.equals(changed)) {
+                writeAll(envPath(canon), changed);
+            }
+            return result;
         }
-        return removed;
+    }
+
+    private static void validateValue(String key, String value) {
+        if ("AGENT_FLEET_PROFILE_TOKEN_SHA256".equals(key) && !value.matches("[0-9a-f]{64}")) {
+            throw new IllegalArgumentException("Fleet profile token fingerprint must be a SHA-256 digest");
+        }
+        if (java.util.regex.Pattern.compile("\\R").matcher(value).find()) {
+            throw new IllegalArgumentException("Environment values must fit on one line");
+        }
     }
 
     /** Raw values for internal readers (binder/bootstrap), never for API responses. */

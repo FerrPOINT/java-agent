@@ -27,7 +27,7 @@ public interface SessionRepository extends JpaRepository<SessionEntity, UUID> {
     @Query("select s.id from SessionEntity s where s.id = :sessionId")
     Optional<UUID> findMessageParentId(@Param("sessionId") UUID sessionId);
 
-    SessionEntity findByUserId(String userId);
+    SessionEntity findFirstByUserIdAndProfileOrderByUpdatedAtDescIdDesc(String userId, String profile);
 
     List<SessionEntity> findAllByUserId(String userId);
 

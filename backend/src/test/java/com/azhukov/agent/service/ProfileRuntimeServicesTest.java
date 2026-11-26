@@ -83,7 +83,7 @@ class ProfileRuntimeServicesTest {
         var profiles = profileService();
         Files.createDirectories(profiles.profilePath("alpha"));
         Files.createDirectories(profiles.profilePath("beta"));
-        var modelRouting = new ProfileModelRouting(profiles, new ProfileEnvStore(prov(profiles)));
+        var modelRouting = new ProfileModelRouting(profiles, new ProfileEnvStore(prov(profiles), new com.azhukov.agent.service.ProfileRuntimeRegistry(null)));
         var instructions = new ProfileInstructions(new AgentProperties(), profiles,
             new com.fasterxml.jackson.databind.ObjectMapper());
         var writer = new ProfileConfigWriter(prov(profiles), null, modelRouting, instructions, new ProfileRuntimeRegistry(null));
@@ -117,7 +117,7 @@ class ProfileRuntimeServicesTest {
         var profiles = spy(profileService());
         Files.createDirectories(profiles.profilePath("alpha"));
         Files.createDirectories(profiles.profilePath("beta"));
-        var routing = new ProfileModelRouting(profiles, new ProfileEnvStore(prov(profiles)));
+        var routing = new ProfileModelRouting(profiles, new ProfileEnvStore(prov(profiles), new com.azhukov.agent.service.ProfileRuntimeRegistry(null)));
         var instructions = new ProfileInstructions(new AgentProperties(), profiles,
             new com.fasterxml.jackson.databind.ObjectMapper());
         var writer = new ProfileConfigWriter(prov(profiles), null, routing, instructions,
@@ -152,7 +152,7 @@ class ProfileRuntimeServicesTest {
 
     @Test
     void envStoreRejectsNonAllowlistedKeys() throws IOException {
-        ProfileEnvStore store = new ProfileEnvStore(prov(profileService()));
+        ProfileEnvStore store = new ProfileEnvStore(prov(profileService()), new com.azhukov.agent.service.ProfileRuntimeRegistry(null));
         assertThatThrownBy(() -> store.set("default", "ARBITRARY_KEY", "x"))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessageContaining("not allowlisted");
@@ -162,7 +162,7 @@ class ProfileRuntimeServicesTest {
     void envStoreMasksValuesAndRoundTripsDeletes() throws IOException {
         ProfileService profiles = profileService();
         profiles.ensureDefaultProfile();
-        ProfileEnvStore store = new ProfileEnvStore(prov(profiles));
+        ProfileEnvStore store = new ProfileEnvStore(prov(profiles), new com.azhukov.agent.service.ProfileRuntimeRegistry(null));
 
         store.set("default", "AGENT_MODEL_API_KEY", "super-secret");
         Map<String, Map<String, Object>> rows = store.maskedRows("default");
@@ -181,7 +181,7 @@ class ProfileRuntimeServicesTest {
     void envFileHasOwnerOnlyPermissions() throws IOException {
         ProfileService profiles = profileService();
         profiles.ensureDefaultProfile();
-        ProfileEnvStore store = new ProfileEnvStore(prov(profiles));
+        ProfileEnvStore store = new ProfileEnvStore(prov(profiles), new com.azhukov.agent.service.ProfileRuntimeRegistry(null));
         store.set("default", "AGENT_TTS_API_KEY", "x");
         Path envPath = profiles.profilesRoot().resolve("default").resolve(".env");
         assertThat(Files.isRegularFile(envPath)).isTrue();
@@ -195,7 +195,7 @@ class ProfileRuntimeServicesTest {
         var profiles = profileService();
         Files.createDirectories(profiles.profilePath("alpha"));
         Files.createDirectories(profiles.profilePath("beta"));
-        var store = new ProfileEnvStore(prov(profiles));
+        var store = new ProfileEnvStore(prov(profiles), new com.azhukov.agent.service.ProfileRuntimeRegistry(null));
         store.set("alpha", "AGENT_MODEL_API_KEY", "alpha-fixture");
         Files.createSymbolicLink(profiles.profilePath("beta").resolve(".env"),
             profiles.profilePath("alpha").resolve(".env"));
@@ -211,7 +211,7 @@ class ProfileRuntimeServicesTest {
     void envStoreRejectsMultiLineCredentialsBeforeWriting() throws Exception {
         var profiles = profileService();
         Files.createDirectories(profiles.profilePath("alpha"));
-        var store = new ProfileEnvStore(prov(profiles));
+        var store = new ProfileEnvStore(prov(profiles), new com.azhukov.agent.service.ProfileRuntimeRegistry(null));
         store.set("alpha", "AGENT_MODEL_API_KEY", "alpha-fixture");
 
         assertThatThrownBy(() -> store.set("alpha", "AGENT_MODEL_API_KEY",
@@ -225,7 +225,7 @@ class ProfileRuntimeServicesTest {
         var profiles = profileService();
         Files.createDirectories(profiles.profilePath("alpha"));
         Files.createDirectories(profiles.profilePath("beta"));
-        var env = new ProfileEnvStore(prov(profiles));
+        var env = new ProfileEnvStore(prov(profiles), new com.azhukov.agent.service.ProfileRuntimeRegistry(null));
         var routing = new ProfileModelRouting(profiles, env);
         profiles.writeModel("alpha", "openai", "alpha-v1", "https://alpha.example.test/v1");
         env.set("alpha", "AGENT_MODEL_API_KEY", "fixture-alpha");
@@ -253,7 +253,7 @@ class ProfileRuntimeServicesTest {
     @Test
     void missingProfileCredentialsAndLinkedConfigCannotSelectAnotherModel() throws Exception {
         var profiles = profileService();
-        var routing = new ProfileModelRouting(profiles, new ProfileEnvStore(prov(profiles)));
+        var routing = new ProfileModelRouting(profiles, new ProfileEnvStore(prov(profiles), new com.azhukov.agent.service.ProfileRuntimeRegistry(null)));
         Files.createDirectories(profiles.profilePath("alpha"));
         Files.createDirectories(profiles.profilePath("beta"));
         profiles.writeModel("alpha", "openai", "alpha", "https://alpha.example.test/v1", "fixture-alpha");

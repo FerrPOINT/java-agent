@@ -542,7 +542,7 @@ class ToolsetsControllerTest {
         profileService.createProfile(new ProfileService.CreateProfileRequest(
             "work", null, false, false, true, null, null, null, null));
         com.azhukov.agent.service.ProfileEnvStore envStore =
-            new com.azhukov.agent.service.ProfileEnvStore(providerOf(profileService));
+            new com.azhukov.agent.service.ProfileEnvStore(providerOf(profileService), new com.azhukov.agent.service.ProfileRuntimeRegistry(null));
         MockMvc mvc = MockMvcBuilders.standaloneSetup(
             new ToolsetsController(toolRegistry, realProperties, profileService,
                 providerOf(envStore))).build();

@@ -44,7 +44,7 @@ public class SessionResolver {
                 identityReferences.nativeStorage(userId);
             } finally {com.azhukov.agent.core.security.NativeIdentityOrigin.bind(previous);}
         }
-        SessionEntity existing = sessionRepository.findByUserId(userId);
+        SessionEntity existing = sessionRepository.findFirstByUserIdAndProfileOrderByUpdatedAtDescIdDesc(userId, "default");
         if (existing != null) {
             sessionRepository.touchUpdatedAt(existing.getId(), Instant.now());
             return new Session(existing.getId(), existing.getUserId(), existing.getTitle(),

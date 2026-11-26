@@ -7,14 +7,22 @@ import com.azhukov.agent.gateway.model.Platform;
 import com.azhukov.agent.gateway.model.PlatformConfig;
 import com.azhukov.agent.gateway.telegram.TelegramAdapter;
 import com.azhukov.agent.gateway.telegram.TelegramBotApiClient;
+import com.azhukov.agent.service.GatewayConfigWriter;
+import com.azhukov.agent.service.ProfileEnvStore;
+import com.azhukov.agent.service.ProfileRuntimeRegistry;
+import com.azhukov.agent.service.ProfileService;
+import com.azhukov.agent.service.RuntimeConfigService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.http.MediaType;
 import org.springframework.mock.env.MockEnvironment;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Map;
 import java.util.Optional;
 
@@ -34,17 +42,21 @@ class MessagingDashboardControllerTest {
     private GatewayRoutingService gatewayRoutingService;
     private MockEnvironment environment;
     private MockMvc mockMvc;
+    @TempDir Path tempDir;
 
     @BeforeEach
-    void setUp() {
+    void setUp() throws Exception {
         properties = new AgentProperties();
+        properties.getProfile().setBaseDir(tempDir.toString());
+        Files.createDirectory(tempDir.resolve("alpha"));
+        Files.createDirectory(tempDir.resolve("beta"));
         gatewayRoutingService = mock(GatewayRoutingService.class);
         environment = new MockEnvironment();
-        org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.service.GatewayConfigWriter> writerProvider =
-            providerOf(new com.azhukov.agent.service.GatewayConfigWriter(properties, null));
+        var runtime = new ProfileRuntimeRegistry(null);
+        var profiles = new ProfileService(properties, new RuntimeConfigService());
+        var writer = new GatewayConfigWriter(properties, new ProfileEnvStore(providerOf(profiles), runtime), runtime);
         mockMvc = MockMvcBuilders.standaloneSetup(
-                new MessagingDashboardController(properties, gatewayRoutingService, environment,
-                    writerProvider, null))
+                new MessagingDashboardController(properties, gatewayRoutingService, environment, writer, null))
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();
     }
@@ -209,6 +221,52 @@ class MessagingDashboardControllerTest {
         mockMvc.perform(delete("/api/messaging/whatsapp/onboarding/pairing-1"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.ok").value(true));
+    }
+
+    @Test
+    void namedTelegramSettingsAreDurableScopedAndKeepTokenPrivate() throws Exception {
+        properties.getGateway().getTelegram().setBotToken("default-private-token");
+        properties.getGateway().getTelegram().getAllowedUserIds().add("100");
+        UserContext.set("operator", UserContext.ROLE_ADMIN);
+        mockMvc.perform(put("/api/messaging/platforms/telegram")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"profile":"alpha","bot_token":"synthetic-alpha-secret","allowed_user_ids":["101"]}
+                    """))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.bot_token_set").value(true));
+        mockMvc.perform(post("/api/pairing/approve")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"platform\":\"telegram\",\"profile\":\"beta\",\"user_id\":\"202\"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.approved[0].user_id").value("202"));
+        mockMvc.perform(get("/api/pairing").param("profile", "alpha"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.approved.length()").value(1))
+            .andExpect(jsonPath("$.approved[0].user_id").value("101"));
+        mockMvc.perform(get("/api/messaging/platforms").param("profile", "alpha"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.platforms[0].env_vars[0].redacted_value").value("********"));
+        mockMvc.perform(get("/api/messaging/platforms").param("profile", "beta"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.platforms[0].env_vars[0].is_set").value(false));
+        mockMvc.perform(put("/api/messaging/platforms/telegram")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"profile\":123,\"allowed_user_ids\":[\"overwrite-default\"]}"))
+            .andExpect(status().isBadRequest());
+        mockMvc.perform(get("/api/pairing"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.approved[0].user_id").value("100"));
+        mockMvc.perform(get("/api/pairing").param("profile", "missing"))
+            .andExpect(status().isNotFound());
+        UserContext.set("other-user", UserContext.ROLE_USER);
+        mockMvc.perform(get("/api/pairing").param("profile", "alpha"))
+            .andExpect(status().isForbidden());
+        org.assertj.core.api.Assertions.assertThat(Files.readString(tempDir.resolve("alpha/.env")))
+            .contains("TELEGRAM_BOT_TOKEN=synthetic-alpha-secret")
+            .doesNotContain("202", "default-private-token");
+        org.assertj.core.api.Assertions.assertThat(Files.readString(tempDir.resolve("beta/.env")))
+            .doesNotContain("TELEGRAM_BOT_TOKEN", "101");
     }
 
     @Test

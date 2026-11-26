@@ -52,7 +52,7 @@ class DashboardSystemControllerTest {
         properties.getWeb().setSearxngUrl("http://localhost:8888");
         runtimeConfigService = new RuntimeConfigService();
         profileService = new ProfileService(properties, runtimeConfigService);
-        var envStore = new com.azhukov.agent.service.ProfileEnvStore(providerOf(profileService));
+        var envStore = new com.azhukov.agent.service.ProfileEnvStore(providerOf(profileService), new com.azhukov.agent.service.ProfileRuntimeRegistry(null));
         var modelRouting = new com.azhukov.agent.service.ProfileModelRouting(profileService, envStore);
         var instructions = new com.azhukov.agent.service.ProfileInstructions(properties, profileService,
             new com.fasterxml.jackson.databind.ObjectMapper());
