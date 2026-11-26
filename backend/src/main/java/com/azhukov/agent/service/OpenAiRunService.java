@@ -83,7 +83,7 @@ public class OpenAiRunService {
 
     public record SubmissionKey(String runId, String profile, String fingerprint) {}
 
-    public record Acceptance(String runId, String sessionId) {}
+    public record Acceptance(String runId, String sessionId, boolean replayed) {}
 
     public static final class IdempotencyConflict extends RuntimeException {}
 
@@ -107,7 +107,7 @@ public class OpenAiRunService {
                 || state.getAcceptedSessionId() == null) {
                 throw new IdempotencyConflict();
             }
-            return new Acceptance(state.getRunId(), state.getAcceptedSessionId());
+            return new Acceptance(state.getRunId(), state.getAcceptedSessionId(), true);
         });
     }
 
@@ -161,14 +161,14 @@ public class OpenAiRunService {
         } catch (RejectedExecutionException e) {
             closeReservation(reservation);
             record.finishFailed("Run execution could not start");
-            return new Acceptance(runId, context.responseSessionId());
+            return new Acceptance(runId, context.responseSessionId(), false);
         }
         try {
             executor.submit(() -> monitorApprovals(record));
         } catch (RejectedExecutionException e) {
             log.debug("Run approval monitor is stopping for {}", runId);
         }
-        return new Acceptance(runId, context.responseSessionId());
+        return new Acceptance(runId, context.responseSessionId(), false);
     }
 
     public RunRecord get(String runId) {

@@ -243,6 +243,7 @@ public class OpenAiRunsController {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("run_id", result.runId());
         body.put("status", "started");
+        body.put("replayed", result.replayed());
         return ResponseEntity.status(status)
             .headers(responseHeaders(result.sessionId(), sessionKeyHeader))
             .contentType(MediaType.APPLICATION_JSON)

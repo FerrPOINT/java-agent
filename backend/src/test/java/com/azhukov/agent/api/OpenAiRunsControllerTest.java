@@ -248,7 +248,8 @@ class OpenAiRunsControllerTest {
         assertThat(accepted).isEmpty();
         MvcResult created = first.perform(post("/v1/runs").header("Idempotency-Key", "dispatch-31")
                 .contentType(MediaType.APPLICATION_JSON).content(body))
-            .andExpect(status().isAccepted()).andReturn();
+            .andExpect(status().isAccepted())
+            .andExpect(jsonPath("$.replayed").value(false)).andReturn();
         String runId = readRunId(created);
 
         MockMvc restarted = durableRunsController(stateMachine);
@@ -256,6 +257,7 @@ class OpenAiRunsControllerTest {
                 .contentType(MediaType.APPLICATION_JSON).content(body))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.run_id").value(runId))
+            .andExpect(jsonPath("$.replayed").value(true))
             .andExpect(header().string(OpenAiSessionService.SESSION_ID_HEADER, SESSION_ID.toString()));
         restarted.perform(post("/v1/runs/lookup").header("Idempotency-Key", "dispatch-31")
                 .header(OpenAiSessionService.SESSION_KEY_HEADER, "different-session")
@@ -270,6 +272,7 @@ class OpenAiRunsControllerTest {
                 .contentType(MediaType.APPLICATION_JSON).content(body))
             .andExpect(status().isAccepted())
             .andExpect(jsonPath("$.run_id").value(runId))
+            .andExpect(jsonPath("$.replayed").value(true))
             .andExpect(header().string(OpenAiSessionService.SESSION_ID_HEADER, SESSION_ID.toString()));
         restarted.perform(post("/v1/runs").header("Idempotency-Key", "dispatch-31")
                 .contentType(MediaType.APPLICATION_JSON).content("{\"input\":\"a different dispatch\"}"))
