@@ -6,6 +6,8 @@ import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.client.ModelRequestOptions;
 import com.azhukov.agent.api.OpenAiInputParser.ParseResult;
 import com.azhukov.agent.core.model.Message;
+import com.azhukov.agent.core.model.Session;
+import com.azhukov.agent.core.tool.ToolRegistry;
 import com.azhukov.agent.core.security.ApiErrorTextRedactor;
 import com.azhukov.agent.core.security.NativeIdentityOrigin;
 import com.azhukov.agent.core.security.UserContext;
@@ -24,7 +26,9 @@ import com.azhukov.agent.service.ProfileService;
 import com.azhukov.agent.service.ProfileExecutionConfiguration;
 import com.azhukov.agent.service.ProfileModelRouting;
 import com.azhukov.agent.service.ProfileRuntimeRegistry;
+import com.azhukov.agent.tools.workflow.ProjectWorkflowTool;
 import com.fasterxml.jackson.annotation.JsonAlias;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -58,6 +62,7 @@ public class OpenAiRunsController {
     private final OpenAiResponseStore responseStore;
     private final OpenAiMapper openAiMapper;
     private final ObjectMapper objectMapper;
+    private final ToolRegistry toolRegistry;
 
     private OpenAiInputParser inputParser() {
         return new OpenAiInputParser(objectMapper);
@@ -88,6 +93,11 @@ public class OpenAiRunsController {
         }
         if (request == null || !runsInputTruthy(request.input())) {
             return openAiError(HttpStatus.BAD_REQUEST, "Missing 'input' field", "invalid_request_error");
+        }
+
+        if (!validWorkflowAssignment(request, profile, revision, idempotencyKey)) {
+            return openAiError(HttpStatus.FORBIDDEN, "Workflow task requires an authenticated Fleet profile",
+                "invalid_request_error", "workflow_assignment_required");
         }
 
         SubmissionKey key = null;
@@ -198,6 +208,14 @@ public class OpenAiRunsController {
             List<Message> history, UUID previousSession, SubmissionKey key) {
         var options = profileModelRouting.bind(profile, requestOptions(request, modelAlias));
         String model = options.boundProfile() == null ? modelAlias : options.modelName();
+        if (request.workflowTask() != null) {
+            Session selected = Session.create(UserContext.getUserId(), "openai-compatible", model)
+                .withMetadata("profile", profile).withMetadata("platform", "api_server");
+            if (!toolRegistry.isProfileToolEnabled(ProjectWorkflowTool.NAME, selected)) {
+                return openAiError(HttpStatus.SERVICE_UNAVAILABLE, "Workflow is unavailable for this profile",
+                    "server_error", "workflow_unavailable");
+            }
+        }
         int limit = runAdmissionService.maxConcurrentRuns(profile);
         var reservation = runAdmissionService.tryAcquire(profile, limit);
         if (reservation.isEmpty()) {
@@ -207,7 +225,7 @@ public class OpenAiRunsController {
             () -> openAiSessionService.resolveRunSession(sessionId, sessionKeyHeader, model, profile),
             userMessage, model, options, instructions, history,
             hasExplicitConversationHistory(request) ? null : previousSession,
-            reservation.get(), key);
+            reservation.get(), key, request.workflowTask());
         return accepted(result, sessionKeyHeader);
     }
 
@@ -229,6 +247,10 @@ public class OpenAiRunsController {
             return openAiError(HttpStatus.BAD_REQUEST, "A valid Idempotency-Key is required",
                 "invalid_request_error", "invalid_idempotency_key");
         }
+        if (!validWorkflowAssignment(request, profile, revision, idempotencyKey)) {
+            return openAiError(HttpStatus.FORBIDDEN, "Workflow task requires an authenticated Fleet profile",
+                "invalid_request_error", "workflow_assignment_required");
+        }
         String principal = UserContext.getUserId();
         if (principal == null) {
             return openAiError(HttpStatus.UNAUTHORIZED, "Authenticated run identity required", "invalid_request_error");
@@ -243,6 +265,18 @@ public class OpenAiRunsController {
         } catch (OpenAiRunService.DurableAcceptanceUnavailable e) {
             return durableAcceptanceUnavailable();
         }
+    }
+
+    private static boolean validWorkflowAssignment(OpenAiRunRequest request, String profile,
+                                                   String revision, String idempotencyKey) {
+        if (request == null || request.workflowTask() == null) {
+            return true;
+        }
+        var origin = NativeIdentityOrigin.current();
+        return origin != null && origin.kind() == NativeIdentityOrigin.Kind.FLEET_PROFILE
+            && origin.principal().equals("fleet-profile:" + profile)
+            && !"default".equals(profile) && revision != null && validIdempotencyKey(idempotencyKey)
+            && ProjectWorkflowTool.validKey(request.workflowTask());
     }
 
     private boolean knownProfile(String profile) {
@@ -733,6 +767,7 @@ public class OpenAiRunsController {
         @JsonProperty("model_options") @JsonAlias("modelOptions") Object modelOptions,
         @JsonProperty("max_output_tokens")
         @JsonAlias({"maxOutputTokens", "max_tokens", "maxTokens"})
-        Integer maxOutputTokens
+        Integer maxOutputTokens,
+        @JsonProperty("workflow_task") @JsonInclude(JsonInclude.Include.NON_NULL) String workflowTask
     ) {}
 }

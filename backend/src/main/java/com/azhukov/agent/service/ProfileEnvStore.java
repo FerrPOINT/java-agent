@@ -29,6 +29,8 @@ public class ProfileEnvStore {
     private static final Set<String> ALLOWED_KEYS = Set.of(
         "AGENT_MODEL_API_KEY",
         "AGENT_FLEET_PROFILE_TOKEN_SHA256",
+        "PROJECT_WORKFLOW_API_TOKEN",
+        "PROJECT_WORKFLOW_NAMESPACE_ID",
         "AGENT_MODEL_BASE_URL",
         "AGENT_WEB_SEARXNG_URL",
         "AGENT_TTS_API_KEY",

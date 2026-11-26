@@ -81,11 +81,20 @@ public class ToolExecutionService {
         "delete_file", "execute_code", "process", "skill_manage",
         "send_message", "image_generate", "todo", "mcp_tool",
         "browser_click", "browser_type", "browser_press", "browser_dialog",
-        "clarify");
+        "clarify", com.azhukov.agent.tools.workflow.ProjectWorkflowTool.NAME);
     /** Hermes parity (clarify_gateway TIMEOUT): the blocking clarify tool waits
      *  for the user's reply (default 3600s), far beyond the generic tool
      *  timeout — it must not be killed by the tool-output timeout. */
     private static final Set<String> NO_TOOL_TIMEOUT = Set.of("clarify");
+
+    private long timeoutSeconds(String name) {
+        if (com.azhukov.agent.tools.workflow.ProjectWorkflowTool.NAME.equals(name)) {
+            return com.azhukov.agent.tools.workflow.ProjectWorkflowTool.REQUEST_TIMEOUT_SECONDS + 5L;
+        }
+        return NO_TOOL_TIMEOUT.contains(name) ? Long.MAX_VALUE / 2
+            : properties.getToolOutput().getTimeoutSecondsOrDefault(120);
+    }
+
     private final Retry retry = Retry.of("tool", RetryConfig.custom()
             .maxAttempts(3)
             .waitDuration(Duration.ofMillis(500))
@@ -155,9 +164,7 @@ public class ToolExecutionService {
             NO_RETRY_TOOLS.contains(toolName) ? noRetry : retry, () -> {
             java.util.concurrent.Future<ToolResult> future = executor.submit(callable);
             try {
-                long timeout = NO_TOOL_TIMEOUT.contains(toolName)
-                    ? java.lang.Long.MAX_VALUE / 2 // effectively unbounded (await handles its own TTL)
-                    : properties.getToolOutput().getTimeoutSecondsOrDefault(120);
+                long timeout = timeoutSeconds(toolName);
                 long started = System.nanoTime();
                 long timeoutNanos = TimeUnit.SECONDS.toNanos(timeout);
                 while (true) {

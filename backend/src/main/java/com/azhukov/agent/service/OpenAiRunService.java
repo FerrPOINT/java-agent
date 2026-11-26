@@ -122,7 +122,8 @@ public class OpenAiRunService {
                              List<Message> historyToPersist,
                              UUID previousSessionId,
                              ApiRunAdmissionService.Reservation reservation,
-                             SubmissionKey key) {
+                             SubmissionKey key,
+                             String workflowTask) {
         sweepTerminalRuns();
         String runId = key == null ? "run_" + UUID.randomUUID().toString().replace("-", "") : key.runId();
         OpenAiRunStateMachine machine = stateMachine();
@@ -155,6 +156,10 @@ public class OpenAiRunService {
         record.stateMachine = machine;
         runs.put(runId, record);
         Session runSession = RunControlScope.withControlSessionId(session, controlSessionId);
+        if (workflowTask != null) {
+            runSession = runSession.withMetadata(com.azhukov.agent.tools.workflow.ProjectWorkflowTool.TASK_METADATA,
+                workflowTask);
+        }
         if (instructions != null && !instructions.isBlank()) {
             runSession = runSession.withMetadata("system_prompt_override", instructions);
         }
