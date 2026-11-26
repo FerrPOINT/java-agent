@@ -10,6 +10,8 @@ import com.azhukov.agent.service.OpenAiRunStateMachine;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
@@ -24,6 +26,10 @@ import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.request;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
  * WP-6 (V59) PostgreSQL slowTest: guarded transitions, terminal idempotency,
@@ -60,6 +66,9 @@ class OpenAiRunStateRepositoryTest extends PostgresTestContainer {
 
     @Autowired
     private OpenAiRunStateMachine stateMachine;
+
+    @Autowired
+    private MockMvc mvc;
 
     @Test
     void concurrentAcceptanceCommitsOneRunOneSessionAndOneInitialEvent() throws Exception {
@@ -111,6 +120,32 @@ class OpenAiRunStateRepositoryTest extends PostgresTestContainer {
                 eventRepository.deleteByRunId(runId);
                 stateRepository.deleteById(runId);
                 sessions.deleteAllById(created);
+            });
+        }
+    }
+
+    @Test
+    void sseResumesFromCommittedSequenceAfterClientReconnect() throws Exception {
+        String runId = "run-" + UUID.randomUUID();
+        stateMachine.accept(runId, "model", null, this::sessionContext);
+        try {
+            stateMachine.recordEvent(runId, "in_progress", java.util.Map.of("event", "run.started"));
+            stateMachine.recordEvent(runId, null, java.util.Map.of("event", "message.delta", "delta", "remaining"));
+            stateMachine.recordEvent(runId, "completed", java.util.Map.of("event", "run.completed", "output", "done"));
+            var stream = mvc.perform(get("/v1/runs/{id}/events", runId)
+                    .header("Last-Event-ID", "2").accept(MediaType.TEXT_EVENT_STREAM))
+                .andExpect(status().isOk())
+                .andExpect(request().asyncStarted())
+                .andReturn();
+            mvc.perform(asyncDispatch(stream)).andExpect(status().isOk());
+            assertThat(stream.getResponse().getContentAsString())
+                .containsPattern("(?s)id:3.*id:4")
+                .contains("message.delta", "remaining", "run.completed")
+                .doesNotContain("id:1", "id:2");
+        } finally {
+            transactionTemplate.executeWithoutResult(tx -> {
+                eventRepository.deleteByRunId(runId);
+                stateRepository.deleteById(runId);
             });
         }
     }

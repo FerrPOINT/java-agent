@@ -205,18 +205,39 @@ public class OpenAiRunsController {
 
     @GetMapping(value = "/{runId}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public ResponseEntity<?> runEvents(@PathVariable String runId,
-            @PathVariable(name = "profile", required = false) String profile) {
-        if (accessibleRun(runId, profile) == null) {
+            @PathVariable(name = "profile", required = false) String profile,
+            @RequestHeader(name = "Last-Event-ID", required = false) String lastEventId) {
+        var machine = runStateMachineProvider == null ? null : runStateMachineProvider.getIfAvailable();
+        if (machine == null) {
+            return durableAcceptanceUnavailable();
+        }
+        var state = machine.state(runId)
+            .filter(owner -> isAccessible(owner.getUserId(), owner.getProfile(), profile));
+        if (state.isEmpty()) {
             return openAiError(HttpStatus.NOT_FOUND, "Run not found: " + runId, "invalid_request_error", "run_not_found");
         }
-        SseEmitter emitter = runService.events(runId);
-        if (emitter == null) {
-            return openAiError(HttpStatus.NOT_FOUND, "Run not found: " + runId, "invalid_request_error", "run_not_found");
+        long cursor;
+        try {
+            if (lastEventId != null && !lastEventId.matches("[0-9]{1,19}")) {
+                throw new NumberFormatException();
+            }
+            cursor = lastEventId == null ? 0 : Long.parseLong(lastEventId);
+        } catch (NumberFormatException e) {
+            return invalidEventCursor();
         }
+        if (cursor > state.get().getLastSeq()) {
+            return invalidEventCursor();
+        }
+        SseEmitter emitter = runService.events(runId, cursor);
         return ResponseEntity.ok()
             .headers(sseHeaders())
             .contentType(MediaType.TEXT_EVENT_STREAM)
             .body(emitter);
+    }
+
+    private ResponseEntity<Map<String, Object>> invalidEventCursor() {
+        return openAiError(HttpStatus.BAD_REQUEST, "Last-Event-ID is outside the run event history",
+            "invalid_request_error", "invalid_event_cursor");
     }
 
     @GetMapping("/{runId}/events/replay")

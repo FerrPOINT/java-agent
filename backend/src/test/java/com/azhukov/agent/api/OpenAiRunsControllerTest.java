@@ -34,7 +34,6 @@ import org.mapstruct.factory.Mappers;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
@@ -160,7 +159,7 @@ class OpenAiRunsControllerTest {
         lenient().when(stateMachine.state("run_persisted")).thenReturn(java.util.Optional.of(state));
         UserContext.set("user-a", UserContext.ROLE_USER);
 
-        persistedRunsController(stateMachine).perform(get("/v1/runs/run_persisted"))
+        durableRunsController(stateMachine).perform(get("/v1/runs/run_persisted"))
             .andExpect(status().isNotFound());
     }
 
@@ -171,7 +170,7 @@ class OpenAiRunsControllerTest {
         state.setProfile("alpha");
         when(stateMachine.state("run_persisted")).thenReturn(java.util.Optional.of(state));
         UserContext.set("user-a", UserContext.ROLE_ADMIN);
-        MockMvc persistedMvc = persistedRunsController(stateMachine);
+        MockMvc persistedMvc = durableRunsController(stateMachine);
 
         persistedMvc.perform(get("/p/beta/v1/runs/run_persisted"))
             .andExpect(status().isNotFound());
@@ -191,7 +190,7 @@ class OpenAiRunsControllerTest {
     void persistedRunControlEndpointsRemainUnavailableAfterRestart() throws Exception {
         OpenAiRunStateMachine stateMachine = mock(OpenAiRunStateMachine.class);
         UserContext.set("user-a", UserContext.ROLE_USER);
-        MockMvc persistedMvc = persistedRunsController(stateMachine);
+        MockMvc persistedMvc = durableRunsController(stateMachine);
 
         persistedMvc.perform(post("/v1/runs/run_persisted/stop"))
             .andExpect(status().isNotFound());
@@ -208,7 +207,7 @@ class OpenAiRunsControllerTest {
         lenient().when(stateMachine.state("run_persisted")).thenReturn(java.util.Optional.of(state));
         UserContext.set("user-a", UserContext.ROLE_USER);
 
-        persistedRunsController(stateMachine).perform(get("/v1/runs/run_persisted"))
+        durableRunsController(stateMachine).perform(get("/v1/runs/run_persisted"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.run_id").value("run_persisted"))
             .andExpect(jsonPath("$.status").value("completed"))
@@ -260,27 +259,25 @@ class OpenAiRunsControllerTest {
         var beans = new org.springframework.beans.factory.support.StaticListableBeanFactory();
         beans.addBean("runStateMachine", stateMachine);
         var provider = beans.getBeanProvider(OpenAiRunStateMachine.class);
-        var service = new OpenAiRunService(agentRuntimeService, openAiSessionService,
+        runService = new OpenAiRunService(agentRuntimeService, openAiSessionService,
             steerBuffer, interruptToken, approvalQueue, new DefaultRedactor(properties),
             objectMapper, processTool, provider);
         var controller = new OpenAiRunsController(
-            service, openAiSessionService, responseStore, Mappers.getMapper(OpenAiMapper.class),
+            runService, openAiSessionService, responseStore, Mappers.getMapper(OpenAiMapper.class),
             objectMapper, properties, new DefaultRedactor(properties), runAdmissionService, profileService, provider);
         return MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();
     }
 
-    private MockMvc persistedRunsController(OpenAiRunStateMachine stateMachine) {
-        @SuppressWarnings("unchecked")
-        ObjectProvider<OpenAiRunStateMachine> provider = mock(ObjectProvider.class);
-        lenient().when(provider.getIfAvailable()).thenReturn(stateMachine);
-        OpenAiRunsController controller = new OpenAiRunsController(
-            runService, openAiSessionService, responseStore, Mappers.getMapper(OpenAiMapper.class),
-            objectMapper, properties, new DefaultRedactor(properties), runAdmissionService, profileService, provider);
-        return MockMvcBuilders.standaloneSetup(controller)
-            .setControllerAdvice(new GlobalExceptionHandler())
-            .build();
+    private OpenAiRunStateMachine captureRunEvents() {
+        var machine = mock(OpenAiRunStateMachine.class);
+        when(machine.accept(anyString(), anyString(), isNull(), any())).thenAnswer(call -> {
+            java.util.function.Supplier<OpenAiSessionContext> resolver = call.getArgument(3);
+            return resolver.get();
+        });
+        mockMvc = durableRunsController(machine);
+        return machine;
     }
 
     private OpenAiRunStateEntity persistedRun(String userId) {
@@ -1025,7 +1022,8 @@ class OpenAiRunsControllerTest {
     }
 
     @Test
-    void failedRunRedactsStatusAndEventErrorLikeHermes() throws Exception {
+    void failedRunRedactsStatusAndCommittedEventError() throws Exception {
+        var machine = captureRunEvents();
         when(agentRuntimeService.runApiTurn(any(Session.class), anyString(), any(ModelRequestOptions.class)))
             .thenThrow(new RuntimeException("provider rejected OPENAI_API_KEY=sk-testsecret123456789012345"));
 
@@ -1035,20 +1033,11 @@ class OpenAiRunsControllerTest {
             .contains("OPENAI_API_KEY=[REDACTED]")
             .doesNotContain("sk-testsecret123456789012345");
 
-        MvcResult result = mockMvc.perform(get("/v1/runs/{runId}/events", runId)
-                .accept(MediaType.TEXT_EVENT_STREAM))
-            .andExpect(status().isOk())
-            .andExpect(header().string(HttpHeaders.CACHE_CONTROL, "no-cache"))
-            .andExpect(header().string("X-Accel-Buffering", "no"))
-            .andExpect(request().asyncStarted())
-            .andReturn();
-
-        mockMvc.perform(asyncDispatch(result))
-            .andExpect(status().isOk())
-            .andExpect(content().contentTypeCompatibleWith(MediaType.TEXT_EVENT_STREAM));
-
-        assertThat(result.getResponse().getContentAsString())
-            .contains("run.failed")
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> event = ArgumentCaptor.forClass(Map.class);
+        verify(machine).recordEvent(eq(runId), eq("failed"), event.capture());
+        assertThat(event.getValue()).containsEntry("event", "run.failed");
+        assertThat((String) event.getValue().get("error"))
             .contains("OPENAI_API_KEY=[REDACTED]")
             .doesNotContain("sk-testsecret123456789012345");
     }
@@ -1345,7 +1334,8 @@ class OpenAiRunsControllerTest {
     }
 
     @Test
-    void approvalRequestEventRedactsToolArgumentsLikeHermes() throws Exception {
+    void committedApprovalEventRedactsToolArguments() throws Exception {
+        var machine = captureRunEvents();
         BlockingRun blockingRun = blockRuntime();
         String runId = createRun("needs approval");
         waitForStatus(runId, "running");
@@ -1362,19 +1352,13 @@ class OpenAiRunsControllerTest {
         );
         waitForStatus(runId, "waiting_for_approval");
 
-        MvcResult result = mockMvc.perform(get("/v1/runs/{runId}/events", runId)
-                .accept(MediaType.TEXT_EVENT_STREAM))
-            .andExpect(status().isOk())
-            .andExpect(request().asyncStarted())
-            .andReturn();
-
         blockingRun.complete();
         waitForStatus(runId, "completed");
-        mockMvc.perform(asyncDispatch(result))
-            .andExpect(status().isOk())
-            .andExpect(content().contentTypeCompatibleWith(MediaType.TEXT_EVENT_STREAM));
 
-        assertThat(result.getResponse().getContentAsString())
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> event = ArgumentCaptor.forClass(Map.class);
+        verify(machine).recordEvent(eq(runId), eq("requires_action"), event.capture());
+        assertThat(objectMapper.writeValueAsString(event.getValue()))
             .contains("approval.request")
             .contains("\"choices\":[\"once\",\"deny\"]")
             .contains("OPENAI_API_KEY=[REDACTED]")
@@ -1437,51 +1421,56 @@ class OpenAiRunsControllerTest {
     }
 
     @Test
-    void eventsEndpointStreamsLifecycleEvents() throws Exception {
-        when(agentRuntimeService.runApiTurn(any(Session.class), anyString(), any(ModelRequestOptions.class)))
-            .thenReturn(new ChatResponseDto(SESSION_ID, "streamed", List.of(), true));
-        String runId = createRun("stream events");
-        waitForStatus(runId, "completed");
+    void durableEventsResumeStrictlyAfterLastEventIdWithNoLocalRun() throws Exception {
+        OpenAiRunStateMachine machine = mock(OpenAiRunStateMachine.class);
+        var state = persistedRun("user-a");
+        state.setProfile("alpha");
+        when(machine.state("run_persisted")).thenReturn(java.util.Optional.of(state));
+        when(machine.replayParsed(eq("run_persisted"), eq(2L), org.mockito.ArgumentMatchers.anyInt())).thenReturn(List.of(
+            new OpenAiRunStateMachine.ParsedEvent(3, Map.of("event", "message.delta", "delta", "remaining")),
+            new OpenAiRunStateMachine.ParsedEvent(4, Map.of("event", "run.completed"))
+        ));
+        UserContext.set("user-a", UserContext.ROLE_USER);
+        MockMvc restarted = durableRunsController(machine);
+        String url = "/p/alpha/v1/runs/run_persisted/events";
 
-        MvcResult result = mockMvc.perform(get("/v1/runs/{runId}/events", runId)
+        MvcResult stream = restarted.perform(get(url).header("Last-Event-ID", "2")
                 .accept(MediaType.TEXT_EVENT_STREAM))
             .andExpect(status().isOk())
+            .andExpect(header().string(HttpHeaders.CACHE_CONTROL, "no-cache"))
+            .andExpect(header().string("X-Accel-Buffering", "no"))
             .andExpect(request().asyncStarted())
             .andReturn();
-
-        mockMvc.perform(asyncDispatch(result))
+        restarted.perform(asyncDispatch(stream))
             .andExpect(status().isOk())
             .andExpect(content().contentTypeCompatibleWith(MediaType.TEXT_EVENT_STREAM));
 
-        assertThat(result.getResponse().getContentAsString())
-            .contains("run.started")
-            .contains("message.delta")
-            .contains("\"delta\":\"streamed\"")
-            .contains("run.completed");
+        assertThat(stream.getResponse().getContentAsString())
+            .containsPattern("(?s)id:3.*id:4")
+            .contains("message.delta", "remaining", "run.completed")
+            .doesNotContain("id:1", "id:2");
     }
 
     @Test
-    void eventsEndpointIsOneShotAfterCloseLikeHermes() throws Exception {
-        when(agentRuntimeService.runApiTurn(any(Session.class), anyString(), any(ModelRequestOptions.class)))
-            .thenReturn(new ChatResponseDto(SESSION_ID, "streamed", List.of(), true));
-        String runId = createRun("stream events once");
-        waitForStatus(runId, "completed");
+    void eventCursorMustBelongToTheRequestedProfileAndJournal() throws Exception {
+        OpenAiRunStateMachine machine = mock(OpenAiRunStateMachine.class);
+        var state = persistedRun("user-a");
+        state.setProfile("alpha");
+        when(machine.state("run_persisted")).thenReturn(java.util.Optional.of(state));
+        UserContext.set("user-a", UserContext.ROLE_USER);
+        MockMvc restarted = durableRunsController(machine);
 
-        MvcResult result = mockMvc.perform(get("/v1/runs/{runId}/events", runId)
+        restarted.perform(get("/p/beta/v1/runs/run_persisted/events").header("Last-Event-ID", "2")
                 .accept(MediaType.TEXT_EVENT_STREAM))
-            .andExpect(status().isOk())
-            .andExpect(request().asyncStarted())
-            .andReturn();
-
-        mockMvc.perform(asyncDispatch(result))
-            .andExpect(status().isOk())
-            .andExpect(content().contentTypeCompatibleWith(MediaType.TEXT_EVENT_STREAM));
-
-        mockMvc.perform(get("/v1/runs/{runId}/events", runId)
-                .accept(MediaType.TEXT_EVENT_STREAM))
-            .andExpect(status().isNotFound())
-            .andExpect(jsonPath("$.error.message").value("Run not found: " + runId))
-            .andExpect(jsonPath("$.error.code").value("run_not_found"));
+            .andExpect(status().isNotFound());
+        for (String invalid : List.of("-1", "not-a-number", "9223372036854775808", "5")) {
+            restarted.perform(get("/p/alpha/v1/runs/run_persisted/events").header("Last-Event-ID", invalid)
+                    .accept(MediaType.TEXT_EVENT_STREAM))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("invalid_event_cursor"));
+        }
+        verify(machine, never()).replayParsed(anyString(), org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyInt());
     }
 
     @Test
@@ -1509,8 +1498,6 @@ class OpenAiRunsControllerTest {
         waitForStatus(runId, "completed");
 
         mockMvc.perform(get("/p/beta/v1/runs/{runId}", runId))
-            .andExpect(status().isNotFound());
-        mockMvc.perform(get("/p/beta/v1/runs/{runId}/events", runId).accept(MediaType.TEXT_EVENT_STREAM))
             .andExpect(status().isNotFound());
         for (String action : List.of("stop", "steer", "approval")) {
             mockMvc.perform(post("/p/beta/v1/runs/{runId}/{action}", runId, action))
