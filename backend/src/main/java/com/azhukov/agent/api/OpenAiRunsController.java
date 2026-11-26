@@ -75,8 +75,7 @@ public class OpenAiRunsController {
             @RequestHeader(value = OpenAiSessionService.SESSION_KEY_HEADER, required = false) String sessionKeyHeader,
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
         String profile = selectedProfile(pathProfile);
-        if (!"default".equals(profile)
-            && (!profileService.isValidProfileName(profile) || !profileService.knownProfile(profile))) {
+        if (!knownProfile(profile)) {
             return openAiError(HttpStatus.NOT_FOUND, "Profile not found", "invalid_request_error", "profile_not_found");
         }
         if (request == null || !runsInputTruthy(request.input())) {
@@ -85,7 +84,7 @@ public class OpenAiRunsController {
 
         SubmissionKey key = null;
         if (idempotencyKey != null) {
-            if (!idempotencyKey.matches("[!-~]{1,128}")) {
+            if (!validIdempotencyKey(idempotencyKey)) {
                 return openAiError(HttpStatus.BAD_REQUEST, "Invalid Idempotency-Key",
                     "invalid_request_error", "invalid_idempotency_key");
             }
@@ -94,11 +93,7 @@ public class OpenAiRunsController {
                 return openAiError(HttpStatus.UNAUTHORIZED, "Authenticated run identity required",
                     "invalid_request_error");
             }
-            var origin = NativeIdentityOrigin.current();
-            String digest = OpenAiIdempotencyCache.fingerprint(objectMapper, "openai-runs",
-                origin == null ? "central" : origin.kind().name(), principal, profile, idempotencyKey);
-            String fingerprint = OpenAiIdempotencyCache.fingerprint(objectMapper, request, sessionKeyHeader);
-            key = new SubmissionKey("run_" + digest.substring(0, 60), profile, fingerprint);
+            key = submissionKey(profile, principal, idempotencyKey, request, sessionKeyHeader);
             try {
                 var replay = runService.replay(key);
                 if (replay.isPresent()) {
@@ -182,11 +177,63 @@ public class OpenAiRunsController {
         }
     }
 
+    @PostMapping("/lookup")
+    public ResponseEntity<Map<String, Object>> lookup(
+            @PathVariable(name = "profile", required = false) String pathProfile,
+            @RequestBody OpenAiRunRequest request,
+            @RequestHeader(value = OpenAiSessionService.SESSION_KEY_HEADER, required = false) String sessionKeyHeader,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
+        String profile = selectedProfile(pathProfile);
+        if (!knownProfile(profile)) {
+            return openAiError(HttpStatus.NOT_FOUND, "Profile not found", "invalid_request_error", "profile_not_found");
+        }
+        if (!validIdempotencyKey(idempotencyKey)) {
+            return openAiError(HttpStatus.BAD_REQUEST, "A valid Idempotency-Key is required",
+                "invalid_request_error", "invalid_idempotency_key");
+        }
+        String principal = UserContext.getUserId();
+        if (principal == null) {
+            return openAiError(HttpStatus.UNAUTHORIZED, "Authenticated run identity required", "invalid_request_error");
+        }
+        try {
+            return runService.replay(submissionKey(profile, principal, idempotencyKey, request, sessionKeyHeader))
+                .map(result -> acceptanceReceipt(result, sessionKeyHeader, HttpStatus.OK))
+                .orElseGet(() -> openAiError(HttpStatus.NOT_FOUND, "No accepted run for this request",
+                    "invalid_request_error", "run_not_found"));
+        } catch (OpenAiRunService.IdempotencyConflict e) {
+            return idempotencyConflict();
+        } catch (OpenAiRunService.DurableAcceptanceUnavailable e) {
+            return durableAcceptanceUnavailable();
+        }
+    }
+
+    private boolean knownProfile(String profile) {
+        return "default".equals(profile) || (profileService.isValidProfileName(profile) && profileService.knownProfile(profile));
+    }
+
+    private static boolean validIdempotencyKey(String value) {
+        return value != null && value.matches("[!-~]{1,128}");
+    }
+
+    private SubmissionKey submissionKey(String profile, String principal, String idempotencyKey,
+                                        OpenAiRunRequest request, String sessionKeyHeader) {
+        var origin = NativeIdentityOrigin.current();
+        String digest = OpenAiIdempotencyCache.fingerprint(objectMapper, "openai-runs",
+            origin == null ? "central" : origin.kind().name(), principal, profile, idempotencyKey);
+        String fingerprint = OpenAiIdempotencyCache.fingerprint(objectMapper, request, sessionKeyHeader);
+        return new SubmissionKey("run_" + digest.substring(0, 60), profile, fingerprint);
+    }
+
     private ResponseEntity<Map<String, Object>> accepted(Acceptance result, String sessionKeyHeader) {
+        return acceptanceReceipt(result, sessionKeyHeader, HttpStatus.ACCEPTED);
+    }
+
+    private ResponseEntity<Map<String, Object>> acceptanceReceipt(Acceptance result, String sessionKeyHeader,
+                                                                   HttpStatus status) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("run_id", result.runId());
         body.put("status", "started");
-        return ResponseEntity.status(HttpStatus.ACCEPTED)
+        return ResponseEntity.status(status)
             .headers(responseHeaders(result.sessionId(), sessionKeyHeader))
             .contentType(MediaType.APPLICATION_JSON)
             .body(body);

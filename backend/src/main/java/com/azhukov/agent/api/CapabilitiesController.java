@@ -219,10 +219,14 @@ public class CapabilitiesController {
         idempotency.put("durable", configured);
         idempotency.put("retention_seconds", null);
         features.put("runs_idempotency", idempotency);
+        features.put("run_acceptance_lookup", configured);
     }
 
     private void addRunEndpoints(Map<String, Object> endpoints) {
         endpoints.put("runs", Map.of("method", "POST", "path", "/v1/runs"));
+        if (runs.durableAcceptanceConfigured()) {
+            endpoints.put("run_acceptance_lookup", Map.of("method", "POST", "path", "/v1/runs/lookup"));
+        }
         endpoints.put("run_status", Map.of("method", "GET", "path", "/v1/runs/{run_id}"));
         endpoints.put("run_events", Map.of("method", "GET", "path", "/v1/runs/{run_id}/events"));
         endpoints.put("run_approval", Map.of("method", "POST", "path", "/v1/runs/{run_id}/approval"));

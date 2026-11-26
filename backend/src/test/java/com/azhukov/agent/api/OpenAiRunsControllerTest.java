@@ -241,12 +241,30 @@ class OpenAiRunsControllerTest {
 
         String body = "{\"input\":\"original dispatch\"}";
         MockMvc first = durableRunsController(stateMachine);
+        first.perform(post("/v1/runs/lookup").header("Idempotency-Key", "dispatch-31")
+                .contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isNotFound());
+        assertThat(accepted).isEmpty();
         MvcResult created = first.perform(post("/v1/runs").header("Idempotency-Key", "dispatch-31")
                 .contentType(MediaType.APPLICATION_JSON).content(body))
             .andExpect(status().isAccepted()).andReturn();
         String runId = readRunId(created);
 
         MockMvc restarted = durableRunsController(stateMachine);
+        restarted.perform(post("/v1/runs/lookup").header("Idempotency-Key", "dispatch-31")
+                .contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.run_id").value(runId))
+            .andExpect(header().string(OpenAiSessionService.SESSION_ID_HEADER, SESSION_ID.toString()));
+        restarted.perform(post("/v1/runs/lookup").header("Idempotency-Key", "dispatch-31")
+                .header(OpenAiSessionService.SESSION_KEY_HEADER, "different-session")
+                .contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isConflict());
+        UserContext.set("user-2", UserContext.ROLE_USER);
+        restarted.perform(post("/v1/runs/lookup").header("Idempotency-Key", "dispatch-31")
+                .contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isNotFound());
+        UserContext.set("user-1", UserContext.ROLE_USER);
         restarted.perform(post("/v1/runs").header("Idempotency-Key", "dispatch-31")
                 .contentType(MediaType.APPLICATION_JSON).content(body))
             .andExpect(status().isAccepted())
