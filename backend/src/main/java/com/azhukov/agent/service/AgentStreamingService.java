@@ -38,6 +38,7 @@ import com.azhukov.agent.core.tool.ToolCallValidator;
 import com.azhukov.agent.core.tool.ToolExecutionService;
 import com.azhukov.agent.core.tool.ToolRegistry;
 import com.azhukov.agent.core.security.ApprovalQueue;
+import com.azhukov.agent.core.security.ProfileDatabaseScope;
 import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.security.ToolApprovalPolicy;
 import com.azhukov.agent.core.state.TurnState;
@@ -347,7 +348,7 @@ public class AgentStreamingService {
             streamCtx.markDisconnected();
         });
 
-        CompletableFuture.runAsync(() -> {
+        CompletableFuture.runAsync(ProfileDatabaseScope.carry(() -> {
             // rev-79: per-session turn lock — mutual exclusion with the sync path
             // AND other streaming turns on the same session. Live-verified race:
             // two parallel /agent/chat/stream POSTs returned interleaved content
@@ -411,7 +412,7 @@ public class AgentStreamingService {
                 // Safety net: clear ThreadLocal if runAgenticLoop didn't
                 InterruptToken.clearCurrentSessionId();
             }
-        }, streamingExecutor);
+        }), streamingExecutor);
         return emitter;
     }
 

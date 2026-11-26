@@ -151,7 +151,7 @@ class HeartbeatServiceTest {
 
         var jdbc = org.mockito.Mockito.mock(org.springframework.jdbc.core.JdbcTemplate.class);
         org.mockito.Mockito.when(jdbc.queryForList(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.<Object>any()))
-            .thenReturn(java.util.List.of(java.util.Map.of("session_id", sid, "state_value", entity.getCliState().get("heartbeat"))));
+            .thenReturn(java.util.List.of(java.util.Map.of("session_id", sid, "profile", "default", "state_value", entity.getCliState().get("heartbeat"))));
         var restored = new HeartbeatService(defaultSessions(), new ProfileRuntimeRegistry(null));
         var jdbcField = HeartbeatService.class.getDeclaredField("jdbcTemplate");
         jdbcField.setAccessible(true);
@@ -167,7 +167,7 @@ class HeartbeatServiceTest {
     void firePromptTemplate() {
         HeartbeatService svc = new HeartbeatService(defaultSessions(), new ProfileRuntimeRegistry(null));
         HeartbeatService.HeartbeatState st = new HeartbeatService.HeartbeatState(
-            "Check the deployment", 600, "active", Instant.now(), null, 0);
+            "Check the deployment", 600, "active", Instant.now(), null, 0, 0, "default");
         String prompt = svc.buildFirePrompt(st);
         assertThat(prompt).startsWith("[Heartbeat — recurring instruction, fires every 10m]");
         assertThat(prompt).contains("Check the deployment");
@@ -194,7 +194,7 @@ class HeartbeatServiceTest {
     @DisplayName("--times cap: isDue false once fireCount reaches maxTicks")
     void timesCap() {
         HeartbeatService.HeartbeatState st = new HeartbeatService.HeartbeatState(
-            "Watch CI", 60, "active", Instant.now().minusSeconds(500), null, 3, 3);
+            "Watch CI", 60, "active", Instant.now().minusSeconds(500), null, 3, 3, "default");
         assertThat(st.fireCount()).isEqualTo(3);
         assertThat(st.maxTicks()).isEqualTo(3);
         assertThat(st.isDue(Instant.now())).isFalse();   // cap reached

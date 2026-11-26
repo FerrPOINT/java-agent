@@ -199,7 +199,7 @@ class CronJobControllerTest {
         session.setProfile("alpha");
         when(sessionRepository.findById(sessionId)).thenReturn(java.util.Optional.of(session));
         when(heartbeatService.get(sessionId)).thenReturn(new HeartbeatService.HeartbeatState(
-            "private alpha reminder", 60, "active", java.time.Instant.now(), null, 0, 0));
+            "private alpha reminder", 60, "active", java.time.Instant.now(), null, 0, 0, "alpha"));
 
         UserContext.set("same-owner", UserContext.ROLE_USER);
         try {

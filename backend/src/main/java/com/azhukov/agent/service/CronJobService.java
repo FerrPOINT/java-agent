@@ -1,6 +1,7 @@
 package com.azhukov.agent.service;
 
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.security.ProfileDatabaseScope;
 import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.agent.SessionMutationLock;
 import com.azhukov.agent.core.security.DefaultUrlSafety;
@@ -845,6 +846,10 @@ private static final String CRON_EXECUTION_HINT = """
     }
 
     private CronExecutionOutcome executeJob(CronJobEntity job, String extraPrompt) {
+        return ProfileDatabaseScope.call(jobProfile(job), () -> runScopedJob(job, extraPrompt));
+    }
+
+    private CronExecutionOutcome runScopedJob(CronJobEntity job, String extraPrompt) {
         log.info("Executing cron job: {} (deliverTo: {}, skills: {}, noAgent: {}, script: {})",
             job.getName(), job.getDeliverTo(), job.getSkills(), job.isNoAgent(), job.getScript());
 

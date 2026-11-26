@@ -3,6 +3,7 @@ package com.azhukov.agent.api;
 import com.azhukov.agent.api.dto.ChatRequest;
 import com.azhukov.agent.shared.dto.ChatResponseDto;
 import com.azhukov.agent.api.dto.MessageListDto;
+import com.azhukov.agent.core.security.ProfileDatabaseScope;
 import com.azhukov.agent.service.AgentRuntimeService;
 import com.azhukov.agent.service.AgentStreamingService;
 import com.azhukov.agent.service.SessionQueryService;
@@ -196,7 +197,7 @@ public class SessionCrudController {
                 integer(raw, "max_messages"),
                 Boolean.parseBoolean(String.valueOf(raw.getOrDefault("include_archived", false))),
                 Boolean.parseBoolean(String.valueOf(raw.getOrDefault("dry_run", false))));
-        com.azhukov.agent.service.SessionPruneService.PruneResult result = pruneService.prune(request);
+        var result = ProfileDatabaseScope.call(request.profile(), () -> pruneService.prune(request));
         Map<String, Object> response = new java.util.LinkedHashMap<>();
         response.put("pruned", result.pruned());
         response.put("pruned_count", result.pruned().size());

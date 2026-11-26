@@ -8,6 +8,7 @@ import com.azhukov.agent.core.client.ModelRequestOptions;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.security.ApiErrorTextRedactor;
+import com.azhukov.agent.core.security.ProfileDatabaseScope;
 import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.security.ApprovalQueue;
 import com.azhukov.agent.core.security.Redactor;
@@ -168,7 +169,7 @@ public class OpenAiRunService {
             return new Acceptance(runId, context.responseSessionId(), false, revision);
         }
         try {
-            executor.submit(() -> monitorApprovals(record));
+            executor.submit(ProfileDatabaseScope.carry(() -> monitorApprovals(record)));
         } catch (RejectedExecutionException e) {
             log.debug("Run approval monitor is stopping for {}", runId);
         }

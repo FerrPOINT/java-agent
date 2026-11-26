@@ -5,6 +5,7 @@ import com.azhukov.agent.core.agent.AgentRuntime;
 import com.azhukov.agent.core.agent.MidTurnPersistenceCallback;
 import com.azhukov.agent.core.agent.SteerBuffer;
 import com.azhukov.agent.core.model.Session;
+import com.azhukov.agent.core.security.ProfileDatabaseScope;
 import com.azhukov.agent.gateway.model.MessageEvent;
 import com.azhukov.agent.gateway.model.Platform;
 import com.azhukov.agent.gateway.model.SessionSource;
@@ -101,7 +102,7 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
 
     @Override
     public void accept(MessageEvent event) {
-        process(event, null);
+        ProfileDatabaseScope.run(event.source().profile(), () -> process(event, null));
     }
 
     private void process(MessageEvent event, ChatQueue ownedQueue) {

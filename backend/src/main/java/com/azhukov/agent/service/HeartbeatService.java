@@ -1,6 +1,7 @@
 package com.azhukov.agent.service;
 
 import com.azhukov.agent.core.agent.AgentRuntime;
+import com.azhukov.agent.core.security.ProfileDatabaseScope;
 import com.azhukov.agent.core.agent.AgentSessionResolver;
 import com.azhukov.agent.persistence.repository.SessionRepository;
 import lombok.RequiredArgsConstructor;
@@ -11,6 +12,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -71,12 +73,9 @@ public class HeartbeatService {
         Instant createdAt,
         Instant lastFiredAt,
         int fireCount,
-        int maxTicks           // /loop --times N; 0 = unlimited
+        int maxTicks,          // /loop --times N; 0 = unlimited
+        String profile
     ) {
-        public HeartbeatState(String prompt, int intervalSeconds, String status,
-                               Instant createdAt, Instant lastFiredAt, int fireCount) {
-            this(prompt, intervalSeconds, status, createdAt, lastFiredAt, fireCount, 0);
-        }
 
         public boolean isDue(Instant now) {
             if (!"active".equals(status) || prompt == null || prompt.isBlank() || intervalSeconds <= 0) {
@@ -161,10 +160,13 @@ public class HeartbeatService {
     @org.springframework.context.event.EventListener(org.springframework.boot.context.event.ApplicationReadyEvent.class)
     public void restorePersisted() {
         if (jdbcTemplate == null) return;
-        try {
+        try (var scope = ProfileDatabaseScope.enterHistoryOverview()) {
             int restored = 0;
-            var rows = jdbcTemplate.queryForList(
-                "SELECT session_id, state_value FROM session_cli_state WHERE state_key = ?", STATE_KEY);
+            var rows = jdbcTemplate.queryForList("""
+                SELECT state.session_id, state.state_value, s.profile
+                FROM session_cli_state state JOIN sessions s ON s.id = state.session_id
+                WHERE state.state_key = ?
+                """, STATE_KEY);
             for (var row : rows) {
                 UUID sid = java.util.UUID.fromString(String.valueOf(row.get("session_id")));
                 String raw = String.valueOf(row.get("state_value"));
@@ -181,9 +183,13 @@ public class HeartbeatService {
                 if (!valid) continue;
                 parts[0] = raw.substring(0, end);
                 try {
+                    String profile = (String) row.get("profile");
+                    if (!ProfileDatabaseScope.validProfile(profile)) {
+                        continue;
+                    }
                     HeartbeatState st = new HeartbeatState(parts[0],
                         Integer.parseInt(parts[1]), parts[2], Instant.now(), null,
-                        Integer.parseInt(parts[4]), Integer.parseInt(parts[3]));
+                        Integer.parseInt(parts[4]), Integer.parseInt(parts[3]), profile);
                     if ("active".equals(st.status()) || "paused".equals(st.status())) {
                         states.put(sid, st);
                         restored++;
@@ -231,8 +237,9 @@ public class HeartbeatService {
     }
 
     public synchronized HeartbeatState set(UUID sessionId, String prompt, int intervalSeconds, int maxTicks) {
+        String profile = Objects.requireNonNullElse(ProfileDatabaseScope.current(), "default");
         HeartbeatState st = new HeartbeatState(prompt.strip(), intervalSeconds, "active",
-            Instant.now(), null, 0, maxTicks);
+            Instant.now(), null, 0, maxTicks, profile);
         states.put(sessionId, st);
         persist(sessionId, st);
         ensureWatchdog();
@@ -243,7 +250,7 @@ public class HeartbeatService {
         HeartbeatState st = states.get(sessionId);
         if (st == null || !"active".equals(st.status())) return null;
         st = new HeartbeatState(st.prompt(), st.intervalSeconds(), "paused",
-            st.createdAt(), st.lastFiredAt(), st.fireCount(), st.maxTicks());
+            st.createdAt(), st.lastFiredAt(), st.fireCount(), st.maxTicks(), st.profile());
         states.put(sessionId, st);
         persist(sessionId, st);
         return st;
@@ -253,7 +260,7 @@ public class HeartbeatService {
         HeartbeatState st = states.get(sessionId);
         if (st == null || !"paused".equals(st.status())) return null;
         st = new HeartbeatState(st.prompt(), st.intervalSeconds(), "active",
-            st.createdAt(), Instant.now(), st.fireCount(), st.maxTicks());  // anchor reset — Hermes resume restarts the clock
+            st.createdAt(), Instant.now(), st.fireCount(), st.maxTicks(), st.profile());  // anchor reset — Hermes resume restarts the clock
         states.put(sessionId, st);
         persist(sessionId, st);
         ensureWatchdog();
@@ -325,6 +332,10 @@ public class HeartbeatService {
 
     /** One due-check for one session. Package-private for tests. */
     void tick(UUID sessionId, HeartbeatState st, Instant now) {
+        ProfileDatabaseScope.run(st.profile(), () -> tickScoped(sessionId, st, now));
+    }
+
+    private void tickScoped(UUID sessionId, HeartbeatState st, Instant now) {
         if (!st.isDue(now)) return;
 
         // Hermes: heartbeats only fire into an IDLE session. If the session is
@@ -335,7 +346,7 @@ public class HeartbeatService {
         }
 
         var session = sessionRepository.findById(sessionId).orElse(null);
-        if (session == null) {
+        if (session == null || !AgentSessionResolver.inProfile(session, st.profile())) {
             states.remove(sessionId, st);
             return;
         }
@@ -379,7 +390,7 @@ public class HeartbeatService {
     private synchronized HeartbeatState claimTick(UUID sessionId, HeartbeatState previous) {
         if (states.get(sessionId) != previous) return null;
         var fired = new HeartbeatState(previous.prompt(), previous.intervalSeconds(),
-            previous.status(), previous.createdAt(), Instant.now(), previous.fireCount() + 1, previous.maxTicks());
+            previous.status(), previous.createdAt(), Instant.now(), previous.fireCount() + 1, previous.maxTicks(), previous.profile());
         states.put(sessionId, fired);
         return fired;
     }

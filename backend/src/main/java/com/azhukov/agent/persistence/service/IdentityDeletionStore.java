@@ -16,6 +16,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import javax.sql.DataSource;
 import lombok.RequiredArgsConstructor;
@@ -40,6 +41,9 @@ public class IdentityDeletionStore implements IdentityDeletionOwner, IdentityRef
     private final Environment environment;
     private final ObjectMapper mapper;
     private static final String OWNER="java-agent";
+    private static final Set<String> PROFILE_REFERENCE_SOURCES =
+        Set.of("sessions", "messages", "session_cli_state", "openai_run_states", "openai_run_events");
+
     private static final String LOCK="SELECT pg_advisory_xact_lock(714402216006::bigint)";
 
     @PostConstruct
@@ -159,9 +163,9 @@ public class IdentityDeletionStore implements IdentityDeletionOwner, IdentityRef
         long total=0;
         for(String source:sources) {
             window.requireCurrent();if(!source.matches("[a-z_]+")) throw unknown();
-            if ("openai_run_states".equals(source) || "openai_run_events".equals(source)) {
+            if (PROFILE_REFERENCE_SOURCES.contains(source)) {
                 try (PreparedStatement q = c.prepareStatement(
-                        "SELECT unresolved,reference_count FROM java_identity_run_reference_count(?,?,?)")) {
+                        "SELECT unresolved,reference_count FROM java_identity_profile_reference_count(?,?,?)")) {
                     q.setString(1, source);
                     q.setString(2, request.identity().issuer());
                     q.setString(3, request.identity().subject());
