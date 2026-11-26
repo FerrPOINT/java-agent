@@ -13,9 +13,21 @@ public record SessionSource(
     String userId,
     String username,
     String displayName,
-    String threadId
+    String threadId,
+    String profile
 ) {
     public SessionSource(Platform platform, String chatId, String userId, String username, String displayName) {
         this(platform, chatId, userId, username, displayName, null);
+    }
+
+    public SessionSource(Platform platform, String chatId, String userId, String username, String displayName, String threadId) {
+        this(platform, chatId, userId, username, displayName, threadId, "default");
+    }
+
+    public SessionSource {
+        // Previously serialized standalone targets do not have a profile field.
+        if (profile == null) {
+            profile = "default";
+        }
     }
 }

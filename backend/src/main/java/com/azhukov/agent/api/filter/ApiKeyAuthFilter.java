@@ -4,6 +4,7 @@ import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.security.CentralJwtVerifier;
 import com.azhukov.agent.core.security.NativeIdentityOrigin;
+import com.azhukov.agent.gateway.telegram.TelegramWebhookController;
 import com.azhukov.agent.service.ProfileEnvStore;
 import com.azhukov.agent.service.UserAccessService;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -83,7 +84,7 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        return IdentityDeletionBoundaryFilter.privateOwner(request);
+        return IdentityDeletionBoundaryFilter.privateOwner(request) || TelegramWebhookController.isNamedCallback(request);
     }
 
     /** Test-only compatibility constructor without per-user auth. */

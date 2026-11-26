@@ -16,6 +16,7 @@ import java.util.function.Function;
 public class GatewayConfigWriter {
 
     static final String TOKEN = "TELEGRAM_BOT_TOKEN";
+    static final String WEBHOOK_SECRET = "TELEGRAM_WEBHOOK_SECRET";
     static final String USER_IDS = "TELEGRAM_ALLOWED_USERS";
     static final String USERNAMES = "TELEGRAM_ALLOWED_USERNAMES";
     static final String ALLOW_BY_DEFAULT = "TELEGRAM_ALLOW_BY_DEFAULT";
@@ -30,7 +31,14 @@ public class GatewayConfigWriter {
                 return access(agentProperties.getGateway().getTelegram());
             }
         }
-        return access(namedSettings(env.readAll(profile)));
+        return access(profileTelegram(profile));
+    }
+
+    public TelegramProperties profileTelegram(String profile) throws IOException {
+        if (isDefault(profile)) {
+            throw new IllegalArgumentException("A named Telegram profile is required");
+        }
+        return namedSettings(env.readAll(profile));
     }
 
     public ApproveResult approveTelegramUser(String profile, String userValue) throws IOException {
@@ -51,9 +59,12 @@ public class GatewayConfigWriter {
         });
     }
 
-    public TelegramAccess updateTelegramConfig(String profile, String botToken,
+    public TelegramAccess updateTelegramConfig(String profile, String botToken, String webhookSecret,
                                                List<String> allowedUserIds, List<String> allowedUsernames,
                                                Boolean allowByDefault) throws IOException {
+        if (hasText(webhookSecret)) {
+            validateWebhookSecret(webhookSecret);
+        }
         List<String> ids = allowedUserIds == null ? null : allowedUserIds.stream()
             .filter(GatewayConfigWriter::hasText).map(GatewayConfigWriter::requireUserValue).distinct().toList();
         List<String> usernames = allowedUsernames == null ? null : allowedUsernames.stream()
@@ -62,6 +73,9 @@ public class GatewayConfigWriter {
         return update(profile, telegram -> {
             if (hasText(botToken)) {
                 telegram.setBotToken(botToken.trim());
+            }
+            if (hasText(webhookSecret)) {
+                telegram.setWebhookSecret(webhookSecret);
             }
             replaceAllowlist(telegram.getAllowedUserIds(), ids);
             replaceAllowlist(telegram.getAllowedUsernames(), usernames);
@@ -88,6 +102,9 @@ public class GatewayConfigWriter {
             if (hasText(telegram.getBotToken())) {
                 values.put(TOKEN, telegram.getBotToken());
             }
+            if (hasText(telegram.getWebhookSecret())) {
+                values.put(WEBHOOK_SECRET, telegram.getWebhookSecret());
+            }
             values.put(USER_IDS, String.join(",", telegram.getAllowedUserIds()));
             values.put(USERNAMES, String.join(",", telegram.getAllowedUsernames()));
             values.put(ALLOW_BY_DEFAULT, Boolean.toString(telegram.isAllowByDefault()));
@@ -98,6 +115,7 @@ public class GatewayConfigWriter {
     private static TelegramProperties namedSettings(Map<String, String> values) {
         var config = new TelegramProperties();
         config.setBotToken(values.getOrDefault(TOKEN, ""));
+        config.setWebhookSecret(values.getOrDefault(WEBHOOK_SECRET, ""));
         config.getAllowedUserIds().addAll(parseList(values.get(USER_IDS)));
         config.getAllowedUsernames().addAll(parseList(values.get(USERNAMES)));
         config.setAllowByDefault("true".equals(values.get(ALLOW_BY_DEFAULT)));
@@ -111,8 +129,15 @@ public class GatewayConfigWriter {
     }
 
     private static TelegramAccess access(TelegramProperties telegram) {
-        return new TelegramAccess(hasText(telegram.getBotToken()), List.copyOf(telegram.getAllowedUserIds()),
+        return new TelegramAccess(hasText(telegram.getBotToken()), hasText(telegram.getWebhookSecret()),
+            List.copyOf(telegram.getAllowedUserIds()),
             List.copyOf(telegram.getAllowedUsernames()), telegram.isAllowByDefault());
+    }
+
+    public static boolean isAllowed(TelegramProperties settings, String userId, String username) {
+        return settings.isAllowByDefault()
+            || (userId != null && !userId.isBlank() && settings.getAllowedUserIds().contains(userId))
+            || (username != null && !username.isBlank() && settings.getAllowedUsernames().contains(username));
     }
 
     private static List<String> allowlist(TelegramProperties telegram, String user) {
@@ -141,11 +166,17 @@ public class GatewayConfigWriter {
         return user;
     }
 
+    static void validateWebhookSecret(String value) {
+        if (value == null || !value.matches("[A-Za-z0-9_-]{1,256}")) {
+            throw new IllegalArgumentException("Invalid Telegram webhook secret");
+        }
+    }
+
     private static boolean hasText(String value) {
         return value != null && !value.isBlank();
     }
 
-    public record TelegramAccess(boolean botTokenSet, List<String> userIds, List<String> usernames,
+    public record TelegramAccess(boolean botTokenSet, boolean webhookSecretSet, List<String> userIds, List<String> usernames,
                                  boolean allowByDefault) {}
 
     public record ApproveResult(String user, boolean changed, TelegramAccess access) {}

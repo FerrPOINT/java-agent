@@ -36,6 +36,7 @@ public class ProfileEnvStore {
         "AGENT_VISION_API_KEY",
         "AGENT_TRANSCRIPTION_API_KEY",
         GatewayConfigWriter.TOKEN,
+        GatewayConfigWriter.WEBHOOK_SECRET,
         GatewayConfigWriter.USER_IDS,
         GatewayConfigWriter.USERNAMES,
         GatewayConfigWriter.ALLOW_BY_DEFAULT);
@@ -54,7 +55,7 @@ public class ProfileEnvStore {
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("is_set", value != null && !value.isBlank());
             row.put("redacted_value", value == null || value.isBlank() ? null : REDACTED);
-            row.put("is_password", key.endsWith("_KEY") || key.endsWith("_SHA256") || key.endsWith("_TOKEN"));
+            row.put("is_password", key.endsWith("_KEY") || key.endsWith("_SHA256") || key.endsWith("_TOKEN") || key.endsWith("_SECRET"));
             rows.put(key, row);
         }
         return rows;
@@ -98,6 +99,9 @@ public class ProfileEnvStore {
     }
 
     private static void validateValue(String key, String value) {
+        if (GatewayConfigWriter.WEBHOOK_SECRET.equals(key)) {
+            GatewayConfigWriter.validateWebhookSecret(value);
+        }
         if ("AGENT_FLEET_PROFILE_TOKEN_SHA256".equals(key) && !value.matches("[0-9a-f]{64}")) {
             throw new IllegalArgumentException("Fleet profile token fingerprint must be a SHA-256 digest");
         }

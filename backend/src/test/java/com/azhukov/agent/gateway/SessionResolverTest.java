@@ -38,7 +38,7 @@ class SessionResolverTest {
         properties = new AgentProperties();
         properties.getModel().setProvider("openai-compatible");
         properties.getModel().setModelName("gpt-4");
-        resolver = new SessionResolver(sessionRepository, properties);
+        resolver = new SessionResolver(sessionRepository, properties, null);
     }
 
     @Test

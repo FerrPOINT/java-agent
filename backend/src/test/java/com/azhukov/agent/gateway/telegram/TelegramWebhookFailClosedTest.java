@@ -22,7 +22,7 @@ class TelegramWebhookFailClosedTest {
         props.getGateway().getTelegram().setWebhookSecret("my-secret");
         props.getGateway().getTelegram().setAllowByDefault(true);
         TelegramWebhookController c = new TelegramWebhookController(
-            new GatewayRoutingService(List.of(), evt -> {}), props);
+            new GatewayRoutingService(List.of(), evt -> {}), props, null, null);
         ResponseEntity<String> r = c.receive(null, Map.of("update_id", 1));
         assertThat(r.getStatusCode().value()).isEqualTo(403);
     }
@@ -33,7 +33,7 @@ class TelegramWebhookFailClosedTest {
         props.getGateway().getTelegram().setWebhookSecret("my-secret");
         props.getGateway().getTelegram().setAllowByDefault(true);
         TelegramWebhookController c = new TelegramWebhookController(
-            new GatewayRoutingService(List.of(), evt -> {}), props);
+            new GatewayRoutingService(List.of(), evt -> {}), props, null, null);
         ResponseEntity<String> r = c.receive("wrong", Map.of("update_id", 1));
         assertThat(r.getStatusCode().value()).isEqualTo(403);
     }
@@ -44,7 +44,7 @@ class TelegramWebhookFailClosedTest {
         // webhookSecret not set (default "")
         props.getGateway().getTelegram().setAllowByDefault(true);
         TelegramWebhookController c = new TelegramWebhookController(
-            new GatewayRoutingService(List.of(), evt -> {}), props);
+            new GatewayRoutingService(List.of(), evt -> {}), props, null, null);
         ResponseEntity<String> r = c.receive("anything", Map.of("update_id", 1));
         assertThat(r.getStatusCode().value()).isEqualTo(403);
     }
@@ -55,7 +55,7 @@ class TelegramWebhookFailClosedTest {
         props.getGateway().getTelegram().setWebhookSecret("my-secret");
         props.getGateway().getTelegram().setAllowByDefault(true);
         TelegramWebhookController c = new TelegramWebhookController(
-            new GatewayRoutingService(List.of(), evt -> {}), props);
+            new GatewayRoutingService(List.of(), evt -> {}), props, null, null);
         ResponseEntity<String> r = c.receive("my-secret", Map.of("update_id", 1));
         assertThat(r.getStatusCode().value()).isEqualTo(200);
     }

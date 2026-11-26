@@ -21,7 +21,7 @@ class TelegramWebhookControllerTest {
         props.getGateway().getTelegram().setWebhookSecret("test-secret");
         MessageEvent[] captured = new MessageEvent[1];
         GatewayRoutingService routing = new GatewayRoutingService(List.of(), evt -> captured[0] = evt);
-        TelegramWebhookController c = new TelegramWebhookController(routing, props);
+        TelegramWebhookController c = new TelegramWebhookController(routing, props, null, null);
 
         Map<String, Object> update = Map.of(
             "update_id", 1,
@@ -44,7 +44,7 @@ class TelegramWebhookControllerTest {
     void returnsOkWhenNoMessage() {
         AgentProperties props = new AgentProperties();
         props.getGateway().getTelegram().setWebhookSecret("test-secret");
-        TelegramWebhookController c = new TelegramWebhookController(null, props);
+        TelegramWebhookController c = new TelegramWebhookController(null, props, null, null);
         var r2 = c.receive("test-secret", Map.of("update_id", 1));
         assertThat(r2.getStatusCode().value()).isEqualTo(200);
     }
@@ -55,7 +55,7 @@ class TelegramWebhookControllerTest {
         props.getGateway().getTelegram().getAllowedUserIds().add("999");
         MessageEvent[] captured = new MessageEvent[1];
         GatewayRoutingService routing = new GatewayRoutingService(List.of(), evt -> captured[0] = evt);
-        TelegramWebhookController c = new TelegramWebhookController(routing, props);
+        TelegramWebhookController c = new TelegramWebhookController(routing, props, null, null);
 
         Map<String, Object> update = Map.of(
             "message", Map.of(

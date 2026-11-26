@@ -365,6 +365,14 @@ Authoritative source: `backend/src/main/resources/application.yml`. The value is
 | `agent.model.model-name` | `${AGENT_MODEL_NAME:gpt-4o-mini}` |
 | `logging.level.com.azhukov.agent` | `INFO` |
 
+## Telegram webhooks for named agent profiles
+
+Enable the backend webhook listener with `AGENT_GATEWAY_TELEGRAM_WEBHOOK_ENABLED`. Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_WEBHOOK_SECRET` in the named profile's .env or save them with `PUT /api/messaging/platforms/telegram` using the `profile, bot_token and webhook_secret` fields.
+
+Register the bot's callback at `POST /gateway/telegram/{profile}` with the same secret in Telegram. The callback verifies the `X-Telegram-Bot-Api-Secret-Token` header and the profile's allowed Telegram users. `TELEGRAM_ALLOWED_USERS` and `TELEGRAM_ALLOWED_USERNAMES` default to empty lists. `TELEGRAM_ALLOW_BY_DEFAULT` defaults to false.
+
+The callback uses the selected profile's model, session and outbound bot token. A stopped profile responds with `HTTP 503` so Telegram can retry. Within the running Java Agent process, a repeated Telegram update ID is ignored independently for each profile.
+
 ## Telegram Bot
 
 Authoritative source: `telegram-bot/src/main/resources/application.yml`. The value is the literal shipped YAML expression. In `${ENV:fallback}`, `fallback` is used only when `ENV` is unset. Credentials are redacted.

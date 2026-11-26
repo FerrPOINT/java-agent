@@ -7,6 +7,7 @@ import com.azhukov.agent.gateway.model.Platform;
 import com.azhukov.agent.gateway.model.PlatformConfig;
 import com.azhukov.agent.gateway.model.SendResult;
 import com.azhukov.agent.gateway.model.SessionSource;
+import com.azhukov.agent.service.GatewayConfigWriter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -21,6 +22,9 @@ public class TelegramAdapter implements BasePlatformAdapter {
 
     private final AgentProperties properties;
     private final TelegramBotApiClient botApiClient;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private GatewayConfigWriter gatewayConfig;
     private Consumer<MessageEvent> messageHandler;
     private volatile boolean connected;
 
@@ -43,8 +47,9 @@ public class TelegramAdapter implements BasePlatformAdapter {
 
     @Override
     public CompletableFuture<SendResult> send(SessionSource target, String text) {
-        if (!connected) {
-            return CompletableFuture.completedFuture(new SendResult(false, null, "Not connected"));
+        var client = clientFor(target);
+        if (client == null) {
+            return unavailable();
         }
         long chatId = extractChatId(target);
         if (chatId == 0L) {
@@ -52,7 +57,7 @@ public class TelegramAdapter implements BasePlatformAdapter {
         }
         Integer threadId = parseThreadId(target);
         return CompletableFuture.supplyAsync(() -> {
-            var messageId = botApiClient.sendMessage(chatId, text, threadId);
+            var messageId = client.sendMessage(chatId, text, threadId);
             return messageId
                 .map(id -> new SendResult(true, id, null))
                 .orElseGet(() -> new SendResult(false, null, "Telegram sendMessage failed"));
@@ -61,15 +66,16 @@ public class TelegramAdapter implements BasePlatformAdapter {
 
     @Override
     public CompletableFuture<SendResult> sendImage(SessionSource target, byte[] image, String caption) {
-        if (!connected) {
-            return CompletableFuture.completedFuture(new SendResult(false, null, "Not connected"));
+        var client = clientFor(target);
+        if (client == null) {
+            return unavailable();
         }
         long chatId = extractChatId(target);
         if (chatId == 0L) {
             return CompletableFuture.completedFuture(new SendResult(false, null, "No chat_id in target"));
         }
         return CompletableFuture.supplyAsync(() -> {
-            var messageId = botApiClient.sendPhoto(chatId, image, caption);
+            var messageId = client.sendPhoto(chatId, image, caption);
             return messageId
                 .map(id -> new SendResult(true, id, null))
                 .orElseGet(() -> new SendResult(false, null, "Telegram sendPhoto failed"));
@@ -78,15 +84,16 @@ public class TelegramAdapter implements BasePlatformAdapter {
 
     @Override
     public CompletableFuture<SendResult> sendDocument(SessionSource target, byte[] document, String fileName, String caption) {
-        if (!connected) {
-            return CompletableFuture.completedFuture(new SendResult(false, null, "Not connected"));
+        var client = clientFor(target);
+        if (client == null) {
+            return unavailable();
         }
         long chatId = extractChatId(target);
         if (chatId == 0L) {
             return CompletableFuture.completedFuture(new SendResult(false, null, "No chat_id in target"));
         }
         return CompletableFuture.supplyAsync(() -> {
-            var messageId = botApiClient.sendDocument(chatId, document, fileName, caption);
+            var messageId = client.sendDocument(chatId, document, fileName, caption);
             return messageId
                 .map(id -> new SendResult(true, id, null))
                 .orElseGet(() -> new SendResult(false, null, "Telegram sendDocument failed"));
@@ -95,12 +102,16 @@ public class TelegramAdapter implements BasePlatformAdapter {
 
     @Override
     public CompletableFuture<SendResult> sendTyping(SessionSource target) {
+        var client = target != null && "default".equals(target.profile()) ? botApiClient : clientFor(target);
+        if (client == null) {
+            return unavailable();
+        }
         long chatId = extractChatId(target);
         if (chatId == 0L) {
             return CompletableFuture.completedFuture(new SendResult(false, null, "No chat_id in target"));
         }
         return CompletableFuture.supplyAsync(() ->
-            botApiClient.sendChatAction(chatId, "typing")
+            client.sendChatAction(chatId, "typing")
                 ? new SendResult(true, null, null)
                 : new SendResult(false, null, "sendChatAction failed")
         );
@@ -108,8 +119,9 @@ public class TelegramAdapter implements BasePlatformAdapter {
 
     @Override
     public CompletableFuture<SendResult> addReaction(SessionSource target, String emoji, String messageId) {
-        if (!connected) {
-            return CompletableFuture.completedFuture(new SendResult(false, null, "Not connected"));
+        var client = clientFor(target);
+        if (client == null) {
+            return unavailable();
         }
         long chatId = extractChatId(target);
         if (chatId == 0L) {
@@ -121,7 +133,7 @@ public class TelegramAdapter implements BasePlatformAdapter {
         }
         String reaction = emoji == null ? "" : emoji;
         return CompletableFuture.supplyAsync(() ->
-            botApiClient.setMessageReaction(chatId, parsedMessageId, reaction)
+            client.setMessageReaction(chatId, parsedMessageId, reaction)
                 ? new SendResult(true, messageId, null)
                 : new SendResult(false, null, "Telegram setMessageReaction failed")
         );
@@ -130,6 +142,22 @@ public class TelegramAdapter implements BasePlatformAdapter {
     @Override
     public CompletableFuture<SendResult> removeReaction(SessionSource target, String messageId) {
         return addReaction(target, "", messageId);
+    }
+
+    private TelegramBotApiClient clientFor(SessionSource target) {
+        if (target == null || "default".equals(target.profile())) {
+            return connected ? botApiClient : null;
+        }
+        try {
+            var settings = gatewayConfig.profileTelegram(target.profile());
+            return settings.getBotToken().isBlank() ? null : botApiClient.withToken(settings.getBotToken());
+        } catch (java.io.IOException | IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    private static CompletableFuture<SendResult> unavailable() {
+        return CompletableFuture.completedFuture(new SendResult(false, null, "Not connected"));
     }
 
     private long extractChatId(SessionSource target) {

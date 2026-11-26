@@ -141,11 +141,13 @@ public class MessagingDashboardController {
             var telegram = gatewayConfigWriter.updateTelegramConfig(
                 requestedProfile(body),
                 bodyString(body, "bot_token"),
+                bodyString(body, "webhook_secret"),
                 stringList(body == null ? null : body.get("allowed_user_ids")),
                 stringList(body == null ? null : body.get("allowed_usernames")),
                 optionalBoolean(body, "allow_by_default"));
             return ResponseEntity.ok(Map.of("ok", true, "platform", TELEGRAM,
-                "bot_token_set", telegram.botTokenSet(), "allowed_user_ids", telegram.userIds(),
+                "bot_token_set", telegram.botTokenSet(), "webhook_secret_set", telegram.webhookSecretSet(),
+                "allowed_user_ids", telegram.userIds(),
                 "allowed_usernames", telegram.usernames(), "allow_by_default", telegram.allowByDefault()));
         } catch (IllegalArgumentException e) {
             return badRequest(e.getMessage());
@@ -173,6 +175,9 @@ public class MessagingDashboardController {
         Map<String, Object> payload = TELEGRAM.equals(normalized) ? telegramPlatform(profile) : webhookPlatform();
         String state = stringValue(payload.get("state"));
         String name = stringValue(payload.get("name"));
+        if ("webhook_configured".equals(state)) {
+            return ResponseEntity.ok(testResponse(false, state, "Send a Telegram message to verify the configured webhook."));
+        }
         if (!Boolean.TRUE.equals(payload.get("enabled"))) {
             return ResponseEntity.ok(testResponse(false, state,
                 name + " is disabled. Enable it, then restart the gateway."));
@@ -352,12 +357,17 @@ public class MessagingDashboardController {
     private Map<String, Object> telegramPlatform(String profile) {
         if (!GatewayConfigWriter.isDefault(profile)) {
             var telegram = telegramAccess(profile);
+            boolean enabled = environment.getProperty("agent.gateway.telegram.webhook.enabled", Boolean.class, false);
+            boolean configured = telegram.botTokenSet() && telegram.webhookSecretSet();
+            String state = !enabled ? "disabled" : configured ? "webhook_configured" : "not_configured";
             Map<String, Object> platform = platformBase(TELEGRAM, "Telegram", "Use Java agent from Telegram chats.",
-                "https://core.telegram.org/bots/features", false, telegram.botTokenSet(), false, "not_connected");
+                "https://core.telegram.org/bots/features", enabled, configured, false, state);
             platform.put("env_vars", List.of(
                 envVarStatus("TELEGRAM_BOT_TOKEN", "Telegram bot token", "Bot token", true, true, telegram.botTokenSet()),
                 envVarStatus("TELEGRAM_ALLOWED_USERS", "Allowed Telegram user IDs", "Allowed users",
-                    false, false, !telegram.userIds().isEmpty())));
+                    false, false, !telegram.userIds().isEmpty()),
+                envVarStatus("TELEGRAM_WEBHOOK_SECRET", "Telegram webhook secret", "Webhook secret",
+                    true, true, telegram.webhookSecretSet())));
             return platform;
         }
         boolean enabled = telegramEnabled();
