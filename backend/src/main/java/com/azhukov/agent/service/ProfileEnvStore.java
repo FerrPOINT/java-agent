@@ -27,6 +27,7 @@ public class ProfileEnvStore {
     /** Keys the dashboard may write — mirrors the envRows() catalog. */
     private static final Set<String> ALLOWED_KEYS = Set.of(
         "AGENT_MODEL_API_KEY",
+        "AGENT_FLEET_PROFILE_TOKEN_SHA256",
         "AGENT_MODEL_BASE_URL",
         "AGENT_WEB_SEARXNG_URL",
         "AGENT_TTS_API_KEY",
@@ -47,7 +48,7 @@ public class ProfileEnvStore {
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("is_set", value != null && !value.isBlank());
             row.put("redacted_value", value == null || value.isBlank() ? null : REDACTED);
-            row.put("is_password", key.endsWith("_API_KEY") || key.endsWith("_KEY"));
+            row.put("is_password", key.endsWith("_API_KEY") || key.endsWith("_KEY") || key.endsWith("_SHA256"));
             rows.put(key, row);
         }
         return rows;
@@ -63,6 +64,9 @@ public class ProfileEnvStore {
         requireAllowlisted(key);
         Map<String, String> values = readAll(profile);
         String clean = value == null ? "" : value;
+        if ("AGENT_FLEET_PROFILE_TOKEN_SHA256".equals(key) && !clean.matches("[0-9a-f]{64}")) {
+            throw new IllegalArgumentException("Fleet profile token fingerprint must be a SHA-256 digest");
+        }
         if (java.util.regex.Pattern.compile("\\R").matcher(clean).find()) {
             throw new IllegalArgumentException("Environment values must fit on one line");
         }

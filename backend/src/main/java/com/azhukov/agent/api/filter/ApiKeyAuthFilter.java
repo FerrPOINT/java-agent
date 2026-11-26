@@ -3,6 +3,8 @@ package com.azhukov.agent.api.filter;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.security.CentralJwtVerifier;
+import com.azhukov.agent.core.security.NativeIdentityOrigin;
+import com.azhukov.agent.service.ProfileEnvStore;
 import com.azhukov.agent.service.UserAccessService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -25,6 +27,10 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
+import java.util.regex.Pattern;
 import java.util.List;
 import java.util.Map;
 
@@ -42,9 +48,15 @@ import java.util.Map;
 @Component
 public class ApiKeyAuthFilter extends OncePerRequestFilter {
 
+    private static final Pattern FLEET_TOKEN =
+        Pattern.compile("fcj_([a-z0-9][a-z0-9_-]{0,63})\\.([A-Za-z0-9_-]{43,128})");
+    private static final Pattern FLEET_PATH = Pattern.compile("/p/([a-z0-9][a-z0-9_-]{0,63})/v1/(.+)");
+    private static final Pattern RUN_REF = Pattern.compile("runs/(run_[a-z0-9]{1,124})(/.*)?");
+
     private final AgentProperties agentProperties;
     private final UserAccessService userAccessService;
     private CentralJwtVerifier centralJwtVerifier;
+    private ObjectProvider<ProfileEnvStore> profileEnv;
     private com.azhukov.agent.core.ports.IdentityReferenceRegistration identityReferences;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -64,6 +76,11 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
         identityReferences = provider.getIfAvailable();
     }
 
+    @org.springframework.beans.factory.annotation.Autowired
+    void configureFleetProfiles(ObjectProvider<ProfileEnvStore> provider) {
+        profileEnv = provider;
+    }
+
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
         return IdentityDeletionBoundaryFilter.privateOwner(request);
@@ -79,6 +96,11 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
                                      HttpServletResponse response,
                                      FilterChain filterChain) throws ServletException, IOException {
         try {
+        String bearer = extractBearerToken(request.getHeader("Authorization"));
+        if (bearer != null && bearer.startsWith("fcj_")) {
+            authenticateFleetProfile(request, response, filterChain, bearer);
+            return;
+        }
         if (centralJwtVerifier != null) {
             authenticateCentral(request, response, filterChain);
             return;
@@ -163,6 +185,68 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
             UserContext.clear();
             com.azhukov.agent.core.security.NativeIdentityOrigin.clear();
         }
+    }
+
+    private void authenticateFleetProfile(HttpServletRequest request, HttpServletResponse response,
+                                          FilterChain chain, String bearer) throws ServletException, IOException {
+        var token = FLEET_TOKEN.matcher(bearer);
+        var path = FLEET_PATH.matcher(request.getRequestURI());
+        if (token.matches() && path.matches() && token.group(1).equals(path.group(1))
+            && !"default".equals(path.group(1)) && fleetRoute(request.getMethod(), path.group(2))
+            && matchesFleetProfileFingerprint(path.group(1), bearer)) {
+            String principal = "fleet-profile:" + path.group(1);
+            SecurityContextHolder.getContext().setAuthentication(
+                UsernamePasswordAuthenticationToken.authenticated(principal, null, List.of()));
+            setNativeUser(principal, UserContext.ROLE_USER, NativeIdentityOrigin.Kind.FLEET_PROFILE, false);
+            response.setHeader("Cache-Control", "no-store");
+            chain.doFilter(request, response);
+            return;
+        }
+        response.setStatus(HttpStatus.UNAUTHORIZED.value());
+        response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+        response.setCharacterEncoding(StandardCharsets.UTF_8.name());
+        response.setHeader("Cache-Control", "no-store");
+        response.getWriter().write(errorJson("Invalid Fleet profile credential", "authentication_error",
+            "fleet_profile_auth_failed"));
+    }
+
+    private boolean matchesFleetProfileFingerprint(String profile, String bearer) {
+        var store = profileEnv == null ? null : profileEnv.getIfAvailable();
+        if (store == null) {
+            return false;
+        }
+        try {
+            String fingerprint = store.readAll(profile).get("AGENT_FLEET_PROFILE_TOKEN_SHA256");
+            if (fingerprint == null || !fingerprint.matches("[0-9a-f]{64}")) {
+                return false;
+            }
+            byte[] supplied = MessageDigest.getInstance("SHA-256").digest(bearer.getBytes(StandardCharsets.UTF_8));
+            return MessageDigest.isEqual(HexFormat.of().parseHex(fingerprint), supplied);
+        } catch (IOException | IllegalArgumentException | NoSuchAlgorithmException e) {
+            return false;
+        }
+    }
+
+    private static boolean fleetRoute(String method, String route) {
+        if ("GET".equals(method) && ("capabilities".equals(route) || "runtime".equals(route))) {
+            return true;
+        }
+        if ("PUT".equals(method) && "runtime".equals(route)) {
+            return true;
+        }
+        if ("POST".equals(method) && ("runs".equals(route) || "runs/lookup".equals(route))) {
+            return true;
+        }
+        var run = RUN_REF.matcher(route);
+        if (!run.matches()) {
+            return false;
+        }
+        String suffix = run.group(2);
+        if ("GET".equals(method)) {
+            return suffix == null || "/events".equals(suffix) || "/events/replay".equals(suffix);
+        }
+        return "POST".equals(method)
+            && ("/stop".equals(suffix) || "/steer".equals(suffix) || "/approval".equals(suffix));
     }
 
     private void authenticateCentral(HttpServletRequest request, HttpServletResponse response,

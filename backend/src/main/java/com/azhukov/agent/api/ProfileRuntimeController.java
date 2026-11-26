@@ -1,5 +1,6 @@
 package com.azhukov.agent.api;
 
+import com.azhukov.agent.core.security.NativeIdentityOrigin;
 import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.service.OpenAiRunService;
 import com.azhukov.agent.service.ProfileInstructions;
@@ -37,8 +38,11 @@ public class ProfileRuntimeController {
     @PutMapping
     public Map<String, Object> setState(@PathVariable String profile, @RequestBody WorkerState request) {
         requireNamedProfile(profile);
-        if (!UserContext.isAdmin()) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Administrator access required");
+        var origin = NativeIdentityOrigin.current();
+        boolean fleet = origin != null && origin.kind() == NativeIdentityOrigin.Kind.FLEET_PROFILE
+            && ("fleet-profile:" + profile).equals(origin.principal());
+        if (!UserContext.isAdmin() && !fleet) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Profile operator access required");
         }
         String state = request.state();
         if (!ProfileRuntimeRegistry.WORKER_RUNNING.equals(state)
