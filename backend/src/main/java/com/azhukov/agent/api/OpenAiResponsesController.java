@@ -23,6 +23,8 @@ import com.azhukov.agent.service.ApiRunAdmissionService;
 import com.azhukov.agent.service.OpenAiResponseStore;
 import com.azhukov.agent.service.OpenAiResponseStore.StoredResponse;
 import com.azhukov.agent.service.OpenAiSessionService;
+import com.azhukov.agent.service.ProfileModelRouting;
+import com.azhukov.agent.service.ProfileService;
 import com.azhukov.agent.service.OpenAiSessionService.OpenAiSessionContext;
 import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -82,15 +84,26 @@ public class OpenAiResponsesController {
     private final OpenAiIdempotencyCache idempotencyCache;
     private final Redactor redactor;
     private final ApiRunAdmissionService runAdmissionService;
+    private final ProfileService profiles;
+    private final ProfileModelRouting profileModels;
 
     @PostMapping
     public ResponseEntity<?> createResponse(
             @RequestBody OpenAiResponsesRequest request,
+            @PathVariable(name = "profile", required = false) String pathProfile,
             @RequestHeader(value = OpenAiSessionService.SESSION_ID_HEADER, required = false) String sessionIdHeader,
             @RequestHeader(value = OpenAiSessionService.SESSION_KEY_HEADER, required = false) String sessionKeyHeader,
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
+        String profile = selectedProfile(pathProfile);
+        if (!"default".equals(profile)
+            && (!profiles.isValidNamedProfileName(profile) || !profiles.knownProfile(profile))) {
+            return openAiError(HttpStatus.NOT_FOUND, "Profile not found", "invalid_request_error");
+        }
         if (request == null || request.input() == null) {
             return openAiError(HttpStatus.BAD_REQUEST, "Missing 'input' field", "invalid_request_error");
+        }
+        if (request.conversation() != null && request.conversation().chars().anyMatch(Character::isISOControl)) {
+            return openAiError(HttpStatus.BAD_REQUEST, "Invalid conversation ID", "invalid_request_error");
         }
         if (hasText(request.conversation()) && hasText(request.previousResponseId())) {
             return openAiError(HttpStatus.BAD_REQUEST,
@@ -98,7 +111,7 @@ public class OpenAiResponsesController {
                 "invalid_request_error");
         }
 
-        String previousResponseId = previousResponseId(request);
+        String previousResponseId = previousResponseId(request, profile);
         StoredResponse previous = null;
         List<Message> priorHistory = null;
         String instructions = normalizeInstructions(request.instructions());
@@ -110,7 +123,7 @@ public class OpenAiResponsesController {
             }
             priorHistory = parsedHistory.messages();
         } else if (hasText(previousResponseId)) {
-            previous = accessibleStoredResponse(previousResponseId, sessionKeyHeader);
+            previous = accessibleStoredResponse(previousResponseId, sessionKeyHeader, profile);
             if (previous == null) {
                 return openAiError(HttpStatus.NOT_FOUND,
                     "Previous response not found: " + previousResponseId,
@@ -133,8 +146,10 @@ public class OpenAiResponsesController {
         }
         priorHistory = autoTruncateResponseHistory(priorHistory, request.truncation());
 
-        String requestedModel = requestedModel(request.model());
-        String routeConflict = OpenAiRouteSelection.routeProviderConflict(
+
+        String alias = requestedModel(request.model());
+        boolean standalone = "default".equals(profile);
+        String routeConflict = !standalone ? null : OpenAiRouteSelection.routeProviderConflict(
             properties.getApi(),
             request.model(),
             request.provider(),
@@ -143,37 +158,45 @@ public class OpenAiResponsesController {
         if (routeConflict != null) {
             return openAiError(HttpStatus.BAD_REQUEST, routeConflict, "invalid_request_error");
         }
+        final ModelRequestOptions options;
+        try {
+            options = standalone ? requestOptions(request, alias)
+                : profileModels.bind(profile, requestOptions(request, alias));
+        } catch (ProfileModelRouting.ProfileModelUnavailable e) {
+            return openAiError(HttpStatus.SERVICE_UNAVAILABLE, e.getMessage(), "server_error");
+        }
+        String requestedModel = standalone ? alias : options.modelName();
         if (!OpenAiRequestBooleans.coerce(request.stream(), false)) {
             StoredResponse storedPrevious = previous;
             List<Message> storedPriorHistory = priorHistory;
             String storedInstructions = instructions;
             var scope = hasText(idempotencyKey)
-                ? openAiSessionService.idempotencyScope("responses", sessionKeyHeader) : null;
+                ? openAiSessionService.idempotencyScope(standalone ? "responses" : "responses/" + profile, sessionKeyHeader) : null;
             return idempotencyCache.getOrCompute(
                 scope,
                 idempotencyKey,
                 () -> OpenAiIdempotencyCache.fingerprint(objectMapper, request, sessionIdHeader, sessionKeyHeader),
                 () -> syncResponse(request, sessionIdHeader, sessionKeyHeader, inputMessages,
-                    storedPriorHistory, storedInstructions, requestedModel, storedPrevious),
+                    storedPriorHistory, storedInstructions, requestedModel, storedPrevious, profile, options),
                 replay -> {
                     UserContext.requireCurrentAccess();
                     if (replay.sessionId() != null) {
-                        openAiSessionService.resolveStoredResponseSession(replay.sessionId(), sessionKeyHeader);
+                        resolveStoredSession(replay.sessionId(), sessionKeyHeader, profile);
                     }
                 }
             ).response();
         }
-        List<ToolDefinition> tools = buildTools(request);
         var reservation = runAdmissionService.tryAcquire();
         if (reservation.isEmpty()) {
             return concurrencyLimitedResponse();
         }
         var permit = reservation.get();
         try {
-            OpenAiSessionContext sessionContext = resolveSession(sessionIdHeader, sessionKeyHeader, requestedModel, previous);
-            List<Message> messages = buildMessages(sessionContext, instructions, priorHistory, inputMessages, request.truncation());
+            OpenAiSessionContext sessionContext = resolveSession(sessionIdHeader, sessionKeyHeader, requestedModel, previous, profile);
+            List<ToolDefinition> tools = buildTools(request, sessionContext.session());
+            List<Message> messages = buildMessages(sessionContext, instructions, priorHistory, inputMessages, request.truncation(), tools);
             return streamResponse(request, sessionContext, inputMessages, messages, tools,
-                requestOptions(request, requestedModel), priorHistory, instructions, requestedModel, permit);
+                options, priorHistory, instructions, requestedModel, permit);
         } catch (RuntimeException | Error failure) {
             permit.close();
             throw failure;
@@ -187,9 +210,9 @@ public class OpenAiResponsesController {
                                            List<Message> priorHistory,
                                            String instructions,
                                            String requestedModel,
-                                           StoredResponse previous) {
-        List<ToolDefinition> tools = buildTools(request);
-        ModelRequestOptions requestOptions = requestOptions(request, requestedModel);
+                                           StoredResponse previous,
+                                           String profile,
+                                           ModelRequestOptions requestOptions) {
         var reservation = runAdmissionService.tryAcquire();
         if (reservation.isEmpty()) {
             return new OpenAiIdempotencyCache.Result(concurrencyLimitedResponse(), null);
@@ -197,9 +220,10 @@ public class OpenAiResponsesController {
         OpenAiSessionContext sessionContext;
         AgentCallResult result;
         try (ApiRunAdmissionService.Reservation ignored = reservation.get()) {
-            sessionContext = resolveSession(sessionIdHeader, sessionKeyHeader, requestedModel, previous);
-            List<Message> messages = buildMessages(sessionContext, instructions, priorHistory, inputMessages, request.truncation());
-            result = runAgent(messages, tools, requestOptions);
+            sessionContext = resolveSession(sessionIdHeader, sessionKeyHeader, requestedModel, previous, profile);
+            List<ToolDefinition> tools = buildTools(request, sessionContext.session());
+            List<Message> messages = buildMessages(sessionContext, instructions, priorHistory, inputMessages, request.truncation(), tools);
+            result = runAgent(sessionContext.session(), messages, tools, requestOptions);
         }
         ChatResponse response = result.response();
         openAiSessionService.persistTurn(sessionContext, inputMessages, response, result.generatedMessages());
@@ -216,7 +240,7 @@ public class OpenAiResponsesController {
                 storedConversationHistory(priorHistory, inputMessages, result),
                 instructions,
                 sessionContext.session().id()
-            ), request.conversation());
+            ), conversationStorageKey(request.conversation(), sessionContext.session().profile()));
         }
 
         return new OpenAiIdempotencyCache.Result(ResponseEntity.ok()
@@ -260,7 +284,7 @@ public class OpenAiResponsesController {
                 historyWithoutAssistant(priorHistory, inputMessages),
                 instructions,
                 sessionContext.session().id()
-            ), request.conversation());
+            ), conversationStorageKey(request.conversation(), sessionContext.session().profile()));
         }
 
         var responseEntity = ResponseEntity.ok()
@@ -273,7 +297,7 @@ public class OpenAiResponsesController {
                     "type", "response.created",
                     "response", createdResponse
                 ));
-                AgentCallResult result = runAgent(messages, tools, requestOptions);
+                AgentCallResult result = runAgent(sessionContext.session(), messages, tools, requestOptions);
                 ChatResponse response = result.response();
                 if (hasGeneratedToolItems(result.generatedMessages())) {
                     emitGeneratedToolItemEvents(
@@ -369,8 +393,9 @@ public class OpenAiResponsesController {
 
     @GetMapping("/{responseId}")
     public ResponseEntity<Map<String, Object>> getResponse(@PathVariable String responseId,
+                                                             @PathVariable(name = "profile", required = false) String profile,
                                                              @RequestHeader(value = OpenAiSessionService.SESSION_KEY_HEADER, required = false) String sessionKeyHeader) {
-        StoredResponse stored = accessibleStoredResponse(responseId, sessionKeyHeader);
+        StoredResponse stored = accessibleStoredResponse(responseId, sessionKeyHeader, selectedProfile(profile));
         if (stored == null) {
             return openAiError(HttpStatus.NOT_FOUND, "Response not found: " + responseId, "invalid_request_error");
         }
@@ -379,8 +404,9 @@ public class OpenAiResponsesController {
 
     @DeleteMapping("/{responseId}")
     public ResponseEntity<Map<String, Object>> deleteResponse(@PathVariable String responseId,
+                                                               @PathVariable(name = "profile", required = false) String profile,
                                                                @RequestHeader(value = OpenAiSessionService.SESSION_KEY_HEADER, required = false) String sessionKeyHeader) {
-        if (accessibleStoredResponse(responseId, sessionKeyHeader) == null || !responseStore.delete(responseId)) {
+        if (accessibleStoredResponse(responseId, sessionKeyHeader, selectedProfile(profile)) == null || !responseStore.delete(responseId)) {
             return openAiError(HttpStatus.NOT_FOUND, "Response not found: " + responseId, "invalid_request_error");
         }
         Map<String, Object> body = new LinkedHashMap<>();
@@ -390,16 +416,16 @@ public class OpenAiResponsesController {
         return ResponseEntity.ok(body);
     }
 
-    private StoredResponse accessibleStoredResponse(String responseId, String sessionKeyHeader) {
+    private StoredResponse accessibleStoredResponse(String responseId, String sessionKeyHeader, String profile) {
         StoredResponse stored = responseStore.get(responseId);
         if (stored == null) {
             return null;
         }
         if (stored.sessionId() == null) {
-            return UserContext.scopeUserId() == null ? stored : null;
+            return "default".equals(profile) && UserContext.scopeUserId() == null ? stored : null;
         }
         try {
-            openAiSessionService.resolveStoredResponseSession(stored.sessionId(), sessionKeyHeader);
+            resolveStoredSession(stored.sessionId(), sessionKeyHeader, profile);
             return stored;
         } catch (IllegalArgumentException ignored) {
             return null;
@@ -409,26 +435,37 @@ public class OpenAiResponsesController {
     private OpenAiSessionContext resolveSession(String sessionIdHeader,
                                                 String sessionKeyHeader,
                                                 String requestedModel,
-                                                StoredResponse previous) {
-        if (hasText(sessionIdHeader)) {
-            return openAiSessionService.resolve(sessionIdHeader, sessionKeyHeader, requestedModel);
+                                                StoredResponse previous,
+                                                String profile) {
+        if (!hasText(sessionIdHeader) && previous != null && previous.sessionId() != null) {
+            return resolveStoredSession(previous.sessionId(), sessionKeyHeader, profile);
         }
-        if (previous != null && previous.sessionId() != null) {
-            return openAiSessionService.resolveStoredResponseSession(previous.sessionId(), sessionKeyHeader);
-        }
-        return openAiSessionService.resolve(null, sessionKeyHeader, requestedModel);
+        return "default".equals(profile)
+            ? openAiSessionService.resolve(sessionIdHeader, sessionKeyHeader, requestedModel)
+            : openAiSessionService.resolveRunSession(sessionIdHeader, sessionKeyHeader, requestedModel, profile);
     }
 
-    private AgentCallResult runAgent(List<Message> messages,
+    private OpenAiSessionContext resolveStoredSession(UUID sessionId, String sessionKey, String profile) {
+        return "default".equals(profile)
+            ? openAiSessionService.resolveStoredResponseSession(sessionId, sessionKey)
+            : openAiSessionService.resolveStoredResponseSession(sessionId, sessionKey, profile);
+    }
+
+    private AgentCallResult runAgent(Session session, List<Message> messages,
                                      List<ToolDefinition> tools,
                                      ModelRequestOptions requestOptions) {
-        TurnResult turnResult = agentRuntime.runMessages(messages, tools, requestOptions);
+        boolean standalone = "default".equals(session.profile());
+        TurnResult turnResult = standalone ? agentRuntime.runMessages(messages, tools, requestOptions)
+            : agentRuntime.runMessages(session, messages, tools, requestOptions);
         if (turnResult != null) {
             ChatResponse response = chatResponseFrom(turnResult);
             return new AgentCallResult(
                 response,
                 generatedMessages(messages, turnResult, response),
                 compressedConversationHistoryReplacement(messages, turnResult.messages()));
+        }
+        if (!standalone) {
+            throw new IllegalStateException("The selected profile did not return a model result");
         }
         ChatResponse response = agentRuntime.run(messages, tools, requestOptions);
         return new AgentCallResult(response != null ? response : ChatResponse.text(""), List.of(), null);
@@ -546,10 +583,16 @@ public class OpenAiResponsesController {
                                         String instructions,
                                         List<Message> priorHistory,
                                         List<Message> inputMessages,
-                                        String truncation) {
+                                        String truncation,
+                                        List<ToolDefinition> tools) {
         Session session = sessionContext.session();
         List<Message> messages = new ArrayList<>();
-        messages.add(promptBuilder.buildSystemMessage(session, instructions));
+        if (!"default".equals(session.profile()) && promptBuilder instanceof com.azhukov.agent.core.prompt.DefaultPromptBuilder builder) {
+            messages.add(builder.buildSystemMessageForTools(session, tools.stream().map(ToolDefinition::name)
+                .collect(java.util.stream.Collectors.toSet()), instructions));
+        } else {
+            messages.add(promptBuilder.buildSystemMessage(session, instructions));
+        }
         if (priorHistory != null) {
             messages.addAll(priorHistory);
         } else if (sessionContext.continuationRequested()) {
@@ -559,8 +602,10 @@ public class OpenAiResponsesController {
         return messages;
     }
 
-    private List<ToolDefinition> buildTools(OpenAiResponsesRequest request) {
-        return OpenAiToolSelection.select(serverToolDefinitions(), request.tools() == null ? null
+    private List<ToolDefinition> buildTools(OpenAiResponsesRequest request, Session session) {
+        List<ToolDefinition> available = "default".equals(session.profile()) ? serverToolDefinitions()
+            : toolRegistry.getProfileDefinitions(session);
+        return OpenAiToolSelection.select(available, request.tools() == null ? null
             : request.tools().stream().map(tool -> tool != null
                 && (tool.type() == null || "function".equals(tool.type().trim()))
                 ? tool.function() != null ? tool.function().name() : tool.name() : null).toList());
@@ -581,8 +626,18 @@ public class OpenAiResponsesController {
         return toolRegistry.getDefinitions(apiToolsets);
     }
 
-    private String previousResponseId(OpenAiResponsesRequest request) {
-        return responseStore.previousResponseId(request.previousResponseId(), request.conversation());
+    private String previousResponseId(OpenAiResponsesRequest request, String profile) {
+        return responseStore.previousResponseId(
+            request.previousResponseId(), conversationStorageKey(request.conversation(), profile));
+    }
+
+    private static String conversationStorageKey(String conversation, String profile) {
+        return conversation == null || conversation.isBlank() || "default".equals(profile)
+            ? conversation : profile + "\n" + conversation.trim();
+    }
+
+    private static String selectedProfile(String profile) {
+        return profile == null ? "default" : profile;
     }
 
     private boolean hasExplicitConversationHistory(OpenAiResponsesRequest request) {
@@ -823,7 +878,7 @@ public class OpenAiResponsesController {
                         conversationHistoryReplacement),
                     instructions,
                     sessionContext.session().id()
-                ), request.conversation());
+                ), conversationStorageKey(request.conversation(), sessionContext.session().profile()));
         }
         sendResponsesSse(emitter, sequenceNumber, "response.completed", Map.of(
             "type", "response.completed",
@@ -868,7 +923,7 @@ public class OpenAiResponsesController {
                 fullHistory(priorHistory, inputMessages, partialResponse),
                 instructions,
                 sessionContext.session().id()
-            ), request.conversation());
+            ), conversationStorageKey(request.conversation(), sessionContext.session().profile()));
         }
         sendResponsesSse(emitter, sequenceNumber, "response.failed", Map.of(
             "type", "response.failed",

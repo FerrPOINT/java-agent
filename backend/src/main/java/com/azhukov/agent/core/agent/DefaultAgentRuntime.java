@@ -265,9 +265,22 @@ public class DefaultAgentRuntime implements AgentRuntime {
 
     @Override
     public ChatResponse run(List<Message> messages, List<ToolDefinition> tools, ModelRequestOptions options) {
+        return complete(Session.create("openai-user", "openai-compatible", ""), messages, tools, options);
+    }
+
+    @Override
+    public TurnResult runMessages(Session session, List<Message> messages, List<ToolDefinition> tools,
+                                  ModelRequestOptions options) {
+        return AgentRuntime.singleModelTurn(complete(session, messages, tools, options));
+    }
+
+    private ChatResponse complete(Session session, List<Message> messages, List<ToolDefinition> tools,
+                                  ModelRequestOptions options) {
+        if (!"default".equals(session.profile()) || (options != null && options.boundProfile() != null)) {
+            options = profileModelRouting.bind(session.profile(), options);
+        }
         List<Message> sanitized = messageSanitizer.sanitize(messages);
-        List<Message> context = contextEngine.prepareContext(
-            Session.create("openai-user", "openai-compatible", ""), sanitized);
+        List<Message> context = contextEngine.prepareContext(session, sanitized);
         TurnModelState modelState = turnModelState.get();
         ModelClient client = modelState != null && modelState.activeClient != null
             ? modelState.activeClient : modelClient;
