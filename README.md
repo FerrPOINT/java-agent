@@ -155,7 +155,11 @@
 `PROJECT_WORKFLOW_API_TOKEN` службы этого агента. Для вызова требуется
 именованный нативный запуск Fleet с `workflow_task`, ключом идемпотентности
 и закреплённой ревизией. Доступ к назначению и повтор отчёта проверяет Workflow
-через существующий протокол `configured-cli-v1`.
+через существующий протокол `configured-cli-v1`. Fleet сверяет ключ с Auth
+через `GET /p/{profile}/v1/runtime/workflow-identity`. Установка задаёт
+адрес интроспекции в `AGENT_CENTRAL_AUTH_PERSONAL_TOKEN_URI`.
+Ответ содержит подтверждённую учётную запись агента, namespace, адрес
+Workflow и проверенную ревизию профиля.
 
 Для подключения роли Base укажи в `config.yaml` профиля:
 

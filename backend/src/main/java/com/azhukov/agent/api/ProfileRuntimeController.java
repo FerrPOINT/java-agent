@@ -1,14 +1,20 @@
 package com.azhukov.agent.api;
 
+import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.security.NativeIdentityOrigin;
+import com.azhukov.agent.core.tool.ToolRegistry;
 import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.service.OpenAiRunService;
+import com.azhukov.agent.service.ProfileExecutionConfiguration;
 import com.azhukov.agent.service.ProfileInstructions;
 import com.azhukov.agent.service.ProfileModelRouting;
 import com.azhukov.agent.service.ProfileRuntimeRegistry;
 import com.azhukov.agent.service.ProfileService;
+import com.azhukov.agent.tools.workflow.ProjectWorkflowTool;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.CacheControl;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -28,6 +34,9 @@ public class ProfileRuntimeController {
     private final OpenAiRunService runs;
     private final ProfileModelRouting models;
     private final ProfileInstructions instructions;
+    private final ProfileExecutionConfiguration settings;
+    private final ToolRegistry toolRegistry;
+    private final ProjectWorkflowTool workflow;
 
     @GetMapping
     public Map<String, Object> state(@PathVariable String profile) {
@@ -35,13 +44,38 @@ public class ProfileRuntimeController {
         return Map.of("profile", profile, "state", runtime.namedWorkerState(profile));
     }
 
+    @GetMapping("/workflow-identity")
+    public ResponseEntity<Map<String, Object>> workflowIdentity(@PathVariable String profile) {
+        requireNamedProfile(profile);
+        if (!fleetPrincipal(profile)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Fleet profile access required");
+        }
+        try {
+            var accepted = runtime.locked(profile, () -> {
+                runtime.requireRunning(profile);
+                return settings.capture(profile);
+            });
+            var identity = accepted.use(() -> {
+                Session selected = Session.create(UserContext.getUserId(), "openai-compatible", "workflow-observation")
+                    .withMetadata("profile", profile).withMetadata("platform", "api_server");
+                if (!toolRegistry.isProfileToolEnabled(ProjectWorkflowTool.NAME, selected)) {
+                    throw new IllegalStateException("Workflow tool is unavailable");
+                }
+                return workflow.verifyIdentity(profile);
+            });
+            return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(Map.of(
+                "profile", profile, "profile_revision", accepted.revision(),
+                "protocol", "configured-cli-v1", "namespace_id", identity.namespaceId(),
+                "machine_subject", identity.machineSubject(), "workflow_base_url", identity.workflowBaseUrl()));
+        } catch (IllegalStateException e) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Workflow identity is unavailable");
+        }
+    }
+
     @PutMapping
     public Map<String, Object> setState(@PathVariable String profile, @RequestBody WorkerState request) {
         requireNamedProfile(profile);
-        var origin = NativeIdentityOrigin.current();
-        boolean fleet = origin != null && origin.kind() == NativeIdentityOrigin.Kind.FLEET_PROFILE
-            && ("fleet-profile:" + profile).equals(origin.principal());
-        if (!UserContext.isAdmin() && !fleet) {
+        if (!UserContext.isAdmin() && !fleetPrincipal(profile)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Profile operator access required");
         }
         String state = request.state();
@@ -64,6 +98,12 @@ public class ProfileRuntimeController {
             int stopRequests = ProfileRuntimeRegistry.WORKER_STOPPED.equals(state) ? runs.requestProfileStop(profile) : 0;
             return Map.of("profile", profile, "state", state, "run_stop_requests", stopRequests);
         });
+    }
+
+    private static boolean fleetPrincipal(String profile) {
+        var origin = NativeIdentityOrigin.current();
+        return origin != null && origin.kind() == NativeIdentityOrigin.Kind.FLEET_PROFILE
+            && ("fleet-profile:" + profile).equals(origin.principal());
     }
 
     private void requireNamedProfile(String profile) {

@@ -229,7 +229,8 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
     }
 
     private static boolean fleetRoute(String method, String route) {
-        if ("GET".equals(method) && ("capabilities".equals(route) || "runtime".equals(route))) {
+        if ("GET".equals(method) && ("capabilities".equals(route) || "runtime".equals(route)
+            || "runtime/workflow-identity".equals(route))) {
             return true;
         }
         if ("PUT".equals(method) && "runtime".equals(route)) {
