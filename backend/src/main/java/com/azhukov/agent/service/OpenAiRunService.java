@@ -107,10 +107,14 @@ public class OpenAiRunService {
         String runId = "run_" + UUID.randomUUID().toString().replace("-", "");
         UUID controlSessionId = UUID.randomUUID();
         String userId = sessionContext.session().userId();
-        RunRecord record = new RunRecord(runId, sessionId, controlSessionId, userId, requestedModel);
+        String profile = sessionContext.session().getMetadata("profile");
+        if (profile == null) {
+            profile = "default";
+        }
+        RunRecord record = new RunRecord(runId, sessionId, controlSessionId, userId, profile, requestedModel);
         var stateMachine = stateMachine();
         if (stateMachine != null) {
-            stateMachine.createRun(runId, sessionId, userId, "default", requestedModel, null);
+            stateMachine.createRun(runId, sessionId, userId, profile, requestedModel, null);
             record.stateMachine = stateMachine;
         }
         runs.put(runId, record);
@@ -455,10 +459,10 @@ public class OpenAiRunService {
         return runStateMachineProvider == null ? null : runStateMachineProvider.getIfAvailable();
     }
 
-    public static RunRecord restoredRun(String runId, UUID sessionId, String userId, String model,
+    public static RunRecord restoredRun(String runId, UUID sessionId, String userId, String profile, String model,
                                         String status, java.time.Instant createdAt, java.time.Instant updatedAt,
                                         Map<String, Object> lastEvent) {
-        RunRecord run = new RunRecord(runId, sessionId, sessionId, userId, model);
+        RunRecord run = new RunRecord(runId, sessionId, sessionId, userId, profile, model);
         run.restoreStatus(status, createdAt, updatedAt);
         run.executionAvailable = false;
         for (String field : List.of("output", "usage", "error", "pending_steer")) {
@@ -473,6 +477,7 @@ public class OpenAiRunService {
         private final UUID sessionId;
         private final UUID controlSessionId;
         private final String userId;
+        private final String profile;
         private final String model;
         private double createdAt;
         private final BlockingQueue<QueuedEvent> events = new LinkedBlockingQueue<>(256);
@@ -485,11 +490,12 @@ public class OpenAiRunService {
         private String status = "queued";
         private double updatedAt;
 
-        private RunRecord(String runId, UUID sessionId, UUID controlSessionId, String userId, String model) {
+        private RunRecord(String runId, UUID sessionId, UUID controlSessionId, String userId, String profile, String model) {
             this.runId = runId;
             this.sessionId = sessionId;
             this.controlSessionId = controlSessionId;
             this.userId = userId;
+            this.profile = profile;
             this.model = model;
             this.createdAt = epochSeconds();
             this.updatedAt = this.createdAt;
@@ -509,6 +515,10 @@ public class OpenAiRunService {
 
         public String userId() {
             return userId;
+        }
+
+        public String profile() {
+            return profile;
         }
 
         public synchronized String status() {

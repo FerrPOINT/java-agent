@@ -89,7 +89,7 @@ public class OpenAiSessionService {
                     userId,
                     "openai-compatible",
                     effectiveModelName(modelName),
-                    "api_server")
+                    "api_server", "default")
                 : sessionResolver.createSession(userId, "openai-compatible", effectiveModelName(modelName), "api_server");
             return new OpenAiSessionContext(
                 session,
@@ -100,7 +100,7 @@ public class OpenAiSessionService {
 
         requireConfiguredApiKey("Session continuation requires API key authentication. "
             + "Configure API_SERVER_KEY to enable this feature.");
-        return resolveExternalOrUuidSession(requestedSessionId, sessionKey, modelName, true);
+        return resolveExternalOrUuidSession(requestedSessionId, sessionKey, modelName, "default");
     }
 
     static UUID deterministicChatSessionUuid(String userId, String statelessSeed) {
@@ -114,73 +114,68 @@ public class OpenAiSessionService {
     }
 
     public OpenAiSessionContext resolveStoredResponseSession(UUID sessionId, String sessionKeyHeader) {
-        String sessionKey = parseSessionKey(sessionKeyHeader);
-        UUID resolvedId = sessionResolver.resolveResumeSessionId(sessionId);
-        return new OpenAiSessionContext(loadAccessibleSession(resolvedId, sessionId.toString()), false, sessionKey);
+        return resolveStoredResponseSession(sessionId, sessionKeyHeader, "default");
     }
 
-    public OpenAiSessionContext resolveRunSession(UUID sessionId, String sessionKeyHeader, String modelName) {
+    public OpenAiSessionContext resolveStoredResponseSession(UUID sessionId, String sessionKeyHeader, String profile) {
         String sessionKey = parseSessionKey(sessionKeyHeader);
-        if (sessionId == null) {
-            String userId = effectiveSessionUserId(sessionKey);
-            return new OpenAiSessionContext(
-                sessionResolver.createSession(userId, "openai-compatible", effectiveModelName(modelName), "api_server"),
-                false,
-                sessionKey
-            );
-        }
-        UUID resolvedId = sessionResolver.resolveResumeSessionId(sessionId);
-        return new OpenAiSessionContext(loadAccessibleSession(resolvedId, sessionId.toString()), true, sessionKey);
+        return new OpenAiSessionContext(loadAccessibleSession(sessionId, profile), false, sessionKey);
     }
 
-    public OpenAiSessionContext resolveRunSession(String sessionId, String sessionKeyHeader, String modelName) {
+    public OpenAiSessionContext resolveRunSession(String sessionId, String sessionKeyHeader, String modelName,
+                                                 String profile) {
         String sessionKey = parseSessionKey(sessionKeyHeader);
         String requestedSessionId = parseHeaderValue(sessionId, "Invalid session_id", "Session ID too long");
         if (requestedSessionId == null) {
             String userId = effectiveSessionUserId(sessionKey);
             return new OpenAiSessionContext(
-                sessionResolver.createSession(userId, "openai-compatible", effectiveModelName(modelName), "api_server"),
+                sessionResolver.createSession(userId, "openai-compatible", effectiveModelName(modelName), "api_server", profile),
                 false,
                 sessionKey
             );
         }
-        return resolveExternalOrUuidSession(requestedSessionId, sessionKey, modelName, true);
+        return resolveExternalOrUuidSession(requestedSessionId, sessionKey, modelName, profile);
     }
 
     private OpenAiSessionContext resolveExternalOrUuidSession(String requestedSessionId,
                                                              String sessionKey,
                                                              String modelName,
-                                                             boolean continuationRequested) {
+                                                             String profile) {
         UUID uuidSessionId = tryParseUuid(requestedSessionId);
         if (uuidSessionId != null) {
-            UUID resolvedId = sessionResolver.resolveResumeSessionId(uuidSessionId);
-            return new OpenAiSessionContext(
-                loadAccessibleSession(resolvedId, requestedSessionId),
-                continuationRequested,
-                sessionKey
-            );
+            return new OpenAiSessionContext(loadAccessibleSession(uuidSessionId, profile), true, sessionKey);
         }
 
         String userId = effectiveSessionUserId(sessionKey);
-        UUID mappedSessionId = deterministicExternalSessionUuid(userId, requestedSessionId);
+        String seed = "default".equals(profile) ? requestedSessionId : profile + "\n" + requestedSessionId;
+        UUID mappedSessionId = deterministicExternalSessionUuid(userId, seed);
         Session session = sessionResolver.loadOrCreateSession(
             mappedSessionId,
             userId,
             "openai-compatible",
             effectiveModelName(modelName),
-            "api_server"
+            "api_server",
+            profile
         );
-        return new OpenAiSessionContext(session, continuationRequested, sessionKey, requestedSessionId);
+        return new OpenAiSessionContext(session, true, sessionKey, requestedSessionId);
     }
 
-    private Session loadAccessibleSession(UUID resolvedId, String requestedSessionId) {
-        if (!sessionRepository.existsById(resolvedId)) {
-            throw new IllegalArgumentException("Session not found: " + requestedSessionId);
+    private Session loadAccessibleSession(UUID requestedId, String profile) {
+        Session original = requireSessionInProfile(requestedId, profile);
+        UUID resolvedId = sessionResolver.resolveResumeSessionId(requestedId);
+        return resolvedId.equals(requestedId) ? original : requireSessionInProfile(resolvedId, profile);
+    }
+
+    private Session requireSessionInProfile(UUID id, String profile) {
+        if (!sessionRepository.existsById(id)) {
+            throw new IllegalArgumentException("Session not found: " + id);
         }
-        Session session = sessionResolver.loadSession(resolvedId);
+        Session session = sessionResolver.loadSession(id);
+        String ownerProfile = session.getMetadata("profile");
         String scopedUserId = UserContext.scopeUserId();
-        if (scopedUserId != null && !scopedUserId.equals(session.userId())) {
-            throw new IllegalArgumentException("Session not found: " + requestedSessionId);
+        if (!profile.equals(ownerProfile == null ? "default" : ownerProfile)
+            || (scopedUserId != null && !scopedUserId.equals(session.userId()))) {
+            throw new IllegalArgumentException("Session not found: " + id);
         }
         return session;
     }

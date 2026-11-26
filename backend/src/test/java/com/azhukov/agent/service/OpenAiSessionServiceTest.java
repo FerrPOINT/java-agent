@@ -132,7 +132,7 @@ class OpenAiSessionServiceTest {
             AgentProperties.DEFAULT_USER_ID,
             "openai-compatible",
             MODEL,
-            "api_server"))
+            "api_server", "default"))
             .thenReturn(session);
 
         OpenAiSessionService.OpenAiSessionContext context =
@@ -156,7 +156,7 @@ class OpenAiSessionServiceTest {
             sessionKey,
             "openai-compatible",
             MODEL,
-            "api_server"))
+            "api_server", "default"))
             .thenReturn(keyedSession);
 
         OpenAiSessionService.OpenAiSessionContext context =
@@ -237,13 +237,27 @@ class OpenAiSessionServiceTest {
             "openai-compatible", MODEL, null, Map.of(), null);
         properties.getSecurity().setApiKey("secret");
         UserContext.set("user-a", UserContext.ROLE_USER);
-        when(sessionResolver.resolveResumeSessionId(SESSION_ID)).thenReturn(SESSION_ID);
         when(sessionRepository.existsById(SESSION_ID)).thenReturn(true);
         when(sessionResolver.loadSession(SESSION_ID)).thenReturn(foreign);
 
         assertThatThrownBy(() -> service.resolve(SESSION_ID.toString(), null, MODEL))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessage("Session not found: " + SESSION_ID);
+    }
+
+    @Test
+    void runCannotResumeTheSameUsersSessionFromAnotherProfile() {
+        Session own = session.withMetadata("profile", "alpha");
+        UserContext.set(own.userId(), UserContext.ROLE_USER);
+        when(sessionRepository.existsById(SESSION_ID)).thenReturn(true);
+        when(sessionResolver.loadSession(SESSION_ID)).thenReturn(own);
+        when(sessionResolver.resolveResumeSessionId(SESSION_ID)).thenReturn(SESSION_ID);
+
+        assertThatThrownBy(() -> service.resolveRunSession(SESSION_ID.toString(), null, MODEL, "beta"))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("Session not found: " + SESSION_ID);
+        assertThat(service.resolveRunSession(SESSION_ID.toString(), null, MODEL, "alpha").session())
+            .isEqualTo(own);
     }
 
     @Test
@@ -261,7 +275,7 @@ class OpenAiSessionServiceTest {
             AgentProperties.DEFAULT_USER_ID,
             "openai-compatible",
             MODEL,
-            "api_server"))
+            "api_server", "default"))
             .thenReturn(mappedSession);
 
         OpenAiSessionService.OpenAiSessionContext context = service.resolve(externalSessionId, null, MODEL);
@@ -289,7 +303,7 @@ class OpenAiSessionServiceTest {
             sessionKey,
             "openai-compatible",
             MODEL,
-            "api_server"))
+            "api_server", "default"))
             .thenReturn(keyedSession);
 
         OpenAiSessionService.OpenAiSessionContext context = service.resolve(externalSessionId, sessionKey, MODEL);
@@ -318,14 +332,14 @@ class OpenAiSessionServiceTest {
         Session ownedSession = new Session(mappedId, "user-a", "OpenAI",
             "openai-compatible", MODEL, null, Map.of(), null);
         UserContext.set("user-a", UserContext.ROLE_USER);
-        when(sessionResolver.loadOrCreateSession(mappedId, "user-a", "openai-compatible", MODEL, "api_server"))
+        when(sessionResolver.loadOrCreateSession(mappedId, "user-a", "openai-compatible", MODEL, "api_server", "default"))
             .thenReturn(ownedSession);
 
         OpenAiSessionService.OpenAiSessionContext context =
-            service.resolveRunSession(externalSessionId, suppliedSessionKey, MODEL);
+            service.resolveRunSession(externalSessionId, suppliedSessionKey, MODEL, "default");
 
         assertThat(context.session()).isEqualTo(ownedSession);
-        verify(sessionResolver).loadOrCreateSession(mappedId, "user-a", "openai-compatible", MODEL, "api_server");
+        verify(sessionResolver).loadOrCreateSession(mappedId, "user-a", "openai-compatible", MODEL, "api_server", "default");
     }
 
     @Test
@@ -342,11 +356,11 @@ class OpenAiSessionServiceTest {
             AgentProperties.DEFAULT_USER_ID,
             "openai-compatible",
             MODEL,
-            "api_server"))
+            "api_server", "default"))
             .thenReturn(mappedSession);
 
         OpenAiSessionService.OpenAiSessionContext context =
-            service.resolveRunSession(externalSessionId, null, MODEL);
+            service.resolveRunSession(externalSessionId, null, MODEL, "default");
 
         assertThat(context.session()).isEqualTo(mappedSession);
         assertThat(context.continuationRequested()).isTrue();

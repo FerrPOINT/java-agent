@@ -104,10 +104,15 @@ public class AgentSessionResolver {
      * The source becomes the platform in the system prompt volatile tier.
      */
     public Session createSession(String userId, String provider, String modelName, String source) {
+        return createSession(userId, provider, modelName, source, "default");
+    }
+
+    public Session createSession(String userId, String provider, String modelName, String source, String profile) {
         if(identityReferences!=null)identityReferences.nativeStorage(userId);
         SessionEntity e = newSessionEntity(userId, provider, modelName, source);
+        e.setProfile(profile);
         SessionEntity saved = transactionTemplate.execute(status -> sessionRepository.save(e));
-        return sessionMapper.toDomain(saved);
+        return sessionMapper.toDomain(saved).withMetadata("profile", saved.getProfile());
     }
 
     /**
@@ -120,15 +125,16 @@ public class AgentSessionResolver {
                                        String userId,
                                        String provider,
                                        String modelName,
-                                       String source) {
+                                       String source,
+                                       String profile) {
         if (sessionId == null) {
-            return createSession(userId, provider, modelName, source);
+            return createSession(userId, provider, modelName, source, profile);
         }
         if(identityReferences!=null)identityReferences.nativeStorage(userId);
         return transactionTemplate.execute(status -> {
             SessionEntity existing = sessionRepository.findById(sessionId).orElse(null);
             if (existing != null) {
-                return hydrateSession(existing);
+                return hydrateInProfile(existing, profile);
             }
             // Deterministic external session ids must be created WITHOUT the
             // Hibernate merge() path: Spring Data treats an assigned id as
@@ -138,17 +144,24 @@ public class AgentSessionResolver {
             // is race-safe under concurrent first-turn requests.
             try {
                 sessionRepository.insertSessionRow(sessionId, userId, "New chat",
-                    provider, modelName, source, Instant.now());
+                    provider, modelName, source, profile, Instant.now());
             } catch (org.springframework.dao.DataIntegrityViolationException duplicate) {
                 SessionEntity winner = sessionRepository.findById(sessionId).orElse(null);
                 if (winner != null) {
-                    return hydrateSession(winner);
+                    return hydrateInProfile(winner, profile);
                 }
                 throw duplicate;
             }
             SessionEntity saved = sessionRepository.findById(sessionId).orElseThrow();
-            return hydrateSession(saved);
+            return hydrateInProfile(saved, profile);
         });
+    }
+
+    private Session hydrateInProfile(SessionEntity entity, String profile) {
+        if (!profile.equals(entity.getProfile())) {
+            throw new IllegalArgumentException("Session not found: " + entity.getId());
+        }
+        return hydrateSession(entity);
     }
 
     private SessionEntity newSessionEntity(String userId, String provider, String modelName, String source) {
