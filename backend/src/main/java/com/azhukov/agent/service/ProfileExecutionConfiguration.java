@@ -60,6 +60,9 @@ public class ProfileExecutionConfiguration {
                 identity.put("yaml", yaml);
                 identity.put("environment", new TreeMap<>(env));
                 identity.put("base_role", prompt.base().roleText());
+                if (prompt.base().verified() != null) {
+                    identity.put("base_manifest", prompt.base().verified().manifestSha256());
+                }
                 identity.put("base_skills", new TreeMap<>(prompt.base().skills()));
                 identity.put("persona", prompt.persona());
                 identity.put("project", prompt.project());
@@ -176,6 +179,10 @@ public class ProfileExecutionConfiguration {
 
         public String revision() {
             return revision;
+        }
+
+        public ProfileInstructions.BasePackage baseInstructions() {
+            return instructions.base();
         }
 
         Map<String, Object> settings() {

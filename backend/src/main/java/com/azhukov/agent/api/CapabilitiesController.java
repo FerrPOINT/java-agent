@@ -2,6 +2,7 @@ package com.azhukov.agent.api;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.model.Session;
+import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.core.tool.ToolRegistry;
 import com.azhukov.agent.service.OpenAiRunService;
@@ -177,14 +178,14 @@ public class CapabilitiesController {
             }
             try {
                 var accepted = settings.capture(profile);
-                return accepted.use(() -> namedCapabilities(profile, accepted.revision()));
+                return accepted.use(() -> namedCapabilities(profile, accepted));
             } catch (ProfileModelRouting.ProfileModelUnavailable | IllegalStateException e) {
                 throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Profile configuration is unavailable");
             }
         });
     }
 
-    private Map<String, Object> namedCapabilities(String profile, String revision) {
+    private Map<String, Object> namedCapabilities(String profile, ProfileExecutionConfiguration.Snapshot accepted) {
         var model = models.bind(profile, null).modelName();
         var session = Session.create("capabilities", "openai-compatible", model)
             .withMetadata("profile", profile).withMetadata("platform", "api_server");
@@ -210,7 +211,20 @@ public class CapabilitiesController {
             "skills_count", skills.stream().filter(skill -> !skill.disabled()).count(),
             "tools_count", definitions.size()
         ));
-        payload.put("profile_revision", revision);
+        payload.put("profile_revision", accepted.revision());
+        payload.put("tool_names", definitions.stream().map(ToolDefinition::name).distinct().sorted().toList());
+        var base = accepted.baseInstructions();
+        if (base.verified() != null) {
+            var verified = base.verified();
+            var enabled = skills.stream()
+                .filter(skill -> !skill.disabled() && base.skills().containsKey(skill.name()))
+                .map(SkillManager.SkillInfo::name).sorted().toList();
+            payload.put("base_instructions", Map.of(
+                "role", verified.role(),
+                "manifest_sha256", verified.manifestSha256(),
+                "instruction_sha256", verified.instructionSha256(),
+                "enabled_skills", enabled));
+        }
         return payload;
     }
 

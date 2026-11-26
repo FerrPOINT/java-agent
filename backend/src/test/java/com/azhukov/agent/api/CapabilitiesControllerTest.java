@@ -174,7 +174,9 @@ class CapabilitiesControllerTest {
             .andExpect(jsonPath("$.model").value("work-model"))
             .andExpect(jsonPath("$.features.runs_idempotency.durable").value(true))
             .andExpect(jsonPath("$.endpoints.runs.path").value("/v1/runs"))
-            .andExpect(jsonPath("$.toolsets").doesNotExist());
+            .andExpect(jsonPath("$.toolsets").doesNotExist())
+            .andExpect(jsonPath("$.tool_names").isArray())
+            .andExpect(jsonPath("$.base_instructions").doesNotExist());
         mockMvc.perform(get("/p/unknown/v1/capabilities")).andExpect(status().isNotFound());
         when(profileModels.bind("work", null)).thenThrow(new ProfileModelRouting.ProfileModelUnavailable());
         mockMvc.perform(get("/p/work/v1/capabilities")).andExpect(status().isServiceUnavailable());

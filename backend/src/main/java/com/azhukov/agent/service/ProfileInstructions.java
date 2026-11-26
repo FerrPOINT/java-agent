@@ -37,7 +37,9 @@ public class ProfileInstructions {
     public record Text(String file, String content) {}
     public record Snapshot(BasePackage base, String persona, Text project, String projectOverride, Set<String> disabledSkills) {}
 
-    public record BasePackage(Path root, String roleText, Map<String, String> skills) {
+    public record BaseInstructions(String role, String manifestSha256, String instructionSha256) {}
+
+    public record BasePackage(Path root, String roleText, Map<String, String> skills, BaseInstructions verified) {
         public String readSkill(String name) throws IOException {
             String expected = skills.get(name);
             if (expected == null) {
@@ -47,7 +49,7 @@ public class ProfileInstructions {
         }
     }
 
-    private static final BasePackage NO_BASE = new BasePackage(null, "", Map.of());
+    private static final BasePackage NO_BASE = new BasePackage(null, "", Map.of(), null);
 
     public Snapshot read(String profile) {
         var accepted = ProfileExecutionConfiguration.current(profile);
@@ -117,7 +119,8 @@ public class ProfileInstructions {
         if (!file.equals(instruction.path("path").asText())) {
             throw new IllegalArgumentException("Base role is not in the pinned manifest");
         }
-        String roleText = checked(root.resolve(file), instruction.path("sha256").asText());
+        String instructionSha256 = instruction.path("sha256").asText();
+        String roleText = checked(root.resolve(file), instructionSha256);
         JsonNode hashes = manifest.path("sources").path("native").path("skills");
         Map<String, String> skills = new LinkedHashMap<>();
         for (JsonNode item : selected.path("physicalSkills")) {
@@ -128,7 +131,8 @@ public class ProfileInstructions {
             }
             skills.put(name, digest);
         }
-        return new BasePackage(root, roleText, Map.copyOf(skills));
+        return new BasePackage(root, roleText, Map.copyOf(skills),
+            new BaseInstructions(role, expectedManifest, instructionSha256));
     }
 
     static Set<String> disabledSkills(Map<String, Object> config) {

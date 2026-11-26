@@ -13,6 +13,8 @@ final class ProfileExecutionConfigurationFixture {
         var configuration = mock(ProfileExecutionConfiguration.class);
         var snapshot = mock(ProfileExecutionConfiguration.Snapshot.class);
         lenient().when(snapshot.revision()).thenReturn("a".repeat(64));
+        lenient().when(snapshot.baseInstructions()).thenReturn(new com.azhukov.agent.service.ProfileInstructions.BasePackage(
+            null, "", java.util.Map.of(), null));
         lenient().when(snapshot.use(any())).thenAnswer(call -> call.<Supplier<?>>getArgument(0).get());
         lenient().when(configuration.capture(any())).thenReturn(snapshot);
         return configuration;
