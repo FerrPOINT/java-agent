@@ -18,9 +18,11 @@ class SessionModelOwnershipTest {
     void rejectedOwnerCheckKeepsTheForbiddenContract() throws Exception {
         UUID id = UUID.randomUUID();
         AgentRuntimeService runtime = mock(AgentRuntimeService.class);
+        SessionQueryService sessions = mock(SessionQueryService.class);
+        when(sessions.sessionExists("default", id)).thenReturn(true);
         doThrow(new SecurityException("Session does not belong to the current user"))
                 .when(runtime).switchModel(id, "noop", null);
-        var controller = new SessionCrudController(mock(SessionQueryService.class), runtime,
+        var controller = new SessionCrudController(sessions, mock(com.azhukov.agent.service.ProfileService.class), runtime,
                 mock(AgentStreamingService.class), null);
         var mvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new GlobalExceptionHandler(new ObjectMapper())).build();

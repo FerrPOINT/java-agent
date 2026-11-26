@@ -119,7 +119,7 @@ class MidTurnPersistenceConcurrencyTest {
     }
 
     private static SessionQueryService deletionService(Fixture fixture, ApplicationEventPublisher publisher) {
-        var target = new SessionQueryService(fixture.sessions, fixture.messages, mock(AgentSessionResolver.class), mock(DomainDtoMapper.class), new AgentProperties(), publisher);
+        var target = new SessionQueryService(fixture.sessions, fixture.messages, mock(AgentSessionResolver.class), mock(DomainDtoMapper.class), new AgentProperties(), publisher, mock(ProfileModelRouting.class));
         var proxy = new ProxyFactory(target);
         proxy.setProxyTargetClass(true);
         proxy.addAdvice(new TransactionInterceptor(fixture.transactions.getTransactionManager(), new AnnotationTransactionAttributeSource()));
@@ -128,7 +128,7 @@ class MidTurnPersistenceConcurrencyTest {
 
     private static boolean deleteAsOwner(SessionQueryService deletion, UUID id) {
         UserContext.set("user-1", UserContext.ROLE_USER);
-        try { return deletion.deleteSession(id); }
+        try { return deletion.deleteSession("default", id); }
         finally { UserContext.clear(); }
     }
     private static void await(CountDownLatch latch) {

@@ -6,6 +6,7 @@ import com.azhukov.agent.api.dto.MessageListDto;
 import com.azhukov.agent.service.AgentRuntimeService;
 import com.azhukov.agent.service.AgentStreamingService;
 import com.azhukov.agent.service.SessionQueryService;
+import com.azhukov.agent.service.ProfileService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -23,6 +24,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.net.URI;
@@ -52,6 +54,7 @@ import java.util.UUID;
 public class SessionCrudController {
 
     private final SessionQueryService sessionQueryService;
+    private final ProfileService profiles;
     private final AgentRuntimeService agentRuntimeService;
     private final AgentStreamingService streamingService;
     private final org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.service.SessionPruneService> pruneServiceProvider;
@@ -63,22 +66,29 @@ public class SessionCrudController {
     public Map<String, Object> listSessions(
             @RequestParam(defaultValue = "50") int limit,
             @RequestParam(defaultValue = "0") int offset,
-            @RequestParam(required = false) String userId
+            @RequestParam(required = false) String userId,
+            @RequestParam(defaultValue = "default") String profile
     ) {
-        return sessionQueryService.listSessions(limit, offset, userId);
+        return sessionQueryService.listSessions(knownProfile(profile), limit, offset, userId);
     }
 
     // ── Create session ──
 
     @Operation(summary = "Create a new session")
     @PostMapping
-    public ResponseEntity<Map<String, Object>> createSession(@RequestBody(required = false) CreateSessionBody body) {
+    public ResponseEntity<Map<String, Object>> createSession(
+            @RequestParam(defaultValue = "default") String profile,
+            @RequestBody(required = false) CreateSessionBody body) {
         String userId = body != null ? body.userId() : null;
         String model = body != null ? body.model() : null;
         String title = body != null ? body.title() : null;
-        Map<String, Object> response = sessionQueryService.createSession(userId, model, title);
+        Map<String, Object> response = sessionQueryService.createSession(knownProfile(profile), userId, model, title);
         String sessionId = (String) response.get("id");
-        return ResponseEntity.created(URI.create("/api/sessions/" + sessionId)).body(response);
+        String location = "/api/sessions/" + sessionId;
+        if (!"default".equals(profile)) {
+            location += "?profile=" + profile;
+        }
+        return ResponseEntity.created(URI.create(location)).body(response);
     }
 
     public record CreateSessionBody(String userId, String model, String title) {}
@@ -87,8 +97,9 @@ public class SessionCrudController {
 
     @Operation(summary = "Get a session by ID")
     @GetMapping("/{sessionId}")
-    public ResponseEntity<Map<String, Object>> getSession(@PathVariable UUID sessionId) {
-        return sessionQueryService.getSession(sessionId)
+    public ResponseEntity<Map<String, Object>> getSession(@PathVariable UUID sessionId,
+            @RequestParam(defaultValue = "default") String profile) {
+        return sessionQueryService.getSession(knownProfile(profile), sessionId)
             .map(ResponseEntity::ok)
             .orElseGet(() -> ResponseEntity.notFound().build());
     }
@@ -99,8 +110,9 @@ public class SessionCrudController {
     @PatchMapping("/{sessionId}")
     public ResponseEntity<Map<String, Object>> updateSession(
             @PathVariable UUID sessionId,
+            @RequestParam(defaultValue = "default") String profile,
             @RequestBody UpdateSessionBody body) {
-        return sessionQueryService.updateSession(sessionId, body.title())
+        return sessionQueryService.updateSession(knownProfile(profile), sessionId, body.title())
             .map(ResponseEntity::ok)
             .orElseGet(() -> ResponseEntity.notFound().build());
     }
@@ -111,8 +123,9 @@ public class SessionCrudController {
 
     @Operation(summary = "Delete a session and all its messages")
     @DeleteMapping("/{sessionId}")
-    public ResponseEntity<Map<String, Object>> deleteSession(@PathVariable UUID sessionId) {
-        boolean deleted = sessionQueryService.deleteSession(sessionId);
+    public ResponseEntity<Map<String, Object>> deleteSession(@PathVariable UUID sessionId,
+            @RequestParam(defaultValue = "default") String profile) {
+        boolean deleted = sessionQueryService.deleteSession(knownProfile(profile), sessionId);
         if (!deleted) {
             return ResponseEntity.notFound().build();
         }
@@ -129,9 +142,10 @@ public class SessionCrudController {
     @GetMapping("/{sessionId}/messages")
     public ResponseEntity<MessageListDto> getSessionMessages(
             @PathVariable UUID sessionId,
+            @RequestParam(defaultValue = "default") String profile,
             @RequestParam(defaultValue = "100") int limit,
             @RequestParam(defaultValue = "0") int offset) {
-        return sessionQueryService.getSessionMessages(sessionId, limit, offset)
+        return sessionQueryService.getSessionMessages(knownProfile(profile), sessionId, limit, offset)
             .map(ResponseEntity::ok)
             .orElseGet(() -> ResponseEntity.notFound().build());
     }
@@ -166,9 +180,10 @@ public class SessionCrudController {
                     "unsupported_filters", unsupported.keySet(),
                     "error", "unsupported_filters"));
         }
+        String selectedProfile = string(raw, "profile");
         com.azhukov.agent.service.SessionPruneService.PruneRequest request =
             new com.azhukov.agent.service.SessionPruneService.PruneRequest(
-                string(raw, "profile"),
+                knownProfile(selectedProfile == null ? "default" : selectedProfile),
                 string(raw, "source"),
                 string(raw, "title_contains"),
                 string(raw, "end_reason"),
@@ -229,7 +244,11 @@ public class SessionCrudController {
     @PostMapping("/{sessionId}/fork")
     public ResponseEntity<Map<String, Object>> forkSession(
             @PathVariable UUID sessionId,
+            @RequestParam(defaultValue = "default") String profile,
             @RequestBody(required = false) Map<String, Object> body) {
+        if (!sessionQueryService.sessionExists(knownProfile(profile), sessionId)) {
+            return ResponseEntity.notFound().build();
+        }
         String name = body != null && body.get("title") instanceof String t ? t : null;
         try {
             var summary = agentRuntimeService.branchSession(sessionId, name);
@@ -251,12 +270,17 @@ public class SessionCrudController {
     @PostMapping("/{sessionId}/model")
     public ResponseEntity<Map<String, Object>> sessionModelLock(
             @PathVariable UUID sessionId,
+            @RequestParam(defaultValue = "default") String profile,
             @RequestBody Map<String, Object> body) {
         Object modelObj = body != null ? body.get("model") : null;
         Object providerObj = body != null ? body.get("provider") : null;
         if (modelObj == null || modelObj.toString().isBlank()) {
             return ResponseEntity.badRequest().body(Map.of(
                 "error", Map.of("message", "model is required", "type", "invalid_request_error")));
+        }
+        requireStandalone(profile);
+        if (!sessionQueryService.sessionExists(profile, sessionId)) {
+            return ResponseEntity.notFound().build();
         }
         try {
             agentRuntimeService.switchModel(sessionId, modelObj.toString(),
@@ -283,8 +307,10 @@ public class SessionCrudController {
     @PostMapping("/{sessionId}/chat")
     public ResponseEntity<ChatResponseDto> sessionChat(
             @PathVariable UUID sessionId,
+            @RequestParam(defaultValue = "default") String profile,
             @Valid @RequestBody SessionChatRequest body) {
-        if (!sessionQueryService.sessionExists(sessionId)) {
+        requireStandalone(profile);
+        if (!sessionQueryService.sessionExists(profile, sessionId)) {
             return ResponseEntity.notFound().build();
         }
         ChatRequest request = ChatRequest.simple(sessionId, body.message(), null, body.timeoutMs());
@@ -298,13 +324,30 @@ public class SessionCrudController {
     @PostMapping(value = "/{sessionId}/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public ResponseEntity<SseEmitter> sessionChatStream(
             @PathVariable UUID sessionId,
+            @RequestParam(defaultValue = "default") String profile,
             @Valid @RequestBody SessionChatRequest body) {
-        if (!sessionQueryService.sessionExists(sessionId)) {
+        requireStandalone(profile);
+        if (!sessionQueryService.sessionExists(profile, sessionId)) {
             return ResponseEntity.notFound().build();
         }
         ChatRequest request = ChatRequest.simple(sessionId, body.message(), null, body.timeoutMs());
         SseEmitter emitter = streamingService.streamTurn(request);
         return ResponseEntity.ok(emitter);
+    }
+
+    private void requireStandalone(String profile) {
+        if (!"default".equals(knownProfile(profile))) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Use the configured model and profile run API at /p/" + profile + "/v1/runs");
+        }
+    }
+
+    private String knownProfile(String profile) {
+        if (!"default".equals(profile)
+            && (!profiles.isValidNamedProfileName(profile) || !profiles.knownProfile(profile))) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Profile not found");
+        }
+        return profile;
     }
 
     // ── Helper record ──

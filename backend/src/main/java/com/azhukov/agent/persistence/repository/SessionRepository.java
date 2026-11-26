@@ -36,6 +36,9 @@ public interface SessionRepository extends JpaRepository<SessionEntity, UUID> {
 
     Page<SessionEntity> findAllByUserId(String userId, Pageable pageable);
 
+    Page<SessionEntity> findAllByUserIdAndProfile(String userId, String profile, Pageable pageable);
+    Optional<SessionEntity> findByIdAndProfile(UUID id, String profile);
+
     @Query(value = "SELECT id FROM sessions WHERE id IN (:ids)", nativeQuery = true)
     List<UUID> findExistingIds(@Param("ids") Collection<UUID> ids);
 
@@ -76,7 +79,7 @@ public interface SessionRepository extends JpaRepository<SessionEntity, UUID> {
     @Query("""
         SELECT s FROM SessionEntity s
         WHERE s.endReason IS NOT NULL
-          AND (:profile IS NULL OR s.profile = :profile)
+          AND s.profile = :profile
         ORDER BY s.createdAt ASC
         """)
     java.util.List<SessionEntity> listEndedSessions(@Param("profile") String profile, org.springframework.data.domain.Pageable pageable);

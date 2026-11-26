@@ -55,9 +55,9 @@ class SessionPruneServiceTest {
     void deletesOnlyEndedSessionsOlderThanCutoff() {
         SessionEntity oldEnough = ended("compression", Instant.now().minusSeconds(90 * 86400 + 3600), 5);
         SessionEntity tooFresh = ended("compression", Instant.now().minusSeconds(3600), 5);
-        when(sessionRepository.listEndedSessions(isNull(), any(Pageable.class)))
+        when(sessionRepository.listEndedSessions(eq("default"), any(Pageable.class)))
             .thenReturn(List.of(oldEnough, tooFresh));
-        when(sessionQueryService.deleteSession(oldEnough.getId())).thenReturn(true);
+        when(sessionQueryService.deleteSession("default", oldEnough.getId())).thenReturn(true);
 
         var result = service().prune(new SessionPruneService.PruneRequest(
             null, null, null, null, null, null, null, null, null,
@@ -66,13 +66,13 @@ class SessionPruneServiceTest {
         assertThat(result.pruned()).hasSize(1);
         assertThat(result.pruned().get(0)).containsEntry("id", oldEnough.getId().toString());
         assertThat(result.deletedMessages()).isEqualTo(5);
-        verify(sessionQueryService, never()).deleteSession(tooFresh.getId());
+        verify(sessionQueryService, never()).deleteSession("default", tooFresh.getId());
     }
 
     @Test
     void dryRunReportsWithoutDeleting() {
         SessionEntity oldEnough = ended("new_session", Instant.now().minusSeconds(120 * 86400), 3);
-        when(sessionRepository.listEndedSessions(isNull(), any(Pageable.class)))
+        when(sessionRepository.listEndedSessions(eq("default"), any(Pageable.class)))
             .thenReturn(List.of(oldEnough));
 
         var result = service().prune(new SessionPruneService.PruneRequest(
@@ -81,7 +81,7 @@ class SessionPruneServiceTest {
 
         assertThat(result.dryRun()).isTrue();
         assertThat(result.pruned()).hasSize(1);
-        verify(sessionQueryService, never()).deleteSession(any(UUID.class));
+        verify(sessionQueryService, never()).deleteSession(eq("default"), any(UUID.class));
     }
 
     @Test
@@ -90,7 +90,7 @@ class SessionPruneServiceTest {
         owned.setUserId("owner");
         SessionEntity foreign = ended("new_session", Instant.now().minusSeconds(120 * 86400), 5);
         foreign.setUserId("foreign");
-        when(sessionRepository.listEndedSessions(isNull(), any(Pageable.class)))
+        when(sessionRepository.listEndedSessions(eq("default"), any(Pageable.class)))
                 .thenReturn(List.of(owned, foreign));
         com.azhukov.agent.core.security.UserContext.set("owner",
                 com.azhukov.agent.core.security.UserContext.ROLE_USER);
@@ -100,7 +100,7 @@ class SessionPruneServiceTest {
                     null, null, false, true));
             assertThat(result.pruned()).isEmpty();
             assertThat(result.skippedOpen()).isEmpty();
-            verify(sessionQueryService, never()).deleteSession(any(UUID.class));
+            verify(sessionQueryService, never()).deleteSession(eq("default"), any(UUID.class));
         } finally {
             com.azhukov.agent.core.security.UserContext.clear();
         }
@@ -126,7 +126,7 @@ class SessionPruneServiceTest {
     void messageBoundsFilter() {
         SessionEntity small = ended("idle_timeout", Instant.now().minusSeconds(120 * 86400), 2);
         SessionEntity big = ended("idle_timeout", Instant.now().minusSeconds(120 * 86400), 500);
-        when(sessionRepository.listEndedSessions(isNull(), any(Pageable.class)))
+        when(sessionRepository.listEndedSessions(eq("default"), any(Pageable.class)))
             .thenReturn(List.of(small, big));
 
         var result = service().prune(new SessionPruneService.PruneRequest(
@@ -140,7 +140,7 @@ class SessionPruneServiceTest {
     void archivedSessionsSkippedUnlessRequested() {
         SessionEntity archived = ended("compression", Instant.now().minusSeconds(120 * 86400), 2);
         archived.setArchived(true);
-        when(sessionRepository.listEndedSessions(isNull(), any(Pageable.class)))
+        when(sessionRepository.listEndedSessions(eq("default"), any(Pageable.class)))
             .thenReturn(List.of(archived));
 
         var skipped = service().prune(new SessionPruneService.PruneRequest(
@@ -158,7 +158,7 @@ class SessionPruneServiceTest {
     void scopedUserCannotPruneAnotherUsersEndedSessions() {
         SessionEntity foreign = ended("compression", Instant.now().minusSeconds(120 * 86400), 2);
         foreign.setUserId("victim");
-        when(sessionRepository.listEndedSessions(isNull(), any(Pageable.class)))
+        when(sessionRepository.listEndedSessions(eq("default"), any(Pageable.class)))
             .thenReturn(List.of(foreign));
 
         UserContext.set("owner", UserContext.ROLE_USER);
@@ -168,7 +168,7 @@ class SessionPruneServiceTest {
                 null, null, false, false));
 
             assertThat(result.pruned()).isEmpty();
-            verify(sessionQueryService, never()).deleteSession(foreign.getId());
+            verify(sessionQueryService, never()).deleteSession("default", foreign.getId());
         } finally {
             UserContext.clear();
         }

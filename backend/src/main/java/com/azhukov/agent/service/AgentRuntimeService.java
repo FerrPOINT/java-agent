@@ -495,6 +495,8 @@ public class AgentRuntimeService {
             new Session(null, source.getUserId(), name != null ? name : "Branch of " + source.getTitle(),
                 source.getModelProvider(), source.getModelName(), null, java.util.Map.of(), null)
         );
+        branch.setProfile(source.getProfile());
+        branch.setSource(source.getSource());
         branch.setCreatedAt(Instant.now());
         branch.setUpdatedAt(Instant.now());
         SessionEntity saved = sessionRepository.save(branch);
