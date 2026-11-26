@@ -112,7 +112,7 @@ class AgentControllerBranchCoverageTest {
             steerBuffer, interruptToken,
             null,
             org.mockito.Mockito.mock(com.azhukov.agent.persistence.repository.BackgroundJobRepository.class),
-            null, null, null,
+            sessionRepository, null, null,
             approvalQueue,
             agentProperties,
             null,
@@ -1029,7 +1029,7 @@ class AgentControllerBranchCoverageTest {
         mockMvc = sessionMockMvc();
         SessionSummaryDto dto = new SessionSummaryDto(
             SESSION_ID, "user-1", "Branch of test", "openai-compatible", "", FIXED_TIME, FIXED_TIME);
-        when(agentRuntimeService.branchSession(eq(SESSION_ID), any())).thenReturn(dto);
+        when(agentRuntimeService.branchSession(eq(SESSION_ID), any(), eq("default"))).thenReturn(dto);
 
         mockMvc.perform(post("/api/v1/agent/session/" + SESSION_ID + "/branch"))
             .andExpect(status().isOk())

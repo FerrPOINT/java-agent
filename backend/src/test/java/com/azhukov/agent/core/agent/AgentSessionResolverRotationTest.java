@@ -94,6 +94,14 @@ class AgentSessionResolverRotationTest {
     void followsRotationChainWhenParentRowsAreArchived() {
         // Parent rows deactivated by rotation → countBySessionIdAndActiveTrue == 0
         when(messageRepository.countBySessionIdAndActiveTrue(parentId)).thenReturn(0L);
+        SessionEntity parent = new SessionEntity();
+        parent.setId(parentId);
+        parent.setUserId("user-1");
+        when(sessionRepository.findById(parentId)).thenReturn(java.util.Optional.of(parent));
+        SessionEntity other = new SessionEntity();
+        other.setId(UUID.randomUUID());
+        other.setUserId("user-1");
+        other.setProfile("beta");
         SessionEntity child = new SessionEntity();
         child.setId(childId);
         child.setUserId("user-1");
@@ -102,7 +110,7 @@ class AgentSessionResolverRotationTest {
         child.setTitle("New chat (compressed)");
         child.setParentSessionId(parentId);
         when(sessionRepository.findChildSessions(parentId))
-            .thenReturn(List.of(child));
+            .thenReturn(List.of(other, child));
         when(sessionRepository.findById(childId)).thenReturn(java.util.Optional.of(child));
         when(messageRepository.countBySessionIdAndActiveTrue(childId)).thenReturn(5L);
 
@@ -133,8 +141,6 @@ class AgentSessionResolverRotationTest {
     @Test
     void createsNewSessionWhenChainEndsEmpty() {
         when(messageRepository.countBySessionIdAndActiveTrue(parentId)).thenReturn(0L);
-        when(sessionRepository.findChildSessions(parentId))
-            .thenReturn(List.of());
         SessionEntity fresh = new SessionEntity();
         fresh.setId(UUID.randomUUID());
         fresh.setUserId("user-1");
@@ -151,7 +157,6 @@ class AgentSessionResolverRotationTest {
     void createsNewSessionWithInboundTransportSource() {
         UUID missing = UUID.randomUUID();
         when(messageRepository.countBySessionIdAndActiveTrue(missing)).thenReturn(0L);
-        when(sessionRepository.findChildSessions(missing)).thenReturn(List.of());
         SessionEntity fresh = new SessionEntity();
         fresh.setId(UUID.randomUUID());
         fresh.setUserId("telegram-user");

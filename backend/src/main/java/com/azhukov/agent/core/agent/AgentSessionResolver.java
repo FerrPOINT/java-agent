@@ -1,6 +1,7 @@
 package com.azhukov.agent.core.agent;
 
 import com.azhukov.agent.core.model.Session;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.mapper.SessionEntityMapper;
 import com.azhukov.agent.core.ports.MessageStorePort;
@@ -8,7 +9,9 @@ import com.azhukov.agent.core.ports.SessionStorePort;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.hibernate.Hibernate;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
@@ -16,6 +19,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import com.azhukov.agent.config.AgentProperties;
@@ -71,6 +75,7 @@ public class AgentSessionResolver {
         if (sessionId == null) {
             return new ResolvedSession(createSession(userId, "openai-compatible", modelName, source), true);
         }
+        sessionRepository.findById(sessionId).ifPresent(session -> requireAccessible(session, "default"));
         try {
             // P0-24: Follow compression child chain to find the descendant with messages
             UUID resolvedId = resolveResumeSessionId(sessionId);
@@ -145,8 +150,32 @@ public class AgentSessionResolver {
         });
     }
 
+    public static boolean inProfile(SessionEntity session, String profile) {
+        return profile.equals(sessionProfile(session));
+    }
+
+    static boolean sameScope(SessionEntity first, SessionEntity second) {
+        return Objects.equals(first.getUserId(), second.getUserId())
+            && sessionProfile(first).equals(sessionProfile(second));
+    }
+
+    private static String sessionProfile(SessionEntity session) {
+        String saved = session.getProfile();
+        return saved == null || saved.isBlank() ? "default" : saved;
+    }
+
+    public static void requireAccessible(SessionEntity session, String profile) {
+        if (!inProfile(session, profile)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Session not found");
+        }
+        String user = UserContext.scopeUserId();
+        if (user != null && !user.equals(session.getUserId())) {
+            throw new SecurityException("Session does not belong to the current user");
+        }
+    }
+
     private Session hydrateInProfile(SessionEntity entity, String profile) {
-        if (!profile.equals(entity.getProfile())) {
+        if (!inProfile(entity, profile)) {
             throw new IllegalArgumentException("Session not found: " + entity.getId());
         }
         return hydrateSession(entity);
@@ -264,7 +293,11 @@ public class AgentSessionResolver {
             if (messageRepository.countBySessionIdAndActiveTrue(sessionId) > 0) {
                 return sessionId;
             }
-            // Walk descendants: at each step, pick the most-recently-created child
+            SessionEntity initial = sessionRepository.findById(sessionId).orElse(null);
+            if (initial == null) {
+                return sessionId;
+            }
+            // Walk only descendants belonging to the original profile and user.
             UUID current = sessionId;
             Set<UUID> seen = new HashSet<>();
             seen.add(current);
@@ -274,7 +307,11 @@ public class AgentSessionResolver {
                 if (children == null || children.isEmpty()) {
                     return sessionId;
                 }
-                UUID childId = children.get(0).getId();
+                UUID childId = children.stream()
+                    .filter(child -> sameScope(initial, child))
+                    .map(SessionEntity::getId)
+                    .filter(Objects::nonNull)
+                    .findFirst().orElse(null);
                 if (childId == null || seen.contains(childId)) {
                     return sessionId;
                 }

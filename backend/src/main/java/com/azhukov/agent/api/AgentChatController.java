@@ -11,6 +11,7 @@ import com.azhukov.agent.api.dto.SteerRequest;
 import com.azhukov.agent.api.dto.StopRequest;
 import com.azhukov.agent.api.dto.TtsRequest;
 import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.agent.AgentSessionResolver;
 import com.azhukov.agent.core.agent.InterruptToken;
 import com.azhukov.agent.core.agent.SteerBuffer;
 import com.azhukov.agent.core.agent.MemoryNudgeManager;
@@ -183,13 +184,8 @@ public class AgentChatController {
      * @throws SecurityException when the session belongs to another user
      */
     private void requireSessionOwnership(UUID sessionId) {
-        String scoped = com.azhukov.agent.core.security.UserContext.scopeUserId();
-        if (scoped == null) return; // admin or no-auth → full access
-        sessionRepository.findById(sessionId).ifPresent(session -> {
-            if (!scoped.equals(session.getUserId())) {
-                throw new SecurityException("Session does not belong to the current user");
-            }
-        });
+        sessionRepository.findById(sessionId).ifPresent(session ->
+            AgentSessionResolver.requireAccessible(session, "default"));
     }
 
 
@@ -214,6 +210,7 @@ public class AgentChatController {
         out.put("jobId", job.getId().toString());
         out.put("status", job.getStatus());
         if (job.getSessionId() != null) {
+            requireSessionOwnership(job.getSessionId());
             out.put("sessionId", job.getSessionId().toString());
         }
         if (job.getResult() != null) {
@@ -459,14 +456,11 @@ public class AgentChatController {
     @GetMapping("/agent/approvals/pending")
     public List<ApprovalQueue.PendingApproval> pendingApprovals() {
         String scoped = com.azhukov.agent.core.security.UserContext.scopeUserId();
-        if (scoped == null) {
-            return approvalQueue.getPendingApprovals();
-        }
-        // Non-admin users only see pending approvals for their own sessions
         return approvalQueue.getPendingApprovals().stream()
             .filter(p -> sessionRepository.findById(p.sessionId())
-                .map(s -> scoped.equals(s.getUserId()))
-                .orElse(false))
+                .filter(session -> AgentSessionResolver.inProfile(session, "default"))
+                .filter(session -> scoped == null || scoped.equals(session.getUserId()))
+                .isPresent())
             .toList();
     }
 

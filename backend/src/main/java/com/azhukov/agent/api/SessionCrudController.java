@@ -246,12 +246,13 @@ public class SessionCrudController {
             @PathVariable UUID sessionId,
             @RequestParam(defaultValue = "default") String profile,
             @RequestBody(required = false) Map<String, Object> body) {
-        if (!sessionQueryService.sessionExists(knownProfile(profile), sessionId)) {
+        String scope = knownProfile(profile);
+        if (!sessionQueryService.sessionExists(scope, sessionId)) {
             return ResponseEntity.notFound().build();
         }
         String name = body != null && body.get("title") instanceof String t ? t : null;
         try {
-            var summary = agentRuntimeService.branchSession(sessionId, name);
+            var summary = agentRuntimeService.branchSession(sessionId, name, scope);
             Map<String, Object> response = new java.util.LinkedHashMap<>();
             response.put("object", "session");
             response.put("id", summary.id() != null ? summary.id().toString() : null);

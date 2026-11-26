@@ -283,13 +283,8 @@ public class AgentStreamingService {
 
     private void requireSessionOwnership(UUID sessionId) {
         if (sessionId == null) return;
-        String scopedUserId = UserContext.scopeUserId();
-        if (scopedUserId == null) return;
-        SessionEntity session = transactionTemplate.execute(status ->
-            sessionRepository.findById(sessionId).orElse(null));
-        if (session != null && !scopedUserId.equals(session.getUserId())) {
-            throw new SecurityException("Session does not belong to the current user");
-        }
+        sessionRepository.findById(sessionId).ifPresent(session ->
+            AgentSessionResolver.requireAccessible(session, "default"));
     }
 
     /**

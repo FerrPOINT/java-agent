@@ -67,13 +67,8 @@ public class AgentRuntimeService {
      * @throws SecurityException if the session exists but belongs to another user
      */
     public void requireSessionOwnership(UUID sessionId) {
-        String scoped = UserContext.scopeUserId();
-        if (scoped == null) return; // admin or no-auth → full access
-        sessionRepository.findById(sessionId).ifPresent(session -> {
-            if (!scoped.equals(session.getUserId())) {
-                throw new SecurityException("Session does not belong to the current user");
-            }
-        });
+        sessionRepository.findById(sessionId).ifPresent(session ->
+            AgentSessionResolver.requireAccessible(session, "default"));
     }
 
     private final AgentRuntime agentRuntime;
@@ -232,7 +227,7 @@ public class AgentRuntimeService {
     public List<SessionSummaryDto> listSessions() {
         String userId = UserContext.scopeUserId();
         if (userId == null) userId = AgentProperties.DEFAULT_USER_ID;
-        return sessionRepository.findAllByUserId(userId, PageRequest.of(0, 50)).stream()
+        return sessionRepository.findAllByUserIdAndProfile(userId, "default", PageRequest.of(0, 50)).stream()
             .map(sessionMapper::toDomain)
             .map(domainDtoMapper::toSessionSummaryDto)
             .toList();
@@ -355,7 +350,7 @@ public class AgentRuntimeService {
     @Transactional(readOnly = true)
     public List<SessionSummaryDto> listSessionsByUserId(String userId) {
         String effectiveUserId = UserContext.effectiveUserId(userId);
-        return sessionRepository.findAllByUserId(effectiveUserId, PageRequest.of(0, 50)).stream()
+        return sessionRepository.findAllByUserIdAndProfile(effectiveUserId, "default", PageRequest.of(0, 50)).stream()
             .map(sessionMapper::toDomain)
             .map(domainDtoMapper::toSessionSummaryDto)
             .toList();
@@ -397,7 +392,7 @@ public class AgentRuntimeService {
     public List<ActiveAgentDto> listActiveAgents() {
         String userId = UserContext.scopeUserId();
         if (userId == null) userId = AgentProperties.DEFAULT_USER_ID;
-        return sessionRepository.findAllByUserId(userId, PageRequest.of(0, 50)).stream()
+        return sessionRepository.findAllByUserIdAndProfile(userId, "default", PageRequest.of(0, 50)).stream()
             .map(e -> new ActiveAgentDto(
                 e.getId().toString(),
                 "active",
@@ -486,11 +481,11 @@ public class AgentRuntimeService {
     }
 
     @Transactional
-    public SessionSummaryDto branchSession(UUID sessionId, String name) {
-        requireSessionOwnership(sessionId);
+    public SessionSummaryDto branchSession(UUID sessionId, String name, String profile) {
         // Fork a session: load messages, create new session with copied messages
         SessionEntity source = sessionRepository.findById(sessionId)
             .orElseThrow(() -> new IllegalArgumentException("Session not found: " + sessionId));
+        AgentSessionResolver.requireAccessible(source, profile);
         SessionEntity branch = sessionMapper.toEntity(
             new Session(null, source.getUserId(), name != null ? name : "Branch of " + source.getTitle(),
                 source.getModelProvider(), source.getModelName(), null, java.util.Map.of(), null)
@@ -564,6 +559,7 @@ public class AgentRuntimeService {
             if (!ownerId.equals(parent.getUserId())) {
                 throw new SecurityException("Session does not belong to the background job owner");
             }
+            AgentSessionResolver.requireAccessible(parent, "default");
         }
         com.azhukov.agent.persistence.entity.BackgroundJobEntity job =
             new com.azhukov.agent.persistence.entity.BackgroundJobEntity();

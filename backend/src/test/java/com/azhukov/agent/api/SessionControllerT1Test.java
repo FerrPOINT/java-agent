@@ -597,7 +597,7 @@ class SessionControllerT1Test {
     @Test
     void branchSession_success() throws Exception {
         SessionSummaryDto dto = new SessionSummaryDto(SESSION_ID, "user-1", "branch", "p", "m", FIXED_TIME, FIXED_TIME);
-        when(agentRuntimeService.branchSession(SESSION_ID, "branch")).thenReturn(dto);
+        when(agentRuntimeService.branchSession(SESSION_ID, "branch", "default")).thenReturn(dto);
 
         mockMvc.perform(post("/api/v1/agent/session/{sessionId}/branch", SESSION_ID)
                 .param("name", "branch"))
@@ -608,7 +608,7 @@ class SessionControllerT1Test {
     @Test
     void branchSession_noNameParam() throws Exception {
         SessionSummaryDto dto = new SessionSummaryDto(SESSION_ID, "user-1", null, "p", "m", FIXED_TIME, FIXED_TIME);
-        when(agentRuntimeService.branchSession(SESSION_ID, null)).thenReturn(dto);
+        when(agentRuntimeService.branchSession(SESSION_ID, null, "default")).thenReturn(dto);
 
         mockMvc.perform(post("/api/v1/agent/session/{sessionId}/branch", SESSION_ID))
             .andExpect(status().isOk())

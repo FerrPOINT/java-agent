@@ -165,7 +165,7 @@ class AgentControllerPhase2Test {
             FIXED_TIME,
             FIXED_TIME
         );
-        when(agentRuntimeService.branchSession(eq(SESSION_ID), any())).thenReturn(dto);
+        when(agentRuntimeService.branchSession(eq(SESSION_ID), any(), eq("default"))).thenReturn(dto);
 
         mockMvc.perform(post("/api/v1/agent/session/{sessionId}/branch", SESSION_ID)
                 .param("name", "Branch of Test session"))
