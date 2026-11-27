@@ -41,7 +41,7 @@ repositories {
     maven { url = 'https://repo.spring.io/milestone' }
 }
 
-def langchain4jVersion = "1.23.0"
+def langchain4jVersion = "1.24.0"
 
 dependencies {
     // shared DTOs + mapper + REST factory (h10)
