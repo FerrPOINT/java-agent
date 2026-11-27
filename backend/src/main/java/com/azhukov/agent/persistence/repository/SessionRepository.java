@@ -27,7 +27,7 @@ public interface SessionRepository extends JpaRepository<SessionEntity, UUID> {
     @Query("select s.id from SessionEntity s where s.id = :sessionId")
     Optional<UUID> findMessageParentId(@Param("sessionId") UUID sessionId);
 
-    SessionEntity findByUserId(String userId);
+    SessionEntity findFirstByUserIdAndProfileOrderByUpdatedAtDescIdDesc(String userId, String profile);
 
     List<SessionEntity> findAllByUserId(String userId);
 
@@ -35,6 +35,9 @@ public interface SessionRepository extends JpaRepository<SessionEntity, UUID> {
     long countByUserId(String userId);
 
     Page<SessionEntity> findAllByUserId(String userId, Pageable pageable);
+
+    Page<SessionEntity> findAllByUserIdAndProfile(String userId, String profile, Pageable pageable);
+    Optional<SessionEntity> findByIdAndProfile(UUID id, String profile);
 
     @Query(value = "SELECT id FROM sessions WHERE id IN (:ids)", nativeQuery = true)
     List<UUID> findExistingIds(@Param("ids") Collection<UUID> ids);
@@ -76,7 +79,7 @@ public interface SessionRepository extends JpaRepository<SessionEntity, UUID> {
     @Query("""
         SELECT s FROM SessionEntity s
         WHERE s.endReason IS NOT NULL
-          AND (:profile IS NULL OR s.profile = :profile)
+          AND s.profile = :profile
         ORDER BY s.createdAt ASC
         """)
     java.util.List<SessionEntity> listEndedSessions(@Param("profile") String profile, org.springframework.data.domain.Pageable pageable);
@@ -668,9 +671,10 @@ public interface SessionRepository extends JpaRepository<SessionEntity, UUID> {
 
     @Modifying
     @Transactional
-    @Query(value = "INSERT INTO sessions (id, user_id, title, model_provider, model_name, created_at, updated_at, session_status, source, last_active, message_count) "
-        + "VALUES (:id, :userId, :title, :provider, :modelName, :now, :now, 'active', :source, :now, 0)", nativeQuery = true)
-    void insertSessionRow(UUID id, String userId, String title, String provider, String modelName, String source, Instant now);
+    @Query(value = "INSERT INTO sessions (id, user_id, title, model_provider, model_name, created_at, updated_at, session_status, source, profile, last_active, message_count) "
+        + "VALUES (:id, :userId, :title, :provider, :modelName, :now, :now, 'active', :source, :profile, :now, 0) "
+        + "ON CONFLICT DO NOTHING", nativeQuery = true)
+    void insertSessionRow(UUID id, String userId, String title, String provider, String modelName, String source, String profile, Instant now);
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Transactional

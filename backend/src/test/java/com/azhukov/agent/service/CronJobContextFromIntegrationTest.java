@@ -51,7 +51,7 @@ class CronJobContextFromIntegrationTest {
         service = new CronJobService(
             cronJobRepository, agentRuntimeService, properties, skillManager,
             cronExecutionLogRepository, messageRepository, new org.springframework.transaction.support.TransactionTemplate(org.mockito.Mockito.mock(org.springframework.transaction.PlatformTransactionManager.class)), new CronScheduleParser(),
-            org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class));
+            org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), new ProfileRuntimeRegistry(null));
     }
 
     @Test

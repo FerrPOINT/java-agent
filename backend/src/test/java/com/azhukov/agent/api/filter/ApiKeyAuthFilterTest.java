@@ -90,6 +90,49 @@ class ApiKeyAuthFilterTest {
         verify(response, never()).setStatus(401);
     }
 
+    @Test
+    void fleetCredentialOnlyAuthorizesItsNamedProfileAndNativeRoutes() throws Exception {
+        String token = "fcj_alpha." + "x".repeat(43);
+        String fingerprint = java.util.HexFormat.of().formatHex(
+            java.security.MessageDigest.getInstance("SHA-256").digest(token.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        var store = mock(com.azhukov.agent.service.ProfileEnvStore.class);
+        when(store.readAll("alpha")).thenReturn(java.util.Map.of("AGENT_FLEET_PROFILE_TOKEN_SHA256", fingerprint));
+        var beans = new org.springframework.beans.factory.support.StaticListableBeanFactory();
+        beans.addBean("fleetProfileEnv", store);
+        var central = mock(com.azhukov.agent.core.security.CentralJwtVerifier.class);
+        beans.addBean("centralVerifier", central);
+        filter.configureFleetProfiles(beans.getBeanProvider(com.azhukov.agent.service.ProfileEnvStore.class));
+        filter.configureCentralVerifier(beans.getBeanProvider(com.azhukov.agent.core.security.CentralJwtVerifier.class));
+
+        var accepted = new org.springframework.mock.web.MockHttpServletRequest("POST", "/p/alpha/v1/runs/lookup");
+        accepted.addHeader("Authorization", "Bearer " + token);
+        var success = new org.springframework.mock.web.MockHttpServletResponse();
+        try {
+            filter.doFilter(accepted, success, (incoming, outgoing) -> {
+                assertThat(com.azhukov.agent.core.security.UserContext.getUserId()).isEqualTo("fleet-profile:alpha");
+                assertThat(com.azhukov.agent.core.security.UserContext.isAdmin()).isFalse();
+                assertThat(com.azhukov.agent.core.security.NativeIdentityOrigin.current().kind())
+                    .isEqualTo(com.azhukov.agent.core.security.NativeIdentityOrigin.Kind.FLEET_PROFILE);
+            });
+            assertThat(success.getStatus()).isEqualTo(200);
+
+            for (String path : java.util.List.of("/p/beta/v1/runs", "/v1/runs", "/p/alpha/api/config")) {
+                var rejected = new org.springframework.mock.web.MockHttpServletRequest("POST", path);
+                rejected.addHeader("Authorization", "Bearer " + token);
+                var failure = new org.springframework.mock.web.MockHttpServletResponse();
+                filter.doFilter(rejected, failure, (incoming, outgoing) -> {
+                    throw new AssertionError("Fleet bearer passed outside its narrow scope");
+                });
+                assertThat(failure.getStatus()).isEqualTo(401);
+            }
+            org.mockito.Mockito.verifyNoInteractions(central);
+            verify(store).readAll("alpha");
+            assertThat(com.azhukov.agent.core.security.UserContext.getUserId()).isNull();
+        } finally {
+            org.springframework.security.core.context.SecurityContextHolder.clearContext();
+        }
+    }
+
     // ─── Correct key → pass ───
 
     @Test

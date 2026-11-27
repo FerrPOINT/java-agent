@@ -2,6 +2,7 @@ package com.azhukov.agent.tools.memory;
 
 import com.azhukov.agent.config.SharedObjectMapper;
 import com.azhukov.agent.core.skill.SkillManager;
+import com.azhukov.agent.service.ProfileSkills;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
@@ -10,6 +11,7 @@ import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -37,6 +39,8 @@ public class SkillsListTool implements ToolHandler {
     private static final ObjectMapper JSON = SharedObjectMapper.get();
 
     private final SkillManager skillManager;
+    @Autowired
+    private ProfileSkills profileSkills;
 
     @Override
     public ToolResult execute(String arguments, Message lastAssistant, Session session) {
@@ -50,7 +54,11 @@ public class SkillsListTool implements ToolHandler {
             String categoryFilter = args.category();
 
             // S9: Return name + category + trust level (not just name)
-            List<SkillManager.SkillInfo> skills = skillManager.listSkills();
+            List<SkillManager.SkillInfo> skills = session == null || "default".equals(session.profile())
+                ? skillManager.listSkills()
+                : profileSkills.forProfile(session.profile()).listSkills().stream()
+                    .filter(skill -> !skill.disabled())
+                    .toList();
             if (skills.isEmpty()) {
                 return skillsJson(List.of(), "No skills found in skills/ directory.");
             }

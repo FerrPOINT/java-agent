@@ -276,6 +276,22 @@ class MemoryToolTest {
     }
 
     @Test
+    void missingOldTextOnlyReportsTheSelectedProfilesMemory() throws Exception {
+        var properties = new AgentProperties();
+        var tool = new MemoryTool(memoryProvider, null, properties);
+        var beta = SESSION.withMetadata("profile", "beta");
+        String namespace = MemoryScope.userId(beta, properties);
+        when(memoryProvider.getRawEntries(namespace, "memory")).thenReturn(List.of("beta-note"));
+        when(memoryProvider.read(namespace, "memory")).thenReturn("beta-note");
+
+        ToolResult result = tool.execute("{\"action\":\"remove\",\"target\":\"memory\"}", LAST_MSG, beta);
+
+        assertThat(errorJson(result).path("error").asText()).contains("beta-note");
+        assertThat(errorJson(result).path("current_entries").get(0).asText()).isEqualTo("beta-note");
+        verify(memoryProvider, never()).read(USER_ID, "memory");
+    }
+
+    @Test
     @DisplayName("Should fail when content is missing for replace action")
     void shouldFailWhenContentMissingForReplace() throws Exception {
         MemoryTool tool = new MemoryTool(memoryProvider);

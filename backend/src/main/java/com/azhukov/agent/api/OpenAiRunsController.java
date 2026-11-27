@@ -6,18 +6,31 @@ import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.client.ModelRequestOptions;
 import com.azhukov.agent.api.OpenAiInputParser.ParseResult;
 import com.azhukov.agent.core.model.Message;
+import com.azhukov.agent.core.model.Session;
+import com.azhukov.agent.core.tool.ToolRegistry;
 import com.azhukov.agent.core.security.ApiErrorTextRedactor;
+import com.azhukov.agent.core.security.NativeIdentityOrigin;
 import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.security.Redactor;
 import com.azhukov.agent.service.ApiRunAdmissionService;
+import com.azhukov.agent.service.OpenAiIdempotencyCache;
 import com.azhukov.agent.service.OpenAiResponseStore;
 import com.azhukov.agent.service.OpenAiResponseStore.StoredResponse;
 import com.azhukov.agent.service.OpenAiRunService;
+import com.azhukov.agent.service.OpenAiRunService.Acceptance;
 import com.azhukov.agent.service.OpenAiRunService.ControlResult;
+import com.azhukov.agent.service.OpenAiRunService.SubmissionKey;
 import com.azhukov.agent.service.OpenAiRunService.RunRecord;
 import com.azhukov.agent.service.OpenAiSessionService;
-import com.azhukov.agent.service.OpenAiSessionService.OpenAiSessionContext;
+import com.azhukov.agent.service.ProfileService;
+import com.azhukov.agent.service.ProfileExecutionConfiguration;
+import com.azhukov.agent.service.ProfileModelRouting;
+import com.azhukov.agent.service.ProfileRuntimeRegistry;
+import com.azhukov.agent.tools.workflow.ProjectWorkflowTool;
+import com.azhukov.agent.tools.tracker.TrackerRunScope;
+import com.azhukov.agent.tools.tracker.TrackerTool;
 import com.fasterxml.jackson.annotation.JsonAlias;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -51,6 +64,7 @@ public class OpenAiRunsController {
     private final OpenAiResponseStore responseStore;
     private final OpenAiMapper openAiMapper;
     private final ObjectMapper objectMapper;
+    private final ToolRegistry toolRegistry;
 
     private OpenAiInputParser inputParser() {
         return new OpenAiInputParser(objectMapper);
@@ -59,14 +73,57 @@ public class OpenAiRunsController {
     private final AgentProperties properties;
     private final Redactor redactor;
     private final ApiRunAdmissionService runAdmissionService;
+    private final ProfileService profileService;
+    private final ProfileModelRouting profileModelRouting;
+    private final ProfileRuntimeRegistry profileRuntime;
+    private final ProfileExecutionConfiguration settings;
     private final org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.service.OpenAiRunStateMachine> runStateMachineProvider;
 
     @PostMapping
     public ResponseEntity<Map<String, Object>> createRun(
+            @PathVariable(name = "profile", required = false) String pathProfile,
             @RequestBody OpenAiRunRequest request,
-            @RequestHeader(value = OpenAiSessionService.SESSION_KEY_HEADER, required = false) String sessionKeyHeader) {
+            @RequestHeader(value = OpenAiSessionService.SESSION_KEY_HEADER, required = false) String sessionKeyHeader,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
+            @RequestHeader(value = ProfileExecutionConfiguration.REVISION_HEADER, required = false) String revision) {
+        String profile = selectedProfile(pathProfile);
+        if (revision != null && ("default".equals(profile) || !ProfileExecutionConfiguration.validRevision(revision))) {
+            return openAiError(HttpStatus.BAD_REQUEST, "Invalid profile revision", "invalid_request_error", "invalid_profile_revision");
+        }
+        if (!knownProfile(profile)) {
+            return openAiError(HttpStatus.NOT_FOUND, "Profile not found", "invalid_request_error", "profile_not_found");
+        }
         if (request == null || !runsInputTruthy(request.input())) {
             return openAiError(HttpStatus.BAD_REQUEST, "Missing 'input' field", "invalid_request_error");
+        }
+
+        if (!validWorkflowAssignment(request, profile, revision, idempotencyKey)) {
+            return openAiError(HttpStatus.FORBIDDEN, "Workflow task requires an authenticated Fleet profile",
+                "invalid_request_error", "workflow_assignment_required");
+        }
+
+        SubmissionKey key = null;
+        if (idempotencyKey != null) {
+            if (!validIdempotencyKey(idempotencyKey)) {
+                return openAiError(HttpStatus.BAD_REQUEST, "Invalid Idempotency-Key",
+                    "invalid_request_error", "invalid_idempotency_key");
+            }
+            String principal = UserContext.getUserId();
+            if (principal == null) {
+                return openAiError(HttpStatus.UNAUTHORIZED, "Authenticated run identity required",
+                    "invalid_request_error");
+            }
+            key = submissionKey(profile, principal, idempotencyKey, request, sessionKeyHeader, revision);
+            try {
+                var replay = runService.replay(key);
+                if (replay.isPresent()) {
+                    return accepted(replay.get(), sessionKeyHeader);
+                }
+            } catch (OpenAiRunService.IdempotencyConflict e) {
+                return idempotencyConflict();
+            } catch (OpenAiRunService.DurableAcceptanceUnavailable e) {
+                return durableAcceptanceUnavailable();
+            }
         }
 
         RunInput input = parseInput(request.input());
@@ -80,18 +137,18 @@ public class OpenAiRunsController {
             return openAiError(HttpStatus.BAD_REQUEST, "No user message found in input", "invalid_request_error");
         }
 
-        String requestedModel = requestedModel(request.model());
-        String routeConflict = OpenAiRouteSelection.routeProviderConflict(
+        String modelAlias = requestedModel(request.model());
+        String routeConflict = "default".equals(profile) ? OpenAiRouteSelection.routeProviderConflict(
             properties.getApi(),
             request.model(),
             request.provider(),
             false
-        );
+        ) : null;
         if (routeConflict != null) {
             return openAiError(HttpStatus.BAD_REQUEST, routeConflict, "invalid_request_error");
         }
         String instructions = normalizeInstructions(request.instructions());
-        StoredResponse previous = previousResponse(request.previousResponseId(), sessionKeyHeader);
+        StoredResponse previous = previousResponse(request.previousResponseId(), sessionKeyHeader, profile);
         if (previous == null && request.previousResponseId() != null && !request.previousResponseId().isBlank()) {
             return openAiError(HttpStatus.NOT_FOUND, "Previous response not found: " + request.previousResponseId(),
                 "invalid_request_error", "previous_response_not_found");
@@ -105,62 +162,184 @@ public class OpenAiRunsController {
             return openAiError(HttpStatus.BAD_REQUEST, parsedHistory.error(), "invalid_request_error",
                 parsedHistory.code(), parsedHistory.param());
         }
-        List<Message> historyToPersist = parsedHistory.messages();
-        OpenAiSessionContext sessionContext;
+        String requestSessionId = request.sessionId();
+        UUID previousSessionId = previous == null ? null : previous.sessionId();
+        String sessionId = hasText(requestSessionId) || previousSessionId == null
+            ? requestSessionId : previousSessionId.toString();
+        final var submissionKey = key;
+        final var submissionInstructions = instructions;
         try {
-            if (hasText(request.sessionId())) {
-                sessionContext = openAiSessionService.resolveRunSession(
-                    request.sessionId(),
-                    sessionKeyHeader,
-                    requestedModel);
-            } else {
-                UUID sessionId = previous != null ? previous.sessionId() : null;
-                sessionContext = openAiSessionService.resolveRunSession(sessionId, sessionKeyHeader, requestedModel);
-            }
+            return profileRuntime.locked(profile, () -> {
+                profileRuntime.requireRunning(profile);
+                java.util.function.Supplier<ResponseEntity<Map<String, Object>>> admission = () ->
+                    admitRun(profile, request, modelAlias, sessionId, sessionKeyHeader, input.userMessage(),
+                        submissionInstructions, parsedHistory.messages(), previousSessionId, submissionKey);
+                if ("default".equals(profile)) {
+                    return admission.get();
+                }
+                var snapshot = settings.capture(profile);
+                if (revision != null && !revision.equals(snapshot.revision())) {
+                    return openAiError(HttpStatus.PRECONDITION_FAILED, "Profile configuration changed",
+                        "invalid_request_error", "profile_revision_changed");
+                }
+                return snapshot.use(admission);
+            });
+        } catch (ProfileExecutionConfiguration.ConfigurationUnavailable e) {
+            return openAiError(HttpStatus.SERVICE_UNAVAILABLE, e.getMessage(), "server_error", "profile_configuration_unavailable");
+        } catch (ProfileRuntimeRegistry.ProfileStopped e) {
+            return openAiError(HttpStatus.SERVICE_UNAVAILABLE, e.getMessage(), "server_error", "profile_stopped");
+        } catch (ProfileModelRouting.ProfileModelUnavailable e) {
+            return openAiError(HttpStatus.SERVICE_UNAVAILABLE, e.getMessage(),
+                "server_error", "profile_model_unavailable");
+        } catch (ApiRunAdmissionService.ProfileLimitUnavailable e) {
+            return openAiError(HttpStatus.SERVICE_UNAVAILABLE, e.getMessage(), "server_error");
+        } catch (OpenAiRunService.IdempotencyConflict e) {
+            return idempotencyConflict();
+        } catch (OpenAiRunService.DurableAcceptanceUnavailable e) {
+            return durableAcceptanceUnavailable();
         } catch (IllegalArgumentException e) {
             if (e.getMessage() != null && e.getMessage().startsWith("Session not found:")) {
                 return openAiError(HttpStatus.NOT_FOUND, e.getMessage(), "invalid_request_error", "session_not_found");
             }
             return openAiError(HttpStatus.BAD_REQUEST, e.getMessage(), "invalid_request_error");
         }
+    }
 
-        boolean previousHistoryAlreadyPersisted = previous != null
-            && previous.sessionId() != null
-            && previous.sessionId().equals(sessionContext.session().id())
-            && !hasExplicitConversationHistory(request);
-        var reservation = runAdmissionService.tryAcquire();
+    private ResponseEntity<Map<String, Object>> admitRun(String profile, OpenAiRunRequest request, String modelAlias,
+            String sessionId, String sessionKeyHeader, Message userMessage, String instructions,
+            List<Message> history, UUID previousSession, SubmissionKey key) {
+        var options = profileModelRouting.bind(profile, requestOptions(request, modelAlias));
+        String model = options.boundProfile() == null ? modelAlias : options.modelName();
+        if (request.workflowTask() != null) {
+            Session selected = Session.create(UserContext.getUserId(), "openai-compatible", model)
+                .withMetadata("profile", profile).withMetadata("platform", "api_server");
+            if (request.trackerTask() != null && !toolRegistry.isProfileToolEnabled(TrackerTool.NAME, selected)) {
+                return openAiError(HttpStatus.SERVICE_UNAVAILABLE, "Tracker is unavailable for this profile",
+                    "server_error", "tracker_unavailable");
+            }
+            if (!toolRegistry.isProfileToolEnabled(ProjectWorkflowTool.NAME, selected)) {
+                return openAiError(HttpStatus.SERVICE_UNAVAILABLE, "Workflow is unavailable for this profile",
+                    "server_error", "workflow_unavailable");
+            }
+        }
+        int limit = runAdmissionService.maxConcurrentRuns(profile);
+        var reservation = runAdmissionService.tryAcquire(profile, limit);
         if (reservation.isEmpty()) {
-            return concurrencyLimitedResponse();
+            return concurrencyLimitedResponse(limit);
         }
-        ApiRunAdmissionService.Reservation acquiredReservation = reservation.get();
-        RunRecord run;
-        try {
-            run = runService.submit(
-                sessionContext,
-                input.userMessage(),
-                requestedModel,
-                requestOptions(request, requestedModel),
-                instructions,
-                previousHistoryAlreadyPersisted ? List.of() : historyToPersist,
-                acquiredReservation
-            );
-        } catch (RuntimeException e) {
-            acquiredReservation.close();
-            throw e;
-        }
+        Acceptance result = runService.submit(
+            () -> openAiSessionService.resolveRunSession(sessionId, sessionKeyHeader, model, profile),
+            userMessage, model, options, instructions, history,
+            hasExplicitConversationHistory(request) ? null : previousSession,
+            reservation.get(), key, request.workflowTask(), request.trackerTask());
+        return accepted(result, sessionKeyHeader);
+    }
 
+    @PostMapping("/lookup")
+    public ResponseEntity<Map<String, Object>> lookup(
+            @PathVariable(name = "profile", required = false) String pathProfile,
+            @RequestBody OpenAiRunRequest request,
+            @RequestHeader(value = OpenAiSessionService.SESSION_KEY_HEADER, required = false) String sessionKeyHeader,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
+            @RequestHeader(value = ProfileExecutionConfiguration.REVISION_HEADER, required = false) String revision) {
+        String profile = selectedProfile(pathProfile);
+        if (revision != null && ("default".equals(profile) || !ProfileExecutionConfiguration.validRevision(revision))) {
+            return openAiError(HttpStatus.BAD_REQUEST, "Invalid profile revision", "invalid_request_error", "invalid_profile_revision");
+        }
+        if (!knownProfile(profile)) {
+            return openAiError(HttpStatus.NOT_FOUND, "Profile not found", "invalid_request_error", "profile_not_found");
+        }
+        if (!validIdempotencyKey(idempotencyKey)) {
+            return openAiError(HttpStatus.BAD_REQUEST, "A valid Idempotency-Key is required",
+                "invalid_request_error", "invalid_idempotency_key");
+        }
+        if (!validWorkflowAssignment(request, profile, revision, idempotencyKey)) {
+            return openAiError(HttpStatus.FORBIDDEN, "Workflow task requires an authenticated Fleet profile",
+                "invalid_request_error", "workflow_assignment_required");
+        }
+        String principal = UserContext.getUserId();
+        if (principal == null) {
+            return openAiError(HttpStatus.UNAUTHORIZED, "Authenticated run identity required", "invalid_request_error");
+        }
+        try {
+            return runService.replay(submissionKey(profile, principal, idempotencyKey, request, sessionKeyHeader, revision))
+                .map(result -> acceptanceReceipt(result, sessionKeyHeader, HttpStatus.OK))
+                .orElseGet(() -> openAiError(HttpStatus.NOT_FOUND, "No accepted run for this request",
+                    "invalid_request_error", "run_not_found"));
+        } catch (OpenAiRunService.IdempotencyConflict e) {
+            return idempotencyConflict();
+        } catch (OpenAiRunService.DurableAcceptanceUnavailable e) {
+            return durableAcceptanceUnavailable();
+        }
+    }
+
+    private static boolean validWorkflowAssignment(OpenAiRunRequest request, String profile,
+                                                   String revision, String idempotencyKey) {
+        if (request == null) {
+            return true;
+        }
+        if (request.workflowTask() == null) {
+            return request.trackerTask() == null;
+        }
+        var origin = NativeIdentityOrigin.current();
+        return origin != null && origin.kind() == NativeIdentityOrigin.Kind.FLEET_PROFILE
+            && origin.principal().equals("fleet-profile:" + profile)
+            && !"default".equals(profile) && revision != null && validIdempotencyKey(idempotencyKey)
+            && ProjectWorkflowTool.validKey(request.workflowTask());
+    }
+
+    private boolean knownProfile(String profile) {
+        return "default".equals(profile) || (profileService.isValidProfileName(profile) && profileService.knownProfile(profile));
+    }
+
+    private static boolean validIdempotencyKey(String value) {
+        return value != null && value.matches("[!-~]{1,128}");
+    }
+
+    private SubmissionKey submissionKey(String profile, String principal, String idempotencyKey,
+                                        OpenAiRunRequest request, String sessionKeyHeader, String revision) {
+        var origin = NativeIdentityOrigin.current();
+        String digest = OpenAiIdempotencyCache.fingerprint(objectMapper, "openai-runs",
+            origin == null ? "central" : origin.kind().name(), principal, profile, idempotencyKey);
+        String fingerprint = revision == null
+            ? OpenAiIdempotencyCache.fingerprint(objectMapper, request, sessionKeyHeader)
+            : OpenAiIdempotencyCache.fingerprint(objectMapper, request, sessionKeyHeader, revision);
+        return new SubmissionKey("run_" + digest.substring(0, 60), profile, fingerprint);
+    }
+
+    private ResponseEntity<Map<String, Object>> accepted(Acceptance result, String sessionKeyHeader) {
+        return acceptanceReceipt(result, sessionKeyHeader, HttpStatus.ACCEPTED);
+    }
+
+    private ResponseEntity<Map<String, Object>> acceptanceReceipt(Acceptance result, String sessionKeyHeader,
+                                                                   HttpStatus status) {
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("run_id", run.runId());
+        body.put("run_id", result.runId());
         body.put("status", "started");
-        return ResponseEntity.status(HttpStatus.ACCEPTED)
-            .headers(responseHeaders(sessionContext))
+        body.put("replayed", result.replayed());
+        if (result.profileRevision() != null) {
+            body.put("profile_revision", result.profileRevision());
+        }
+        return ResponseEntity.status(status)
+            .headers(responseHeaders(result.sessionId(), sessionKeyHeader))
             .contentType(MediaType.APPLICATION_JSON)
             .body(body);
     }
 
+    private ResponseEntity<Map<String, Object>> idempotencyConflict() {
+        return openAiError(HttpStatus.CONFLICT, "Idempotency-Key already belongs to a different request",
+            "invalid_request_error", "idempotency_conflict");
+    }
+
+    private ResponseEntity<Map<String, Object>> durableAcceptanceUnavailable() {
+        return openAiError(HttpStatus.SERVICE_UNAVAILABLE, "Run acceptance storage is unavailable",
+            "server_error", "run_persistence_unavailable");
+    }
+
     @GetMapping("/{runId}")
-    public ResponseEntity<Map<String, Object>> getRun(@PathVariable String runId) {
-        RunRecord run = accessibleRun(runId);
+    public ResponseEntity<Map<String, Object>> getRun(@PathVariable String runId,
+            @PathVariable(name = "profile", required = false) String profile) {
+        RunRecord run = accessibleRun(runId, profile);
         if (run == null) {
             return openAiError(HttpStatus.NOT_FOUND, "Run not found: " + runId, "invalid_request_error", "run_not_found");
         }
@@ -168,24 +347,47 @@ public class OpenAiRunsController {
     }
 
     @GetMapping(value = "/{runId}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public ResponseEntity<?> runEvents(@PathVariable String runId) {
-        if (accessibleRun(runId) == null) {
+    public ResponseEntity<?> runEvents(@PathVariable String runId,
+            @PathVariable(name = "profile", required = false) String profile,
+            @RequestHeader(name = "Last-Event-ID", required = false) String lastEventId) {
+        var machine = runStateMachineProvider == null ? null : runStateMachineProvider.getIfAvailable();
+        if (machine == null) {
+            return durableAcceptanceUnavailable();
+        }
+        var state = machine.state(runId, selectedProfile(profile))
+            .filter(owner -> isAccessible(owner.getUserId(), owner.getProfile(), profile));
+        if (state.isEmpty()) {
             return openAiError(HttpStatus.NOT_FOUND, "Run not found: " + runId, "invalid_request_error", "run_not_found");
         }
-        SseEmitter emitter = runService.events(runId);
-        if (emitter == null) {
-            return openAiError(HttpStatus.NOT_FOUND, "Run not found: " + runId, "invalid_request_error", "run_not_found");
+        long cursor;
+        try {
+            if (lastEventId != null && !lastEventId.matches("[0-9]{1,19}")) {
+                throw new NumberFormatException();
+            }
+            cursor = lastEventId == null ? 0 : Long.parseLong(lastEventId);
+        } catch (NumberFormatException e) {
+            return invalidEventCursor();
         }
+        if (cursor > state.get().getLastSeq()) {
+            return invalidEventCursor();
+        }
+        SseEmitter emitter = runService.events(runId, selectedProfile(profile), cursor);
         return ResponseEntity.ok()
             .headers(sseHeaders())
             .contentType(MediaType.TEXT_EVENT_STREAM)
             .body(emitter);
     }
 
+    private ResponseEntity<Map<String, Object>> invalidEventCursor() {
+        return openAiError(HttpStatus.BAD_REQUEST, "Last-Event-ID is outside the run event history",
+            "invalid_request_error", "invalid_event_cursor");
+    }
+
     @GetMapping("/{runId}/events/replay")
     @io.swagger.v3.oas.annotations.Operation(summary = "Durable run event replay after a sequence cursor (restart-safe)")
     public ResponseEntity<Map<String, Object>> replayEvents(
             @PathVariable String runId,
+            @PathVariable(name = "profile", required = false) String profile,
             @RequestParam(name = "after", required = false, defaultValue = "0") long after,
             @RequestParam(name = "limit", required = false, defaultValue = "100") int limit) {
         com.azhukov.agent.service.OpenAiRunStateMachine stateMachine =
@@ -195,14 +397,14 @@ public class OpenAiRunsController {
                 "run event persistence is not available in this deployment",
                 "invalid_request_error", "run_persistence_unavailable");
         }
-        var state = stateMachine.state(runId);
-        String scopedUserId = UserContext.scopeUserId();
-        if (state.isEmpty() || (scopedUserId != null && !scopedUserId.equals(state.get().getUserId()))) {
+        var state = stateMachine.state(runId, selectedProfile(profile))
+            .filter(owner -> isAccessible(owner.getUserId(), owner.getProfile(), profile));
+        if (state.isEmpty()) {
             return openAiError(HttpStatus.NOT_FOUND, "Run not found: " + runId,
                 "invalid_request_error", "run_not_found");
         }
         int cappedLimit = Math.min(Math.max(limit, 1), 500);
-        List<Map<String, Object>> events = stateMachine.replayParsed(runId, after, cappedLimit)
+        List<Map<String, Object>> events = stateMachine.replayParsed(runId, selectedProfile(profile), after, cappedLimit)
             .stream()
             .map(parsed -> {
                 Map<String, Object> payload = new LinkedHashMap<>(parsed.payload());
@@ -220,9 +422,11 @@ public class OpenAiRunsController {
     }
 
     @PostMapping("/{runId}/approval")
-    public ResponseEntity<Map<String, Object>> approval(@PathVariable String runId,
-                                                        @RequestBody(required = false) String body) {
-        RunRecord run = activeAccessibleRun(runId);
+    public ResponseEntity<Map<String, Object>> approval(
+            @PathVariable String runId,
+            @PathVariable(name = "profile", required = false) String profile,
+            @RequestBody(required = false) String body) {
+        RunRecord run = activeAccessibleRun(runId, profile);
         if (run == null) {
             return openAiError(HttpStatus.NOT_FOUND, "Run not found: " + runId,
                 "invalid_request_error", "run_not_found");
@@ -244,9 +448,11 @@ public class OpenAiRunsController {
     }
 
     @PostMapping("/{runId}/steer")
-    public ResponseEntity<Map<String, Object>> steer(@PathVariable String runId,
-                                                     @RequestBody(required = false) String body) {
-        RunRecord run = activeAccessibleRun(runId);
+    public ResponseEntity<Map<String, Object>> steer(
+            @PathVariable String runId,
+            @PathVariable(name = "profile", required = false) String profile,
+            @RequestBody(required = false) String body) {
+        RunRecord run = activeAccessibleRun(runId, profile);
         if (run == null) {
             return openAiError(HttpStatus.NOT_FOUND, "Run not found: " + runId,
                 "invalid_request_error", "run_not_found");
@@ -273,47 +479,53 @@ public class OpenAiRunsController {
     }
 
     @PostMapping("/{runId}/stop")
-    public ResponseEntity<Map<String, Object>> stop(@PathVariable String runId) {
-        if (activeAccessibleRun(runId) == null) {
+    public ResponseEntity<Map<String, Object>> stop(@PathVariable String runId,
+            @PathVariable(name = "profile", required = false) String profile) {
+        if (activeAccessibleRun(runId, profile) == null) {
             return openAiError(HttpStatus.NOT_FOUND, "Run not found: " + runId,
                 "invalid_request_error", "run_not_found");
         }
         return controlResponse(runId, runService.stop(runId));
     }
 
-    private RunRecord activeAccessibleRun(String runId) {
+    private RunRecord activeAccessibleRun(String runId, String profile) {
         RunRecord run = runService.get(runId);
-        return run != null && isAccessible(run.userId()) ? run : null;
+        return run != null && isAccessible(run.userId(), run.profile(), profile) ? run : null;
     }
 
-    private RunRecord accessibleRun(String runId) {
+    private RunRecord accessibleRun(String runId, String profile) {
         RunRecord run = runService.get(runId);
         if (run != null) {
-            return isAccessible(run.userId()) ? run : null;
+            return isAccessible(run.userId(), run.profile(), profile) ? run : null;
         }
         com.azhukov.agent.service.OpenAiRunStateMachine stateMachine =
             runStateMachineProvider == null ? null : runStateMachineProvider.getIfAvailable();
         if (stateMachine == null) {
             return null;
         }
-        return stateMachine.state(runId)
-            .filter(state -> isAccessible(state.getUserId()))
+        return stateMachine.state(runId, selectedProfile(profile))
+            .filter(state -> isAccessible(state.getUserId(), state.getProfile(), profile))
             .map(state -> persistedRunRecord(stateMachine, state))
             .orElse(null);
     }
 
-    private boolean isAccessible(String ownerId) {
+    private boolean isAccessible(String ownerId, String ownerProfile, String pathProfile) {
         String scopedUserId = UserContext.scopeUserId();
-        return scopedUserId == null || scopedUserId.equals(ownerId);
+        return selectedProfile(pathProfile).equals(ownerProfile)
+            && (scopedUserId == null || scopedUserId.equals(ownerId));
+    }
+
+    private static String selectedProfile(String pathProfile) {
+        return pathProfile == null ? "default" : pathProfile;
     }
 
     private RunRecord persistedRunRecord(com.azhukov.agent.service.OpenAiRunStateMachine stateMachine,
                                          com.azhukov.agent.persistence.entity.OpenAiRunStateEntity state) {
-        Map<String, Object> lastEvent = stateMachine.replayParsed(state.getRunId(), Math.max(0, state.getLastSeq() - 1), 1)
+        Map<String, Object> lastEvent = stateMachine.replayParsed(state.getRunId(), state.getProfile(), Math.max(0, state.getLastSeq() - 1), 1)
             .stream().findFirst().map(event -> event.payload()).orElseGet(Map::of);
         return OpenAiRunService.restoredRun(
-            state.getRunId(), state.getSessionId(), state.getUserId(), state.getModel(),
-            state.getState(), state.getCreatedAt(), state.getUpdatedAt(), lastEvent);
+            state.getRunId(), state.getSessionId(), state.getUserId(), state.getProfile(), state.getModel(),
+            state.getProfileRevision(), state.getState(), state.getCreatedAt(), state.getUpdatedAt(), lastEvent);
     }
 
     private ResponseEntity<Map<String, Object>> controlResponse(String runId, ControlResult result) {
@@ -327,7 +539,7 @@ public class OpenAiRunsController {
         return openAiError(status, message, "invalid_request_error", result.code());
     }
 
-    private StoredResponse previousResponse(String previousResponseId, String sessionKeyHeader) {
+    private StoredResponse previousResponse(String previousResponseId, String sessionKeyHeader, String profile) {
         if (previousResponseId == null || previousResponseId.isBlank()) {
             return null;
         }
@@ -336,10 +548,10 @@ public class OpenAiRunsController {
             return null;
         }
         if (stored.sessionId() == null) {
-            return UserContext.scopeUserId() == null ? stored : null;
+            return "default".equals(profile) && UserContext.scopeUserId() == null ? stored : null;
         }
         try {
-            openAiSessionService.resolveStoredResponseSession(stored.sessionId(), sessionKeyHeader);
+            openAiSessionService.resolveStoredResponseSession(stored.sessionId(), sessionKeyHeader, profile);
             return stored;
         } catch (IllegalArgumentException e) {
             return null;
@@ -394,11 +606,11 @@ public class OpenAiRunsController {
         );
     }
 
-    private HttpHeaders responseHeaders(OpenAiSessionContext sessionContext) {
+    private HttpHeaders responseHeaders(String sessionId, String sessionKeyHeader) {
         HttpHeaders headers = new HttpHeaders();
-        headers.add(OpenAiSessionService.SESSION_ID_HEADER, sessionContext.responseSessionId());
-        if (hasText(sessionContext.sessionKey())) {
-            headers.add(OpenAiSessionService.SESSION_KEY_HEADER, sessionContext.sessionKey());
+        headers.add(OpenAiSessionService.SESSION_ID_HEADER, sessionId);
+        if (hasText(sessionKeyHeader)) {
+            headers.add(OpenAiSessionService.SESSION_KEY_HEADER, sessionKeyHeader.trim());
         }
         return headers;
     }
@@ -414,8 +626,7 @@ public class OpenAiRunsController {
         return openAiError(status, message, type, null, null);
     }
 
-    private ResponseEntity<Map<String, Object>> concurrencyLimitedResponse() {
-        int limit = runAdmissionService.maxConcurrentRuns();
+    private ResponseEntity<Map<String, Object>> concurrencyLimitedResponse(int limit) {
         Map<String, Object> error = new LinkedHashMap<>();
         error.put("message", apiErrorText("Too many concurrent runs (max " + limit + ")"));
         error.put("type", "rate_limit_error");
@@ -565,6 +776,8 @@ public class OpenAiRunsController {
         @JsonProperty("model_options") @JsonAlias("modelOptions") Object modelOptions,
         @JsonProperty("max_output_tokens")
         @JsonAlias({"maxOutputTokens", "max_tokens", "maxTokens"})
-        Integer maxOutputTokens
+        Integer maxOutputTokens,
+        @JsonProperty("workflow_task") @JsonInclude(JsonInclude.Include.NON_NULL) String workflowTask,
+        @JsonProperty("tracker_task") @JsonInclude(JsonInclude.Include.NON_NULL) TrackerRunScope trackerTask
     ) {}
 }

@@ -37,7 +37,18 @@ public interface AgentRuntime {
     }
 
     default TurnResult runMessages(List<Message> messages, List<ToolDefinition> tools, ModelRequestOptions options) {
-        ChatResponse response = run(messages, tools, options);
+        return singleModelTurn(run(messages, tools, options));
+    }
+
+    default TurnResult runMessages(Session session, List<Message> messages, List<ToolDefinition> tools,
+                                   ModelRequestOptions options) {
+        if (!"default".equals(session.profile())) {
+            throw new IllegalStateException("The runtime does not support named profile model calls");
+        }
+        return runMessages(messages, tools, options);
+    }
+
+    static TurnResult singleModelTurn(ChatResponse response) {
         if (response == null) {
             return new TurnResult(List.of(), true, null);
         }

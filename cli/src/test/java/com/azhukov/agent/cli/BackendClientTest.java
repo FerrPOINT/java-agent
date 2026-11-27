@@ -50,7 +50,7 @@ class BackendClientTest {
         mockPostStream(new ByteArrayInputStream(sse.getBytes(StandardCharsets.UTF_8)));
         var state = new CliState();
         state.setQueuedPrompt("keep for next turn");
-        var runner = new CliReplRunner(backendClient, null, null, new MarkdownRenderer(false), null);
+        var runner = new CliReplRunner(backendClient, null, null, null, new MarkdownRenderer(false), null);
 
         ReflectionTestUtils.invokeMethod(runner, "handleChatStream", "hi", "sid", state);
 

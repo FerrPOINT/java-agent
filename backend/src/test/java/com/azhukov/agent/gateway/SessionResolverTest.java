@@ -38,7 +38,7 @@ class SessionResolverTest {
         properties = new AgentProperties();
         properties.getModel().setProvider("openai-compatible");
         properties.getModel().setModelName("gpt-4");
-        resolver = new SessionResolver(sessionRepository, properties);
+        resolver = new SessionResolver(sessionRepository, properties, null);
     }
 
     @Test
@@ -76,7 +76,7 @@ class SessionResolverTest {
         entity.setModelProvider("openai-compatible");
         entity.setModelName("gpt-4");
 
-        when(sessionRepository.findByUserId("user-1")).thenReturn(entity);
+        when(sessionRepository.findFirstByUserIdAndProfileOrderByUpdatedAtDescIdDesc("user-1", "default")).thenReturn(entity);
 
         SessionSource source = new SessionSource(Platform.TELEGRAM, "chat-1", "user-1", "alice", "Alice");
         Session session = resolver.resolve(source);
@@ -84,14 +84,14 @@ class SessionResolverTest {
         assertThat(session.id()).isEqualTo(id);
         assertThat(session.userId()).isEqualTo("user-1");
         assertThat(session.title()).isEqualTo("Telegram alice");
-        verify(sessionRepository).findByUserId("user-1");
+        verify(sessionRepository).findFirstByUserIdAndProfileOrderByUpdatedAtDescIdDesc("user-1", "default");
         verify(sessionRepository).touchUpdatedAt(eq(id), any(Instant.class));
         verify(sessionRepository, never()).save(any());
     }
 
     @Test
     void resolveCreatesNewSessionWhenNotFound() {
-        when(sessionRepository.findByUserId("chat-1")).thenReturn(null);
+        when(sessionRepository.findFirstByUserIdAndProfileOrderByUpdatedAtDescIdDesc("chat-1", "default")).thenReturn(null);
 
         // Simulate save assigning an id
         when(sessionRepository.save(any(SessionEntity.class))).thenAnswer(inv -> {
@@ -120,7 +120,7 @@ class SessionResolverTest {
 
     @Test
     void resolveUsesChatIdWhenUserIdIsNull() {
-        when(sessionRepository.findByUserId("chat-42")).thenReturn(null);
+        when(sessionRepository.findFirstByUserIdAndProfileOrderByUpdatedAtDescIdDesc("chat-42", "default")).thenReturn(null);
 
         when(sessionRepository.save(any(SessionEntity.class))).thenAnswer(inv -> {
             SessionEntity e = inv.getArgument(0);

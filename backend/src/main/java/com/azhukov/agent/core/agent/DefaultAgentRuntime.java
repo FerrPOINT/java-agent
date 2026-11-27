@@ -79,6 +79,8 @@ import java.util.concurrent.locks.ReentrantLock;
 public class DefaultAgentRuntime implements AgentRuntime {
 
     private final ModelClient modelClient;
+    @Autowired
+    private com.azhukov.agent.service.ProfileModelRouting profileModelRouting;
     private final ToolRegistry toolRegistry;
     private final ToolExecutionService toolExecutionService;
     // Verify-on-stop guard (Hermes parity: verification_stop.py)
@@ -263,9 +265,22 @@ public class DefaultAgentRuntime implements AgentRuntime {
 
     @Override
     public ChatResponse run(List<Message> messages, List<ToolDefinition> tools, ModelRequestOptions options) {
+        return complete(Session.create("openai-user", "openai-compatible", ""), messages, tools, options);
+    }
+
+    @Override
+    public TurnResult runMessages(Session session, List<Message> messages, List<ToolDefinition> tools,
+                                  ModelRequestOptions options) {
+        return AgentRuntime.singleModelTurn(complete(session, messages, tools, options));
+    }
+
+    private ChatResponse complete(Session session, List<Message> messages, List<ToolDefinition> tools,
+                                  ModelRequestOptions options) {
+        if (!"default".equals(session.profile()) || (options != null && options.boundProfile() != null)) {
+            options = profileModelRouting.bind(session.profile(), options);
+        }
         List<Message> sanitized = messageSanitizer.sanitize(messages);
-        List<Message> context = contextEngine.prepareContext(
-            Session.create("openai-user", "openai-compatible", ""), sanitized);
+        List<Message> context = contextEngine.prepareContext(session, sanitized);
         TurnModelState modelState = turnModelState.get();
         ModelClient client = modelState != null && modelState.activeClient != null
             ? modelState.activeClient : modelClient;
@@ -277,10 +292,15 @@ public class DefaultAgentRuntime implements AgentRuntime {
     public TurnResult runTurn(Session session, String userInput, List<String> references,
                               ModelRequestOptions options) {
         ModelRequestOptions effectiveOptions = options != null ? options : ModelRequestOptions.empty();
+        String profile = session.profile();
+        if (!"default".equals(profile) || effectiveOptions.boundProfile() != null) {
+            effectiveOptions = profileModelRouting.bind(profile, effectiveOptions);
+        }
+        ModelRequestOptions turnOptions = effectiveOptions;
         UUID sid = session.id();
         return turnLocks.withTurn(sid, () -> {
             try {
-                return runTurnInternal(session, userInput, references, effectiveOptions);
+                return runTurnInternal(session, userInput, references, turnOptions);
             } finally {
                 turnModelState.remove();
                 if (contextEngine instanceof com.azhukov.agent.core.context.DefaultContextEngine dce) {
@@ -293,6 +313,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
     private TurnResult runTurnInternal(Session session, String userInput, List<String> references,
                                        ModelRequestOptions options) {
         UUID sessionIdUuid = session.id();
+        boolean ownsControlLifecycle = !RunControlScope.hasControlSessionId(session);
         String sessionId = sessionIdUuid.toString();
         // P-05: foreground work supersedes any delayed/in-flight review for
         // this session before it can call the model or write memory.
@@ -300,14 +321,14 @@ public class DefaultAgentRuntime implements AgentRuntime {
             backgroundReviewService.cancelForNewForegroundTurn(sessionIdUuid);
         }
         // Clear stale cancellation from an earlier child turn before this new turn starts.
-        if (interruptToken != null) {
+        if (ownsControlLifecycle && interruptToken != null) {
             interruptToken.reset(sessionIdUuid);
         }
         toolExecutionService.resetForTurn(sessionIdUuid);
         turnStateManager.clear(sessionIdUuid);
         // Clear any pending steer from a previous turn (parity with Hermes
         // _drain_pending_steer clearing on turn start).
-        if (steerBuffer != null) {
+        if (ownsControlLifecycle && steerBuffer != null) {
             steerBuffer.clear(sessionIdUuid);
         }
         TurnSnapshot budget = iterationBudget.startTurn(sessionIdUuid);
@@ -318,14 +339,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
         // activated during the previous turn. Then initialize the fallback manager
         // with the current primary config and the configured fallback chain.
         // M2 fix: this state is per-turn and never shared across sessions.
-        turnModelState.set(new TurnModelState(
-            new FallbackManager(
-                properties.getFallbackChain(),
-                properties.getModel().getProvider(),
-                properties.getModel().getModelName(),
-                properties.getModel().getBaseUrl(),
-                properties.getModel().getApiKey()),
-            modelClient));
+        turnModelState.set(new TurnModelState(FallbackManager.forTurn(properties, options), modelClient));
 
         // Resolve effective toolsets: session metadata override (from DelegateTaskTool)
         // takes priority, then the configured default toolsets.
@@ -337,13 +351,28 @@ public class DefaultAgentRuntime implements AgentRuntime {
             effectiveToolsets = new HashSet<>(properties.getSkills().getDefaultToolsets());
         }
 
+        boolean named = !"default".equals(session.profile());
+        List<ToolDefinition> tools = named ? toolRegistry.getProfileDefinitions(session)
+            : toolRegistry.getDefinitions(effectiveToolsets);
+        // Delegation deny-list: subtract blocked TOOL names after composite
+        // expansion (Hermes parity — mixed bundles like hermes-cli must not leak
+        // delegate_task/clarify/memory/send_message/cronjob to child sessions).
+        String blockedMeta = session.getMetadata("delegation_blocked_tools");
+        if (blockedMeta != null && !blockedMeta.isBlank()) {
+            Set<String> denied = new HashSet<>(Arrays.asList(blockedMeta.split(",")));
+            tools = tools.stream()
+                .filter(td -> !denied.contains(td.name()))
+                .collect(java.util.stream.Collectors.toList());
+        }
+
         // Nudge: increment per-session memory turn counter
         // H6: Only increment if the memory toolset is actually available to the session.
         // M8: On first turn for a session (restart), hydrate the counter from prior
         // user turns in the conversation history so the nudge interval is preserved
         // across restarts. Mirrors Hermes which initializes _turns_since_memory from
         // the persisted conversation length on session load.
-        if (effectiveToolsets.contains("memory")) {
+        if (named ? tools.stream().anyMatch(tool -> "memory".equals(tool.name()))
+            : effectiveToolsets.contains("memory")) {
             int memNudge = properties.getMemory().getNudgeInterval();
             AtomicInteger memCounter = turnsSinceMemory.computeIfAbsent(sessionIdUuid, k -> {
                 // M8: Hydrate from history — count prior user turns and initialize
@@ -387,7 +416,10 @@ public class DefaultAgentRuntime implements AgentRuntime {
         String effectiveOverride = (systemPromptOverride != null && !systemPromptOverride.isBlank())
             ? systemPromptOverride
             : (persistedPrompt != null && !persistedPrompt.isBlank() ? persistedPrompt : null);
-        if (effectiveOverride != null
+        if (named && promptBuilder instanceof DefaultPromptBuilder dpb) {
+            turnMessages.add(dpb.buildSystemMessageForTools(session, tools.stream().map(ToolDefinition::name)
+                .collect(java.util.stream.Collectors.toSet()), effectiveOverride));
+        } else if (effectiveOverride != null
                 && promptBuilder instanceof DefaultPromptBuilder dpb) {
             turnMessages.add(dpb.buildSystemMessage(session, effectiveOverride));
         } else {
@@ -414,19 +446,6 @@ public class DefaultAgentRuntime implements AgentRuntime {
             }
         } else {
             turnMessages.add(Message.user(safeInput));
-        }
-
-        // Toolsets already resolved above (before memory nudge counter).
-        List<ToolDefinition> tools = toolRegistry.getDefinitions(effectiveToolsets);
-        // Delegation deny-list: subtract blocked TOOL names after composite
-        // expansion (Hermes parity — mixed bundles like hermes-cli must not leak
-        // delegate_task/clarify/memory/send_message/cronjob to child sessions).
-        String blockedMeta = session.getMetadata("delegation_blocked_tools");
-        if (blockedMeta != null && !blockedMeta.isBlank()) {
-            Set<String> denied = new HashSet<>(Arrays.asList(blockedMeta.split(",")));
-            tools = tools.stream()
-                .filter(td -> !denied.contains(td.name()))
-                .collect(java.util.stream.Collectors.toList());
         }
 
         // Resolve effective max turns: session metadata override (from DelegateTaskTool)
@@ -460,7 +479,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
             // P8 parity (turn_finalizer.py:756): a steer arriving after the last
             // model/tool boundary must be handed to the caller for the next turn,
             // never cleared as a lost in-flight note. consume() atomically drains it.
-            if (steerBuffer != null) {
+            if (ownsControlLifecycle && steerBuffer != null) {
                 pendingSteer = steerBuffer.consume(sessionIdUuid);
             }
             // Clean up per-session guardrail state to prevent memory leaks (REM-2)
@@ -553,11 +572,12 @@ public class DefaultAgentRuntime implements AgentRuntime {
             // tool-calling iterations. Mirrors Hermes _iters_since_skill which
             // is incremented at the start of each loop iteration.
             // H6: Only increment if the skills toolset is actually available.
-            if (effectiveToolsets.contains("skills")) {
+            if ("default".equals(session.profile()) ? effectiveToolsets.contains("skills")
+                : tools.stream().anyMatch(tool -> "skill_manage".equals(tool.name()))) {
                 itersSinceSkill.computeIfAbsent(session.id(), k -> new AtomicInteger(0)).incrementAndGet();
             }
 
-            if (interruptToken != null && interruptToken.isCancelled(session.id())) {
+            if (interruptToken != null && interruptToken.isCancelled(RunControlScope.controlSessionId(session))) {
                 turnMessages.add(Message.assistant("Turn cancelled by user.", turnIndex));
                 if (turnFinalizer != null) {
                     turnFinalizer.finalize(session.id(), turnMessages, false, TurnExitReason.INTERRUPTED);
@@ -592,7 +612,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     : turnExecutor().formatBudgetExhaustionMessage(budget, exhaustionReason);
                 turnMessages.add(Message.assistant(budgetMsg, turnIndex));
                 // H7: Fire background review on budget-exhausted path too.
-                boolean interrupted = interruptToken != null && interruptToken.isCancelled(session.id());
+                boolean interrupted = interruptToken != null && interruptToken.isCancelled(RunControlScope.controlSessionId(session));
                 triggerNudgedBackgroundReview(session, turnMessages, interrupted);
                 if (turnFinalizer != null) {
                     turnFinalizer.finalize(session.id(), turnMessages, true, TurnExitReason.BUDGET_EXHAUSTED);
@@ -608,10 +628,11 @@ public class DefaultAgentRuntime implements AgentRuntime {
             // c2: shared owner in TurnExecutorUtils — previously a verbatim copy
             // in both loops.
             if (steerBuffer != null) {
-                String preApiSteer = steerBuffer.consume(session.id());
+                UUID controlSessionId = RunControlScope.controlSessionId(session);
+                String preApiSteer = steerBuffer.consume(controlSessionId);
                 if (preApiSteer != null
                         && !TurnExecutorUtils.injectPreApiSteer(context, preApiSteer, session.id())) {
-                    steerBuffer.steer(session.id(), preApiSteer);
+                    steerBuffer.steer(controlSessionId, preApiSteer);
                 }
             }
             // Hermes parity: wall-clock run-budget wrap-up notice (conversation_loop.py:2154-2172).
@@ -680,7 +701,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
             // (2^attempt × base, capped at 32768) giving the model room to finish.
             while (ResponseRecoveryPolicy.isTruncatedToolCall(response.finishReason(), response.hasToolCalls())
                     && truncatedToolCallRetries < ResponseRecoveryPolicy.MAX_TRUNCATED_TOOL_CALL_RETRIES) {
-                if (interruptToken != null && interruptToken.isCancelled(session.id())) break;
+                if (interruptToken != null && interruptToken.isCancelled(RunControlScope.controlSessionId(session))) break;
                 if (modelAttempts.exhausted()) break;
                 truncatedToolCallRetries++;
                 int boostedMax = ResponseRecoveryPolicy.boostedMaxTokens(
@@ -695,7 +716,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 response = callModelWithRetry(context, tools, boostedOptions, modelAttempts);
             }
 
-            if (interruptToken != null && interruptToken.isCancelled(session.id())) {
+            if (interruptToken != null && interruptToken.isCancelled(RunControlScope.controlSessionId(session))) {
                 turnMessages.add(Message.assistant("Turn cancelled by user.", turnIndex));
                 if (turnFinalizer != null) {
                     turnFinalizer.finalize(session.id(), turnMessages, false, TurnExitReason.INTERRUPTED);
@@ -935,7 +956,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 log.debug("Turn {} completed without tool calls", i);
                 // Nudge-gated background review — only fire when counters hit thresholds.
                 // Mirrors Hermes: memory review every N user turns, skill review every M tool iterations.
-                boolean interrupted = interruptToken != null && interruptToken.isCancelled(session.id());
+                boolean interrupted = interruptToken != null && interruptToken.isCancelled(RunControlScope.controlSessionId(session));
                 triggerNudgedBackgroundReview(session, turnMessages, interrupted);
 
                 // ── Verify-on-stop guard (Hermes parity: verification_stop.py) ──
@@ -1191,7 +1212,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
         }
 
         // H7: Fire background review on max-turns-reached path too.
-        boolean interrupted = interruptToken != null && interruptToken.isCancelled(session.id());
+        boolean interrupted = interruptToken != null && interruptToken.isCancelled(RunControlScope.controlSessionId(session));
         triggerNudgedBackgroundReview(session, turnMessages, interrupted);
 
         if (turnFinalizer != null) {
@@ -1492,7 +1513,8 @@ public class DefaultAgentRuntime implements AgentRuntime {
             if (rotated.isPresent()) {
                 Session ns = rotated.get();
                 log.info("Switching to rotated session: old={}, new={}", session.id(), ns.id());
-                return ns;
+                return RunControlScope.hasControlSessionId(session)
+                    ? RunControlScope.withControlSessionId(ns, RunControlScope.controlSessionId(session)) : ns;
             }
         }
         return session;

@@ -14,9 +14,12 @@ public interface OpenAiRunEventRepository extends JpaRepository<OpenAiRunEventEn
     @Query("""
         SELECT e FROM OpenAiRunEventEntity e
         WHERE e.runId = :runId AND e.seq > :afterSeq
+          AND EXISTS (SELECT r.runId FROM OpenAiRunStateEntity r
+                      WHERE r.runId = e.runId AND r.profile = :profile)
         ORDER BY e.seq ASC
         """)
     List<OpenAiRunEventEntity> replayAfter(@Param("runId") String runId,
+                                           @Param("profile") String profile,
                                            @Param("afterSeq") long afterSeq,
                                            Pageable pageable);
 

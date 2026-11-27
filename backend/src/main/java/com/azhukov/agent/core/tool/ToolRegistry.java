@@ -16,6 +16,14 @@ public interface ToolRegistry {
 
     List<ToolDefinition> getDefinitions(Set<String> toolsets);
 
+    default List<ToolDefinition> getProfileDefinitions(Session session) {
+        return List.of();
+    }
+
+    default boolean isProfileToolEnabled(String toolName, Session session) {
+        return false;
+    }
+
     ToolResult execute(String toolName, String toolCallId, String arguments, Message lastAssistant, Session session);
 
     ToolResult execute(String toolName, String toolCallId, String arguments, Message lastAssistant, Session session,

@@ -8,9 +8,13 @@ import com.azhukov.agent.core.model.ToolCall;
 import com.azhukov.agent.core.model.ToolDefinition;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.security.McpToolTrustService.ToolTrustMetadata;
+import com.azhukov.agent.service.ProfileService;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
+import com.azhukov.agent.tools.workflow.ProjectWorkflowTool;
+import com.azhukov.agent.tools.tracker.TrackerTool;
+import com.azhukov.agent.tools.forge.ForgeTool;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.RequiredArgsConstructor;
@@ -38,6 +42,8 @@ public class SpringToolRegistry implements ToolRegistry {
     private final AgentProperties properties;
     private final ObjectMapper objectMapper;
     private final ManagedToolGate managedToolGateway;
+    @org.springframework.beans.factory.annotation.Autowired
+    private ProfileService profiles;
     private final Map<String, ToolEntry> entries = new java.util.concurrent.ConcurrentHashMap<>();
 
     private static final String MEMORY_TARGETS_DESCRIPTION =
@@ -59,6 +65,11 @@ public class SpringToolRegistry implements ToolRegistry {
     private static final List<String> BROWSER_CDP_TOOLS = List.of("browser_cdp", "browser_dialog");
     private static final List<String> FILE_TOOLS = List.of("read_file", "write_file", "patch", "search_files", "publish_file");
     private static final List<String> SKILL_TOOLS = List.of("skills_list", "skill_view", "skill_manage");
+    private static final Set<String> PROFILE_TOOLS = Set.of(
+        "read_file", "write_file", "patch", "search_files", "publish_file", "delete_file",
+        "skills_list", "skill_view", "skill_manage", "memory", "mcp_tool", "cronjob",
+        ProjectWorkflowTool.NAME, TrackerTool.NAME, ForgeTool.NAME
+    );
     private static final List<String> HERMES_CORE_TOOLS = List.of(
         "web_search", "web_extract",
         "terminal", "process",
@@ -1068,7 +1079,9 @@ public class SpringToolRegistry implements ToolRegistry {
 
     @Override
     public List<ToolDefinition> getDefinitions() {
-        return adaptToolDefinitions(new ArrayList<>(entries.values().stream().map(ToolEntry::definition).toList()));
+        return adaptToolDefinitions(new ArrayList<>(entries.values().stream()
+            .filter(entry -> !namedProfileOnly(entry))
+            .map(ToolEntry::definition).toList()));
     }
 
     @Override
@@ -1078,6 +1091,7 @@ public class SpringToolRegistry implements ToolRegistry {
         }
         ResolvedToolsetFilter filter = resolveToolsets(toolsets);
         List<ToolDefinition> selected = entries.values().stream()
+            .filter(entry -> !namedProfileOnly(entry))
             .filter(e -> filter.allTools()
                 || e.isUnscopedDynamic()
                 || (e.toolset() != null && filter.toolsets().contains(e.toolset()))
@@ -1085,6 +1099,67 @@ public class SpringToolRegistry implements ToolRegistry {
             .map(ToolEntry::definition)
             .toList();
         return adaptToolDefinitions(selected);
+    }
+
+    @Override
+    public List<ToolDefinition> getProfileDefinitions(Session session) {
+        var configured = profileToolsets(session);
+        if (configured.isEmpty()) {
+            return List.of();
+        }
+        var filter = resolveToolsets(configured);
+        return adaptToolDefinitions(entries.values().stream()
+            .filter(entry -> admittedProfileTool(entry, filter, configured, session.profile()))
+            .map(ToolEntry::definition)
+            .toList());
+    }
+
+    @Override
+    public boolean isProfileToolEnabled(String toolName, Session session) {
+        ToolEntry entry = entries.get(toolName);
+        if (entry == null || entry.annotation() == null || !PROFILE_TOOLS.contains(toolName)) {
+            return false;
+        }
+        var configured = profileToolsets(session);
+        return !configured.isEmpty() && admittedProfileTool(entry, resolveToolsets(configured), configured, session.profile());
+    }
+
+    private static boolean namedProfileOnly(ToolEntry entry) {
+        return entry.handler() instanceof ProjectWorkflowTool || entry.handler() instanceof TrackerTool
+            || entry.handler() instanceof ForgeTool;
+    }
+
+    private boolean admittedProfileTool(ToolEntry entry, ResolvedToolsetFilter filter, Set<String> configured,
+                                        String profile) {
+        String name = entry.definition().name();
+        if (entry.handler() instanceof ProjectWorkflowTool workflow) {
+            return configured.contains(name) && workflow.configured(profile);
+        }
+        if (entry.handler() instanceof TrackerTool tracker) {
+            return configured.contains(name) && tracker.configured(profile);
+        }
+        if (entry.handler() instanceof ForgeTool forge) {
+            return configured.contains(name) && configured.contains(TrackerTool.NAME) && forge.configured(profile);
+        }
+        if ("mcp_tool".equals(name) || "cronjob".equals(name)) {
+            return entry.annotation() != null && configured.contains(name);
+        }
+        return entry.annotation() != null && PROFILE_TOOLS.contains(entry.definition().name())
+            && (filter.allTools() || filter.toolsets().contains(entry.toolset())
+                || filter.toolNames().contains(entry.definition().name()));
+    }
+
+    private Set<String> profileToolsets(Session session) {
+        String platform = session.getMetadata("platform");
+        if (platform == null || platform.isBlank()) {
+            platform = "api_server";
+        }
+        try {
+            return Set.copyOf(ProfileService.configuredPlatformToolsets(
+                profiles.readExecutionConfig(session.profile()), platform));
+        } catch (java.io.IOException | RuntimeException e) {
+            throw new IllegalStateException("Unable to load toolsets for the selected profile");
+        }
     }
 
     private List<ToolDefinition> adaptToolDefinitions(List<ToolDefinition> definitions) {
@@ -1226,6 +1301,10 @@ public class SpringToolRegistry implements ToolRegistry {
         if (entry == null) {
             return failureResult("Unknown tool: " + toolName);
         }
+        if (session != null && !"default".equals(session.profile())
+            && !isProfileToolEnabled(toolName, session)) {
+            return failureResult("Tool is unavailable in the selected profile: " + toolName);
+        }
         return mcpAdmission == null
             ? entry.handler().execute(arguments, lastAssistant, session)
             : entry.handler().execute(arguments, lastAssistant, session, mcpAdmission);
@@ -1247,7 +1326,7 @@ public class SpringToolRegistry implements ToolRegistry {
         Set<String> result = new HashSet<>();
         for (ToolEntry e : entries.values()) {
             String toolset = e.toolset();
-            if (toolset != null) {
+            if (toolset != null && !namedProfileOnly(e)) {
                 result.add(toolset);
             }
         }

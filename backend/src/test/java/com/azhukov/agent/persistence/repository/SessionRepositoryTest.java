@@ -58,7 +58,7 @@ class SessionRepositoryTest extends PostgresTestContainer {
     void findByUserIdReturnsSavedEntity() {
         sessionRepository.save(newSession(USER_ID_2, TITLE_2));
 
-        SessionEntity found = sessionRepository.findByUserId(USER_ID_2);
+        SessionEntity found = sessionRepository.findFirstByUserIdAndProfileOrderByUpdatedAtDescIdDesc(USER_ID_2, "default");
 
         assertThat(found).isNotNull();
         assertThat(found.getUserId()).isEqualTo(USER_ID_2);
@@ -67,7 +67,7 @@ class SessionRepositoryTest extends PostgresTestContainer {
 
     @Test
     void findByUserIdReturnsNullForUnknownUser() {
-        SessionEntity found = sessionRepository.findByUserId(UNKNOWN_USER_ID);
+        SessionEntity found = sessionRepository.findFirstByUserIdAndProfileOrderByUpdatedAtDescIdDesc(UNKNOWN_USER_ID, "default");
 
         assertThat(found).isNull();
     }

@@ -60,7 +60,7 @@ class ApprovalProducerWiringTest {
 
         // Runtime-side gate sequence (as wired in TurnExecutor/DefaultAgentRuntime):
         ToolCall call = new ToolCall("c1", "terminal", "{\"command\":\"shutdown now\"}");
-        assertTrue(g.requiresApproval(call, g.mcpAdmission(call)));
+        assertTrue(g.requiresApproval(call, g.mcpAdmission(call, null)));
         var request = g.requestApproval(session, call);
 
         // Approve from the user side — awaitDecision will either block until

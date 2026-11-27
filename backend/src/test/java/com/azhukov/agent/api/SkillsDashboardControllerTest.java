@@ -33,6 +33,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import com.azhukov.agent.service.ProfileService;
+import com.azhukov.agent.service.ProfileInstructions;
+import com.azhukov.agent.service.ProfileSkills;
 import com.azhukov.agent.service.RuntimeConfigService;
 
 class SkillsDashboardControllerTest {
@@ -305,7 +307,9 @@ class SkillsDashboardControllerTest {
         writeProfileSkill(profileService, "worker_alpha", "worker-skill");
         skillManager.saveSkill("dashboard-skill", SKILL_MD.formatted("dashboard-skill", "dashboard-skill"));
         mockMvc = MockMvcBuilders.standaloneSetup(new SkillsDashboardController(
-            skillManager, properties, hubService(), profileService, null)).build();
+            skillManager, properties, hubService(), profileService,
+            new ProfileSkills(profileService, new ProfileInstructions(properties, profileService,
+                new com.fasterxml.jackson.databind.ObjectMapper())), null)).build();
 
         mockMvc.perform(get("/api/skills").param("profile", "worker_alpha"))
             .andExpect(status().isOk())
@@ -334,7 +338,9 @@ class SkillsDashboardControllerTest {
             "worker_alpha", null, false, false, true, null, null, null, null));
         writeProfileSkill(profileService, "worker_alpha", "worker-skill");
         mockMvc = MockMvcBuilders.standaloneSetup(new SkillsDashboardController(
-            skillManager, properties, hubService(), profileService, null)).build();
+            skillManager, properties, hubService(), profileService,
+            new ProfileSkills(profileService, new ProfileInstructions(properties, profileService,
+                new com.fasterxml.jackson.databind.ObjectMapper())), null)).build();
 
         mockMvc.perform(put("/api/skills/toggle")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -358,7 +364,9 @@ class SkillsDashboardControllerTest {
         profileService.createProfile(new ProfileService.CreateProfileRequest(
             "worker_alpha", null, false, false, true, null, null, null, null));
         mockMvc = MockMvcBuilders.standaloneSetup(new SkillsDashboardController(
-            skillManager, properties, hubService(), profileService, null)).build();
+            skillManager, properties, hubService(), profileService,
+            new ProfileSkills(profileService, new ProfileInstructions(properties, profileService,
+                new com.fasterxml.jackson.databind.ObjectMapper())), null)).build();
 
         mockMvc.perform(post("/api/skills")
                 .contentType(MediaType.APPLICATION_JSON)

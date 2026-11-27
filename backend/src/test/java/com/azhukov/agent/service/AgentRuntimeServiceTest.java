@@ -665,7 +665,7 @@ class AgentRuntimeServiceTest {
         SessionEntity ownSession = newSessionEntity(EXISTING_SESSION_ID, "user-1", "Mine");
         org.springframework.data.domain.Page<SessionEntity> page =
             new org.springframework.data.domain.PageImpl<>(List.of(ownSession));
-        when(sessionRepository.findAllByUserId(eq("user-1"), any()))
+        when(sessionRepository.findAllByUserIdAndProfile(eq("user-1"), eq("default"), any()))
             .thenReturn(page);
         UserContext.set("user-1", UserContext.ROLE_USER);
         try {
@@ -683,7 +683,7 @@ class AgentRuntimeServiceTest {
         when(sessionRepository.findById(EXISTING_SESSION_ID)).thenReturn(Optional.of(otherUserSession));
         UserContext.set(USER_ID, UserContext.ROLE_USER);
         try {
-            assertThatThrownBy(() -> agentRuntimeService.runHeartbeatTurn(EXISTING_SESSION_ID, "heartbeat"))
+            assertThatThrownBy(() -> agentRuntimeService.runHeartbeatTurn(EXISTING_SESSION_ID, "heartbeat", "default"))
                 .isInstanceOf(SecurityException.class);
             verify(agentRuntime, never()).runTurn(any(Session.class), eq("heartbeat"));
         } finally {
@@ -696,14 +696,14 @@ class AgentRuntimeServiceTest {
         SessionEntity ownSession = newSessionEntity(EXISTING_SESSION_ID, USER_ID, "Mine");
         org.springframework.data.domain.Page<SessionEntity> page =
             new org.springframework.data.domain.PageImpl<>(List.of(ownSession));
-        when(sessionRepository.findAllByUserId(eq(USER_ID), any())).thenReturn(page);
+        when(sessionRepository.findAllByUserIdAndProfile(eq(USER_ID), eq("default"), any())).thenReturn(page);
         UserContext.set(USER_ID, UserContext.ROLE_USER);
         try {
             List<com.azhukov.agent.api.dto.ActiveAgentDto> agents = agentRuntimeService.listActiveAgents();
 
             assertThat(agents).hasSize(1);
             assertThat(agents.get(0).sessionId()).isEqualTo(EXISTING_SESSION_ID.toString());
-            verify(sessionRepository).findAllByUserId(eq(USER_ID), any());
+            verify(sessionRepository).findAllByUserIdAndProfile(eq(USER_ID), eq("default"), any());
         } finally {
             UserContext.clear();
         }

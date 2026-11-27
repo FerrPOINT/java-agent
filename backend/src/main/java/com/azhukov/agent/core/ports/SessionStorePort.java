@@ -20,7 +20,7 @@ public interface SessionStorePort {
     Optional<SessionEntity> findById(UUID id);
 
     void insertSessionRow(UUID id, String userId, String title, String provider,
-                          String modelName, String source, Instant now);
+                          String modelName, String source, String profile, Instant now);
 
     List<SessionEntity> findChildSessions(UUID parentSessionId);
 }

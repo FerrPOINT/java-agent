@@ -57,7 +57,7 @@ class CronJobRepositoryTest extends PostgresTestContainer {
         var service = new CronJobService(
             cronJobRepository, context.getBeanProvider(AgentRuntimeService.class), properties, org.mockito.Mockito.mock(com.azhukov.agent.core.skill.SkillManager.class),
             executionLogs, messages, transactions, scheduleParser,
-            org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class));
+            org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), new com.azhukov.agent.service.ProfileRuntimeRegistry(null));
         try {
             service.init();
             var disabled = cronJobRepository.findById(invalid.getId()).orElseThrow();

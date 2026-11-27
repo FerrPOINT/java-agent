@@ -333,6 +333,43 @@ class SpringToolRegistryTest {
         return r;
     }
 
+    @AgentTool(name = "read_file", description = "Profile file", toolset = "file")
+    static class ProfileReadTool implements ToolHandler {
+        @Override
+        public ToolResult execute(String args, Message lastAssistant, Session session) {
+            return ToolResult.ok("read-" + session.profile());
+        }
+    }
+
+    @Test
+    void namedProfileUsesItsOwnPlatformSettingForDiscoveryAndDirectExecution() throws Exception {
+        var selected = registryWithBeans(new ProfileReadTool(), new WebSearchHandler());
+        var profiles = mock(com.azhukov.agent.service.ProfileService.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(selected, "profiles", profiles);
+        var alpha = Session.create("same-owner", "openai", "fixture").withMetadata("profile", "alpha")
+            .withMetadata("platform", "api_server");
+        var beta = alpha.withMetadata("profile", "beta");
+        when(profiles.readExecutionConfig("alpha"))
+            .thenReturn(Map.of("platform_toolsets", Map.of("api_server", List.of("file"))));
+        when(profiles.readExecutionConfig("beta"))
+            .thenReturn(Map.of("platform_toolsets", Map.of("cli", List.of("file"))));
+        assertThat(selected.getProfileDefinitions(alpha)).extracting(ToolDefinition::name).containsExactly("read_file");
+        assertThat(selected.getProfileDefinitions(beta)).isEmpty();
+        assertThat(selected.execute("read_file", "alpha", "{}", null, alpha).content()).isEqualTo("read-alpha");
+        assertThat(selected.execute("read_file", "beta", "{}", null, beta).success()).isFalse();
+        assertThat(selected.getProfileDefinitions(beta.withMetadata("platform", "cli")))
+            .extracting(ToolDefinition::name).containsExactly("read_file");
+
+        when(profiles.readExecutionConfig("alpha"))
+            .thenReturn(Map.of("platform_toolsets", Map.of("api_server", List.of("all"))));
+        assertThat(selected.getProfileDefinitions(alpha)).extracting(ToolDefinition::name).containsExactly("read_file");
+        assertThat(selected.execute("web_search", "uncertified", "{}", null, alpha).success()).isFalse();
+        assertThat(selected.getProfileDefinitions(beta)).isEmpty();
+        when(profiles.readExecutionConfig("alpha")).thenReturn(Map.of());
+        assertThat(selected.execute("read_file", "disabled", "{}", null, alpha).success()).isFalse();
+        assertThat(selected.getProfileDefinitions(alpha)).isEmpty();
+    }
+
     // ── getDefinitions() ──
 
     @Test

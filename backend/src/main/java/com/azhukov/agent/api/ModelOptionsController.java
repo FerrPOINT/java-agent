@@ -6,6 +6,7 @@ import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.persistence.entity.CronJobEntity;
 import com.azhukov.agent.service.CronJobService;
 import com.azhukov.agent.service.CronModelDriftPolicy;
+import com.azhukov.agent.service.ProfileConfigWriter;
 import com.azhukov.agent.service.ProfileService;
 import com.azhukov.agent.service.RuntimeConfigService;
 import com.fasterxml.jackson.annotation.JsonAlias;
@@ -43,6 +44,7 @@ public class ModelOptionsController {
     private final AgentProperties properties;
     private final RuntimeConfigService runtimeConfigService;
     private final ProfileService profileService;
+    private final ProfileConfigWriter profileConfigWriter;
     private final CronJobService cronJobService;
 
     @ModelAttribute
@@ -56,21 +58,17 @@ public class ModelOptionsController {
     public ModelOptionsController(AgentProperties properties,
                                   RuntimeConfigService runtimeConfigService,
                                   ProfileService profileService,
-                                  CronJobService cronJobService) {
+                                  CronJobService cronJobService,
+                                  ProfileConfigWriter profileConfigWriter) {
         this.properties = properties;
         this.runtimeConfigService = runtimeConfigService;
         this.profileService = profileService;
+        this.profileConfigWriter = profileConfigWriter;
         this.cronJobService = cronJobService;
     }
 
-    ModelOptionsController(AgentProperties properties,
-                           RuntimeConfigService runtimeConfigService,
-                           ProfileService profileService) {
-        this(properties, runtimeConfigService, profileService, null);
-    }
-
     ModelOptionsController(AgentProperties properties, RuntimeConfigService runtimeConfigService) {
-        this(properties, runtimeConfigService, null, null);
+        this(properties, runtimeConfigService, null, null, null);
     }
 
     @GetMapping("/options")
@@ -311,37 +309,14 @@ public class ModelOptionsController {
         if (isDefaultProfile(profile)) {
             return currentModelSelection(properties.getModel());
         }
-        Map<String, Object> config = readProfileConfig(profile);
-        Object modelConfig = config.get("model");
-        if (modelConfig instanceof Map<?, ?> modelMap) {
-            Map<String, Object> model = toStringKeyMap(modelMap);
-            String provider = clean(stringValue(model.get("provider")));
-            String modelName = clean(stringValue(model.get("default")));
-            if (modelName == null) {
-                modelName = clean(stringValue(model.get("model")));
-            }
-            if (modelName == null) {
-                modelName = clean(stringValue(model.get("name")));
-            }
-            Object nestedDefault = model.get("default");
-            if (nestedDefault instanceof Map<?, ?> defaultMap) {
-                Map<String, Object> defaultData = toStringKeyMap(defaultMap);
-                if (provider == null) {
-                    provider = clean(stringValue(defaultData.get("provider")));
-                }
-                modelName = firstNonBlank(
-                    stringValue(defaultData.get("model")),
-                    stringValue(defaultData.get("name")),
-                    stringValue(defaultData.get("id")),
-                    modelName);
-            }
-            return new CurrentModelSelection(
-                defaultIfBlank(provider, ""),
-                defaultIfBlank(modelName, ""),
-                defaultIfBlank(stringValue(model.get("base_url")), ""),
-                defaultIfBlank(stringValue(model.get("api_key")), ""));
+        try {
+            var selection = profileService.readNamedModel(profile);
+            return new CurrentModelSelection(defaultIfBlank(selection.provider(), ""),
+                defaultIfBlank(selection.model(), ""), defaultIfBlank(selection.baseUrl(), ""),
+                defaultIfBlank(selection.apiKey(), ""));
+        } catch (IOException e) {
+            throw serverError("Failed to read profile model configuration", e);
         }
-        return new CurrentModelSelection("", defaultIfBlank(stringValue(modelConfig), ""), "", "");
     }
 
     private CurrentModelSelection currentModelSelection(AgentProperties.ModelProperties model) {
@@ -373,7 +348,7 @@ public class ModelOptionsController {
                                                          String baseUrl,
                                                          String apiKey) {
         try {
-            Map<String, Object> saved = profileService.writeModel(profile, provider, model, baseUrl, apiKey);
+            Map<String, Object> saved = profileConfigWriter.writeModel(profile, provider, model, baseUrl, apiKey);
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("ok", true);
             response.put("scope", "main");
@@ -384,6 +359,8 @@ public class ModelOptionsController {
             response.put("stale_aux", staleAuxiliary(profile, provider));
             response.put("cron_model_impact", cronModelImpact(profile, provider, model));
             return response;
+        } catch (IllegalArgumentException e) {
+            throw badRequest(e.getMessage());
         } catch (IOException e) {
             throw serverError("Failed to save profile model assignment", e);
         }

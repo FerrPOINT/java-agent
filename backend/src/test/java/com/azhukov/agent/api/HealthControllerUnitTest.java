@@ -141,7 +141,7 @@ class HealthControllerUnitTest {
     void hermesDetailedHealthReportsAdmittedSessionRuns() {
         AgentProperties realProperties = new AgentProperties();
         realProperties.getApi().setMaxConcurrentRuns(1);
-        ApiRunAdmissionService admissionService = new ApiRunAdmissionService(realProperties);
+        ApiRunAdmissionService admissionService = new ApiRunAdmissionService(realProperties, null);
         HealthController controller = new HealthController(properties);
         controller.setApiRunAdmissionService(admissionService);
 

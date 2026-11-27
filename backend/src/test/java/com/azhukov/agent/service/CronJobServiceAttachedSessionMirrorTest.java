@@ -59,7 +59,7 @@ class CronJobServiceAttachedSessionMirrorTest {
         return new CronJobService(cronJobRepository, agentRuntimeServiceProvider, properties(),
             skillManager, cronExecutionLogRepository, messageRepository,
             new TransactionTemplate(transactions), new CronScheduleParser(),
-            deliveryProvider, sessionRepositoryProvider, null);
+            deliveryProvider, sessionRepositoryProvider, null, new ProfileRuntimeRegistry(null));
     }
 
     private AgentProperties properties() {
@@ -87,7 +87,7 @@ class CronJobServiceAttachedSessionMirrorTest {
         when(cronJobRepository.recordRun(job)).thenReturn(1);
         when(cronJobRepository.findById(job.getId())).thenReturn(Optional.of(job));
         when(agentRuntimeServiceProvider.getIfAvailable()).thenReturn(runtime);
-        when(runtime.runBackground(any(), anyBoolean(), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(java.util.Map.of())))
+        when(runtime.runBackground(any(), anyBoolean(), org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(java.util.Map.of(com.azhukov.agent.tools.cron.CronJobTool.CRON_RUN_METADATA, "true"))))
             .thenThrow(new IllegalStateException("provider timed out"));
         when(cronExecutionLogRepository.save(any(CronExecutionLogEntity.class))).thenAnswer(inv -> {
             CronExecutionLogEntity entity = inv.getArgument(0);

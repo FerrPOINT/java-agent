@@ -65,6 +65,9 @@ agent:
   # Deployment identity. Default stays generic; set AGENT_NAME=Wartz Java Agent for Wartz.
   name: ${AGENT_NAME:Джава агент}
 
+  workflow:
+    base-url: ${AGENT_WORKFLOW_BASE_URL:}
+
   attachments:
     # Container deployments bind this directory to durable storage.
     cache-root: ${AGENT_ATTACHMENTS_CACHE_ROOT:}
@@ -465,6 +468,8 @@ agent:
   profile:
     name: ${AGENT_PROFILE_NAME:default}
     base-dir: ${AGENT_PROFILE_BASE_DIR:}
+    base-instructions-dir: ${AGENT_PROFILE_BASE_INSTRUCTIONS_DIR:}
+    base-instructions-manifest-sha256: ${AGENT_PROFILE_BASE_INSTRUCTIONS_MANIFEST_SHA256:}
 
 management:
   # M2: optional separate management port (stand compose sets

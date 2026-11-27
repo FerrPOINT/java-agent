@@ -280,6 +280,13 @@ public class SlashCommandRegistry {
         aliases.put(normalizedAlias, normalizedTarget);
     }
 
+    void selectProfile(ProfileCliClient client, CliProperties settings) {
+        commands.keySet().retainAll(ProfileCliCommands.LOCAL);
+        descriptions.keySet().retainAll(ProfileCliCommands.LOCAL);
+        aliases.entrySet().removeIf(entry -> !ProfileCliCommands.LOCAL.contains(entry.getValue()));
+        ProfileCliCommands.register(this, client, settings);
+    }
+
     /**
      * c8: Delegate command registration to each {@link CommandGroup}.
      */

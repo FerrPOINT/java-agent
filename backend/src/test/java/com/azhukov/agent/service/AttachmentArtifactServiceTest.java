@@ -23,6 +23,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -63,7 +64,13 @@ class AttachmentArtifactServiceTest {
     }
 
     private AttachmentArtifactService service() {
-        AttachmentArtifactService service = new AttachmentArtifactService(prov(repository), new ArtifactProcessIsolation(), sessions);
+        var transactions = mock(org.springframework.transaction.support.TransactionTemplate.class);
+        lenient().when(transactions.execute(any())).thenAnswer(call -> {
+            org.springframework.transaction.support.TransactionCallback<?> callback = call.getArgument(0);
+            return callback.doInTransaction(mock(org.springframework.transaction.TransactionStatus.class));
+        });
+        AttachmentArtifactService service = new AttachmentArtifactService(
+            prov(repository), new ArtifactProcessIsolation(), transactions, sessions);
         ReflectionTestUtils.setField(service, "cacheRootConfig", tempDir.toString());
         lenient().when(repository.save(any(AttachmentArtifactEntity.class)))
             .thenAnswer(inv -> inv.getArgument(0));
@@ -130,6 +137,28 @@ class AttachmentArtifactServiceTest {
     }
 
     @Test
+    void sameOwnerCanRegisterIdenticalBytesSeparatelyAndReadOnlyTheSelectedProfile() throws Exception {
+        var service = service();
+        byte[] bytes = "profile attachment".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        var alpha = service.register("shared-owner", "alpha", null, null, "internal", "file", "text/plain", "a.txt", bytes);
+        var beta = service.register("shared-owner", "beta", null, null, "internal", "file", "text/plain", "b.txt", bytes);
+        assertThat(alpha.rejection()).isNull();
+        assertThat(beta.rejection()).isNull();
+        assertThat(alpha.id()).isNotEqualTo(beta.id());
+        assertThat(alpha.cachePath()).startsWith("shared-owner/alpha/");
+        assertThat(beta.cachePath()).startsWith("shared-owner/beta/");
+        var captor = org.mockito.ArgumentCaptor.forClass(AttachmentArtifactEntity.class);
+        verify(repository, org.mockito.Mockito.times(2)).save(captor.capture());
+        var records = captor.getAllValues().stream().collect(java.util.stream.Collectors.toMap(
+            AttachmentArtifactEntity::getId, java.util.function.Function.identity()));
+        when(repository.findById(alpha.id())).thenReturn(Optional.of(records.get(alpha.id())));
+        when(repository.findById(beta.id())).thenReturn(Optional.of(records.get(beta.id())));
+        assertThat(service.contentPath(alpha.id(), "shared-owner", "beta")).isEmpty();
+        assertThat(service.contentPath(alpha.id(), "shared-owner", "alpha")).isPresent();
+        assertThat(service.contentPath(beta.id(), "shared-owner", "beta")).isPresent();
+    }
+
+    @Test
     void uploadWithoutExplicitOwnerUsesAuthenticatedAdministrator() throws Exception {
         var service = service();
         var mvc = org.springframework.test.web.servlet.setup.MockMvcBuilders
@@ -160,20 +189,20 @@ class AttachmentArtifactServiceTest {
         var stored = org.mockito.ArgumentCaptor.forClass(AttachmentArtifactEntity.class);
         verify(repository).save(stored.capture());
         when(repository.findById(registration.id())).thenReturn(Optional.of(stored.getValue()));
-        assertThat(service.outboundStatus(registration.id(), "u1", session))
+        assertThat(service.outboundStatus(registration.id(), "u1", "default", session))
             .isEqualTo(AttachmentArtifactService.OutboundStatus.UNCLAIMED);
-        assertThat(service.outboundStatus(registration.id(), "u1", UUID.randomUUID()))
+        assertThat(service.outboundStatus(registration.id(), "u1", "default", UUID.randomUUID()))
             .isEqualTo(AttachmentArtifactService.OutboundStatus.UNAVAILABLE);
-        assertThat(service.outboundStatus(registration.id(), "u2", session))
+        assertThat(service.outboundStatus(registration.id(), "u2", "default", session))
             .isEqualTo(AttachmentArtifactService.OutboundStatus.UNAVAILABLE);
         stored.getValue().setOutboundClaimedAt(java.time.Instant.now());
-        assertThat(service.outboundStatus(registration.id(), "u1", session))
+        assertThat(service.outboundStatus(registration.id(), "u1", "default", session))
             .isEqualTo(AttachmentArtifactService.OutboundStatus.CLAIMED);
-        try (var content = service.verifiedContent(registration.id(), "u1").orElseThrow()) {
+        try (var content = service.verifiedContent(registration.id(), "u1", "default").orElseThrow()) {
             assertThat(content.stream().readAllBytes()).isEqualTo(bytes);
         }
         Files.write(tempDir.resolve(registration.cachePath()), new byte[]{3, 2, 1});
-        assertThat(service.verifiedContent(registration.id(), "u1")).isEmpty();
+        assertThat(service.verifiedContent(registration.id(), "u1", "default")).isEmpty();
     }
 
     @Test
@@ -202,8 +231,8 @@ class AttachmentArtifactServiceTest {
         existing.setCachePath("u1/att_existing.png");
         Files.createDirectories(tempDir.resolve("u1"));
         Files.write(tempDir.resolve("u1/att_existing.png"), data);
-        when(repository.findFirstByOwnerIdAndContentHashAndDispositionAndSessionIdAndDedupScope(
-            org.mockito.ArgumentMatchers.eq("u1"), any(), org.mockito.ArgumentMatchers.eq("photo"), org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.eq("")))
+        when(repository.findFirstByOwnerIdAndProfileAndContentHashAndDispositionAndSessionIdAndDedupScope(
+            org.mockito.ArgumentMatchers.eq("u1"), org.mockito.ArgumentMatchers.eq("default"), any(), org.mockito.ArgumentMatchers.eq("photo"), org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.eq("")))
             .thenReturn(Optional.of(existing));
 
         var service = service();
@@ -239,13 +268,13 @@ class AttachmentArtifactServiceTest {
     @Test
     void receiptUsesExactOwnerAndSession() {
         var session = UUID.randomUUID();
-        when(repository.recordOutboundReceipt(eq("att_1"), eq("user-a"), eq(session), eq("42"), any(Instant.class)))
+        when(repository.recordOutboundReceipt(eq("att_1"), eq("user-a"), org.mockito.ArgumentMatchers.eq("default"), eq(session), eq("42"), any(Instant.class)))
             .thenReturn(1);
         var service = service();
 
-        assertThat(service.markDelivered("att_1", "user-a", session, "42")).isTrue();
-        assertThat(service.markDelivered("att_1", "user-b", session, "42")).isFalse();
-        assertThat(service.markDelivered("att_1", "user-a", UUID.randomUUID(), "42")).isFalse();
+        assertThat(service.markDelivered("att_1", "user-a", "default", session, "42")).isTrue();
+        assertThat(service.markDelivered("att_1", "user-b", "default", session, "42")).isFalse();
+        assertThat(service.markDelivered("att_1", "user-a", "default", UUID.randomUUID(), "42")).isFalse();
     }
 
     // helper to expose hash for dedupe stubbing
@@ -325,9 +354,9 @@ class AttachmentArtifactServiceTest {
         entity.setCachePath(stored.cachePath());
         when(repository.findById(stored.id())).thenReturn(Optional.of(entity));
 
-        assertThat(Files.readAllBytes(service().contentPath(stored.id(), "u1").orElseThrow()))
+        assertThat(Files.readAllBytes(service().contentPath(stored.id(), "u1", "default").orElseThrow()))
             .isEqualTo(data);
-        assertThat(service().contentPath(stored.id(), "other-owner")).isEmpty();
+        assertThat(service().contentPath(stored.id(), "other-owner", "default")).isEmpty();
     }
 
     @Test
@@ -352,7 +381,7 @@ class AttachmentArtifactServiceTest {
         var entity = new AttachmentArtifactEntity();
         entity.setId("att_missing");
         entity.setCachePath("u1/missing.txt");
-        when(repository.findFirstByOwnerIdAndContentHashAndDispositionAndSessionIdAndDedupScope(any(), any(), any(), any(), org.mockito.ArgumentMatchers.eq("")))
+        when(repository.findFirstByOwnerIdAndProfileAndContentHashAndDispositionAndSessionIdAndDedupScope(any(), org.mockito.ArgumentMatchers.eq("default"), any(), any(), any(), org.mockito.ArgumentMatchers.eq("")))
             .thenReturn(Optional.of(entity));
         var result = service().register("u1", "default", null, null,
             "cli", "document", "text/plain", "safe.txt", "bytes".getBytes());
@@ -432,13 +461,13 @@ class AttachmentArtifactServiceTest {
         saved.getValue().setExpiresAt(Instant.now().plusSeconds(600));
         when(repository.findById(registration.id())).thenReturn(Optional.of(saved.getValue()));
         Path cached = tempDir.resolve(registration.cachePath());
-        try (var verified = service.verifiedContent(registration.id(), "u1").orElseThrow()) {
+        try (var verified = service.verifiedContent(registration.id(), "u1", "default").orElseThrow()) {
             Path replacement = Files.writeString(tempDir.resolve("replacement"), "different bytes");
             Files.move(replacement, cached, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
             assertThat(verified.stream().readAllBytes()).isEqualTo(original);
         }
-        assertThat(service.verifiedContent(registration.id(), "u1")).isEmpty();
-        assertThat(service.verifiedContent(registration.id(), "another-owner")).isEmpty();
+        assertThat(service.verifiedContent(registration.id(), "u1", "default")).isEmpty();
+        assertThat(service.verifiedContent(registration.id(), "another-owner", "default")).isEmpty();
     }
 
     @Test

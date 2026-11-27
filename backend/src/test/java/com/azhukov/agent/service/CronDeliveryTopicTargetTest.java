@@ -38,7 +38,7 @@ class CronDeliveryTopicTargetTest {
         service = new CronJobService(
             null, null, null, null, null, null, null, null,
             (ObjectProvider<DeliveryWorkItemService>) mock(ObjectProvider.class),
-            sessionRepositoryProvider, null);
+            sessionRepositoryProvider, null, new ProfileRuntimeRegistry(null));
         job = new CronJobEntity();
         lenient().when(sessionRepositoryProvider.getIfAvailable()).thenReturn(sessionRepository);
     }

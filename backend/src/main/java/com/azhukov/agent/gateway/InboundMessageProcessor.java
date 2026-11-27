@@ -5,9 +5,12 @@ import com.azhukov.agent.core.agent.AgentRuntime;
 import com.azhukov.agent.core.agent.MidTurnPersistenceCallback;
 import com.azhukov.agent.core.agent.SteerBuffer;
 import com.azhukov.agent.core.model.Session;
+import com.azhukov.agent.core.security.ProfileDatabaseScope;
 import com.azhukov.agent.gateway.model.MessageEvent;
 import com.azhukov.agent.gateway.model.Platform;
 import com.azhukov.agent.gateway.model.SessionSource;
+import com.azhukov.agent.service.GatewayConfigWriter;
+import com.azhukov.agent.service.ProfileRuntimeRegistry;
 import com.azhukov.agent.persistence.service.MessagePersistenceService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -34,6 +37,12 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
     private final org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.service.AttachmentArtifactService>
         attachmentArtifacts;
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private GatewayConfigWriter gatewayConfig;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private ProfileRuntimeRegistry profileRuntime;
+
     // rev-83: subagent protection (#30170 parity) — demote interrupt to queue
     // when the running agent has active subagents, so a conversational follow-up
     // doesn't destroy minutes of subagent work.
@@ -41,7 +50,17 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
     private com.azhukov.agent.tools.delegate.DelegateTaskTool delegateTaskTool;
 
     /** Each entry owns the chat until its current message and any queued messages finish. */
-    private final ConcurrentHashMap<String, ChatQueue> activeChats = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<ChatScope, ChatQueue> activeChats = new ConcurrentHashMap<>();
+
+    private record ChatScope(String profile, Platform platform, String chatId, String threadId, String userId) {
+        static ChatScope from(SessionSource source) {
+            boolean standalone = "default".equals(source.profile());
+            return new ChatScope(source.profile(), source.platform(), source.chatId(),
+                standalone ? null : source.threadId(), standalone ? null : source.userId());
+        }
+    }
+
+    private record UpdateScope(String profile, Platform platform, String updateId) {}
 
     private static final class ChatQueue {
         private final ArrayDeque<MessageEvent> pending = new ArrayDeque<>();
@@ -51,15 +70,15 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
     /**
      * Bounded dedup of platform redeliveries: Telegram retries webhook POSTs
      * and can redeliver long-poll updates after reconnect. Keyed by
-     * "platform:eventId"; null eventIds (synthetic events, late-steer
+     * (profile, platform, update ID); null eventIds (synthetic events, late-steer
      * handoffs) never dedup. Bounded to avoid an unbounded leak.
      */
     private static final int DEDUP_MAX_ENTRIES = 10_000;
-    private final java.util.Set<String> seenEventIds =
+    private final java.util.Set<UpdateScope> seenEventIds =
         java.util.Collections.synchronizedSet(java.util.Collections.newSetFromMap(
-            new java.util.LinkedHashMap<String, Boolean>(16, 0.75f, false) {
+            new java.util.LinkedHashMap<UpdateScope, Boolean>(16, 0.75f, false) {
                 @Override
-                protected boolean removeEldestEntry(java.util.Map.Entry<String, Boolean> eldest) {
+                protected boolean removeEldestEntry(java.util.Map.Entry<UpdateScope, Boolean> eldest) {
                     return size() > DEDUP_MAX_ENTRIES;
                 }
             }));
@@ -68,7 +87,7 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
         if (event == null || event.eventId() == null || event.eventId().isBlank()) {
             return false;
         }
-        String key = event.source().platform() + ":" + event.eventId();
+        var key = new UpdateScope(event.source().profile(), event.source().platform(), event.eventId());
         // add() returns false when already present → duplicate redelivery
         return !seenEventIds.add(key);
     }
@@ -83,16 +102,15 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
 
     @Override
     public void accept(MessageEvent event) {
-        process(event, null);
+        ProfileDatabaseScope.run(event.source().profile(), () -> process(event, null));
     }
 
     private void process(MessageEvent event, ChatQueue ownedQueue) {
         SessionSource source = event.source();
-        log.info("Processing inbound {} message from userId={} chatId={} text={}",
-            source.platform(), source.userId(), source.chatId(),
-            event.text() != null ? event.text().substring(0, Math.min(event.text().length(), 80)) : "");
+        log.info("Processing inbound {} message in profile {} from userId={} chatId={}",
+            source.platform(), source.profile(), source.userId(), source.chatId());
 
-        String chatId = source.chatId();
+        ChatScope chat = ChatScope.from(source);
         boolean newDelivery = ownedQueue == null;
         UUID lockedSession = null;
         try {
@@ -117,8 +135,8 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
             if (newDelivery) {
                 var queue = new ChatQueue();
                 ChatQueue active;
-                while ((active = activeChats.putIfAbsent(chatId, queue)) != null) {
-                    if (handleBusy(chatId, active, session, event)) {
+                while ((active = activeChats.putIfAbsent(chat, queue)) != null) {
+                    if (handleBusy(chat, active, session, event)) {
                         return;
                     }
                 }
@@ -170,8 +188,11 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
             }
 
             final String reply = response;
-            routingServiceProvider.getIfAvailable().send(source.platform(), source, reply)
-                .whenComplete((result, ex) -> {
+            var routing = routingServiceProvider.getIfAvailable();
+            var delivery = "default".equals(source.profile())
+                ? routing.send(source.platform(), source, reply)
+                : routing.send(source.platform(), source, reply, session.id());
+            delivery.whenComplete((result, ex) -> {
                     if (ex != null || (result != null && !result.success())) {
                         log.warn("Failed to send response back to {}: {}", source.platform(),
                             ex != null ? ex.getMessage() : result.error());
@@ -183,7 +204,8 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
             log.error("Error processing inbound message from userId={}: {}", source.userId(), e.getMessage(), e);
             try {
                 routingServiceProvider.getIfAvailable().send(source.platform(), source,
-                    "Ошибка обработки: " + e.getMessage());
+                    "default".equals(source.profile()) ? "Ошибка обработки: " + e.getMessage()
+                        : "Ошибка обработки сообщения");
             } catch (Exception sendEx) {
                 log.error("Failed to send error reply to userId={}: {}", source.userId(), sendEx.getMessage());
             }
@@ -195,18 +217,18 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
                 turnLocks.release(lockedSession);
             }
             if (ownedQueue != null) {
-                dispatchNext(chatId, ownedQueue);
+                dispatchNext(chat, ownedQueue);
             }
         }
     }
 
-    private boolean handleBusy(String chatId, ChatQueue queue, Session session, MessageEvent event) {
+    private boolean handleBusy(ChatScope chat, ChatQueue queue, Session session, MessageEvent event) {
         String mode = agentProperties.getGateway().getBusyInputMode();
         boolean interrupt = "interrupt".equalsIgnoreCase(mode);
         boolean protectSubagents = interrupt && delegateTaskTool != null && delegateTaskTool.getActiveSubagentCount() > 0;
         String reply;
         synchronized (queue) {
-            if (activeChats.get(chatId) != queue) {
+            if (activeChats.get(chat) != queue) {
                 return false;
             }
             boolean ownsTurn = session.id() != null && session.id().equals(queue.runningSession);
@@ -233,45 +255,26 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
         return true;
     }
 
-    private void dispatchNext(String chatId, ChatQueue queue) {
+    private void dispatchNext(ChatScope chat, ChatQueue queue) {
         MessageEvent next;
         synchronized (queue) {
             next = queue.pending.poll();
             if (next == null) {
-                activeChats.remove(chatId, queue);
+                activeChats.remove(chat, queue);
                 return;
             }
         }
         java.util.concurrent.CompletableFuture.runAsync(() -> process(next, queue));
     }
 
-    private boolean isAuthorized(SessionSource source) {
-        // Non-Telegram platforms are not gated by Telegram config — let them through
-        if (source.platform() != Platform.TELEGRAM) {
-            return true;
+    private boolean isAuthorized(SessionSource source) throws java.io.IOException {
+        if ("default".equals(source.profile())) {
+            return source.platform() != Platform.TELEGRAM || GatewayConfigWriter.isAllowed(
+                agentProperties.getGateway().getTelegram(), source.userId(), source.username());
         }
-        var telegram = agentProperties.getGateway().getTelegram();
-        // allowByDefault → open access
-        if (telegram.isAllowByDefault()) {
-            return true;
-        }
-        String userId = source.userId();
-        if (userId != null && !userId.isBlank()) {
-            for (String allowed : telegram.getAllowedUserIds()) {
-                if (userId.equals(allowed)) {
-                    return true;
-                }
-            }
-        }
-        String username = source.username();
-        if (username != null && !username.isBlank()) {
-            for (String allowed : telegram.getAllowedUsernames()) {
-                if (username.equals(allowed)) {
-                    return true;
-                }
-            }
-        }
-        return false;
+        return source.platform() == Platform.TELEGRAM && profileRuntime.acceptsRuns(source.profile())
+            && GatewayConfigWriter.isAllowed(gatewayConfig.profileTelegram(source.profile()),
+                source.userId(), source.username());
     }
 
     /**
@@ -302,7 +305,7 @@ public class InboundMessageProcessor implements Consumer<MessageEvent> {
                     ? att.fileName() : "gateway-file.bin";
                 var registration = artifacts.register(
                     source.userId() != null ? source.userId() : "gateway",
-                    "default",
+                    session != null ? session.profile() : "default",
                     session != null ? session.id() : null,
                     event.eventId(),
                     source.platform().name().toLowerCase(java.util.Locale.ROOT),

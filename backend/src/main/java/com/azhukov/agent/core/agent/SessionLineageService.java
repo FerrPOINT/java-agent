@@ -61,17 +61,22 @@ public class SessionLineageService implements SessionLineagePort {
         return transactionTemplate.execute(status -> {
             List<UUID> chain = new ArrayList<>();
             UUID current = sessionId;
+            SessionEntity initial = sessionRepository.findById(sessionId).orElse(null);
+            if (initial == null) {
+                return List.of(sessionId);
+            }
             Set<UUID> seen = new HashSet<>();
             for (int i = 0; i < MAX_CHAIN_DEPTH; i++) {
                 if (current == null || seen.contains(current)) {
                     break;
                 }
-                seen.add(current);
-                chain.add(current);
-                SessionEntity entity = sessionRepository.findById(current).orElse(null);
-                if (entity == null) {
+                SessionEntity entity = current.equals(sessionId) ? initial
+                    : sessionRepository.findById(current).orElse(null);
+                if (entity == null || !AgentSessionResolver.sameScope(initial, entity)) {
                     break;
                 }
+                seen.add(current);
+                chain.add(current);
                 current = entity.getParentSessionId();
             }
             // Reverse to get root-to-tip order
@@ -92,7 +97,9 @@ public class SessionLineageService implements SessionLineagePort {
         }
         return transactionTemplate.execute(status -> {
             SessionEntity entity = sessionRepository.findById(sessionId).orElse(null);
-            return entity != null && entity.getParentSessionId() != null;
+            return entity != null && entity.getParentSessionId() != null
+                && sessionRepository.findById(entity.getParentSessionId())
+                    .filter(parent -> AgentSessionResolver.sameScope(entity, parent)).isPresent();
         });
     }
 

@@ -65,7 +65,7 @@ class AgentSessionIdentityBoundaryTest {
 
         assertThatThrownBy(() -> resolver.createSession(OWNER, "fixture", "model"))
                 .isSameAs(fenced);
-        assertThatThrownBy(() -> resolver.loadOrCreateSession(SESSION, OWNER, "fixture", "model", "api_server"))
+        assertThatThrownBy(() -> resolver.loadOrCreateSession(SESSION, OWNER, "fixture", "model", "api_server", "default"))
                 .isSameAs(fenced);
         verify(references, times(2)).nativeStorage(OWNER);
         verifyNoInteractions(transactions, sessions);
@@ -76,7 +76,7 @@ class AgentSessionIdentityBoundaryTest {
         SessionEntity stored = owned(OWNER);
         when(sessions.findById(SESSION)).thenReturn(Optional.empty(), Optional.of(stored));
 
-        var result = resolver.loadOrCreateSession(SESSION, OWNER, "fixture", "model", "api_server");
+        var result = resolver.loadOrCreateSession(SESSION, OWNER, "fixture", "model", "api_server", "default");
 
         assertThat(result.id()).isEqualTo(SESSION);
         assertThat(result.userId()).isEqualTo(OWNER);
@@ -84,7 +84,7 @@ class AgentSessionIdentityBoundaryTest {
         order.verify(references).nativeStorage(OWNER);
         order.verify(sessions).findById(SESSION);
         order.verify(sessions).insertSessionRow(eq(SESSION), eq(OWNER), eq("New chat"),
-                eq("fixture"), eq("model"), eq("api_server"), any(Instant.class));
+                eq("fixture"), eq("model"), eq("api_server"), eq("default"), any(Instant.class));
         order.verify(sessions).findById(SESSION);
         verify(sessions, never()).save(any());
     }
@@ -97,9 +97,8 @@ class AgentSessionIdentityBoundaryTest {
         stored.setSubgoal("owned task");
         stored.setCliState(Map.of("theme", "dark", "userDisplayName", "chosen name"));
         when(sessions.findById(SESSION)).thenReturn(Optional.empty(), Optional.of(stored));
-        duplicateInsert(new DataIntegrityViolationException("synthetic duplicate"));
 
-        var result = resolver.loadOrCreateSession(SESSION, OWNER, "fixture", "model", "api_server");
+        var result = resolver.loadOrCreateSession(SESSION, OWNER, "fixture", "model", "api_server", "work");
 
         assertThat(result.id()).isEqualTo(SESSION);
         assertThat(result.userId()).isEqualTo(OWNER);
@@ -112,9 +111,8 @@ class AgentSessionIdentityBoundaryTest {
     @Test
     void aForeignDuplicateWinnerCannotBeHydratedOrReplaced() {
         when(sessions.findById(SESSION)).thenReturn(Optional.empty(), Optional.of(owned("foreign-owner")));
-        duplicateInsert(new DataIntegrityViolationException("synthetic duplicate"));
 
-        assertThatThrownBy(() -> resolver.loadOrCreateSession(SESSION, OWNER, "fixture", "model", "api_server"))
+        assertThatThrownBy(() -> resolver.loadOrCreateSession(SESSION, OWNER, "fixture", "model", "api_server", "default"))
                 .isInstanceOf(SecurityException.class);
         verify(sessions, never()).save(any());
         verify(sessions, times(2)).findById(SESSION);
@@ -124,9 +122,10 @@ class AgentSessionIdentityBoundaryTest {
     void anUnexplainedInsertFailureIsNotConvertedIntoAnOwnedSession() {
         var failure = new DataIntegrityViolationException("synthetic constraint failure");
         when(sessions.findById(SESSION)).thenReturn(Optional.empty());
-        duplicateInsert(failure);
+        doThrow(failure).when(sessions).insertSessionRow(eq(SESSION), eq(OWNER), eq("New chat"),
+                eq("fixture"), eq("model"), eq("api_server"), eq("default"), any(Instant.class));
 
-        assertThatThrownBy(() -> resolver.loadOrCreateSession(SESSION, OWNER, "fixture", "model", "api_server"))
+        assertThatThrownBy(() -> resolver.loadOrCreateSession(SESSION, OWNER, "fixture", "model", "api_server", "default"))
                 .isSameAs(failure);
         verify(sessions, never()).save(any());
     }
@@ -137,10 +136,10 @@ class AgentSessionIdentityBoundaryTest {
         stored.setSource("api_server");
         when(sessions.findById(SESSION)).thenReturn(Optional.of(stored));
 
-        var result = resolver.loadOrCreateSession(SESSION, OWNER, "fixture", "model", "cli");
+        var result = resolver.loadOrCreateSession(SESSION, OWNER, "fixture", "model", "cli", "default");
 
         assertThat(result.metadata()).containsEntry("userDisplayName", OWNER).containsEntry("platform", "api_server");
-        verify(sessions, never()).insertSessionRow(any(), any(), any(), any(), any(), any(), any());
+        verify(sessions, never()).insertSessionRow(any(), any(), any(), any(), any(), any(), any(), any());
         verify(sessions, never()).save(any());
     }
 
@@ -163,7 +162,7 @@ class AgentSessionIdentityBoundaryTest {
             return entity;
         });
 
-        var created = resolver.loadOrCreateSession(null, OWNER, "fixture", "model", "telegram");
+        var created = resolver.loadOrCreateSession(null, OWNER, "fixture", "model", "telegram", "default");
 
         assertThat(created.id()).isEqualTo(SESSION);
         assertThat(created.userId()).isEqualTo(OWNER);
@@ -172,11 +171,6 @@ class AgentSessionIdentityBoundaryTest {
         order.verify(sessions).save(argThat(entity -> "telegram".equals(entity.getSource())
                 && OWNER.equals(entity.getUserId())));
         verify(sessions, never()).findById(any());
-    }
-
-    private void duplicateInsert(DataIntegrityViolationException failure) {
-        doThrow(failure).when(sessions).insertSessionRow(eq(SESSION), eq(OWNER), eq("New chat"),
-                eq("fixture"), eq("model"), eq("api_server"), any(Instant.class));
     }
 
     private static SessionEntity owned(String owner) {

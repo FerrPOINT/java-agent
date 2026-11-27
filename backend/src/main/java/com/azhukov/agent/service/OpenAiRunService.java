@@ -8,11 +8,13 @@ import com.azhukov.agent.core.client.ModelRequestOptions;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.security.ApiErrorTextRedactor;
+import com.azhukov.agent.core.security.ProfileDatabaseScope;
 import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.security.ApprovalQueue;
 import com.azhukov.agent.core.security.Redactor;
 import com.azhukov.agent.service.OpenAiSessionService.OpenAiSessionContext;
 import com.azhukov.agent.tools.terminal.ProcessTool;
+import com.azhukov.agent.tools.tracker.TrackerRunScope;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
@@ -23,22 +25,23 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
-import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 
 /**
  * Durable OpenAI Runs API surface (WP-6): run state machine persistence and
@@ -52,7 +55,12 @@ public class OpenAiRunService {
 
     private static final long RUN_STATUS_TTL_SECONDS = 3600;
     private static final long RUN_EVENT_STREAM_TIMEOUT_MS = 600_000L;
+    private static final int EVENT_BATCH_SIZE = 64;
+    private static final long EVENT_POLL_MS = 500L;
+    private static final long EVENT_KEEPALIVE_MS = 15_000L;
     private static final List<String> APPROVAL_CHOICES = List.of("once", "deny");
+    private static final List<String> STATUS_EVENT_FIELDS = List.of(
+        "output", "usage", "error", "pending_steer", "completed", "partial", "interrupted");
 
     private final AgentRuntimeService agentRuntimeService;
     private final OpenAiSessionService openAiSessionService;
@@ -77,57 +85,105 @@ public class OpenAiRunService {
         this.turnLocks = turnLocks;
     }
 
-    public RunRecord submit(OpenAiSessionContext sessionContext,
-                            String userMessage,
-                            String requestedModel,
-                            ModelRequestOptions options,
-                            String instructions,
-                            List<Message> historyToPersist) {
-        return submit(sessionContext, Message.user(userMessage), requestedModel, options, instructions, historyToPersist, null);
+    public record SubmissionKey(String runId, String profile, String fingerprint) {}
+
+    public record Acceptance(String runId, String sessionId, boolean replayed, String profileRevision) {}
+
+    public static final class IdempotencyConflict extends RuntimeException {}
+
+    public static final class DurableAcceptanceUnavailable extends RuntimeException {}
+
+    public boolean durableAcceptanceConfigured() {
+        return stateMachine() != null;
     }
 
-    public RunRecord submit(OpenAiSessionContext sessionContext,
-                            Message userMessage,
-                            String requestedModel,
-                            ModelRequestOptions options,
-                            String instructions,
-                            List<Message> historyToPersist) {
-        return submit(sessionContext, userMessage, requestedModel, options, instructions, historyToPersist, null);
+    /** Read a previously committed acceptance without opening a session or dispatching again. */
+    public Optional<Acceptance> replay(SubmissionKey key) {
+        OpenAiRunStateMachine machine = stateMachine();
+        if (machine == null) {
+            throw new DurableAcceptanceUnavailable();
+        }
+        return machine.state(key.runId(), key.profile()).map(state -> {
+            String scopedUser = UserContext.scopeUserId();
+            if (!Objects.equals(state.getRequestFingerprint(), key.fingerprint())
+                || !key.profile().equals(state.getProfile())
+                || (scopedUser != null && !scopedUser.equals(state.getUserId()))
+                || state.getAcceptedSessionId() == null) {
+                throw new IdempotencyConflict();
+            }
+            return new Acceptance(state.getRunId(), state.getAcceptedSessionId(), true, state.getProfileRevision());
+        });
     }
 
-    public RunRecord submit(OpenAiSessionContext sessionContext,
-                            Message userMessage,
-                            String requestedModel,
-                            ModelRequestOptions options,
-                            String instructions,
-                            List<Message> historyToPersist,
-                            ApiRunAdmissionService.Reservation reservation) {
+    public Acceptance submit(Supplier<OpenAiSessionContext> resolveSession,
+                             Message userMessage,
+                             String requestedModel,
+                             ModelRequestOptions options,
+                             String instructions,
+                             List<Message> historyToPersist,
+                             UUID previousSessionId,
+                             ApiRunAdmissionService.Reservation reservation,
+                             SubmissionKey key,
+                             String workflowTask,
+                             TrackerRunScope trackerTask) {
         sweepTerminalRuns();
-        UUID sessionId = sessionContext.session().id();
-        String runId = "run_" + UUID.randomUUID().toString().replace("-", "");
-        UUID controlSessionId = UUID.randomUUID();
-        String userId = sessionContext.session().userId();
-        RunRecord record = new RunRecord(runId, sessionId, controlSessionId, userId, requestedModel);
-        var stateMachine = stateMachine();
-        if (stateMachine != null) {
-            stateMachine.createRun(runId, sessionId, userId, "default", requestedModel, null);
-            record.stateMachine = stateMachine;
-        }
-        runs.put(runId, record);
-
-        Session runSession = RunControlScope.withControlSessionId(sessionContext.session(), controlSessionId);
-        if (instructions != null && !instructions.isBlank()) {
-            runSession = runSession.withMetadata("system_prompt_override", instructions);
-        }
-        Session effectiveSession = runSession;
+        String runId = key == null ? "run_" + UUID.randomUUID().toString().replace("-", "") : key.runId();
+        OpenAiRunStateMachine machine = stateMachine();
+        OpenAiSessionContext context;
         try {
-            executor.submit(UserContext.wrap(() -> run(record, effectiveSession, userMessage, options, historyToPersist, reservation)));
-            executor.submit(() -> monitorApprovals(record));
-            return record;
+            if (machine == null) {
+                if (key != null) {
+                    throw new DurableAcceptanceUnavailable();
+                }
+                context = resolveSession.get();
+            } else {
+                context = machine.accept(runId, requestedModel, key == null ? null : key.fingerprint(), resolveSession);
+            }
+        } catch (OpenAiRunStateMachine.AlreadyAccepted e) {
+            closeReservation(reservation);
+            if (key == null) {
+                throw e;
+            }
+            return replay(key).orElseThrow(DurableAcceptanceUnavailable::new);
         } catch (RuntimeException e) {
             closeReservation(reservation);
             throw e;
         }
+
+        Session session = context.session();
+        String revision = ProfileExecutionConfiguration.currentRevision(session.profile());
+        UUID controlSessionId = UUID.randomUUID();
+        RunRecord record = new RunRecord(runId, session.id(), controlSessionId, session.userId(),
+            session.profile(), requestedModel, revision);
+        record.stateMachine = machine;
+        runs.put(runId, record);
+        Session runSession = RunControlScope.withControlSessionId(session, controlSessionId);
+        if (workflowTask != null) {
+            runSession = runSession.withMetadata(com.azhukov.agent.tools.workflow.ProjectWorkflowTool.TASK_METADATA,
+                workflowTask);
+        }
+        if (trackerTask != null) {
+            runSession = runSession.withMetadata(TrackerRunScope.METADATA, objectMapper.valueToTree(trackerTask).toString());
+        }
+        if (instructions != null && !instructions.isBlank()) {
+            runSession = runSession.withMetadata("system_prompt_override", instructions);
+        }
+        Session effectiveSession = runSession;
+        List<Message> history = session.id().equals(previousSessionId) ? List.of() : historyToPersist;
+        try {
+            executor.submit(ProfileExecutionConfiguration.carry(
+                UserContext.wrap(() -> run(record, effectiveSession, userMessage, options, history, reservation))));
+        } catch (RejectedExecutionException e) {
+            closeReservation(reservation);
+            record.finishFailed("Run execution could not start");
+            return new Acceptance(runId, context.responseSessionId(), false, revision);
+        }
+        try {
+            executor.submit(ProfileDatabaseScope.carry(() -> monitorApprovals(record)));
+        } catch (RejectedExecutionException e) {
+            log.debug("Run approval monitor is stopping for {}", runId);
+        }
+        return new Acceptance(runId, context.responseSessionId(), false, revision);
     }
 
     public RunRecord get(String runId) {
@@ -142,6 +198,16 @@ public class OpenAiRunService {
             }
         }
         return count;
+    }
+
+    public int requestProfileStop(String profile) {
+        int stopping = 0;
+        for (var record : runs.values()) {
+            if (profile.equals(record.profile()) && stop(record.runId()).status() == 200) {
+                stopping++;
+            }
+        }
+        return stopping;
     }
 
     public ControlResult stop(String runId) {
@@ -162,8 +228,11 @@ public class OpenAiRunService {
                 }
             }
         } finally {
-            if (signalProcesses && processTool != null) {
-                processTool.killOwnedBy(record.controlSessionId());
+            if (signalProcesses) {
+                approvalQueue.clear(record.controlSessionId());
+                if (processTool != null) {
+                    processTool.killOwnedBy(record.controlSessionId());
+                }
             }
         }
         return ControlResult.ok(Map.of("run_id", runId, "status", "stopping"));
@@ -247,13 +316,17 @@ public class OpenAiRunService {
         return ControlResult.ok(body);
     }
 
-    public SseEmitter events(String runId) {
-        RunRecord record = runs.get(runId);
-        if (record == null || !record.claimEventStream()) {
-            return null;
+    /** Stream ordered committed events after the client's last observed sequence. */
+    public SseEmitter events(String runId, String profile, long after) {
+        var machine = stateMachine();
+        if (machine == null) {
+            throw new DurableAcceptanceUnavailable();
         }
         SseEmitter emitter = new SseEmitter(RUN_EVENT_STREAM_TIMEOUT_MS);
-        executor.submit(UserContext.wrap(() -> drainEvents(record, emitter)));
+        var worker = executor.submit(UserContext.wrap(() -> streamEvents(machine, runId, profile, after, emitter)));
+        emitter.onTimeout(() -> worker.cancel(true));
+        emitter.onError(error -> worker.cancel(true));
+        emitter.onCompletion(() -> worker.cancel(true));
         return emitter;
     }
 
@@ -291,6 +364,9 @@ public class OpenAiRunService {
                 Map<String, Object> event = new LinkedHashMap<>();
                 event.put("output", output);
                 event.put("usage", usage);
+                event.put("completed", true);
+                event.put("partial", false);
+                event.put("interrupted", false);
                 synchronized (record) {
                     String pendingSteer = steerBuffer.consume(record.controlSessionId());
                     if (pendingSteer != null && !pendingSteer.isBlank()) event.put("pending_steer", pendingSteer);
@@ -319,7 +395,6 @@ public class OpenAiRunService {
             steerBuffer.clear(record.controlSessionId());
             interruptToken.remove(record.controlSessionId());
             closeReservation(reservation);
-            record.closeEvents();
         }
     }
 
@@ -365,7 +440,8 @@ public class OpenAiRunService {
     private Map<String, Object> approvalPayload(ApprovalQueue.PendingApproval approval) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("request_id", approval.requestId().toString());
-        payload.put("reason", apiErrorText(approval.reason()));
+        String description = apiErrorText(approval.reason());
+        payload.put("description", description == null || description.isBlank() ? "Tool approval required" : description);
         payload.put("choices", APPROVAL_CHOICES);
         if (approval.call() != null) {
             payload.put("tool", approval.call().name());
@@ -377,39 +453,48 @@ public class OpenAiRunService {
         return payload;
     }
 
-    private void drainEvents(RunRecord record, SseEmitter emitter) {
+    private void streamEvents(OpenAiRunStateMachine machine, String runId, String profile, long cursor, SseEmitter emitter) {
+        long lastWrite = System.nanoTime();
         try {
             while (true) {
-                QueuedEvent event = record.events.poll(UserContext.accessWaitMillis(30_000), TimeUnit.MILLISECONDS);
                 UserContext.requireCurrentAccess();
-                if (event == null) {
-                    emitter.send(SseEmitter.event().comment("keepalive"));
-                    continue;
+                var state = machine.state(runId, profile).orElseThrow();
+                var events = machine.replayParsed(runId, profile, cursor, EVENT_BATCH_SIZE);
+                if (events.isEmpty() && cursor < state.getLastSeq()) {
+                    throw new IllegalStateException("Run event history is incomplete");
                 }
-                if (event.terminal()) {
-                    if (record.streamOverflowed) {
-                        emitter.completeWithError(new IllegalStateException("Run event stream fell behind. Use event replay."));
-                        return;
+                for (var event : events) {
+                    UserContext.requireCurrentAccess();
+                    if (event.seq() != cursor + 1) {
+                        throw new IllegalStateException("Run event history is not contiguous");
                     }
-                    if (!record.executionAvailable) {
-                        emitter.completeWithError(new IllegalStateException("Run outcome is unavailable"));
-                        return;
-                    }
-                    emitter.send(SseEmitter.event().comment("stream closed"));
+                    emitter.send(SseEmitter.event().id(Long.toString(event.seq()))
+                        .data(objectMapper.writeValueAsString(event.payload())));
+                    cursor = event.seq();
+                    lastWrite = System.nanoTime();
+                }
+                if (OpenAiRunStateMachine.isTerminal(state.getState()) && cursor >= state.getLastSeq()) {
                     emitter.complete();
                     return;
                 }
-                emitter.send(SseEmitter.event().data(objectMapper.writeValueAsString(event.payload())));
+                if (events.size() == EVENT_BATCH_SIZE) {
+                    continue;
+                }
+                var record = runs.get(runId);
+                if (record != null && !record.executionAvailable) {
+                    throw new IllegalStateException("Run outcome is unavailable");
+                }
+                if (TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - lastWrite) >= EVENT_KEEPALIVE_MS) {
+                    emitter.send(SseEmitter.event().comment("keepalive"));
+                    lastWrite = System.nanoTime();
+                }
+                Thread.sleep(UserContext.accessWaitMillis(EVENT_POLL_MS));
             }
-        } catch (IOException e) {
-            emitter.completeWithError(e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            emitter.completeWithError(e);
+            emitter.complete();
         } catch (Exception e) {
             emitter.completeWithError(e);
-        } finally {
-            record.closeEventStream();
         }
     }
 
@@ -455,13 +540,13 @@ public class OpenAiRunService {
         return runStateMachineProvider == null ? null : runStateMachineProvider.getIfAvailable();
     }
 
-    public static RunRecord restoredRun(String runId, UUID sessionId, String userId, String model,
-                                        String status, java.time.Instant createdAt, java.time.Instant updatedAt,
+    public static RunRecord restoredRun(String runId, UUID sessionId, String userId, String profile, String model,
+                                        String revision, String status, java.time.Instant createdAt, java.time.Instant updatedAt,
                                         Map<String, Object> lastEvent) {
-        RunRecord run = new RunRecord(runId, sessionId, sessionId, userId, model);
+        RunRecord run = new RunRecord(runId, sessionId, sessionId, userId, profile, model, revision);
         run.restoreStatus(status, createdAt, updatedAt);
         run.executionAvailable = false;
-        for (String field : List.of("output", "usage", "error", "pending_steer")) {
+        for (String field : STATUS_EVENT_FIELDS) {
             if (lastEvent.containsKey(field)) run.extra.put(field, lastEvent.get(field));
         }
         if (lastEvent.containsKey("event")) run.extra.put("last_event", lastEvent.get("event"));
@@ -473,24 +558,26 @@ public class OpenAiRunService {
         private final UUID sessionId;
         private final UUID controlSessionId;
         private final String userId;
+        private final String profile;
         private final String model;
+        private final String profileRevision;
         private double createdAt;
-        private final BlockingQueue<QueuedEvent> events = new LinkedBlockingQueue<>(256);
-        private final AtomicBoolean eventStreamClaimed = new AtomicBoolean(false);
         private final AtomicBoolean stopRequested = new AtomicBoolean(false);
         private final Map<String, Object> extra = new LinkedHashMap<>();
         private OpenAiRunStateMachine stateMachine;
         private volatile boolean executionAvailable = true;
-        private volatile boolean streamOverflowed;
         private String status = "queued";
         private double updatedAt;
 
-        private RunRecord(String runId, UUID sessionId, UUID controlSessionId, String userId, String model) {
+        private RunRecord(String runId, UUID sessionId, UUID controlSessionId, String userId,
+                          String profile, String model, String profileRevision) {
             this.runId = runId;
             this.sessionId = sessionId;
             this.controlSessionId = controlSessionId;
             this.userId = userId;
+            this.profile = profile;
             this.model = model;
+            this.profileRevision = profileRevision;
             this.createdAt = epochSeconds();
             this.updatedAt = this.createdAt;
         }
@@ -509,6 +596,10 @@ public class OpenAiRunService {
 
         public String userId() {
             return userId;
+        }
+
+        public String profile() {
+            return profile;
         }
 
         public synchronized String status() {
@@ -538,6 +629,7 @@ public class OpenAiRunService {
             payload.put("created_at", createdAt);
             payload.put("session_id", sessionId.toString());
             payload.put("model", model);
+            if (profileRevision != null) payload.put("profile_revision", profileRevision);
             if (!executionAvailable) payload.put("execution_available", false);
             payload.putAll(extra);
             return payload;
@@ -561,44 +653,25 @@ public class OpenAiRunService {
                     case "completed", "failed", "cancelled" -> nextStatus;
                     default -> null;
                 };
-                stateMachine.recordEvent(runId, durableState, payload);
+                stateMachine.recordEvent(runId, profile, durableState, payload);
             }
             if (nextStatus != null) status = nextStatus;
             updatedAt = epochSeconds();
             extra.put("last_event", event);
-            for (String key : List.of("output", "usage", "pending_steer", "error")) {
+            if ("approval.request".equals(event)) {
+                extra.put("approval", java.util.Collections.unmodifiableMap(payload));
+            } else if (!"waiting_for_approval".equals(status)) {
+                extra.remove("approval");
+            }
+            for (String key : STATUS_EVENT_FIELDS) {
                 if (fields.containsKey(key)) extra.put(key, fields.get(key));
             }
-            if (!streamOverflowed && !events.offer(new QueuedEvent(payload, false))) {
-                streamOverflowed = true;
-                events.clear();
-                closeEvents();
-            }
-        }
-
-        private void closeEvents() {
-            var end = new QueuedEvent(Map.<String, Object>of(), true);
-            if (!events.offer(end)) {
-                streamOverflowed = true;
-                events.clear();
-                events.offer(end);
-            }
-        }
-
-        private boolean claimEventStream() {
-            return eventStreamClaimed.compareAndSet(false, true);
-        }
-
-        private void closeEventStream() {
-            eventStreamClaimed.set(true);
         }
 
         private synchronized boolean isTerminal() {
             return !executionAvailable || "completed".equals(status) || "failed".equals(status) || "cancelled".equals(status);
         }
     }
-
-    private record QueuedEvent(Map<String, Object> payload, boolean terminal) {}
 
     public record ControlResult(int status, String message, String code, Map<String, Object> body) {
         private static ControlResult ok(Map<String, Object> body) {

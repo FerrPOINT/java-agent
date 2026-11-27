@@ -12,12 +12,17 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
 
 /**
@@ -53,7 +58,7 @@ class ProfileRuntimeServicesTest {
     @Test
     void defaultConfigWriteBootstrapsAndMerges() throws IOException {
         ProfileService profiles = profileService();
-        ProfileConfigWriter writer = new ProfileConfigWriter(prov(profiles), null, new com.fasterxml.jackson.databind.ObjectMapper());
+        ProfileConfigWriter writer = new ProfileConfigWriter(prov(profiles), null, null, null, new ProfileRuntimeRegistry(null));
 
         writer.write("default", Map.of("dashboard", Map.of("theme", "dark")), "test");
 
@@ -64,7 +69,7 @@ class ProfileRuntimeServicesTest {
     @Test
     void invalidYamlIsRejectedAndNeverWritten() throws IOException {
         ProfileService profiles = profileService();
-        ProfileConfigWriter writer = new ProfileConfigWriter(prov(profiles), null, new com.fasterxml.jackson.databind.ObjectMapper());
+        ProfileConfigWriter writer = new ProfileConfigWriter(prov(profiles), null, null, null, new ProfileRuntimeRegistry(null));
 
         assertThatThrownBy(() -> writer.writeRaw("default", "[]", "test"))
             .isInstanceOf(IllegalArgumentException.class)
@@ -73,11 +78,83 @@ class ProfileRuntimeServicesTest {
         assertThat(profiles.configPath("default")).doesNotExist();
     }
 
+    @Test
+    void invalidProfileEditPreservesCurrentRoutingAndValidEditOnlyChangesItsProfile() throws Exception {
+        var profiles = profileService();
+        Files.createDirectories(profiles.profilePath("alpha"));
+        Files.createDirectories(profiles.profilePath("beta"));
+        var modelRouting = new ProfileModelRouting(profiles, new ProfileEnvStore(prov(profiles), new com.azhukov.agent.service.ProfileRuntimeRegistry(null)));
+        var instructions = new ProfileInstructions(new AgentProperties(), profiles,
+            new com.fasterxml.jackson.databind.ObjectMapper());
+        var writer = new ProfileConfigWriter(prov(profiles), null, modelRouting, instructions, new ProfileRuntimeRegistry(null));
+        writer.writeModel("alpha", "openai", "alpha-v1", "https://alpha.example.test/v1", "alpha-fixture");
+        writer.writeModel("beta", "openai", "beta", "https://beta.example.test/v1", "beta-fixture");
+        var acceptedAlpha = modelRouting.bind("alpha", null);
+        var beforeBeta = modelRouting.bind("beta", null);
+        String before = profiles.readRawConfig("alpha");
+
+        assertThatThrownBy(() -> writer.writeRaw("alpha", "model: {provider: openai}", "test"))
+            .isInstanceOf(ProfileModelRouting.ProfileModelUnavailable.class);
+        assertThatThrownBy(() -> writer.writeModel("alpha", "openai", "broken", "file:///invalid", null))
+            .isInstanceOf(ProfileModelRouting.ProfileModelUnavailable.class);
+        assertThatThrownBy(() -> writer.writeRaw("alpha", "dashboard: {}", "test"))
+            .isInstanceOf(ProfileModelRouting.ProfileModelUnavailable.class);
+        assertThatThrownBy(() -> writer.write("alpha", Map.of("instructions", Map.of("base_role", "designer")), "test"))
+            .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> writer.writeRaw("alpha", "model: {}\nmodel: [fixture-secret]\n", "test"))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("Invalid profile YAML");
+        assertThat(profiles.readRawConfig("alpha")).isEqualTo(before);
+        assertThat(modelRouting.bind("alpha", null)).isEqualTo(acceptedAlpha);
+
+        writer.write("alpha", Map.of("model", Map.of("default", "alpha-v2", "api_key", "alpha-replacement")), "test");
+        assertThat(modelRouting.bind("alpha", null).modelName()).isEqualTo("alpha-v2");
+        assertThat(modelRouting.bind("alpha", null).apiKey()).isEqualTo("alpha-replacement");
+        assertThat(modelRouting.bind("alpha", acceptedAlpha)).isSameAs(acceptedAlpha);
+        assertThat(modelRouting.bind("beta", null)).isEqualTo(beforeBeta);
+    }
+
+    @Test
+    void aBlockedConfigWriteDoesNotDelayAnotherProfile() throws Exception {
+        var profiles = spy(profileService());
+        Files.createDirectories(profiles.profilePath("alpha"));
+        Files.createDirectories(profiles.profilePath("beta"));
+        var routing = new ProfileModelRouting(profiles, new ProfileEnvStore(prov(profiles), new com.azhukov.agent.service.ProfileRuntimeRegistry(null)));
+        var instructions = new ProfileInstructions(new AgentProperties(), profiles,
+            new com.fasterxml.jackson.databind.ObjectMapper());
+        var writer = new ProfileConfigWriter(prov(profiles), null, routing, instructions,
+            new ProfileRuntimeRegistry(null));
+        var readEntered = new CountDownLatch(1);
+        var releaseRead = new CountDownLatch(1);
+        doAnswer(invocation -> {
+            readEntered.countDown();
+            if (!releaseRead.await(5, TimeUnit.SECONDS)) {
+                throw new IOException("Test did not release the alpha profile read");
+            }
+            return invocation.callRealMethod();
+        }).when(profiles).readDiskExecutionConfig("alpha");
+
+        try (var threads = Executors.newFixedThreadPool(2)) {
+            var alpha = threads.submit(() -> writer.write("alpha", Map.of("max_concurrent_runs", 1), "test"));
+            try {
+                assertThat(readEntered.await(2, TimeUnit.SECONDS)).isTrue();
+                var beta = threads.submit(() -> writer.write("beta", Map.of("max_concurrent_runs", 2), "test"));
+                assertThat(beta.get(2, TimeUnit.SECONDS)).isPositive();
+                assertThat(alpha.isDone()).isFalse();
+                assertThat(profiles.readExecutionConfig("beta")).containsEntry("max_concurrent_runs", 2);
+            } finally {
+                releaseRead.countDown();
+            }
+            assertThat(alpha.get(2, TimeUnit.SECONDS)).isPositive();
+            assertThat(profiles.readExecutionConfig("alpha")).containsEntry("max_concurrent_runs", 1);
+        }
+    }
+
     // ── ProfileEnvStore ──────────────────────────────────────────────────
 
     @Test
     void envStoreRejectsNonAllowlistedKeys() throws IOException {
-        ProfileEnvStore store = new ProfileEnvStore(prov(profileService()));
+        ProfileEnvStore store = new ProfileEnvStore(prov(profileService()), new com.azhukov.agent.service.ProfileRuntimeRegistry(null));
         assertThatThrownBy(() -> store.set("default", "ARBITRARY_KEY", "x"))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessageContaining("not allowlisted");
@@ -87,7 +164,7 @@ class ProfileRuntimeServicesTest {
     void envStoreMasksValuesAndRoundTripsDeletes() throws IOException {
         ProfileService profiles = profileService();
         profiles.ensureDefaultProfile();
-        ProfileEnvStore store = new ProfileEnvStore(prov(profiles));
+        ProfileEnvStore store = new ProfileEnvStore(prov(profiles), new com.azhukov.agent.service.ProfileRuntimeRegistry(null));
 
         store.set("default", "AGENT_MODEL_API_KEY", "super-secret");
         Map<String, Map<String, Object>> rows = store.maskedRows("default");
@@ -106,13 +183,90 @@ class ProfileRuntimeServicesTest {
     void envFileHasOwnerOnlyPermissions() throws IOException {
         ProfileService profiles = profileService();
         profiles.ensureDefaultProfile();
-        ProfileEnvStore store = new ProfileEnvStore(prov(profiles));
+        ProfileEnvStore store = new ProfileEnvStore(prov(profiles), new com.azhukov.agent.service.ProfileRuntimeRegistry(null));
         store.set("default", "AGENT_TTS_API_KEY", "x");
         Path envPath = profiles.profilesRoot().resolve("default").resolve(".env");
         assertThat(Files.isRegularFile(envPath)).isTrue();
         var perms = Files.getPosixFilePermissions(envPath);
         assertThat(perms.stream().noneMatch(p -> p.name().startsWith("GROUP_")
             || p.name().startsWith("OTHERS_"))).isTrue();
+    }
+
+    @Test
+    void envStoreRejectsAnotherProfilesLinkedCredentials() throws Exception {
+        var profiles = profileService();
+        Files.createDirectories(profiles.profilePath("alpha"));
+        Files.createDirectories(profiles.profilePath("beta"));
+        var store = new ProfileEnvStore(prov(profiles), new com.azhukov.agent.service.ProfileRuntimeRegistry(null));
+        store.set("alpha", "AGENT_MODEL_API_KEY", "alpha-fixture");
+        Files.createSymbolicLink(profiles.profilePath("beta").resolve(".env"),
+            profiles.profilePath("alpha").resolve(".env"));
+
+        assertThatThrownBy(() -> store.set("beta", "AGENT_MODEL_API_KEY", "beta-fixture"))
+            .isInstanceOf(IOException.class);
+        assertThatThrownBy(() -> store.delete("beta", "AGENT_MODEL_API_KEY"))
+            .isInstanceOf(IOException.class);
+        assertThat(store.readAll("alpha")).containsEntry("AGENT_MODEL_API_KEY", "alpha-fixture");
+    }
+
+    @Test
+    void envStoreRejectsMultiLineCredentialsBeforeWriting() throws Exception {
+        var profiles = profileService();
+        Files.createDirectories(profiles.profilePath("alpha"));
+        var store = new ProfileEnvStore(prov(profiles), new com.azhukov.agent.service.ProfileRuntimeRegistry(null));
+        store.set("alpha", "AGENT_MODEL_API_KEY", "alpha-fixture");
+
+        assertThatThrownBy(() -> store.set("alpha", "AGENT_MODEL_API_KEY",
+            "replacement\rAGENT_MODEL_BASE_URL=https://injected.example.test"))
+            .isInstanceOf(IllegalArgumentException.class);
+        assertThat(store.readAll("alpha")).containsExactlyEntriesOf(Map.of("AGENT_MODEL_API_KEY", "alpha-fixture"));
+    }
+
+    @Test
+    void preparedModelRoutesKeepEachProfilesCredentialsAcrossUpdates() throws Exception {
+        var profiles = profileService();
+        Files.createDirectories(profiles.profilePath("alpha"));
+        Files.createDirectories(profiles.profilePath("beta"));
+        var env = new ProfileEnvStore(prov(profiles), new com.azhukov.agent.service.ProfileRuntimeRegistry(null));
+        var routing = new ProfileModelRouting(profiles, env);
+        profiles.writeConfig("alpha", Map.of("model", Map.of("provider", "openai", "default", "alpha-v1", "base_url", "https://alpha.example.test/v1")));
+        env.set("alpha", "AGENT_MODEL_API_KEY", "fixture-alpha");
+        profiles.writeConfig("beta", Map.of("model", Map.of("provider", "deepseek", "default", "beta-v1", "base_url", "https://beta.example.test/v1", "api_key", "fixture-beta")));
+
+        var request = new com.azhukov.agent.core.client.ModelRequestOptions("global", null, false, null,
+            null, null, null, "global", "https://global.example.test/v1", "fixture-global");
+        var alpha = routing.bind("alpha", request);
+        var beta = routing.bind("beta", request);
+        assertThat(alpha.modelName()).isEqualTo("alpha-v1");
+        assertThat(alpha.baseUrl()).isEqualTo("https://alpha.example.test/v1");
+        assertThat(alpha.apiKey()).isEqualTo("fixture-alpha");
+        assertThat(beta.modelName()).isEqualTo("beta-v1");
+        assertThat(beta.baseUrl()).isEqualTo("https://beta.example.test/v1");
+        assertThat(beta.apiKey()).isEqualTo("fixture-beta");
+
+        profiles.writeConfig("alpha", Map.of("model", Map.of("provider", "openai", "default", "alpha-v2", "base_url", "https://alpha.example.test/v1", "api_key", "fixture-new")));
+        assertThat(routing.bind("alpha", alpha)).isSameAs(alpha);
+        assertThat(routing.bind("alpha", request).modelName()).isEqualTo("alpha-v2");
+        assertThat(routing.bind("alpha", request).apiKey()).isEqualTo("fixture-new");
+        assertThat(routing.bind("beta", request)).isEqualTo(beta);
+        assertThatThrownBy(() -> routing.bind("beta", alpha)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void missingProfileCredentialsAndLinkedConfigCannotSelectAnotherModel() throws Exception {
+        var profiles = profileService();
+        var routing = new ProfileModelRouting(profiles, new ProfileEnvStore(prov(profiles), new com.azhukov.agent.service.ProfileRuntimeRegistry(null)));
+        Files.createDirectories(profiles.profilePath("alpha"));
+        Files.createDirectories(profiles.profilePath("beta"));
+        profiles.writeConfig("alpha", Map.of("model", Map.of("provider", "openai", "default", "alpha", "base_url", "https://alpha.example.test/v1", "api_key", "fixture-alpha")));
+        profiles.writeConfig("beta", Map.of("model", Map.of("provider", "openai", "default", "beta", "base_url", "https://beta.example.test/v1")));
+        assertThatThrownBy(() -> routing.bind("beta", null))
+            .isInstanceOf(ProfileModelRouting.ProfileModelUnavailable.class);
+        Files.delete(profiles.configPath("beta"));
+        Files.createSymbolicLink(profiles.configPath("beta"), profiles.configPath("alpha"));
+        assertThatThrownBy(() -> routing.bind("beta", null))
+            .isInstanceOf(ProfileModelRouting.ProfileModelUnavailable.class);
+        assertThat(routing.bind("alpha", null).modelName()).isEqualTo("alpha");
     }
 
     // ── ProfileRuntimeRegistry ───────────────────────────────────────────

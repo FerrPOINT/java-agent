@@ -607,7 +607,7 @@ class AgentStreamingServiceSseErrorTest {
             .insertSessionRow(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
                 org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
                 org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any(),
-                org.mockito.ArgumentMatchers.any());
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
         return port;
     }
 

@@ -37,6 +37,10 @@ public record Session(
         return new Session(id, userId, title, modelProvider, modelName, systemPrompt, Map.copyOf(updated), subgoal);
     }
 
+    public String profile() {
+        return metadata.getOrDefault("profile", "default");
+    }
+
     public String getMetadata(String key) {
         return metadata != null ? metadata.get(key) : null;
     }

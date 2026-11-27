@@ -26,7 +26,6 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -49,12 +48,13 @@ class SessionCrudControllerTest {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Mock private SessionQueryService sessionQueryService;
+    @Mock private com.azhukov.agent.service.ProfileService profiles;
     @Mock private AgentRuntimeService agentRuntimeService;
     @Mock private AgentStreamingService streamingService;
 
     @BeforeEach
     void setUp() {
-        SessionCrudController controller = new SessionCrudController(sessionQueryService,
+        SessionCrudController controller = new SessionCrudController(sessionQueryService, profiles,
             agentRuntimeService, streamingService, null);
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler(new com.fasterxml.jackson.databind.ObjectMapper()))
@@ -65,7 +65,7 @@ class SessionCrudControllerTest {
 
     @Test
     void listSessionsReturnsMapWithDefaults() throws Exception {
-        when(sessionQueryService.listSessions(50, 0, null))
+        when(sessionQueryService.listSessions("default", 50, 0, null))
             .thenReturn(Map.of("object", "list", "data", List.of()));
 
         mockMvc.perform(get("/api/v2/sessions"))
@@ -75,7 +75,7 @@ class SessionCrudControllerTest {
 
     @Test
     void listSessionsWithCustomPaginationAndUserId() throws Exception {
-        when(sessionQueryService.listSessions(10, 20, "user-1"))
+        when(sessionQueryService.listSessions("default", 10, 20, "user-1"))
             .thenReturn(Map.of("object", "list", "data", List.of(), "limit", 10, "offset", 20));
 
         mockMvc.perform(get("/api/v2/sessions")
@@ -91,7 +91,7 @@ class SessionCrudControllerTest {
 
     @Test
     void createSessionReturns201WithLocation() throws Exception {
-        when(sessionQueryService.createSession(null, null, null))
+        when(sessionQueryService.createSession("default", null, null, null))
             .thenReturn(Map.of("id", SESSION_ID.toString(), "object", "session"));
 
         mockMvc.perform(post("/api/v2/sessions"))
@@ -102,7 +102,7 @@ class SessionCrudControllerTest {
 
     @Test
     void createSessionWithBodyPassesFields() throws Exception {
-        when(sessionQueryService.createSession("user-1", "gpt-4", "My Session"))
+        when(sessionQueryService.createSession("default", "user-1", "gpt-4", "My Session"))
             .thenReturn(Map.of("id", SESSION_ID.toString()));
 
         mockMvc.perform(post("/api/v2/sessions")
@@ -113,14 +113,14 @@ class SessionCrudControllerTest {
             .andExpect(status().isCreated())
             .andExpect(jsonPath("$.id").value(SESSION_ID.toString()));
 
-        verify(sessionQueryService).createSession("user-1", "gpt-4", "My Session");
+        verify(sessionQueryService).createSession("default", "user-1", "gpt-4", "My Session");
     }
 
     // ── Get session ──
 
     @Test
     void getSessionReturns200WhenFound() throws Exception {
-        when(sessionQueryService.getSession(SESSION_ID))
+        when(sessionQueryService.getSession("default", SESSION_ID))
             .thenReturn(Optional.of(Map.of("id", SESSION_ID.toString(), "title", "Test")));
 
         mockMvc.perform(get("/api/v2/sessions/{sessionId}", SESSION_ID))
@@ -130,8 +130,27 @@ class SessionCrudControllerTest {
     }
 
     @Test
+    void anotherProfileCannotReadOrDeleteAKnownSession() throws Exception {
+        for (String profile : List.of("alpha", "beta")) {
+            when(profiles.isValidNamedProfileName(profile)).thenReturn(true);
+            when(profiles.knownProfile(profile)).thenReturn(true);
+        }
+        when(sessionQueryService.getSession("alpha", SESSION_ID))
+            .thenReturn(Optional.of(Map.of("id", SESSION_ID.toString(), "title", "Alpha transcript")));
+        mockMvc.perform(get("/api/v2/sessions/{sessionId}", SESSION_ID).param("profile", "alpha"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.title").value("Alpha transcript"));
+        mockMvc.perform(get("/api/v2/sessions/{sessionId}", SESSION_ID).param("profile", "beta"))
+            .andExpect(status().isNotFound());
+        mockMvc.perform(delete("/api/v2/sessions/{sessionId}", SESSION_ID).param("profile", "beta"))
+            .andExpect(status().isNotFound());
+        mockMvc.perform(post("/api/v2/sessions/{sessionId}/chat", SESSION_ID).param("profile", "beta")
+                .contentType(MediaType.APPLICATION_JSON).content("{\"message\":\"hello\"}"))
+            .andExpect(status().isBadRequest());
+    }
+
+    @Test
     void getSessionReturns404WhenNotFound() throws Exception {
-        when(sessionQueryService.getSession(SESSION_ID))
+        when(sessionQueryService.getSession("default", SESSION_ID))
             .thenReturn(Optional.empty());
 
         mockMvc.perform(get("/api/v2/sessions/{sessionId}", SESSION_ID))
@@ -142,7 +161,7 @@ class SessionCrudControllerTest {
 
     @Test
     void updateSessionReturns200WhenFound() throws Exception {
-        when(sessionQueryService.updateSession(SESSION_ID, "New Title"))
+        when(sessionQueryService.updateSession("default", SESSION_ID, "New Title"))
             .thenReturn(Optional.of(Map.of("id", SESSION_ID.toString(), "title", "New Title")));
 
         mockMvc.perform(patch("/api/v2/sessions/{sessionId}", SESSION_ID)
@@ -156,7 +175,7 @@ class SessionCrudControllerTest {
 
     @Test
     void updateSessionReturns404WhenNotFound() throws Exception {
-        when(sessionQueryService.updateSession(eq(SESSION_ID), any()))
+        when(sessionQueryService.updateSession(eq("default"), eq(SESSION_ID), any()))
             .thenReturn(Optional.empty());
 
         mockMvc.perform(patch("/api/v2/sessions/{sessionId}", SESSION_ID)
@@ -171,7 +190,7 @@ class SessionCrudControllerTest {
 
     @Test
     void deleteSessionReturns200WithBodyWhenDeleted() throws Exception {
-        when(sessionQueryService.deleteSession(SESSION_ID)).thenReturn(true);
+        when(sessionQueryService.deleteSession("default", SESSION_ID)).thenReturn(true);
 
         mockMvc.perform(delete("/api/v2/sessions/{sessionId}", SESSION_ID))
             .andExpect(status().isOk())
@@ -182,7 +201,7 @@ class SessionCrudControllerTest {
 
     @Test
     void deleteSessionReturns404WhenNotFound() throws Exception {
-        when(sessionQueryService.deleteSession(SESSION_ID)).thenReturn(false);
+        when(sessionQueryService.deleteSession("default", SESSION_ID)).thenReturn(false);
 
         mockMvc.perform(delete("/api/v2/sessions/{sessionId}", SESSION_ID))
             .andExpect(status().isNotFound());
@@ -194,7 +213,7 @@ class SessionCrudControllerTest {
     void getSessionMessagesReturns200WithMessages() throws Exception {
         MessageDto msg = new MessageDto("m1", SESSION_ID.toString(), "user", "hello", null, null, 0, "2024-01-01T00:00:00Z");
         MessageListDto dto = new MessageListDto("list", SESSION_ID.toString(), List.of(msg), 100, 0);
-        when(sessionQueryService.getSessionMessages(SESSION_ID, 100, 0))
+        when(sessionQueryService.getSessionMessages("default", SESSION_ID, 100, 0))
             .thenReturn(Optional.of(dto));
 
         mockMvc.perform(get("/api/v2/sessions/{sessionId}/messages", SESSION_ID))
@@ -206,7 +225,7 @@ class SessionCrudControllerTest {
     @Test
     void getSessionMessagesWithPagination() throws Exception {
         MessageListDto dto = new MessageListDto("list", SESSION_ID.toString(), List.of(), 10, 5);
-        when(sessionQueryService.getSessionMessages(SESSION_ID, 10, 5))
+        when(sessionQueryService.getSessionMessages("default", SESSION_ID, 10, 5))
             .thenReturn(Optional.of(dto));
 
         mockMvc.perform(get("/api/v2/sessions/{sessionId}/messages", SESSION_ID)
@@ -219,7 +238,7 @@ class SessionCrudControllerTest {
 
     @Test
     void getSessionMessagesReturns404WhenSessionNotFound() throws Exception {
-        when(sessionQueryService.getSessionMessages(eq(SESSION_ID), anyInt(), anyInt()))
+        when(sessionQueryService.getSessionMessages(eq("default"), eq(SESSION_ID), anyInt(), anyInt()))
             .thenReturn(Optional.empty());
 
         mockMvc.perform(get("/api/v2/sessions/{sessionId}/messages", SESSION_ID))
@@ -228,8 +247,8 @@ class SessionCrudControllerTest {
 
     @Test
     void sessionModelLockRejectsForeignSessionBeforePersisting() throws Exception {
-        doThrow(new SecurityException("Session does not belong to the current user"))
-            .when(agentRuntimeService).switchModel(SESSION_ID, "gpt-4", "openai");
+        when(sessionQueryService.sessionExists("default", SESSION_ID))
+            .thenThrow(new SecurityException("Session does not belong to the current user"));
 
         mockMvc.perform(post("/api/v2/sessions/{sessionId}/model", SESSION_ID)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -241,7 +260,7 @@ class SessionCrudControllerTest {
 
     @Test
     void sessionChatReturnsResponseWhenSessionExists() throws Exception {
-        when(sessionQueryService.sessionExists(SESSION_ID)).thenReturn(true);
+        when(sessionQueryService.sessionExists("default", SESSION_ID)).thenReturn(true);
         ChatResponseDto chatResponse = new ChatResponseDto(SESSION_ID, "hello back", List.of(), true);
         when(agentRuntimeService.runTurn(any())).thenReturn(chatResponse);
 
@@ -257,7 +276,7 @@ class SessionCrudControllerTest {
 
     @Test
     void sessionChatReturns404WhenSessionDoesNotExist() throws Exception {
-        when(sessionQueryService.sessionExists(SESSION_ID)).thenReturn(false);
+        when(sessionQueryService.sessionExists("default", SESSION_ID)).thenReturn(false);
 
         mockMvc.perform(post("/api/v2/sessions/{sessionId}/chat", SESSION_ID)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -270,7 +289,7 @@ class SessionCrudControllerTest {
     @Test
     void sessionChatWithBlankMessageStillProcessesWhenSessionExists() throws Exception {
         // SessionChatRequest.message has no @NotBlank — blank message is forwarded to the runtime.
-        when(sessionQueryService.sessionExists(SESSION_ID)).thenReturn(true);
+        when(sessionQueryService.sessionExists("default", SESSION_ID)).thenReturn(true);
         ChatResponseDto chatResponse = new ChatResponseDto(SESSION_ID, "", List.of(), true);
         when(agentRuntimeService.runTurn(any())).thenReturn(chatResponse);
 
@@ -299,7 +318,7 @@ class SessionCrudControllerTest {
 
     @Test
     void sessionChatStreamReturnsSseWhenSessionExists() throws Exception {
-        when(sessionQueryService.sessionExists(SESSION_ID)).thenReturn(true);
+        when(sessionQueryService.sessionExists("default", SESSION_ID)).thenReturn(true);
         SseEmitter emitter = new SseEmitter();
         when(streamingService.streamTurn(any())).thenReturn(emitter);
 
@@ -314,7 +333,7 @@ class SessionCrudControllerTest {
 
     @Test
     void sessionChatStreamReturns404WhenSessionDoesNotExist() throws Exception {
-        when(sessionQueryService.sessionExists(SESSION_ID)).thenReturn(false);
+        when(sessionQueryService.sessionExists("default", SESSION_ID)).thenReturn(false);
 
         mockMvc.perform(post("/api/v2/sessions/{sessionId}/chat/stream", SESSION_ID)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -328,7 +347,7 @@ class SessionCrudControllerTest {
     @Test
     void sessionChatStreamWithBlankMessageStillProcessesWhenSessionExists() throws Exception {
         // SessionChatRequest.message has no @NotBlank — blank message is forwarded.
-        when(sessionQueryService.sessionExists(SESSION_ID)).thenReturn(true);
+        when(sessionQueryService.sessionExists("default", SESSION_ID)).thenReturn(true);
         SseEmitter emitter = new SseEmitter();
         when(streamingService.streamTurn(any())).thenReturn(emitter);
 

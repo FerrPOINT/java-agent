@@ -3,6 +3,10 @@ package com.azhukov.agent.api;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.skill.SkillManager;
 import com.azhukov.agent.core.tool.ToolRegistry;
+import com.azhukov.agent.service.OpenAiRunService;
+import com.azhukov.agent.service.ProfileModelRouting;
+import com.azhukov.agent.service.ProfileService;
+import com.azhukov.agent.service.ProfileSkills;
 import com.azhukov.agent.service.RuntimeConfigService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -25,6 +29,10 @@ class CapabilitiesControllerTest {
     private AgentProperties properties;
     private AgentProperties.ApiProperties apiProps;
     private RuntimeConfigService runtimeConfigService;
+    private ProfileService profiles;
+    private ProfileModelRouting profileModels;
+    private ProfileSkills profileSkills;
+    private OpenAiRunService runs;
 
     @BeforeEach
     void setUp() {
@@ -52,8 +60,14 @@ class CapabilitiesControllerTest {
         SkillManager skillManager = mock(SkillManager.class);
         when(skillManager.listSkillNames()).thenReturn(List.of("skill1", "skill2"));
 
+        profiles = mock(ProfileService.class);
+        profileModels = mock(ProfileModelRouting.class);
+        profileSkills = mock(ProfileSkills.class);
+        runs = mock(OpenAiRunService.class);
         mockMvc = MockMvcBuilders.standaloneSetup(new CapabilitiesController(
-            properties, toolRegistry, skillManager, runtimeConfigService)).build();
+            properties, toolRegistry, skillManager, runtimeConfigService,
+            profiles, profileModels, profileSkills, runs, new com.azhukov.agent.service.ProfileRuntimeRegistry(null),
+            new org.springframework.mock.env.MockEnvironment(), ProfileExecutionConfigurationFixture.settings())).build();
     }
 
     @Test
@@ -135,13 +149,37 @@ class CapabilitiesControllerTest {
     }
 
     @Test
-    void profilePrefixedCapabilitiesRouteMirrorsHermesMultiplexAlias() throws Exception {
-        mockMvc.perform(get("/p/work/v1/capabilities"))
+    void explicitDefaultCapabilitiesMatchStandaloneCapabilities() throws Exception {
+        mockMvc.perform(get("/p/default/v1/capabilities"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.object").value("java-agent.api_server.capabilities"))
             .andExpect(jsonPath("$.endpoints.models.path").value("/v1/models"))
             .andExpect(jsonPath("$.endpoints.responses.path").value("/v1/responses"))
             .andExpect(jsonPath("$.endpoints.runs.path").value("/v1/runs"));
+    }
+
+    @Test
+    void namedCapabilitiesUseTheirRouteAndRejectUnknownOrIncompleteProfiles() throws Exception {
+        when(profiles.isValidNamedProfileName("work")).thenReturn(true);
+        when(profiles.knownProfile("work")).thenReturn(true);
+        when(profileModels.bind("work", null)).thenReturn(
+            com.azhukov.agent.core.client.ModelRequestOptions.empty()
+                .bindProfile("work", "work-model", "openai", "https://fixture.invalid", "fixture-key"));
+        var view = mock(ProfileSkills.View.class);
+        when(profileSkills.forProfile("work")).thenReturn(view);
+        when(runs.durableAcceptanceConfigured()).thenReturn(true);
+        mockMvc.perform(get("/p/work/v1/capabilities"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.profile").value("work"))
+            .andExpect(jsonPath("$.model").value("work-model"))
+            .andExpect(jsonPath("$.features.runs_idempotency.durable").value(true))
+            .andExpect(jsonPath("$.endpoints.runs.path").value("/v1/runs"))
+            .andExpect(jsonPath("$.toolsets").doesNotExist())
+            .andExpect(jsonPath("$.tool_names").isArray())
+            .andExpect(jsonPath("$.base_instructions").doesNotExist());
+        mockMvc.perform(get("/p/unknown/v1/capabilities")).andExpect(status().isNotFound());
+        when(profileModels.bind("work", null)).thenThrow(new ProfileModelRouting.ProfileModelUnavailable());
+        mockMvc.perform(get("/p/work/v1/capabilities")).andExpect(status().isServiceUnavailable());
     }
 
     @Test
@@ -194,8 +232,10 @@ class CapabilitiesControllerTest {
         when(skillManager.listSkillNames()).thenReturn(List.of());
 
         var controller = new CapabilitiesController(
-            properties, toolRegistry, skillManager, runtimeConfigService);
-        var result = controller.capabilities();
+            properties, toolRegistry, skillManager, runtimeConfigService,
+            profiles, profileModels, profileSkills, runs, new com.azhukov.agent.service.ProfileRuntimeRegistry(null),
+            new org.springframework.mock.env.MockEnvironment(), ProfileExecutionConfigurationFixture.settings());
+        var result = controller.capabilities(null);
         assertThat(result).containsEntry("platform", "java-agent");
         assertThat(result).containsKey("features");
         assertThat(result).containsKey("endpoints");

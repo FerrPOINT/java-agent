@@ -378,6 +378,10 @@ public class DefaultPromptBuilder implements PromptBuilder {
     private final SkillManager skillManager;
     private final com.azhukov.agent.core.context.CodingWorkspaceSnapshot codingWorkspaceSnapshot;
     private final EnvironmentProbe environmentProbe;
+    @Autowired
+    private com.azhukov.agent.service.ProfileInstructions profileInstructions;
+    @Autowired
+    private com.azhukov.agent.service.ProfileSkills profileSkills;
 
     // Request-scoped effective tool surface while composing/caching a prompt.
     private final ThreadLocal<Set<String>> requestToolNames = new ThreadLocal<>();
@@ -456,15 +460,19 @@ public class DefaultPromptBuilder implements PromptBuilder {
      * absent from its API tool definitions (P-04).
      */
     public Message buildSystemMessageForTools(Session session, Set<String> effectiveToolNames) {
+        return buildSystemMessageForTools(session, effectiveToolNames, null);
+    }
+
+    public Message buildSystemMessageForTools(Session session, Set<String> effectiveToolNames, String override) {
         if (effectiveToolNames == null) {
-            return buildSystemMessage(session, null);
+            return buildSystemMessage(session, override);
         }
         Set<String> scopedNames = Set.copyOf(effectiveToolNames);
         Session scopedSession = session == null ? null
             : session.withMetadata("effectiveToolNames", String.join(",", new java.util.TreeSet<>(scopedNames)));
         requestToolNames.set(scopedNames);
         try {
-            return buildSystemMessage(scopedSession, null);
+            return buildSystemMessage(scopedSession, override);
         } finally {
             requestToolNames.remove();
         }
@@ -488,11 +496,12 @@ public class DefaultPromptBuilder implements PromptBuilder {
             sessionId += ":tools:" + Integer.toHexString(effectiveToolNames.hashCode());
         }
 
-        PromptCacheTracker.CachedSystemPrompt cached = null;
-        if (cacheTracker != null) {
-            cached = cacheTracker.getOrBuild(sessionId, () -> buildThreeTierPrompt(session, systemMessageOverride));
+        var instructions = namedInstructions(session);
+        PromptCacheTracker.CachedSystemPrompt cached;
+        if (cacheTracker != null && instructions == null) {
+            cached = cacheTracker.getOrBuild(sessionId, () -> buildThreeTierPrompt(session, systemMessageOverride, null));
         } else {
-            cached = buildThreeTierPrompt(session, systemMessageOverride);
+            cached = buildThreeTierPrompt(session, systemMessageOverride, instructions);
         }
 
         String text = cached.fullPrompt();
@@ -517,7 +526,7 @@ public class DefaultPromptBuilder implements PromptBuilder {
             }
         }
 
-        return usesDeveloperRole()
+        return usesDeveloperRole(session, instructions != null)
             ? Message.developer(text)
             : Message.system(text);
     }
@@ -526,8 +535,12 @@ public class DefaultPromptBuilder implements PromptBuilder {
      * Check whether the configured model expects the OpenAI 'developer' role
      * instead of 'system' (e.g. GPT-5, Codex).
      */
-    private boolean usesDeveloperRole() {
-        return ModelPromptPolicy.usesDeveloperRole(properties.getModel().getModelName());
+    private boolean usesDeveloperRole(Session session, boolean namedProfile) {
+        return ModelPromptPolicy.usesDeveloperRole(namedProfile ? session.modelName() : properties.getModel().getModelName());
+    }
+
+    private com.azhukov.agent.service.ProfileInstructions.Snapshot namedInstructions(Session session) {
+        return session == null || "default".equals(session.profile()) ? null : profileInstructions.read(session.profile());
     }
 
     /**
@@ -969,6 +982,10 @@ public class DefaultPromptBuilder implements PromptBuilder {
             return "";
         }
 
+        return buildSkillsIndex(skills, false);
+    }
+
+    private String buildSkillsIndex(List<SkillInfo> skills, boolean namedProfile) {
         if (skills == null || skills.isEmpty()) {
             return "";
         }
@@ -1013,7 +1030,11 @@ public class DefaultPromptBuilder implements PromptBuilder {
             .append("or troubleshoot this agent itself — its configuration, models, providers, tools, \n")
             .append("skills, or any feature — check the relevant bundled skill and the agent's own \n")
             .append("configuration first instead of guessing or inventing workarounds.\n");
-        sb.append("If a skill has issues, fix it with skill_manage(action='patch').\n");
+        if (namedProfile) {
+            sb.append("Shared Base skills are read-only. Fix issues in local skills with skill_manage(action='patch').\n");
+        } else {
+            sb.append("If a skill has issues, fix it with skill_manage(action='patch').\n");
+        }
         sb.append("After difficult/iterative tasks, offer to save as a skill. ");
         sb.append("If a skill you loaded was missing steps, had wrong commands, or needed ")
             .append("pitfalls you discovered, update it before finishing.\n");
@@ -1238,12 +1259,23 @@ public class DefaultPromptBuilder implements PromptBuilder {
         return mem != null && mem.getMemoryCharLimit() > 0 ? mem.getMemoryCharLimit() : 2200;
     }
 
-    private PromptCacheTracker.CachedSystemPrompt buildThreeTierPrompt(Session session, String systemMessageOverride) {
+    private PromptCacheTracker.CachedSystemPrompt buildThreeTierPrompt(Session session, String systemMessageOverride,
+            com.azhukov.agent.service.ProfileInstructions.Snapshot named) {
         // ── Stable tier (never changes per session) ──
         StringBuilder stable = new StringBuilder();
 
-        // Fix 1: SOUL.md custom persona support
-        String soulContent = loadSoulMd();
+        if (named != null) {
+            stable.append("## Instruction priority\n\n")
+                .append("Apply Base role rules first, then the agent profile's persona and preferences. ")
+                .append("Project instructions specialize work inside that workspace. ")
+                .append("AGENTS.override.md takes priority over other project instructions. ")
+                .append("Apply request-specific instructions within these boundaries.\n\n");
+            if (!named.base().roleText().isBlank()) {
+                stable.append("## Base role instructions\n\n").append(named.base().roleText().strip()).append("\n\n");
+            }
+        }
+        String soulContent = named == null ? loadSoulMd()
+            : sanitizeInstruction(named.persona(), "SOUL.md", SOUL_MD_MAX_CHARS);
         if (soulContent != null && !soulContent.isBlank()) {
             stable.append(soulContent).append("\n\n");
         } else {
@@ -1304,7 +1336,7 @@ public class DefaultPromptBuilder implements PromptBuilder {
         // Hermes injects model guidance only when tools are available (if agent.valid_tool_names:).
         // Without tools, the execution-discipline guidance is wasteful and confusing.
         String modelGuidance = getModelGuidance();
-        boolean hasTools = !toolRegistry.getDefinitions().isEmpty();
+        boolean hasTools = !getAvailableToolNames().isEmpty();
         if (!modelGuidance.isEmpty() && hasTools) {
             stable.append("\n").append(modelGuidance);
         }
@@ -1344,13 +1376,17 @@ public class DefaultPromptBuilder implements PromptBuilder {
         }
 
         // ── Fix 4: Context files (AGENTS.md, CLAUDE.md, .cursorrules) ──
-        String contextFiles = buildContextFilesPrompt();
+        String contextFiles = named == null ? buildContextFilesPrompt() : named.project() == null ? ""
+            : "## " + named.project().file() + "\n\n"
+                + sanitizeInstruction(named.project().content(), named.project().file(), CONTEXT_FILE_MAX_CHARS);
         if (!contextFiles.isEmpty()) {
             contextTier.append(contextFiles).append("\n\n");
         }
 
         // h90: AGENTS.override.md — if present, append as override section to system prompt.
-        String overrideContent = loadOverrideFile();
+        String overrideContent = named == null ? loadOverrideFile() : named.projectOverride().isBlank() ? ""
+            : "## Override Instructions (AGENTS.override.md)\n\n"
+                + sanitizeInstruction(named.projectOverride(), OVERRIDE_FILE_NAME, OVERRIDE_FILE_MAX_CHARS);
         if (!overrideContent.isEmpty()) {
             contextTier.append(overrideContent).append("\n\n");
         }
@@ -1373,8 +1409,8 @@ public class DefaultPromptBuilder implements PromptBuilder {
         // its verify loop up front so it doesn't rediscover it every session.
         // Gated by CodingPostureResolver (Hermes resolve_runtime_mode) — a
         // notes/writing repo must NOT flip into coding posture.
-        boolean shouldEmitCodingBlock = true;
-        if (codingPostureResolver != null) {
+        boolean shouldEmitCodingBlock = named == null;
+        if (shouldEmitCodingBlock && codingPostureResolver != null) {
             String mode = properties.getCore().getCodingContext();
             // Platform from session metadata: "telegram" → messaging surface
             // (not coding); "cli"/null → interactive coding surface (default).
@@ -1418,7 +1454,7 @@ public class DefaultPromptBuilder implements PromptBuilder {
         // uv vs pip, missing pip) so the model picks the right install
         // strategy up front. Emits NOTHING when the environment is clean —
         // zero token cost. Probe failure never blocks prompt build.
-        if (environmentProbe != null) {
+        if (named == null && environmentProbe != null) {
             try {
                 String probeLine = environmentProbe.getProbeLine();
                 if (probeLine != null && !probeLine.isBlank()) {
@@ -1441,7 +1477,12 @@ public class DefaultPromptBuilder implements PromptBuilder {
         // stable/context prefix; placed before the turn-varying memory/
         // timestamp tail so an unchanged index still falls inside the reused
         // prefix on implicit longest-prefix backends.
-        String skillsIndex = buildSkillsIndex();
+        String skillsIndex = "";
+        if (named == null) {
+            skillsIndex = buildSkillsIndex();
+        } else if (getAvailableToolNames().contains("skill_view")) {
+            skillsIndex = buildSkillsIndex(profileSkills.list(session.profile(), named), true);
+        }
         if (!skillsIndex.isEmpty()) {
             volatileTier.append(skillsIndex).append("\n\n");
         }
@@ -1519,8 +1560,12 @@ public class DefaultPromptBuilder implements PromptBuilder {
         );
     }
 
+    private String sanitizeInstruction(String text, String file, int limit) {
+        return truncateContent(scanContextContent(stripYamlFrontmatter(text.strip()), file), file, limit);
+    }
+
     private String buildDefaultPrompt(Session session) {
-        var cached = buildThreeTierPrompt(session, null);
+        var cached = buildThreeTierPrompt(session, null, namedInstructions(session));
         return cached.fullPrompt();
     }
 }

@@ -8,6 +8,7 @@ import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.agent.AgentSessionResolver;
 import com.azhukov.agent.core.agent.SessionDeletedEvent;
 import com.azhukov.agent.core.agent.SessionMutationLock;
+import com.azhukov.agent.core.client.ModelRequestOptions;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.persistence.entity.MessageEntity;
@@ -49,6 +50,8 @@ public class SessionQueryService {
     private final AgentProperties properties;
     private final ApplicationEventPublisher eventPublisher;
 
+    private final ProfileModelRouting profileModels;
+
     // ── Session listing ──
 
     /**
@@ -57,13 +60,13 @@ public class SessionQueryService {
      * @return a map with "data" (list of SessionSummaryDto), "limit", "offset", "has_more"
      */
     @Transactional(readOnly = true)
-    public Map<String, Object> listSessions(int limit, int offset, String userId) {
+    public Map<String, Object> listSessions(String profile, int limit, int offset, String userId) {
         int cappedLimit = Math.min(Math.max(limit, 1), 200);
         int cappedOffset = Math.max(offset, 0);
         String effectiveUserId = UserContext.effectiveUserId(
             userId != null ? userId : AgentProperties.DEFAULT_USER_ID);
 
-        Page<SessionEntity> page = sessionRepository.findAllByUserId(effectiveUserId,
+        Page<SessionEntity> page = sessionRepository.findAllByUserIdAndProfile(effectiveUserId, profile,
             new OffsetPageRequest(cappedLimit, cappedOffset, Sort.by(Sort.Direction.DESC, "updatedAt")));
         List<SessionSummaryDto> sessions = page
             .stream()
@@ -137,14 +140,23 @@ public class SessionQueryService {
      * @return a response map with session fields and the created session ID
      */
     @Transactional
-    public Map<String, Object> createSession(String userId, String model, String title) {
+    public Map<String, Object> createSession(String profile, String userId, String model, String title) {
         String effectiveUserId = UserContext.effectiveUserId(
             userId != null ? userId : AgentProperties.DEFAULT_USER_ID);
         String effectiveModel = model != null && !model.isBlank()
             ? model : properties.getModel().getModelName();
         String effectiveTitle = title != null ? title : "New chat";
 
-        Session session = sessionResolver.createSession(effectiveUserId, "openai-compatible", effectiveModel);
+        String provider = "openai-compatible";
+        if (!"default".equals(profile)) {
+            ModelRequestOptions options = profileModels.bind(profile, ModelRequestOptions.empty());
+            if (model != null && !model.isBlank() && !options.modelName().equals(model)) {
+                throw new IllegalArgumentException("Use the configured profile model");
+            }
+            effectiveModel = options.modelName();
+            provider = options.provider();
+        }
+        Session session = sessionResolver.createSession(effectiveUserId, provider, effectiveModel, "api_server", profile);
 
         if (title != null) {
             sessionRepository.findById(session.id()).ifPresent(e -> {
@@ -165,8 +177,8 @@ public class SessionQueryService {
      * @return Optional containing the response map, or empty if not found
      */
     @Transactional(readOnly = true)
-    public Optional<Map<String, Object>> getSession(UUID sessionId) {
-        SessionEntity entity = sessionRepository.findById(sessionId).orElse(null);
+    public Optional<Map<String, Object>> getSession(String profile, UUID sessionId) {
+        SessionEntity entity = sessionRepository.findByIdAndProfile(sessionId, profile).orElse(null);
         if (entity == null) {
             return Optional.empty();
         }
@@ -183,8 +195,8 @@ public class SessionQueryService {
      * @return Optional containing the response map, or empty if not found
      */
     @Transactional
-    public Optional<Map<String, Object>> updateSession(UUID sessionId, String title) {
-        SessionEntity entity = sessionRepository.findById(sessionId).orElse(null);
+    public Optional<Map<String, Object>> updateSession(String profile, UUID sessionId, String title) {
+        SessionEntity entity = sessionRepository.findByIdAndProfile(sessionId, profile).orElse(null);
         if (entity == null) {
             return Optional.empty();
         }
@@ -207,12 +219,12 @@ public class SessionQueryService {
      * @return true if deleted, false if not found
      */
     @Transactional
-    public boolean deleteSession(UUID sessionId) {
-        return SessionMutationLock.withLock(sessionId, () -> deleteSessionLocked(sessionId));
+    public boolean deleteSession(String profile, UUID sessionId) {
+        return SessionMutationLock.withLock(sessionId, () -> deleteSessionLocked(profile, sessionId));
     }
 
-    private boolean deleteSessionLocked(UUID sessionId) {
-        SessionEntity entity = sessionRepository.findById(sessionId).orElse(null);
+    private boolean deleteSessionLocked(String profile, UUID sessionId) {
+        SessionEntity entity = sessionRepository.findByIdAndProfile(sessionId, profile).orElse(null);
         if (entity == null) {
             return false;
         }
@@ -232,8 +244,8 @@ public class SessionQueryService {
      * @return Optional containing the message list envelope, or empty if session not found
      */
     @Transactional(readOnly = true)
-    public Optional<MessageListDto> getSessionMessages(UUID sessionId, int limit, int offset) {
-        SessionEntity entity = sessionRepository.findById(sessionId).orElse(null);
+    public Optional<MessageListDto> getSessionMessages(String profile, UUID sessionId, int limit, int offset) {
+        SessionEntity entity = sessionRepository.findByIdAndProfile(sessionId, profile).orElse(null);
         if (entity == null) {
             return Optional.empty();
         }
@@ -262,8 +274,8 @@ public class SessionQueryService {
     // ── Session existence check ──
 
     @Transactional(readOnly = true)
-    public boolean sessionExists(UUID sessionId) {
-        SessionEntity entity = sessionRepository.findById(sessionId).orElse(null);
+    public boolean sessionExists(String profile, UUID sessionId) {
+        SessionEntity entity = sessionRepository.findByIdAndProfile(sessionId, profile).orElse(null);
         if (entity == null) {
             return false;
         }

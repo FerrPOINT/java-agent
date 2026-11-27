@@ -12,6 +12,8 @@ import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.security.FileSafety;
+import com.azhukov.agent.core.security.SecureFileAccess;
+import com.azhukov.agent.service.ProfileService;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -60,6 +62,8 @@ public class SearchFilesTool implements ToolHandler {
 
     private final AgentProperties properties;
     private final FileSafety fileSafety;
+    @org.springframework.beans.factory.annotation.Autowired
+    private ProfileService profiles;
 
     public SearchFilesTool() {
         this(new AgentProperties());
@@ -85,32 +89,33 @@ public class SearchFilesTool implements ToolHandler {
         }
         String target = normalizeTarget(args.target());
         String rawBase = args.path() == null ? "." : args.path();
-        Path base = FileToolSafety.resolvePath(rawBase, session);
-
-        ToolResult safetyCheck = FileToolSafety.ensureReadable(properties, fileSafety, base, rawBase);
-        if (safetyCheck != null) {
-            return jsonFail(safetyCheck.error());
-        }
-
-        if (!Files.exists(base)) {
-            return jsonFail("Path not found: " + args.path());
-        }
-
         try {
+            Path base = FileToolSafety.resolveScopedPath(rawBase, session, profiles);
+            boolean named = FileToolSafety.namedProfile(session);
+            if (!named) {
+                ToolResult safetyCheck = FileToolSafety.ensureReadable(properties, fileSafety, base, rawBase);
+                if (safetyCheck != null) {
+                    return jsonFail(safetyCheck.error());
+                }
+                if (!Files.exists(base)) {
+                    return jsonFail("Path not found: " + args.path());
+                }
+            }
+            SearchScope scope = new SearchScope(base, named);
             if ("files".equals(target)) {
-                return findFiles(base, args.pattern(), args.limit(), args.offset());
+                return findFiles(scope, args.pattern(), args.limit(), args.offset());
             }
             String outputMode = args.outputMode() == null ? "content" : args.outputMode().toLowerCase();
             if ("count".equals(outputMode)) {
-                return countMatches(base, args.pattern(), args.fileGlob());
+                return countMatches(scope, args.pattern(), args.fileGlob());
             }
             if ("files_only".equals(outputMode)) {
-                return searchContentFilesOnly(base, args.pattern(), args.fileGlob(), args.limit(), args.offset());
+                return searchContentFilesOnly(scope, args.pattern(), args.fileGlob(), args.limit(), args.offset());
             }
-            return searchContent(base, args.pattern(), args.fileGlob(), args.limit(), args.offset(), args.context());
+            return searchContent(scope, args.pattern(), args.fileGlob(), args.limit(), args.offset(), args.context());
         } catch (PatternSyntaxException e) {
             return jsonFail("Invalid regex pattern: " + e.getMessage());
-        } catch (IOException e) {
+        } catch (IOException | IllegalArgumentException e) {
             return jsonFail("Search failed: " + e.getMessage());
         }
     }
@@ -127,18 +132,17 @@ public class SearchFilesTool implements ToolHandler {
         };
     }
 
-    private ToolResult findFiles(Path base, String pattern, int limit, int offset) throws IOException {
+    private ToolResult findFiles(SearchScope scope, String pattern, int limit, int offset) throws IOException {
         String glob = pattern == null || pattern.isBlank() ? "*" : pattern;
         List<String> matches = new ArrayList<>();
         int maxResults = limit > 0 ? limit : 50;
         int safeOffset = Math.max(0, offset);
         int[] found = {0};
         int[] skipped = {0};
-        try (Stream<Path> stream = Files.find(base, Integer.MAX_VALUE,
-                (path, attrs) -> attrs.isRegularFile()
-                    && matchesGlob(base, path, glob)
-                    && FileToolSafety.isReadable(properties, fileSafety, path))) {
-            stream.sorted((a, b) -> Long.compare(b.toFile().lastModified(), a.toFile().lastModified()))
+        try (var stream = files(scope, glob)) {
+            stream.filter(file -> scope.named() || !Files.isSymbolicLink(file.path()))
+                .sorted(java.util.Comparator.comparingLong(SearchFile::modified).reversed())
+                .map(SearchFile::path)
                 .forEach(p -> {
                     int current = found[0]++;
                     if (current < safeOffset) {
@@ -148,7 +152,7 @@ public class SearchFilesTool implements ToolHandler {
                         skipped[0]++;
                         return;
                     }
-                    matches.add(base.relativize(p).toString());
+                    matches.add(scope.base().relativize(p).toString());
                 });
         }
         Map<String, Object> result = searchResult(found[0]);
@@ -161,7 +165,7 @@ public class SearchFilesTool implements ToolHandler {
         return jsonOk(result);
     }
 
-    private ToolResult searchContentFilesOnly(Path base, String pattern, String fileGlob, int limit, int offset) throws IOException {
+    private ToolResult searchContentFilesOnly(SearchScope scope, String pattern, String fileGlob, int limit, int offset) throws IOException {
         if (pattern == null || pattern.isBlank()) {
             return jsonFail("pattern is required for content search");
         }
@@ -172,13 +176,10 @@ public class SearchFilesTool implements ToolHandler {
         int[] skipped = {0};
         int[] found = {0};
 
-        try (Stream<Path> stream = Files.walk(base)) {
-            Iterable<Path> files = () -> stream.filter(p -> Files.isRegularFile(p)
-                && FileToolSafety.isReadable(properties, fileSafety, p)
-                && matchesGlob(base, p, fileGlob))
-                .iterator();
-            for (Path file : files) {
-                List<String> lines = readSearchLines(file);
+        try (var stream = files(scope, fileGlob)) {
+            Iterable<Path> matchedFiles = () -> stream.map(SearchFile::path).iterator();
+            for (Path file : matchedFiles) {
+                List<String> lines = readSearchLines(file, scope.named());
                 for (String line : lines) {
                     if (regex.matcher(line).find()) {
                         found[0]++;
@@ -189,7 +190,7 @@ public class SearchFilesTool implements ToolHandler {
                             skipped[0]++;
                             break;
                         }
-                        matches.add(base.relativize(file).toString());
+                        matches.add(scope.base().relativize(file).toString());
                         break;
                     }
                 }
@@ -206,7 +207,7 @@ public class SearchFilesTool implements ToolHandler {
                 + " to see more, or narrow with a more specific pattern or file_glob.");
         }
         if (found[0] == 0) {
-            int ciCount = countCaseInsensitiveMatches(base, pattern, fileGlob);
+            int ciCount = countCaseInsensitiveMatches(scope, pattern, fileGlob);
             if (ciCount > 0) {
                 result.put("warning", "0 case-sensitive matches, but " + ciCount
                     + " case-insensitive matches found - try with case-insensitive flag");
@@ -215,7 +216,7 @@ public class SearchFilesTool implements ToolHandler {
         return jsonOk(result);
     }
 
-    private ToolResult searchContent(Path base, String pattern, String fileGlob, int limit, int offset, int context) throws IOException {
+    private ToolResult searchContent(SearchScope scope, String pattern, String fileGlob, int limit, int offset, int context) throws IOException {
         if (pattern == null || pattern.isBlank()) {
             return jsonFail("pattern is required for content search");
         }
@@ -227,14 +228,11 @@ public class SearchFilesTool implements ToolHandler {
         int maxResults = limit > 0 ? limit : 50;
         int safeOffset = Math.max(0, offset);
 
-        try (Stream<Path> stream = Files.walk(base)) {
-            Iterable<Path> files = () -> stream.filter(p -> Files.isRegularFile(p)
-                && FileToolSafety.isReadable(properties, fileSafety, p)
-                && matchesGlob(base, p, fileGlob))
-                .iterator();
+        try (var stream = files(scope, fileGlob)) {
+            Iterable<Path> matchedFiles = () -> stream.map(SearchFile::path).iterator();
             outer:
-            for (Path file : files) {
-                List<String> lines = readSearchLines(file);
+            for (Path file : matchedFiles) {
+                List<String> lines = readSearchLines(file, scope.named());
                 for (int i = 0; i < lines.size(); i++) {
                     if (regex.matcher(lines.get(i)).find()) {
                         found[0]++;
@@ -253,7 +251,7 @@ public class SearchFilesTool implements ToolHandler {
                             sb.append(j + 1).append("|").append(lines.get(j));
                         }
                         Map<String, Object> match = new LinkedHashMap<>();
-                        match.put("path", base.relativize(file).toString());
+                        match.put("path", scope.base().relativize(file).toString());
                         match.put("line", i + 1);
                         match.put("content", sb.toString());
                         matches.add(match);
@@ -274,7 +272,7 @@ public class SearchFilesTool implements ToolHandler {
         // p8: Zero-match hint — when no matches found, probe case-insensitively.
         // If case-insensitive finds matches, append a helpful hint.
         if (found[0] == 0) {
-            int ciCount = countCaseInsensitiveMatches(base, pattern, fileGlob);
+            int ciCount = countCaseInsensitiveMatches(scope, pattern, fileGlob);
             if (ciCount > 0) {
                 result.put("warning", "0 case-sensitive matches, but " + ciCount
                     + " case-insensitive matches found - try with case-insensitive flag");
@@ -283,7 +281,7 @@ public class SearchFilesTool implements ToolHandler {
         return jsonOk(result);
     }
 
-    private ToolResult countMatches(Path base, String pattern, String fileGlob) throws IOException {
+    private ToolResult countMatches(SearchScope scope, String pattern, String fileGlob) throws IOException {
         if (pattern == null || pattern.isBlank()) {
             return jsonFail("pattern is required for count search");
         }
@@ -291,13 +289,10 @@ public class SearchFilesTool implements ToolHandler {
         Map<String, Integer> counts = new LinkedHashMap<>();
         int total = 0;
 
-        try (Stream<Path> stream = Files.walk(base)) {
-            Iterable<Path> files = () -> stream.filter(p -> Files.isRegularFile(p)
-                && FileToolSafety.isReadable(properties, fileSafety, p)
-                && matchesGlob(base, p, fileGlob))
-                .iterator();
-            for (Path file : files) {
-                List<String> lines = readSearchLines(file);
+        try (var stream = files(scope, fileGlob)) {
+            Iterable<Path> matchedFiles = () -> stream.map(SearchFile::path).iterator();
+            for (Path file : matchedFiles) {
+                List<String> lines = readSearchLines(file, scope.named());
                 int matchCount = 0;
                 for (String line : lines) {
                     if (regex.matcher(line).find()) {
@@ -305,7 +300,7 @@ public class SearchFilesTool implements ToolHandler {
                     }
                 }
                 if (matchCount > 0) {
-                    counts.put(base.relativize(file).toString(), matchCount);
+                    counts.put(scope.base().relativize(file).toString(), matchCount);
                     total += matchCount;
                 }
             }
@@ -350,19 +345,16 @@ public class SearchFilesTool implements ToolHandler {
      * p8: Count case-insensitive matches for the zero-match hint.
      * Uses the same pattern but with CASE_INSENSITIVE flag.
      */
-    private int countCaseInsensitiveMatches(Path base, String pattern, String fileGlob) throws IOException {
+    private int countCaseInsensitiveMatches(SearchScope scope, String pattern, String fileGlob) throws IOException {
         if (pattern == null || pattern.isBlank()) {
             return 0;
         }
         Pattern ciRegex = Pattern.compile(pattern, Pattern.CASE_INSENSITIVE);
         int count = 0;
-        try (Stream<Path> stream = Files.walk(base)) {
-            Iterable<Path> files = () -> stream.filter(p -> Files.isRegularFile(p)
-                && FileToolSafety.isReadable(properties, fileSafety, p)
-                && matchesGlob(base, p, fileGlob))
-                .iterator();
-            for (Path file : files) {
-                List<String> lines = readSearchLines(file);
+        try (var stream = files(scope, fileGlob)) {
+            Iterable<Path> matchedFiles = () -> stream.map(SearchFile::path).iterator();
+            for (Path file : matchedFiles) {
+                List<String> lines = readSearchLines(file, scope.named());
                 for (String line : lines) {
                     if (ciRegex.matcher(line).find()) {
                         count++;
@@ -373,15 +365,50 @@ public class SearchFilesTool implements ToolHandler {
         return count;
     }
 
-    private List<String> readSearchLines(Path file) throws IOException {
+    private record SearchScope(Path base, boolean named) {}
+    private record SearchFile(Path path, long modified) {}
+
+    private Stream<SearchFile> files(SearchScope scope, String glob) throws IOException {
+        Path base = scope.base();
+        if (!scope.named()) {
+            return Files.walk(base)
+                .filter(path -> Files.isRegularFile(path)
+                    && FileToolSafety.isReadable(properties, fileSafety, path)
+                    && matchesGlob(base, path, glob))
+                .map(path -> new SearchFile(path, path.toFile().lastModified()));
+        }
+
+        var found = new ArrayList<SearchFile>();
+        try (var parent = SecureFileAccess.openDirectory(base.getParent())) {
+            collectProfileFiles(parent, base.getFileName(), base, base, glob, found);
+        }
+        return found.stream();
+    }
+
+    private void collectProfileFiles(SecureFileAccess.Directory parent, Path name, Path path,
+                                     Path base, String glob, List<SearchFile> found) throws IOException {
+        var attributes = parent.attributes(name);
+        if (attributes.isRegularFile() && matchesGlob(base, path, glob)) {
+            found.add(new SearchFile(path, attributes.lastModifiedTime().toMillis()));
+        } else if (attributes.isDirectory()) {
+            try (var dir = parent.openDirectory(name, false)) {
+                for (Path entry : dir.entries()) {
+                    Path child = entry.getFileName();
+                    collectProfileFiles(dir, child, path.resolve(child), base, glob, found);
+                }
+            }
+        }
+    }
+
+    private List<String> readSearchLines(Path file, boolean named) throws IOException {
         if (hasBinaryExtension(file)) {
             return List.of();
         }
-        Path target = file.toRealPath();
-        if (!FileToolSafety.isReadable(properties, fileSafety, target)) {
+        Path target = named ? file : file.toRealPath();
+        if (!named && !FileToolSafety.isReadable(properties, fileSafety, target)) {
             return List.of();
         }
-        try (var channel = com.azhukov.agent.core.security.SecureFileAccess.openRead(target);
+        try (var channel = SecureFileAccess.openRead(target);
              var input = new java.io.BufferedInputStream(java.nio.channels.Channels.newInputStream(channel))) {
             input.mark(8192);
             if (isLikelyBinarySample(input.readNBytes(8192))) {

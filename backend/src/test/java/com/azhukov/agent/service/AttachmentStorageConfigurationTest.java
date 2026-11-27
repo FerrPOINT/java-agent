@@ -48,6 +48,8 @@ class AttachmentStorageConfigurationTest {
             when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
             context.registerBean(AttachmentArtifactRepository.class, () -> repository);
             context.registerBean(SessionRepository.class, () -> mock(SessionRepository.class));
+            context.registerBean(org.springframework.transaction.support.TransactionTemplate.class,
+                () -> mock(org.springframework.transaction.support.TransactionTemplate.class));
             context.register(AttachmentArtifactService.class, ArtifactProcessIsolation.class);
             context.refresh();
             var result = context.getBean(AttachmentArtifactService.class).register("u1", "default",

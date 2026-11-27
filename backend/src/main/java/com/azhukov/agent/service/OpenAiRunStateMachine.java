@@ -1,10 +1,14 @@
 package com.azhukov.agent.service;
 
+import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.persistence.entity.OpenAiRunEventEntity;
+import com.azhukov.agent.service.OpenAiSessionService.OpenAiSessionContext;
 import com.azhukov.agent.persistence.entity.OpenAiRunStateEntity;
 import com.azhukov.agent.persistence.repository.OpenAiRunEventRepository;
 import com.azhukov.agent.persistence.repository.OpenAiRunStateRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
@@ -13,12 +17,13 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.sql.SQLException;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.UUID;
+import java.util.function.Supplier;
 
 /**
  * WP-6 (docs/35): durable OpenAI Runs state machine + append-only event log.
@@ -56,6 +61,9 @@ public class OpenAiRunStateMachine {
     private final ObjectProvider<OpenAiRunEventRepository> eventRepositoryProvider;
     private final ObjectMapper objectMapper;
 
+    @PersistenceContext
+    private EntityManager entityManager;
+
     public static boolean isTerminal(String state) {
         return COMPLETED.equals(state) || FAILED.equals(state)
             || CANCELLED.equals(state) || EXPIRED.equals(state);
@@ -66,30 +74,40 @@ public class OpenAiRunStateMachine {
         return allowed != null && allowed.contains(to);
     }
 
+    /**
+     * Commit the new session, run and initial event together. A concurrent loser
+     * rolls its transaction back before the caller reads the original receipt.
+     */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void createRun(String runId, UUID sessionId, String userId, String profile,
-                          String model, String externalRunId) {
-        OpenAiRunStateRepository repository = states();
-        if (repository.existsById(runId)) {
-            return; // idempotent create
+    public OpenAiSessionContext accept(String runId, String model, String fingerprint,
+                                       Supplier<OpenAiSessionContext> resolveSession) {
+        OpenAiSessionContext context = resolveSession.get();
+        Session session = context.session();
+        bindProfile(session.profile());
+        var repository = states();
+        String revision = ProfileExecutionConfiguration.currentRevision(session.profile());
+        if (repository.insertAcceptance(runId, session.id(), session.userId(), session.profile(), model,
+                fingerprint, context.responseSessionId(), revision) == 0) {
+            throw new AlreadyAccepted();
         }
-        OpenAiRunStateEntity entity = new OpenAiRunStateEntity();
-        entity.setRunId(runId);
-        entity.setSessionId(sessionId);
-        entity.setUserId(userId);
-        entity.setProfile(profile == null || profile.isBlank() ? "default" : profile);
-        entity.setModel(model);
-        entity.setExternalRunId(externalRunId);
-        entity.setState(QUEUED);
-        entity.setCreatedAt(Instant.now());
-        entity.setUpdatedAt(Instant.now());
-        appendTo(repository.save(entity), Map.of("event", "run.created", "run_id", runId,
-            "timestamp", entity.getCreatedAt().toEpochMilli() / 1000.0));
+        OpenAiRunStateEntity state = repository.findById(runId).orElseThrow();
+        var created = new java.util.LinkedHashMap<String, Object>();
+        created.put("event", "run.created");
+        created.put("run_id", runId);
+        created.put("timestamp", state.getCreatedAt().toEpochMilli() / 1000.0);
+        if (revision != null) {
+            created.put("profile_revision", revision);
+        }
+        appendTo(state, created);
+        return context;
     }
 
+    static final class AlreadyAccepted extends RuntimeException {}
+
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public long recordEvent(String runId, String nextState, Map<String, Object> event) {
-        OpenAiRunStateEntity row = states().lockRun(runId)
+    public long recordEvent(String runId, String profile, String nextState, Map<String, Object> event) {
+        bindProfile(profile);
+        OpenAiRunStateEntity row = states().lockRun(runId, profile)
             .orElseThrow(() -> new IllegalStateException("Run state is unavailable: " + runId));
         if (isTerminal(row.getState())) {
             throw new IllegalStateException("Run is already terminal: " + runId);
@@ -130,21 +148,49 @@ public class OpenAiRunStateMachine {
     }
 
     @Transactional(readOnly = true)
-    public Optional<OpenAiRunStateEntity> state(String runId) {
-        return states().findById(runId);
-    }
-
-    @Transactional(readOnly = true)
-    public List<OpenAiRunEventEntity> replay(String runId, long afterSeq, int limit) {
-        return eventLog().replayAfter(runId, afterSeq, PageRequest.of(0, Math.max(1, limit)));
+    public Optional<OpenAiRunStateEntity> state(String runId, String profile) {
+        bindProfile(profile);
+        return states().findByRunIdAndProfile(runId, profile);
     }
 
     public record ParsedEvent(long seq, Map<String, Object> payload) {}
 
-    public List<ParsedEvent> replayParsed(String runId, long afterSeq, int limit) {
-        return replay(runId, afterSeq, limit).stream()
+    @Transactional(readOnly = true)
+    public List<ParsedEvent> replayParsed(String runId, String profile, long afterSeq, int limit) {
+        bindProfile(profile);
+        return eventLog().replayAfter(runId, profile, afterSeq, PageRequest.of(0, Math.max(1, limit))).stream()
             .map(entity -> new ParsedEvent(entity.getSeq(), parse(entity.getEventJson())))
             .toList();
+    }
+
+    private void bindProfile(String profile) {
+        if (profile == null || profile.isBlank()) {
+            throw new IllegalArgumentException("Profile is required for native run persistence");
+        }
+        if (entityManager == null) {
+            return;
+        }
+        entityManager.unwrap(org.hibernate.Session.class).doWork(connection -> {
+            if ("H2".equals(connection.getMetaData().getDatabaseProductName())) {
+                return;
+            }
+            if (connection.getAutoCommit()) {
+                throw new SQLException("Native run persistence requires a transaction");
+            }
+            try (var bind = connection.prepareStatement("""
+                SELECT set_config('pdlc.java.profile', ?, true)
+                WHERE COALESCE(NULLIF(current_setting('pdlc.java.profile', true), ''), ?) = ?
+                """)) {
+                for (int parameter = 1; parameter <= 3; parameter++) {
+                    bind.setString(parameter, profile);
+                }
+                try (var result = bind.executeQuery()) {
+                    if (!result.next()) {
+                        throw new SQLException("A native run transaction cannot change its profile");
+                    }
+                }
+            }
+        });
     }
 
     private Map<String, Object> parse(String json) {

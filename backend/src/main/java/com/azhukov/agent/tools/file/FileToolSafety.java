@@ -6,11 +6,14 @@ import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
 import com.azhukov.agent.core.security.DefaultFileSafety;
 import com.azhukov.agent.core.security.FileSafety;
+import com.azhukov.agent.core.security.SecureFileAccess;
+import com.azhukov.agent.service.ProfileService;
 import com.azhukov.agent.tools.terminal.TerminalTool;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
@@ -83,6 +86,25 @@ public final class FileToolSafety {
         return basePath.resolve(path).normalize();
     }
 
+    static boolean namedProfile(Session session) {
+        return session != null && !"default".equals(session.profile());
+    }
+
+    static Path resolveScopedPath(String path, Session session, ProfileService profiles) throws IOException {
+        if (!namedProfile(session)) {
+            return resolvePath(path, session);
+        }
+        String profile = session.profile();
+        profiles.validateProfileName(profile);
+        profiles.requireKnownProfile(profile);
+        Path workspace = profiles.workspacePath(profile);
+        Path selected = workspace.resolve(path).normalize();
+        if (!selected.startsWith(workspace)) {
+            throw new IOException("Path is outside the selected profile workspace");
+        }
+        return selected;
+    }
+
     static ToolResult ensureReadable(AgentProperties properties, FileSafety fileSafety, Path path, String rawPath) {
         ToolResult blockedSpecial = ensureNotBlockedReadPath(path, rawPath);
         if (blockedSpecial != null) {
@@ -129,6 +151,14 @@ public final class FileToolSafety {
         return com.azhukov.agent.core.security.SecureFileAccess.openRead(target);
     }
 
+    static boolean workspaceFileExists(Path path) throws IOException {
+        try (var existing = SecureFileAccess.openRead(path)) {
+            return true;
+        } catch (NoSuchFileException missing) {
+            return false;
+        }
+    }
+
     static boolean isReadable(AgentProperties properties, FileSafety fileSafety, Path path) {
         return ensureReadable(properties, fileSafety, path, path.toString()) == null;
     }
@@ -163,6 +193,10 @@ public final class FileToolSafety {
     }
 
     static ToolResult ensurePlainTextWriteAllowed(Path path, String rawPath) {
+        return ensurePlainTextWriteAllowed(path, rawPath, false);
+    }
+
+    static ToolResult ensurePlainTextWriteAllowed(Path path, String rawPath, boolean namedProfile) {
         String displayPath = rawPath == null || rawPath.isBlank() ? String.valueOf(path) : rawPath;
         String ext = extension(displayPath);
         if (OPAQUE_DOCUMENT_EXTENSIONS.contains(ext)) {
@@ -173,8 +207,7 @@ public final class FileToolSafety {
         }
         if (".pdf".equals(ext)) {
             try {
-                Path resolved = resolveWritableTarget(path);
-                if (Files.isRegularFile(resolved)) {
+                if (namedProfile ? workspaceFileExists(path) : Files.isRegularFile(resolveWritableTarget(path))) {
                     return ToolResult.fail(
                         "Refusing to overwrite existing PDF '" + displayPath + "' with plain text. "
                             + "Use the pdf skill or a PDF library to modify it. Creating a new .pdf file is allowed.");

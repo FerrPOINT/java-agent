@@ -41,7 +41,7 @@ class CronJobOwnershipTest {
         service = new CronJobService(
             jobs, mock(ObjectProvider.class), properties, mock(SkillManager.class),
             executions, messages, CronJobServiceTest.unitTransaction(), new CronScheduleParser(),
-            org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class));
+            org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class), new ProfileRuntimeRegistry(null));
         ObjectProvider<SessionRepository> provider = mock(ObjectProvider.class);
         when(provider.getIfAvailable()).thenReturn(sessions);
         ReflectionTestUtils.setField(service, "sessionRepositoryProvider", provider);

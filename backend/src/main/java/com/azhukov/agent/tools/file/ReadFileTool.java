@@ -9,6 +9,8 @@ import com.azhukov.agent.tools.ToolParam;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
 import com.azhukov.agent.core.model.ToolResult;
+import com.azhukov.agent.core.security.SecureFileAccess;
+import com.azhukov.agent.service.ProfileService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.pdfbox.Loader;
@@ -95,6 +97,8 @@ public class ReadFileTool implements ToolHandler {
 
     private final AgentProperties properties;
     private final FileSafety fileSafety;
+    @org.springframework.beans.factory.annotation.Autowired
+    private ProfileService profiles;
 
     public ReadFileTool(AgentProperties properties) {
         this(properties, FileToolSafety.defaultSafety(properties));
@@ -118,31 +122,28 @@ public class ReadFileTool implements ToolHandler {
         if (rawPath == null || rawPath.isBlank()) {
             return jsonFail("path is required");
         }
-        Path path = FileToolSafety.resolvePath(rawPath, session);
-
-        // Device path blocking — check before anything else
-        if (isBlockedDevicePath(rawPath)) {
-            return jsonFail("Device file blocked: " + rawPath);
-        }
-
-        ToolResult safetyCheck = FileToolSafety.ensureReadable(properties, fileSafety, path, rawPath);
-        if (safetyCheck != null) {
-            return jsonFail(safetyCheck.error());
-        }
-
-        if (!Files.exists(path)) {
-            return jsonFail("File not found: " + rawPath);
-        }
-        if (!Files.isRegularFile(path)) {
-            return jsonFail("Not a file: " + rawPath);
-        }
-
         try {
-            // h55: Detect UTF-16 BOM and transcode to UTF-8 before processing.
-            Path target = path.toRealPath();
-            ToolResult targetCheck = FileToolSafety.ensureReadable(properties, fileSafety, target, rawPath);
-            if (targetCheck != null) {
-                return jsonFail(targetCheck.error());
+            Path path = FileToolSafety.resolveScopedPath(rawPath, session, profiles);
+            Path target = path;
+            if (!FileToolSafety.namedProfile(session)) {
+                if (isBlockedDevicePath(rawPath)) {
+                    return jsonFail("Device file blocked: " + rawPath);
+                }
+                ToolResult safetyCheck = FileToolSafety.ensureReadable(properties, fileSafety, path, rawPath);
+                if (safetyCheck != null) {
+                    return jsonFail(safetyCheck.error());
+                }
+                if (!Files.exists(path)) {
+                    return jsonFail("File not found: " + rawPath);
+                }
+                if (!Files.isRegularFile(path)) {
+                    return jsonFail("Not a file: " + rawPath);
+                }
+                target = path.toRealPath();
+                ToolResult targetCheck = FileToolSafety.ensureReadable(properties, fileSafety, target, rawPath);
+                if (targetCheck != null) {
+                    return jsonFail(targetCheck.error());
+                }
             }
             int offset = Math.max(1, args.offset());
             int start = offset - 1;
@@ -151,7 +152,7 @@ public class ReadFileTool implements ToolHandler {
             boolean extractedDocument;
             boolean empty;
             long fileSize;
-            try (var channel = com.azhukov.agent.core.security.SecureFileAccess.openRead(target)) {
+            try (var channel = SecureFileAccess.openRead(target)) {
                 fileSize = channel.size();
                 var input = Channels.newInputStream(channel);
                 byte[] prefix = input.readNBytes(200);
@@ -236,7 +237,7 @@ public class ReadFileTool implements ToolHandler {
                     + "). Use offset=" + nextOffset + " to continue reading.");
             }
             return ToolResult.ok(toJson(resultMap));
-        } catch (IOException e) {
+        } catch (IOException | IllegalArgumentException e) {
             return jsonFail("Failed to read file: " + e.getMessage());
         }
     }

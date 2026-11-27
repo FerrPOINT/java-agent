@@ -57,7 +57,7 @@ public class CliStateApplier {
             if (request.attachments() == null || request.attachments().isEmpty()) {
                 return request;
             }
-            String withAttachments = appendAttachments(request.message(), request.attachments(), attachmentOwner(request, null));
+            String withAttachments = appendAttachments(request.message(), request.attachments(), attachmentOwner(request, null), "default");
             return new ChatRequest(
                 request.sessionId(), withAttachments,
                 request.delegationDepth(), request.timeoutMs(),
@@ -82,7 +82,7 @@ public class CliStateApplier {
         String subgoals = session.getCliStateValue("subgoals");
 
         String finalMessage = buildMergedMessage(request.message(), queuedPrompt, goal, subgoals, subgoal);
-        String withAttachments = appendAttachments(finalMessage, request.attachments(), attachmentOwner(request, session));
+        String withAttachments = appendAttachments(finalMessage, request.attachments(), attachmentOwner(request, session), session.getProfile());
         // Hermes /queue semantics: the queued prompt applies to the NEXT turn only.
         // Mark it consumed so callers can clear the persisted value inside a write tx.
         this.consumedQueuedPrompt.set(queuedPrompt != null && !queuedPrompt.isBlank());
@@ -159,7 +159,7 @@ public class CliStateApplier {
         return UserContext.effectiveUserId(requested);
     }
 
-    private String appendAttachments(String message, java.util.List<AttachmentRef> attachments, String ownerId) {
+    private String appendAttachments(String message, java.util.List<AttachmentRef> attachments, String ownerId, String profile) {
         if (attachments == null || attachments.isEmpty()) {
             return message;
         }
@@ -172,13 +172,13 @@ public class CliStateApplier {
                 continue;
             }
             AttachmentArtifactService.AttachmentArtifact artifact = service == null || ownerId == null ? null
-                : service.find(ref.artifactId(), ownerId).orElse(null);
+                : service.find(ref.artifactId(), ownerId, profile).orElse(null);
             if (artifact == null) {
                 sb.append("[unavailable: ").append(ref.artifactId()).append("]\n");
                 appended++;
                 continue;
             }
-            java.util.Optional<Path> content = service.contentPath(ref.artifactId(), ownerId);
+            java.util.Optional<Path> content = service.contentPath(ref.artifactId(), ownerId, profile);
             String preview = content
                 .map(this::boundedTextPreview)
                 .filter(t -> t != null && !t.isBlank())

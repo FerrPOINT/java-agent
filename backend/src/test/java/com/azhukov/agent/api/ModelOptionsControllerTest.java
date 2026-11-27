@@ -6,6 +6,12 @@ import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.persistence.entity.CronJobEntity;
 import com.azhukov.agent.service.CronJobService;
 import com.azhukov.agent.service.ProfileService;
+import com.azhukov.agent.service.ProfileConfigWriter;
+import com.azhukov.agent.service.ProfileEnvStore;
+import com.azhukov.agent.service.ProfileInstructions;
+import com.azhukov.agent.service.ProfileModelRouting;
+import com.azhukov.agent.service.ProfileRuntimeRegistry;
+import org.springframework.beans.factory.support.StaticListableBeanFactory;
 import com.azhukov.agent.service.RuntimeConfigService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -38,6 +44,7 @@ class ModelOptionsControllerTest {
     private AgentProperties properties;
     private RuntimeConfigService runtimeConfigService;
     private ProfileService profileService;
+    private ProfileConfigWriter profileWriter;
     private MockMvc mockMvc;
 
     @BeforeEach
@@ -76,8 +83,15 @@ class ModelOptionsControllerTest {
         profileProperties.getProfile().setBaseDir(tempDir.resolve("profiles").toString());
         profileProperties.getCore().setSoulMdPath(tempDir.resolve("SOUL.md").toString());
         profileService = new ProfileService(profileProperties, runtimeConfigService);
+        var profileBeans = new StaticListableBeanFactory();
+        profileBeans.addBean("profiles", profileService);
+        var profiles = profileBeans.getBeanProvider(ProfileService.class);
+        var runtime = new ProfileRuntimeRegistry(null);
+        var routing = new ProfileModelRouting(profileService, new ProfileEnvStore(profiles, runtime));
+        profileWriter = new ProfileConfigWriter(profiles, null, routing,
+            new ProfileInstructions(profileProperties, profileService, new com.fasterxml.jackson.databind.ObjectMapper()), runtime);
         mockMvc = MockMvcBuilders.standaloneSetup(
-            new ModelOptionsController(properties, runtimeConfigService, profileService))
+            new ModelOptionsController(properties, runtimeConfigService, profileService, null, profileWriter))
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();
     }
@@ -145,7 +159,8 @@ class ModelOptionsControllerTest {
     void profilePrefixedModelRoutesReadNamedProfileConfig() throws Exception {
         when(properties.getFallbackChain()).thenReturn(List.of());
         createProfile("work");
-        profileService.writeModel("work", "openrouter", "worker/model", "https://worker.example/v1");
+        profileService.writeConfig("work", Map.of("model", Map.of(
+            "provider", "openrouter", "default", "worker/model", "base_url", "https://worker.example/v1")));
 
         mockMvc.perform(get("/p/work/api/model/options"))
             .andExpect(status().isOk())
@@ -330,8 +345,17 @@ class ModelOptionsControllerTest {
             .andExpect(jsonPath("$.provider").value("openrouter"))
             .andExpect(jsonPath("$.model").value("test/model-1"))
             .andExpect(jsonPath("$.base_url").value("https://openrouter.example/api/v1"))
-            .andExpect(jsonPath("$.cron_model_impact.available").value(false));
+            .andExpect(jsonPath("$.cron_model_impact.available").value(false))
+            .andExpect(jsonPath("$.api_key").doesNotExist());
 
+        String acceptedConfig = profileService.readRawConfig("worker_beta");
+        mockMvc.perform(post("/p/worker_beta/api/model/set")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"scope":"main","provider":"openrouter","model":"broken","base_url":"file:///invalid"}
+                    """))
+            .andExpect(status().isBadRequest());
+        assertThat(profileService.readRawConfig("worker_beta")).isEqualTo(acceptedConfig);
         assertThat(runtimeConfigService.getModelSelection()).isNull();
         Map<String, Object> model = modelConfig("worker_beta");
         assertThat(model).containsEntry("provider", "openrouter");
@@ -363,6 +387,8 @@ class ModelOptionsControllerTest {
                       "scope": "main",
                       "provider": "nous",
                       "model": "new/model",
+                      "base_url": "https://nous.example/v1",
+                      "api_key": "fixture-named-provider-key",
                       "confirm_expensive_model": true,
                       "profile": "worker_beta"
                     }
@@ -524,7 +550,7 @@ class ModelOptionsControllerTest {
 
     private MockMvc mockMvcWithCron(CronJobService cronJobService) {
         return MockMvcBuilders.standaloneSetup(
-            new ModelOptionsController(properties, runtimeConfigService, profileService, cronJobService)).build();
+            new ModelOptionsController(properties, runtimeConfigService, profileService, cronJobService, profileWriter)).build();
     }
 
     private static CronJobEntity cronJob(String name, String profile) {

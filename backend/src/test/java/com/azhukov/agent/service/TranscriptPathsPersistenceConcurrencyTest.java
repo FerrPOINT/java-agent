@@ -135,7 +135,7 @@ class TranscriptPathsPersistenceConcurrencyTest {
                     fixture.messages.deleteBySessionId(fixture.id); deletedRows.countDown(); return null;
                 }).when(deletionMessages).deleteBySessionId(fixture.id);
                 var deletionTarget = new SessionQueryService(fixture.sessions, deletionMessages,
-                    mock(AgentSessionResolver.class), mock(DomainDtoMapper.class), new AgentProperties(), mock(ApplicationEventPublisher.class));
+                    mock(AgentSessionResolver.class), mock(DomainDtoMapper.class), new AgentProperties(), mock(ApplicationEventPublisher.class), mock(ProfileModelRouting.class));
                 var deletionProxy = new ProxyFactory(deletionTarget); deletionProxy.setProxyTargetClass(true);
                 deletionProxy.addAdvice(new TransactionInterceptor(fixture.transactions.getTransactionManager(), new AnnotationTransactionAttributeSource(false)));
                 var deletion = (SessionQueryService)deletionProxy.getProxy();
@@ -245,7 +245,7 @@ class TranscriptPathsPersistenceConcurrencyTest {
     }
 
     private static SessionQueryService deletionService(Fixture fixture, ApplicationEventPublisher publisher) {
-        var target = new SessionQueryService(fixture.sessions, fixture.messages, mock(AgentSessionResolver.class), mock(DomainDtoMapper.class), new AgentProperties(), publisher);
+        var target = new SessionQueryService(fixture.sessions, fixture.messages, mock(AgentSessionResolver.class), mock(DomainDtoMapper.class), new AgentProperties(), publisher, mock(ProfileModelRouting.class));
         var proxy = new ProxyFactory(target);
         proxy.setProxyTargetClass(true);
         proxy.addAdvice(new TransactionInterceptor(fixture.transactions.getTransactionManager(), new AnnotationTransactionAttributeSource(false)));
@@ -254,7 +254,7 @@ class TranscriptPathsPersistenceConcurrencyTest {
 
     private static boolean deleteAsOwner(SessionQueryService deletion, UUID id) {
         UserContext.set("user-1", UserContext.ROLE_USER);
-        try { return deletion.deleteSession(id); }
+        try { return deletion.deleteSession("default", id); }
         finally { UserContext.clear(); }
     }
     private static void await(CountDownLatch latch) {

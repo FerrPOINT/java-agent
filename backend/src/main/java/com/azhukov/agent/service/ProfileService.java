@@ -243,18 +243,22 @@ public class ProfileService {
         String canon = normalizeProfileName(name);
         validateProfileName(canon);
         requireKnownProfile(canon);
-        Path soul = soulPath(canon);
-        if (!Files.isRegularFile(soul)) {
+        try {
+            String content = com.azhukov.agent.core.security.SecureFileAccess.readUtf8(soulPath(canon));
+            return Map.of("exists", true, "content", content);
+        } catch (java.nio.file.NoSuchFileException e) {
             return Map.of("exists", false, "content", "");
         }
-        return Map.of("exists", true, "content", Files.readString(soul, StandardCharsets.UTF_8));
     }
 
     public Map<String, Object> writeSoul(String name, String content) throws IOException {
         String canon = normalizeProfileName(name);
         validateProfileName(canon);
         requireKnownProfile(canon);
-        atomicWriteString(soulPath(canon), content != null ? content : "");
+        Path path = soulPath(canon);
+        try (var directory = com.azhukov.agent.core.security.SecureFileAccess.openOrCreateDirectory(path.getParent())) {
+            directory.replaceFile(path.getFileName(), (content == null ? "" : content).getBytes(StandardCharsets.UTF_8));
+        }
         return Map.of("ok", true);
     }
 
@@ -293,34 +297,6 @@ public class ProfileService {
         String text = description != null ? description.trim() : "";
         writeProfileMeta(profileDir, text, false, null);
         return Map.of("ok", true, "description", text, "description_auto", false);
-    }
-
-    public Map<String, Object> writeModel(String name, String provider, String model, String baseUrl) throws IOException {
-        return writeModel(name, provider, model, baseUrl, null);
-    }
-
-    public Map<String, Object> writeModel(String name,
-                                          String provider,
-                                          String model,
-                                          String baseUrl,
-                                          String apiKey) throws IOException {
-        String canon = normalizeProfileName(name);
-        validateProfileName(canon);
-        Path profileDir = requireProfileDirectory(canon);
-        String cleanProvider = clean(provider);
-        String cleanModel = clean(model);
-        if (cleanProvider == null || cleanModel == null) {
-            throw new IllegalArgumentException("provider and model are required");
-        }
-        writeProfileModel(profileDir, cleanProvider, cleanModel, clean(baseUrl), clean(apiKey));
-        Map<String, Object> response = new LinkedHashMap<>();
-        response.put("ok", true);
-        response.put("provider", cleanProvider);
-        response.put("model", cleanModel);
-        if (clean(baseUrl) != null) {
-            response.put("base_url", clean(baseUrl));
-        }
-        return response;
     }
 
     public Map<String, Object> exportProfile(String name, String output, Map<String, String> extraFiles) throws IOException {
@@ -468,7 +444,7 @@ public class ProfileService {
         String canon = normalizeProfileName(name);
         validateProfileName(canon);
         requireKnownProfile(canon);
-        atomicWriteString(profilePath(canon).resolve("config.yaml"), dumpYaml(config));
+        writeConfigText(canon, dumpYaml(config));
     }
 
     public Path configPath(String name) throws IOException {
@@ -480,10 +456,92 @@ public class ProfileService {
 
     public String readRawConfig(String name) throws IOException {
         Path path = configPath(name);
-        if (!Files.isRegularFile(path)) {
+        try {
+            return com.azhukov.agent.core.security.SecureFileAccess.readUtf8(path);
+        } catch (java.nio.file.NoSuchFileException e) {
             return "";
         }
-        return Files.readString(path, StandardCharsets.UTF_8);
+    }
+
+    /** Read the profile YAML used for execution, preserving exact ownership on file access. */
+    public Map<String, Object> readExecutionConfig(String name) throws IOException {
+        var accepted = ProfileExecutionConfiguration.current(name);
+        if (accepted != null) {
+            return accepted.settings();
+        }
+        return readDiskExecutionConfig(name);
+    }
+
+    Map<String, Object> readDiskExecutionConfig(String name) throws IOException {
+        String yaml = readRawConfig(name);
+        return yaml.isBlank() ? new LinkedHashMap<>() : parseExecutionConfig(yaml);
+    }
+
+    static Map<String, Object> parseExecutionConfig(String yaml) {
+        Object loaded;
+        try {
+            var options = new org.yaml.snakeyaml.LoaderOptions();
+            options.setAllowDuplicateKeys(false);
+            loaded = new Yaml(new org.yaml.snakeyaml.constructor.SafeConstructor(options)).load(yaml);
+        } catch (org.yaml.snakeyaml.error.YAMLException e) {
+            throw new IllegalArgumentException("Invalid profile YAML");
+        }
+        if (!(loaded instanceof Map<?, ?> config)) {
+            throw new IllegalArgumentException("YAML must be a mapping");
+        }
+        return toStringKeyMap(config);
+    }
+
+    public static List<String> configuredPlatformToolsets(Map<String, Object> config, String platform) {
+        if (!(config.get("platform_toolsets") instanceof Map<?, ?> platformToolsets)) {
+            return List.of();
+        }
+        Object value = platformToolsets.get(platform);
+        if (value instanceof List<?> list) {
+            return list.stream().filter(String.class::isInstance).map(String.class::cast)
+                .map(String::trim).filter(name -> !name.isEmpty()).distinct().toList();
+        }
+        if (value instanceof String text) {
+            return java.util.Arrays.stream(text.split(",")).map(String::trim)
+                .filter(name -> !name.isEmpty()).distinct().toList();
+        }
+        return List.of();
+    }
+
+    public RuntimeConfigService.RuntimeModelSelection readNamedModel(String name) throws IOException {
+        return modelSelection(readExecutionConfig(name));
+    }
+
+    static RuntimeConfigService.RuntimeModelSelection modelSelection(Map<String, Object> config) {
+        Object modelNode = config.get("model");
+        if (!(modelNode instanceof Map<?, ?> model)) {
+            return new RuntimeConfigService.RuntimeModelSelection(null, nullableConfigText(modelNode), null, null);
+        }
+        String provider = nullableConfigText(model.get("provider"));
+        Object configuredModel = model.get("default");
+        String nameValue = firstConfigText(configuredModel, model.get("model"), model.get("name"));
+        if (configuredModel instanceof Map<?, ?> nested) {
+            if (provider == null) {
+                provider = nullableConfigText(nested.get("provider"));
+            }
+            nameValue = firstConfigText(nested.get("model"), nested.get("name"), nested.get("id"), nameValue);
+        }
+        return new RuntimeConfigService.RuntimeModelSelection(provider, nameValue,
+            nullableConfigText(model.get("base_url")), nullableConfigText(model.get("api_key")));
+    }
+
+    private static String firstConfigText(Object... values) {
+        for (Object value : values) {
+            String text = nullableConfigText(value);
+            if (text != null) {
+                return text;
+            }
+        }
+        return null;
+    }
+
+    private static String nullableConfigText(Object value) {
+        return value instanceof String text ? clean(text) : null;
     }
 
     public void writeRawConfig(String name, String yamlText) throws IOException {
@@ -491,7 +549,18 @@ public class ProfileService {
         if (!(loaded instanceof Map<?, ?>)) {
             throw new IllegalArgumentException("YAML must be a mapping");
         }
-        atomicWriteString(configPath(name), yamlText);
+        writeConfigText(normalizeProfileName(name), yamlText);
+    }
+
+    private void writeConfigText(String profile, String content) throws IOException {
+        Path target = configPath(profile);
+        if ("default".equals(profile)) {
+            atomicWriteString(target, content);
+        } else {
+            try (var dir = com.azhukov.agent.core.security.SecureFileAccess.openOrCreateDirectory(target.getParent())) {
+                dir.replaceFile(target.getFileName(), content.getBytes(StandardCharsets.UTF_8));
+            }
+        }
     }
 
     public String normalizeProfileName(String value) {
@@ -552,11 +621,13 @@ public class ProfileService {
         if (configuredBase != null && configuredBase.getParent() != null) {
             return configuredBase.getParent().toAbsolutePath().normalize();
         }
-        String env = System.getenv("HERMES_HOME");
-        if (env != null && !env.isBlank()) {
-            return Path.of(env).toAbsolutePath().normalize();
-        }
-        return Path.of(System.getProperty("user.home", "."), ".hermes").toAbsolutePath().normalize();
+        return AgentProperties.ProfileProperties.defaultHome();
+    }
+
+    public Path workspacePath(String profile) {
+        String canon = normalizeProfileName(profile);
+        validateProfileName(canon);
+        return profilePath(canon).resolve("workspace");
     }
 
     public Path soulPath(String profile) {
@@ -1056,16 +1127,14 @@ public class ProfileService {
 
     @SuppressWarnings("unchecked")
     private void writeProfileModel(Path profileDir, String provider, String model, String baseUrl) throws IOException {
-        writeProfileModel(profileDir, provider, model, baseUrl, null);
-    }
-
-    private void writeProfileModel(Path profileDir,
-                                   String provider,
-                                   String model,
-                                   String baseUrl,
-                                   String apiKey) throws IOException {
         Path path = profileDir.resolve("config.yaml");
         Map<String, Object> config = readYamlMap(path);
+        applyModelSelection(config, provider, model, baseUrl, null);
+        atomicWriteString(path, dumpYaml(config));
+    }
+
+    static void applyModelSelection(Map<String, Object> config, String provider, String model,
+                                    String baseUrl, String apiKey) {
         Object rawModelConfig = config.get("model");
         Map<String, Object> modelConfig = rawModelConfig instanceof Map<?, ?> modelMap
             ? toStringKeyMap(modelMap)
@@ -1082,7 +1151,6 @@ public class ProfileService {
             modelConfig.put("api_key", apiKey);
         }
         config.put("model", modelConfig);
-        atomicWriteString(path, dumpYaml(config));
     }
 
     private Map<String, Object> readYamlMap(Path path) {
@@ -1100,7 +1168,7 @@ public class ProfileService {
         return new LinkedHashMap<>();
     }
 
-    private Map<String, Object> toStringKeyMap(Map<?, ?> raw) {
+    private static Map<String, Object> toStringKeyMap(Map<?, ?> raw) {
         Map<String, Object> result = new LinkedHashMap<>();
         raw.forEach((key, value) -> {
             if (key != null) {
@@ -1110,12 +1178,12 @@ public class ProfileService {
         return result;
     }
 
-    private Object yamlValue(Object value) {
+    private static Object yamlValue(Object value) {
         if (value instanceof Map<?, ?> map) {
             return toStringKeyMap(map);
         }
         if (value instanceof List<?> list) {
-            return list.stream().map(this::yamlValue).toList();
+            return list.stream().map(ProfileService::yamlValue).toList();
         }
         return value;
     }

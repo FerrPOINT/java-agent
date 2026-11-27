@@ -191,6 +191,35 @@ class CronJobControllerTest {
     }
 
     @Test
+    void exactHeartbeatSessionRequiresItsProfileEvenForTheSameOwner() throws Exception {
+        UUID sessionId = UUID.randomUUID();
+        var session = new com.azhukov.agent.persistence.entity.SessionEntity();
+        session.setId(sessionId);
+        session.setUserId("same-owner");
+        session.setProfile("alpha");
+        when(sessionRepository.findById(sessionId)).thenReturn(java.util.Optional.of(session));
+        when(heartbeatService.get(sessionId)).thenReturn(new HeartbeatService.HeartbeatState(
+            "private alpha reminder", 60, "active", java.time.Instant.now(), null, 0, 0, "alpha"));
+
+        UserContext.set("same-owner", UserContext.ROLE_USER);
+        try {
+            mockMvc.perform(get("/api/v1/agent/cron/heartbeat/{id}", sessionId))
+                .andExpect(status().isNotFound());
+            mockMvc.perform(get("/api/v1/agent/cron/heartbeat/{id}", sessionId).param("profile", "beta"))
+                .andExpect(status().isNotFound());
+            mockMvc.perform(post("/api/v1/agent/cron/heartbeat/{id}/clear", sessionId).param("profile", "beta"))
+                .andExpect(status().isNotFound());
+            mockMvc.perform(get("/api/v1/agent/cron/heartbeat/{id}", sessionId).param("profile", "alpha"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.prompt").value("private alpha reminder"));
+            verify(heartbeatService).get(sessionId);
+            verify(heartbeatService, never()).clear(any());
+        } finally {
+            UserContext.clear();
+        }
+    }
+
+    @Test
     void heartbeatSetRejectsNegativeMaxTicksWithoutStartingUnlimitedLoop() throws Exception {
         UUID sessionId = UUID.randomUUID();
         UserContext.set("user-a", UserContext.ROLE_USER);
@@ -231,7 +260,7 @@ class CronJobControllerTest {
         CronJobEntity entity = new CronJobEntity();
         entity.setId(UUID.randomUUID());
         entity.setName("job1");
-        when(cronJobService.list(true)).thenReturn(List.of(entity));
+        when(cronJobService.listForProfile("default", true)).thenReturn(List.of(entity));
 
         mockMvc.perform(get("/api/v1/agent/cron"))
             .andExpect(status().isOk())
@@ -271,6 +300,7 @@ class CronJobControllerTest {
     void currentUpdatePreservesConfigurationAndExplicitSessionAttachment() throws Exception {
         UUID id = UUID.randomUUID(), session = UUID.randomUUID();
         CronJobEntity entity = new CronJobEntity(); entity.setId(id); entity.setName("updated");
+        when(cronJobService.findById(id, "default")).thenReturn(java.util.Optional.of(entity));
         when(cronJobService.update(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
                 any(), any(), any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(entity);
         mockMvc.perform(put("/api/v1/agent/cron/{id}", id).contentType(MediaType.APPLICATION_JSON).content("""
@@ -316,6 +346,7 @@ class CronJobControllerTest {
         CronJobEntity entity = new CronJobEntity();
         entity.setId(id);
         entity.setEnabled(false);
+        when(cronJobService.findById(id, "default")).thenReturn(java.util.Optional.of(entity));
         when(cronJobService.pause(id)).thenReturn(entity);
 
         mockMvc.perform(post("/api/v1/agent/cron/{id}/pause", id))
@@ -327,7 +358,7 @@ class CronJobControllerTest {
         UUID id = UUID.randomUUID();
         UserContext.set("user-a", UserContext.ROLE_USER);
         try {
-            when(cronJobService.findById(id)).thenReturn(java.util.Optional.empty());
+            when(cronJobService.findById(id, "default")).thenReturn(java.util.Optional.empty());
 
             mockMvc.perform(get("/api/v1/agent/cron/{id}/executions", id))
                 .andExpect(status().isNotFound());
@@ -336,6 +367,24 @@ class CronJobControllerTest {
         } finally {
             UserContext.clear();
         }
+    }
+
+    @Test
+    void sameHumanCannotReadOrRunKnownJobIdFromAnotherProfile() throws Exception {
+        UUID id = UUID.randomUUID();
+        var alpha = new CronJobEntity();
+        alpha.setId(id);
+        alpha.setProfile("alpha");
+        alpha.setName("plan alpha");
+        when(cronJobService.findById(id, "alpha")).thenReturn(java.util.Optional.of(alpha));
+
+        mockMvc.perform(get("/api/v1/agent/cron/{id}", id).param("profile", "alpha"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.profile").value("alpha"));
+        mockMvc.perform(get("/api/v1/agent/cron/{id}", id).param("profile", "beta"))
+            .andExpect(status().isNotFound());
+        mockMvc.perform(post("/api/v1/agent/cron/{id}/run", id).param("profile", "beta"))
+            .andExpect(status().isNotFound());
+        verify(cronJobService, org.mockito.Mockito.never()).runNow(id);
     }
 
     @Test

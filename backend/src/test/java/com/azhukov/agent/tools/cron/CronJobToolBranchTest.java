@@ -90,7 +90,7 @@ class CronJobToolBranchTest {
     @Test
     void uppercaseActionIsLowercased() {
         CronJobTool tool = new CronJobTool(cronJobService);
-        when(cronJobService.list()).thenReturn(List.of());
+        when(cronJobService.listForProfile("default", true)).thenReturn(List.of());
         ToolResult result = tool.execute("{\"action\":\"LIST\"}", assistant(), session());
         assertThat(result.success()).isTrue();
     }
@@ -255,7 +255,7 @@ class CronJobToolBranchTest {
 
     @Test
     void listJobs_serviceThrows_returnsFail() {
-        when(cronJobService.list()).thenThrow(new RuntimeException("DB error"));
+        when(cronJobService.listForProfile("default", true)).thenThrow(new RuntimeException("DB error"));
         CronJobTool tool = new CronJobTool(cronJobService);
         ToolResult result = tool.execute("{\"action\":\"list\"}", assistant(), session());
         assertCronError(result, "Failed to list cron jobs");
@@ -264,7 +264,7 @@ class CronJobToolBranchTest {
     @Test
     @SuppressWarnings("unchecked")
     void listJobs_emptyList_returnsOk() {
-        when(cronJobService.list()).thenReturn(List.of());
+        when(cronJobService.listForProfile("default", true)).thenReturn(List.of());
         CronJobTool tool = new CronJobTool(cronJobService);
         ToolResult result = tool.execute("{\"action\":\"list\"}", assistant(), session());
         Map<String, Object> payload = json(result);
@@ -290,7 +290,7 @@ class CronJobToolBranchTest {
         e2.setSchedule("0 18 * * *");
         e2.setEnabled(false);
 
-        when(cronJobService.list()).thenReturn(List.of(e1, e2));
+        when(cronJobService.listForProfile("default", true)).thenReturn(List.of(e1, e2));
         CronJobTool tool = new CronJobTool(cronJobService);
         ToolResult result = tool.execute("{\"action\":\"list\"}", assistant(), session());
         Map<String, Object> payload = json(result);
@@ -315,7 +315,7 @@ class CronJobToolBranchTest {
 
     @Test
     void pauseJob_notFound_returnsFail() {
-        when(cronJobService.findByName("missing")).thenReturn(Optional.empty());
+        when(cronJobService.findByName("missing", "default")).thenReturn(Optional.empty());
         CronJobTool tool = new CronJobTool(cronJobService);
         ToolResult result = tool.execute("{\"action\":\"pause\",\"name\":\"missing\"}", assistant(), session());
         assertCronError(result, "Job with ID or name 'missing' not found");
@@ -326,7 +326,7 @@ class CronJobToolBranchTest {
         CronJobEntity entity = new CronJobEntity();
         entity.setId(UUID.randomUUID());
         entity.setName("job1");
-        when(cronJobService.findByName("job1")).thenReturn(Optional.of(entity));
+        when(cronJobService.findByName("job1", "default")).thenReturn(Optional.of(entity));
         when(cronJobService.pause(entity.getId())).thenThrow(new RuntimeException("DB error"));
         CronJobTool tool = new CronJobTool(cronJobService);
         ToolResult result = tool.execute("{\"action\":\"pause\",\"name\":\"job1\"}", assistant(), session());
@@ -339,7 +339,7 @@ class CronJobToolBranchTest {
         CronJobEntity entity = new CronJobEntity();
         entity.setId(COMPACT_ID_SOURCE);
         entity.setName("job1");
-        when(cronJobService.list(true)).thenReturn(List.of(entity));
+        when(cronJobService.listForProfile("default", true)).thenReturn(List.of(entity));
         when(cronJobService.pause(COMPACT_ID_SOURCE)).thenReturn(entity);
 
         CronJobTool tool = new CronJobTool(cronJobService);
@@ -364,7 +364,7 @@ class CronJobToolBranchTest {
 
     @Test
     void resumeJob_notFound_returnsFail() {
-        when(cronJobService.findByName("missing")).thenReturn(Optional.empty());
+        when(cronJobService.findByName("missing", "default")).thenReturn(Optional.empty());
         CronJobTool tool = new CronJobTool(cronJobService);
         ToolResult result = tool.execute("{\"action\":\"resume\",\"name\":\"missing\"}", assistant(), session());
         assertCronError(result, "Job with ID or name 'missing' not found");
@@ -378,7 +378,7 @@ class CronJobToolBranchTest {
         entity.setId(id);
         entity.setName("resume-me");
         entity.setEnabled(false);
-        when(cronJobService.findByName("resume-me")).thenReturn(Optional.of(entity));
+        when(cronJobService.findByName("resume-me", "default")).thenReturn(Optional.of(entity));
         when(cronJobService.resume(id)).thenAnswer(inv -> {
             entity.setEnabled(true);
             return entity;
@@ -398,7 +398,7 @@ class CronJobToolBranchTest {
         CronJobEntity entity = new CronJobEntity();
         entity.setId(UUID.randomUUID());
         entity.setName("job1");
-        when(cronJobService.findByName("job1")).thenReturn(Optional.of(entity));
+        when(cronJobService.findByName("job1", "default")).thenReturn(Optional.of(entity));
         when(cronJobService.resume(entity.getId())).thenThrow(new RuntimeException("DB error"));
         CronJobTool tool = new CronJobTool(cronJobService);
         ToolResult result = tool.execute("{\"action\":\"resume\",\"name\":\"job1\"}", assistant(), session());
@@ -416,7 +416,7 @@ class CronJobToolBranchTest {
 
     @Test
     void removeJob_notFound_returnsFail() {
-        when(cronJobService.findByName("missing")).thenReturn(Optional.empty());
+        when(cronJobService.findByName("missing", "default")).thenReturn(Optional.empty());
         CronJobTool tool = new CronJobTool(cronJobService);
         ToolResult result = tool.execute("{\"action\":\"remove\",\"name\":\"missing\"}", assistant(), session());
         assertCronError(result, "Job with ID or name 'missing' not found");
@@ -429,7 +429,7 @@ class CronJobToolBranchTest {
         CronJobEntity entity = new CronJobEntity();
         entity.setId(id);
         entity.setName("remove-me");
-        when(cronJobService.findByName("remove-me")).thenReturn(Optional.of(entity));
+        when(cronJobService.findByName("remove-me", "default")).thenReturn(Optional.of(entity));
         CronJobTool tool = new CronJobTool(cronJobService);
         ToolResult result = tool.execute("{\"action\":\"remove\",\"name\":\"remove-me\"}", assistant(), session());
         Map<String, Object> payload = json(result);
@@ -443,7 +443,7 @@ class CronJobToolBranchTest {
         CronJobEntity entity = new CronJobEntity();
         entity.setId(UUID.randomUUID());
         entity.setName("job1");
-        when(cronJobService.findByName("job1")).thenReturn(Optional.of(entity));
+        when(cronJobService.findByName("job1", "default")).thenReturn(Optional.of(entity));
         org.mockito.Mockito.doThrow(new RuntimeException("DB error"))
             .when(cronJobService).remove(entity.getId());
         CronJobTool tool = new CronJobTool(cronJobService);
@@ -462,7 +462,7 @@ class CronJobToolBranchTest {
 
     @Test
     void runJob_notFound_returnsFail() {
-        when(cronJobService.findByName("missing")).thenReturn(Optional.empty());
+        when(cronJobService.findByName("missing", "default")).thenReturn(Optional.empty());
         CronJobTool tool = new CronJobTool(cronJobService);
         ToolResult result = tool.execute("{\"action\":\"run\",\"name\":\"missing\"}", assistant(), session());
         assertCronError(result, "Job with ID or name 'missing' not found");
@@ -473,7 +473,7 @@ class CronJobToolBranchTest {
         CronJobEntity entity = new CronJobEntity();
         entity.setId(UUID.randomUUID());
         entity.setName("job1");
-        when(cronJobService.findByName("job1")).thenReturn(Optional.of(entity));
+        when(cronJobService.findByName("job1", "default")).thenReturn(Optional.of(entity));
         when(cronJobService.runNowBackground(entity.getId(), null)).thenThrow(new RuntimeException("DB error"));
         CronJobTool tool = new CronJobTool(cronJobService);
         ToolResult result = tool.execute("{\"action\":\"run\",\"name\":\"job1\"}", assistant(), session());
@@ -486,7 +486,7 @@ class CronJobToolBranchTest {
         CronJobEntity entity = new CronJobEntity();
         entity.setId(id);
         entity.setName("job1");
-        when(cronJobService.findById(id)).thenReturn(Optional.of(entity));
+        when(cronJobService.findById(id, "default")).thenReturn(Optional.of(entity));
         when(cronJobService.update(
             eq(id), any(), any(), any(),
             any(), any(), any(), any(),
@@ -515,7 +515,7 @@ class CronJobToolBranchTest {
         CronJobEntity entity = new CronJobEntity();
         entity.setId(id);
         entity.setName("job1");
-        when(cronJobService.findById(id)).thenReturn(Optional.of(entity));
+        when(cronJobService.findById(id, "default")).thenReturn(Optional.of(entity));
 
         CronJobTool tool = new CronJobTool(cronJobService);
         ToolResult result = tool.execute(
@@ -531,7 +531,7 @@ class CronJobToolBranchTest {
         CronJobEntity entity = new CronJobEntity();
         entity.setId(id);
         entity.setName("job1");
-        when(cronJobService.findById(id)).thenReturn(Optional.of(entity));
+        when(cronJobService.findById(id, "default")).thenReturn(Optional.of(entity));
         when(cronJobService.update(
             eq(id), any(), any(), any(),
             any(), any(), any(), any(),
@@ -560,7 +560,7 @@ class CronJobToolBranchTest {
         CronJobEntity entity = new CronJobEntity();
         entity.setId(id);
         entity.setName("job1");
-        when(cronJobService.findByName("job1")).thenReturn(Optional.of(entity));
+        when(cronJobService.findByName("job1", "default")).thenReturn(Optional.of(entity));
         when(cronJobService.runNowBackground(id, "fresh context")).thenReturn(entity);
 
         CronJobTool tool = new CronJobTool(cronJobService);
@@ -664,7 +664,7 @@ class CronJobToolBranchTest {
         CronJobEntity existing = new CronJobEntity();
         existing.setId(id);
         existing.setName("job1");
-        when(cronJobService.findById(id)).thenReturn(Optional.of(existing));
+        when(cronJobService.findById(id, "default")).thenReturn(Optional.of(existing));
         when(cronJobService.update(
             eq(id), any(), any(), any(),
             any(), any(), any(), any(),
@@ -729,7 +729,7 @@ class CronJobToolBranchTest {
         e.setMonitorLastChangedAt(Instant.EPOCH);
         e.setContinuityEnabled(true);
         e.setAttachedSessionId(UUID.fromString("33333333-4444-5555-6666-777777777777"));
-        when(cronJobService.list()).thenReturn(List.of(e));
+        when(cronJobService.listForProfile("default", true)).thenReturn(List.of(e));
 
         CronJobTool tool = new CronJobTool(cronJobService);
         ToolResult result = tool.execute("{\"action\":\"list\"}", assistant(), session());
@@ -853,7 +853,7 @@ class CronJobToolBranchTest {
         e.setSchedule("0 9 * * *");
         e.setEnabled(true);
         // lastRunAt and nextRunAt left null
-        when(cronJobService.list()).thenReturn(List.of(e));
+        when(cronJobService.listForProfile("default", true)).thenReturn(List.of(e));
         CronJobTool tool = new CronJobTool(cronJobService);
         ToolResult result = tool.execute("{\"action\":\"list\"}", assistant(), session());
         Map<String, Object> payload = json(result);

@@ -1,19 +1,17 @@
 package com.azhukov.agent.service;
 
+import com.azhukov.agent.core.security.SecureFileAccess;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.attribute.PosixFilePermission;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 
 /**
  * Profile {@code .env} store (ADR-013, WP-4). Allowlisted keys only, values
@@ -25,22 +23,32 @@ import java.util.Set;
  */
 @Service
 @RequiredArgsConstructor
-@Slf4j
 public class ProfileEnvStore {
 
     /** Keys the dashboard may write — mirrors the envRows() catalog. */
     private static final Set<String> ALLOWED_KEYS = Set.of(
         "AGENT_MODEL_API_KEY",
+        "AGENT_FLEET_PROFILE_TOKEN_SHA256",
+        "PROJECT_WORKFLOW_API_TOKEN",
+        "PROJECT_WORKFLOW_NAMESPACE_ID",
+        "TASKTRACKER_TOKEN",
+        "CICD_API_TOKEN",
         "AGENT_MODEL_BASE_URL",
         "AGENT_WEB_SEARXNG_URL",
         "AGENT_TTS_API_KEY",
         "AGENT_IMAGE_GEN_API_KEY",
         "AGENT_VISION_API_KEY",
-        "AGENT_TRANSCRIPTION_API_KEY");
+        "AGENT_TRANSCRIPTION_API_KEY",
+        GatewayConfigWriter.TOKEN,
+        GatewayConfigWriter.WEBHOOK_SECRET,
+        GatewayConfigWriter.USER_IDS,
+        GatewayConfigWriter.USERNAMES,
+        GatewayConfigWriter.ALLOW_BY_DEFAULT);
 
     private static final String REDACTED = "********";
 
     private final ObjectProvider<ProfileService> profileServiceProvider;
+    private final ProfileRuntimeRegistry runtime;
 
     /** Masked status rows for the whole allowlist. */
     public Map<String, Map<String, Object>> maskedRows(String profile) throws IOException {
@@ -51,7 +59,7 @@ public class ProfileEnvStore {
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("is_set", value != null && !value.isBlank());
             row.put("redacted_value", value == null || value.isBlank() ? null : REDACTED);
-            row.put("is_password", key.endsWith("_API_KEY") || key.endsWith("_KEY"));
+            row.put("is_password", key.endsWith("_KEY") || key.endsWith("_SHA256") || key.endsWith("_TOKEN") || key.endsWith("_SECRET"));
             rows.put(key, row);
         }
         return rows;
@@ -65,33 +73,65 @@ public class ProfileEnvStore {
     /** Set one allowlisted key. Non-allowlisted keys are rejected. */
     public void set(String profile, String key, String value) throws IOException {
         requireAllowlisted(key);
-        Path envPath = secureEnvPath(profile);
-        Map<String, String> values = readAll(profile);
-        values.put(key, value == null ? "" : value);
-        writeAll(envPath, values);
+        String clean = value == null ? "" : value;
+        mutate(profile, values -> values.put(key, clean));
     }
 
     /** Delete one allowlisted key (missing key is a no-op). */
     public boolean delete(String profile, String key) throws IOException {
         requireAllowlisted(key);
-        Map<String, String> values = readAll(profile);
-        boolean removed = values.remove(key) != null;
-        if (removed) {
-            writeAll(secureEnvPath(profile), values);
+        return mutate(profile, values -> values.remove(key) != null);
+    }
+
+    <T> T mutate(String profile, Function<Map<String, String>, T> edit) throws IOException {
+        String canon = profiles().normalizeProfileName(profile);
+        synchronized (runtime.lockFor(canon)) {
+            Map<String, String> original = readDisk(canon);
+            Map<String, String> changed = new LinkedHashMap<>(original);
+            T result = edit.apply(changed);
+            for (var entry : changed.entrySet()) {
+                if (!java.util.Objects.equals(original.get(entry.getKey()), entry.getValue())) {
+                    requireAllowlisted(entry.getKey());
+                    validateValue(entry.getKey(), entry.getValue());
+                }
+            }
+            if (!original.equals(changed)) {
+                writeAll(envPath(canon), changed);
+            }
+            return result;
         }
-        return removed;
+    }
+
+    private static void validateValue(String key, String value) {
+        if (GatewayConfigWriter.WEBHOOK_SECRET.equals(key)) {
+            GatewayConfigWriter.validateWebhookSecret(value);
+        }
+        if ("AGENT_FLEET_PROFILE_TOKEN_SHA256".equals(key) && !value.matches("[0-9a-f]{64}")) {
+            throw new IllegalArgumentException("Fleet profile token fingerprint must be a SHA-256 digest");
+        }
+        if (java.util.regex.Pattern.compile("\\R").matcher(value).find()) {
+            throw new IllegalArgumentException("Environment values must fit on one line");
+        }
     }
 
     /** Raw values for internal readers (binder/bootstrap), never for API responses. */
     public Map<String, String> readAll(String profile) throws IOException {
+        var accepted = ProfileExecutionConfiguration.current(profile);
+        return accepted == null ? readDisk(profile) : accepted.environment();
+    }
+
+    Map<String, String> readDisk(String profile) throws IOException {
         ProfileService profiles = profiles();
         String canon = profiles.normalizeProfileName(profile);
         Path envPath = envPath(canon);
-        if (!Files.isRegularFile(envPath)) {
+        String raw;
+        try {
+            raw = SecureFileAccess.readUtf8(envPath);
+        } catch (java.nio.file.NoSuchFileException e) {
             return new LinkedHashMap<>();
         }
         Map<String, String> values = new LinkedHashMap<>();
-        for (String line : Files.readAllLines(envPath, StandardCharsets.UTF_8)) {
+        for (String line : raw.split("\\R")) {
             int eq = line.indexOf('=');
             if (eq <= 0 || line.startsWith("#")) {
                 continue;
@@ -108,52 +148,22 @@ public class ProfileEnvStore {
     }
 
     private Path envPath(String canon) throws IOException {
-        return profiles().profilesRoot().resolve(canon).resolve(".env");
-    }
-
-    /**
-     * The secure-store contract: the .env file must live under the profile dir
-     * with owner-only permissions. If we cannot guarantee that, fail closed.
-     */
-    private Path secureEnvPath(String profile) throws IOException {
-        ProfileService profiles = profiles();
-        String canon = profiles.normalizeProfileName(profile);
-        Path envPath = envPath(canon);
-        Files.createDirectories(envPath.getParent());
-        if (!Files.isRegularFile(envPath)) {
-            Files.writeString(envPath, "# managed by dashboard\n", StandardCharsets.UTF_8);
-        }
-        try {
-            Files.setPosixFilePermissions(envPath, PosixFilePermissionsFromString("rw-------"));
-        } catch (UnsupportedOperationException e) {
-            throw new IOException("secure env store unavailable: POSIX permissions not supported");
-        }
-        return envPath;
-    }
-
-    static Set<PosixFilePermission> PosixFilePermissionsFromString(String value) {
-        Set<PosixFilePermission> result = new java.util.LinkedHashSet<>();
-        int idx = 0;
-        for (PosixFilePermission permission : List.of(
-            PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE, PosixFilePermission.OWNER_EXECUTE,
-            PosixFilePermission.GROUP_READ, PosixFilePermission.GROUP_WRITE, PosixFilePermission.GROUP_EXECUTE,
-            PosixFilePermission.OTHERS_READ, PosixFilePermission.OTHERS_WRITE, PosixFilePermission.OTHERS_EXECUTE)) {
-            char flag = value.charAt(idx++);
-            if (flag != '-') {
-                result.add(permission);
-            }
-        }
-        return result;
+        var profiles = profiles();
+        profiles.validateProfileName(canon);
+        profiles.requireKnownProfile(canon);
+        return profiles.profilesRoot().resolve(canon).resolve(".env");
     }
 
     private void writeAll(Path envPath, Map<String, String> values) throws IOException {
         StringBuilder sb = new StringBuilder("# managed by dashboard\n");
         for (Map.Entry<String, String> entry : values.entrySet()) {
             sb.append(entry.getKey()).append('=')
-                .append(entry.getValue() == null ? "" : entry.getValue().replace("\n", ""))
+                .append(entry.getValue())
                 .append('\n');
         }
-        Files.writeString(envPath, sb.toString(), StandardCharsets.UTF_8);
+        try (var directory = SecureFileAccess.openOrCreateDirectory(envPath.getParent())) {
+            directory.replacePrivateFile(envPath.getFileName(), sb.toString().getBytes(StandardCharsets.UTF_8));
+        }
     }
 
     private ProfileService profiles() throws IOException {

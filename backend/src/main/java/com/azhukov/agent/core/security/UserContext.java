@@ -105,17 +105,17 @@ public final class UserContext {
     /** A queued task retains the exact proof and never captures a refreshed role/TTL. */
     public static Runnable wrap(Runnable work) {
         var captured = Snapshot.capture();
-        return () -> captured.run(work);
+        return ProfileDatabaseScope.carry(() -> captured.run(work));
     }
 
     public static <T> java.util.function.Supplier<T> wrapSupplier(java.util.function.Supplier<T> work) {
         var captured = Snapshot.capture();
-        return () -> {
+        return ProfileDatabaseScope.carrySupplier(() -> {
             var previous = Snapshot.capture();
             captured.install();
             try { return work.get(); }
             finally { previous.install(); }
-        };
+        });
     }
 
     /** Bound a blocking stream wait to the same original proof; no TTL is created. */

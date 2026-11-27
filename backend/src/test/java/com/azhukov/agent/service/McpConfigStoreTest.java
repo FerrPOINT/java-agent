@@ -128,10 +128,12 @@ class McpConfigStoreTest {
         entity.setEnvKeysJson("[\"SECRET_API_KEY\"]");
         entity.setOauthTokenUrl("https://oauth.example/token");
         entity.setOauthClientId("client-1");
+        entity.setHeadersJson("{\"Authorization\":\"Bearer test-token\"}");
 
         Map<String, Object> view = store().redactedView(entity);
 
-        assertThat(view).containsEntry("oauth_configured", true);
+        assertThat(view).containsEntry("oauth_configured", true)
+            .containsEntry("headers", Map.of("Authorization", "********"));
         // OAuth client id/secret/token url never round-trip; env shows KEY names only.
         assertThat(view.keySet()).doesNotContain("oauth_client_id", "oauth_client_secret",
             "oauth_token_url", "env");

@@ -7,6 +7,12 @@ import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.repository.MessageRepository;
 import com.azhukov.agent.persistence.repository.SessionRepository;
 import com.azhukov.agent.service.ProfileService;
+import com.azhukov.agent.service.ProfileConfigWriter;
+import com.azhukov.agent.service.ProfileEnvStore;
+import com.azhukov.agent.service.ProfileInstructions;
+import com.azhukov.agent.service.ProfileModelRouting;
+import com.azhukov.agent.service.ProfileRuntimeRegistry;
+import org.springframework.beans.factory.support.StaticListableBeanFactory;
 import com.azhukov.agent.service.RuntimeConfigService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -49,6 +55,7 @@ class ProfilesDashboardControllerTest {
     private AgentProperties properties;
     private RuntimeConfigService runtimeConfigService;
     private ProfileService profileService;
+    private ProfileConfigWriter profileWriter;
     private SessionRepository sessionRepository;
     private MessageRepository messageRepository;
     private MockMvc mockMvc;
@@ -63,6 +70,13 @@ class ProfilesDashboardControllerTest {
         properties.getModel().setModelName("gpt-5");
         runtimeConfigService = new RuntimeConfigService();
         profileService = new ProfileService(properties, runtimeConfigService);
+        var profileBeans = new StaticListableBeanFactory();
+        profileBeans.addBean("profiles", profileService);
+        var profiles = profileBeans.getBeanProvider(ProfileService.class);
+        var runtime = new ProfileRuntimeRegistry(null);
+        var routing = new ProfileModelRouting(profileService, new ProfileEnvStore(profiles, runtime));
+        profileWriter = new ProfileConfigWriter(profiles, null, routing,
+            new ProfileInstructions(properties, profileService, new com.fasterxml.jackson.databind.ObjectMapper()), runtime);
         sessionRepository = mock(com.azhukov.agent.persistence.repository.SessionRepository.class);
         messageRepository = mock(com.azhukov.agent.persistence.repository.MessageRepository.class);
         mockMvc = MockMvcBuilders.standaloneSetup(
@@ -73,7 +87,7 @@ class ProfilesDashboardControllerTest {
                 sessionRepository,
                 messageRepository,
                 command -> {
-                }))
+                }, profileWriter))
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();
     }
@@ -91,7 +105,7 @@ class ProfilesDashboardControllerTest {
                 profileService,
                 sessionRepository,
                 messageRepository,
-                launcher)).build();
+                launcher, profileWriter)).build();
     }
 
     @Test
@@ -755,12 +769,23 @@ class ProfilesDashboardControllerTest {
 
         mockMvc.perform(put("/api/profiles/work/model")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"provider\":\"openai\",\"model\":\"gpt-5\",\"base_url\":\"https://api.example/v1\"}"))
+                .content("""
+                    {"provider":"openai","model":"gpt-5","base_url":"https://api.example/v1","api_key":"fixture-key"}
+                    """))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.ok").value(true))
             .andExpect(jsonPath("$.provider").value("openai"))
             .andExpect(jsonPath("$.model").value("gpt-5"))
             .andExpect(jsonPath("$.base_url").value("https://api.example/v1"));
+
+        String acceptedModel = profileService.readRawConfig("work");
+        mockMvc.perform(put("/api/profiles/work/model")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {"provider":"openai","model":"broken","base_url":"file:///invalid"}
+                    """))
+            .andExpect(status().isBadRequest());
+        org.assertj.core.api.Assertions.assertThat(profileService.readRawConfig("work")).isEqualTo(acceptedModel);
 
         mockMvc.perform(put("/api/profiles/work/model")
                 .contentType(MediaType.APPLICATION_JSON)

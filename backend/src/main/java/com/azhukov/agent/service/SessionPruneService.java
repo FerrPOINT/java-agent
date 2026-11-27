@@ -75,8 +75,9 @@ public class SessionPruneService {
 
     @Transactional
     public PruneResult prune(PruneRequest request) {
+        String profile = request.profile() == null ? "default" : request.profile();
         List<SessionEntity> candidates = sessionRepository.listEndedSessions(
-            request.profile(), PageRequest.of(0, MAX_CANDIDATES));
+            profile, PageRequest.of(0, MAX_CANDIDATES));
 
         Instant effectiveCutoff = request.olderThan() != null
             ? request.olderThan()
@@ -104,7 +105,7 @@ public class SessionPruneService {
             pruned.add(summary);
             if (!request.dryRun()) {
                 int messages = candidateMessageCount(session);
-                if (sessionQueryService.deleteSession(session.getId())) {
+                if (sessionQueryService.deleteSession(profile, session.getId())) {
                     deletedMessages += messages;
                 }
             }

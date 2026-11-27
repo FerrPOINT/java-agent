@@ -144,7 +144,7 @@ public class SessionController {
             return Map.of("ok", true, "model", model,
                 "provider", provider != null ? provider : "",
                 "sessionId", sessionId.toString());
-        } catch (SecurityException e) {
+        } catch (SecurityException | org.springframework.web.server.ResponseStatusException e) {
             throw e;
         } catch (Exception e) {
             return Map.of("ok", false, "error", e.getMessage());
@@ -172,7 +172,7 @@ public class SessionController {
                     out.put("model", defaultModelName());
                 }
                 return out;
-            } catch (SecurityException e) {
+            } catch (SecurityException | org.springframework.web.server.ResponseStatusException e) {
                 throw e;
             } catch (Exception e) {
                 return Map.of("error", e.getMessage());
@@ -201,7 +201,7 @@ public class SessionController {
 
     @PostMapping("/agent/session/{sessionId}/branch")
     public SessionSummaryDto branchSession(@PathVariable UUID sessionId, @RequestParam(required = false) String name) {
-        return agentRuntimeService.branchSession(sessionId, name);
+        return agentRuntimeService.branchSession(sessionId, name, "default");
     }
 
     // ── Plan (todo list for session) ──

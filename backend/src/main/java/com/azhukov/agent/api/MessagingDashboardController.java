@@ -1,5 +1,6 @@
 package com.azhukov.agent.api;
 
+import com.azhukov.agent.service.GatewayConfigWriter;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.gateway.GatewayRoutingService;
@@ -29,12 +30,7 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * Hermes dashboard compatibility for messaging-related pages.
- *
- * <p>The Java port has a Telegram adapter, but it does not yet have Hermes'
- * profile-scoped gateway config store, pairing store, or webhook subscription
- * registry. Read routes expose the closest safe runtime/configured state;
- * writes fail explicitly so the desktop does not fall through to generic 404s.</p>
+ * Messaging setup and pairing settings for the installation and named profiles.
  */
 @RestController
 @RequiredArgsConstructor
@@ -47,12 +43,12 @@ public class MessagingDashboardController {
     private final AgentProperties properties;
     private final GatewayRoutingService gatewayRoutingService;
     private final Environment environment;
-    private final org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.service.GatewayConfigWriter> gatewayConfigWriterProvider;
+    private final GatewayConfigWriter gatewayConfigWriter;
     private final org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.service.GatewayHomeChannelService> gatewayHomeChannelProvider;
 
-    private void requireAdminMessagingWriteAccess() {
+    private void requireAdminMessagingAccess() {
         if (UserContext.getUserId() != null && !UserContext.isAdmin()) {
-            throw new SecurityException("Messaging dashboard changes are available to administrators only");
+            throw new SecurityException("Telegram profile configuration requires administrator access");
         }
     }
 
@@ -119,10 +115,13 @@ public class MessagingDashboardController {
     public Map<String, Object> platforms(
         @RequestParam(name = "profile", required = false) String profile
     ) {
+        if (!GatewayConfigWriter.isDefault(profile)) {
+            return Map.of("platforms", List.of(telegramPlatform(profile)));
+        }
         return Map.of(
             "env_path", hermesHome().resolve(".env").toString(),
             "gateway_start_command", "java -jar java-agent-backend.jar",
-            "platforms", List.of(telegramPlatform(), webhookPlatform()));
+            "platforms", List.of(telegramPlatform(profile), webhookPlatform()));
     }
 
     @PutMapping("/api/messaging/platforms/{platformId}")
@@ -131,32 +130,32 @@ public class MessagingDashboardController {
         @PathVariable String platformId,
         @RequestBody(required = false) Map<String, Object> body
     ) {
-        requireAdminMessagingWriteAccess();
+        requireAdminMessagingAccess();
         if (!isKnownPlatform(platformId)) {
             return unknownPlatform(platformId);
         }
         if (!TELEGRAM.equals(normalizePlatform(platformId))) {
             return notImplemented("config writes are only implemented for telegram in the Java port");
         }
-        com.azhukov.agent.service.GatewayConfigWriter writer = gatewayConfigWriterProvider.getIfAvailable();
-        if (writer == null) {
-            return notImplemented("gateway config writer is not available in this deployment");
-        }
         try {
-            Map<String, Object> result = writer.updateTelegramConfig(
-                bodyString(body, "profile"),
+            var telegram = gatewayConfigWriter.updateTelegramConfig(
+                requestedProfile(body),
                 bodyString(body, "bot_token"),
+                bodyString(body, "webhook_secret"),
                 stringList(body == null ? null : body.get("allowed_user_ids")),
                 stringList(body == null ? null : body.get("allowed_usernames")),
-                body == null || body.get("allow_by_default") == null ? null
-                    : Boolean.parseBoolean(String.valueOf(body.get("allow_by_default"))));
-            return ResponseEntity.ok(result);
+                optionalBoolean(body, "allow_by_default"));
+            return ResponseEntity.ok(Map.of("ok", true, "platform", TELEGRAM,
+                "bot_token_set", telegram.botTokenSet(), "webhook_secret_set", telegram.webhookSecretSet(),
+                "allowed_user_ids", telegram.userIds(),
+                "allowed_usernames", telegram.usernames(), "allow_by_default", telegram.allowByDefault()));
         } catch (IllegalArgumentException e) {
             return badRequest(e.getMessage());
+        } catch (java.io.FileNotFoundException e) {
+            return notFound("Unknown profile");
         } catch (IOException e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(Map.of("detail", "Failed to persist platform config: " + e.getMessage(),
-                    "error", "platform_config_persist_failed"));
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(Map.of("detail", "Telegram profile configuration could not be saved"));
         }
     }
 
@@ -170,9 +169,15 @@ public class MessagingDashboardController {
         if (!isKnownPlatform(normalized)) {
             return unknownPlatform(platformId);
         }
-        Map<String, Object> payload = TELEGRAM.equals(normalized) ? telegramPlatform() : webhookPlatform();
+        if (!GatewayConfigWriter.isDefault(profile) && !TELEGRAM.equals(normalized)) {
+            return notFound("Messaging platform is unavailable for this profile");
+        }
+        Map<String, Object> payload = TELEGRAM.equals(normalized) ? telegramPlatform(profile) : webhookPlatform();
         String state = stringValue(payload.get("state"));
         String name = stringValue(payload.get("name"));
+        if ("webhook_configured".equals(state)) {
+            return ResponseEntity.ok(testResponse(false, state, "Send a Telegram message to verify the configured webhook."));
+        }
         if (!Boolean.TRUE.equals(payload.get("enabled"))) {
             return ResponseEntity.ok(testResponse(false, state,
                 name + " is disabled. Enable it, then restart the gateway."));
@@ -206,7 +211,7 @@ public class MessagingDashboardController {
     ) {
         return Map.of(
             "pending", List.of(),
-            "approved", approvedPairingUsers());
+            "approved", approvedPairingUsers(telegramAccess(profile)));
     }
 
     @PostMapping("/api/pairing/approve")
@@ -214,7 +219,7 @@ public class MessagingDashboardController {
     public ResponseEntity<Map<String, Object>> approvePairing(
         @RequestBody(required = false) Map<String, Object> body
     ) {
-        requireAdminMessagingWriteAccess();
+        requireAdminMessagingAccess();
         String platform = bodyString(body, "platform");
         String requestId = bodyString(body, "request_id");
         String code = bodyString(body, "code");
@@ -233,27 +238,23 @@ public class MessagingDashboardController {
         if (!hasText(value) && !hasText(requestId)) {
             return badRequest("user_id, code or request_id is required");
         }
-        com.azhukov.agent.service.GatewayConfigWriter writer = gatewayConfigWriterProvider.getIfAvailable();
-        if (writer == null) {
-            return notImplemented("gateway config writer is not available in this deployment");
-        }
         try {
             String target = hasText(value) ? value : requestId;
-            com.azhukov.agent.service.GatewayConfigWriter.ApproveResult result =
-                writer.approveTelegramUser(bodyString(body, "profile"), target);
+            var result = gatewayConfigWriter.approveTelegramUser(requestedProfile(body), target);
             Map<String, Object> payload = new LinkedHashMap<>();
             payload.put("ok", true);
             payload.put("platform", TELEGRAM);
             payload.put("user_id", result.user());
-            payload.put("added", result.added());
-            payload.put("approved", approvedPairingUsers());
+            payload.put("added", result.changed());
+            payload.put("approved", approvedPairingUsers(result.access()));
             return ResponseEntity.ok(payload);
         } catch (IllegalArgumentException e) {
             return badRequest(e.getMessage());
+        } catch (java.io.FileNotFoundException e) {
+            return notFound("Unknown profile");
         } catch (IOException e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(Map.of("detail", "Failed to persist pairing: " + e.getMessage(),
-                    "error", "pairing_persist_failed"));
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(Map.of("detail", "Telegram profile configuration could not be saved"));
         }
     }
 
@@ -262,33 +263,31 @@ public class MessagingDashboardController {
     public ResponseEntity<Map<String, Object>> revokePairing(
         @RequestBody(required = false) Map<String, Object> body
     ) {
-        requireAdminMessagingWriteAccess();
+        requireAdminMessagingAccess();
         if (!hasText(bodyString(body, "platform")) || !hasText(bodyString(body, "user_id"))) {
             return badRequest("platform and user_id are required");
         }
         if (!TELEGRAM.equals(normalizePlatform(bodyString(body, "platform")))) {
             return badRequest("Pairing revokes are only supported for telegram in the Java port");
         }
-        com.azhukov.agent.service.GatewayConfigWriter writer = gatewayConfigWriterProvider.getIfAvailable();
-        if (writer == null) {
-            return notImplemented("gateway config writer is not available in this deployment");
-        }
         try {
-            boolean removed = writer.revokeTelegramUser(bodyString(body, "profile"), bodyString(body, "user_id"));
+            var result = gatewayConfigWriter.revokeTelegramUser(requestedProfile(body), bodyString(body, "user_id"));
+            boolean removed = result.changed();
             Map<String, Object> payload = new LinkedHashMap<>();
             payload.put("ok", removed);
             payload.put("platform", TELEGRAM);
-            payload.put("approved", approvedPairingUsers());
+            payload.put("approved", approvedPairingUsers(result.access()));
             if (!removed) {
                 payload.put("detail", "User was not in the allowlist");
             }
             return ResponseEntity.ok(payload);
         } catch (IllegalArgumentException e) {
             return badRequest(e.getMessage());
+        } catch (java.io.FileNotFoundException e) {
+            return notFound("Unknown profile");
         } catch (IOException e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(Map.of("detail", "Failed to persist pairing revoke: " + e.getMessage(),
-                    "error", "pairing_persist_failed"));
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(Map.of("detail", "Telegram profile configuration could not be saved"));
         }
     }
 
@@ -355,7 +354,22 @@ public class MessagingDashboardController {
         return webhookSubscriptionNotFound(name);
     }
 
-    private Map<String, Object> telegramPlatform() {
+    private Map<String, Object> telegramPlatform(String profile) {
+        if (!GatewayConfigWriter.isDefault(profile)) {
+            var telegram = telegramAccess(profile);
+            boolean enabled = environment.getProperty("agent.gateway.telegram.webhook.enabled", Boolean.class, false);
+            boolean configured = telegram.botTokenSet() && telegram.webhookSecretSet();
+            String state = !enabled ? "disabled" : configured ? "webhook_configured" : "not_configured";
+            Map<String, Object> platform = platformBase(TELEGRAM, "Telegram", "Use Java agent from Telegram chats.",
+                "https://core.telegram.org/bots/features", enabled, configured, false, state);
+            platform.put("env_vars", List.of(
+                envVarStatus("TELEGRAM_BOT_TOKEN", "Telegram bot token", "Bot token", true, true, telegram.botTokenSet()),
+                envVarStatus("TELEGRAM_ALLOWED_USERS", "Allowed Telegram user IDs", "Allowed users",
+                    false, false, !telegram.userIds().isEmpty()),
+                envVarStatus("TELEGRAM_WEBHOOK_SECRET", "Telegram webhook secret", "Webhook secret",
+                    true, true, telegram.webhookSecretSet())));
+            return platform;
+        }
         boolean enabled = telegramEnabled();
         boolean configured = hasText(properties.getGateway().getTelegram().getBotToken())
             || hasText(environment.getProperty("TELEGRAM_BOT_TOKEN", ""));
@@ -457,7 +471,12 @@ public class MessagingDashboardController {
         String configuredValue
     ) {
         String raw = defaultIfBlank(configuredValue, environment.getProperty(key, ""));
-        boolean isSet = hasText(raw);
+        return envVarStatus(key, description, prompt, required, password, hasText(raw));
+    }
+
+    private Map<String, Object> envVarStatus(
+        String key, String description, String prompt, boolean required, boolean password, boolean isSet
+    ) {
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("advanced", false);
         row.put("description", description);
@@ -466,7 +485,7 @@ public class MessagingDashboardController {
         row.put("is_set", isSet);
         row.put("key", key);
         row.put("prompt", prompt);
-        row.put("redacted_value", isSet ? redact(raw) : null);
+        row.put("redacted_value", isSet ? "********" : null);
         row.put("required", required);
         row.put("url", null);
         return row;
@@ -489,9 +508,23 @@ public class MessagingDashboardController {
             .orElse(false);
     }
 
-    private List<Map<String, Object>> approvedPairingUsers() {
+    private GatewayConfigWriter.TelegramAccess telegramAccess(String profile) {
+        if (!GatewayConfigWriter.isDefault(profile)) {
+            requireAdminMessagingAccess();
+        }
+        try {
+            return gatewayConfigWriter.telegramAccess(profile);
+        } catch (java.io.FileNotFoundException e) {
+            throw new org.springframework.web.server.ResponseStatusException(HttpStatus.NOT_FOUND, "Unknown profile");
+        } catch (IOException e) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                HttpStatus.SERVICE_UNAVAILABLE, "Telegram profile configuration is unavailable");
+        }
+    }
+
+    private List<Map<String, Object>> approvedPairingUsers(GatewayConfigWriter.TelegramAccess telegram) {
         List<Map<String, Object>> approved = new ArrayList<>();
-        for (String id : properties.getGateway().getTelegram().getAllowedUserIds()) {
+        for (String id : telegram.userIds()) {
             String clean = clean(id);
             if (clean == null) {
                 continue;
@@ -502,7 +535,7 @@ public class MessagingDashboardController {
             user.put("user_name", "");
             approved.add(user);
         }
-        for (String username : properties.getGateway().getTelegram().getAllowedUsernames()) {
+        for (String username : telegram.usernames()) {
             String clean = clean(username);
             if (clean == null) {
                 continue;
@@ -585,6 +618,27 @@ public class MessagingDashboardController {
     }
 
         @SuppressWarnings("unchecked")
+    private static String requestedProfile(Map<String, Object> body) {
+        if (body == null || !body.containsKey("profile")) {
+            return "default";
+        }
+        Object value = body.get("profile");
+        if (value instanceof String profile && !profile.isBlank()) {
+            return profile;
+        }
+        throw new IllegalArgumentException("A valid Telegram profile is required");
+    }
+
+    private static Boolean optionalBoolean(Map<String, Object> body, String key) {
+        if (body == null || !body.containsKey(key)) {
+            return null;
+        }
+        if (body.get(key) instanceof Boolean flag) {
+            return flag;
+        }
+        throw new IllegalArgumentException(key + " must be a boolean");
+    }
+
     private static List<String> stringList(Object raw) {
         if (raw == null) {
             return null;
@@ -615,17 +669,6 @@ public class MessagingDashboardController {
 private static String bodyString(Map<String, Object> body, String key) {
         Object value = body != null ? body.get(key) : null;
         return value instanceof String text ? text.trim() : "";
-    }
-
-    private static String redact(String value) {
-        if (!hasText(value)) {
-            return null;
-        }
-        String clean = value.trim();
-        if (clean.length() <= 8) {
-            return "***";
-        }
-        return clean.substring(0, 4) + "..." + clean.substring(clean.length() - 4);
     }
 
     private static String clean(String value) {

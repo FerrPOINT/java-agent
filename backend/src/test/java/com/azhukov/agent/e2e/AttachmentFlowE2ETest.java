@@ -319,7 +319,7 @@ class AttachmentFlowE2ETest extends PostgresTestContainer {
                 .header("X-API-Key", "fixture-gateway-key").param("ownerId", owner).param("sessionId", session.toString())
                 .param("messageId", "421"))
             .andExpect(status().isConflict());
-        assertThat(artifactService.find(id, owner).orElseThrow().deliveredMessageId()).isEqualTo("420");
+        assertThat(artifactService.find(id, owner, "default").orElseThrow().deliveredMessageId()).isEqualTo("420");
     }
 
     @Test
@@ -338,10 +338,10 @@ class AttachmentFlowE2ETest extends PostgresTestContainer {
             .substring("MEDIA:artifact:".length());
 
         assertThat(second).isNotEqualTo(first);
-        assertThat(artifactService.claimOutbound(first, session.userId(), session.id())).isPresent();
-        assertThat(artifactService.claimOutbound(first, session.userId(), session.id())).isEmpty();
-        assertThat(artifactService.claimOutbound(second, session.userId(), session.id())).isPresent();
-        try (var content = artifactService.verifiedContent(second, session.userId()).orElseThrow()) {
+        assertThat(artifactService.claimOutbound(first, session.userId(), "default", session.id())).isPresent();
+        assertThat(artifactService.claimOutbound(first, session.userId(), "default", session.id())).isEmpty();
+        assertThat(artifactService.claimOutbound(second, session.userId(), "default", session.id())).isPresent();
+        try (var content = artifactService.verifiedContent(second, session.userId(), "default").orElseThrow()) {
             assertThat(content.stream().readAllBytes()).isEqualTo(bytes);
         }
     }

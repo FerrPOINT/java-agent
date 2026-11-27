@@ -22,6 +22,9 @@ import com.azhukov.agent.service.OpenAiResponseStore.StoredResponse;
 import com.azhukov.agent.service.OpenAiRunService;
 import com.azhukov.agent.service.OpenAiRunStateMachine;
 import com.azhukov.agent.service.OpenAiSessionService;
+import com.azhukov.agent.service.ProfileService;
+import com.azhukov.agent.service.ProfileModelRouting;
+import com.azhukov.agent.service.RuntimeConfigService.RuntimeModelSelection;
 import com.azhukov.agent.service.OpenAiSessionService.OpenAiSessionContext;
 import com.azhukov.agent.tools.terminal.ProcessTool;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -33,7 +36,6 @@ import org.mapstruct.factory.Mappers;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
@@ -87,6 +89,8 @@ class OpenAiRunsControllerTest {
     private ProcessTool processTool;
     private OpenAiSessionContext sessionContext;
     private ApiRunAdmissionService runAdmissionService;
+    private ProfileService profileService;
+    private ProfileModelRouting profileModelRouting;
 
     @Mock
     private AgentRuntimeService agentRuntimeService;
@@ -104,7 +108,9 @@ class OpenAiRunsControllerTest {
         processTool = mock(ProcessTool.class);
         properties = new AgentProperties();
         properties.getModel().setModelName(MODEL);
-        runAdmissionService = new ApiRunAdmissionService(properties);
+        profileService = mock(ProfileService.class);
+        runAdmissionService = new ApiRunAdmissionService(properties, profileService);
+        profileModelRouting = new ProfileModelRouting(profileService, null);
 
         runService = new OpenAiRunService(
             agentRuntimeService,
@@ -125,10 +131,14 @@ class OpenAiRunsControllerTest {
             responseStore,
             openAiMapper,
             objectMapper,
+            mock(com.azhukov.agent.core.tool.ToolRegistry.class),
             properties,
             new DefaultRedactor(properties),
             runAdmissionService,
-            null
+            profileService,
+            profileModelRouting,
+            new com.azhukov.agent.service.ProfileRuntimeRegistry(null),
+            ProfileExecutionConfigurationFixture.settings(), null
         );
 
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
@@ -140,9 +150,7 @@ class OpenAiRunsControllerTest {
             false,
             null
         );
-        lenient().when(openAiSessionService.resolveRunSession(nullable(UUID.class), any(), anyString()))
-            .thenReturn(sessionContext);
-        lenient().when(openAiSessionService.resolveRunSession(anyString(), any(), anyString()))
+        lenient().when(openAiSessionService.resolveRunSession(nullable(String.class), any(), anyString(), eq("default")))
             .thenReturn(sessionContext);
     }
 
@@ -155,18 +163,42 @@ class OpenAiRunsControllerTest {
     void foreignUserCannotReadPersistedRunAfterRestart() throws Exception {
         OpenAiRunStateMachine stateMachine = mock(OpenAiRunStateMachine.class);
         OpenAiRunStateEntity state = persistedRun("user-b");
-        lenient().when(stateMachine.state("run_persisted")).thenReturn(java.util.Optional.of(state));
+        lenient().when(stateMachine.state("run_persisted", "default")).thenReturn(java.util.Optional.of(state));
         UserContext.set("user-a", UserContext.ROLE_USER);
 
-        persistedRunsController(stateMachine).perform(get("/v1/runs/run_persisted"))
+        durableRunsController(stateMachine).perform(get("/v1/runs/run_persisted"))
             .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void persistedRunIsReadableAndReplayableOnlyInItsProfile() throws Exception {
+        OpenAiRunStateMachine stateMachine = mock(OpenAiRunStateMachine.class);
+        OpenAiRunStateEntity state = persistedRun("user-a");
+        state.setProfile("alpha");
+        when(stateMachine.state(eq("run_persisted"), anyString())).thenAnswer(call ->
+            "alpha".equals(call.getArgument(1)) ? java.util.Optional.of(state) : java.util.Optional.empty());
+        UserContext.set("user-a", UserContext.ROLE_ADMIN);
+        MockMvc persistedMvc = durableRunsController(stateMachine);
+
+        persistedMvc.perform(get("/p/beta/v1/runs/run_persisted"))
+            .andExpect(status().isNotFound());
+        persistedMvc.perform(get("/p/beta/v1/runs/run_persisted/events/replay"))
+            .andExpect(status().isNotFound());
+        persistedMvc.perform(get("/v1/runs/run_persisted"))
+            .andExpect(status().isNotFound());
+        persistedMvc.perform(get("/p/alpha/v1/runs/run_persisted"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.run_id").value("run_persisted"));
+        persistedMvc.perform(get("/p/alpha/v1/runs/run_persisted/events/replay"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.last_seq").value(4));
     }
 
     @Test
     void persistedRunControlEndpointsRemainUnavailableAfterRestart() throws Exception {
         OpenAiRunStateMachine stateMachine = mock(OpenAiRunStateMachine.class);
         UserContext.set("user-a", UserContext.ROLE_USER);
-        MockMvc persistedMvc = persistedRunsController(stateMachine);
+        MockMvc persistedMvc = durableRunsController(stateMachine);
 
         persistedMvc.perform(post("/v1/runs/run_persisted/stop"))
             .andExpect(status().isNotFound());
@@ -180,27 +212,110 @@ class OpenAiRunsControllerTest {
     void getRunUsesPersistedStateAfterRestart() throws Exception {
         OpenAiRunStateMachine stateMachine = mock(OpenAiRunStateMachine.class);
         OpenAiRunStateEntity state = persistedRun("user-a");
-        lenient().when(stateMachine.state("run_persisted")).thenReturn(java.util.Optional.of(state));
+        lenient().when(stateMachine.state("run_persisted", "default")).thenReturn(java.util.Optional.of(state));
+        when(stateMachine.replayParsed("run_persisted", "default", 3L, 1)).thenReturn(List.of(
+            new OpenAiRunStateMachine.ParsedEvent(4L, Map.of(
+                "event", "run.completed", "run_id", "run_persisted", "output", "done",
+                "completed", true, "partial", false, "interrupted", false))));
         UserContext.set("user-a", UserContext.ROLE_USER);
 
-        persistedRunsController(stateMachine).perform(get("/v1/runs/run_persisted"))
+        durableRunsController(stateMachine).perform(get("/v1/runs/run_persisted"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.run_id").value("run_persisted"))
             .andExpect(jsonPath("$.status").value("completed"))
+            .andExpect(jsonPath("$.completed").value(true))
+            .andExpect(jsonPath("$.partial").value(false))
+            .andExpect(jsonPath("$.interrupted").value(false))
             .andExpect(jsonPath("$.session_id").value(SESSION_ID.toString()))
             .andExpect(jsonPath("$.model").value(MODEL));
     }
 
-    private MockMvc persistedRunsController(OpenAiRunStateMachine stateMachine) {
-        @SuppressWarnings("unchecked")
-        ObjectProvider<OpenAiRunStateMachine> provider = mock(ObjectProvider.class);
-        lenient().when(provider.getIfAvailable()).thenReturn(stateMachine);
-        OpenAiRunsController controller = new OpenAiRunsController(
+    @Test
+    void keyedRunReplayUsesTheOriginalAcceptanceAfterServiceRecreation() throws Exception {
+        OpenAiRunStateMachine stateMachine = mock(OpenAiRunStateMachine.class);
+        var accepted = new java.util.concurrent.ConcurrentHashMap<String, OpenAiRunStateEntity>();
+        when(stateMachine.state(anyString(), anyString())).thenAnswer(call -> java.util.Optional.ofNullable(accepted.get(call.getArgument(0))));
+        when(stateMachine.accept(anyString(), anyString(), anyString(), any())).thenAnswer(call -> {
+            java.util.function.Supplier<OpenAiSessionContext> resolver = call.getArgument(3);
+            OpenAiSessionContext resolved = resolver.get();
+            var row = persistedRun("user-1");
+            row.setRunId(call.getArgument(0));
+            row.setRequestFingerprint(call.getArgument(2));
+            row.setAcceptedSessionId(resolved.responseSessionId());
+            accepted.put(row.getRunId(), row);
+            return resolved;
+        });
+        when(agentRuntimeService.runApiTurn(any(Session.class), anyString(), any(ModelRequestOptions.class)))
+            .thenReturn(new ChatResponseDto(SESSION_ID, "done", List.of(), true));
+        UserContext.set("user-1", UserContext.ROLE_USER);
+
+        String body = "{\"input\":\"original dispatch\"}";
+        MockMvc first = durableRunsController(stateMachine);
+        first.perform(post("/v1/runs/lookup").header("Idempotency-Key", "dispatch-31")
+                .contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isNotFound());
+        assertThat(accepted).isEmpty();
+        MvcResult created = first.perform(post("/v1/runs").header("Idempotency-Key", "dispatch-31")
+                .contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isAccepted())
+            .andExpect(jsonPath("$.replayed").value(false)).andReturn();
+        String runId = readRunId(created);
+
+        MockMvc restarted = durableRunsController(stateMachine);
+        restarted.perform(post("/v1/runs/lookup").header("Idempotency-Key", "dispatch-31")
+                .contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.run_id").value(runId))
+            .andExpect(jsonPath("$.replayed").value(true))
+            .andExpect(header().string(OpenAiSessionService.SESSION_ID_HEADER, SESSION_ID.toString()));
+        restarted.perform(post("/v1/runs/lookup").header("Idempotency-Key", "dispatch-31")
+                .header(OpenAiSessionService.SESSION_KEY_HEADER, "different-session")
+                .contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isConflict());
+        UserContext.set("user-2", UserContext.ROLE_USER);
+        restarted.perform(post("/v1/runs/lookup").header("Idempotency-Key", "dispatch-31")
+                .contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isNotFound());
+        UserContext.set("user-1", UserContext.ROLE_USER);
+        restarted.perform(post("/v1/runs").header("Idempotency-Key", "dispatch-31")
+                .contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isAccepted())
+            .andExpect(jsonPath("$.run_id").value(runId))
+            .andExpect(jsonPath("$.replayed").value(true))
+            .andExpect(header().string(OpenAiSessionService.SESSION_ID_HEADER, SESSION_ID.toString()));
+        restarted.perform(post("/v1/runs").header("Idempotency-Key", "dispatch-31")
+                .contentType(MediaType.APPLICATION_JSON).content("{\"input\":\"a different dispatch\"}"))
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.error.code").value("idempotency_conflict"));
+        verify(stateMachine).accept(eq(runId), anyString(), anyString(), any());
+        verify(openAiSessionService).resolveRunSession(isNull(String.class), isNull(), anyString(), eq("default"));
+    }
+
+    private MockMvc durableRunsController(OpenAiRunStateMachine stateMachine) {
+        var beans = new org.springframework.beans.factory.support.StaticListableBeanFactory();
+        beans.addBean("runStateMachine", stateMachine);
+        var provider = beans.getBeanProvider(OpenAiRunStateMachine.class);
+        runService = new OpenAiRunService(agentRuntimeService, openAiSessionService,
+            steerBuffer, interruptToken, approvalQueue, new DefaultRedactor(properties),
+            objectMapper, processTool, provider);
+        var controller = new OpenAiRunsController(
             runService, openAiSessionService, responseStore, Mappers.getMapper(OpenAiMapper.class),
-            objectMapper, properties, new DefaultRedactor(properties), runAdmissionService, provider);
+            objectMapper, mock(com.azhukov.agent.core.tool.ToolRegistry.class), properties,
+            new DefaultRedactor(properties), runAdmissionService, profileService, profileModelRouting,
+            new com.azhukov.agent.service.ProfileRuntimeRegistry(null), ProfileExecutionConfigurationFixture.settings(), provider);
         return MockMvcBuilders.standaloneSetup(controller)
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();
+    }
+
+    private OpenAiRunStateMachine captureRunEvents() {
+        var machine = mock(OpenAiRunStateMachine.class);
+        when(machine.accept(anyString(), anyString(), isNull(), any())).thenAnswer(call -> {
+            java.util.function.Supplier<OpenAiSessionContext> resolver = call.getArgument(3);
+            return resolver.get();
+        });
+        mockMvc = durableRunsController(machine);
+        return machine;
     }
 
     private OpenAiRunStateEntity persistedRun(String userId) {
@@ -246,6 +361,9 @@ class OpenAiRunsControllerTest {
         JsonNode status = waitForStatus(runId, "completed");
         assertThat(status.path("object").asText()).isEqualTo("hermes.run");
         assertThat(status.path("output").asText()).isEqualTo("done");
+        assertThat(status.path("completed").booleanValue()).isTrue();
+        assertThat(status.path("partial").booleanValue()).isFalse();
+        assertThat(status.path("interrupted").booleanValue()).isFalse();
         assertThat(status.path("usage").path("input_tokens").asInt()).isEqualTo(12);
 
         ArgumentCaptor<Session> sessionCaptor = ArgumentCaptor.forClass(Session.class);
@@ -272,7 +390,7 @@ class OpenAiRunsControllerTest {
             null,
             externalSessionId
         );
-        when(openAiSessionService.resolveRunSession(eq(externalSessionId), isNull(), eq("gpt-run")))
+        when(openAiSessionService.resolveRunSession(eq(externalSessionId), isNull(), eq("gpt-run"), eq("default")))
             .thenReturn(external);
         when(agentRuntimeService.runApiTurn(any(Session.class), anyString(), any(ModelRequestOptions.class)))
             .thenReturn(new ChatResponseDto(SESSION_ID, "external done", List.of(), true));
@@ -293,11 +411,17 @@ class OpenAiRunsControllerTest {
 
         JsonNode status = waitForStatus(readRunId(created), "completed");
         assertThat(status.path("output").asText()).isEqualTo("external done");
-        verify(openAiSessionService).resolveRunSession(eq(externalSessionId), isNull(), eq("gpt-run"));
+        verify(openAiSessionService).resolveRunSession(eq(externalSessionId), isNull(), eq("gpt-run"), eq("default"));
     }
 
     @Test
-    void profilePrefixedRunsRouteMirrorsHermesMultiplexAlias() throws Exception {
+    void namedRunUsesTheSelectedProfile() throws Exception {
+        when(profileService.isValidProfileName("work")).thenReturn(true);
+        when(profileService.knownProfile("work")).thenReturn(true);
+        when(profileService.readNamedModel("work")).thenReturn(
+            new RuntimeModelSelection("fixture-profile", "work-model", "http://127.0.0.1:12345/v1", "fixture-work"));
+        when(openAiSessionService.resolveRunSession(isNull(String.class), isNull(), eq("work-model"), eq("work")))
+            .thenReturn(new OpenAiSessionContext(sessionContext.session().withMetadata("profile", "work"), false, null));
         when(agentRuntimeService.runApiTurn(any(Session.class), anyString(), any(ModelRequestOptions.class)))
             .thenReturn(new ChatResponseDto(SESSION_ID, "profile done", List.of(), true));
 
@@ -305,7 +429,8 @@ class OpenAiRunsControllerTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                     {
-                      "input": "do it"
+                      "input": "do it",
+                      "model": "gpt-test"
                     }
                     """))
             .andExpect(status().isAccepted())
@@ -317,6 +442,14 @@ class OpenAiRunsControllerTest {
         JsonNode status = waitForProfileStatus(runId, "completed");
         assertThat(status.path("object").asText()).isEqualTo("hermes.run");
         assertThat(status.path("output").asText()).isEqualTo("profile done");
+        assertThat(status.path("model").asText()).isEqualTo("work-model");
+        ArgumentCaptor<ModelRequestOptions> options = ArgumentCaptor.forClass(ModelRequestOptions.class);
+        verify(agentRuntimeService).runApiTurn(any(Session.class), anyString(), options.capture());
+        assertThat(options.getValue().boundProfile()).isEqualTo("work");
+        assertThat(options.getValue().modelName()).isEqualTo("work-model");
+        assertThat(options.getValue().apiKey()).isEqualTo("fixture-work");
+        mockMvc.perform(get("/p/other/v1/runs/{runId}", runId)).andExpect(status().isNotFound());
+        mockMvc.perform(get("/v1/runs/{runId}", runId)).andExpect(status().isNotFound());
     }
 
     @Test
@@ -337,7 +470,7 @@ class OpenAiRunsControllerTest {
 
         JsonNode status = waitForStatus(readRunId(created), "completed");
         assertThat(status.path("model").asText()).isEqualTo("java-agent");
-        verify(openAiSessionService).resolveRunSession(isNull(UUID.class), isNull(), eq("java-agent"));
+        verify(openAiSessionService).resolveRunSession(isNull(String.class), isNull(), eq("java-agent"), eq("default"));
 
         ArgumentCaptor<ModelRequestOptions> optionsCaptor = ArgumentCaptor.forClass(ModelRequestOptions.class);
         verify(agentRuntimeService).runApiTurn(any(Session.class), eq("do it"), optionsCaptor.capture());
@@ -597,7 +730,7 @@ class OpenAiRunsControllerTest {
 
     @Test
     void createRunReturnsBadRequestForInvalidSessionKeyInsteadOfSessionNotFound() throws Exception {
-        when(openAiSessionService.resolveRunSession(isNull(UUID.class), eq("bad-key"), eq(MODEL)))
+        when(openAiSessionService.resolveRunSession(isNull(String.class), eq("bad-key"), eq(MODEL), eq("default")))
             .thenThrow(new IllegalArgumentException("Invalid session key"));
 
         mockMvc.perform(post("/v1/runs")
@@ -857,7 +990,7 @@ class OpenAiRunsControllerTest {
 
         waitForStatus(readRunId(created), "completed");
 
-        verify(openAiSessionService).resolveRunSession(eq(SESSION_ID), isNull(), eq("gpt-run"));
+        verify(openAiSessionService).resolveRunSession(eq(SESSION_ID.toString()), isNull(), eq("gpt-run"), eq("default"));
         ArgumentCaptor<Session> sessionCaptor = ArgumentCaptor.forClass(Session.class);
         verify(agentRuntimeService).runApiTurn(sessionCaptor.capture(), eq("next question"), any(ModelRequestOptions.class));
         assertThat(sessionCaptor.getValue().metadata())
@@ -906,7 +1039,7 @@ class OpenAiRunsControllerTest {
             assertThat(enteredRuntime.await(2, TimeUnit.SECONDS)).isTrue();
             var record = runService.get(runId);
             var stateMachine = mock(OpenAiRunStateMachine.class);
-            when(stateMachine.recordEvent(eq(runId), isNull(), any()))
+            when(stateMachine.recordEvent(eq(runId), eq("default"), isNull(), any()))
                 .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("fixture storage failure"))
                 .thenReturn(1L);
             org.springframework.test.util.ReflectionTestUtils.setField(record, "stateMachine", stateMachine);
@@ -938,7 +1071,8 @@ class OpenAiRunsControllerTest {
     }
 
     @Test
-    void failedRunRedactsStatusAndEventErrorLikeHermes() throws Exception {
+    void failedRunRedactsStatusAndCommittedEventError() throws Exception {
+        var machine = captureRunEvents();
         when(agentRuntimeService.runApiTurn(any(Session.class), anyString(), any(ModelRequestOptions.class)))
             .thenThrow(new RuntimeException("provider rejected OPENAI_API_KEY=sk-testsecret123456789012345"));
 
@@ -948,20 +1082,11 @@ class OpenAiRunsControllerTest {
             .contains("OPENAI_API_KEY=[REDACTED]")
             .doesNotContain("sk-testsecret123456789012345");
 
-        MvcResult result = mockMvc.perform(get("/v1/runs/{runId}/events", runId)
-                .accept(MediaType.TEXT_EVENT_STREAM))
-            .andExpect(status().isOk())
-            .andExpect(header().string(HttpHeaders.CACHE_CONTROL, "no-cache"))
-            .andExpect(header().string("X-Accel-Buffering", "no"))
-            .andExpect(request().asyncStarted())
-            .andReturn();
-
-        mockMvc.perform(asyncDispatch(result))
-            .andExpect(status().isOk())
-            .andExpect(content().contentTypeCompatibleWith(MediaType.TEXT_EVENT_STREAM));
-
-        assertThat(result.getResponse().getContentAsString())
-            .contains("run.failed")
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> event = ArgumentCaptor.forClass(Map.class);
+        verify(machine).recordEvent(eq(runId), eq("default"), eq("failed"), event.capture());
+        assertThat(event.getValue()).containsEntry("event", "run.failed");
+        assertThat((String) event.getValue().get("error"))
             .contains("OPENAI_API_KEY=[REDACTED]")
             .doesNotContain("sk-testsecret123456789012345");
     }
@@ -1114,9 +1239,9 @@ class OpenAiRunsControllerTest {
         waitForStatus(runId, "waiting_for_approval");
         var stateMachine = mock(OpenAiRunStateMachine.class);
         var attempts = new java.util.concurrent.atomic.AtomicInteger();
-        when(stateMachine.recordEvent(eq(runId), org.mockito.ArgumentMatchers.nullable(String.class), any()))
+        when(stateMachine.recordEvent(eq(runId), eq("default"), org.mockito.ArgumentMatchers.nullable(String.class), any()))
             .thenAnswer(call -> {
-                Map<String, Object> event = call.getArgument(2);
+                Map<String, Object> event = call.getArgument(3);
                 if ("approval.cleared".equals(event.get("event")) && attempts.incrementAndGet() == 1) {
                     throw new org.springframework.dao.DataAccessResourceFailureException("fixture transient failure");
                 }
@@ -1144,9 +1269,9 @@ class OpenAiRunsControllerTest {
         waitForStatus(runId, "waiting_for_approval");
         var stateMachine = mock(OpenAiRunStateMachine.class);
         var responseEvent = new java.util.concurrent.atomic.AtomicReference<Map<String, Object>>();
-        when(stateMachine.recordEvent(eq(runId), org.mockito.ArgumentMatchers.isNull(), any()))
+        when(stateMachine.recordEvent(eq(runId), eq("default"), org.mockito.ArgumentMatchers.isNull(), any()))
             .thenAnswer(call -> {
-                Map<String, Object> event = call.getArgument(2);
+                Map<String, Object> event = call.getArgument(3);
                 if ("approval.responded".equals(event.get("event"))) {
                     approvalQueue.clear(record.controlSessionId());
                     responseEvent.set(event);
@@ -1177,7 +1302,7 @@ class OpenAiRunsControllerTest {
             new ToolCall("approval-call", "fixture_tool", "{}"), "fixture approval");
         waitForStatus(runId, "waiting_for_approval");
         var stateMachine = mock(OpenAiRunStateMachine.class);
-        when(stateMachine.recordEvent(eq(runId), org.mockito.ArgumentMatchers.isNull(), any()))
+        when(stateMachine.recordEvent(eq(runId), eq("default"), org.mockito.ArgumentMatchers.isNull(), any()))
             .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("fixture storage failure"))
             .thenReturn(1L);
         org.springframework.test.util.ReflectionTestUtils.setField(record, "stateMachine", stateMachine);
@@ -1220,6 +1345,11 @@ class OpenAiRunsControllerTest {
             .andExpect(jsonPath("$.error.code").value("approval_not_pending"));
         assertThat(approvalQueue.isPending(controlSessionId)).isTrue();
 
+        JsonNode waiting = waitForStatus(runId, "waiting_for_approval");
+        assertThat(waiting.path("approval").path("request_id").asText()).isEqualTo(pending.requestId().toString());
+        assertThat(waiting.path("approval").path("run_id").asText()).isEqualTo(runId);
+        assertThat(waiting.path("approval").path("event").asText()).isEqualTo("approval.request");
+
         // The exact request_id resolves and is echoed back.
         mockMvc.perform(post("/v1/runs/{runId}/approval", runId)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -1230,8 +1360,9 @@ class OpenAiRunsControllerTest {
             .andExpect(jsonPath("$.resolved").value(1));
         assertThat(approvalQueue.isApproved(controlSessionId)).isTrue();
 
+        assertThat(waitForStatus(runId, "running").has("approval")).isFalse();
         blockingRun.complete();
-        waitForStatus(runId, "completed");
+        assertThat(waitForStatus(runId, "completed").has("approval")).isFalse();
     }
 
     @Test
@@ -1258,7 +1389,8 @@ class OpenAiRunsControllerTest {
     }
 
     @Test
-    void approvalRequestEventRedactsToolArgumentsLikeHermes() throws Exception {
+    void committedApprovalEventRedactsToolArguments() throws Exception {
+        var machine = captureRunEvents();
         BlockingRun blockingRun = blockRuntime();
         String runId = createRun("needs approval");
         waitForStatus(runId, "running");
@@ -1275,19 +1407,13 @@ class OpenAiRunsControllerTest {
         );
         waitForStatus(runId, "waiting_for_approval");
 
-        MvcResult result = mockMvc.perform(get("/v1/runs/{runId}/events", runId)
-                .accept(MediaType.TEXT_EVENT_STREAM))
-            .andExpect(status().isOk())
-            .andExpect(request().asyncStarted())
-            .andReturn();
-
         blockingRun.complete();
         waitForStatus(runId, "completed");
-        mockMvc.perform(asyncDispatch(result))
-            .andExpect(status().isOk())
-            .andExpect(content().contentTypeCompatibleWith(MediaType.TEXT_EVENT_STREAM));
 
-        assertThat(result.getResponse().getContentAsString())
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> event = ArgumentCaptor.forClass(Map.class);
+        verify(machine).recordEvent(eq(runId), eq("default"), eq("requires_action"), event.capture());
+        assertThat(objectMapper.writeValueAsString(event.getValue()))
             .contains("approval.request")
             .contains("\"choices\":[\"once\",\"deny\"]")
             .contains("OPENAI_API_KEY=[REDACTED]")
@@ -1350,51 +1476,58 @@ class OpenAiRunsControllerTest {
     }
 
     @Test
-    void eventsEndpointStreamsLifecycleEvents() throws Exception {
-        when(agentRuntimeService.runApiTurn(any(Session.class), anyString(), any(ModelRequestOptions.class)))
-            .thenReturn(new ChatResponseDto(SESSION_ID, "streamed", List.of(), true));
-        String runId = createRun("stream events");
-        waitForStatus(runId, "completed");
+    void durableEventsResumeStrictlyAfterLastEventIdWithNoLocalRun() throws Exception {
+        OpenAiRunStateMachine machine = mock(OpenAiRunStateMachine.class);
+        var state = persistedRun("user-a");
+        state.setProfile("alpha");
+        when(machine.state(eq("run_persisted"), anyString())).thenAnswer(call ->
+            "alpha".equals(call.getArgument(1)) ? java.util.Optional.of(state) : java.util.Optional.empty());
+        when(machine.replayParsed(eq("run_persisted"), eq("alpha"), eq(2L), org.mockito.ArgumentMatchers.anyInt())).thenReturn(List.of(
+            new OpenAiRunStateMachine.ParsedEvent(3, Map.of("event", "message.delta", "delta", "remaining")),
+            new OpenAiRunStateMachine.ParsedEvent(4, Map.of("event", "run.completed"))
+        ));
+        UserContext.set("user-a", UserContext.ROLE_USER);
+        MockMvc restarted = durableRunsController(machine);
+        String url = "/p/alpha/v1/runs/run_persisted/events";
 
-        MvcResult result = mockMvc.perform(get("/v1/runs/{runId}/events", runId)
+        MvcResult stream = restarted.perform(get(url).header("Last-Event-ID", "2")
                 .accept(MediaType.TEXT_EVENT_STREAM))
             .andExpect(status().isOk())
+            .andExpect(header().string(HttpHeaders.CACHE_CONTROL, "no-cache"))
+            .andExpect(header().string("X-Accel-Buffering", "no"))
             .andExpect(request().asyncStarted())
             .andReturn();
-
-        mockMvc.perform(asyncDispatch(result))
+        restarted.perform(asyncDispatch(stream))
             .andExpect(status().isOk())
             .andExpect(content().contentTypeCompatibleWith(MediaType.TEXT_EVENT_STREAM));
 
-        assertThat(result.getResponse().getContentAsString())
-            .contains("run.started")
-            .contains("message.delta")
-            .contains("\"delta\":\"streamed\"")
-            .contains("run.completed");
+        assertThat(stream.getResponse().getContentAsString())
+            .containsPattern("(?s)id:3.*id:4")
+            .contains("message.delta", "remaining", "run.completed")
+            .doesNotContain("id:1", "id:2");
     }
 
     @Test
-    void eventsEndpointIsOneShotAfterCloseLikeHermes() throws Exception {
-        when(agentRuntimeService.runApiTurn(any(Session.class), anyString(), any(ModelRequestOptions.class)))
-            .thenReturn(new ChatResponseDto(SESSION_ID, "streamed", List.of(), true));
-        String runId = createRun("stream events once");
-        waitForStatus(runId, "completed");
+    void eventCursorMustBelongToTheRequestedProfileAndJournal() throws Exception {
+        OpenAiRunStateMachine machine = mock(OpenAiRunStateMachine.class);
+        var state = persistedRun("user-a");
+        state.setProfile("alpha");
+        when(machine.state(eq("run_persisted"), anyString())).thenAnswer(call ->
+            "alpha".equals(call.getArgument(1)) ? java.util.Optional.of(state) : java.util.Optional.empty());
+        UserContext.set("user-a", UserContext.ROLE_USER);
+        MockMvc restarted = durableRunsController(machine);
 
-        MvcResult result = mockMvc.perform(get("/v1/runs/{runId}/events", runId)
+        restarted.perform(get("/p/beta/v1/runs/run_persisted/events").header("Last-Event-ID", "2")
                 .accept(MediaType.TEXT_EVENT_STREAM))
-            .andExpect(status().isOk())
-            .andExpect(request().asyncStarted())
-            .andReturn();
-
-        mockMvc.perform(asyncDispatch(result))
-            .andExpect(status().isOk())
-            .andExpect(content().contentTypeCompatibleWith(MediaType.TEXT_EVENT_STREAM));
-
-        mockMvc.perform(get("/v1/runs/{runId}/events", runId)
-                .accept(MediaType.TEXT_EVENT_STREAM))
-            .andExpect(status().isNotFound())
-            .andExpect(jsonPath("$.error.message").value("Run not found: " + runId))
-            .andExpect(jsonPath("$.error.code").value("run_not_found"));
+            .andExpect(status().isNotFound());
+        for (String invalid : List.of("-1", "not-a-number", "9223372036854775808", "5")) {
+            restarted.perform(get("/p/alpha/v1/runs/run_persisted/events").header("Last-Event-ID", invalid)
+                    .accept(MediaType.TEXT_EVENT_STREAM))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("invalid_event_cursor"));
+        }
+        verify(machine, never()).replayParsed(anyString(), anyString(), org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyInt());
     }
 
     @Test
@@ -1411,6 +1544,25 @@ class OpenAiRunsControllerTest {
         mockMvc.perform(post("/v1/runs/{runId}/stop", runId))
             .andExpect(status().isNotFound())
             .andExpect(jsonPath("$.error.code").value("run_not_found"));
+    }
+
+    @Test
+    void activeRunIsReadableAndControllableOnlyInItsProfile() throws Exception {
+        when(agentRuntimeService.runApiTurn(any(Session.class), anyString(), any(ModelRequestOptions.class)))
+            .thenReturn(new ChatResponseDto(SESSION_ID, "done", List.of(), true));
+        UserContext.set("user-1", UserContext.ROLE_USER);
+        String runId = createRun("work in default profile");
+        waitForStatus(runId, "completed");
+
+        mockMvc.perform(get("/p/beta/v1/runs/{runId}", runId))
+            .andExpect(status().isNotFound());
+        for (String action : List.of("stop", "steer", "approval")) {
+            mockMvc.perform(post("/p/beta/v1/runs/{runId}/{action}", runId, action))
+                .andExpect(status().isNotFound());
+        }
+        mockMvc.perform(get("/p/default/v1/runs/{runId}", runId))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.run_id").value(runId));
     }
 
     @Test
@@ -1484,7 +1636,7 @@ class OpenAiRunsControllerTest {
             SESSION_ID
         ), null);
         UserContext.set("user-2", UserContext.ROLE_USER);
-        when(openAiSessionService.resolveStoredResponseSession(SESSION_ID, null))
+        when(openAiSessionService.resolveStoredResponseSession(SESSION_ID, null, "default"))
             .thenThrow(new IllegalArgumentException("Session not found: " + SESSION_ID));
 
         mockMvc.perform(post("/v1/runs")
@@ -1524,7 +1676,7 @@ class OpenAiRunsControllerTest {
         String runId = readRunId(created);
         waitForStatus(runId, "completed");
 
-        verify(openAiSessionService).resolveRunSession(eq(SESSION_ID), isNull(), eq("gpt-run"));
+        verify(openAiSessionService).resolveRunSession(eq(SESSION_ID.toString()), isNull(), eq("gpt-run"), eq("default"));
         verify(openAiSessionService, never()).persistHistory(any(), any());
     }
 

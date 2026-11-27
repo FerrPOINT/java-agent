@@ -54,7 +54,7 @@ class ProfilesDashboardControllerBranchTest {
                 mock(SessionRepository.class),
                 mock(MessageRepository.class),
                 command -> {
-                })).build();
+                }, null)).build();
     }
 
     @Test

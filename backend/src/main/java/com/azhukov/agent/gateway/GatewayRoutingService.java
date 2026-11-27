@@ -104,7 +104,8 @@ public class GatewayRoutingService {
 
     /** Inbound dispatch, gated on lifecycle state (drain/stop rejects new inbound). */
     public void dispatchInbound(MessageEvent event) {
-        GatewayLifecycleService lifecycle = lifecycleProvider == null ? null : lifecycleProvider.getIfAvailable();
+        GatewayLifecycleService lifecycle = "default".equals(event.source().profile()) && lifecycleProvider != null
+            ? lifecycleProvider.getIfAvailable() : null;
         if (lifecycle != null && !lifecycle.beginInbound()) {
             log.info("Inbound event {} rejected: gateway not accepting (state {})",
                 event.eventId(), lifecycle.currentState());

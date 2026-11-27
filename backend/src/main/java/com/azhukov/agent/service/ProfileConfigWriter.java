@@ -1,9 +1,7 @@
 package com.azhukov.agent.service;
 
-import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.persistence.entity.ProfileConfigRevisionEntity;
 import com.azhukov.agent.persistence.repository.ProfileConfigRevisionRepository;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
@@ -14,105 +12,132 @@ import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.HexFormat;
 import java.util.Map;
+import java.util.LinkedHashMap;
+import java.util.function.Consumer;
 
-/**
- * Serialized, audited profile config writer (ADR-013, WP-4). Extends
- * {@link ProfileService} writes with: same atomic-writer semantics for the
- * DEFAULT profile (its config.yaml lives under profiles/default like any named
- * profile), typed validation via the {@link AgentProperties} binder, and an
- * append-only revision row per write. A failed validation never touches the
- * file and records a {@code failed} revision.
- */
+/** Validates and atomically writes profile settings, with an audit revision for each write. */
 @Service
 @Slf4j
 public class ProfileConfigWriter {
 
     private final ObjectProvider<ProfileService> profileServiceProvider;
     private final ObjectProvider<ProfileConfigRevisionRepository> revisionProvider;
-    private final ObjectMapper objectMapper;
+    private final ProfileModelRouting modelRouting;
+    private final ProfileInstructions instructions;
+    private final ProfileRuntimeRegistry runtime;
 
     public ProfileConfigWriter(ObjectProvider<ProfileService> profileServiceProvider,
                                ObjectProvider<ProfileConfigRevisionRepository> revisionProvider,
-                               ObjectMapper objectMapper) {
+                               ProfileModelRouting modelRouting, ProfileInstructions instructions,
+                               ProfileRuntimeRegistry runtime) {
         this.profileServiceProvider = profileServiceProvider;
         this.revisionProvider = revisionProvider;
-        this.objectMapper = objectMapper;
+        this.modelRouting = modelRouting;
+        this.instructions = instructions;
+        this.runtime = runtime;
     }
 
-    /**
-     * Validate + atomically write a merged config map for any profile
-     * (including default). Returns the applied revision number.
-     */
+    /** Merge and apply a profile config update. Returns the applied revision. */
     public long write(String profile, Map<String, Object> incoming, String actor) throws IOException {
-        ProfileService profiles = profileServiceProvider == null
-            ? null : profileServiceProvider.getIfAvailable();
-        if (profiles == null) {
-            throw new IllegalStateException("Profile service is unavailable");
-        }
-        String canon = profiles.normalizeProfileName(profile);
-        if ("default".equals(canon)) {
-            profiles.ensureDefaultProfile();
-        }
-        Map<String, Object> merged = profiles.readConfig(canon);
-        deepMerge(merged, incoming);
-        String yaml = dumpYaml(merged);
-        validateAgainstBinder(yaml);
+        return update(profile, config -> deepMerge(config, incoming), actor);
+    }
 
-        long revision = nextRevision(canon);
-        try {
-            profiles.writeConfig(canon, merged);
-            recordRevision(canon, revision, actor, "applied", null);
-            return revision;
-        } catch (IOException | RuntimeException e) {
-            recordRevision(canon, revision, actor, "failed", e.getMessage());
-            throw e;
+    /** Validate and persist the main-model edit under the same profile lock as other config writes. */
+    public Map<String, Object> writeModel(String profile, String provider, String model, String baseUrl,
+                                           String apiKey) throws IOException {
+        if (provider == null || provider.isBlank() || model == null || model.isBlank()) {
+            throw new IllegalArgumentException("provider and model are required");
+        }
+        String selectedProvider = provider.trim();
+        String selectedModel = model.trim();
+        String endpoint = baseUrl == null || baseUrl.isBlank() ? null : baseUrl.trim();
+        String key = apiKey == null || apiKey.isBlank() ? null : apiKey.trim();
+        update(profile, config -> ProfileService.applyModelSelection(config, selectedProvider, selectedModel, endpoint, key),
+            "dashboard");
+
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("ok", true);
+        response.put("provider", selectedProvider);
+        response.put("model", selectedModel);
+        if (endpoint != null) {
+            response.put("base_url", endpoint);
+        }
+        return response;
+    }
+
+    private long update(String profile, Consumer<Map<String, Object>> edit, String actor) throws IOException {
+        ProfileService profiles = profiles();
+        String canon = profiles.normalizeProfileName(profile);
+        synchronized (runtime.lockFor(canon)) {
+            prepareProfile(profiles, canon);
+            Map<String, Object> candidate = profiles.readDiskExecutionConfig(canon);
+            boolean hadModel = candidate.containsKey("model");
+            edit.accept(candidate);
+            return apply(profiles, canon, dumpYaml(candidate), candidate, hadModel, actor);
         }
     }
 
-    /** Serialized raw-YAML write with validation + revision (dashboard editor path). */
+    /** Replace the dashboard editor YAML after validating the candidate. */
     public long writeRaw(String profile, String yamlText, String actor) throws IOException {
-        ProfileService profiles = profileServiceProvider == null
-            ? null : profileServiceProvider.getIfAvailable();
-        if (profiles == null) {
-            throw new IllegalStateException("Profile service is unavailable");
-        }
+        ProfileService profiles = profiles();
         String canon = profiles.normalizeProfileName(profile);
-        if ("default".equals(canon)) {
-            profiles.ensureDefaultProfile();
-        }
-        validateAgainstBinder(yamlText);
-        long revision = nextRevision(canon);
-        try {
-            profiles.writeRawConfig(canon, yamlText);
-            recordRevision(canon, revision, actor, "applied", null);
-            return revision;
-        } catch (IOException | RuntimeException e) {
-            recordRevision(canon, revision, actor, "failed", e.getMessage());
-            throw e;
+        synchronized (runtime.lockFor(canon)) {
+            prepareProfile(profiles, canon);
+            Map<String, Object> candidate = ProfileService.parseExecutionConfig(yamlText);
+            // An explicit model in the candidate can also repair an invalid prior file.
+            boolean hadModel = !"default".equals(canon) && !candidate.containsKey("model")
+                && profiles.readDiskExecutionConfig(canon).containsKey("model");
+            return apply(profiles, canon, yamlText, candidate, hadModel, actor);
         }
     }
 
-    /**
-     * Typed validation: the candidate YAML must bind to {@link AgentProperties}
-     * without errors. Unknown keys are tolerated (forward compatibility), type
-     * mismatches are not.
-     */
-    private void validateAgainstBinder(String yamlText) {
+    private ProfileService profiles() {
+        ProfileService profiles = profileServiceProvider.getIfAvailable();
+        if (profiles == null) {
+            throw new IllegalStateException("Profile service is unavailable");
+        }
+        return profiles;
+    }
+
+    private static void prepareProfile(ProfileService profiles, String profile) throws IOException {
+        if ("default".equals(profile)) {
+            profiles.ensureDefaultProfile();
+        }
+        profiles.requireKnownProfile(profile);
+    }
+
+    private long apply(ProfileService profiles, String profile, String yaml, Map<String, Object> candidate,
+                       boolean hadModel, String actor) throws IOException {
+        long revision = nextRevision(profile);
         try {
-            Object loaded = new org.yaml.snakeyaml.Yaml().load(yamlText == null ? "" : yamlText);
-            if (loaded != null && !(loaded instanceof Map)) {
-                throw new IllegalArgumentException("YAML must be a mapping");
+            validate(profile, candidate, hadModel);
+            profiles.writeRawConfig(profile, yaml);
+        } catch (IOException | RuntimeException e) {
+            recordRevision(profile, revision, actor, "failed", "Profile configuration was rejected");
+            throw e;
+        }
+        recordRevision(profile, revision, actor, "applied", null);
+        return revision;
+    }
+
+    private void validate(String profile, Map<String, Object> candidate, boolean hadModel) {
+        if (candidate.containsKey("agent") && !(candidate.get("agent") instanceof Map<?, ?>)) {
+            throw new IllegalArgumentException("agent section must be a mapping");
+        }
+        if ("default".equals(profile)) {
+            return;
+        }
+        ApiRunAdmissionService.configuredLimit(candidate, ApiRunAdmissionService.DEFAULT_MAX_CONCURRENT_RUNS);
+        if (hadModel || candidate.containsKey("model")) {
+            modelRouting.validateCandidate(profile, candidate);
+        }
+        try {
+            var base = instructions.loadBase(candidate.get("instructions"));
+            for (String skill : base.skills().keySet()) {
+                base.readSkill(skill);
             }
-            // Map agent.* keys onto the typed properties tree; a wrong type here
-            // surfaces as a clear IllegalArgumentException instead of a failed boot.
-            if (loaded instanceof Map<?, ?> map && map.containsKey("agent")) {
-                Object agentTree = map.get("agent");
-                if (!(agentTree instanceof Map)) {
-                    throw new IllegalArgumentException("agent section must be a mapping");
-                }
-            }
-        } catch (org.yaml.snakeyaml.error.YAMLException e) {
-            throw new IllegalArgumentException("Invalid YAML: " + e.getMessage());
+        } catch (IOException | RuntimeException e) {
+            throw new IllegalArgumentException("The selected Base instructions or skills are unavailable");
         }
     }
 

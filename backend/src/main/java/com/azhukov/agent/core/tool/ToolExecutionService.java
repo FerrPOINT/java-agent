@@ -81,11 +81,21 @@ public class ToolExecutionService {
         "delete_file", "execute_code", "process", "skill_manage",
         "send_message", "image_generate", "todo", "mcp_tool",
         "browser_click", "browser_type", "browser_press", "browser_dialog",
-        "clarify");
+        "clarify", com.azhukov.agent.tools.workflow.ProjectWorkflowTool.NAME,
+        com.azhukov.agent.tools.tracker.TrackerTool.NAME);
     /** Hermes parity (clarify_gateway TIMEOUT): the blocking clarify tool waits
      *  for the user's reply (default 3600s), far beyond the generic tool
      *  timeout — it must not be killed by the tool-output timeout. */
     private static final Set<String> NO_TOOL_TIMEOUT = Set.of("clarify");
+
+    private long timeoutSeconds(String name) {
+        if (com.azhukov.agent.tools.workflow.ProjectWorkflowTool.NAME.equals(name)) {
+            return com.azhukov.agent.tools.workflow.ProjectWorkflowTool.REQUEST_TIMEOUT_SECONDS + 5L;
+        }
+        return NO_TOOL_TIMEOUT.contains(name) ? Long.MAX_VALUE / 2
+            : properties.getToolOutput().getTimeoutSecondsOrDefault(120);
+    }
+
     private final Retry retry = Retry.of("tool", RetryConfig.custom()
             .maxAttempts(3)
             .waitDuration(Duration.ofMillis(500))
@@ -105,6 +115,16 @@ public class ToolExecutionService {
         UserContext.requireCurrentAccess();
         java.util.Objects.requireNonNull(session, "Tool execution requires a session");
         java.util.Objects.requireNonNull(session.id(), "Tool execution requires a session ID");
+        boolean named = !"default".equals(session.profile());
+        if (named) {
+            try {
+                if (!toolRegistry.isProfileToolEnabled(toolName, session)) {
+                    return failureResult("Tool is unavailable in the selected profile: " + toolName);
+                }
+            } catch (IllegalStateException e) {
+                return failureResult(e.getMessage());
+            }
+        }
         // PR-3 parity: guardrails must observe the executing session (scope
         // guardrail callbacks to the session so InterruptToken.currentSessionId()
         // resolves inside before/afterCall).
@@ -125,7 +145,9 @@ public class ToolExecutionService {
         // Hermes parity (tool_executor.py:1025-1033): checkpoint the workspace
         // before file-mutating tools and destructive terminal commands. This
         // enables /undo rollback to the state before the mutation.
-        ensureFileCheckpoint(toolName, arguments);
+        if (!named) {
+            ensureFileCheckpoint(toolName, arguments);
+        }
 
         long start = System.currentTimeMillis();
         log.info("tool_execution_started session={} callId={} tool={} argsBytes={}",
@@ -137,14 +159,13 @@ public class ToolExecutionService {
                 ? toolRegistry.execute(toolName, toolCallId, arguments, lastAssistant, session)
                 : toolRegistry.execute(toolName, toolCallId, arguments, lastAssistant, session, mcpAdmission);
         });
-        Callable<ToolResult> callable = executeTool::get;
+        var scopedTool = com.azhukov.agent.service.ProfileExecutionConfiguration.carrySupplier(executeTool);
+        Callable<ToolResult> callable = scopedTool::get;
         Supplier<ToolResult> decorated = Retry.decorateSupplier(
             NO_RETRY_TOOLS.contains(toolName) ? noRetry : retry, () -> {
             java.util.concurrent.Future<ToolResult> future = executor.submit(callable);
             try {
-                long timeout = NO_TOOL_TIMEOUT.contains(toolName)
-                    ? java.lang.Long.MAX_VALUE / 2 // effectively unbounded (await handles its own TTL)
-                    : properties.getToolOutput().getTimeoutSecondsOrDefault(120);
+                long timeout = timeoutSeconds(toolName);
                 long started = System.nanoTime();
                 long timeoutNanos = TimeUnit.SECONDS.toNanos(timeout);
                 while (true) {
@@ -227,7 +248,7 @@ public class ToolExecutionService {
             try {
                 java.util.Map<String, Object> argsMap = com.fasterxml.jackson.databind.json.JsonMapper.builder().build()
                     .readValue(arguments, new com.fasterxml.jackson.core.type.TypeReference<java.util.Map<String, Object>>() {});
-                String hints = subdirectoryHints.checkToolCall(toolName, argsMap);
+                String hints = subdirectoryHints.checkToolCall(toolName, argsMap, session);
                 if (hints != null && !hints.isBlank()) {
                     safeContent = safeContent + hints;
                 }
@@ -274,7 +295,7 @@ public class ToolExecutionService {
         // Preserve oversized successful output before the in-context limiter
         // truncates it. The replacement contains a preview + absolute temp
         // path so the model can call read_file for the complete result.
-        if (toolResultStorage != null && safeResult.success()) {
+        if (!named && toolResultStorage != null && safeResult.success()) {
             safeResult = toolResultStorage.maybePersist(safeResult, toolName, toolCallId);
         }
         // Classify result

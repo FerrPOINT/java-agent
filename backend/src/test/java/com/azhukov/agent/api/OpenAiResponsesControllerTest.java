@@ -92,12 +92,18 @@ class OpenAiResponsesControllerTest {
     @Mock
     private OpenAiSessionService openAiSessionService;
 
+    @Mock
+    private com.azhukov.agent.service.ProfileService profiles;
+
+    @Mock
+    private com.azhukov.agent.service.ProfileModelRouting profileModels;
+
     @BeforeEach
     void setUp() {
         objectMapper = new ObjectMapper();
         properties = new AgentProperties();
         properties.getModel().setModelName(MODEL);
-        runAdmissionService = new ApiRunAdmissionService(properties);
+        runAdmissionService = new ApiRunAdmissionService(properties, profiles);
 
         responseStore = new OpenAiResponseStore(objectMapper, null, null);
         OpenAiResponsesController controller = new OpenAiResponsesController(
@@ -111,7 +117,10 @@ class OpenAiResponsesControllerTest {
             responseStore,
             new OpenAiIdempotencyCache(),
             new DefaultRedactor(properties),
-            runAdmissionService
+            runAdmissionService,
+            profiles,
+            profileModels,
+            new com.azhukov.agent.service.ProfileRuntimeRegistry(null)
         );
 
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
@@ -195,11 +204,11 @@ class OpenAiResponsesControllerTest {
     }
 
     @Test
-    void profilePrefixedResponsesRouteMirrorsHermesMultiplexAlias() throws Exception {
+    void explicitDefaultResponsesMatchStandaloneResponses() throws Exception {
         when(agentRuntime.run(anyList(), anyList(), any(ModelRequestOptions.class)))
             .thenReturn(ChatResponse.text("profile pong"));
 
-        mockMvc.perform(post("/p/work/v1/responses")
+        mockMvc.perform(post("/p/default/v1/responses")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                     {
@@ -210,6 +219,36 @@ class OpenAiResponsesControllerTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.object").value("response"))
             .andExpect(jsonPath("$.output[0].content[0].text").value("profile pong"));
+    }
+
+    @Test
+    void namedResponseUsesTheSelectedModelAndRejectsTheExactResponseIdFromAnotherProfile() throws Exception {
+        when(profiles.isValidNamedProfileName("alpha")).thenReturn(true);
+        when(profiles.knownProfile("alpha")).thenReturn(true);
+        Session session = sessionContext.session().withMetadata("profile", "alpha");
+        var route = ModelRequestOptions.empty().bindProfile("alpha", "alpha-model", "openai",
+            "http://alpha.invalid/v1", "fixture-key");
+        when(profileModels.bind(eq("alpha"), any())).thenReturn(route);
+        when(openAiSessionService.resolveRunSession(null, null, "alpha-model", "alpha"))
+            .thenReturn(new OpenAiSessionContext(session, false, null));
+        when(promptBuilder.buildSystemMessage(eq(session), org.mockito.ArgumentMatchers.isNull())).thenReturn(Message.system(SYSTEM_PROMPT));
+        when(agentRuntime.runMessages(eq(session), anyList(), anyList(), eq(route)))
+            .thenReturn(new TurnResult(List.of(Message.assistant("alpha reply", 1)), true, null));
+        when(openAiSessionService.resolveStoredResponseSession(SESSION_ID, null, "alpha"))
+            .thenReturn(new OpenAiSessionContext(session, false, null));
+        when(openAiSessionService.resolveStoredResponseSession(SESSION_ID, null, "beta"))
+            .thenThrow(new IllegalArgumentException("session not found"));
+
+        String response = mockMvc.perform(post("/p/alpha/v1/responses")
+                .contentType(MediaType.APPLICATION_JSON).content("{\"input\":\"prompt\"}"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.model").value("alpha-model"))
+            .andReturn().getResponse().getContentAsString();
+        String id = objectMapper.readTree(response).path("id").asText();
+        mockMvc.perform(get("/p/alpha/v1/responses/" + id)).andExpect(status().isOk());
+        mockMvc.perform(get("/p/beta/v1/responses/" + id)).andExpect(status().isNotFound());
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete("/p/beta/v1/responses/" + id))
+            .andExpect(status().isNotFound());
+        mockMvc.perform(get("/p/alpha/v1/responses/" + id)).andExpect(status().isOk());
     }
 
     @Test

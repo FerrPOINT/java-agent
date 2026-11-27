@@ -52,14 +52,17 @@ class DashboardSystemControllerTest {
         properties.getWeb().setSearxngUrl("http://localhost:8888");
         runtimeConfigService = new RuntimeConfigService();
         profileService = new ProfileService(properties, runtimeConfigService);
+        var envStore = new com.azhukov.agent.service.ProfileEnvStore(providerOf(profileService), new com.azhukov.agent.service.ProfileRuntimeRegistry(null));
+        var modelRouting = new com.azhukov.agent.service.ProfileModelRouting(profileService, envStore);
+        var instructions = new com.azhukov.agent.service.ProfileInstructions(properties, profileService,
+            new com.fasterxml.jackson.databind.ObjectMapper());
         com.azhukov.agent.service.ProfileConfigWriter configWriter =
             new com.azhukov.agent.service.ProfileConfigWriter(
-                providerOf(profileService), null, new com.fasterxml.jackson.databind.ObjectMapper());
+                providerOf(profileService), null, modelRouting, instructions,
+                new com.azhukov.agent.service.ProfileRuntimeRegistry(null));
         com.azhukov.agent.service.DashboardActionService actionService =
             new com.azhukov.agent.service.DashboardActionService(
                 providerOf(profileService), null, null, null, null, properties);
-        com.azhukov.agent.service.ProfileEnvStore envStore =
-            new com.azhukov.agent.service.ProfileEnvStore(providerOf(profileService));
         mockMvc = MockMvcBuilders.standaloneSetup(
             new DashboardSystemController(properties, runtimeConfigService, profileService,
                 null, null, providerOf(actionService), providerOf(configWriter), providerOf(envStore)))
@@ -431,7 +434,8 @@ class DashboardSystemControllerTest {
             "model", Map.of(
                 "provider", "openrouter",
                 "default", "old-model",
-                "base_url", "https://profile.example/v1"),
+                "base_url", "https://profile.example/v1",
+                "api_key", "fixture-work"),
             "custom_section", Map.of("keep", true)));
 
         mockMvc.perform(put("/p/work/api/config")
@@ -465,7 +469,7 @@ class DashboardSystemControllerTest {
 
         mockMvc.perform(put("/p/work/api/config/raw")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"yaml_text\":\"model:\\n  provider: groq\\n  default: llama-3\\n\"}"))
+                .content("{\"yaml_text\":\"model:\\n  provider: groq\\n  default: llama-3\\n  base_url: https://models.example/v1\\n  api_key: fixture-work\\n\"}"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.ok").value(true));
 

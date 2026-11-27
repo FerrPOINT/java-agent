@@ -94,12 +94,20 @@ public class McpOAuthFlowService {
             String.valueOf(FLOW_TTL.toSeconds()));
     }
 
+    public Optional<String> callbackProfile(String serverName, String state) {
+        if (state == null || !state.matches("[a-zA-Z0-9_-]{43}")) {
+            return Optional.empty();
+        }
+        return flows().callbackProfile(sha256Hex(state), serverName)
+            .filter(com.azhukov.agent.core.security.ProfileDatabaseScope::validProfile);
+    }
+
     @Transactional
-    public Map<String, Object> complete(String serverName, String code, String state) {
+    public Map<String, Object> complete(String profile, String serverName, String code, String state) {
         if (state == null || state.isBlank() || code == null || code.isBlank()) {
             return failure("missing state or code parameter");
         }
-        McpOAuthFlowEntity flow = flows().findByStateHash(sha256Hex(state))
+        McpOAuthFlowEntity flow = flows().findByStateHashAndProfile(sha256Hex(state), profile)
             .orElse(null);
         if (flow == null || !"pending".equals(flow.getStatus())) {
             return failure("unknown or already used state");
@@ -158,13 +166,14 @@ public class McpOAuthFlowService {
     }
 
     @Transactional
-    public boolean cancel(String flowId) {
+    public boolean cancel(String profile, String flowId) {
+        UUID id;
         try {
-            UUID id = UUID.fromString(flowId);
+            id = UUID.fromString(flowId);
         } catch (IllegalArgumentException e) {
             return false;
         }
-        Optional<McpOAuthFlowEntity> flow = flows().findById(UUID.fromString(flowId));
+        Optional<McpOAuthFlowEntity> flow = flows().lockByIdAndProfile(id, profile);
         if (flow.isEmpty() || !"pending".equals(flow.get().getStatus())) {
             return false;
         }
@@ -174,9 +183,9 @@ public class McpOAuthFlowService {
     }
 
     @Transactional(readOnly = true)
-    public Optional<McpOAuthFlowEntity> status(String flowId) {
+    public Optional<McpOAuthFlowEntity> status(String profile, String flowId) {
         try {
-            return flows().findById(UUID.fromString(flowId));
+            return flows().findByIdAndProfile(UUID.fromString(flowId), profile);
         } catch (IllegalArgumentException e) {
             return Optional.empty();
         }

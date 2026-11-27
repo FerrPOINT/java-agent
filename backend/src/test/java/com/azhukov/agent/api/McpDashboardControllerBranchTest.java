@@ -64,9 +64,10 @@ class McpDashboardControllerBranchTest {
     void setUp() {
         properties = new AgentProperties();
         when(configStoreProvider.getIfAvailable()).thenReturn(configStore);
+        when(mcpLifecycleManager.runtimeProfile()).thenReturn("default");
         when(oauthFlowProvider.getIfAvailable()).thenReturn(oauthFlows);
         mockMvc = MockMvcBuilders.standaloneSetup(new McpDashboardController(
-                mcpLifecycleManager, properties, new ObjectMapper(),
+                mcpLifecycleManager, properties, new ObjectMapper(), null,
                 configStoreProvider, oauthFlowProvider))
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();
@@ -127,8 +128,7 @@ class McpDashboardControllerBranchTest {
 
     @Test
     void replaceServersUpsertsEachEntryAndReturnsList() throws Exception {
-        when(configStore.upsert(any(), any(McpConfigStore.ServerConfigInput.class)))
-            .thenReturn(savedEntity());
+        when(configStore.upsertAll(any(), any())).thenReturn(List.of(savedEntity()));
         when(configStore.redactedView(any())).thenReturn(Map.of("name", "filesystem", "enabled", true));
 
         mockMvc.perform(put("/api/mcp/servers").contentType(MediaType.APPLICATION_JSON)
@@ -136,7 +136,7 @@ class McpDashboardControllerBranchTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.servers[0].name").value("filesystem"));
 
-        verify(configStore).upsert(any(), any(McpConfigStore.ServerConfigInput.class));
+        verify(configStore).upsertAll(any(), any());
     }
 
     @Test
@@ -157,17 +157,17 @@ class McpDashboardControllerBranchTest {
 
     @Test
     void removeServerDeletesConfigAndSchemaCache() throws Exception {
-        when(configStore.delete(null, "filesystem")).thenReturn(true);
+        when(configStore.delete("default", "filesystem")).thenReturn(true);
 
         mockMvc.perform(delete("/api/mcp/servers/filesystem"))
             .andExpect(status().isOk());
 
-        verify(configStore).delete(null, "filesystem");
+        verify(configStore).delete("default", "filesystem");
     }
 
     @Test
     void removeServerUnknownNameReturns404() throws Exception {
-        when(configStore.delete(null, "missing")).thenReturn(false);
+        when(configStore.delete("default", "missing")).thenReturn(false);
 
         mockMvc.perform(delete("/api/mcp/servers/missing"))
             .andExpect(status().isNotFound());
@@ -175,7 +175,7 @@ class McpDashboardControllerBranchTest {
 
     @Test
     void setEnabledTogglesConfiguredServer() throws Exception {
-        when(configStore.setEnabled(null, "filesystem", true)).thenReturn(Optional.of(savedEntity()));
+        when(configStore.setEnabled("default", "filesystem", true)).thenReturn(Optional.of(savedEntity()));
         when(configStore.redactedView(any())).thenReturn(Map.of("name", "filesystem", "enabled", true));
 
         mockMvc.perform(put("/api/mcp/servers/filesystem/enabled")
@@ -184,12 +184,12 @@ class McpDashboardControllerBranchTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.name").value("filesystem"));
 
-        verify(configStore).setEnabled(null, "filesystem", true);
+        verify(configStore).setEnabled("default", "filesystem", true);
     }
 
     @Test
     void setEnabledUnknownServerReturns404() throws Exception {
-        when(configStore.setEnabled(null, "missing", true)).thenReturn(Optional.empty());
+        when(configStore.setEnabled("default", "missing", true)).thenReturn(Optional.empty());
 
         mockMvc.perform(put("/api/mcp/servers/missing/enabled")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -199,7 +199,7 @@ class McpDashboardControllerBranchTest {
 
     @Test
     void startAuthFlowCreatesFlowAndReturnsUrl() throws Exception {
-        when(oauthFlows.start(eq(null), eq("filesystem"), any()))
+        when(oauthFlows.start(eq("default"), eq("filesystem"), any()))
             .thenReturn(new McpOAuthFlowService.FlowStart("flow-1", "https://auth.example/oauth", "600"));
 
         mockMvc.perform(post("/api/mcp/servers/filesystem/auth"))
@@ -214,7 +214,7 @@ class McpDashboardControllerBranchTest {
         flow.setServerName("filesystem");
         flow.setStatus("pending");
         flow.setExpiresAt(java.time.Instant.now().plusSeconds(60));
-        when(oauthFlows.status("flow-1")).thenReturn(Optional.of(flow));
+        when(oauthFlows.status("default", "flow-1")).thenReturn(Optional.of(flow));
 
         mockMvc.perform(get("/api/mcp/oauth/flows/flow-1"))
             .andExpect(status().isOk())
@@ -224,7 +224,7 @@ class McpDashboardControllerBranchTest {
 
     @Test
     void pollFlowUnknownReturns404() throws Exception {
-        when(oauthFlows.status("missing")).thenReturn(Optional.empty());
+        when(oauthFlows.status("default", "missing")).thenReturn(Optional.empty());
 
         mockMvc.perform(get("/api/mcp/oauth/flows/missing"))
             .andExpect(status().isNotFound());
@@ -232,7 +232,7 @@ class McpDashboardControllerBranchTest {
 
     @Test
     void deleteFlowCancelsAndConfirms() throws Exception {
-        when(oauthFlows.cancel("flow-1")).thenReturn(true);
+        when(oauthFlows.cancel("default", "flow-1")).thenReturn(true);
 
         mockMvc.perform(delete("/api/mcp/oauth/flows/flow-1"))
             .andExpect(status().isOk())
@@ -241,7 +241,7 @@ class McpDashboardControllerBranchTest {
 
     @Test
     void deleteFlowUnknownReportsExpired() throws Exception {
-        when(oauthFlows.cancel("missing")).thenReturn(false);
+        when(oauthFlows.cancel("default", "missing")).thenReturn(false);
 
         mockMvc.perform(delete("/api/mcp/oauth/flows/missing"))
             .andExpect(status().isOk())
@@ -250,7 +250,8 @@ class McpDashboardControllerBranchTest {
 
     @Test
     void oauthCallbackRendersSuccessHtml() throws Exception {
-        when(oauthFlows.complete("filesystem", "code-1", "state-1"))
+        when(oauthFlows.callbackProfile("filesystem", "state-1")).thenReturn(Optional.of("alpha"));
+        when(oauthFlows.complete("alpha", "filesystem", "code-1", "state-1"))
             .thenReturn(Map.of("ok", true));
 
         mockMvc.perform(get("/api/mcp/oauth/callback/filesystem")

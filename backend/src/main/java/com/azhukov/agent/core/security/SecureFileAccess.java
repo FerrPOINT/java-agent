@@ -7,7 +7,10 @@ import java.lang.foreign.FunctionDescriptor;
 import java.lang.foreign.Linker;
 import java.lang.foreign.MemorySegment;
 import java.lang.invoke.MethodHandle;
+import java.nio.channels.Channels;
+import java.nio.channels.FileChannel;
 import java.nio.channels.SeekableByteChannel;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
@@ -87,6 +90,12 @@ public final class SecureFileAccess {
         }
     }
 
+    public static String readUtf8(Path path) throws IOException {
+        try (var input = Channels.newInputStream(openRead(path))) {
+            return new String(input.readAllBytes(), StandardCharsets.UTF_8);
+        }
+    }
+
     public static SeekableByteChannel openRead(Path path) throws IOException {
         try (var directory = openDirectory(path.getParent())) {
             return directory.openRead(path.getFileName());
@@ -138,13 +147,29 @@ public final class SecureFileAccess {
         }
 
         public void replaceFile(Path name, byte[] bytes, BeforeReplace check) throws IOException {
+            publishFile(name, bytes, check, false, false);
+        }
+
+        public void replacePrivateFile(Path name, byte[] bytes) throws IOException {
+            publishFile(name, bytes, () -> {}, false, true);
+        }
+
+        public void createFile(Path name, byte[] bytes) throws IOException {
+            publishFile(name, bytes, () -> {}, true, true);
+        }
+
+        private void publishFile(Path name, byte[] bytes, BeforeReplace check, boolean create,
+                                 boolean privatePermissions) throws IOException {
             componentName(name);
             var permissions = PosixFilePermissions.fromString("rw-------");
             try {
                 var original = entries.getFileAttributeView(name, PosixFileAttributeView.class, LinkOption.NOFOLLOW_LINKS)
                     .readAttributes();
+                if (create) throw new FileAlreadyExistsException(name.toString());
                 if (!original.isRegularFile()) throw new IOException("Not a regular file: " + name);
-                permissions = original.permissions();
+                if (!privatePermissions) {
+                    permissions = original.permissions();
+                }
             } catch (NoSuchFileException missing) {
                 // A new file starts private.
             }
@@ -154,7 +179,7 @@ public final class SecureFileAccess {
             boolean published = false;
             Throwable writeFailure = null;
             try (var stage = openDirectory(stageName, false)) {
-                writeStagedFile(stage, name, bytes, permissions, check);
+                writeStagedFile(stage, name, bytes, permissions, check, create);
                 published = true;
             } catch (IOException | RuntimeException failure) {
                 if (!published) {
@@ -177,7 +202,7 @@ public final class SecureFileAccess {
 
         private void writeStagedFile(Directory stage, Path name, byte[] bytes,
                                      Set<PosixFilePermission> permissions,
-                                     BeforeReplace check) throws IOException {
+                                     BeforeReplace check, boolean create) throws IOException {
             Path payload = Path.of(".payload");
             boolean created = false;
             try {
@@ -187,6 +212,9 @@ public final class SecureFileAccess {
                     created = true;
                     var buffer = ByteBuffer.wrap(bytes);
                     while (buffer.hasRemaining()) channel.write(buffer);
+                    if (channel instanceof FileChannel file) {
+                        file.force(true);
+                    }
                 }
                 Object writtenFile = stage.attributes(payload).fileKey();
                 stage.entries.getFileAttributeView(payload, PosixFileAttributeView.class, LinkOption.NOFOLLOW_LINKS)
@@ -196,7 +224,11 @@ public final class SecureFileAccess {
                 if (!current.isRegularFile() || writtenFile == null || !writtenFile.equals(current.fileKey())) {
                     throw new IOException("Staged file changed before replacement: " + name);
                 }
-                stage.entries.move(payload, entries, name);
+                if (create) {
+                    stage.moveWithoutReplace(payload, this, name);
+                } else {
+                    stage.entries.move(payload, entries, name);
+                }
             } catch (IOException | RuntimeException failure) {
                 if (created) {
                     try {

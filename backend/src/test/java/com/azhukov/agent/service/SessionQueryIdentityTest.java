@@ -28,7 +28,7 @@ class SessionQueryIdentityTest {
     private final AgentSessionResolver resolver = mock(AgentSessionResolver.class);
     private final SessionQueryService service = new SessionQueryService(repository,
             mock(MessageRepository.class), resolver, Mappers.getMapper(DomainDtoMapper.class),
-            new AgentProperties(), mock(ApplicationEventPublisher.class));
+            new AgentProperties(), mock(ApplicationEventPublisher.class), mock(ProfileModelRouting.class));
 
     @AfterEach
     void cleanup() { UserContext.clear(); }
@@ -36,10 +36,10 @@ class SessionQueryIdentityTest {
     @Test
     void callerCannotListAnExplicitForeignOwner() {
         UserContext.set("owner", UserContext.ROLE_USER);
-        when(repository.findAllByUserId(anyString(), any(Pageable.class)))
+        when(repository.findAllByUserIdAndProfile(anyString(), eq("default"), any(Pageable.class)))
                 .thenReturn(new PageImpl<SessionEntity>(List.of()));
-        service.listSessions(50, 0, "foreign");
-        verify(repository).findAllByUserId(eq("owner"), any(Pageable.class));
+        service.listSessions("default", 50, 0, "foreign");
+        verify(repository).findAllByUserIdAndProfile(eq("owner"), eq("default"), any(Pageable.class));
     }
 
     @Test
@@ -47,9 +47,9 @@ class SessionQueryIdentityTest {
         UserContext.set("owner", UserContext.ROLE_USER);
         Session session = mock(Session.class);
         when(session.id()).thenReturn(UUID.randomUUID());
-        when(resolver.createSession(anyString(), anyString(), anyString())).thenReturn(session);
-        assertThat(service.createSession("foreign", "noop", null)).containsEntry("user_id", "owner");
-        verify(resolver).createSession("owner", "openai-compatible", "noop");
+        when(resolver.createSession(anyString(), anyString(), anyString(), eq("api_server"), eq("default"))).thenReturn(session);
+        assertThat(service.createSession("default", "foreign", "noop", null)).containsEntry("user_id", "owner");
+        verify(resolver).createSession("owner", "openai-compatible", "noop", "api_server", "default");
     }
 
     @Test
@@ -58,8 +58,8 @@ class SessionQueryIdentityTest {
         UUID id = UUID.randomUUID();
         SessionEntity foreign = new SessionEntity();
         foreign.setUserId("foreign");
-        when(repository.findById(id)).thenReturn(Optional.of(foreign));
-        assertThatThrownBy(() -> service.sessionExists(id)).isInstanceOf(SecurityException.class);
+        when(repository.findByIdAndProfile(id, "default")).thenReturn(Optional.of(foreign));
+        assertThatThrownBy(() -> service.sessionExists("default", id)).isInstanceOf(SecurityException.class);
     }
 
     @Test
@@ -68,8 +68,8 @@ class SessionQueryIdentityTest {
         UUID id = UUID.randomUUID();
         SessionEntity owned = new SessionEntity();
         owned.setUserId("owner");
-        when(repository.findById(id)).thenReturn(Optional.of(owned));
-        assertThat(service.sessionExists(id)).isTrue();
-        assertThat(service.sessionExists(UUID.randomUUID())).isFalse();
+        when(repository.findByIdAndProfile(id, "default")).thenReturn(Optional.of(owned));
+        assertThat(service.sessionExists("default", id)).isTrue();
+        assertThat(service.sessionExists("default", UUID.randomUUID())).isFalse();
     }
 }

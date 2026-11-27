@@ -1,5 +1,8 @@
 package com.azhukov.agent.service;
 
+import com.azhukov.agent.core.security.ProfileDatabaseScope;
+import org.springframework.transaction.support.TransactionTemplate;
+
 import com.azhukov.agent.persistence.entity.AttachmentArtifactEntity;
 import com.azhukov.agent.persistence.repository.AttachmentArtifactRepository;
 import lombok.RequiredArgsConstructor;
@@ -41,6 +44,7 @@ public class AttachmentArtifactService {
 
     private final ObjectProvider<AttachmentArtifactRepository> repositoryProvider;
     private final ArtifactProcessIsolation artifactProcessIsolation;
+    private final TransactionTemplate transactions;
     private final com.azhukov.agent.persistence.repository.SessionRepository sessions;
 
     @Value("${agent.attachments.cache-root:}")
@@ -110,8 +114,13 @@ public class AttachmentArtifactService {
         if (ownerId == null || ownerId.isBlank()) {
             return new ArtifactRegistration(null, null, null, false, "attachment owner required");
         }
+        String selectedProfile = profile == null ? "default" : profile;
+        if (!selectedProfile.matches("[a-z0-9][a-z0-9_-]{0,63}")) {
+            return new ArtifactRegistration(null, null, null, false, "invalid attachment profile");
+        }
         if (sessionId != null && sessions.findById(sessionId)
-                .filter(session -> ownerId.equals(session.getUserId())).isEmpty()) {
+                .filter(session -> ownerId.equals(session.getUserId()) && selectedProfile.equals(session.getProfile()))
+                .isEmpty()) {
             return new ArtifactRegistration(null, null, null, false, "session not found");
         }
         String rejection = validate(disposition, origin, fileName);
@@ -119,7 +128,7 @@ public class AttachmentArtifactService {
             return new ArtifactRegistration(null, null, null, false, rejection);
         }
         String id = "att_" + UUID.randomUUID().toString().replace("-", "");
-        String relative = ownerId + "/" + id + extensionOf(fileName, mimeType);
+        String relative = ownerId + "/" + selectedProfile + "/" + id + extensionOf(fileName, mimeType);
         Path target = null;
         boolean retained = false;
         boolean created = false;
@@ -143,8 +152,8 @@ public class AttachmentArtifactService {
             com.azhukov.agent.core.security.UserContext.requireCurrentAccess();
             AttachmentArtifactRepository repository = repository();
             Optional<AttachmentArtifactEntity> existing = deduplicate
-                ? repository.findFirstByOwnerIdAndContentHashAndDispositionAndSessionIdAndDedupScope(
-                    ownerId, hash, disposition, sessionId, "")
+                ? repository.findFirstByOwnerIdAndProfileAndContentHashAndDispositionAndSessionIdAndDedupScope(
+                    ownerId, selectedProfile, hash, disposition, sessionId, "")
                 : Optional.empty();
             if (existing.isPresent()) {
                 AttachmentArtifactEntity artifact = existing.get();
@@ -169,7 +178,7 @@ public class AttachmentArtifactService {
             AttachmentArtifactEntity entity = new AttachmentArtifactEntity();
             entity.setId(id);
             entity.setOwnerId(ownerId);
-            entity.setProfile(profile == null || profile.isBlank() ? "default" : profile);
+            entity.setProfile(selectedProfile);
             entity.setSessionId(sessionId);
             entity.setMessageId(messageId);
             entity.setContentHash(hash);
@@ -212,7 +221,7 @@ public class AttachmentArtifactService {
             throw new IllegalArgumentException("An active session is required to publish media");
         }
         com.azhukov.agent.core.security.UserContext.requireCurrentAccess();
-        var result = registerStream(session.userId(), session.getMetadata("profile"), session.id(), null,
+        var result = registerStream(session.userId(), session.profile(), session.id(), null,
             "internal", disposition, mimeType, fileName, content, false);
         if (result.rejection() != null) throw new IllegalStateException(result.rejection());
         return "MEDIA:artifact:" + result.id();
@@ -220,8 +229,8 @@ public class AttachmentArtifactService {
 
     public enum OutboundStatus { UNAVAILABLE, UNCLAIMED, CLAIMED, DELIVERED }
 
-    public OutboundStatus outboundStatus(String id, String owner, UUID sessionId) {
-        return findEntity(id, owner).filter(artifact -> sessionId.equals(artifact.getSessionId()))
+    public OutboundStatus outboundStatus(String id, String owner, String profile, UUID sessionId) {
+        return findEntity(id, owner, profile).filter(artifact -> sessionId.equals(artifact.getSessionId()))
             .filter(artifact -> artifact.getExpiresAt().isAfter(Instant.now()))
             .filter(artifact -> "received".equals(artifact.getState()) || "delivered".equals(artifact.getState()))
             .map(artifact -> {
@@ -240,15 +249,15 @@ public class AttachmentArtifactService {
         }
     }
 
-    public Optional<Instant> claimOutbound(String id, String owner, UUID sessionId) {
+    public Optional<Instant> claimOutbound(String id, String owner, String profile, UUID sessionId) {
         // The claim is read back through a timestamp column with microsecond precision.
         Instant claimedAt = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS);
-        return repository().claimOutbound(id, owner, sessionId, claimedAt) == 1
+        return repository().claimOutbound(id, owner, profile, sessionId, claimedAt) == 1
             ? Optional.of(claimedAt) : Optional.empty();
     }
 
-    public boolean releaseOutbound(String id, String owner, UUID sessionId, Instant claimedAt) {
-        return repository().releaseOutbound(id, owner, sessionId, claimedAt) == 1;
+    public boolean releaseOutbound(String id, String owner, String profile, UUID sessionId, Instant claimedAt) {
+        return repository().releaseOutbound(id, owner, profile, sessionId, claimedAt) == 1;
     }
 
     /** The verified descriptor is closed by the HTTP resource consumer or by the rejecting caller. */
@@ -258,8 +267,8 @@ public class AttachmentArtifactService {
     }
 
     /** Verify immutable registered bytes with bounded memory and retain the same open descriptor. */
-    public Optional<VerifiedContent> verifiedContent(String artifactId, String ownerId) {
-        return findEntity(artifactId, ownerId).flatMap(artifact -> {
+    public Optional<VerifiedContent> verifiedContent(String artifactId, String ownerId, String profile) {
+        return findEntity(artifactId, ownerId, profile).flatMap(artifact -> {
             java.nio.channels.FileChannel channel = null;
             boolean transferred = false;
             try {
@@ -287,8 +296,8 @@ public class AttachmentArtifactService {
         });
     }
 
-    public Optional<Path> contentPath(String artifactId, String ownerId) {
-        return findEntity(artifactId, ownerId).map(entity -> {
+    public Optional<Path> contentPath(String artifactId, String ownerId, String profile) {
+        return findEntity(artifactId, ownerId, profile).map(entity -> {
             try {
                 return safeCachePath(entity.getCachePath());
             } catch (IllegalArgumentException e) {
@@ -297,35 +306,21 @@ public class AttachmentArtifactService {
         });
     }
 
-    /** Backward-compatible admin/service lookup without an owner filter. */
-    public Optional<Path> contentPath(String artifactId) {
-        return contentPath(artifactId, null);
+    public Optional<AttachmentArtifact> find(String artifactId, String ownerId, String profile) {
+        return findEntity(artifactId, ownerId, profile).map(AttachmentArtifact::from);
     }
 
-    public Optional<AttachmentArtifact> find(String artifactId, String ownerId) {
-        return findEntity(artifactId, ownerId).map(AttachmentArtifact::from);
-    }
-
-    /** Backward-compatible admin/service lookup without an owner filter. */
-    public Optional<AttachmentArtifact> find(String artifactId) {
-        return find(artifactId, null);
-    }
-
-    public List<AttachmentArtifact> bySession(UUID sessionId, String ownerId) {
+    public List<AttachmentArtifact> bySession(UUID sessionId, String ownerId, String profile) {
         Instant now = Instant.now();
         return repository().findBySessionIdOrderByCreatedAtAsc(sessionId).stream()
             .filter(entity -> entity.getExpiresAt().isAfter(now))
+            .filter(entity -> profile.equals(entity.getProfile()))
             .filter(entity -> ownerId == null || java.util.Objects.equals(ownerId, entity.getOwnerId()))
             .map(AttachmentArtifact::from).toList();
     }
 
-    /** Backward-compatible admin/service lookup without an owner filter. */
-    public List<AttachmentArtifact> bySession(UUID sessionId) {
-        return bySession(sessionId, null);
-    }
-
-    public boolean markDelivered(String artifactId, String ownerId, UUID sessionId, String messageId) {
-        return repository().recordOutboundReceipt(artifactId, ownerId, sessionId, messageId, Instant.now()) == 1;
+    public boolean markDelivered(String artifactId, String ownerId, String profile, UUID sessionId, String messageId) {
+        return repository().recordOutboundReceipt(artifactId, ownerId, profile, sessionId, messageId, Instant.now()) == 1;
     }
 
     /**
@@ -374,11 +369,10 @@ public class AttachmentArtifactService {
 
     /** Scheduled wrapper so the TTL sweep actually runs (WP-4 tail: the method existed with zero callers). */
     @org.springframework.scheduling.annotation.Scheduled(fixedDelay = 300_000L, initialDelay = 60_000L)
-    @org.springframework.transaction.annotation.Transactional
     public void scheduledSweep() {
-        try {
-            int removed = sweepExpiredWithinTransaction();
-            if (removed > 0) {
+        try (var scope = ProfileDatabaseScope.enterAttachmentExpiry()) {
+            Integer removed = transactions.execute(status -> sweepExpiredWithinTransaction());
+            if (removed != null && removed > 0) {
                 log.info("Attachment TTL sweep removed {} expired artifact(s)", removed);
             }
         } catch (Exception e) {
@@ -480,10 +474,11 @@ public class AttachmentArtifactService {
         }
     }
 
-    private Optional<AttachmentArtifactEntity> findEntity(String artifactId, String ownerId) {
+    private Optional<AttachmentArtifactEntity> findEntity(String artifactId, String ownerId, String profile) {
         Instant now = Instant.now();
         return repository().findById(artifactId)
             .filter(entity -> entity.getExpiresAt().isAfter(now))
+            .filter(entity -> profile.equals(entity.getProfile()))
             .filter(entity -> ownerId == null || java.util.Objects.equals(ownerId, entity.getOwnerId()));
     }
 

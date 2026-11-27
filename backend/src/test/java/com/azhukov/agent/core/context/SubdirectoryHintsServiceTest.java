@@ -1,6 +1,12 @@
 package com.azhukov.agent.core.context;
 
+import com.azhukov.agent.config.AgentProperties;
+import com.azhukov.agent.core.agent.SessionDeletedEvent;
+import com.azhukov.agent.core.model.Session;
+import com.azhukov.agent.service.ProfileService;
+import com.azhukov.agent.service.RuntimeConfigService;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
@@ -18,6 +24,39 @@ class SubdirectoryHintsServiceTest {
 
     @TempDir
     Path tempDir;
+
+    @Test
+    void namedWorkspaceHintsRemainInTheSelectedSessionAndProfile() throws IOException {
+        var properties = new AgentProperties();
+        properties.getProfile().setBaseDir(tempDir.resolve(".profiles").toString());
+        var profiles = new ProfileService(properties, new RuntimeConfigService());
+        Path alpha = profiles.workspacePath("alpha").resolve("src");
+        Path beta = profiles.workspacePath("beta").resolve("src");
+        Files.createDirectories(alpha);
+        Files.createDirectories(beta);
+        Files.writeString(alpha.resolve("AGENTS.md"), "alpha-own-guide");
+        Files.writeString(beta.resolve("AGENTS.md"), "beta-own-guide");
+        Files.createSymbolicLink(beta.getParent().resolve("linked"), alpha);
+        var service = new SubdirectoryHintsService(tempDir);
+        ReflectionTestUtils.setField(service, "profileService", profiles);
+        Session sameUser = Session.create("user", "openai", "fixture");
+        Session a = sameUser.withMetadata("profile", "alpha");
+        Session b = sameUser.withMetadata("profile", "beta");
+
+        assertThat(service.checkToolCall("read_file", Map.of("path", "src/Foo.java"), a))
+            .contains("alpha-own-guide").doesNotContain("beta-own-guide");
+        assertThat(service.checkToolCall("read_file", Map.of("path", alpha.resolve("Foo.java").toString()), b))
+            .isNull();
+        assertThat(service.checkToolCall("read_file", Map.of("path", "linked/Foo.java"), b))
+            .isNull();
+        assertThat(service.checkToolCall("read_file", Map.of("path", "src/Foo.java"), b))
+            .contains("beta-own-guide").doesNotContain("alpha-own-guide");
+        assertThat(service.checkToolCall("read_file", Map.of("path", "src/Foo.java"), b)).isNull();
+
+        service.removeSessionHints(new SessionDeletedEvent(sameUser.id()));
+        assertThat(service.checkToolCall("read_file", Map.of("path", "src/Foo.java"), b))
+            .contains("beta-own-guide");
+    }
 
     @Test
     void discoversAgentsMdInSubdirectory() throws IOException {

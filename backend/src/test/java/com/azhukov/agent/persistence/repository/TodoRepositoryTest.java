@@ -107,7 +107,7 @@ class TodoRepositoryTest extends PostgresTestContainer {
             var deletion = pool.submit(() -> transactions.execute(status -> {
                 waiterPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
                 waiterReady.countDown();
-                boolean removed = sessionQueryService.deleteSession(saved.getId());
+                boolean removed = sessionQueryService.deleteSession(saved.getProfile(), saved.getId());
                 sessionRepository.flush();
                 return removed;
             }));
@@ -161,7 +161,7 @@ class TodoRepositoryTest extends PostgresTestContainer {
             var deletion = pool.submit(() -> transactions.execute(status -> {
                 waiterPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
                 waiterReady.countDown();
-                boolean removed = sessionQueryService.deleteSession(oldSession.getId());
+                boolean removed = sessionQueryService.deleteSession(oldSession.getProfile(), oldSession.getId());
                 sessionRepository.flush();
                 return removed;
             }));
@@ -196,12 +196,12 @@ class TodoRepositoryTest extends PostgresTestContainer {
         try {
             var deletion = pool.submit(() -> tx.execute(status -> {
                 dPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
-                boolean deleted = sessionQueryService.deleteSession(first.getId());
+                boolean deleted = sessionQueryService.deleteSession(first.getProfile(), first.getId());
                 sessionRepository.flush();
                 parentHeld.countDown();
                 try { if (!continueDelete.await(15, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("release timeout"); }
                 catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new IllegalStateException(e); }
-                return deleted && sessionQueryService.deleteSession(second.getId());
+                return deleted && sessionQueryService.deleteSession(second.getProfile(), second.getId());
             }));
             assertThat(parentHeld.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
             var tool = pool.submit(() -> tx.execute(status -> {
@@ -274,7 +274,7 @@ class TodoRepositoryTest extends PostgresTestContainer {
             var deletion = pool.submit(() -> tx.execute(status -> {
                 dPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
                 deletionReady.countDown();
-                boolean removed = sessionQueryService.deleteSession(second.getId());
+                boolean removed = sessionQueryService.deleteSession(second.getProfile(), second.getId());
                 sessionRepository.flush();
                 return removed;
             }));
@@ -299,7 +299,7 @@ class TodoRepositoryTest extends PostgresTestContainer {
         todoRepository.saveAndFlush(newTodo(retained.getId(), user, "retained", STATUS_PENDING, PRIORITY_HIGH, T1));
         var stale = new com.azhukov.agent.core.model.Session(removed.getId(), user, "owner", MODEL_PROVIDER, MODEL_NAME, null, java.util.Map.of());
         try {
-            assertThat(sessionQueryService.deleteSession(removed.getId())).isTrue();
+            assertThat(sessionQueryService.deleteSession(removed.getProfile(), removed.getId())).isTrue();
             var result = todoTool.execute("{\"todos\":[{\"content\":\"new\"}]}", null, stale);
             assertThat(result.success()).isFalse();
             assertThat(todoRepository.findByUserId(user)).extracting(TodoEntity::getTitle).containsExactly("retained");
@@ -343,7 +343,7 @@ class TodoRepositoryTest extends PostgresTestContainer {
             var deletion = pool.submit(() -> transactions.execute(status -> {
                 waiterPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
                 ready.countDown();
-                boolean removed = sessionQueryService.deleteSession(saved.getId());
+                boolean removed = sessionQueryService.deleteSession(saved.getProfile(), saved.getId());
                 sessionRepository.flush();
                 return removed;
             }));
@@ -394,7 +394,7 @@ class TodoRepositoryTest extends PostgresTestContainer {
             var deletion = pool.submit(() -> transactions.execute(status -> {
                 waiterPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
                 ready.countDown();
-                boolean removed = sessionQueryService.deleteSession(saved.getId());
+                boolean removed = sessionQueryService.deleteSession(saved.getProfile(), saved.getId());
                 sessionRepository.flush();
                 return removed;
             }));
@@ -440,7 +440,7 @@ class TodoRepositoryTest extends PostgresTestContainer {
             var merge = pool.submit(() -> transactions.execute(status -> tool.execute("{\"merge\":true,\"todos\":[{\"id\":\"" + first.getId() + "\",\"content\":\"first updated\"},{\"id\":\"" + second.getId() + "\",\"content\":\"second updated\"}]}", null, session)));
             assertThat(firstLocked.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
             var deletion = pool.submit(() -> transactions.execute(status -> {
-                boolean removed = sessionQueryService.deleteSession(secondSession.getId());
+                boolean removed = sessionQueryService.deleteSession(secondSession.getProfile(), secondSession.getId());
                 sessionRepository.flush();
                 deleted.countDown();
                 try { if (!finishDeletion.await(15, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("release timeout"); }
@@ -496,7 +496,7 @@ class TodoRepositoryTest extends PostgresTestContainer {
             var deletion = pool.submit(() -> transactions.execute(status -> {
                 waiterPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
                 ready.countDown();
-                boolean removed = sessionQueryService.deleteSession(firstSession.getId());
+                boolean removed = sessionQueryService.deleteSession(firstSession.getProfile(), firstSession.getId());
                 sessionRepository.flush();
                 return removed;
             }));
@@ -532,7 +532,7 @@ class TodoRepositoryTest extends PostgresTestContainer {
         try {
             var deletion = pool.submit(() -> transactions.execute(status -> {
                 holderPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
-                boolean removed = sessionQueryService.deleteSession(oldSession.getId());
+                boolean removed = sessionQueryService.deleteSession(oldSession.getProfile(), oldSession.getId());
                 sessionRepository.flush();
                 held.countDown();
                 try { if (!release.await(15, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("release timeout"); }
@@ -596,7 +596,7 @@ class TodoRepositoryTest extends PostgresTestContainer {
             var removal = pool.submit(() -> transactions.execute(status -> {
                 waiterPid.set(jdbc.queryForObject("select pg_backend_pid()", Integer.class));
                 ready.countDown();
-                boolean result = sessionQueryService.deleteSession(oldSession.getId());
+                boolean result = sessionQueryService.deleteSession(oldSession.getProfile(), oldSession.getId());
                 sessionRepository.flush();
                 return result;
             }));

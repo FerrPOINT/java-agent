@@ -688,12 +688,12 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
             var running = executor.submit(run);
             assertThat(entered.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
             switch (change) {
-                case "pause" -> assertThat(cronController.pause(job.getId()).enabled()).isFalse();
-                case "update", "update-paused" -> assertThat(cronController.update(job.getId(),
+                case "pause" -> assertThat(cronController.pause(job.getId(), job.getProfile()).enabled()).isFalse();
+                case "update", "update-paused" -> assertThat(cronController.update(job.getId(), job.getProfile(),
                     new com.azhukov.agent.api.CronJobController.UpdateCronRequest(job.getName(), "every 2h",
                         null, null, null, null, null, null, null, null, null, null,
                         null, null, null, null, null, null, null)).schedule()).isEqualTo("every 2h");
-                case "remove" -> assertThat(cronController.delete(job.getId()).getStatusCode().is2xxSuccessful()).isTrue();
+                case "remove" -> assertThat(cronController.delete(job.getId(), job.getProfile()).getStatusCode().is2xxSuccessful()).isTrue();
                 default -> throw new AssertionError(change);
             }
             int scheduledAfterChange = callbacks.size();
@@ -744,7 +744,7 @@ class CronSuggestionRepositoryTest extends PostgresTestContainer {
             try {
                 assertThat(entered.await(10, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
                 if (changeDestination) {
-                    cronController.update(job.getId(), new com.azhukov.agent.api.CronJobController.UpdateCronRequest(
+                    cronController.update(job.getId(), job.getProfile(), new com.azhukov.agent.api.CronJobController.UpdateCronRequest(
                         job.getName(), job.getSchedule(), null, "local", false,
                         null, null, null, null, null, null, null, null, null,
                         null, null, null, null, null));

@@ -36,11 +36,14 @@ class McpDashboardControllerTest {
     @Mock
     private McpLifecycleManager mcpLifecycleManager;
 
+    @Mock
+    private com.azhukov.agent.service.ProfileService profiles;
+
     @BeforeEach
     void setUp() {
         properties = new AgentProperties();
         mockMvc = MockMvcBuilders.standaloneSetup(new McpDashboardController(
-                mcpLifecycleManager, properties, new ObjectMapper(), null, null))
+                mcpLifecycleManager, properties, new ObjectMapper(), profiles, null, null))
             .setControllerAdvice(new GlobalExceptionHandler())
             .build();
     }
@@ -65,8 +68,11 @@ class McpDashboardControllerTest {
     @Test
     void liveOperationsUseTheRunningProfile() throws Exception {
         when(mcpLifecycleManager.runtimeProfile()).thenReturn("research");
+        when(profiles.normalizeProfileName(" Research ")).thenReturn("research");
+        when(profiles.isValidProfileName("research")).thenReturn(true);
+        when(profiles.knownProfile("research")).thenReturn(true);
         mockMvc.perform(get("/api/mcp/servers").param("profile", " Research "))
-            .andExpect(status().isOk());
+            .andExpect(status().isServiceUnavailable());
         mockMvc.perform(get("/api/mcp/servers").param("profile", "default"))
             .andExpect(status().isBadRequest());
         mockMvc.perform(post("/api/mcp/servers/demo/test").param("profile", "default"))

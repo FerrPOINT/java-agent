@@ -2,6 +2,7 @@ package com.azhukov.agent.config;
 
 import com.azhukov.agent.api.filter.ApiKeyAuthFilter;
 import com.azhukov.agent.api.filter.SecurityHeadersFilter;
+import com.azhukov.agent.gateway.telegram.TelegramWebhookController;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -21,7 +22,7 @@ import jakarta.servlet.DispatcherType;
  *   <li>CSRF disabled (no browser forms)</li>
  *   <li>Form login and HTTP basic disabled</li>
  *   <li>No session management (stateless)</li>
- *   <li>Health/info and Telegram webhook endpoints are public</li>
+ *   <li>Health/info and signed named Telegram callbacks use their own access rules</li>
  *   <li>All other endpoints require API key authentication</li>
  * </ul>
  */
@@ -53,6 +54,7 @@ public class SecurityConfig {
                 // This surface has its own registered machine-PAT verifier and
                 // never enters the ordinary central/native auth filter.
                 .requestMatchers("/api/internal/v1/user-deletions/**").permitAll()
+                .requestMatchers(TelegramWebhookController::isNamedCallback).permitAll()
                 .anyRequest().authenticated()
             )
             .addFilterBefore(securityHeadersFilter, UsernamePasswordAuthenticationFilter.class)

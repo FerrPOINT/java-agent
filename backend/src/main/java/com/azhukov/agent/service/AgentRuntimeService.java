@@ -67,13 +67,8 @@ public class AgentRuntimeService {
      * @throws SecurityException if the session exists but belongs to another user
      */
     public void requireSessionOwnership(UUID sessionId) {
-        String scoped = UserContext.scopeUserId();
-        if (scoped == null) return; // admin or no-auth → full access
-        sessionRepository.findById(sessionId).ifPresent(session -> {
-            if (!scoped.equals(session.getUserId())) {
-                throw new SecurityException("Session does not belong to the current user");
-            }
-        });
+        sessionRepository.findById(sessionId).ifPresent(session ->
+            AgentSessionResolver.requireAccessible(session, "default"));
     }
 
     private final AgentRuntime agentRuntime;
@@ -96,6 +91,8 @@ public class AgentRuntimeService {
     private final McpLifecycleManager mcpLifecycleManager;
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
     private final RuntimeConfigService runtimeConfigService;
+    @org.springframework.beans.factory.annotation.Autowired
+    private ProfileModelRouting profileModelRouting;
     private final TransactionTemplate transactionTemplate;
     private final AgentSessionResolver sessionResolver;
     private final CliStateApplier cliStateApplier;
@@ -230,7 +227,7 @@ public class AgentRuntimeService {
     public List<SessionSummaryDto> listSessions() {
         String userId = UserContext.scopeUserId();
         if (userId == null) userId = AgentProperties.DEFAULT_USER_ID;
-        return sessionRepository.findAllByUserId(userId, PageRequest.of(0, 50)).stream()
+        return sessionRepository.findAllByUserIdAndProfile(userId, "default", PageRequest.of(0, 50)).stream()
             .map(sessionMapper::toDomain)
             .map(domainDtoMapper::toSessionSummaryDto)
             .toList();
@@ -353,7 +350,7 @@ public class AgentRuntimeService {
     @Transactional(readOnly = true)
     public List<SessionSummaryDto> listSessionsByUserId(String userId) {
         String effectiveUserId = UserContext.effectiveUserId(userId);
-        return sessionRepository.findAllByUserId(effectiveUserId, PageRequest.of(0, 50)).stream()
+        return sessionRepository.findAllByUserIdAndProfile(effectiveUserId, "default", PageRequest.of(0, 50)).stream()
             .map(sessionMapper::toDomain)
             .map(domainDtoMapper::toSessionSummaryDto)
             .toList();
@@ -395,7 +392,7 @@ public class AgentRuntimeService {
     public List<ActiveAgentDto> listActiveAgents() {
         String userId = UserContext.scopeUserId();
         if (userId == null) userId = AgentProperties.DEFAULT_USER_ID;
-        return sessionRepository.findAllByUserId(userId, PageRequest.of(0, 50)).stream()
+        return sessionRepository.findAllByUserIdAndProfile(userId, "default", PageRequest.of(0, 50)).stream()
             .map(e -> new ActiveAgentDto(
                 e.getId().toString(),
                 "active",
@@ -484,15 +481,17 @@ public class AgentRuntimeService {
     }
 
     @Transactional
-    public SessionSummaryDto branchSession(UUID sessionId, String name) {
-        requireSessionOwnership(sessionId);
+    public SessionSummaryDto branchSession(UUID sessionId, String name, String profile) {
         // Fork a session: load messages, create new session with copied messages
         SessionEntity source = sessionRepository.findById(sessionId)
             .orElseThrow(() -> new IllegalArgumentException("Session not found: " + sessionId));
+        AgentSessionResolver.requireAccessible(source, profile);
         SessionEntity branch = sessionMapper.toEntity(
             new Session(null, source.getUserId(), name != null ? name : "Branch of " + source.getTitle(),
                 source.getModelProvider(), source.getModelName(), null, java.util.Map.of(), null)
         );
+        branch.setProfile(source.getProfile());
+        branch.setSource(source.getSource());
         branch.setCreatedAt(Instant.now());
         branch.setUpdatedAt(Instant.now());
         SessionEntity saved = sessionRepository.save(branch);
@@ -514,15 +513,8 @@ public class AgentRuntimeService {
      * instruction as a NORMAL USER TURN in the SAME session — session-scoped,
      * unlike {@link #runBackground} which always creates a fresh session.
      */
-    public String runHeartbeatTurn(UUID sessionId, String prompt) {
-        requireSessionOwnership(sessionId);
-        SessionEntity entity = sessionRepository.findById(sessionId).orElse(null);
-        Session session;
-        if (entity != null) {
-            session = sessionMapper.toDomain(entity);
-        } else {
-            session = createSession(AgentProperties.DEFAULT_USER_ID, "openai-compatible", "");
-        }
+    public String runHeartbeatTurn(UUID sessionId, String prompt, String profile) {
+        Session session = sessionResolver.loadSession(sessionId, profile);
         TurnResult result = sessionTurnLockManager.withTurn(session.id(), () -> {
             TurnResult turn = agentRuntime.runTurn(session, prompt);
             persistMessages(session.id(), turn.messages());
@@ -560,6 +552,7 @@ public class AgentRuntimeService {
             if (!ownerId.equals(parent.getUserId())) {
                 throw new SecurityException("Session does not belong to the background job owner");
             }
+            AgentSessionResolver.requireAccessible(parent, "default");
         }
         com.azhukov.agent.persistence.entity.BackgroundJobEntity job =
             new com.azhukov.agent.persistence.entity.BackgroundJobEntity();
@@ -598,7 +591,6 @@ public class AgentRuntimeService {
         if (ownerId == null || ownerId.isBlank()) {
             throw new IllegalArgumentException("Background job owner is required");
         }
-        Session baseSession = createSession(ownerId, "openai-compatible", "");
         java.util.Map<String, String> metadata = new java.util.HashMap<>();
         if (runtimeMetadata != null) {
             runtimeMetadata.forEach((key, value) -> {
@@ -610,6 +602,11 @@ public class AgentRuntimeService {
         if (skipBackgroundReview) {
             metadata.put("skip_background_review", "true");
         }
+        String profile = metadata.getOrDefault("profile", "default");
+        Session baseSession = "default".equals(profile)
+            ? createSession(ownerId, "openai-compatible", "")
+            : sessionResolver.createSession(ownerId, "openai-compatible", "",
+                metadata.getOrDefault("platform", "cron"), profile);
         final Session session = metadata.isEmpty() ? baseSession
             : new Session(baseSession.id(), baseSession.userId(), baseSession.title(),
                 baseSession.modelProvider(), baseSession.modelName(), baseSession.systemPrompt(),
@@ -796,6 +793,9 @@ public class AgentRuntimeService {
 
     private ChatResponseDto runApiTurnLocked(Session session, Message message, ModelRequestOptions options) {
         ModelRequestOptions effectiveOptions = options != null ? options : ModelRequestOptions.empty();
+        if (!"default".equals(session.profile()) || effectiveOptions.boundProfile() != null) {
+            effectiveOptions = profileModelRouting.bind(session.profile(), effectiveOptions);
+        }
         Session runtimeSession = RuntimeModelOptionsResolver.applyEffectiveRuntime(session, properties, effectiveOptions);
         Message userMessage = apiUserMessage(message);
         if (midTurnPersistenceCallback != null) {

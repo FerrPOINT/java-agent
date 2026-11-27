@@ -2,12 +2,14 @@ package com.azhukov.agent.api;
 
 import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.service.AttachmentArtifactService;
+import com.azhukov.agent.service.ProfileService;
 import com.azhukov.agent.service.AttachmentArtifactService.ArtifactRegistration;
 import com.azhukov.agent.service.AttachmentArtifactService.AttachmentArtifact;
 import com.azhukov.agent.service.AttachmentArtifactService.OutboundStatus;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
@@ -44,12 +46,14 @@ import java.util.UUID;
  * so the model sees content (bounded text) or a safe cache path.
  */
 @RestController
-@RequestMapping("/api/v1/attachments")
+@RequestMapping({"/api/v1/attachments", "/p/{profile}/api/v1/attachments"})
 @RequiredArgsConstructor
 @Slf4j
 public class AttachmentController {
 
     private final ObjectProvider<AttachmentArtifactService> serviceProvider;
+    @Autowired
+    private ProfileService profiles;
 
     /** Bounded text preview injected into the turn when the artifact is text-ish. */
     private static final int TEXT_PREVIEW_CHARS = 4_000;
@@ -76,7 +80,7 @@ public class AttachmentController {
             @RequestPart("file") MultipartFile file,
             @RequestParam(value = "origin", required = false) String origin,
             @RequestParam(value = "disposition", required = false, defaultValue = "file") String disposition,
-            @RequestParam(value = "profile", required = false) String profile,
+            @PathVariable(name = "profile", required = false) String pathProfile,
             @RequestParam(value = "sessionId", required = false) UUID sessionId,
             @RequestParam(value = "messageId", required = false) String messageId,
             @RequestParam(value = "ownerId", required = false) String ownerId) {
@@ -90,7 +94,7 @@ public class AttachmentController {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "file part is not readable");
         }
         ArtifactRegistration registration = service().register(
-            authenticatedOwner(ownerId), profile, sessionId, messageId,
+            authenticatedOwner(ownerId), selectedProfile(pathProfile), sessionId, messageId,
             // V62 chk_attachment_origin allows telegram/cli/internal only —
             // a blank origin from the REST upload is an internal one.
             origin == null || origin.isBlank() ? "internal" : origin,
@@ -102,19 +106,22 @@ public class AttachmentController {
     }
 
     @GetMapping("/{id}")
-    public AttachmentArtifact get(@PathVariable("id") String id) {
+    public AttachmentArtifact get(@PathVariable("id") String id,
+            @PathVariable(name = "profile", required = false) String pathProfile) {
         String owner = scopedOwner();
-        return service().find(id, owner)
+        return service().find(id, owner, selectedProfile(pathProfile))
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "unknown artifact " + id));
     }
 
     /** Attachment block injected into the turn (bounded text preview or path reference). */
     @GetMapping("/{id}/content")
-    public ResponseEntity<Resource> content(@PathVariable("id") String id) {
+    public ResponseEntity<Resource> content(@PathVariable("id") String id,
+            @PathVariable(name = "profile", required = false) String pathProfile) {
         String owner = scopedOwner();
-        AttachmentArtifact artifact = service().find(id, owner)
+        String profile = selectedProfile(pathProfile);
+        AttachmentArtifact artifact = service().find(id, owner, profile)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "unknown artifact " + id));
-        Path path = service().contentPath(id, owner)
+        Path path = service().contentPath(id, owner, profile)
             .filter(Files::isReadable)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "artifact content is gone " + id));
         return contentResponse(artifact, new FileSystemResource(path));
@@ -122,25 +129,27 @@ public class AttachmentController {
 
     @PostMapping("/{id}/outbound")
     public ResponseEntity<Resource> claimOutbound(@PathVariable("id") String id,
+            @PathVariable(name = "profile", required = false) String pathProfile,
             @RequestParam(name = "ownerId", required = false) String ownerId,
             @RequestParam("sessionId") UUID sessionId) throws java.io.IOException {
         String owner = requireGatewayOwner(ownerId);
-        OutboundStatus status = requireOutboundArtifact(id, owner, sessionId);
+        String profile = selectedProfile(pathProfile);
+        OutboundStatus status = requireOutboundArtifact(id, owner, profile, sessionId);
         if (status == OutboundStatus.DELIVERED) return ResponseEntity.noContent().build();
         requireProtectedOutbound();
         if (status == OutboundStatus.CLAIMED) {
             throw alreadyClaimed();
         }
-        var content = service().verifiedContent(id, owner)
+        var content = service().verifiedContent(id, owner, profile)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Artifact content is unavailable"));
         try {
             var response = contentResponse(content.artifact(),
                 new org.springframework.core.io.InputStreamResource(content.stream()));
             UserContext.requireCurrentAccess();
-            var claim = service().claimOutbound(id, owner, sessionId);
+            var claim = service().claimOutbound(id, owner, profile, sessionId);
             if (claim.isEmpty()) {
                 content.close();
-                if (requireOutboundArtifact(id, owner, sessionId) == OutboundStatus.DELIVERED) {
+                if (requireOutboundArtifact(id, owner, profile, sessionId) == OutboundStatus.DELIVERED) {
                     return ResponseEntity.noContent().build();
                 }
                 throw alreadyClaimed();
@@ -156,12 +165,14 @@ public class AttachmentController {
 
     @DeleteMapping("/{id}/outbound")
     public ResponseEntity<Void> releaseOutbound(@PathVariable("id") String id,
+            @PathVariable(name = "profile", required = false) String pathProfile,
             @RequestParam(name = "ownerId", required = false) String ownerId,
             @RequestParam("sessionId") UUID sessionId,
             @RequestHeader("X-Outbound-Claim") Instant claimedAt) {
         String owner = requireGatewayOwner(ownerId);
-        requireOutboundArtifact(id, owner, sessionId);
-        if (!service().releaseOutbound(id, owner, sessionId, claimedAt)) {
+        String profile = selectedProfile(pathProfile);
+        requireOutboundArtifact(id, owner, profile, sessionId);
+        if (!service().releaseOutbound(id, owner, profile, sessionId, claimedAt)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "No matching outbound claim");
         }
         return ResponseEntity.noContent().build();
@@ -198,6 +209,7 @@ public class AttachmentController {
      */
     @PostMapping("/{id}/delivered")
     public Map<String, Object> delivered(@PathVariable("id") String id,
+            @PathVariable(name = "profile", required = false) String pathProfile,
             @RequestParam(name = "ownerId", required = false) String ownerId,
             @RequestParam("sessionId") UUID sessionId,
             @RequestParam("messageId") long messageId) {
@@ -205,16 +217,28 @@ public class AttachmentController {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Positive Telegram message ID required");
         }
         String owner = requireGatewayOwner(ownerId);
-        requireOutboundArtifact(id, owner, sessionId);
-        if (!service().markDelivered(id, owner, sessionId, Long.toString(messageId))) {
+        String profile = selectedProfile(pathProfile);
+        requireOutboundArtifact(id, owner, profile, sessionId);
+        if (!service().markDelivered(id, owner, profile, sessionId, Long.toString(messageId))) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "No matching outbound attempt or receipt");
         }
         return Map.of("ok", true, "id", id, "state", "delivered");
     }
 
     @GetMapping("/session/{sessionId}")
-    public List<AttachmentArtifact> bySession(@PathVariable("sessionId") UUID sessionId) {
-        return service().bySession(sessionId, scopedOwner());
+    public List<AttachmentArtifact> bySession(@PathVariable("sessionId") UUID sessionId,
+            @PathVariable(name = "profile", required = false) String pathProfile) {
+        return service().bySession(sessionId, scopedOwner(), selectedProfile(pathProfile));
+    }
+
+    private String selectedProfile(String profile) {
+        if (profile == null || "default".equals(profile)) {
+            return "default";
+        }
+        if (!profiles.isValidNamedProfileName(profile) || !profiles.knownProfile(profile)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Unknown profile");
+        }
+        return profile;
     }
 
     private static String requireGatewayOwner(String ownerId) {
@@ -225,8 +249,8 @@ public class AttachmentController {
         return UserContext.requireRequestOwner(ownerId);
     }
 
-    private OutboundStatus requireOutboundArtifact(String id, String owner, UUID sessionId) {
-        OutboundStatus status = service().outboundStatus(id, owner, sessionId);
+    private OutboundStatus requireOutboundArtifact(String id, String owner, String profile, UUID sessionId) {
+        OutboundStatus status = service().outboundStatus(id, owner, profile, sessionId);
         if (status == OutboundStatus.UNAVAILABLE) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Unknown artifact");
         }

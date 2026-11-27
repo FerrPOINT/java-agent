@@ -38,6 +38,7 @@ import com.azhukov.agent.core.tool.ToolCallValidator;
 import com.azhukov.agent.core.tool.ToolExecutionService;
 import com.azhukov.agent.core.tool.ToolRegistry;
 import com.azhukov.agent.core.security.ApprovalQueue;
+import com.azhukov.agent.core.security.ProfileDatabaseScope;
 import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.core.security.ToolApprovalPolicy;
 import com.azhukov.agent.core.state.TurnState;
@@ -88,6 +89,8 @@ import lombok.RequiredArgsConstructor;
 public class AgentStreamingService {
 
     private final ModelClient modelClient;
+    @org.springframework.beans.factory.annotation.Autowired
+    private ProfileModelRouting profileModelRouting;
     private final ToolRegistry toolRegistry;
     private final ToolExecutionService toolExecutionService;
     private final com.azhukov.agent.core.agent.ToolBatchPipeline toolBatchPipeline;
@@ -281,13 +284,8 @@ public class AgentStreamingService {
 
     private void requireSessionOwnership(UUID sessionId) {
         if (sessionId == null) return;
-        String scopedUserId = UserContext.scopeUserId();
-        if (scopedUserId == null) return;
-        SessionEntity session = transactionTemplate.execute(status ->
-            sessionRepository.findById(sessionId).orElse(null));
-        if (session != null && !scopedUserId.equals(session.getUserId())) {
-            throw new SecurityException("Session does not belong to the current user");
-        }
+        sessionRepository.findById(sessionId).ifPresent(session ->
+            AgentSessionResolver.requireAccessible(session, "default"));
     }
 
     /**
@@ -350,7 +348,7 @@ public class AgentStreamingService {
             streamCtx.markDisconnected();
         });
 
-        CompletableFuture.runAsync(() -> {
+        CompletableFuture.runAsync(ProfileDatabaseScope.carry(() -> {
             // rev-79: per-session turn lock — mutual exclusion with the sync path
             // AND other streaming turns on the same session. Live-verified race:
             // two parallel /agent/chat/stream POSTs returned interleaved content
@@ -414,7 +412,7 @@ public class AgentStreamingService {
                 // Safety net: clear ThreadLocal if runAgenticLoop didn't
                 InterruptToken.clearCurrentSessionId();
             }
-        }, streamingExecutor);
+        }), streamingExecutor);
         return emitter;
     }
 
@@ -500,7 +498,7 @@ public class AgentStreamingService {
 
         // Tools: select before building the prompt so system guidance matches
         // the exact tool definitions this request exposes (P-04).
-        List<ToolDefinition> tools = selectTools(request);
+        List<ToolDefinition> tools = selectTools(request, session);
 
         // Per-request model override must be resolved before context preparation:
         // the context window controls preflight compression. Applying it later
@@ -577,9 +575,9 @@ public class AgentStreamingService {
         // Per-request model override (/model command or API "model" field):
         // the model was already resolved before context preparation above; record
         // it in session metadata for the footer and metadata event.
-        com.azhukov.agent.core.client.ModelRequestOptions streamOptions =
-            com.azhukov.agent.service.RuntimeModelOptionsResolver.resolve(
-                properties, request, session, runtimeConfigService);
+        var requestedOptions = RuntimeModelOptionsResolver.resolve(properties, request, session, runtimeConfigService);
+        var streamOptions = "default".equals(session.profile()) ? requestedOptions
+            : profileModelRouting.bind(session.profile(), requestedOptions);
         // Record the RESOLVED model (request override or stored session route
         // expanded to its target model) so the metadata event and the bot
         // footer show what actually serves the turn — a stored route alias
@@ -594,9 +592,7 @@ public class AgentStreamingService {
         // P-08 (Hermes #92450): bound escaped outer-loop exceptions per turn.
         com.azhukov.agent.core.agent.OuterErrorBudget outerErrors =
             new com.azhukov.agent.core.agent.OuterErrorBudget(maxTurns);
-        var streamFallbackManager = new com.azhukov.agent.core.agent.FallbackManager(
-            properties.getFallbackChain(), properties.getModel().getProvider(), properties.getModel().getModelName(),
-            properties.getModel().getBaseUrl(), properties.getModel().getApiKey());
+        var streamFallbackManager = com.azhukov.agent.core.agent.FallbackManager.forTurn(properties, streamOptions);
         var streamFallbackCaller = new com.azhukov.agent.core.agent.FallbackModelCaller(
             errorClassifier, properties, null, contextEngine);
         var streamModel = new com.azhukov.agent.core.agent.FallbackModelCaller.ModelCallContext(
@@ -1665,9 +1661,10 @@ log.info("LLM call took {} ms (session {})", System.currentTimeMillis() - llmSta
     }
 
 
-    private List<ToolDefinition> selectTools(ChatRequest request) {
+    private List<ToolDefinition> selectTools(ChatRequest request, Session session) {
         Set<String> defaultToolsets = new HashSet<>(properties.getSkills().getDefaultToolsets());
-        List<ToolDefinition> all = toolRegistry.getDefinitions(defaultToolsets);
+        List<ToolDefinition> all = "default".equals(session.profile()) ? toolRegistry.getDefinitions(defaultToolsets)
+            : toolRegistry.getProfileDefinitions(session);
         if (request == null) {
             return all;
         }

@@ -23,6 +23,10 @@ public class TelegramBotApiClient {
         this.restClient = restClient;
     }
 
+    TelegramBotApiClient withToken(String token) {
+        return new TelegramBotApiClient(token, restClient);
+    }
+
     public Optional<String> sendMessage(long chatId, String text) {
         return sendMessage(chatId, text, null);
     }
@@ -63,7 +67,7 @@ public class TelegramBotApiClient {
             MultiValueMap<String, org.springframework.http.HttpEntity<?>> parts = builder.build();
             return callMultipartApi("sendDocument", parts);
         } catch (Exception e) {
-            log.warn("Telegram sendDocument failed: {}", e.getMessage());
+            log.warn("Telegram sendDocument failed: {}", e.getClass().getSimpleName());
             return Optional.empty();
         }
     }
@@ -92,7 +96,7 @@ public class TelegramBotApiClient {
             MultiValueMap<String, org.springframework.http.HttpEntity<?>> parts = builder.build();
             return callMultipartApi("sendPhoto", parts);
         } catch (Exception e) {
-            log.warn("Telegram sendPhoto failed: {}", e.getMessage());
+            log.warn("Telegram sendPhoto failed: {}", e.getClass().getSimpleName());
             return Optional.empty();
         }
     }
@@ -128,7 +132,7 @@ public class TelegramBotApiClient {
                 .toEntity(Map.class);
             return extractMessageId(method, response);
         } catch (Exception e) {
-            log.warn("Telegram {} failed: {}", method, e.getMessage());
+            log.warn("Telegram {} failed: {}", method, e.getClass().getSimpleName());
             return Optional.empty();
         }
     }
@@ -152,12 +156,12 @@ public class TelegramBotApiClient {
             }
             Boolean ok = (Boolean) response.getBody().get("ok");
             if (!Boolean.TRUE.equals(ok)) {
-                log.warn("Telegram {} error: {}", method, response.getBody().get("description"));
+                log.warn("Telegram {} returned an unsuccessful result", method);
                 return false;
             }
             return true;
         } catch (Exception e) {
-            log.warn("Telegram {} failed: {}", method, e.getMessage());
+            log.warn("Telegram {} failed: {}", method, e.getClass().getSimpleName());
             return false;
         }
     }
@@ -173,7 +177,7 @@ public class TelegramBotApiClient {
                 .toEntity(Map.class);
             return extractMessageId(method, response);
         } catch (Exception e) {
-            log.warn("Telegram {} (multipart) failed: {}", method, e.getMessage());
+            log.warn("Telegram {} (multipart) failed: {}", method, e.getClass().getSimpleName());
             return Optional.empty();
         }
     }
@@ -186,7 +190,7 @@ public class TelegramBotApiClient {
         }
         Boolean ok = (Boolean) response.getBody().get("ok");
         if (!Boolean.TRUE.equals(ok)) {
-            log.warn("Telegram {} error: {}", method, response.getBody().get("description"));
+            log.warn("Telegram {} returned an unsuccessful result", method);
             return Optional.empty();
         }
         Object result = response.getBody().get("result");

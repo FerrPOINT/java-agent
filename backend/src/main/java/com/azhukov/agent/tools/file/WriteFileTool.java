@@ -3,6 +3,7 @@ package com.azhukov.agent.tools.file;
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.config.SharedObjectMapper;
 import com.azhukov.agent.core.security.FileSafety;
+import com.azhukov.agent.service.ProfileService;
 import com.azhukov.agent.tools.AgentTool;
 import com.azhukov.agent.tools.ToolHandler;
 import com.azhukov.agent.tools.ToolParam;
@@ -37,6 +38,8 @@ public class WriteFileTool implements ToolHandler {
 
     private final FileSafety fileSafety;
     private final AgentProperties properties;
+    @Autowired
+    private ProfileService profiles;
 
     public WriteFileTool(AgentProperties properties) {
         this(FileToolSafety.defaultSafety(properties));
@@ -95,21 +98,23 @@ public class WriteFileTool implements ToolHandler {
                     + "Strip read_file line-number prefixes or reconstruct the intended file contents before writing.");
         }
 
-        Path path = FileToolSafety.resolvePath(args.path(), session);
-        ToolResult safetyCheck = FileToolSafety.ensureWritable(fileSafety, path, args.path(), args.crossProfile());
-        if (safetyCheck != null) {
-            return jsonFail(safetyCheck.error());
-        }
-        ToolResult propertiesCheck = ensureWithinPropertiesAllowed(path, args.path());
-        if (propertiesCheck != null) {
-            return jsonFail(propertiesCheck.error());
-        }
-        ToolResult textWriteCheck = FileToolSafety.ensurePlainTextWriteAllowed(path, args.path());
-        if (textWriteCheck != null) {
-            return jsonFail(textWriteCheck.error());
-        }
-
         try {
+            boolean named = FileToolSafety.namedProfile(session);
+            Path path = FileToolSafety.resolveScopedPath(args.path(), session, profiles);
+            if (!named) {
+                ToolResult safetyCheck = FileToolSafety.ensureWritable(fileSafety, path, args.path(), args.crossProfile());
+                if (safetyCheck != null) {
+                    return jsonFail(safetyCheck.error());
+                }
+                ToolResult propertiesCheck = ensureWithinPropertiesAllowed(path, args.path());
+                if (propertiesCheck != null) {
+                    return jsonFail(propertiesCheck.error());
+                }
+            }
+            ToolResult textWriteCheck = FileToolSafety.ensurePlainTextWriteAllowed(path, args.path(), named);
+            if (textWriteCheck != null) {
+                return jsonFail(textWriteCheck.error());
+            }
             TextFileWriteSupport.WriteOutcome write = TextFileWriteSupport.write(path, args.content());
 
             Map<String, Object> result = new LinkedHashMap<>();
@@ -119,7 +124,7 @@ public class WriteFileTool implements ToolHandler {
             result.put("resolved_path", write.path().toString());
             result.put("files_modified", List.of(write.path().toString()));
             return jsonOk(result);
-        } catch (IOException e) {
+        } catch (IOException | IllegalArgumentException e) {
             return jsonFail("Failed to write file: " + e.getMessage());
         }
     }

@@ -102,7 +102,7 @@ class AttachmentArtifactRepositoryTest extends PostgresTestContainer {
             assertThat(saved.getFileName()).isEqualTo("report.zip");
             java.nio.file.Files.writeString(original, "changed after publication");
             byte[] publishedBytes;
-            try (var published = applicationArtifacts.verifiedContent(id, "user-1").orElseThrow()) {
+            try (var published = applicationArtifacts.verifiedContent(id, "user-1", "default").orElseThrow()) {
                 publishedBytes = published.stream().readAllBytes();
             }
             assertThat(publishedBytes).isEqualTo(bytes);
@@ -112,8 +112,8 @@ class AttachmentArtifactRepositoryTest extends PostgresTestContainer {
                     .isEqualTo("requested document bytes");
                 assertThat(zip.getNextEntry()).isNull();
             }
-            assertThat(applicationArtifacts.find(id, "system")).isEmpty();
-            assertThat(applicationArtifacts.outboundStatus(id, "system", entity.getId()))
+            assertThat(applicationArtifacts.find(id, "system", "default")).isEmpty();
+            assertThat(applicationArtifacts.outboundStatus(id, "system", "default", entity.getId()))
                 .isEqualTo(com.azhukov.agent.service.AttachmentArtifactService.OutboundStatus.UNAVAILABLE);
         } finally {
             com.azhukov.agent.core.security.UserContext.clear();
@@ -137,7 +137,7 @@ class AttachmentArtifactRepositoryTest extends PostgresTestContainer {
             new org.springframework.beans.factory.ObjectProvider<>() {
                 @Override public AttachmentArtifactRepository getObject() { return repository; }
                 @Override public AttachmentArtifactRepository getIfAvailable() { return repository; }
-            }, new com.azhukov.agent.service.ArtifactProcessIsolation(), sessions);
+            }, new com.azhukov.agent.service.ArtifactProcessIsolation(), transactionTemplate, sessions);
         org.springframework.test.util.ReflectionTestUtils.setField(service, "cacheRootConfig", cache.toString());
 
         var rejected = service.register("user-1", "default", foreign.getId(), null, "cli", "document",
@@ -178,12 +178,34 @@ class AttachmentArtifactRepositoryTest extends PostgresTestContainer {
         repository.save(entity("bob", "hash-a", "photo"));
 
         Optional<AttachmentArtifactEntity> aliceHit = repository
-            .findFirstByOwnerIdAndContentHashAndDispositionAndSessionIdAndDedupScope("alice", "hash-a", "photo", null, "");
+            .findFirstByOwnerIdAndProfileAndContentHashAndDispositionAndSessionIdAndDedupScope("alice", "default", "hash-a", "photo", null, "");
         Optional<AttachmentArtifactEntity> carolMiss = repository
-            .findFirstByOwnerIdAndContentHashAndDispositionAndSessionIdAndDedupScope("carol", "hash-a", "photo", null, "");
+            .findFirstByOwnerIdAndProfileAndContentHashAndDispositionAndSessionIdAndDedupScope("carol", "default", "hash-a", "photo", null, "");
 
         assertThat(aliceHit).isPresent();
         assertThat(carolMiss).isEmpty();
+    }
+
+    @Test
+    void twoProfilesKeepIdenticalInboundContentAndOutboundClaimsIndependent() {
+        String owner = "same-owner";
+        var alpha = entity(owner, "same-bytes", "document");
+        alpha.setProfile("alpha");
+        var beta = entity(owner, "same-bytes", "document");
+        beta.setProfile("beta");
+        repository.saveAndFlush(alpha);
+        repository.saveAndFlush(beta);
+        assertThat(applicationArtifacts.find(alpha.getId(), owner, "alpha")).isPresent();
+        assertThat(applicationArtifacts.find(alpha.getId(), owner, "beta")).isEmpty();
+        assertThat(applicationArtifacts.find(beta.getId(), owner, "beta")).isPresent();
+
+        var stored = entity(owner, "active-turn", "document");
+        stored.setSessionId(UUID.randomUUID());
+        stored.setProfile("alpha");
+        repository.saveAndFlush(stored);
+        Instant now = Instant.now();
+        assertThat(repository.claimOutbound(stored.getId(), owner, "beta", stored.getSessionId(), now)).isZero();
+        assertThat(repository.claimOutbound(stored.getId(), owner, "alpha", stored.getSessionId(), now)).isOne();
     }
 
     @Test
@@ -196,9 +218,9 @@ class AttachmentArtifactRepositoryTest extends PostgresTestContainer {
         second.setSessionId(secondSession);
         repository.saveAndFlush(first);
         repository.saveAndFlush(second);
-        assertThat(repository.findFirstByOwnerIdAndContentHashAndDispositionAndSessionIdAndDedupScope("alice", "same", "photo", firstSession, ""))
+        assertThat(repository.findFirstByOwnerIdAndProfileAndContentHashAndDispositionAndSessionIdAndDedupScope("alice", "default", "same", "photo", firstSession, ""))
             .get().extracting(AttachmentArtifactEntity::getId).isEqualTo(first.getId());
-        assertThat(repository.findFirstByOwnerIdAndContentHashAndDispositionAndSessionIdAndDedupScope("alice", "same", "photo", secondSession, ""))
+        assertThat(repository.findFirstByOwnerIdAndProfileAndContentHashAndDispositionAndSessionIdAndDedupScope("alice", "default", "same", "photo", secondSession, ""))
             .get().extracting(AttachmentArtifactEntity::getId).isEqualTo(second.getId());
         var duplicate = entity("alice", "same", "photo");
         duplicate.setSessionId(firstSession);
@@ -214,13 +236,13 @@ class AttachmentArtifactRepositoryTest extends PostgresTestContainer {
         repository.saveAndFlush(artifact);
         var now = Instant.now();
 
-        assertThat(repository.claimOutbound(artifact.getId(), "bob", session, now)).isZero();
-        assertThat(repository.claimOutbound(artifact.getId(), "alice", UUID.randomUUID(), now)).isZero();
+        assertThat(repository.claimOutbound(artifact.getId(), "bob", "default", session, now)).isZero();
+        assertThat(repository.claimOutbound(artifact.getId(), "alice", "default", UUID.randomUUID(), now)).isZero();
         var start = new java.util.concurrent.CountDownLatch(1);
         try (var executor = java.util.concurrent.Executors.newFixedThreadPool(2)) {
             java.util.concurrent.Callable<Integer> attempt = () -> {
                 start.await();
-                return repository.claimOutbound(artifact.getId(), "alice", session, now);
+                return repository.claimOutbound(artifact.getId(), "alice", "default", session, now);
             };
             var first = executor.submit(attempt);
             var second = executor.submit(attempt);
@@ -229,7 +251,7 @@ class AttachmentArtifactRepositoryTest extends PostgresTestContainer {
                 second.get(10, java.util.concurrent.TimeUnit.SECONDS))).containsExactlyInAnyOrder(0, 1);
         }
 
-        assertThat(repository.claimOutbound(artifact.getId(), "alice", session, now)).isZero();
+        assertThat(repository.claimOutbound(artifact.getId(), "alice", "default", session, now)).isZero();
         var stored = repository.findById(artifact.getId()).orElseThrow();
         assertThat(stored.getOutboundClaimedAt()).isNotNull();
         assertThat(stored.getDeliveredMessageId()).isNull();
@@ -245,14 +267,14 @@ class AttachmentArtifactRepositoryTest extends PostgresTestContainer {
         Instant first = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS);
         Instant second = first.plus(1, java.time.temporal.ChronoUnit.MICROS);
 
-        assertThat(repository.claimOutbound(id, "alice", session, first)).isOne();
-        assertThat(repository.releaseOutbound(id, "bob", session, first)).isZero();
-        assertThat(repository.releaseOutbound(id, "alice", UUID.randomUUID(), first)).isZero();
-        assertThat(repository.releaseOutbound(id, "alice", session, first)).isOne();
-        assertThat(repository.claimOutbound(id, "alice", session, second)).isOne();
-        assertThat(repository.releaseOutbound(id, "alice", session, first)).isZero();
-        assertThat(repository.recordOutboundReceipt(id, "alice", session, "42", second)).isOne();
-        assertThat(repository.releaseOutbound(id, "alice", session, second)).isZero();
+        assertThat(repository.claimOutbound(id, "alice", "default", session, first)).isOne();
+        assertThat(repository.releaseOutbound(id, "bob", "default", session, first)).isZero();
+        assertThat(repository.releaseOutbound(id, "alice", "default", UUID.randomUUID(), first)).isZero();
+        assertThat(repository.releaseOutbound(id, "alice", "default", session, first)).isOne();
+        assertThat(repository.claimOutbound(id, "alice", "default", session, second)).isOne();
+        assertThat(repository.releaseOutbound(id, "alice", "default", session, first)).isZero();
+        assertThat(repository.recordOutboundReceipt(id, "alice", "default", session, "42", second)).isOne();
+        assertThat(repository.releaseOutbound(id, "alice", "default", session, second)).isZero();
     }
 
     @Test
@@ -262,25 +284,25 @@ class AttachmentArtifactRepositoryTest extends PostgresTestContainer {
         artifact.setSessionId(session);
         repository.saveAndFlush(artifact);
         Instant now = Instant.now();
-        assertThat(repository.recordOutboundReceipt(artifact.getId(), "alice", session, "41", now)).isZero();
-        assertThat(repository.claimOutbound(artifact.getId(), "alice", session, now)).isOne();
+        assertThat(repository.recordOutboundReceipt(artifact.getId(), "alice", "default", session, "41", now)).isZero();
+        assertThat(repository.claimOutbound(artifact.getId(), "alice", "default", session, now)).isOne();
 
         var start = new java.util.concurrent.CountDownLatch(1);
         try (var executor = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor()) {
             var first = executor.submit(() -> {
                 start.await();
-                return repository.recordOutboundReceipt(artifact.getId(), "alice", session, "42", now);
+                return repository.recordOutboundReceipt(artifact.getId(), "alice", "default", session, "42", now);
             });
             var second = executor.submit(() -> {
                 start.await();
-                return repository.recordOutboundReceipt(artifact.getId(), "alice", session, "43", now);
+                return repository.recordOutboundReceipt(artifact.getId(), "alice", "default", session, "43", now);
             });
             start.countDown();
             int firstResult = first.get(10, java.util.concurrent.TimeUnit.SECONDS);
             int secondResult = second.get(10, java.util.concurrent.TimeUnit.SECONDS);
             assertThat(List.of(firstResult, secondResult)).containsExactlyInAnyOrder(0, 1);
             String winner = firstResult == 1 ? "42" : "43";
-            assertThat(repository.recordOutboundReceipt(artifact.getId(), "alice", session, winner, now.plusSeconds(1)))
+            assertThat(repository.recordOutboundReceipt(artifact.getId(), "alice", "default", session, winner, now.plusSeconds(1)))
                 .isOne();
             var stored = repository.findById(artifact.getId()).orElseThrow();
             assertThat(stored.getDeliveredMessageId()).isEqualTo(winner);
@@ -330,7 +352,7 @@ class AttachmentArtifactRepositoryTest extends PostgresTestContainer {
             new org.springframework.beans.factory.ObjectProvider<>() {
                 @Override public AttachmentArtifactRepository getObject() { return repository; }
                 @Override public AttachmentArtifactRepository getIfAvailable() { return repository; }
-            }, null, sessions);
+            }, null, transactionTemplate, sessions);
         org.springframework.test.util.ReflectionTestUtils.setField(service, "cacheRootConfig", cache.toString());
 
         assertThat(transactionTemplate.<Integer>execute(tx -> service.sweepExpired())).isEqualTo(2);

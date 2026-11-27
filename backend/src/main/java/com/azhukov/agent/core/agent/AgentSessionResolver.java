@@ -1,6 +1,7 @@
 package com.azhukov.agent.core.agent;
 
 import com.azhukov.agent.core.model.Session;
+import com.azhukov.agent.core.security.UserContext;
 import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.mapper.SessionEntityMapper;
 import com.azhukov.agent.core.ports.MessageStorePort;
@@ -8,7 +9,9 @@ import com.azhukov.agent.core.ports.SessionStorePort;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.hibernate.Hibernate;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
@@ -16,6 +19,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import com.azhukov.agent.config.AgentProperties;
@@ -71,6 +75,7 @@ public class AgentSessionResolver {
         if (sessionId == null) {
             return new ResolvedSession(createSession(userId, "openai-compatible", modelName, source), true);
         }
+        sessionRepository.findById(sessionId).ifPresent(session -> requireAccessible(session, "default"));
         try {
             // P0-24: Follow compression child chain to find the descendant with messages
             UUID resolvedId = resolveResumeSessionId(sessionId);
@@ -104,10 +109,15 @@ public class AgentSessionResolver {
      * The source becomes the platform in the system prompt volatile tier.
      */
     public Session createSession(String userId, String provider, String modelName, String source) {
+        return createSession(userId, provider, modelName, source, "default");
+    }
+
+    public Session createSession(String userId, String provider, String modelName, String source, String profile) {
         if(identityReferences!=null)identityReferences.nativeStorage(userId);
         SessionEntity e = newSessionEntity(userId, provider, modelName, source);
+        e.setProfile(profile);
         SessionEntity saved = transactionTemplate.execute(status -> sessionRepository.save(e));
-        return sessionMapper.toDomain(saved);
+        return sessionMapper.toDomain(saved).withMetadata("profile", saved.getProfile());
     }
 
     /**
@@ -120,35 +130,55 @@ public class AgentSessionResolver {
                                        String userId,
                                        String provider,
                                        String modelName,
-                                       String source) {
+                                       String source,
+                                       String profile) {
         if (sessionId == null) {
-            return createSession(userId, provider, modelName, source);
+            return createSession(userId, provider, modelName, source, profile);
         }
         if(identityReferences!=null)identityReferences.nativeStorage(userId);
         return transactionTemplate.execute(status -> {
             SessionEntity existing = sessionRepository.findById(sessionId).orElse(null);
             if (existing != null) {
-                return hydrateSession(existing);
+                return hydrateInProfile(existing, profile);
             }
-            // Deterministic external session ids must be created WITHOUT the
-            // Hibernate merge() path: Spring Data treats an assigned id as
-            // "not new", and merge() on OSIV-bound persistence contexts can
-            // throw bogus StaleObjectState for rows we verified are absent.
-            // A plain INSERT (duplicate → load winner) sidesteps the issue and
-            // is race-safe under concurrent first-turn requests.
-            try {
-                sessionRepository.insertSessionRow(sessionId, userId, "New chat",
-                    provider, modelName, source, Instant.now());
-            } catch (org.springframework.dao.DataIntegrityViolationException duplicate) {
-                SessionEntity winner = sessionRepository.findById(sessionId).orElse(null);
-                if (winner != null) {
-                    return hydrateSession(winner);
-                }
-                throw duplicate;
-            }
+            // An assigned id must use INSERT, and a concurrent winner must
+            // leave this transaction usable for an ownership check and readback.
+            sessionRepository.insertSessionRow(sessionId, userId, "New chat",
+                provider, modelName, source, profile, Instant.now());
             SessionEntity saved = sessionRepository.findById(sessionId).orElseThrow();
-            return hydrateSession(saved);
+            return hydrateInProfile(saved, profile);
         });
+    }
+
+    public static boolean inProfile(SessionEntity session, String profile) {
+        return profile.equals(sessionProfile(session));
+    }
+
+    static boolean sameScope(SessionEntity first, SessionEntity second) {
+        return Objects.equals(first.getUserId(), second.getUserId())
+            && sessionProfile(first).equals(sessionProfile(second));
+    }
+
+    public static String sessionProfile(SessionEntity session) {
+        String saved = session.getProfile();
+        return saved == null || saved.isBlank() ? "default" : saved;
+    }
+
+    public static void requireAccessible(SessionEntity session, String profile) {
+        if (!inProfile(session, profile)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Session not found");
+        }
+        String user = UserContext.scopeUserId();
+        if (user != null && !user.equals(session.getUserId())) {
+            throw new SecurityException("Session does not belong to the current user");
+        }
+    }
+
+    private Session hydrateInProfile(SessionEntity entity, String profile) {
+        if (!inProfile(entity, profile)) {
+            throw new IllegalArgumentException("Session not found: " + entity.getId());
+        }
+        return hydrateSession(entity);
     }
 
     private SessionEntity newSessionEntity(String userId, String provider, String modelName, String source) {
@@ -184,6 +214,10 @@ public class AgentSessionResolver {
      * @throws IllegalArgumentException if the session is not found
      */
     public Session loadSession(UUID id) {
+        return loadSession(id, null);
+    }
+
+    public Session loadSession(UUID id, String profile) {
         // Wrap the load + cliState access in a read-only transaction so the
         // lazy ElementCollection is initialized while the Hibernate session
         // is still open. Without this, getCliState() triggers a
@@ -192,6 +226,9 @@ public class AgentSessionResolver {
         return transactionTemplate.execute(status -> {
             SessionEntity e = sessionRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Session not found: " + id));
+            if (profile != null) {
+                requireAccessible(e, profile);
+            }
             return hydrateSession(e);
         });
     }
@@ -263,7 +300,11 @@ public class AgentSessionResolver {
             if (messageRepository.countBySessionIdAndActiveTrue(sessionId) > 0) {
                 return sessionId;
             }
-            // Walk descendants: at each step, pick the most-recently-created child
+            SessionEntity initial = sessionRepository.findById(sessionId).orElse(null);
+            if (initial == null) {
+                return sessionId;
+            }
+            // Walk only descendants belonging to the original profile and user.
             UUID current = sessionId;
             Set<UUID> seen = new HashSet<>();
             seen.add(current);
@@ -273,7 +314,11 @@ public class AgentSessionResolver {
                 if (children == null || children.isEmpty()) {
                     return sessionId;
                 }
-                UUID childId = children.get(0).getId();
+                UUID childId = children.stream()
+                    .filter(child -> sameScope(initial, child))
+                    .map(SessionEntity::getId)
+                    .filter(Objects::nonNull)
+                    .findFirst().orElse(null);
                 if (childId == null || seen.contains(childId)) {
                     return sessionId;
                 }

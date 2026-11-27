@@ -33,7 +33,7 @@ public class OpenAiIdempotencyCache {
 
     public record Result(ResponseEntity<?> response, UUID sessionId) {}
 
-    public String fingerprint(ObjectMapper objectMapper, Object... parts) {
+    public static String fingerprint(ObjectMapper objectMapper, Object... parts) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             if (parts != null) {

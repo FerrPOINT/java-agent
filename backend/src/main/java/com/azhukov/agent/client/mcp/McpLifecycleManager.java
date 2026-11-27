@@ -2,6 +2,7 @@ package com.azhukov.agent.client.mcp;
 
 import com.azhukov.agent.config.AgentProperties;
 import com.azhukov.agent.service.McpConfigStore;
+import com.azhukov.agent.core.security.ProfileDatabaseScope;
 import com.azhukov.agent.persistence.entity.McpServerConfigEntity;
 import com.azhukov.agent.core.model.Message;
 import com.azhukov.agent.core.model.Session;
@@ -258,7 +259,8 @@ public class McpLifecycleManager {
         var store = configStoreProvider == null ? null : configStoreProvider.getIfAvailable();
         if (store != null) {
             try {
-                for (var entity : store.list(runtimeProfile())) {
+                String profile = runtimeProfile();
+                for (var entity : ProfileDatabaseScope.call(profile, () -> store.list(profile))) {
                     if (entity.getName() != null && names.add(entity.getName())) {
                         merged.add(new ConfiguredServer(toServerProperties(entity), entity));
                     }
@@ -382,6 +384,11 @@ public class McpLifecycleManager {
     }
 
     private void connectAttempt(ConfiguredServer server, ConnectionAttempt owner, CompletableFuture<Void> handshake,
+                                boolean allowLazy, int nextRetry, boolean initial) {
+        ProfileDatabaseScope.run(runtimeProfile(), () -> connectScoped(server, owner, handshake, allowLazy, nextRetry, initial));
+    }
+
+    private void connectScoped(ConfiguredServer server, ConnectionAttempt owner, CompletableFuture<Void> handshake,
                                 boolean allowLazy, int nextRetry, boolean initial) {
         String name = server.properties().getName();
         try {
@@ -670,15 +677,104 @@ public class McpLifecycleManager {
 
         return switch (transport) {
             case "stdio" -> createStdioClient(server);
-            case "sse" -> createSseClient(server);
-            case "http", "streamable", "streamablehttp" -> createStreamableHttpClient(server);
+            case "sse", "http", "streamable", "streamablehttp" -> createRemoteClient(server, runtimeProfile(), null);
             default -> {
                 if (!server.getBaseUrl().isBlank()) {
-                    yield createStreamableHttpClient(server);
+                    yield createRemoteClient(server, runtimeProfile(), null);
                 }
                 throw new IllegalArgumentException("MCP server " + server.getName() + " has no transport configured");
             }
         };
+    }
+
+    public List<DiscoveredTool> inspectProfileServer(String profile, String name) {
+        var configured = profileServer(profile, name);
+        return withProfileClient(profile, configured, Duration.ofSeconds(10), client -> profileTools(configured, client).stream()
+            .map(tool -> new DiscoveredTool(name, tool.name(),
+                convertToolDefinition(mcpPrefixedToolName(name, tool.name()), tool)))
+            .toList());
+    }
+
+    public ToolTrustMetadata admitProfileTool(String profile, String serverName, String toolName) {
+        var configured = profileServer(profile, serverName);
+        return withProfileClient(profile, configured, Duration.ofSeconds(10), client -> profileTool(profile, configured, client, toolName));
+    }
+
+    public McpSchema.CallToolResult executeProfileTool(String profile, String serverName, String toolName,
+                                                       String arguments, ToolTrustMetadata admission) {
+        var configured = profileServer(profile, serverName);
+        if (admission == null || !profileBinding(profile, configured).equals(admission.profileBinding())) {
+            throw new IllegalStateException("MCP configuration changed after admission");
+        }
+        final Map<String, Object> params;
+        try {
+            params = objectMapper.readValue(arguments, new TypeReference<>() {});
+        } catch (Exception e) {
+            throw new IllegalArgumentException("Invalid MCP tool arguments");
+        }
+        if (params == null || (argumentScanner != null && argumentScanner.scan(params).isBlocked())) {
+            throw new IllegalArgumentException("MCP tool arguments were rejected");
+        }
+        if (rateLimiter != null && !rateLimiter.tryAcquire(profile + ":" + serverName + ":" + toolName,
+                properties.getMcp().getRateLimitMaxCalls(), properties.getMcp().getRateLimitWindowSeconds())) {
+            throw new IllegalStateException("MCP tool rate limit exceeded");
+        }
+
+        return withProfileClient(profile, configured, resolveMcpToolTimeout(configured.properties()), client -> {
+            var observed = profileTool(profile, configured, client, toolName);
+            if (!admission.equals(observed)
+                || !admission.profileBinding().equals(profileBinding(profile, profileServer(profile, serverName)))) {
+                throw new IllegalStateException("MCP definition or configuration changed before dispatch");
+            }
+            return client.callTool(new McpSchema.CallToolRequest(toolName, params));
+        });
+    }
+
+    private ToolTrustMetadata profileTool(String profile, ConfiguredServer server, McpSyncClient client, String name) {
+        var definition = profileTools(server, client).stream().filter(tool -> tool.name().equals(name)).findFirst()
+            .orElseThrow(() -> new IllegalStateException("MCP tool is unavailable in the selected profile"));
+        return ToolTrustMetadata.nativeTool(server.properties().getName(), server.properties().getTrust(), definition,
+            profileBinding(profile, server));
+    }
+
+    private static McpToolTrustService.ProfileBinding profileBinding(String profile, ConfiguredServer server) {
+        var config = server.schemaConfig();
+        return new McpToolTrustService.ProfileBinding(profile, config.getId(), config.getConfigRevision());
+    }
+
+    private List<McpSchema.Tool> profileTools(ConfiguredServer configured, McpSyncClient client) {
+        var capabilities = client.getServerCapabilities();
+        if (capabilities != null && capabilities.tools() == null) {
+            return List.of();
+        }
+        return admittedMcpTools(configured.properties(), listToolsWithPagination(client));
+    }
+
+    private ConfiguredServer profileServer(String profile, String name) {
+        var store = configStoreProvider == null ? null : configStoreProvider.getIfAvailable();
+        if (store == null) {
+            throw new IllegalStateException("MCP config store is unavailable");
+        }
+        var config = store.find(profile, name).filter(McpServerConfigEntity::isEnabled)
+            .orElseThrow(() -> new java.util.NoSuchElementException("MCP server is unavailable for the selected profile"));
+        com.azhukov.agent.service.ProfileExecutionConfiguration.requireAcceptedMcpVersion(profile, config);
+        var server = toServerProperties(config);
+        if (!("http".equals(server.getTransport()) || "sse".equals(server.getTransport()))) {
+            throw new IllegalArgumentException("The selected profile MCP server requires HTTP or SSE transport");
+        }
+        McpConfigStore.requireRemoteEndpoint(server.getBaseUrl());
+        return new ConfiguredServer(server, config);
+    }
+
+    private <T> T withProfileClient(String profile, ConfiguredServer configured, Duration timeout,
+                                    java.util.function.Function<McpSyncClient, T> operation) {
+        var server = configured.properties();
+        try (var client = createRemoteClient(server, profile, timeout)) {
+            client.initialize();
+            return operation.apply(client);
+        } catch (Exception e) {
+            throw new IllegalStateException("Unable to access MCP for the selected profile");
+        }
     }
 
     private McpSyncClient createStdioClient(AgentProperties.McpProperties.ServerProperties server) {
@@ -774,31 +870,38 @@ public class McpLifecycleManager {
 
     private String watchdogScriptPath;
 
-    private McpSyncClient createSseClient(AgentProperties.McpProperties.ServerProperties server) {
-        var transport = HttpClientSseClientTransport.builder(server.getBaseUrl())
-            .httpRequestCustomizer(remoteHeaderCustomizer(server))
-            .build();
-        return McpClient.sync(transport).build();
-    }
-
-    private McpSyncClient createStreamableHttpClient(AgentProperties.McpProperties.ServerProperties server) {
-        var transport = HttpClientStreamableHttpTransport.builder(server.getBaseUrl())
-            .httpRequestCustomizer(remoteHeaderCustomizer(server))
-            .build();
-        return McpClient.sync(transport).build();
+    private McpSyncClient createRemoteClient(AgentProperties.McpProperties.ServerProperties server,
+                                               String profile, Duration timeout) {
+        var headers = remoteHeaderCustomizer(profile, server);
+        var transport = "sse".equalsIgnoreCase(server.getTransport())
+            ? HttpClientSseClientTransport.builder(server.getBaseUrl()).httpRequestCustomizer(headers).build()
+            : HttpClientStreamableHttpTransport.builder(server.getBaseUrl()).httpRequestCustomizer(headers).build();
+        var client = McpClient.sync(transport);
+        if (timeout != null) {
+            client.requestTimeout(timeout);
+        }
+        return client.build();
     }
 
     McpSyncHttpClientRequestCustomizer remoteHeaderCustomizer(AgentProperties.McpProperties.ServerProperties server) {
-        return (builder, method, uri, body, context) -> {
-            Map<String, String> headers = resolveRemoteHeaders(server);
-            headers.forEach(builder::setHeader);
-        };
+        return remoteHeaderCustomizer(runtimeProfile(), server);
+    }
+
+    private McpSyncHttpClientRequestCustomizer remoteHeaderCustomizer(
+            String profile, AgentProperties.McpProperties.ServerProperties server) {
+        return (builder, method, uri, body, context) ->
+            resolveRemoteHeaders(profile, server).forEach(builder::setHeader);
     }
 
     Map<String, String> resolveRemoteHeaders(AgentProperties.McpProperties.ServerProperties server) {
+        return resolveRemoteHeaders(runtimeProfile(), server);
+    }
+
+    private Map<String, String> resolveRemoteHeaders(
+            String profile, AgentProperties.McpProperties.ServerProperties server) {
         Map<String, String> headers = new LinkedHashMap<>(server.getHeaders());
         if (mcpOAuthManager != null && !containsHeader(headers, "Authorization")) {
-            mcpOAuthManager.getToken(runtimeProfile(), server)
+            mcpOAuthManager.getToken(profile, server)
                 .filter(token -> token != null && !token.isBlank())
                 .ifPresent(token -> headers.put("Authorization", "Bearer " + token));
         }
@@ -1048,7 +1151,8 @@ public class McpLifecycleManager {
         if (store == null) {
             return null;
         }
-        return store.find(runtimeProfile(), name).filter(McpServerConfigEntity::isEnabled)
+        String profile = runtimeProfile();
+        return ProfileDatabaseScope.call(profile, () -> store.find(profile, name)).filter(McpServerConfigEntity::isEnabled)
             .map(config -> new ConfiguredServer(toServerProperties(config), config))
             .orElse(null);
     }
@@ -1149,6 +1253,10 @@ public class McpLifecycleManager {
     }
 
     private void refreshTools(String serverName, McpServerState state) {
+        ProfileDatabaseScope.run(runtimeProfile(), () -> refreshScopedTools(serverName, state));
+    }
+
+    private void refreshScopedTools(String serverName, McpServerState state) {
         if (state == null) {
             return;
         }
@@ -1746,7 +1854,12 @@ public class McpLifecycleManager {
         if (remaining <= 0) {
             throw new TimeoutException("MCP deadline expired before " + operation);
         }
-        Future<T> future = toolCallExecutor.submit(action);
+        String profile = java.util.Objects.requireNonNullElse(ProfileDatabaseScope.current(), runtimeProfile());
+        Future<T> future = toolCallExecutor.submit(() -> {
+            try (var ignored = ProfileDatabaseScope.enter(profile)) {
+                return action.call();
+            }
+        });
         try {
             return future.get(remainingNanos(timeout, startedAt), TimeUnit.NANOSECONDS);
         } catch (TimeoutException e) {

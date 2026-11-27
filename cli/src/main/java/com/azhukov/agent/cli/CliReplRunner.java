@@ -13,7 +13,6 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.UUID;
 
@@ -42,77 +41,81 @@ import java.util.UUID;
 public class CliReplRunner implements CommandLineRunner {
 
     private final BackendClient backendClient;
+    private final ProfileCliClient profileClient;
     private final SlashCommandRegistry commandRegistry;
     private final CliProperties properties;
     private final MarkdownRenderer markdownRenderer;
     private final ContextReferenceExpander contextExpander;
 
-    private static final Path SESSION_DIR = Path.of(System.getProperty("user.home"), ".java-agent-cli");
-    private static final Path SESSION_FILE = SESSION_DIR.resolve("session.txt");
-
     @Override
     public void run(String... args) throws Exception {
-        // C4: Session persistence — check --new-session flag
-        boolean newSessionRequested = false;
-        for (String arg : args) {
-            if ("--new-session".equals(arg) || "--new-session=true".equals(arg)) {
-                newSessionRequested = true;
-                break;
+        boolean named = properties.namedProfile();
+        SessionStore store = commandRegistry.getSessionStore();
+        CliState cliState = commandRegistry.getCliState();
+        cliState.setUserProfile(properties.getProfile());
+        Path historyFile = properties.stateDirectory().resolve("history.txt");
+        if (named) {
+            if (properties.getModel() != null && !properties.getModel().isBlank()) {
+                throw new IllegalArgumentException("The selected profile determines the model.");
             }
+            profileClient.capabilities();
+            commandRegistry.selectProfile(profileClient, properties);
         }
 
+        boolean newSessionRequested = properties.isNewSession();
         String sessionId = properties.getSessionId();
-
-        // C4: If no session ID was explicitly set, try to load from file
+        boolean resumed = false;
         if ((sessionId == null || sessionId.isBlank()) && !newSessionRequested) {
-            sessionId = loadSavedSession();
-            if (sessionId != null && !sessionId.isBlank()) {
-                log.info("Resumed session: {}", sessionId);
-            }
+            sessionId = store.loadActiveSession();
+            resumed = sessionId != null;
         }
-
-        // C4: If still no session, create one via the backend so runtime settings endpoints work
-        if (sessionId == null || sessionId.isBlank()) {
+        if (named) {
+            if (sessionId == null || sessionId.isBlank()) {
+                sessionId = profileClient.createSession();
+            } else if (!profileClient.ownsSession(sessionId)) {
+                throw new IllegalArgumentException("Session not found in this profile. Use --new-session.");
+            }
+            store.saveActiveSession(sessionId);
+        } else if (sessionId == null || sessionId.isBlank()) {
             try {
                 sessionId = backendClient.createSession();
-                if (sessionId == null || sessionId.isBlank()) {
-                    sessionId = UUID.randomUUID().toString();
-                }
             } catch (BackendUnavailableException e) {
+                sessionId = null;
+            }
+            if (sessionId == null || sessionId.isBlank()) {
                 sessionId = UUID.randomUUID().toString();
             }
         }
-
-        CliState cliState = commandRegistry.getCliState();
-        if (cliState != null) {
-            cliState.setCurrentSessionId(sessionId);
+        cliState.setCurrentSessionId(sessionId);
+        if (!named) {
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                try {
+                    store.saveActiveSession(cliState.getCurrentSessionId());
+                } catch (IOException e) {
+                    log.warn("Failed to save session: {}", e.getMessage());
+                }
+            }));
         }
-
-        // Save whichever session is active at shutdown; /new and /resume may
-        // change it after the REPL starts.
-        final String initialSessionId = sessionId;
-        Runtime.getRuntime().addShutdownHook(new Thread(() ->
-            saveSession(cliState != null ? cliState.getCurrentSessionId() : initialSessionId)));
-
-        boolean streaming = true;
 
         System.out.println("═══════════════════════════════════════════════════");
         System.out.println("  Java Agent CLI v" + getClass().getPackage().getImplementationVersion());
         System.out.println("  Backend: " + properties.getBackendUrl());
         System.out.println("  Session: " + sessionId);
-        // C4: Show if resumed
-        if (loadSavedSession() != null && !newSessionRequested) {
+        if (named) System.out.println("  Profile: " + properties.getProfile());
+        if (resumed) {
             System.out.println("  (resumed from previous session)");
         }
         System.out.println("═══════════════════════════════════════════════════");
         System.out.println("  Type /help for commands, /exit to quit.");
-        System.out.println("  Streaming: " + (streaming ? "ON" : "OFF") + " (use /stream to toggle)");
-        System.out.println("  Alt+Enter: multi-line | /editor: external editor | @file: refs");
+        if (!named) {
+            System.out.println("  Streaming: ON");
+            System.out.println("  Alt+Enter: multi-line | /editor: external editor | @file: refs");
+        }
         System.out.println("═══════════════════════════════════════════════════");
         System.out.println();
 
         // C6: Load dynamic skill commands on startup
-        loadDynamicSkills();
+        if (!named) loadDynamicSkills();
 
         // P1-5: Load session store and record current session
         commandRegistry.getSessionStore().recordSession(sessionId, null);
@@ -128,7 +131,7 @@ public class CliReplRunner implements CommandLineRunner {
             reader.setOpt(LineReader.Option.BRACKETED_PASTE);
 
             // P1-10: Attach file-based history persistence
-            InputHistoryManager.attachHistory(reader);
+            InputHistoryManager.attachHistory(reader, historyFile);
 
             while (true) {
                 String prompt = "agent> ";
@@ -149,10 +152,10 @@ public class CliReplRunner implements CommandLineRunner {
                 }
 
                 // P1-10: Persist input history
-                InputHistoryManager.appendEntry(line);
+                InputHistoryManager.appendEntry(line, historyFile);
 
                 // P1-9: External editor — /editor or \e
-                if (line.equals("/editor") || line.equals("\\e")) {
+                if (!named && (line.equals("/editor") || line.equals("\\e"))) {
                     String edited = ExternalEditor.edit(line.equals("\\e") ? "" : line);
                     if (edited != null && !edited.isBlank()) {
                         line = edited.strip();
@@ -212,7 +215,7 @@ public class CliReplRunner implements CommandLineRunner {
                 }
 
                 // P1-7: Expand @-context references before sending to backend
-                if (ContextReferenceExpander.hasReferences(line)) {
+                if (!named && ContextReferenceExpander.hasReferences(line)) {
                     line = contextExpander.expand(line);
                 }
 
@@ -230,11 +233,10 @@ public class CliReplRunner implements CommandLineRunner {
                     sessionStore.incrementMessages(activeSessionId);
                 }
 
-                if (streaming) {
-                    // Plain text — send as chat message via streaming SSE (pass cliState)
-                    handleChatStream(line, activeSessionId, cliState);
+                if (named) {
+                    handleProfileChat(line, activeSessionId);
                 } else {
-                    handleChatNonStream(line, activeSessionId, cliState);
+                    handleChatStream(line, activeSessionId, cliState);
                 }
             }
         }
@@ -259,15 +261,20 @@ public class CliReplRunner implements CommandLineRunner {
         }
     }
 
-    private void handleChatNonStream(String message, String sessionId, CliState cliState) {
+    private void handleProfileChat(String message, String sessionId) {
+        var renderer = new MarkdownRenderer.StreamingRenderer(markdownRenderer, System.out::println);
         try {
-            String response = backendClient.chat(message, sessionId, cliState);
-            // /queue semantics: the queued prompt applies to exactly one turn.
-            cliState.setQueuedPrompt(null);
-            System.out.println(markdownRenderer.render(response));
-        } catch (BackendUnavailableException e) {
-            System.out.println("\nBackend unavailable. Is the backend running on " +
-                backendClient.getBackendUrl() + "?");
+            String run = profileClient.submit(sessionId, message);
+            System.out.println("Run: " + run);
+            String status = profileClient.awaitRun(run, renderer::accept,
+                tool -> System.out.println("[" + tool + "]"));
+            renderer.flush();
+            if (!status.isEmpty()) System.out.println(status);
+        } catch (org.springframework.web.client.RestClientResponseException e) {
+            System.out.println("Profile request failed (HTTP " + e.getStatusCode().value() + ").");
+        } catch (RuntimeException e) {
+            renderer.flush();
+            System.out.println("Profile request failed: " + e.getMessage());
         }
     }
 
@@ -299,32 +306,6 @@ public class CliReplRunner implements CommandLineRunner {
         } catch (Exception e) {
             // C8: Backend may be unavailable on startup; don't fail entirely
             log.warn("Failed to load dynamic skills on startup: {}", e.getMessage());
-        }
-    }
-
-    private String loadSavedSession() {
-        try {
-            if (Files.exists(SESSION_FILE)) {
-                String saved = Files.readString(SESSION_FILE).strip();
-                try {
-                    UUID.fromString(saved);
-                    return saved;
-                } catch (IllegalArgumentException e) {
-                    log.warn("Ignoring invalid saved session id: {}", saved);
-                }
-            }
-        } catch (IOException e) {
-            log.warn("Failed to load session: {}", e.getMessage());
-        }
-        return null;
-    }
-
-    private void saveSession(String sessionId) {
-        try {
-            Files.createDirectories(SESSION_DIR);
-            Files.writeString(SESSION_FILE, sessionId);
-        } catch (IOException e) {
-            log.warn("Failed to save session: {}", e.getMessage());
         }
     }
 }

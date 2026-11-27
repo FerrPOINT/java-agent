@@ -34,8 +34,8 @@ public class JpaSessionStore implements SessionStorePort {
 
     @Override
     public void insertSessionRow(UUID id, String userId, String title, String provider,
-                                 String modelName, String source, Instant now) {
-        sessionRepository.insertSessionRow(id, userId, title, provider, modelName, source, now);
+                                 String modelName, String source, String profile, Instant now) {
+        sessionRepository.insertSessionRow(id, userId, title, provider, modelName, source, profile, now);
     }
 
     @Override

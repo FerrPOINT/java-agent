@@ -137,6 +137,21 @@ class SessionLineageServiceTest {
         assertThat(result).containsExactly(sessionId);
     }
 
+    @Test
+    void lineageExcludesAnotherProfileEvenForTheSameOwner() {
+        UUID parentId = UUID.randomUUID();
+        UUID childId = UUID.randomUUID();
+        SessionEntity parent = newSessionEntity(parentId, null);
+        parent.setProfile("alpha");
+        SessionEntity child = newSessionEntity(childId, parentId);
+        child.setProfile("beta");
+        when(sessionRepository.findById(childId)).thenReturn(Optional.of(child));
+        when(sessionRepository.findById(parentId)).thenReturn(Optional.of(parent));
+
+        assertThat(service.findAncestorSessionIds(childId)).containsExactly(childId);
+        assertThat(service.hasParentSession(childId)).isFalse();
+    }
+
     // ── hasParentSession ──
 
     @Test
@@ -159,6 +174,7 @@ class SessionLineageServiceTest {
         UUID childId = UUID.randomUUID();
         SessionEntity child = newSessionEntity(childId, parentId);
         when(sessionRepository.findById(childId)).thenReturn(Optional.of(child));
+        when(sessionRepository.findById(parentId)).thenReturn(Optional.of(newSessionEntity(parentId, null)));
 
         assertThat(service.hasParentSession(childId)).isTrue();
     }
