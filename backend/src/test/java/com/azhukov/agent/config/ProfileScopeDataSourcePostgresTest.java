@@ -12,14 +12,29 @@ import javax.sql.DataSource;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.mock.env.MockEnvironment;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @Tag("slow")
 class ProfileScopeDataSourcePostgresTest extends PostgresTestContainer {
 
     @Autowired
     private DataSource migrationSource;
+
+    @Test
+    void rejectsTheMigrationRoleBeforeAnyQueryInAProfileDeployment() throws SQLException {
+        DataSource source = profiled(migrationSource.unwrap(HikariDataSource.class));
+        assertThatThrownBy(() -> { try (var ignored = source.getConnection()) {} })
+            .isInstanceOf(SQLException.class)
+            .hasMessageContaining("requires active PostgreSQL row security");
+        try (var scope = ProfileDatabaseScope.enter("beta")) {
+            assertThatThrownBy(() -> { try (var ignored = source.getConnection()) {} })
+                .isInstanceOf(SQLException.class)
+                .hasMessageContaining("requires active PostgreSQL row security");
+        }
+    }
 
     @Test
     void theSamePooledConnectionCarriesOneProfileAndClearsItBeforeUnscopedUse() throws SQLException {
@@ -43,7 +58,7 @@ class ProfileScopeDataSourcePostgresTest extends PostgresTestContainer {
                 config.setMaximumPoolSize(1);
 
                 try (var pool = new HikariDataSource(config)) {
-                    var source = (DataSource) new ProfileScopeDataSource().postProcessAfterInitialization(pool, "profileFixture");
+                    var source = profiled(pool);
                     int backend;
                     try (var scope = ProfileDatabaseScope.enter("alpha"); var connection = source.getConnection()) {
                         connection.setAutoCommit(false);
@@ -70,6 +85,11 @@ class ProfileScopeDataSourcePostgresTest extends PostgresTestContainer {
                 sql.execute("DROP ROLE " + role);
             }
         }
+    }
+
+    private static DataSource profiled(DataSource source) {
+        var settings = new MockEnvironment().withProperty("agent.profile.base-dir", "/profile-fixture");
+        return (DataSource) new ProfileScopeDataSource(settings).postProcessAfterInitialization(source, "profileFixture");
     }
 
     private static int backend(Connection connection) throws SQLException {

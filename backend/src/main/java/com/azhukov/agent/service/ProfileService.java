@@ -621,11 +621,7 @@ public class ProfileService {
         if (configuredBase != null && configuredBase.getParent() != null) {
             return configuredBase.getParent().toAbsolutePath().normalize();
         }
-        String env = System.getenv("HERMES_HOME");
-        if (env != null && !env.isBlank()) {
-            return Path.of(env).toAbsolutePath().normalize();
-        }
-        return Path.of(System.getProperty("user.home", "."), ".hermes").toAbsolutePath().normalize();
+        return AgentProperties.ProfileProperties.defaultHome();
     }
 
     public Path workspacePath(String profile) {

@@ -3,27 +3,55 @@ package com.azhukov.agent.config;
 import com.azhukov.agent.core.security.ProfileDatabaseScope;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.SQLException;
 import javax.sql.DataSource;
 import org.springframework.beans.factory.config.BeanPostProcessor;
+import org.springframework.core.env.Environment;
 import org.springframework.jdbc.datasource.DelegatingDataSource;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 
 /** Bind a PostgreSQL connection lease to the selected application profile. */
 @Component
 public class ProfileScopeDataSource implements BeanPostProcessor {
 
+    private final boolean configuredProfiles;
+
+    public ProfileScopeDataSource(Environment environment) {
+        configuredProfiles = StringUtils.hasText(environment.getProperty("agent.profile.base-dir"));
+    }
+
     @Override
     public Object postProcessAfterInitialization(Object bean, String name) {
         return bean instanceof DataSource source && !(source instanceof ScopedDataSource)
-            ? new ScopedDataSource(source) : bean;
+            ? new ScopedDataSource(source, configuredProfiles) : bean;
     }
 
     static final class ScopedDataSource extends DelegatingDataSource {
 
-        ScopedDataSource(DataSource source) {
+        private static final String SET_PROFILE = "SELECT set_config('pdlc.java.profile', ?, false)";
+        private static final String SET_PROFILE_WITH_POLICY_CHECK = SET_PROFILE + """
+            , NOT EXISTS (
+                SELECT 1
+                FROM (VALUES
+                    ('openai_run_states'), ('openai_run_events'), ('sessions'), ('messages'),
+                    ('session_cli_state'), ('memory'), ('memory_pending'), ('memory_write_audit'),
+                    ('pending_review_summaries'), ('attachment_artifacts'), ('mcp_server_configs'),
+                    ('mcp_schema_cache'), ('mcp_oauth_tokens'), ('mcp_oauth_flows')
+                ) AS stores(name)
+                WHERE row_security_active(to_regclass(stores.name)) IS DISTINCT FROM TRUE
+            )
+            """;
+
+        private final boolean configuredProfiles;
+        private final Path defaultProfiles = AgentProperties.ProfileProperties.defaultHome().resolve("profiles");
+
+        ScopedDataSource(DataSource source, boolean configuredProfiles) {
             super(source);
+            this.configuredProfiles = configuredProfiles;
         }
 
         @Override
@@ -45,7 +73,8 @@ public class ProfileScopeDataSource implements BeanPostProcessor {
                 if (!connection.getAutoCommit()) {
                     throw new SQLException("Profile-scoped connection must be idle on checkout");
                 }
-                configure(connection, profile == null ? "" : profile);
+                bindProfile(connection, profile == null ? "" : profile,
+                    configuredProfiles || Files.isDirectory(defaultProfiles));
                 if (profile == null) {
                     return connection;
                 }
@@ -81,7 +110,7 @@ public class ProfileScopeDataSource implements BeanPostProcessor {
                         connection.rollback();
                         connection.setAutoCommit(true);
                     }
-                    configure(connection, "");
+                    bindProfile(connection, "", false);
                 } catch (SQLException resetFailure) {
                     try {
                         connection.abort(Runnable::run);
@@ -93,10 +122,17 @@ public class ProfileScopeDataSource implements BeanPostProcessor {
             }
         }
 
-        private static void configure(Connection connection, String profile) throws SQLException {
-            try (var bind = connection.prepareStatement("SELECT set_config('pdlc.java.profile', ?, false)")) {
+        private static void bindProfile(Connection connection, String profile, boolean requirePolicies) throws SQLException {
+            try (var bind = connection.prepareStatement(requirePolicies ? SET_PROFILE_WITH_POLICY_CHECK : SET_PROFILE)) {
                 bind.setString(1, profile);
-                bind.execute();
+                try (var result = bind.executeQuery()) {
+                    if (requirePolicies && (!result.next() || !result.getBoolean(2))) {
+                        throw new SQLException(
+                            "Profile storage requires active PostgreSQL row security. Apply migrations separately "
+                                + "and connect as the application role without table ownership or BYPASSRLS",
+                            "42501");
+                    }
+                }
             }
         }
     }

@@ -5,6 +5,7 @@ import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -792,9 +793,16 @@ public class AgentProperties {
     public static class ProfileProperties {
         /** Feature 10: Active profile name (default "default"). */
         private String name = "default";
-        /** Feature 10: Base directory for profiles (default ~/.java-agent/profiles/). */
+        /** Base directory for named profiles (default: profiles under the agent home). */
         private String baseDir = "";
         private String baseInstructionsDir = "";
         private String baseInstructionsManifestSha256 = "";
+
+        public static Path defaultHome() {
+            String home = System.getenv("HERMES_HOME");
+            return home != null && !home.isBlank()
+                ? Path.of(home).toAbsolutePath().normalize()
+                : Path.of(System.getProperty("user.home", "."), ".hermes").toAbsolutePath().normalize();
+        }
     }
 }
