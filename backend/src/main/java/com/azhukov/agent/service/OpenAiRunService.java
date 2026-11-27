@@ -228,8 +228,11 @@ public class OpenAiRunService {
                 }
             }
         } finally {
-            if (signalProcesses && processTool != null) {
-                processTool.killOwnedBy(record.controlSessionId());
+            if (signalProcesses) {
+                approvalQueue.clear(record.controlSessionId());
+                if (processTool != null) {
+                    processTool.killOwnedBy(record.controlSessionId());
+                }
             }
         }
         return ControlResult.ok(Map.of("run_id", runId, "status", "stopping"));

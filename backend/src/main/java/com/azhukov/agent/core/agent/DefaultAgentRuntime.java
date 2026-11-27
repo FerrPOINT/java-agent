@@ -313,6 +313,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
     private TurnResult runTurnInternal(Session session, String userInput, List<String> references,
                                        ModelRequestOptions options) {
         UUID sessionIdUuid = session.id();
+        boolean ownsControlLifecycle = !RunControlScope.hasControlSessionId(session);
         String sessionId = sessionIdUuid.toString();
         // P-05: foreground work supersedes any delayed/in-flight review for
         // this session before it can call the model or write memory.
@@ -320,14 +321,14 @@ public class DefaultAgentRuntime implements AgentRuntime {
             backgroundReviewService.cancelForNewForegroundTurn(sessionIdUuid);
         }
         // Clear stale cancellation from an earlier child turn before this new turn starts.
-        if (interruptToken != null) {
+        if (ownsControlLifecycle && interruptToken != null) {
             interruptToken.reset(sessionIdUuid);
         }
         toolExecutionService.resetForTurn(sessionIdUuid);
         turnStateManager.clear(sessionIdUuid);
         // Clear any pending steer from a previous turn (parity with Hermes
         // _drain_pending_steer clearing on turn start).
-        if (steerBuffer != null) {
+        if (ownsControlLifecycle && steerBuffer != null) {
             steerBuffer.clear(sessionIdUuid);
         }
         TurnSnapshot budget = iterationBudget.startTurn(sessionIdUuid);
@@ -478,7 +479,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
             // P8 parity (turn_finalizer.py:756): a steer arriving after the last
             // model/tool boundary must be handed to the caller for the next turn,
             // never cleared as a lost in-flight note. consume() atomically drains it.
-            if (steerBuffer != null) {
+            if (ownsControlLifecycle && steerBuffer != null) {
                 pendingSteer = steerBuffer.consume(sessionIdUuid);
             }
             // Clean up per-session guardrail state to prevent memory leaks (REM-2)
@@ -576,7 +577,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 itersSinceSkill.computeIfAbsent(session.id(), k -> new AtomicInteger(0)).incrementAndGet();
             }
 
-            if (interruptToken != null && interruptToken.isCancelled(session.id())) {
+            if (interruptToken != null && interruptToken.isCancelled(RunControlScope.controlSessionId(session))) {
                 turnMessages.add(Message.assistant("Turn cancelled by user.", turnIndex));
                 if (turnFinalizer != null) {
                     turnFinalizer.finalize(session.id(), turnMessages, false, TurnExitReason.INTERRUPTED);
@@ -611,7 +612,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                     : turnExecutor().formatBudgetExhaustionMessage(budget, exhaustionReason);
                 turnMessages.add(Message.assistant(budgetMsg, turnIndex));
                 // H7: Fire background review on budget-exhausted path too.
-                boolean interrupted = interruptToken != null && interruptToken.isCancelled(session.id());
+                boolean interrupted = interruptToken != null && interruptToken.isCancelled(RunControlScope.controlSessionId(session));
                 triggerNudgedBackgroundReview(session, turnMessages, interrupted);
                 if (turnFinalizer != null) {
                     turnFinalizer.finalize(session.id(), turnMessages, true, TurnExitReason.BUDGET_EXHAUSTED);
@@ -627,10 +628,11 @@ public class DefaultAgentRuntime implements AgentRuntime {
             // c2: shared owner in TurnExecutorUtils — previously a verbatim copy
             // in both loops.
             if (steerBuffer != null) {
-                String preApiSteer = steerBuffer.consume(session.id());
+                UUID controlSessionId = RunControlScope.controlSessionId(session);
+                String preApiSteer = steerBuffer.consume(controlSessionId);
                 if (preApiSteer != null
                         && !TurnExecutorUtils.injectPreApiSteer(context, preApiSteer, session.id())) {
-                    steerBuffer.steer(session.id(), preApiSteer);
+                    steerBuffer.steer(controlSessionId, preApiSteer);
                 }
             }
             // Hermes parity: wall-clock run-budget wrap-up notice (conversation_loop.py:2154-2172).
@@ -699,7 +701,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
             // (2^attempt × base, capped at 32768) giving the model room to finish.
             while (ResponseRecoveryPolicy.isTruncatedToolCall(response.finishReason(), response.hasToolCalls())
                     && truncatedToolCallRetries < ResponseRecoveryPolicy.MAX_TRUNCATED_TOOL_CALL_RETRIES) {
-                if (interruptToken != null && interruptToken.isCancelled(session.id())) break;
+                if (interruptToken != null && interruptToken.isCancelled(RunControlScope.controlSessionId(session))) break;
                 if (modelAttempts.exhausted()) break;
                 truncatedToolCallRetries++;
                 int boostedMax = ResponseRecoveryPolicy.boostedMaxTokens(
@@ -714,7 +716,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 response = callModelWithRetry(context, tools, boostedOptions, modelAttempts);
             }
 
-            if (interruptToken != null && interruptToken.isCancelled(session.id())) {
+            if (interruptToken != null && interruptToken.isCancelled(RunControlScope.controlSessionId(session))) {
                 turnMessages.add(Message.assistant("Turn cancelled by user.", turnIndex));
                 if (turnFinalizer != null) {
                     turnFinalizer.finalize(session.id(), turnMessages, false, TurnExitReason.INTERRUPTED);
@@ -954,7 +956,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
                 log.debug("Turn {} completed without tool calls", i);
                 // Nudge-gated background review — only fire when counters hit thresholds.
                 // Mirrors Hermes: memory review every N user turns, skill review every M tool iterations.
-                boolean interrupted = interruptToken != null && interruptToken.isCancelled(session.id());
+                boolean interrupted = interruptToken != null && interruptToken.isCancelled(RunControlScope.controlSessionId(session));
                 triggerNudgedBackgroundReview(session, turnMessages, interrupted);
 
                 // ── Verify-on-stop guard (Hermes parity: verification_stop.py) ──
@@ -1210,7 +1212,7 @@ public class DefaultAgentRuntime implements AgentRuntime {
         }
 
         // H7: Fire background review on max-turns-reached path too.
-        boolean interrupted = interruptToken != null && interruptToken.isCancelled(session.id());
+        boolean interrupted = interruptToken != null && interruptToken.isCancelled(RunControlScope.controlSessionId(session));
         triggerNudgedBackgroundReview(session, turnMessages, interrupted);
 
         if (turnFinalizer != null) {
@@ -1511,7 +1513,8 @@ public class DefaultAgentRuntime implements AgentRuntime {
             if (rotated.isPresent()) {
                 Session ns = rotated.get();
                 log.info("Switching to rotated session: old={}, new={}", session.id(), ns.id());
-                return ns;
+                return RunControlScope.hasControlSessionId(session)
+                    ? RunControlScope.withControlSessionId(ns, RunControlScope.controlSessionId(session)) : ns;
             }
         }
         return session;

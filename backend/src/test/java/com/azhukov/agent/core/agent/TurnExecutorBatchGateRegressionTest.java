@@ -65,6 +65,43 @@ class TurnExecutorBatchGateRegressionTest {
         verifyNoInteractions(svc);
     }
 
+    @Test
+    void pendingApprovalAndSteerBelongToTheAcceptedRunInASharedChat() {
+        UUID control = UUID.randomUUID();
+        var chat = Session.create("user", "noop", "noop");
+        var run = RunControlScope.withControlSessionId(chat, control);
+        var queue = new ApprovalQueue();
+        var steer = new SteerBuffer();
+        var policy = mock(ToolApprovalPolicy.class);
+        var svc = mock(ToolExecutionService.class);
+        when(policy.requiresApproval(any(), any())).thenReturn(true);
+        when(policy.requestApproval(any(), any())).thenAnswer(request -> {
+            UUID owner = request.getArgument(0);
+            assertThat(owner).isEqualTo(control);
+            var pending = queue.request(owner, request.getArgument(1), "fixture approval");
+            assertThat(queue.getPending(chat.id())).isNull();
+            assertThat(queue.resolvePending(pending, true, () -> {})).isTrue();
+            return pending;
+        });
+        when(svc.execute(anyString(), anyString(), anyString(), any(), any(), any()))
+            .thenReturn(ToolResult.ok("fixture output"));
+        when(svc.enforceToolResultBudget(any())).thenAnswer(call -> call.getArgument(0));
+        steer.steer(control, "only this run");
+        steer.steer(chat.id(), "another control consumer");
+        var turn = new TurnExecutor(properties(), null, null, svc,
+            new ToolResultFormatter(), new TokenEstimator(), new InterruptToken(), queue, policy,
+            mock(MemoryNudgeManager.class), steer);
+
+        var result = turn.executeToolBatch(List.of(new ToolCall("c1", "terminal", "{}")),
+            Set.of("terminal"), run, mock(TurnState.class), 1, false, null);
+
+        assertThat(result.toolResults()).singleElement().satisfies(message ->
+            assertThat(message.content()).contains("fixture output", "only this run")
+                .doesNotContain("another control consumer"));
+        assertThat(steer.consume(chat.id())).isEqualTo("another control consumer");
+        assertThat(queue.getPending(control)).isNull();
+    }
+
     private AgentProperties properties() {
         AgentProperties p = new AgentProperties();
         p.getSecurity().setApprovalsEnabled(true);

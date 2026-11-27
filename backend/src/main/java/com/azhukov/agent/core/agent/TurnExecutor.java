@@ -295,6 +295,7 @@ public class TurnExecutor {
             && toolCalls.stream().allMatch(tc -> "execute_code".equals(tc.name()));
         boolean anyApprovalRequired = false;
         boolean named = !"default".equals(session.profile());
+        UUID controlSessionId = RunControlScope.controlSessionId(session);
         boolean scopedMcpCall = named && toolCalls.stream().anyMatch(call -> "mcp_tool".equals(call.name()));
         if (!skipApproval && !scopedMcpCall) {
             for (ToolCall call : toolCalls) {
@@ -314,7 +315,7 @@ public class TurnExecutor {
             List<ToolExecutionRecord> executions = new ArrayList<>();
             String browserUnavailableReason = null;
             for (ToolCall call : toolCalls) {
-                if (interruptToken != null && interruptToken.isCancelled(session.id())) {
+                if (interruptToken != null && interruptToken.isCancelled(controlSessionId)) {
                     log.info("Turn cancelled by interrupt for session {}", session.id());
                     return new ToolBatchResult(toolResults, true, executions);
                 }
@@ -364,12 +365,13 @@ public class TurnExecutor {
                 // session cannot authorize it or be cleared by this waiter.
                 boolean approvalRequired = flagRequiresApproval;
                 var approvalRequest = approvalRequired
-                    ? approvalPolicy.requestApproval(session.id(), call) : null;
+                    ? approvalPolicy.requestApproval(controlSessionId, call) : null;
                 boolean decisionReceived = false;
                 if (approvalRequired) {
                     log.info("Tool {} requires approval for session {}, waiting...", call.name(), session.id());
                     long approvalTimeoutMs = java.time.Duration.ofMinutes(5).toMillis();
                     decisionReceived = approvalRequest != null
+                        && (interruptToken == null || !interruptToken.isCancelled(controlSessionId))
                         && approvalQueue.awaitDecision(approvalRequest, approvalTimeoutMs);
                     if (!decisionReceived) {
                         log.warn("Approval wait timed out for session {} after {} ms", session.id(), approvalTimeoutMs);
@@ -383,7 +385,7 @@ public class TurnExecutor {
                         if (events != null) events.onToolResult(call, deniedResult, formatted);
                         return new ToolBatchResult(toolResults, true, executions);
                     }
-                    if (interruptToken != null && interruptToken.isCancelled(session.id())) {
+                    if (interruptToken != null && interruptToken.isCancelled(controlSessionId)) {
                         log.info("Session {} interrupted while waiting for approval", session.id());
                         ToolResult deniedResult = ToolResult.fail("Approval wait interrupted");
                         String formatted = toolResultFormatter.formatResult(deniedResult);
@@ -440,13 +442,13 @@ public class TurnExecutor {
             // an injected steer note can never be truncated away (streaming
             // semantics: enforce the batch, then append the steer).
             List<Message> bounded = toolExecutionService.enforceToolResultBudget(toolResults);
-            injectSteer(bounded, session.id(), currentTurnIndex);
+            injectSteer(bounded, controlSessionId, currentTurnIndex);
             return new ToolBatchResult(bounded, false, executions);
         } else {
             // Parallel path. execute_code refunds do not reach here in practice
             // (a single execute_code call is not parallel-safe), but the flag is
             // still computed uniformly.
-            if (interruptToken != null && interruptToken.isCancelled(session.id())) {
+            if (interruptToken != null && interruptToken.isCancelled(controlSessionId)) {
                 log.info("Turn cancelled by interrupt for session {}", session.id());
                 return ToolBatchResult.interruptedResult();
             }
@@ -466,14 +468,14 @@ public class TurnExecutor {
                     events.onToolResult(call, ToolResult.ok(msg.content() != null ? msg.content() : ""), msg.content());
                 }
             }
-            if (interruptToken != null && interruptToken.isCancelled(session.id())) {
+            if (interruptToken != null && interruptToken.isCancelled(controlSessionId)) {
                 log.info("Turn cancelled by interrupt after parallel tool execution for session {}", session.id());
-                injectSteer(toolResults, session.id(), currentTurnIndex);
+                injectSteer(toolResults, controlSessionId, currentTurnIndex);
                 return new ToolBatchResult(toolResults, true, executions);
             }
             // Budget enforcement before steer injection — see sequential path.
             List<Message> boundedParallel = toolExecutionService.enforceToolResultBudget(toolResults);
-            injectSteer(boundedParallel, session.id(), currentTurnIndex);
+            injectSteer(boundedParallel, controlSessionId, currentTurnIndex);
             return new ToolBatchResult(boundedParallel, false, executions);
         }
     }
