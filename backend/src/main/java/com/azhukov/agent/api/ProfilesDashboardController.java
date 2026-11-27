@@ -6,6 +6,7 @@ import com.azhukov.agent.persistence.entity.MessageEntity;
 import com.azhukov.agent.persistence.entity.SessionEntity;
 import com.azhukov.agent.persistence.repository.MessageRepository;
 import com.azhukov.agent.persistence.repository.SessionRepository;
+import com.azhukov.agent.service.ProfileConfigWriter;
 import com.azhukov.agent.service.ProfileService;
 import com.azhukov.agent.service.RuntimeConfigService;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -62,6 +63,7 @@ public class ProfilesDashboardController {
     private final AgentProperties properties;
     private final RuntimeConfigService runtimeConfigService;
     private final ProfileService profileService;
+    private final ProfileConfigWriter profileConfigWriter;
     private final SessionRepository sessionRepository;
     private final MessageRepository messageRepository;
     private final ProfileTerminalLauncher terminalLauncher;
@@ -75,10 +77,11 @@ public class ProfilesDashboardController {
         SessionRepository sessionRepository,
         MessageRepository messageRepository,
         org.springframework.beans.factory.ObjectProvider<ProfileTerminalLauncher> terminalLauncherProvider,
-        org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.core.client.ModelClient> modelClientProvider
+        org.springframework.beans.factory.ObjectProvider<com.azhukov.agent.core.client.ModelClient> modelClientProvider,
+        ProfileConfigWriter profileConfigWriter
     ) {
         this(properties, runtimeConfigService, profileService, sessionRepository, messageRepository,
-            terminalLauncherProvider == null ? null : terminalLauncherProvider.getIfAvailable());
+            terminalLauncherProvider == null ? null : terminalLauncherProvider.getIfAvailable(), profileConfigWriter);
         this.modelClientProvider = modelClientProvider;
     }
 
@@ -88,11 +91,13 @@ public class ProfilesDashboardController {
         ProfileService profileService,
         SessionRepository sessionRepository,
         MessageRepository messageRepository,
-        ProfileTerminalLauncher terminalLauncher
+        ProfileTerminalLauncher terminalLauncher,
+        ProfileConfigWriter profileConfigWriter
     ) {
         this.properties = properties;
         this.runtimeConfigService = runtimeConfigService;
         this.profileService = profileService;
+        this.profileConfigWriter = profileConfigWriter;
         this.sessionRepository = sessionRepository;
         this.messageRepository = messageRepository;
         this.terminalLauncher = terminalLauncher;
@@ -253,9 +258,9 @@ public class ProfilesDashboardController {
         }
     }
 
-    @PutMapping("/{name}/model")
+    @PutMapping("/{profile}/model")
     public ResponseEntity<Map<String, Object>> updateProfileModel(
-        @PathVariable String name,
+        @PathVariable("profile") String name,
         @RequestBody(required = false) Map<String, Object> body
     ) {
         requireAdminProfilesWriteAccess();
@@ -269,7 +274,8 @@ public class ProfilesDashboardController {
             return badRequest("provider and model are required");
         }
         try {
-            return ResponseEntity.ok(profileService.writeModel(name, provider, model, bodyString(body, "base_url")));
+            return ResponseEntity.ok(profileConfigWriter.writeModel(name, provider, model,
+                bodyString(body, "base_url"), bodyString(body, "api_key")));
         } catch (Exception e) {
             return profileError(e);
         }

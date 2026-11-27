@@ -87,13 +87,15 @@ class ProfileRuntimeServicesTest {
         var instructions = new ProfileInstructions(new AgentProperties(), profiles,
             new com.fasterxml.jackson.databind.ObjectMapper());
         var writer = new ProfileConfigWriter(prov(profiles), null, modelRouting, instructions, new ProfileRuntimeRegistry(null));
-        profiles.writeModel("alpha", "openai", "alpha-v1", "https://alpha.example.test/v1", "alpha-fixture");
-        profiles.writeModel("beta", "openai", "beta", "https://beta.example.test/v1", "beta-fixture");
+        writer.writeModel("alpha", "openai", "alpha-v1", "https://alpha.example.test/v1", "alpha-fixture");
+        writer.writeModel("beta", "openai", "beta", "https://beta.example.test/v1", "beta-fixture");
         var acceptedAlpha = modelRouting.bind("alpha", null);
         var beforeBeta = modelRouting.bind("beta", null);
         String before = profiles.readRawConfig("alpha");
 
         assertThatThrownBy(() -> writer.writeRaw("alpha", "model: {provider: openai}", "test"))
+            .isInstanceOf(ProfileModelRouting.ProfileModelUnavailable.class);
+        assertThatThrownBy(() -> writer.writeModel("alpha", "openai", "broken", "file:///invalid", null))
             .isInstanceOf(ProfileModelRouting.ProfileModelUnavailable.class);
         assertThatThrownBy(() -> writer.writeRaw("alpha", "dashboard: {}", "test"))
             .isInstanceOf(ProfileModelRouting.ProfileModelUnavailable.class);
@@ -227,9 +229,9 @@ class ProfileRuntimeServicesTest {
         Files.createDirectories(profiles.profilePath("beta"));
         var env = new ProfileEnvStore(prov(profiles), new com.azhukov.agent.service.ProfileRuntimeRegistry(null));
         var routing = new ProfileModelRouting(profiles, env);
-        profiles.writeModel("alpha", "openai", "alpha-v1", "https://alpha.example.test/v1");
+        profiles.writeConfig("alpha", Map.of("model", Map.of("provider", "openai", "default", "alpha-v1", "base_url", "https://alpha.example.test/v1")));
         env.set("alpha", "AGENT_MODEL_API_KEY", "fixture-alpha");
-        profiles.writeModel("beta", "deepseek", "beta-v1", "https://beta.example.test/v1", "fixture-beta");
+        profiles.writeConfig("beta", Map.of("model", Map.of("provider", "deepseek", "default", "beta-v1", "base_url", "https://beta.example.test/v1", "api_key", "fixture-beta")));
 
         var request = new com.azhukov.agent.core.client.ModelRequestOptions("global", null, false, null,
             null, null, null, "global", "https://global.example.test/v1", "fixture-global");
@@ -242,7 +244,7 @@ class ProfileRuntimeServicesTest {
         assertThat(beta.baseUrl()).isEqualTo("https://beta.example.test/v1");
         assertThat(beta.apiKey()).isEqualTo("fixture-beta");
 
-        profiles.writeModel("alpha", "openai", "alpha-v2", "https://alpha.example.test/v1", "fixture-new");
+        profiles.writeConfig("alpha", Map.of("model", Map.of("provider", "openai", "default", "alpha-v2", "base_url", "https://alpha.example.test/v1", "api_key", "fixture-new")));
         assertThat(routing.bind("alpha", alpha)).isSameAs(alpha);
         assertThat(routing.bind("alpha", request).modelName()).isEqualTo("alpha-v2");
         assertThat(routing.bind("alpha", request).apiKey()).isEqualTo("fixture-new");
@@ -256,8 +258,8 @@ class ProfileRuntimeServicesTest {
         var routing = new ProfileModelRouting(profiles, new ProfileEnvStore(prov(profiles), new com.azhukov.agent.service.ProfileRuntimeRegistry(null)));
         Files.createDirectories(profiles.profilePath("alpha"));
         Files.createDirectories(profiles.profilePath("beta"));
-        profiles.writeModel("alpha", "openai", "alpha", "https://alpha.example.test/v1", "fixture-alpha");
-        profiles.writeModel("beta", "openai", "beta", "https://beta.example.test/v1");
+        profiles.writeConfig("alpha", Map.of("model", Map.of("provider", "openai", "default", "alpha", "base_url", "https://alpha.example.test/v1", "api_key", "fixture-alpha")));
+        profiles.writeConfig("beta", Map.of("model", Map.of("provider", "openai", "default", "beta", "base_url", "https://beta.example.test/v1")));
         assertThatThrownBy(() -> routing.bind("beta", null))
             .isInstanceOf(ProfileModelRouting.ProfileModelUnavailable.class);
         Files.delete(profiles.configPath("beta"));

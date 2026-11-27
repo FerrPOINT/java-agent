@@ -299,34 +299,6 @@ public class ProfileService {
         return Map.of("ok", true, "description", text, "description_auto", false);
     }
 
-    public Map<String, Object> writeModel(String name, String provider, String model, String baseUrl) throws IOException {
-        return writeModel(name, provider, model, baseUrl, null);
-    }
-
-    public Map<String, Object> writeModel(String name,
-                                          String provider,
-                                          String model,
-                                          String baseUrl,
-                                          String apiKey) throws IOException {
-        String canon = normalizeProfileName(name);
-        validateProfileName(canon);
-        Path profileDir = requireProfileDirectory(canon);
-        String cleanProvider = clean(provider);
-        String cleanModel = clean(model);
-        if (cleanProvider == null || cleanModel == null) {
-            throw new IllegalArgumentException("provider and model are required");
-        }
-        writeProfileModel(profileDir, cleanProvider, cleanModel, clean(baseUrl), clean(apiKey));
-        Map<String, Object> response = new LinkedHashMap<>();
-        response.put("ok", true);
-        response.put("provider", cleanProvider);
-        response.put("model", cleanModel);
-        if (clean(baseUrl) != null) {
-            response.put("base_url", clean(baseUrl));
-        }
-        return response;
-    }
-
     public Map<String, Object> exportProfile(String name, String output, Map<String, String> extraFiles) throws IOException {
         String canon = normalizeProfileName(name);
         validateProfileName(canon);
@@ -1159,16 +1131,14 @@ public class ProfileService {
 
     @SuppressWarnings("unchecked")
     private void writeProfileModel(Path profileDir, String provider, String model, String baseUrl) throws IOException {
-        writeProfileModel(profileDir, provider, model, baseUrl, null);
-    }
-
-    private void writeProfileModel(Path profileDir,
-                                   String provider,
-                                   String model,
-                                   String baseUrl,
-                                   String apiKey) throws IOException {
         Path path = profileDir.resolve("config.yaml");
         Map<String, Object> config = readYamlMap(path);
+        applyModelSelection(config, provider, model, baseUrl, null);
+        atomicWriteString(path, dumpYaml(config));
+    }
+
+    static void applyModelSelection(Map<String, Object> config, String provider, String model,
+                                    String baseUrl, String apiKey) {
         Object rawModelConfig = config.get("model");
         Map<String, Object> modelConfig = rawModelConfig instanceof Map<?, ?> modelMap
             ? toStringKeyMap(modelMap)
@@ -1185,7 +1155,6 @@ public class ProfileService {
             modelConfig.put("api_key", apiKey);
         }
         config.put("model", modelConfig);
-        atomicWriteString(path, dumpYaml(config));
     }
 
     private Map<String, Object> readYamlMap(Path path) {

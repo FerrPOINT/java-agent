@@ -121,27 +121,6 @@ class ProfileServiceTest {
     }
 
     @Test
-    void writeModelCanPersistExplicitApiKeyWithoutLeakingItInResponse() throws Exception {
-        profileService.createProfile(new ProfileService.CreateProfileRequest(
-            "work", null, false, false, true, null, null, null, null));
-
-        Map<String, Object> response = profileService.writeModel(
-            "work",
-            "openrouter",
-            "test/model-1",
-            "https://openrouter.example/api/v1",
-            "profile-secret");
-
-        assertThat(response)
-            .containsEntry("provider", "openrouter")
-            .containsEntry("model", "test/model-1")
-            .containsEntry("base_url", "https://openrouter.example/api/v1")
-            .doesNotContainKey("api_key");
-        assertThat(Files.readString(tempDir.resolve("profiles").resolve("work").resolve("config.yaml")))
-            .contains("api_key: profile-secret");
-    }
-
-    @Test
     void rawConfigReadAndWriteAreScopedAndRequireYamlMapping() throws Exception {
         profileService.createProfile(new ProfileService.CreateProfileRequest(
             "work", null, false, false, true, null, null, null, null));

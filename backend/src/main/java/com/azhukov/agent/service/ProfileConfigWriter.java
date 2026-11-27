@@ -12,6 +12,8 @@ import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.HexFormat;
 import java.util.Map;
+import java.util.LinkedHashMap;
+import java.util.function.Consumer;
 
 /** Validates and atomically writes profile settings, with an audit revision for each write. */
 @Service
@@ -37,14 +39,41 @@ public class ProfileConfigWriter {
 
     /** Merge and apply a profile config update. Returns the applied revision. */
     public long write(String profile, Map<String, Object> incoming, String actor) throws IOException {
+        return update(profile, config -> deepMerge(config, incoming), actor);
+    }
+
+    /** Validate and persist the main-model edit under the same profile lock as other config writes. */
+    public Map<String, Object> writeModel(String profile, String provider, String model, String baseUrl,
+                                           String apiKey) throws IOException {
+        if (provider == null || provider.isBlank() || model == null || model.isBlank()) {
+            throw new IllegalArgumentException("provider and model are required");
+        }
+        String selectedProvider = provider.trim();
+        String selectedModel = model.trim();
+        String endpoint = baseUrl == null || baseUrl.isBlank() ? null : baseUrl.trim();
+        String key = apiKey == null || apiKey.isBlank() ? null : apiKey.trim();
+        update(profile, config -> ProfileService.applyModelSelection(config, selectedProvider, selectedModel, endpoint, key),
+            "dashboard");
+
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("ok", true);
+        response.put("provider", selectedProvider);
+        response.put("model", selectedModel);
+        if (endpoint != null) {
+            response.put("base_url", endpoint);
+        }
+        return response;
+    }
+
+    private long update(String profile, Consumer<Map<String, Object>> edit, String actor) throws IOException {
         ProfileService profiles = profiles();
         String canon = profiles.normalizeProfileName(profile);
         synchronized (runtime.lockFor(canon)) {
             prepareProfile(profiles, canon);
-            Map<String, Object> merged = profiles.readDiskExecutionConfig(canon);
-            boolean hadModel = merged.containsKey("model");
-            deepMerge(merged, incoming);
-            return apply(profiles, canon, dumpYaml(merged), merged, hadModel, actor);
+            Map<String, Object> candidate = profiles.readDiskExecutionConfig(canon);
+            boolean hadModel = candidate.containsKey("model");
+            edit.accept(candidate);
+            return apply(profiles, canon, dumpYaml(candidate), candidate, hadModel, actor);
         }
     }
 
