@@ -48,9 +48,13 @@ public class InputHistoryManager {
      * @param reader the LineReader to attach history to
      */
     public static void attachHistory(LineReader reader) {
+        attachHistory(reader, HISTORY_FILE);
+    }
+
+    static void attachHistory(LineReader reader, Path historyFile) {
         try {
-            ensureHistoryFile();
-            reader.setVariable(LineReader.HISTORY_FILE, HISTORY_FILE.toString());
+            Files.createDirectories(historyFile.getParent());
+            reader.setVariable(LineReader.HISTORY_FILE, historyFile.toString());
             // Enable history persistence
             reader.setVariable(LineReader.DISABLE_HISTORY, "false");
             // Set max history size
@@ -89,10 +93,14 @@ public class InputHistoryManager {
      * @param entry the input to append
      */
     public static void appendEntry(String entry) {
+        appendEntry(entry, HISTORY_FILE);
+    }
+
+    static void appendEntry(String entry, Path historyFile) {
         if (entry == null || entry.isBlank()) return;
         try {
-            ensureHistoryFile();
-            Files.writeString(HISTORY_FILE, entry + "\n",
+            Files.createDirectories(historyFile.getParent());
+            Files.writeString(historyFile, entry + "\n",
                 java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
         } catch (IOException e) {
             log.warn("Failed to append history entry: {}", e.getMessage());

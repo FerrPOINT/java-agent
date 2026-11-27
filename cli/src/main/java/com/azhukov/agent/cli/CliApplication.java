@@ -3,14 +3,13 @@ package com.azhukov.agent.cli;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
-import java.util.UUID;
-
 /**
  * Spring Boot main class for the CLI subproject.
  * <p>
  * Accepts command-line args:
  * <ul>
  *   <li>{@code --backend.url=URL} — backend REST API base URL (default: http://localhost:8090)</li>
+ *   <li>{@code --profile=NAME} — Java Agent profile (default: default)</li>
  *   <li>{@code --session.id=UUID} — session ID (default: random UUID or saved session)</li>
  *   <li>{@code --model=NAME} — model override (default: from backend config)</li>
  *   <li>{@code --new-session} — force a new session instead of loading from ~/.java-agent-cli/session.txt (C4)</li>
@@ -26,6 +25,7 @@ public class CliApplication {
         // Prefer an explicitly configured endpoint for containerized clients;
         // preserve the standalone default for local CLI use.
         String backendUrl = System.getenv().getOrDefault("CLI_BACKEND_URL", "http://localhost:8090");
+        String profile = System.getenv().getOrDefault("CLI_PROFILE", "default");
         String sessionId = "";
         String model = "";
         boolean newSession = false;
@@ -33,6 +33,8 @@ public class CliApplication {
         for (String arg : args) {
             if (arg.startsWith("--backend.url=")) {
                 backendUrl = arg.substring("--backend.url=".length());
+            } else if (arg.startsWith("--profile=")) {
+                profile = arg.substring("--profile=".length());
             } else if (arg.startsWith("--session.id=")) {
                 sessionId = arg.substring("--session.id=".length());
             } else if (arg.startsWith("--model=")) {
@@ -52,6 +54,7 @@ public class CliApplication {
 
         // Inject as Spring properties for @ConfigurationProperties binding
         System.setProperty("cli.backend-url", backendUrl);
+        System.setProperty("cli.profile", profile);
         System.setProperty("cli.session-id", sessionId);
         if (!model.isBlank()) {
             System.setProperty("cli.model", model);

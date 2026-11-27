@@ -300,6 +300,18 @@ cd cli
 java -jar build/libs/cli-0.0.1-SNAPSHOT.jar --backend.url=http://localhost:8090
 ```
 
+Чтобы открыть именованный профиль, запустите CLI с `--profile` или задайте `CLI_PROFILE`:
+
+```bash
+java -jar cli/build/libs/cli-0.0.1-SNAPSHOT.jar --backend.url=http://localhost:8090 --profile=review
+```
+
+Модель, инструкции и инструменты берутся из конфигурации профиля на сервере.
+CLI хранит активную сессию, историю ввода и квитанции запусков в
+`~/.java-agent-cli/profiles/<profile>/`. `/resume <id>` проверяет принадлежность
+сессии. `/wait` восстанавливает результат принятого запуска, `/retry` повторяет
+приём с исходным ключом. `/help all` показывает доступные команды.
+
 Streaming smoke:
 
 ```bash

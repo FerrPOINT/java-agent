@@ -57,13 +57,27 @@ public class SessionStore {
      * itself delegates to {@link SharedObjectMapper#get()}). The store path
      * defaults to {@code ~/.java-agent-cli/sessions.json}.
      *
-     * @param objectMapper the injected Jackson {@link ObjectMapper}
      */
     @Autowired
-    public SessionStore(ObjectMapper objectMapper) {
-        this.objectMapper = objectMapper;
-        this.storePath = STORE_FILE;
-        load();
+    public SessionStore(ObjectMapper objectMapper, CliProperties properties) {
+        this(objectMapper, properties.stateDirectory().resolve("sessions.json"));
+    }
+
+    String loadActiveSession() {
+        try {
+            String session = Files.readString(storePath.resolveSibling("session.txt")).strip();
+            return java.util.UUID.fromString(session).toString();
+        } catch (java.nio.file.NoSuchFileException ignored) {
+            return null;
+        } catch (IOException | IllegalArgumentException e) {
+            log.warn("Could not read the last active session: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    void saveActiveSession(String id) throws IOException {
+        Files.createDirectories(storePath.getParent());
+        Files.writeString(storePath.resolveSibling("session.txt"), id);
     }
 
     /**
